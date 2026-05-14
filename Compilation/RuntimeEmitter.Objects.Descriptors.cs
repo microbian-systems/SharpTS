@@ -1363,7 +1363,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldtoken, _types.Double);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
         il.Emit(OpCodes.Bne_Un, notDoubleTypeLabel);
-        void EmitNumberStaticCheck(string n, bool isMethod, double? constValue = null)
+        void EmitNumberStaticCheck(string n, bool isMethod, double? constValue = null, MethodBuilder? methodTarget = null, int methodArity = 1)
         {
             var skipLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldloc, propNameLocal);
@@ -1378,6 +1378,19 @@ public partial class RuntimeEmitter
             {
                 il.Emit(OpCodes.Ldc_R8, constValue.Value);
                 il.Emit(OpCodes.Box, _types.Double);
+            }
+            else if (methodTarget != null)
+            {
+                // Emit TSFunction.GetOrCreate(methodInfo, name, length) so the
+                // descriptor's .value === Number.X (same cached wrapper).
+                il.Emit(OpCodes.Ldtoken, methodTarget);
+                il.Emit(OpCodes.Ldtoken, methodTarget.DeclaringType!);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+                    _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+                il.Emit(OpCodes.Castclass, _types.MethodInfo);
+                il.Emit(OpCodes.Ldstr, n);
+                il.Emit(OpCodes.Ldc_I4, methodArity);
+                il.Emit(OpCodes.Call, runtime.TSFunctionGetOrCreate);
             }
             else
             {
@@ -1403,7 +1416,9 @@ public partial class RuntimeEmitter
         EmitNumberStaticCheck("MAX_SAFE_INTEGER", false, 9007199254740991.0);
         EmitNumberStaticCheck("MIN_SAFE_INTEGER", false, -9007199254740991.0);
         EmitNumberStaticCheck("EPSILON", false, 2.220446049250313e-16);
-        // Methods
+        // Methods — TODO: emit TSFunction.GetOrCreate inline once EmitNumberMethods
+        // runs BEFORE EmitObjectGetOwnPropertyDescriptor (currently runs after,
+        // so runtime.NumberParseInt etc. are null at this emit site).
         EmitNumberStaticCheck("parseInt", true);
         EmitNumberStaticCheck("parseFloat", true);
         EmitNumberStaticCheck("isNaN", true);
