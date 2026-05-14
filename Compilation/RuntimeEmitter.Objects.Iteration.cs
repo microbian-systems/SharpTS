@@ -823,6 +823,72 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, fieldsDictEnumeratorLocal);
         il.Emit(OpCodes.Call, enumeratorType.GetMethod("Dispose")!);
 
+        // $TSObject literal accessors: iterate _getters keys, append
+        // [key, GetProperty(obj, key)] (GetProperty fires the accessor's
+        // getter). Mirrors GetKeys/GetValues' recent extensions.
+        var notTSObjForEnt = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjForEnt);
+        var tsoEntGettersDict = il.DeclareLocal(dictType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetGettersDict);
+        il.Emit(OpCodes.Stloc, tsoEntGettersDict);
+        var skipEntGetters = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, tsoEntGettersDict);
+        il.Emit(OpCodes.Brfalse, skipEntGetters);
+        var entKeysType = _types.MakeGenericType(typeof(Dictionary<,>.KeyCollection).GetGenericTypeDefinition(), _types.String, _types.Object);
+        var entKeysEnumType = _types.MakeGenericType(typeof(Dictionary<,>.KeyCollection.Enumerator).GetGenericTypeDefinition(), _types.String, _types.Object);
+        var entGettersEnum = il.DeclareLocal(entKeysEnumType);
+        il.Emit(OpCodes.Ldloc, tsoEntGettersDict);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(dictType, "Keys").GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, entKeysType.GetMethod("GetEnumerator")!);
+        il.Emit(OpCodes.Stloc, entGettersEnum);
+        var entGettersStart = il.DefineLabel();
+        var entGettersEnd = il.DefineLabel();
+        var entGettersKey = il.DeclareLocal(_types.String);
+        il.MarkLabel(entGettersStart);
+        il.Emit(OpCodes.Ldloca, entGettersEnum);
+        il.Emit(OpCodes.Call, entKeysEnumType.GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, entGettersEnd);
+        il.Emit(OpCodes.Ldloca, entGettersEnum);
+        il.Emit(OpCodes.Call, entKeysEnumType.GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, entGettersKey);
+        // PDS enum check
+        var entGetterDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, entGettersKey);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, entGetterDescLocal);
+        var entGetterAddLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, entGetterDescLocal);
+        il.Emit(OpCodes.Brfalse, entGetterAddLabel);
+        il.Emit(OpCodes.Ldloc, entGetterDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, entGettersStart);
+        il.MarkLabel(entGetterAddLabel);
+        // entry = [key, GetProperty(obj, key)]
+        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, entryLocal);
+        il.Emit(OpCodes.Ldloc, entryLocal);
+        il.Emit(OpCodes.Ldloc, entGettersKey);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+        il.Emit(OpCodes.Ldloc, entryLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, entGettersKey);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, entryLocal);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+        il.Emit(OpCodes.Br, entGettersStart);
+        il.MarkLabel(entGettersEnd);
+        il.Emit(OpCodes.Ldloca, entGettersEnum);
+        il.Emit(OpCodes.Call, entKeysEnumType.GetMethod("Dispose")!);
+        il.MarkLabel(skipEntGetters);
+        il.MarkLabel(notTSObjForEnt);
+
         il.MarkLabel(returnResultLabel);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
