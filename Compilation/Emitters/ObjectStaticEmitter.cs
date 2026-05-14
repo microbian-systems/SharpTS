@@ -178,7 +178,11 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
             case "create":
                 // Object.create(proto, propertiesObject?) - creates a new object with prototype
                 // First argument (proto) is already on the stack
-                // Emit second argument (propertiesObject) - optional
+                // Emit second argument (propertiesObject) - optional. ECMA-262
+                // §20.1.2.2 step 3 distinguishes Properties === undefined (skip)
+                // from Properties === null (TypeError via ObjectDefineProperties).
+                // Push $Undefined.Instance for the missing-arg case so the
+                // runtime can apply the correct branch.
                 if (arguments.Count > 1)
                 {
                     emitter.EmitExpression(arguments[1]);
@@ -186,7 +190,7 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
                 }
                 else
                 {
-                    il.Emit(OpCodes.Ldnull);
+                    il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
                 }
                 il.Emit(OpCodes.Call, ctx.Runtime!.ObjectCreate);
                 return true;

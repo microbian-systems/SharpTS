@@ -91,9 +91,22 @@ public partial class RuntimeEmitter
         // (inherited keys leaked into "own"). PDS-installed prototype link
         // (above) handles inheritance correctly without copying.
 
-        // If propertiesObject is null, skip property definition
+        // ECMA-262 §20.1.2.2 step 3: only define properties if Properties is
+        // not undefined. Properties === null falls through and is passed to
+        // ObjectDefineProperties → ToObject(null) → TypeError. Test262
+        // 15.2.3.5-4-3 expects this throw.
+        var propsIsUndefLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, noPropsLabel);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, noPropsLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brtrue, propsIsUndefLabel);
+        // Properties is null → throw TypeError per ToObject step.
+        il.Emit(OpCodes.Ldstr, "Cannot convert undefined or null to object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(propsIsUndefLabel);
 
         // Cast propertiesObject to Dictionary<string, object?>
         il.Emit(OpCodes.Ldarg_1);
