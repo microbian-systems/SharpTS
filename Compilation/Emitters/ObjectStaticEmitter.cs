@@ -154,7 +154,10 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Call, ctx.Runtime!.ObjectDefineProperty);
                 return true;
             case "getOwnPropertyDescriptor":
-                // Object.getOwnPropertyDescriptor(obj, prop) - gets a property descriptor
+                // Object.getOwnPropertyDescriptor(obj, prop) - gets a property descriptor.
+                // ECMA-262 §20.1.2.6 step 1: Let obj be ? ToObject(O). ToObject
+                // throws TypeError on null/undefined.
+                EmitToObjectGuard(il, ctx.Runtime!, "Object.getOwnPropertyDescriptor");
                 // First argument (obj) is already on the stack
                 // Emit second argument (property name)
                 if (arguments.Count > 1)
@@ -349,5 +352,28 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
         il.Emit(OpCodes.Ldc_I4, specLength);
         il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
         return true;
+    }
+
+    /// <summary>
+    /// Emits a TypeError throw if the value on top of stack is null or $Undefined.Instance.
+    /// Mirrors ECMA-262 ToObject step 1. Stack is preserved (value remains on top).
+    /// </summary>
+    private static void EmitToObjectGuard(ILGenerator il, EmittedRuntime runtime, string callName)
+    {
+        var throwLabel = il.DefineLabel();
+        var okLabel = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, throwLabel);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, throwLabel);
+        il.Emit(OpCodes.Br, okLabel);
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, callName + " called on null or undefined");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(okLabel);
     }
 }
