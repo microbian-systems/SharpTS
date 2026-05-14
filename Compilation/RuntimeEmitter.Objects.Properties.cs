@@ -4141,6 +4141,33 @@ public partial class RuntimeEmitter
         EmitTypeBuiltinNameCheck("prototype");
         EmitTypeBuiltinNameCheck("name");
         EmitTypeBuiltinNameCheck("length");
+
+        // Number Type-specific non-configurable constants. Reflection
+        // probe below would miss these because JS names (UPPER_SNAKE_CASE)
+        // differ from .NET names (PascalCase): MAX_VALUE → double.MaxValue
+        // etc. Without this, `delete Number.MAX_VALUE` returned true
+        // (Test262 S15.7.3.2_A3).
+        var notNumberTypeForDelLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.Double);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Bne_Un, notNumberTypeForDelLabel);
+        void EmitNumberConstNameCheck(string n)
+        {
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brtrue, typeBuiltinNameTrueLabel);
+        }
+        EmitNumberConstNameCheck("MAX_VALUE");
+        EmitNumberConstNameCheck("MIN_VALUE");
+        EmitNumberConstNameCheck("NaN");
+        EmitNumberConstNameCheck("POSITIVE_INFINITY");
+        EmitNumberConstNameCheck("NEGATIVE_INFINITY");
+        EmitNumberConstNameCheck("MAX_SAFE_INTEGER");
+        EmitNumberConstNameCheck("MIN_SAFE_INTEGER");
+        EmitNumberConstNameCheck("EPSILON");
+        il.MarkLabel(notNumberTypeForDelLabel);
         // Reflection: any static field/property on the Type → built-in own.
         const System.Reflection.BindingFlags typeDelStaticPub =
             System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
