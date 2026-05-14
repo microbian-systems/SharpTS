@@ -3500,12 +3500,27 @@ public partial class RuntimeEmitter
         var doSetLabel = il.DefineLabel();
         var valueLocal = il.DeclareLocal(_types.Object);
 
-        // Check if frozen: _frozenObjects.TryGetValue(obj, out _)
+        // Check if frozen: _frozenObjects.TryGetValue(obj, out _).
+        // Per ECMA-262, freeze only forbids writes to DATA properties — accessor
+        // setters still fire because the descriptor's writable bit doesn't apply
+        // to accessors. So when there's a PDS setter for this key, fall through
+        // to the doSetLabel path (which invokes it). Pre-fix dropped frozen
+        // accessor writes silently — broke test262 15.2.3.9-2-c-{2,3,4}.
         il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloca, valueLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType()));
-        il.Emit(OpCodes.Brtrue, nullLabel); // Frozen - silently return
+        var frozenNotFoundLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, frozenNotFoundLabel);
+        // Frozen — only allow if there's a PDS accessor setter for this key.
+        var frozenAccessorSetterLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, frozenAccessorSetterLocal);
+        il.Emit(OpCodes.Call, runtime.PDSTryGetSetter);
+        il.Emit(OpCodes.Brfalse, nullLabel); // No setter, frozen data — silent return
+        il.Emit(OpCodes.Br, doSetLabel);     // Has setter — proceed (doSetLabel re-fetches via PDSTryGetSetter)
+        il.MarkLabel(frozenNotFoundLabel);
 
         // Check if sealed and property doesn't exist
         il.Emit(OpCodes.Ldsfld, runtime.SealedObjectsField);
