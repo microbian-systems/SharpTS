@@ -55,16 +55,38 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldtoken, runtime.TSFunctionType);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
         il.Emit(OpCodes.Callvirt, setItem);
+        // "constructor" is non-enumerable per ECMA-262 §17. Installed below
+        // after the descriptor helper is defined.
 
         // Wire each $TSFunction wrapper. Helpers all take (object __this,
         // params object[] args) so $TSFunction.InvokeWithThis injects the
         // dynamic receiver as `__this` and the JS-level args land in `args`.
+        // Also install a PDS data descriptor with enumerable:false so
+        // Object.getOwnPropertyDescriptor reports the spec attrs (built-in
+        // methods are W:T, E:F, C:T per ECMA-262 §17). Test262 verifies via
+        // verifyProperty(Function.prototype, "bind", {W:T,E:F,C:T}).
+        var fnDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        void InstallNonEnumerableFn(string jsName, System.Action emitValue)
+        {
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, fnDescLocal);
+            il.Emit(OpCodes.Ldloc, fnDescLocal);
+            emitValue();
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldloc, fnDescLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetSetMethod()!);
+            il.Emit(OpCodes.Ldsfld, runtime.FunctionPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, fnDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+        }
         void Wire(string jsName, MethodBuilder helper, int jsLength)
         {
             try { helper.DefineParameter(1, ParameterAttributes.None, "__this"); }
             catch { /* already named — ignore */ }
-            il.Emit(OpCodes.Ldsfld, runtime.FunctionPrototypeField);
-            il.Emit(OpCodes.Ldstr, jsName);
+            var fnWrapperLocal = il.DeclareLocal(_types.Object);
             il.Emit(OpCodes.Ldnull);
             il.Emit(OpCodes.Ldtoken, helper);
             il.Emit(OpCodes.Ldtoken, helper.DeclaringType!);
@@ -74,13 +96,27 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldstr, jsName);
             il.Emit(OpCodes.Ldc_I4, jsLength);
             il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+            il.Emit(OpCodes.Stloc, fnWrapperLocal);
+            // dict[jsName] = wrapper (fast path)
+            il.Emit(OpCodes.Ldsfld, runtime.FunctionPrototypeField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, fnWrapperLocal);
             il.Emit(OpCodes.Callvirt, setItem);
+            // Non-enumerable PDS descriptor for gOPD / Object.keys / for-in.
+            InstallNonEnumerableFn(jsName, () => il.Emit(OpCodes.Ldloc, fnWrapperLocal));
         }
 
         Wire("call", callHelper, 1);
         Wire("apply", applyHelper, 2);
         Wire("bind", bindHelper, 1);
         Wire("toString", toStringHelper, 0);
+
+        // constructor: non-enumerable per ECMA-262 §17.
+        InstallNonEnumerableFn("constructor", () =>
+        {
+            il.Emit(OpCodes.Ldtoken, runtime.TSFunctionType);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        });
 
         // Function.prototype's [[Prototype]] is %Object.prototype% per
         // ECMA-262 §20.2.3.
