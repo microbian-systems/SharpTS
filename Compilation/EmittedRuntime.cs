@@ -402,6 +402,8 @@ public class EmittedRuntime
     public MethodBuilder ObjectProtoToLocaleStringHelper { get; set; } = null!;
     /// <summary>$PropertyDescriptorStore.GetEnumerableExtraKeys(obj, dict) — returns enumerable PDS keys NOT already in dict (i.e. accessor-only own properties created via Object.defineProperty). Used by GetKeys/GetValues/GetEntries to surface §10.1.11.1 OrdinaryOwnPropertyKeys-correct results.</summary>
     public MethodBuilder PDSGetEnumerableExtraKeys { get; set; } = null!;
+    /// <summary>$PropertyDescriptorStore.GetAllExtraKeys(obj, dict) — like the Enumerable variant but does NOT filter by the Enumerable bit. Used by Object.getOwnPropertyNames (ECMA-262 §20.1.2.10) which returns both enumerable AND non-enumerable own string-keyed properties.</summary>
+    public MethodBuilder PDSGetAllExtraKeys { get; set; } = null!;
     /// <summary>$Runtime.ArrayProtoToString(this) — ECMA-262 23.1.3.32. Returns join of elements with default separator (",").</summary>
     public MethodBuilder ArrayProtoToStringHelper { get; set; } = null!;
     /// <summary>Populates <see cref="BooleanPrototypeField"/> with $TSFunction wrappers for toString/valueOf; idempotent.</summary>

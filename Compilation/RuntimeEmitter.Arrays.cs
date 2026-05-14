@@ -846,6 +846,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, dictLoopStart);
 
         il.MarkLabel(dictLoopEnd);
+
+        // Append PDS extras (accessor-only own properties + non-enumerable
+        // own properties created via Object.defineProperty).
+        var pdsExtraNamesLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Call, runtime.PDSGetAllExtraKeys);
+        il.Emit(OpCodes.Stloc, pdsExtraNamesLocal);
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ldloc, pdsExtraNamesLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("AddRange", [_types.IEnumerableOfObject])!);
         il.Emit(OpCodes.Ldloc, namesLocal);
         il.Emit(OpCodes.Ret);
 

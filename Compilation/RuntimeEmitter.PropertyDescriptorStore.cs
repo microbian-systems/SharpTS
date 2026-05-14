@@ -289,6 +289,7 @@ public partial class RuntimeEmitter
         EmitPDSDeleteProperty(typeBuilder, runtime, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictContainsKey);
         EmitPDSGetPropertyDescriptor(typeBuilder, runtime, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue);
         EmitPDSGetEnumerableExtraKeys(typeBuilder, runtime, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue);
+        EmitPDSGetAllExtraKeys(typeBuilder, runtime, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue);
 
         var type = typeBuilder.CreateType()!;
         runtime.PropertyDescriptorStoreType = type;
@@ -1107,6 +1108,93 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
         il.Emit(OpCodes.Brfalse, loopStart);
         // result.Add(currentKey)
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, currentKeyLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
+        il.Emit(OpCodes.Br, loopStart);
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        il.Emit(OpCodes.Call, resolvedEnumDispose);
+
+        il.MarkLabel(returnResultLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Like <see cref="EmitPDSGetEnumerableExtraKeys"/>, but does NOT filter
+    /// by the Enumerable bit. Used by <c>Object.getOwnPropertyNames</c>
+    /// (ECMA-262 §20.1.2.10), which returns the union of own enumerable AND
+    /// non-enumerable string-keyed properties.
+    /// </summary>
+    private void EmitPDSGetAllExtraKeys(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        FieldBuilder descriptorsField, MethodInfo descriptorsTryGet,
+        Type descriptorsDictType, MethodInfo descriptorsDictTryGetValue)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetAllExtraKeys",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.ListOfObject,
+            [_types.Object, _types.DictionaryStringObject]
+        );
+        runtime.PDSGetAllExtraKeys = method;
+
+        var il = method.GetILGenerator();
+        var resultLocal = il.DeclareLocal(_types.ListOfObject);
+        var pdsDictLocal = il.DeclareLocal(descriptorsDictType);
+        var keyLocal = il.DeclareLocal(_types.Object);
+        EmitNormalizePDSKey(il, runtime, keyLocal);
+
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObject));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        il.Emit(OpCodes.Ldsfld, descriptorsField);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Ldloca, pdsDictLocal);
+        il.Emit(OpCodes.Callvirt, descriptorsTryGet);
+        var returnResultLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, returnResultLabel);
+
+        var kvpType = typeof(KeyValuePair<,>).MakeGenericType(_types.String, runtime.CompiledPropertyDescriptorType);
+        var enumeratorType = typeof(Dictionary<,>.Enumerator).MakeGenericType(_types.String, runtime.CompiledPropertyDescriptorType);
+        var dictOpenType = typeof(Dictionary<,>);
+        var descriptorsDictGetEnumerator = EmitterTypeHelpers.ResolveMethod(descriptorsDictType, dictOpenType.GetMethod("GetEnumerator")!);
+        var enumOpenType = typeof(Dictionary<,>.Enumerator);
+        var resolvedEnumMoveNext = EmitterTypeHelpers.ResolveMethod(enumeratorType, enumOpenType.GetMethod("MoveNext")!);
+        var resolvedEnumCurrent = EmitterTypeHelpers.ResolveMethod(enumeratorType, enumOpenType.GetProperty("Current")!.GetGetMethod()!);
+        var resolvedEnumDispose = EmitterTypeHelpers.ResolveMethod(enumeratorType, enumOpenType.GetMethod("Dispose")!);
+        var kvpOpenType = typeof(KeyValuePair<,>);
+        var resolvedKvpKey = EmitterTypeHelpers.ResolveMethod(kvpType, kvpOpenType.GetProperty("Key")!.GetGetMethod()!);
+
+        var enumeratorLocal = il.DeclareLocal(enumeratorType);
+        var kvpLocal = il.DeclareLocal(kvpType);
+        il.Emit(OpCodes.Ldloc, pdsDictLocal);
+        il.Emit(OpCodes.Callvirt, descriptorsDictGetEnumerator);
+        il.Emit(OpCodes.Stloc, enumeratorLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var currentKeyLocal = il.DeclareLocal(_types.String);
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        il.Emit(OpCodes.Call, resolvedEnumMoveNext);
+        il.Emit(OpCodes.Brfalse, loopEnd);
+        il.Emit(OpCodes.Ldloca, enumeratorLocal);
+        il.Emit(OpCodes.Call, resolvedEnumCurrent);
+        il.Emit(OpCodes.Stloc, kvpLocal);
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, resolvedKvpKey);
+        il.Emit(OpCodes.Stloc, currentKeyLocal);
+        // Skip if dict (arg1) already contains the key.
+        il.Emit(OpCodes.Ldarg_1);
+        var skipDictNullLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, skipDictNullLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, currentKeyLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
+        il.Emit(OpCodes.Brtrue, loopStart);
+        il.MarkLabel(skipDictNullLabel);
+        // No Enumerable filter — return all PDS keys.
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldloc, currentKeyLocal);
         il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
