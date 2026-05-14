@@ -240,8 +240,8 @@ test/built-ins/Array/length/S15.4.5.1_A1.3_T1.js Pass
 test/built-ins/Array/length/S15.4.5.1_A1.3_T2.js Pass
 test/built-ins/Array/length/S15.4.5.2_A3_T4.js Pass
 test/built-ins/Array/length/define-own-prop-length-coercion-order-set.js Fail
-test/built-ins/Array/length/define-own-prop-length-coercion-order.js Timeout
-test/built-ins/Array/length/define-own-prop-length-error.js RuntimeError:worker-stalled
+test/built-ins/Array/length/define-own-prop-length-coercion-order.js RuntimeError:worker-crashed
+test/built-ins/Array/length/define-own-prop-length-error.js Pass
 test/built-ins/Array/length/define-own-prop-length-no-value-order.js Fail
 test/built-ins/Array/length/define-own-prop-length-overflow-order.js Pass
 test/built-ins/Array/length/define-own-prop-length-overflow-realm.js RuntimeError
@@ -6246,9 +6246,9 @@ test/built-ins/Object/freeze/15.2.3.9-2-a-9.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-b-i-1.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-b-i-2.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-c-1.js Pass
-test/built-ins/Object/freeze/15.2.3.9-2-c-2.js Fail
-test/built-ins/Object/freeze/15.2.3.9-2-c-3.js Fail
-test/built-ins/Object/freeze/15.2.3.9-2-c-4.js Fail
+test/built-ins/Object/freeze/15.2.3.9-2-c-2.js Pass
+test/built-ins/Object/freeze/15.2.3.9-2-c-3.js Pass
+test/built-ins/Object/freeze/15.2.3.9-2-c-4.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-d-1.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-d-2.js Pass
 test/built-ins/Object/freeze/15.2.3.9-2-d-3.js Pass
