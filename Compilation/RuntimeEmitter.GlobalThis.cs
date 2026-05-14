@@ -256,24 +256,36 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Br, returnLabel);
         }
 
-        // parseInt - return cached TSFunction wrapping NumberParseInt
+        // parseInt — wrap NumberParseInt via $TSFunction.GetOrCreate so the
+        // result has identity (parseInt === parseInt) AND equals Number.parseInt
+        // (also wraps NumberParseInt). Per ECMA-262 Number.parseInt is the same
+        // function object as the global parseInt.
+        void EmitGetOrCreateTSFn(MethodBuilder wrappedMethod, string jsName, int jsLength)
+        {
+            il.Emit(OpCodes.Ldtoken, wrappedMethod);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle", _types.RuntimeMethodHandle));
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldc_I4, jsLength);
+            il.Emit(OpCodes.Call, runtime.TSFunctionGetOrCreate);
+        }
         il.MarkLabel(parseIntLabel);
-        EmitCachedTSFunction(il, runtime.CachedParseIntFunction, runtime.NumberParseInt, runtime);
+        EmitGetOrCreateTSFn(runtime.NumberParseInt, "parseInt", 2);
         il.Emit(OpCodes.Br, returnLabel);
 
-        // parseFloat - return cached TSFunction wrapping NumberParseFloat
+        // parseFloat — same pattern.
         il.MarkLabel(parseFloatLabel);
-        EmitCachedTSFunction(il, runtime.CachedParseFloatFunction, runtime.NumberParseFloat, runtime);
+        EmitGetOrCreateTSFn(runtime.NumberParseFloat, "parseFloat", 1);
         il.Emit(OpCodes.Br, returnLabel);
 
-        // isNaN - return cached TSFunction wrapping NumberIsNaN
+        // isNaN
         il.MarkLabel(isNaNLabel);
-        EmitCachedTSFunction(il, runtime.CachedIsNaNFunction, runtime.NumberIsNaN, runtime);
+        EmitGetOrCreateTSFn(runtime.NumberIsNaN, "isNaN", 1);
         il.Emit(OpCodes.Br, returnLabel);
 
-        // isFinite - return cached TSFunction wrapping NumberIsFinite
+        // isFinite
         il.MarkLabel(isFiniteLabel);
-        EmitCachedTSFunction(il, runtime.CachedIsFiniteFunction, runtime.NumberIsFinite, runtime);
+        EmitGetOrCreateTSFn(runtime.NumberIsFinite, "isFinite", 1);
         il.Emit(OpCodes.Br, returnLabel);
 
         il.MarkLabel(returnLabel);
