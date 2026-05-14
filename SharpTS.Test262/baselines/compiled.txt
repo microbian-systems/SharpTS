@@ -3241,9 +3241,9 @@ test/built-ins/JSON/parse/15.12.2-2-6.js Pass
 test/built-ins/JSON/parse/15.12.2-2-7.js Pass
 test/built-ins/JSON/parse/15.12.2-2-8.js Pass
 test/built-ins/JSON/parse/15.12.2-2-9.js Pass
-test/built-ins/JSON/parse/S15.12.2_A1.js Fail
+test/built-ins/JSON/parse/S15.12.2_A1.js Pass
 test/built-ins/JSON/parse/builtin.js Pass
-test/built-ins/JSON/parse/duplicate-proto.js Fail
+test/built-ins/JSON/parse/duplicate-proto.js Pass
 test/built-ins/JSON/parse/invalid-whitespace.js Pass
 test/built-ins/JSON/parse/length.js Pass
 test/built-ins/JSON/parse/name.js Pass
