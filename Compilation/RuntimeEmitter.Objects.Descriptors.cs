@@ -1614,11 +1614,16 @@ public partial class RuntimeEmitter
         // Math singleton dict — synthesize spec descriptors for its known
         // methods (W:T,E:F,C:T) and constants (W:F,E:F,C:F). The singleton
         // is otherwise empty; static dispatch handles Math.abs() etc., but
-        // gOPD(Math, "abs") needs to report the spec descriptor.
+        // gOPD(Math, "abs") needs to report the spec descriptor. Skip the
+        // synth if the (Math, name) pair was deleted (IsBuiltinDeleted).
         var notMathSingletonLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldsfld, runtime.MathSingletonField);
         il.Emit(OpCodes.Bne_Un, notMathSingletonLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Call, runtime.IsBuiltinDeletedMethod);
+        il.Emit(OpCodes.Brtrue, returnNullLabel);
         void EmitMathNameDesc(string n, bool isMethod, double? constValue = null)
         {
             var skipLabel = il.DefineLabel();
@@ -1671,6 +1676,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldsfld, runtime.JsonSingletonField);
         il.Emit(OpCodes.Bne_Un, notJsonSingletonLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, propNameLocal);
+        il.Emit(OpCodes.Call, runtime.IsBuiltinDeletedMethod);
+        il.Emit(OpCodes.Brtrue, returnNullLabel);
         void EmitJsonNameDesc(string n)
         {
             var skipLabel = il.DefineLabel();
