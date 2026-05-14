@@ -7305,12 +7305,12 @@ test/built-ins/Object/prototype/valueOf/S15.2.4.4_A9.js Pass
 test/built-ins/Object/prototype/valueOf/name.js Pass
 test/built-ins/Object/prototype/valueOf/not-a-constructor.js Pass
 test/built-ins/Object/seal/abrupt-completion.js Fail
-test/built-ins/Object/seal/configurable-attribute-all-own-properties-set-from-true-to-false-property-are-unaltered.js Fail
-test/built-ins/Object/seal/configurable-attribute-own-accessor-property-set-from-true-to-false-property-are-unaltered.js Fail
+test/built-ins/Object/seal/configurable-attribute-all-own-properties-set-from-true-to-false-property-are-unaltered.js Pass
+test/built-ins/Object/seal/configurable-attribute-own-accessor-property-set-from-true-to-false-property-are-unaltered.js Pass
 test/built-ins/Object/seal/length.js Pass
 test/built-ins/Object/seal/name.js Pass
 test/built-ins/Object/seal/not-a-constructor.js Pass
-test/built-ins/Object/seal/object-seal-all-own-properties-of-o-are-already-non-configurable.js Fail
+test/built-ins/Object/seal/object-seal-all-own-properties-of-o-are-already-non-configurable.js Pass
 test/built-ins/Object/seal/object-seal-configurable-attribute-of-own-data-property-of-o-is-set-from-true-to-false-and-other-attributes-of-the-property-are-unaltered.js Pass
 test/built-ins/Object/seal/object-seal-extensible-of-o-is-set-as-false-even-if-o-has-no-own-property.js Pass
 test/built-ins/Object/seal/object-seal-inherited-accessor-properties-are-ignored.js Pass
