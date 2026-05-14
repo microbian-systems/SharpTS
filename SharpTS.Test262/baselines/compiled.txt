@@ -240,12 +240,12 @@ test/built-ins/Array/length/S15.4.5.1_A1.3_T1.js Pass
 test/built-ins/Array/length/S15.4.5.1_A1.3_T2.js Pass
 test/built-ins/Array/length/S15.4.5.2_A3_T4.js Pass
 test/built-ins/Array/length/define-own-prop-length-coercion-order-set.js Fail
-test/built-ins/Array/length/define-own-prop-length-coercion-order.js RuntimeError:worker-crashed
+test/built-ins/Array/length/define-own-prop-length-coercion-order.js Timeout
 test/built-ins/Array/length/define-own-prop-length-error.js Pass
 test/built-ins/Array/length/define-own-prop-length-no-value-order.js Fail
 test/built-ins/Array/length/define-own-prop-length-overflow-order.js Pass
 test/built-ins/Array/length/define-own-prop-length-overflow-realm.js RuntimeError
-test/built-ins/Array/name.js Fail
+test/built-ins/Array/name.js RuntimeError:worker-stalled
 test/built-ins/Array/of/construct-this-with-the-number-of-arguments.js Fail
 test/built-ins/Array/of/creates-a-new-array-from-arguments.js Pass
 test/built-ins/Array/of/does-not-use-prototype-properties.js Pass
@@ -7040,7 +7040,7 @@ test/built-ins/Object/preventExtensions/15.2.3.10-3-22.js Pass
 test/built-ins/Object/preventExtensions/15.2.3.10-3-23.js Pass
 test/built-ins/Object/preventExtensions/15.2.3.10-3-24.js Pass
 test/built-ins/Object/preventExtensions/15.2.3.10-3-3.js Pass
-test/built-ins/Object/preventExtensions/15.2.3.10-3-4.js Fail
+test/built-ins/Object/preventExtensions/15.2.3.10-3-4.js Pass
 test/built-ins/Object/preventExtensions/15.2.3.10-3-5-1.js Pass
 test/built-ins/Object/preventExtensions/15.2.3.10-3-5.js Pass
 test/built-ins/Object/preventExtensions/15.2.3.10-3-6.js Pass
