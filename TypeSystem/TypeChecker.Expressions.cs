@@ -1217,6 +1217,7 @@ public partial class TypeChecker
         if (name.Lexeme == "String") return new TypeInfo.Any(); // String is a special global object
         if (name.Lexeme == "Boolean") return new TypeInfo.Any(); // Boolean is a special global object
         if (name.Lexeme == "Symbol") return new TypeInfo.Any(); // Symbol is a special global object
+        if (name.Lexeme == "Function") return new TypeInfo.Any(); // Function is the Function constructor
         if (name.Lexeme == "Proxy") return new TypeInfo.Any(); // Proxy is a special global object
         if (name.Lexeme == "Buffer") return new TypeInfo.Any(); // Buffer is a global constructor for binary data
         if (name.Lexeme == "parseInt") return new TypeInfo.Any(); // Global parseInt function

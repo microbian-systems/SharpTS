@@ -518,6 +518,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notListForProtoLabel);
 
+        // $TSFunction wrappers inherit from %Function.prototype%. Built-in
+        // constructor Types (Object/Array/...) are handled by callers that
+        // know the specific Type identity — handling System.Type here would
+        // also match user-defined classes (TypeBuilder instances) whose
+        // [[Prototype]] is their superclass, not Function.prototype.
+        var notTSFnForProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, notTSFnForProtoLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.FunctionPrototypeField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSFnForProtoLabel);
+
         // Not found in either: return null
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
