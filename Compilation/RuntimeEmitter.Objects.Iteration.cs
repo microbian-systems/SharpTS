@@ -437,6 +437,65 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, fieldsDictEnumeratorLocal);
         il.Emit(OpCodes.Call, enumeratorType.GetMethod("Dispose")!);
 
+        // $TSObject literal accessors: iterate _getters keys, call
+        // GetProperty(obj, key) (which fires the getter). Mirrors GetKeys'
+        // recent extension. Without this, Object.values on a literal with
+        // accessors misses the getter-backed values.
+        var notTSObjForVal = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjForVal);
+        var tsoValGettersDict = il.DeclareLocal(dictType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetGettersDict);
+        il.Emit(OpCodes.Stloc, tsoValGettersDict);
+        var skipValGetters = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, tsoValGettersDict);
+        il.Emit(OpCodes.Brfalse, skipValGetters);
+        var keysType = _types.MakeGenericType(typeof(Dictionary<,>.KeyCollection).GetGenericTypeDefinition(), _types.String, _types.Object);
+        var keysEnumType = _types.MakeGenericType(typeof(Dictionary<,>.KeyCollection.Enumerator).GetGenericTypeDefinition(), _types.String, _types.Object);
+        var valGettersEnum = il.DeclareLocal(keysEnumType);
+        il.Emit(OpCodes.Ldloc, tsoValGettersDict);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(dictType, "Keys").GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, keysType.GetMethod("GetEnumerator")!);
+        il.Emit(OpCodes.Stloc, valGettersEnum);
+        var valGettersStart = il.DefineLabel();
+        var valGettersEnd = il.DefineLabel();
+        var valGettersKey = il.DeclareLocal(_types.String);
+        il.MarkLabel(valGettersStart);
+        il.Emit(OpCodes.Ldloca, valGettersEnum);
+        il.Emit(OpCodes.Call, keysEnumType.GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, valGettersEnd);
+        il.Emit(OpCodes.Ldloca, valGettersEnum);
+        il.Emit(OpCodes.Call, keysEnumType.GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, valGettersKey);
+        // PDS enum check
+        var valGetterDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, valGettersKey);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, valGetterDescLocal);
+        var valGetterAddLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, valGetterDescLocal);
+        il.Emit(OpCodes.Brfalse, valGetterAddLabel);
+        il.Emit(OpCodes.Ldloc, valGetterDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, valGettersStart);
+        il.MarkLabel(valGetterAddLabel);
+        // result.Add(GetProperty(obj, key))
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, valGettersKey);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+        il.Emit(OpCodes.Br, valGettersStart);
+        il.MarkLabel(valGettersEnd);
+        il.Emit(OpCodes.Ldloca, valGettersEnum);
+        il.Emit(OpCodes.Call, keysEnumType.GetMethod("Dispose")!);
+        il.MarkLabel(skipValGetters);
+        il.MarkLabel(notTSObjForVal);
+
         il.MarkLabel(returnResultLabel);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);

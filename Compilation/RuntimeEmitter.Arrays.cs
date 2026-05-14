@@ -564,6 +564,67 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, keysEnumeratorLocal2);
         il.Emit(OpCodes.Call, keysEnumeratorType.GetMethod("Dispose")!);
 
+        // $TSObject literal accessors: iterate _getters / _setters maps too.
+        // Object literal `{get bar(){...}}` stores accessor functions in
+        // _getters (and _setters) dicts, separate from _fields. Without this,
+        // Object.keys / for-in miss them. Use TSObjectGetGettersDict accessor
+        // to read the dict; iterate keys; add unless already in result.
+        var notTSObjectForGetters = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjectForGetters);
+        var tsoGettersDict = il.DeclareLocal(dictType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetGettersDict);
+        il.Emit(OpCodes.Stloc, tsoGettersDict);
+        var skipGettersIter = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, tsoGettersDict);
+        il.Emit(OpCodes.Brfalse, skipGettersIter);
+        // Iterate getters' Keys.
+        il.Emit(OpCodes.Ldloc, tsoGettersDict);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(dictType, "Keys").GetGetMethod()!);
+        var gettersEnumLocal = il.DeclareLocal(keysEnumeratorType);
+        il.Emit(OpCodes.Callvirt, keysType.GetMethod("GetEnumerator")!);
+        il.Emit(OpCodes.Stloc, gettersEnumLocal);
+        var gettersLoopStart = il.DefineLabel();
+        var gettersLoopEnd = il.DefineLabel();
+        var gettersKeyLocal = il.DeclareLocal(_types.String);
+        il.MarkLabel(gettersLoopStart);
+        il.Emit(OpCodes.Ldloca, gettersEnumLocal);
+        il.Emit(OpCodes.Call, keysEnumeratorType.GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, gettersLoopEnd);
+        il.Emit(OpCodes.Ldloca, gettersEnumLocal);
+        il.Emit(OpCodes.Call, keysEnumeratorType.GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, gettersKeyLocal);
+        // Skip if already in result.
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, gettersKeyLocal);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("Contains")!);
+        il.Emit(OpCodes.Brtrue, gettersLoopStart);
+        // PDS descriptor: skip if Enumerable=false.
+        var gettersDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, gettersKeyLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, gettersDescLocal);
+        il.Emit(OpCodes.Ldloc, gettersDescLocal);
+        var gettersAddLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, gettersAddLabel);
+        il.Emit(OpCodes.Ldloc, gettersDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, gettersLoopStart);
+        il.MarkLabel(gettersAddLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, gettersKeyLocal);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("Add")!);
+        il.Emit(OpCodes.Br, gettersLoopStart);
+        il.MarkLabel(gettersLoopEnd);
+        il.Emit(OpCodes.Ldloca, gettersEnumLocal);
+        il.Emit(OpCodes.Call, keysEnumeratorType.GetMethod("Dispose")!);
+        il.MarkLabel(skipGettersIter);
+        il.MarkLabel(notTSObjectForGetters);
+
         // PDS extra keys (accessor-only own properties not in _fields).
         // Same shape as the Dict path above. Pass fieldsDictLocal so the
         // helper skips keys already iterated.
