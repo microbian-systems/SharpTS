@@ -6637,11 +6637,11 @@ test/built-ins/Object/getOwnPropertyNames/15.2.3.4-2-3.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-2-4.js RuntimeError
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-3-1.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-1.js RuntimeError
-test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-2.js Fail
+test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-2.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-36.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-37.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-38.js Pass
-test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-39.js Fail
+test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-39.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-40.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-41.js Pass
 test/built-ins/Object/getOwnPropertyNames/15.2.3.4-4-42.js Pass
@@ -7054,7 +7054,7 @@ test/built-ins/Object/preventExtensions/symbol-object-contains-symbol-properties
 test/built-ins/Object/preventExtensions/symbol-object-contains-symbol-properties-strict.js Fail
 test/built-ins/Object/preventExtensions/throws-when-false.js Fail
 test/built-ins/Object/prop-desc.js RuntimeError
-test/built-ins/Object/property-order.js Fail
+test/built-ins/Object/property-order.js Pass
 test/built-ins/Object/proto-from-ctor-realm.js RuntimeError
 test/built-ins/Object/prototype/15.2.3.1.js Pass
 test/built-ins/Object/prototype/S15.2.3.1_A1.js Fail
