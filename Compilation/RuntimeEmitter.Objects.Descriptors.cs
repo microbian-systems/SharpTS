@@ -1255,6 +1255,39 @@ public partial class RuntimeEmitter
         EmitObjectMethodNameCheck("values");
         il.MarkLabel(objTypeNotObjectLabel);
 
+        // IList<object> → JS Array constructor. Same method-descriptor shape
+        // as Object.
+        var notArrayTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Bne_Un, notArrayTypeLabel);
+        void EmitArrayMethodNameCheck(string n)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, propNameLocal);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, skipLabel);
+            il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+            il.Emit(OpCodes.Stloc, resultDictLocal);
+            il.Emit(OpCodes.Ldloc, resultDictLocal);
+            il.Emit(OpCodes.Ldstr, "value");
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+            EmitDescriptorBoolField(il, resultDictLocal, "writable", true);
+            EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+            EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
+            il.Emit(OpCodes.Ldloc, resultDictLocal);
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+        EmitArrayMethodNameCheck("from");
+        EmitArrayMethodNameCheck("fromAsync");
+        EmitArrayMethodNameCheck("isArray");
+        EmitArrayMethodNameCheck("of");
+        il.MarkLabel(notArrayTypeLabel);
+
         // System.Double → JS Number constructor. Static constants have W:F,E:F,C:F;
         // static methods have W:T,E:F,C:T. Same dispatch shape as Object Type.
         var notDoubleTypeLabel = il.DefineLabel();

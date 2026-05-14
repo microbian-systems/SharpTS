@@ -275,6 +275,16 @@ public partial class RuntimeEmitter
         NameEq("isFrozen"); NameEq("isSealed"); NameEq("keys"); NameEq("preventExtensions");
         NameEq("seal"); NameEq("setPrototypeOf"); NameEq("values");
         il.MarkLabel(notObjectTypeLabel);
+
+        // Array static names (typeof Array → IList<object>).
+        var notArrayConsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.IListOfObject);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Bne_Un, notArrayConsLabel);
+        NameEq("from"); NameEq("fromAsync"); NameEq("isArray"); NameEq("of");
+        il.MarkLabel(notArrayConsLabel);
+
         // Reflection: type.GetField(name, Public|Static) ?? type.GetMethod(name, Public|Static)
         const System.Reflection.BindingFlags staticPub = System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static;
         var typeLocal2 = il.DeclareLocal(_types.Type);
