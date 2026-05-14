@@ -6500,7 +6500,7 @@ test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-226.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-227.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-228.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-229.js Pass
-test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-23.js Fail
+test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-23.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-230.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-231.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-232.js Pass
@@ -6511,7 +6511,7 @@ test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-236.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-237.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-238.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-239.js Pass
-test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-24.js Fail
+test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-24.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-240.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-241.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-242.js Pass
@@ -6522,7 +6522,7 @@ test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-246.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-247.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-248.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-249.js Pass
-test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-25.js Fail
+test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-25.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-250.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-26.js Fail
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-27.js Pass
