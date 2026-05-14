@@ -1255,6 +1255,62 @@ public partial class RuntimeEmitter
         EmitObjectMethodNameCheck("values");
         il.MarkLabel(objTypeNotObjectLabel);
 
+        // System.Double → JS Number constructor. Static constants have W:F,E:F,C:F;
+        // static methods have W:T,E:F,C:T. Same dispatch shape as Object Type.
+        var notDoubleTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldtoken, _types.Double);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Bne_Un, notDoubleTypeLabel);
+        void EmitNumberStaticCheck(string n, bool isMethod, double? constValue = null)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, propNameLocal);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, skipLabel);
+            il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+            il.Emit(OpCodes.Stloc, resultDictLocal);
+            il.Emit(OpCodes.Ldloc, resultDictLocal);
+            il.Emit(OpCodes.Ldstr, "value");
+            if (constValue.HasValue)
+            {
+                il.Emit(OpCodes.Ldc_R8, constValue.Value);
+                il.Emit(OpCodes.Box, _types.Double);
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldstr, n);
+                il.Emit(OpCodes.Call, runtime.GetProperty);
+            }
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+            EmitDescriptorBoolField(il, resultDictLocal, "writable", isMethod);
+            EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+            EmitDescriptorBoolField(il, resultDictLocal, "configurable", isMethod);
+            il.Emit(OpCodes.Ldloc, resultDictLocal);
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+        // Constants — embed the literal value so dynamic gOPD round-trips even
+        // when runtime.GetProperty can't resolve the JS-static intercept path.
+        EmitNumberStaticCheck("MAX_VALUE", false, double.MaxValue);
+        EmitNumberStaticCheck("MIN_VALUE", false, double.Epsilon);
+        EmitNumberStaticCheck("NaN", false, double.NaN);
+        EmitNumberStaticCheck("POSITIVE_INFINITY", false, double.PositiveInfinity);
+        EmitNumberStaticCheck("NEGATIVE_INFINITY", false, double.NegativeInfinity);
+        EmitNumberStaticCheck("MAX_SAFE_INTEGER", false, 9007199254740991.0);
+        EmitNumberStaticCheck("MIN_SAFE_INTEGER", false, -9007199254740991.0);
+        EmitNumberStaticCheck("EPSILON", false, 2.220446049250313e-16);
+        // Methods
+        EmitNumberStaticCheck("parseInt", true);
+        EmitNumberStaticCheck("parseFloat", true);
+        EmitNumberStaticCheck("isNaN", true);
+        EmitNumberStaticCheck("isFinite", true);
+        EmitNumberStaticCheck("isInteger", true);
+        EmitNumberStaticCheck("isSafeInteger", true);
+        il.MarkLabel(notDoubleTypeLabel);
+
         // Probe GetProperty: if it returns a non-undefined value, the property
         // is reachable through our static dispatch — synthesize a descriptor.
         // This catches JS-named constants (Number.MAX_VALUE → System.Double.
