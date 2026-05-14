@@ -518,11 +518,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notListForProtoLabel);
 
-        // $TSFunction wrappers inherit from %Function.prototype%. Built-in
-        // constructor Types (Object/Array/...) are handled by callers that
-        // know the specific Type identity — handling System.Type here would
-        // also match user-defined classes (TypeBuilder instances) whose
-        // [[Prototype]] is their superclass, not Function.prototype.
+        // Constructor functions ($TSFunction wrappers and System.Type
+        // instances representing built-in classes like Object/Array/Number/
+        // String/RegExp/etc.) inherit from %Function.prototype% unless
+        // explicitly remapped by PDS/_prototypeStore. User-defined classes
+        // (`class B extends A {}`) currently have no PDS entry either, so
+        // their fallback also resolves to Function.prototype — that's still
+        // wrong (should be A) but no worse than the previous null.
         var notTSFnForProtoLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
@@ -530,6 +532,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldsfld, runtime.FunctionPrototypeField);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notTSFnForProtoLabel);
+        var notTypeForProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brfalse, notTypeForProtoLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.FunctionPrototypeField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTypeForProtoLabel);
 
         // Primitive coercions per ECMA-262 §20.1.2.13 step 1 (ToObject):
         // Object.getPrototypeOf(0) → Number.prototype,
