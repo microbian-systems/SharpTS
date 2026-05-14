@@ -1664,6 +1664,39 @@ public partial class RuntimeEmitter
         EmitMathNameDesc("SQRT2", isMethod: false, constValue: System.Math.Sqrt(2));
         il.MarkLabel(notMathSingletonLabel);
 
+        // JSON singleton — synth descriptors for parse/stringify/isRawJSON/rawJSON.
+        // Same pattern as Math; the singleton dict is empty, static dispatch
+        // handles JSON.X(); gOPD just needs to report spec attrs.
+        var notJsonSingletonLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.JsonSingletonField);
+        il.Emit(OpCodes.Bne_Un, notJsonSingletonLabel);
+        void EmitJsonNameDesc(string n)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, propNameLocal);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, skipLabel);
+            il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+            il.Emit(OpCodes.Stloc, resultDictLocal);
+            il.Emit(OpCodes.Ldloc, resultDictLocal);
+            il.Emit(OpCodes.Ldstr, "value");
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+            EmitDescriptorBoolField(il, resultDictLocal, "writable", true);
+            EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+            EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
+            il.Emit(OpCodes.Ldloc, resultDictLocal);
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+        EmitJsonNameDesc("parse");
+        EmitJsonNameDesc("stringify");
+        EmitJsonNameDesc("isRawJSON");
+        EmitJsonNameDesc("rawJSON");
+        il.MarkLabel(notJsonSingletonLabel);
+
         // No descriptor - check if property exists on the object directly (Dictionary case)
         var notDictLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
