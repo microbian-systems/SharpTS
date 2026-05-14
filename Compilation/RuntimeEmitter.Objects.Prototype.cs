@@ -515,6 +515,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brfalse, notDictForProtoLabel);
+        // Object.prototype itself has [[Prototype]] = null per ECMA-262 §20.1.3.
+        // Without this, getPrototypeOf(Object.prototype) circularly returns
+        // Object.prototype instead of null, breaking isPrototypeOf chain walks
+        // that terminate at Op (each step looks up via getPrototypeOf, which
+        // infinite-loops without this base case).
+        var dictIsNotOpLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Bne_Un, dictIsNotOpLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(dictIsNotOpLabel);
         il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notDictForProtoLabel);
