@@ -1180,6 +1180,7 @@ public class EmittedRuntime
     public MethodBuilder TSObjectGetGetter { get; set; } = null!;
     public MethodBuilder TSObjectGetGettersDict { get; set; } = null!;
     public MethodBuilder TSObjectGetSetter { get; set; } = null!;
+    public MethodBuilder TSObjectGetSettersDict { get; set; } = null!;
 
     // Module registry for dynamic imports
     // Stores mapping from module path -> factory function that returns module namespace

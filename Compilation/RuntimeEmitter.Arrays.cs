@@ -623,6 +623,57 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, gettersEnumLocal);
         il.Emit(OpCodes.Call, keysEnumeratorType.GetMethod("Dispose")!);
         il.MarkLabel(skipGettersIter);
+
+        // Symmetric iteration of _setters for setter-only literal accessors.
+        var tsoSettersDict = il.DeclareLocal(dictType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
+        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetSettersDict);
+        il.Emit(OpCodes.Stloc, tsoSettersDict);
+        var skipSettersIter = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, tsoSettersDict);
+        il.Emit(OpCodes.Brfalse, skipSettersIter);
+        il.Emit(OpCodes.Ldloc, tsoSettersDict);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(dictType, "Keys").GetGetMethod()!);
+        var settersEnumLocal = il.DeclareLocal(keysEnumeratorType);
+        il.Emit(OpCodes.Callvirt, keysType.GetMethod("GetEnumerator")!);
+        il.Emit(OpCodes.Stloc, settersEnumLocal);
+        var settersLoopStart = il.DefineLabel();
+        var settersLoopEnd = il.DefineLabel();
+        var settersKeyLocal = il.DeclareLocal(_types.String);
+        il.MarkLabel(settersLoopStart);
+        il.Emit(OpCodes.Ldloca, settersEnumLocal);
+        il.Emit(OpCodes.Call, keysEnumeratorType.GetMethod("MoveNext")!);
+        il.Emit(OpCodes.Brfalse, settersLoopEnd);
+        il.Emit(OpCodes.Ldloca, settersEnumLocal);
+        il.Emit(OpCodes.Call, keysEnumeratorType.GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, settersKeyLocal);
+        // Skip if already in result (avoid duplicates with paired getter).
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, settersKeyLocal);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("Contains")!);
+        il.Emit(OpCodes.Brtrue, settersLoopStart);
+        // PDS descriptor: skip if Enumerable=false.
+        var settersDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, settersKeyLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, settersDescLocal);
+        il.Emit(OpCodes.Ldloc, settersDescLocal);
+        var settersAddLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, settersAddLabel);
+        il.Emit(OpCodes.Ldloc, settersDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, settersLoopStart);
+        il.MarkLabel(settersAddLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, settersKeyLocal);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("Add")!);
+        il.Emit(OpCodes.Br, settersLoopStart);
+        il.MarkLabel(settersLoopEnd);
+        il.Emit(OpCodes.Ldloca, settersEnumLocal);
+        il.Emit(OpCodes.Call, keysEnumeratorType.GetMethod("Dispose")!);
+        il.MarkLabel(skipSettersIter);
         il.MarkLabel(notTSObjectForGetters);
 
         // PDS extra keys (accessor-only own properties not in _fields).

@@ -74,6 +74,8 @@ public partial class RuntimeEmitter
 
         // Method: GetGettersDict (exposes _getters for accessor-aware enumeration)
         EmitTSObjectGetGettersField(typeBuilder, runtime);
+        // Method: GetSettersDict — symmetric for setter-only literal accessors.
+        EmitTSObjectGetSettersField(typeBuilder, runtime);
 
         // Override: ToString()
         EmitTSObjectToString(typeBuilder, runtime);
@@ -721,6 +723,22 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsObjectGettersField);
+        il.Emit(OpCodes.Ret);
+    }
+
+    private void EmitTSObjectGetSettersField(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetSettersDict",
+            MethodAttributes.Public,
+            _types.DictionaryStringObject,
+            Type.EmptyTypes
+        );
+        runtime.TSObjectGetSettersDict = method;
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsObjectSettersField);
         il.Emit(OpCodes.Ret);
     }
 
