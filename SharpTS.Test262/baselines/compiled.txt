@@ -6729,8 +6729,8 @@ test/built-ins/Object/groupBy/invalid-callback.js Pass
 test/built-ins/Object/groupBy/invalid-iterable.js Fail
 test/built-ins/Object/groupBy/invalid-property-key.js Fail
 test/built-ins/Object/groupBy/iterator-next-throws.js Fail
-test/built-ins/Object/groupBy/length.js Fail
-test/built-ins/Object/groupBy/name.js Fail
+test/built-ins/Object/groupBy/length.js Pass
+test/built-ins/Object/groupBy/name.js Pass
 test/built-ins/Object/groupBy/null-prototype.js Fail
 test/built-ins/Object/groupBy/string.js RuntimeError
 test/built-ins/Object/groupBy/toPropertyKey.js RuntimeError
@@ -6785,9 +6785,9 @@ test/built-ins/Object/hasOwn/hasown_own_writable_configurable_enumerable.js Pass
 test/built-ins/Object/hasOwn/hasown_own_writable_configurable_nonenumerable.js Pass
 test/built-ins/Object/hasOwn/hasown_own_writable_nonconfigurable_enumerable.js Pass
 test/built-ins/Object/hasOwn/hasown_own_writable_nonconfigurable_nonenumerable.js Pass
-test/built-ins/Object/hasOwn/length.js Fail
-test/built-ins/Object/hasOwn/name.js Fail
-test/built-ins/Object/hasOwn/not-a-constructor.js Fail
+test/built-ins/Object/hasOwn/length.js Pass
+test/built-ins/Object/hasOwn/name.js Pass
+test/built-ins/Object/hasOwn/not-a-constructor.js Pass
 test/built-ins/Object/hasOwn/prototype.js Pass
 test/built-ins/Object/hasOwn/symbol_own_property.js Pass
 test/built-ins/Object/hasOwn/symbol_property_toPrimitive.js Fail
@@ -6803,9 +6803,9 @@ test/built-ins/Object/internals/DefineOwnProperty/consistent-writable-regexp-dol
 test/built-ins/Object/internals/DefineOwnProperty/nan-equivalence-define-own-property-reassign.js Pass
 test/built-ins/Object/internals/DefineOwnProperty/nan-equivalence-define-own-property-reconfigure.js Pass
 test/built-ins/Object/is-a-constructor.js Pass
-test/built-ins/Object/is/length.js Fail
-test/built-ins/Object/is/name.js Fail
-test/built-ins/Object/is/not-a-constructor.js Fail
+test/built-ins/Object/is/length.js Pass
+test/built-ins/Object/is/name.js Pass
+test/built-ins/Object/is/not-a-constructor.js Pass
 test/built-ins/Object/is/not-same-value-x-y-boolean.js Pass
 test/built-ins/Object/is/not-same-value-x-y-null.js Pass
 test/built-ins/Object/is/not-same-value-x-y-number.js Pass
