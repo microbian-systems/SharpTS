@@ -1067,6 +1067,20 @@ public partial class RuntimeEmitter
         il.MarkLabel(dictKeysLoopEnd);
 
         il.MarkLabel(noFieldsDictLabel);
+
+        // Append PDS extras (accessor-only own props + non-enumerable own
+        // props installed via Object.defineProperty). Mirrors the dict path
+        // earlier. Receiver is arg0; pass the fieldsDict as the "already in"
+        // set when present (null when not $IHasFields, so PDS-only props
+        // surface).
+        var objPdsExtraNamesLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, fieldsDictLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetAllExtraKeys);
+        il.Emit(OpCodes.Stloc, objPdsExtraNamesLocal);
+        il.Emit(OpCodes.Ldloc, namesLocal);
+        il.Emit(OpCodes.Ldloc, objPdsExtraNamesLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("AddRange", [_types.IEnumerableOfObject])!);
         il.Emit(OpCodes.Ldloc, namesLocal);
         il.Emit(OpCodes.Ret);
     }
