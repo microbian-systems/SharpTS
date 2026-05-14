@@ -136,6 +136,48 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brfalse, notDict);
+
+        // Local NameEq helper (mirrors the Type branch's helper).
+        void DictNameEq(string n)
+        {
+            il.Emit(OpCodes.Ldloc, nameLocal);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brtrue, trueLabel);
+        }
+
+        // Math singleton — synth-check the known Math names. The dict is
+        // empty but Math.X resolves through static dispatch; per spec
+        // hasOwn(Math, "abs") === true.
+        var notMathForHasOwnLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.MathSingletonField);
+        il.Emit(OpCodes.Bne_Un, notMathForHasOwnLabel);
+        // First skip if marked deleted in tracker.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, runtime.IsBuiltinDeletedMethod);
+        il.Emit(OpCodes.Brtrue, falseLabel);
+        foreach (var m in new[] { "abs", "acos", "acosh", "asin", "asinh", "atan", "atan2",
+            "atanh", "cbrt", "ceil", "clz32", "cos", "cosh", "exp", "expm1", "floor",
+            "fround", "hypot", "imul", "log", "log10", "log1p", "log2", "max", "min",
+            "pow", "random", "round", "sign", "sin", "sinh", "sqrt", "tan", "tanh", "trunc",
+            "E", "LN10", "LN2", "LOG10E", "LOG2E", "PI", "SQRT1_2", "SQRT2" })
+            DictNameEq(m);
+        il.MarkLabel(notMathForHasOwnLabel);
+
+        // JSON singleton — same pattern.
+        var notJsonForHasOwnLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.JsonSingletonField);
+        il.Emit(OpCodes.Bne_Un, notJsonForHasOwnLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, runtime.IsBuiltinDeletedMethod);
+        il.Emit(OpCodes.Brtrue, falseLabel);
+        DictNameEq("parse"); DictNameEq("stringify"); DictNameEq("isRawJSON"); DictNameEq("rawJSON");
+        il.MarkLabel(notJsonForHasOwnLabel);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldloc, nameLocal);
