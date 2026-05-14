@@ -47,9 +47,9 @@ test/built-ins/Array/from/Array.from-name.js Pass
 test/built-ins/Array/from/Array.from_arity.js Pass
 test/built-ins/Array/from/Array.from_forwards-length-for-array-likes.js Fail
 test/built-ins/Array/from/array-like-has-length-but-no-indexes-with-values.js RuntimeError
-test/built-ins/Array/from/calling-from-valid-1-noStrict.js Pass
-test/built-ins/Array/from/calling-from-valid-1-onlyStrict.js Fail
-test/built-ins/Array/from/calling-from-valid-2.js Fail
+test/built-ins/Array/from/calling-from-valid-1-noStrict.js Fail
+test/built-ins/Array/from/calling-from-valid-1-onlyStrict.js Pass
+test/built-ins/Array/from/calling-from-valid-2.js Pass
 test/built-ins/Array/from/elements-added-after.js Pass
 test/built-ins/Array/from/elements-deleted-after.js Fail
 test/built-ins/Array/from/elements-updated-after.js Pass
@@ -66,9 +66,9 @@ test/built-ins/Array/from/iter-get-iter-val-err.js Pass
 test/built-ins/Array/from/iter-map-fn-args.js Pass
 test/built-ins/Array/from/iter-map-fn-err.js Timeout
 test/built-ins/Array/from/iter-map-fn-return.js Pass
-test/built-ins/Array/from/iter-map-fn-this-arg.js Fail
-test/built-ins/Array/from/iter-map-fn-this-non-strict.js Pass
-test/built-ins/Array/from/iter-map-fn-this-strict.js Fail
+test/built-ins/Array/from/iter-map-fn-this-arg.js Pass
+test/built-ins/Array/from/iter-map-fn-this-non-strict.js Fail
+test/built-ins/Array/from/iter-map-fn-this-strict.js Pass
 test/built-ins/Array/from/iter-set-elem-prop-err.js Fail
 test/built-ins/Array/from/iter-set-elem-prop-non-writable.js Fail
 test/built-ins/Array/from/iter-set-elem-prop.js Pass
@@ -241,9 +241,9 @@ test/built-ins/Array/length/S15.4.5.1_A1.3_T2.js Pass
 test/built-ins/Array/length/S15.4.5.2_A3_T4.js Pass
 test/built-ins/Array/length/define-own-prop-length-coercion-order-set.js Fail
 test/built-ins/Array/length/define-own-prop-length-coercion-order.js Timeout
-test/built-ins/Array/length/define-own-prop-length-error.js RuntimeError:worker-stalled
+test/built-ins/Array/length/define-own-prop-length-error.js Pass
 test/built-ins/Array/length/define-own-prop-length-no-value-order.js Fail
-test/built-ins/Array/length/define-own-prop-length-overflow-order.js Pass
+test/built-ins/Array/length/define-own-prop-length-overflow-order.js RuntimeError:worker-stalled
 test/built-ins/Array/length/define-own-prop-length-overflow-realm.js RuntimeError
 test/built-ins/Array/name.js Fail
 test/built-ins/Array/of/construct-this-with-the-number-of-arguments.js Fail
