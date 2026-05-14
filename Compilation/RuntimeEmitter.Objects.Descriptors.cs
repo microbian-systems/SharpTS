@@ -1235,6 +1235,38 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldtoken, _types.Object);
         il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
         il.Emit(OpCodes.Bne_Un, objTypeNotObjectLabel);
+        void EmitObjectMethodValueDescCheck(string n, MethodBuilder targetMethod, int specLength)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, propNameLocal);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, skipLabel);
+            // Build descriptor { value: $TSFunction.GetOrCreate(method, name, length), W:true, E:false, C:true }.
+            // Test262 15.2.3.3-4-{23,24,25,etc.} verify `desc.value === Object.X`.
+            // GetOrCreate caches by MethodInfo so this returns the SAME instance
+            // as the static dispatch path that resolves Object.X directly.
+            il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+            il.Emit(OpCodes.Stloc, resultDictLocal);
+            il.Emit(OpCodes.Ldloc, resultDictLocal);
+            il.Emit(OpCodes.Ldstr, "value");
+            il.Emit(OpCodes.Ldtoken, targetMethod);
+            il.Emit(OpCodes.Ldtoken, targetMethod.DeclaringType!);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+                _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Ldc_I4, specLength);
+            il.Emit(OpCodes.Call, runtime.TSFunctionGetOrCreate);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+            EmitDescriptorBoolField(il, resultDictLocal, "writable", true);
+            EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
+            EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
+            il.Emit(OpCodes.Ldloc, resultDictLocal);
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+
         void EmitObjectMethodNameCheck(string n)
         {
             var skipLabel = il.DefineLabel();
@@ -1258,27 +1290,35 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Br, endLabel);
             il.MarkLabel(skipLabel);
         }
-        EmitObjectMethodNameCheck("assign");
+        // Use the value-aware variant only for methods whose MethodBuilder
+        // is already defined when this gOPD method emits — others would
+        // capture a null token (EmitObjectGetOwnPropertyDescriptor runs
+        // at line 638 of RuntimeClass.cs setup; methods emitted later in
+        // the dispatch chain — ObjectGetOwnPropertyDescriptors, Object
+        // GetPrototypeOf, ObjectSetPrototypeOf, ObjectCreate, ObjectPrevent
+        // Extensions, ObjectIsExtensible, ObjectGroupBy, GetOwnProperty
+        // Symbols, ObjectDefineProperties — can't use this path here).
+        EmitObjectMethodValueDescCheck("assign", runtime.ObjectAssign, 2);
         EmitObjectMethodNameCheck("create");
         EmitObjectMethodNameCheck("defineProperties");
-        EmitObjectMethodNameCheck("defineProperty");
-        EmitObjectMethodNameCheck("entries");
-        EmitObjectMethodNameCheck("freeze");
-        EmitObjectMethodNameCheck("fromEntries");
+        EmitObjectMethodValueDescCheck("defineProperty", runtime.ObjectDefineProperty, 3);
+        EmitObjectMethodValueDescCheck("entries", runtime.GetEntries, 1);
+        EmitObjectMethodValueDescCheck("freeze", runtime.ObjectFreeze, 1);
+        EmitObjectMethodValueDescCheck("fromEntries", runtime.ObjectFromEntries, 1);
         EmitObjectMethodNameCheck("getOwnPropertyDescriptor");
         EmitObjectMethodNameCheck("getOwnPropertyDescriptors");
-        EmitObjectMethodNameCheck("getOwnPropertyNames");
+        EmitObjectMethodValueDescCheck("getOwnPropertyNames", runtime.GetOwnPropertyNames, 1);
         EmitObjectMethodNameCheck("getOwnPropertySymbols");
         EmitObjectMethodNameCheck("getPrototypeOf");
         EmitObjectMethodNameCheck("groupBy");
-        EmitObjectMethodNameCheck("hasOwn");
-        EmitObjectMethodNameCheck("is");
+        EmitObjectMethodValueDescCheck("hasOwn", runtime.ObjectHasOwn, 2);
+        EmitObjectMethodValueDescCheck("is", runtime.ObjectIs, 2);
         EmitObjectMethodNameCheck("isExtensible");
-        EmitObjectMethodNameCheck("isFrozen");
-        EmitObjectMethodNameCheck("isSealed");
-        EmitObjectMethodNameCheck("keys");
+        EmitObjectMethodValueDescCheck("isFrozen", runtime.ObjectIsFrozen, 1);
+        EmitObjectMethodValueDescCheck("isSealed", runtime.ObjectIsSealed, 1);
+        EmitObjectMethodValueDescCheck("keys", runtime.GetKeys, 1);
         EmitObjectMethodNameCheck("preventExtensions");
-        EmitObjectMethodNameCheck("seal");
+        EmitObjectMethodValueDescCheck("seal", runtime.ObjectSeal, 1);
         EmitObjectMethodNameCheck("setPrototypeOf");
         EmitObjectMethodNameCheck("values");
         il.MarkLabel(objTypeNotObjectLabel);
