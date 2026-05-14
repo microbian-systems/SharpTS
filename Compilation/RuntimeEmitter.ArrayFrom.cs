@@ -12,11 +12,14 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitArrayFrom(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // Signature: (iterable, mapFn, iteratorSymbol, runtimeType, thisArg).
+        // thisArg added in #101 session — appended at end for caller-side
+        // backward compat: existing callers updated to push $Undefined.
         var method = typeBuilder.DefineMethod(
             "ArrayFrom",
             MethodAttributes.Public | MethodAttributes.Static,
             runtime.TSArrayType,
-            [_types.Object, _types.Object, runtime.TSSymbolType, _types.Type]
+            [_types.Object, _types.Object, runtime.TSSymbolType, _types.Type, _types.Object]
         );
         runtime.ArrayFrom = method;
 
@@ -154,10 +157,13 @@ public partial class RuntimeEmitter
         var argsLocal = il.DeclareLocal(_types.ObjectArray);
         il.Emit(OpCodes.Stloc, argsLocal);
 
-        // Call mapFn with args via InvokeValue
+        // Call mapFn with thisArg via InvokeMethodValue(thisArg, fn, args).
+        // Pre-fix InvokeValue passed no this binding, so Array.from(items, fn,
+        // thisArg) ignored the thisArg per ECMA-262 23.1.2.1 step 5.b.
+        il.Emit(OpCodes.Ldarg, (short)4);  // thisArg
         il.Emit(OpCodes.Ldarg_1);  // mapFn
         il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
 
         // Add result to mappedResult
         var callResultLocal = il.DeclareLocal(_types.Object);
@@ -274,12 +280,32 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, mapFnLocal);
         il.MarkLabel(mapFnSet);
 
-        // return ArrayFrom(iterable, mapFn, SymbolIterator, typeof($Runtime))
+        // Read thisArg from args[2] if provided, else $Undefined.
+        var thisArgLocal = il.DeclareLocal(_types.Object);
+        var hasThisArg = il.DefineLabel();
+        var thisArgSet = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Bgt, hasThisArg);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Stloc, thisArgLocal);
+        il.Emit(OpCodes.Br, thisArgSet);
+        il.MarkLabel(hasThisArg);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stloc, thisArgLocal);
+        il.MarkLabel(thisArgSet);
+
+        // return ArrayFrom(iterable, mapFn, SymbolIterator, typeof($Runtime), thisArg)
         il.Emit(OpCodes.Ldloc, iterableLocal);
         il.Emit(OpCodes.Ldloc, mapFnLocal);
         il.Emit(OpCodes.Ldsfld, runtime.SymbolIterator);
         il.Emit(OpCodes.Ldtoken, runtime.RuntimeType);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ldloc, thisArgLocal);
         il.Emit(OpCodes.Call, runtime.ArrayFrom);
         il.Emit(OpCodes.Ret);
     }

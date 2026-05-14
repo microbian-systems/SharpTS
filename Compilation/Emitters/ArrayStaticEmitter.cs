@@ -62,6 +62,19 @@ public sealed class ArrayStaticEmitter : IStaticTypeEmitterStrategy
                 il.Emit(OpCodes.Ldsfld, ctx.Runtime!.SymbolIterator);
                 il.Emit(OpCodes.Ldtoken, ctx.Runtime!.RuntimeType);
                 il.Emit(OpCodes.Call, ctx.Types.TypeGetTypeFromHandle);
+
+                // Emit thisArg (absent → $Undefined). Used as `this` when
+                // invoking mapFn per ECMA-262 23.1.2.1 step 5.b.
+                if (arguments.Count > 2)
+                {
+                    emitter.EmitExpression(arguments[2]);
+                    emitter.EmitBoxIfNeeded(arguments[2]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
+                }
+
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFrom);
                 return true;
             case "of":
