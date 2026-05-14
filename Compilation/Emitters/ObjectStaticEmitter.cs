@@ -328,6 +328,9 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
             "is"                   => runtime.ObjectIs,
             "hasOwn"               => runtime.ObjectHasOwn,
             "groupBy"              => runtime.ObjectGroupBy,
+            "isExtensible"         => runtime.ObjectIsExtensible,
+            "isFrozen"             => runtime.ObjectIsFrozen,
+            "isSealed"             => runtime.ObjectIsSealed,
             _ => null
         };
         if (method == null) return false;
