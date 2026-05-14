@@ -849,6 +849,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToInt64", _types.Object));
         il.Emit(OpCodes.Stloc, idxLong);
 
+        // Non-extensible check: spec ECMA-262 §10.4.2 Array exotic [[Set]]
+        // delegates to OrdinarySet which rejects new-property additions on
+        // non-extensible receivers. For arrays, "new" means index >= length.
+        var tsArrayExtensibleLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.PDSIsExtensible);
+        il.Emit(OpCodes.Brtrue, tsArrayExtensibleLabel);
+        // Non-extensible: silently return if idx >= length (new index).
+        il.Emit(OpCodes.Ldloc, idxLong);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.ListOfObject);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Bge, nullLabel);
+        il.MarkLabel(tsArrayExtensibleLabel);
+
         // If idx < 0 OR idx >= 2^32-1, route to SetProperty (named property).
         var doArraySetLabel = il.DefineLabel();
         var routeAsNamedLabel = il.DefineLabel();
