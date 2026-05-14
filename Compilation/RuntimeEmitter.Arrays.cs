@@ -474,6 +474,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, listLoopStart);
 
         il.MarkLabel(listLoopEnd);
+
+        // Append PDS extras: arrays can have user-defined accessor properties
+        // (`Object.defineProperty(arr, "prop", {get: ...})`) whose keys aren't
+        // numeric indices and aren't in the list's element slots. Mirror the
+        // dict-path PDSGetEnumerableExtraKeys append. Test262 keys/15.2.3.14-
+        // 5-12 covers this.
+        var pdsArrayKeysList = il.DeclareLocal(listType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Call, runtime.PDSGetEnumerableExtraKeys);
+        il.Emit(OpCodes.Stloc, pdsArrayKeysList);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, pdsArrayKeysList);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("AddRange", [_types.IEnumerableOfObject])!);
+
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 

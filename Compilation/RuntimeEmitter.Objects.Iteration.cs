@@ -395,6 +395,41 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Br, loopStart);
             il.MarkLabel(loopEnd);
         }
+
+        // Append PDS extras for arrays: accessor properties via Object.defineProperty.
+        // Mirror the dict-path append; iterate PDS keys and emit GetProperty(obj, key).
+        var valPdsKeysLocal = il.DeclareLocal(listType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Call, runtime.PDSGetEnumerableExtraKeys);
+        il.Emit(OpCodes.Stloc, valPdsKeysLocal);
+        {
+            var iLocal3 = il.DeclareLocal(_types.Int32);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, iLocal3);
+            var pdsValStart = il.DefineLabel();
+            var pdsValEnd = il.DefineLabel();
+            il.MarkLabel(pdsValStart);
+            il.Emit(OpCodes.Ldloc, iLocal3);
+            il.Emit(OpCodes.Ldloc, valPdsKeysLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Count")!);
+            il.Emit(OpCodes.Bge, pdsValEnd);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, valPdsKeysLocal);
+            il.Emit(OpCodes.Ldloc, iLocal3);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Item", [_types.Int32])!);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+            il.Emit(OpCodes.Ldloc, iLocal3);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, iLocal3);
+            il.Emit(OpCodes.Br, pdsValStart);
+            il.MarkLabel(pdsValEnd);
+        }
+
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 
@@ -875,6 +910,51 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Br, loopStart);
             il.MarkLabel(loopEnd);
         }
+
+        // Append PDS extras for arrays: each accessor key + GetProperty value.
+        var entPdsKeysLocal = il.DeclareLocal(listType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Call, runtime.PDSGetEnumerableExtraKeys);
+        il.Emit(OpCodes.Stloc, entPdsKeysLocal);
+        {
+            var iLocal4 = il.DeclareLocal(_types.Int32);
+            var keyLocal2 = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, iLocal4);
+            var pdsEntStart = il.DefineLabel();
+            var pdsEntEnd = il.DefineLabel();
+            il.MarkLabel(pdsEntStart);
+            il.Emit(OpCodes.Ldloc, iLocal4);
+            il.Emit(OpCodes.Ldloc, entPdsKeysLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Count")!);
+            il.Emit(OpCodes.Bge, pdsEntEnd);
+            il.Emit(OpCodes.Ldloc, entPdsKeysLocal);
+            il.Emit(OpCodes.Ldloc, iLocal4);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("get_Item", [_types.Int32])!);
+            il.Emit(OpCodes.Castclass, _types.String);
+            il.Emit(OpCodes.Stloc, keyLocal2);
+            il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+            il.Emit(OpCodes.Stloc, entryLocal);
+            il.Emit(OpCodes.Ldloc, entryLocal);
+            il.Emit(OpCodes.Ldloc, keyLocal2);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+            il.Emit(OpCodes.Ldloc, entryLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, keyLocal2);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, entryLocal);
+            il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [_types.Object])!);
+            il.Emit(OpCodes.Ldloc, iLocal4);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, iLocal4);
+            il.Emit(OpCodes.Br, pdsEntStart);
+            il.MarkLabel(pdsEntEnd);
+        }
+
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 
