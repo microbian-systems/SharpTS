@@ -494,7 +494,10 @@ public partial class RuntimeEmitter
         // have %Object.prototype% as their [[Prototype]] unless overridden.
         // Without this, Object.getPrototypeOf({}) returns null instead of
         // Object.prototype, breaking JSON.parse + literal-object tests.
+        // $TSObject is the wrapped form (from `new Object()` and object
+        // literals with accessors). It must also default to Object.prototype.
         var notDictForProtoLabel = il.DefineLabel();
+        var notTSObjForProtoLabel = il.DefineLabel();
         var notListForProtoLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
@@ -502,6 +505,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notDictForProtoLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brfalse, notTSObjForProtoLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSObjForProtoLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brfalse, notListForProtoLabel);
