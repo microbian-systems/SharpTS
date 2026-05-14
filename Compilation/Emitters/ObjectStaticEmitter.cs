@@ -325,6 +325,8 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
             "getOwnPropertyDescriptors" => runtime.ObjectGetOwnPropertyDescriptors,
             "create"               => runtime.ObjectCreate,
             "assign"               => runtime.ObjectAssign,
+            "is"                   => runtime.ObjectIs,
+            "hasOwn"               => runtime.ObjectHasOwn,
             _ => null
         };
         if (method == null) return false;
@@ -342,6 +344,8 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
             "getOwnPropertyDescriptor" => 2,
             "create" => 2,
             "assign" => 2,
+            "is" => 2,
+            "hasOwn" => 2,
             _ => 1,
         };
 
