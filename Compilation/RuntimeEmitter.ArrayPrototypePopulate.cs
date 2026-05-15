@@ -202,6 +202,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
         il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
 
+        // ECMA-262 §23.1.3.34: Array.prototype[@@iterator] === Array.prototype.values.
+        // Symbol-keyed entry pointing to the SAME wrapper that "values" resolves to.
+        // Lazy retrieval — read it back out of the dict so the values entry's
+        // $TSFunction identity is preserved (`arr[Symbol.iterator] === arr.values`).
+        var iterFnLocal = il.DeclareLocal(_types.Object);
+        var valuesGet = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+        il.Emit(OpCodes.Ldstr, "values");
+        il.Emit(OpCodes.Ldloca, iterFnLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue",
+            _types.String, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, valuesGet); // shouldn't happen — values was just installed
+        // GetSymbolDict(ArrayPrototype)[SymbolIterator] = valuesFn
+        il.Emit(OpCodes.Ldsfld, runtime.ArrayPrototypeField);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolIterator);
+        il.Emit(OpCodes.Ldloc, iterFnLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item",
+            _types.Object, _types.Object));
+        il.MarkLabel(valuesGet);
+
         il.Emit(OpCodes.Ret);
     }
 }

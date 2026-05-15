@@ -159,6 +159,35 @@ public partial class RuntimeEmitter
             il.MarkLabel(notRegExpForSymbolLabel);
         }
 
+        // Array-receiver symbol-key walk: when the per-object symbol dict
+        // doesn't carry the key, walk up to Array.prototype's symbol dict.
+        // Required for `arr[Symbol.iterator]` to resolve to Array.prototype.
+        // values (ECMA-262 §23.1.3.34). Covers List<object> and $TSArray.
+        void EmitProtoSymbolFallback(Type receiverType, FieldBuilder protoField, MethodBuilder populate)
+        {
+            var notThisRcvLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, receiverType);
+            il.Emit(OpCodes.Brfalse, notThisRcvLabel);
+            il.Emit(OpCodes.Call, populate);
+            var protoSymDict = il.DeclareLocal(_types.DictionaryObjectObject);
+            var protoSymVal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldsfld, protoField);
+            il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+            il.Emit(OpCodes.Stloc, protoSymDict);
+            il.Emit(OpCodes.Ldloc, protoSymDict);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloca, protoSymVal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+            il.Emit(OpCodes.Brfalse, notThisRcvLabel);
+            il.Emit(OpCodes.Ldloc, protoSymVal);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notThisRcvLabel);
+        }
+        EmitProtoSymbolFallback(_types.ListOfObject, runtime.ArrayPrototypeField, runtime.ArrayPrototypePopulateMethod);
+        if (runtime.TSArrayType != null)
+            EmitProtoSymbolFallback(runtime.TSArrayType, runtime.ArrayPrototypeField, runtime.ArrayPrototypePopulateMethod);
+
         // ECMA-262 §21.3.2.34 / §25.5.4: Math[@@toStringTag] = "Math",
         // JSON[@@toStringTag] = "JSON". Singletons aren't populated via a
         // dedicated init helper (would need a forward-declared MethodBuilder
