@@ -563,6 +563,29 @@ public partial class RuntimeEmitter
             il.MarkLabel(notTSRegExpForProtoLabel);
         }
 
+        // Promise instances ($TSPromise + raw Task<object>) → Promise.prototype
+        // per ECMA-262 §27.2.5. Without this, Object.getPrototypeOf(promise)
+        // returns null and `Promise.prototype.isPrototypeOf(p)` fails.
+        if (runtime.TSPromiseType != null)
+        {
+            var notTSPromiseForProtoLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+            il.Emit(OpCodes.Brfalse, notTSPromiseForProtoLabel);
+            il.Emit(OpCodes.Call, runtime.PromisePrototypePopulateMethod);
+            il.Emit(OpCodes.Ldsfld, runtime.PromisePrototypeField);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notTSPromiseForProtoLabel);
+        }
+        var notTaskForProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.TaskOfObject);
+        il.Emit(OpCodes.Brfalse, notTaskForProtoLabel);
+        il.Emit(OpCodes.Call, runtime.PromisePrototypePopulateMethod);
+        il.Emit(OpCodes.Ldsfld, runtime.PromisePrototypeField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTaskForProtoLabel);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brfalse, notListForProtoLabel);
