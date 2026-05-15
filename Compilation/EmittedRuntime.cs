@@ -410,6 +410,14 @@ public class EmittedRuntime
     public MethodBuilder BooleanPrototypePopulateMethod { get; set; } = null!;
     /// <summary>$Runtime.HasOwnPropertyHelper(obj, name) — backs <c>obj.hasOwnProperty(name)</c> for $TSFunction / $Object / Dictionary / List receivers.</summary>
     public MethodBuilder HasOwnPropertyHelperMethod { get; set; } = null!;
+    /// <summary>$Runtime.LookupGetterHelper(obj, key) — backs <c>Object.prototype.__lookupGetter__</c> (ECMA-262 §B.2.2.4). Walks prototype chain.</summary>
+    public MethodBuilder LookupGetterHelperMethod { get; set; } = null!;
+    /// <summary>$Runtime.LookupSetterHelper(obj, key) — backs <c>Object.prototype.__lookupSetter__</c> (ECMA-262 §B.2.2.5).</summary>
+    public MethodBuilder LookupSetterHelperMethod { get; set; } = null!;
+    /// <summary>$Runtime.DefineGetterHelper(obj, key, fn) — backs <c>Object.prototype.__defineGetter__</c> (ECMA-262 §B.2.2.2).</summary>
+    public MethodBuilder DefineGetterHelperMethod { get; set; } = null!;
+    /// <summary>$Runtime.DefineSetterHelper(obj, key, fn) — backs <c>Object.prototype.__defineSetter__</c> (ECMA-262 §B.2.2.3).</summary>
+    public MethodBuilder DefineSetterHelperMethod { get; set; } = null!;
     /// <summary>$Runtime.PropertyIsEnumerableHelper(obj, name) — backs <c>obj.propertyIsEnumerable(name)</c>. Honors PDS descriptor's Enumerable bit; falls back to <c>hasOwn(name)</c> (default-enumerable for plain dict entries).</summary>
     public MethodBuilder PropertyIsEnumerableHelperMethod { get; set; } = null!;
     /// <summary>$Runtime.IsPrototypeOfHelper(receiver, target) — backs <c>receiver.isPrototypeOf(target)</c>; walks target's prototype chain via PDS.</summary>

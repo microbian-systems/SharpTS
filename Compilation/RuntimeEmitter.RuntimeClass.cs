@@ -652,6 +652,10 @@ public partial class RuntimeEmitter
         EmitObjectIsExtensible(typeBuilder, runtime, nonExtensibleObjectsField, frozenObjectsField, sealedObjectsField);
         EmitObjectGetPrototypeOf(typeBuilder, runtime, prototypeStoreField);
         EmitObjectSetPrototypeOf(typeBuilder, runtime, prototypeStoreField, nonExtensibleObjectsField);
+        // __lookupGetter__ / __lookupSetter__ helpers (ECMA-262 §B.2.2.4/5).
+        // Depends on PDSGetPropertyDescriptor, HasOwnPropertyHelperMethod,
+        // ObjectGetPrototypeOf, ToJsString — all emitted earlier.
+        EmitLookupAccessorHelpers(typeBuilder, runtime);
         EmitObjectGroupBy(typeBuilder, runtime);
         // Reflect.set / setPrototypeOf / defineProperty / ownKeys / apply /
         // construct — gated on UsesReflect. (Reflect.metadata uses

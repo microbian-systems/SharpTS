@@ -108,6 +108,11 @@ public partial class RuntimeEmitter
         // spec null/undef throw before delegating to ObjectProtoToString.
         Wire("toLocaleString", runtime.ObjectProtoToLocaleStringHelper, 0);
         Wire("propertyIsEnumerable", runtime.PropertyIsEnumerableHelperMethod, 1);
+        // ECMA-262 §B.2.2 legacy accessor lookup methods.
+        Wire("__lookupGetter__", runtime.LookupGetterHelperMethod, 1);
+        Wire("__lookupSetter__", runtime.LookupSetterHelperMethod, 1);
+        Wire("__defineGetter__", runtime.DefineGetterHelperMethod, 2);
+        Wire("__defineSetter__", runtime.DefineSetterHelperMethod, 2);
 
         il.Emit(OpCodes.Ret);
     }
