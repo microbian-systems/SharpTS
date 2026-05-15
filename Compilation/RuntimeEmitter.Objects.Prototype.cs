@@ -536,6 +536,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldsfld, runtime.ObjectPrototypeField);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notTSObjForProtoLabel);
+
+        // $Error instances → Error.prototype (Error.prototype.isPrototypeOf(new
+        // Error()) === true per ECMA-262 §20.5.3). The wrapped Error/TypeError/
+        // RangeError etc. instances all share Error.prototype as their direct
+        // [[Prototype]] (subclass error prototypes themselves inherit from
+        // Error.prototype, so a one-step walk to Error.prototype suffices for
+        // isPrototypeOf to work).
+        var notTSErrForProtoLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSErrorType);
+        il.Emit(OpCodes.Brfalse, notTSErrForProtoLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.ErrorPrototypeField);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTSErrForProtoLabel);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brfalse, notListForProtoLabel);
