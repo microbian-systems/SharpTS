@@ -159,6 +159,30 @@ public partial class RuntimeEmitter
             il.MarkLabel(notRegExpForSymbolLabel);
         }
 
+        // Math/JSON @@toStringTag built-in. ECMA-262 §21.3.1.9 / §25.5.3.
+        // Identity-compare the symbol against the well-known SymbolToStringTag
+        // singleton; if matched AND receiver is the Math or JSON singleton,
+        // return the corresponding tag string.
+        var notToStringTagLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolToStringTag);
+        il.Emit(OpCodes.Bne_Un, notToStringTagLabel);
+        var notMathTagLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.MathSingletonField);
+        il.Emit(OpCodes.Bne_Un, notMathTagLabel);
+        il.Emit(OpCodes.Ldstr, "Math");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notMathTagLabel);
+        var notJsonTagLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.JsonSingletonField);
+        il.Emit(OpCodes.Bne_Un, notJsonTagLabel);
+        il.Emit(OpCodes.Ldstr, "JSON");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notJsonTagLabel);
+        il.MarkLabel(notToStringTagLabel);
+
         // Return undefined for missing symbol properties (JavaScript semantics)
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
