@@ -551,6 +551,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notTSErrForProtoLabel);
 
+        // $RegExp instances → RegExp.prototype per ECMA-262 §22.2.3.
+        if (_features.UsesRegExp)
+        {
+            var notTSRegExpForProtoLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+            il.Emit(OpCodes.Brfalse, notTSRegExpForProtoLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.RegExpPrototypeField);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notTSRegExpForProtoLabel);
+        }
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brfalse, notListForProtoLabel);
