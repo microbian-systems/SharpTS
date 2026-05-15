@@ -270,8 +270,8 @@ test/built-ins/Array/proto-from-ctor-realm-one.js RuntimeError
 test/built-ins/Array/proto-from-ctor-realm-two.js RuntimeError
 test/built-ins/Array/proto-from-ctor-realm-zero.js RuntimeError
 test/built-ins/Array/proto.js Pass
-test/built-ins/Array/prototype/Symbol.iterator.js Fail
-test/built-ins/Array/prototype/Symbol.iterator/not-a-constructor.js Fail
+test/built-ins/Array/prototype/Symbol.iterator.js RuntimeError
+test/built-ins/Array/prototype/Symbol.iterator/not-a-constructor.js Pass
 test/built-ins/Array/prototype/Symbol.unscopables/array-find-from-last.js RuntimeError
 test/built-ins/Array/prototype/Symbol.unscopables/change-array-by-copy.js Fail
 test/built-ins/Array/prototype/Symbol.unscopables/prop-desc.js RuntimeError
@@ -408,8 +408,8 @@ test/built-ins/Array/prototype/entries/resizable-buffer-grow-mid-iteration.js Ru
 test/built-ins/Array/prototype/entries/resizable-buffer-shrink-mid-iteration.js RuntimeError
 test/built-ins/Array/prototype/entries/resizable-buffer.js RuntimeError
 test/built-ins/Array/prototype/entries/return-abrupt-from-this.js Pass
-test/built-ins/Array/prototype/entries/returns-iterator-from-object.js RuntimeError
-test/built-ins/Array/prototype/entries/returns-iterator.js RuntimeError
+test/built-ins/Array/prototype/entries/returns-iterator-from-object.js Pass
+test/built-ins/Array/prototype/entries/returns-iterator.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-0-1.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-1-1.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-1-10.js Pass
@@ -1484,8 +1484,8 @@ test/built-ins/Array/prototype/keys/resizable-buffer-grow-mid-iteration.js Runti
 test/built-ins/Array/prototype/keys/resizable-buffer-shrink-mid-iteration.js RuntimeError
 test/built-ins/Array/prototype/keys/resizable-buffer.js RuntimeError
 test/built-ins/Array/prototype/keys/return-abrupt-from-this.js Pass
-test/built-ins/Array/prototype/keys/returns-iterator-from-object.js RuntimeError
-test/built-ins/Array/prototype/keys/returns-iterator.js RuntimeError
+test/built-ins/Array/prototype/keys/returns-iterator-from-object.js Pass
+test/built-ins/Array/prototype/keys/returns-iterator.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-1.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-10.js Pass
 test/built-ins/Array/prototype/lastIndexOf/15.4.4.15-1-11.js Pass
@@ -3056,8 +3056,8 @@ test/built-ins/Array/prototype/values/prop-desc.js Pass
 test/built-ins/Array/prototype/values/resizable-buffer-grow-mid-iteration.js RuntimeError
 test/built-ins/Array/prototype/values/resizable-buffer-shrink-mid-iteration.js RuntimeError
 test/built-ins/Array/prototype/values/resizable-buffer.js RuntimeError
-test/built-ins/Array/prototype/values/returns-iterator-from-object.js RuntimeError
-test/built-ins/Array/prototype/values/returns-iterator.js RuntimeError
+test/built-ins/Array/prototype/values/returns-iterator-from-object.js Pass
+test/built-ins/Array/prototype/values/returns-iterator.js Pass
 test/built-ins/Array/prototype/values/this-val-non-obj-coercible.js Pass
 test/built-ins/Array/prototype/with/frozen-this-value.js Pass
 test/built-ins/Array/prototype/with/holes-not-preserved.js RuntimeError
@@ -3193,7 +3193,7 @@ test/built-ins/JSON/15.12-0-1.js Pass
 test/built-ins/JSON/15.12-0-2.js Pass
 test/built-ins/JSON/15.12-0-3.js Pass
 test/built-ins/JSON/15.12-0-4.js Pass
-test/built-ins/JSON/Symbol.toStringTag.js Fail
+test/built-ins/JSON/Symbol.toStringTag.js RuntimeError
 test/built-ins/JSON/isRawJSON/basic.js Fail
 test/built-ins/JSON/isRawJSON/builtin.js Pass
 test/built-ins/JSON/isRawJSON/length.js Pass
@@ -3370,7 +3370,7 @@ test/built-ins/Math/SQRT1_2/prop-desc.js Pass
 test/built-ins/Math/SQRT1_2/value.js Pass
 test/built-ins/Math/SQRT2/prop-desc.js Pass
 test/built-ins/Math/SQRT2/value.js Pass
-test/built-ins/Math/Symbol.toStringTag.js Fail
+test/built-ins/Math/Symbol.toStringTag.js RuntimeError
 test/built-ins/Math/abs/S15.8.2.1_A1.js Pass
 test/built-ins/Math/abs/S15.8.2.1_A2.js Pass
 test/built-ins/Math/abs/S15.8.2.1_A3.js Pass
@@ -7655,7 +7655,7 @@ test/built-ins/Promise/allSettled/resolved-sequence.js RuntimeError
 test/built-ins/Promise/allSettled/resolved-then-catch-finally.js RuntimeError
 test/built-ins/Promise/allSettled/resolves-empty-array.js Pass
 test/built-ins/Promise/allSettled/resolves-to-array.js Pass
-test/built-ins/Promise/allSettled/returns-promise.js Fail
+test/built-ins/Promise/allSettled/returns-promise.js Pass
 test/built-ins/Promise/allSettled/species-get-error.js Pass
 test/built-ins/Promise/allSettledKeyed/arg-is-function.js Fail
 test/built-ins/Promise/allSettledKeyed/arg-not-object-reject-bigint.js Fail
@@ -7768,7 +7768,7 @@ test/built-ins/Promise/any/resolved-sequence-extra-ticks.js RuntimeError
 test/built-ins/Promise/any/resolved-sequence-mixed.js Fail
 test/built-ins/Promise/any/resolved-sequence-with-rejections.js Fail
 test/built-ins/Promise/any/resolved-sequence.js RuntimeError
-test/built-ins/Promise/any/returns-promise.js Fail
+test/built-ins/Promise/any/returns-promise.js Pass
 test/built-ins/Promise/any/species-get-error.js Pass
 test/built-ins/Promise/constructor.js Pass
 test/built-ins/Promise/create-resolving-functions-reject.js Pass
