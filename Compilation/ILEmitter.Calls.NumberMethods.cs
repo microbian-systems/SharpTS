@@ -50,7 +50,10 @@ public partial class ILEmitter
                 break;
 
             case "toExponential":
-                // Emit digits argument (default null for default behavior)
+                // 0-arg call signals JS `undefined` (shortest-form branch), not
+                // null (which ToInteger-coerces to 0). Without this distinction,
+                // `(123.456).toExponential()` produced "1e+2" instead of
+                // "1.23456e+2" per ECMA-262 §21.1.3.2 step 9.a.
                 if (arguments.Count > 0)
                 {
                     EmitExpression(arguments[0]);
@@ -58,7 +61,7 @@ public partial class ILEmitter
                 }
                 else
                 {
-                    IL.Emit(OpCodes.Ldnull);
+                    IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.UndefinedInstance);
                 }
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.NumberToExponential);
                 break;

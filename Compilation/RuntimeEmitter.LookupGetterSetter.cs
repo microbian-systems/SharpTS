@@ -47,21 +47,31 @@ public partial class RuntimeEmitter
         var setItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item",
             _types.String, _types.Object);
 
-        // Validate that fn is callable. Cheap check: null/Undefined are not callable.
-        // Looser-than-strict-IsCallable — we accept $TSFunction, Type, MethodInfo
-        // wrappers, and any non-null/undefined object that has a callable target;
-        // ObjectDefineProperty stores the slot opaquely so the eventual get/set
-        // dispatch handles the non-callable case.
-        var nonNullLabel = il.DefineLabel();
+        // ECMA-262 §B.2.2.2 step 2 / §B.2.2.3 step 2: IsCallable(fn) === false → TypeError.
+        // Strict callable check: $TSFunction / $BoundTSFunction / Type (constructor) /
+        // MethodInfo (raw helper). Everything else (string/number/null/undefined/
+        // plain object) triggers the throw.
+        var isCallableLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Brfalse, nonNullLabel);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, isCallableLabel);
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brfalse, nonNullLabel);
-        il.MarkLabel(nonNullLabel);
-        // Note: we deliberately do not throw on non-callable to keep the helper
-        // small — the descriptor still records the slot, and Test262's positive
-        // tests pass callable values.
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brtrue, isCallableLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, isCallableLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.MethodInfo);
+        il.Emit(OpCodes.Brtrue, isCallableLabel);
+        // Not callable — throw TypeError.
+        il.Emit(OpCodes.Ldstr, isGetter
+            ? "Object.prototype.__defineGetter__: callback must be callable"
+            : "Object.prototype.__defineSetter__: callback must be callable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(isCallableLabel);
 
         // desc = new Dictionary<string, object>();
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);

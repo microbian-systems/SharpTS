@@ -345,6 +345,31 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, errorLocal);
         il.Emit(OpCodes.Ldloc, causeLocal);
         il.Emit(OpCodes.Call, runtime.ErrorSetCause);
+        // Also install a non-enumerable PDS data descriptor so
+        // Object.getOwnPropertyDescriptor(err, "cause") surfaces the slot
+        // (ECMA-262 §20.5.8.1 step 1.b → CreateNonEnumerableDataPropertyOrThrow:
+        // writable:true, enumerable:false, configurable:true). Unlocks
+        // built-ins/Error/cause_property + verifyProperty patterns.
+        var causeDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+        il.Emit(OpCodes.Stloc, causeDescLocal);
+        il.Emit(OpCodes.Ldloc, causeDescLocal);
+        il.Emit(OpCodes.Ldloc, causeLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+        il.Emit(OpCodes.Ldloc, causeDescLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetSetMethod()!);
+        il.Emit(OpCodes.Ldloc, causeDescLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetSetMethod()!);
+        il.Emit(OpCodes.Ldloc, causeDescLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetSetMethod()!);
+        il.Emit(OpCodes.Ldloc, errorLocal);
+        il.Emit(OpCodes.Ldstr, "cause");
+        il.Emit(OpCodes.Ldloc, causeDescLocal);
+        il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+        il.Emit(OpCodes.Pop);
 
         il.MarkLabel(skipLabel);
     }

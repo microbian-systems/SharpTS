@@ -1865,6 +1865,22 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notClassNameLabel);
 
+            // ECMA-262 §20.2.3: every Function instance inherits from
+            // %Function.prototype%. Constructors (System.Type tokens) are
+            // function objects, so `Error.constructor` / `String.constructor`
+            // walks the proto chain to Function.prototype.constructor = Function
+            // (= typeof($TSFunction)). Required for Test262 patterns like
+            // `Function.prototype.isPrototypeOf(Error.constructor)`.
+            var notTypeConstructorLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "constructor");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, notTypeConstructorLabel);
+            il.Emit(OpCodes.Ldtoken, runtime.TSFunctionType);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notTypeConstructorLabel);
+
             // Built-in static-member dispatch (#63): for Type tokens that
             // represent a JS-level built-in constructor (Array → IList<object>,
             // Number → double, String → string), look up (type, name) against
