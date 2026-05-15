@@ -7813,7 +7813,7 @@ test/built-ins/Promise/prototype/catch/this-value-then-throws.js Fail
 test/built-ins/Promise/prototype/finally/invokes-then-with-function.js Fail
 test/built-ins/Promise/prototype/finally/invokes-then-with-non-function.js Timeout
 test/built-ins/Promise/prototype/finally/is-a-function.js Pass
-test/built-ins/Promise/prototype/finally/is-a-method.js Fail
+test/built-ins/Promise/prototype/finally/is-a-method.js Pass
 test/built-ins/Promise/prototype/finally/length.js Pass
 test/built-ins/Promise/prototype/finally/name.js Pass
 test/built-ins/Promise/prototype/finally/not-a-constructor.js Pass
@@ -7847,7 +7847,7 @@ test/built-ins/Promise/prototype/then/S25.4.4_A2.1_T1.js Timeout
 test/built-ins/Promise/prototype/then/S25.4.4_A2.1_T2.js Timeout
 test/built-ins/Promise/prototype/then/S25.4.4_A2.1_T3.js Timeout
 test/built-ins/Promise/prototype/then/S25.4.5.3_A1.1_T1.js Pass
-test/built-ins/Promise/prototype/then/S25.4.5.3_A1.1_T2.js Fail
+test/built-ins/Promise/prototype/then/S25.4.5.3_A1.1_T2.js Pass
 test/built-ins/Promise/prototype/then/S25.4.5.3_A2.1_T1.js Fail
 test/built-ins/Promise/prototype/then/S25.4.5.3_A2.1_T2.js Fail
 test/built-ins/Promise/prototype/then/S25.4.5.3_A4.1_T1.js RuntimeError
