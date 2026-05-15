@@ -635,6 +635,12 @@ public partial class RuntimeEmitter
         EmitObjectIsFrozen(typeBuilder, runtime, frozenObjectsField);
         EmitObjectIsSealed(typeBuilder, runtime, sealedObjectsField);
         EmitObjectDefineProperty(typeBuilder, runtime);
+        // Math.* adapters must precede gOPD so its Math singleton synth can
+        // reach the adapter MethodBuilders to produce identity-stable
+        // `desc.value === Math.X` for built-in methods. Moved up from the
+        // original site at the end of the runtime emit. Dep: runtime.ToNumber
+        // (emitted at line 580, before this site).
+        EmitMathAdapters(typeBuilder, runtime);
         EmitObjectGetOwnPropertyDescriptor(typeBuilder, runtime);
         EmitObjectDefineProperties(typeBuilder, runtime);
         // GetOwnPropertySymbols must precede gOPDs (gOPDs now also iterates
@@ -806,9 +812,9 @@ public partial class RuntimeEmitter
         EmitMathSumPrecise(typeBuilder, runtime);
         EmitDefineSymbolAccessor(typeBuilder, runtime);
         EmitTSObjectMergeEnumerable(typeBuilder, runtime);
-        // Math.* adapters for value-form access (issue #60). Depends on
-        // runtime.ToNumber which is emitted before this call.
-        EmitMathAdapters(typeBuilder, runtime);
+        // Math.* adapters moved earlier (before EmitObjectGetOwnPropertyDescriptor)
+        // so gOPD's Math singleton synth can produce identity-stable
+        // `desc.value === Math.X` descriptors.
         EmitGetEnumMemberName(typeBuilder, runtime);
         EmitConcatTemplate(typeBuilder, runtime);
         EmitInvokeTaggedTemplate(typeBuilder, runtime);

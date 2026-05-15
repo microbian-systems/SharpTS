@@ -1624,7 +1624,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, propNameLocal);
         il.Emit(OpCodes.Call, runtime.IsBuiltinDeletedMethod);
         il.Emit(OpCodes.Brtrue, returnNullLabel);
-        void EmitMathNameDesc(string n, bool isMethod, double? constValue = null)
+        void EmitMathNameDesc(string n, bool isMethod, double? constValue = null,
+            MethodBuilder? methodTarget = null, int methodArity = 1)
         {
             var skipLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldloc, propNameLocal);
@@ -1640,6 +1641,21 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Ldc_R8, constValue.Value);
                 il.Emit(OpCodes.Box, _types.Double);
             }
+            else if (methodTarget != null)
+            {
+                // $TSFunction.GetOrCreate(adapter MethodInfo, name, length)
+                // returns the SAME instance as the static dispatch path
+                // (MathStaticEmitter uses TSFunctionGetOrCreate too), so
+                // `desc.value === Math.X` holds in user code.
+                il.Emit(OpCodes.Ldtoken, methodTarget);
+                il.Emit(OpCodes.Ldtoken, methodTarget.DeclaringType!);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+                    _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+                il.Emit(OpCodes.Castclass, _types.MethodInfo);
+                il.Emit(OpCodes.Ldstr, n);
+                il.Emit(OpCodes.Ldc_I4, methodArity);
+                il.Emit(OpCodes.Call, runtime.TSFunctionGetOrCreate);
+            }
             else
             {
                 il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
@@ -1652,12 +1668,50 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Br, endLabel);
             il.MarkLabel(skipLabel);
         }
-        // Methods (W:T, E:F, C:T)
-        foreach (var m in new[] { "abs", "acos", "acosh", "asin", "asinh", "atan", "atan2",
-            "atanh", "cbrt", "ceil", "clz32", "cos", "cosh", "exp", "expm1", "floor",
-            "fround", "hypot", "imul", "log", "log10", "log1p", "log2", "max", "min",
-            "pow", "random", "round", "sign", "sin", "sinh", "sqrt", "tan", "tanh", "trunc" })
-            EmitMathNameDesc(m, isMethod: true);
+        // Methods (W:T, E:F, C:T) with identity-stable value (Math.X === Math.X).
+        // Spec lengths per ECMA-262 §21.3.2 — same as MathStaticEmitter.
+        (string n, MethodBuilder? m, int len)[] mathMethods =
+        {
+            ("abs",    runtime.MathAbsAdapter,    1),
+            ("acos",   runtime.MathAcosAdapter,   1),
+            ("acosh",  runtime.MathAcoshAdapter,  1),
+            ("asin",   runtime.MathAsinAdapter,   1),
+            ("asinh",  runtime.MathAsinhAdapter,  1),
+            ("atan",   runtime.MathAtanAdapter,   1),
+            ("atan2",  runtime.MathAtan2Adapter,  2),
+            ("atanh",  runtime.MathAtanhAdapter,  1),
+            ("cbrt",   runtime.MathCbrtAdapter,   1),
+            ("ceil",   runtime.MathCeilAdapter,   1),
+            ("clz32",  runtime.MathClz32Adapter,  1),
+            ("cos",    runtime.MathCosAdapter,    1),
+            ("cosh",   runtime.MathCoshAdapter,   1),
+            ("exp",    runtime.MathExpAdapter,    1),
+            ("expm1",  runtime.MathExpm1Adapter,  1),
+            ("floor",  runtime.MathFloorAdapter,  1),
+            ("fround", runtime.MathFroundAdapter, 1),
+            ("hypot",  runtime.MathHypotAdapter,  2),
+            ("imul",   runtime.MathImulAdapter,   2),
+            ("log",    runtime.MathLogAdapter,    1),
+            ("log10",  runtime.MathLog10Adapter,  1),
+            ("log1p",  runtime.MathLog1pAdapter,  1),
+            ("log2",   runtime.MathLog2Adapter,   1),
+            ("max",    runtime.MathMaxAdapter,    2),
+            ("min",    runtime.MathMinAdapter,    2),
+            ("pow",    runtime.MathPowAdapter,    2),
+            // "random" → uses runtime.Random which is emitted later than gOPD,
+            // so emit it as undefined-value here (fallback to non-value-aware).
+            ("random", null,                       0),
+            ("round",  runtime.MathRoundAdapter,  1),
+            ("sign",   runtime.MathSignAdapter,   1),
+            ("sin",    runtime.MathSinAdapter,    1),
+            ("sinh",   runtime.MathSinhAdapter,   1),
+            ("sqrt",   runtime.MathSqrtAdapter,   1),
+            ("tan",    runtime.MathTanAdapter,    1),
+            ("tanh",   runtime.MathTanhAdapter,   1),
+            ("trunc",  runtime.MathTruncAdapter,  1),
+        };
+        foreach (var (mn, mb, ml) in mathMethods)
+            EmitMathNameDesc(mn, isMethod: true, methodTarget: mb, methodArity: ml);
         // Constants (W:F, E:F, C:F) with embedded literal values.
         EmitMathNameDesc("E", isMethod: false, constValue: System.Math.E);
         EmitMathNameDesc("LN10", isMethod: false, constValue: System.Math.Log(10));
