@@ -358,7 +358,7 @@ test/built-ins/Array/prototype/concat/length.js Pass
 test/built-ins/Array/prototype/concat/name.js Pass
 test/built-ins/Array/prototype/concat/not-a-constructor.js Pass
 test/built-ins/Array/prototype/concat/prop-desc.js Pass
-test/built-ins/Array/prototype/constructor.js Fail
+test/built-ins/Array/prototype/constructor.js Pass
 test/built-ins/Array/prototype/copyWithin/call-with-boolean.js Fail
 test/built-ins/Array/prototype/copyWithin/coerced-values-end.js RuntimeError
 test/built-ins/Array/prototype/copyWithin/coerced-values-start-change-start.js RuntimeError
@@ -3829,7 +3829,7 @@ test/built-ins/Number/prototype/S15.7.4_A3.4.js Pass
 test/built-ins/Number/prototype/S15.7.4_A3.5.js Pass
 test/built-ins/Number/prototype/S15.7.4_A3.6.js Pass
 test/built-ins/Number/prototype/S15.7.4_A3.7.js Pass
-test/built-ins/Number/prototype/constructor.js Fail
+test/built-ins/Number/prototype/constructor.js Pass
 test/built-ins/Number/prototype/prop-desc.js Pass
 test/built-ins/Number/prototype/toExponential/infinity.js Pass
 test/built-ins/Number/prototype/toExponential/length.js Pass
@@ -6538,7 +6538,7 @@ test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-35.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-36.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-37.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-38.js Pass
-test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-39.js Fail
+test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-39.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-4.js RuntimeError
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-40.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-41.js Pass
@@ -6564,7 +6564,7 @@ test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-59.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-6.js RuntimeError
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-60.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-61.js Fail
-test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-62.js Fail
+test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-62.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-63.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-64.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-65.js Pass
@@ -6586,10 +6586,10 @@ test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-8.js RuntimeError
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-80.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-81.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-82.js Pass
-test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-84.js Fail
+test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-84.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-85.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-86.js Pass
-test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-88.js Fail
+test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-88.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-89.js Pass
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-9.js RuntimeError
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-90.js Pass
