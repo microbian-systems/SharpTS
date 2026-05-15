@@ -401,6 +401,28 @@ public partial class RuntimeEmitter
             il.MarkLabel(notTSErrorLabel);
         }
 
+        // Task<object> or $TSPromise — branded via Promise.prototype[@@toStringTag].
+        // ECMA-262 §19.1.3.6 reads @@toStringTag off the receiver; for a
+        // Promise the chain walk lands on Promise.prototype which we now
+        // populate with "Promise". Emit a direct brand check here so
+        // `Object.prototype.toString.call(promise) === "[object Promise]"`
+        // without depending on prototype-chain walks at runtime.
+        if (runtime.TSPromiseType != null)
+        {
+            var notTSPromiseLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+            il.Emit(OpCodes.Brfalse, notTSPromiseLabel);
+            EmitTag("[object Promise]");
+            il.MarkLabel(notTSPromiseLabel);
+        }
+        var notTaskLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.TaskOfObject);
+        il.Emit(OpCodes.Brfalse, notTaskLabel);
+        EmitTag("[object Promise]");
+        il.MarkLabel(notTaskLabel);
+
         // Default
         il.Emit(OpCodes.Ldstr, "[object Object]");
 

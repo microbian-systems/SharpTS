@@ -196,6 +196,16 @@ public partial class RuntimeEmitter
         Wire("catch",   runtime.PromiseCatchHelperMethod,   1);
         Wire("finally", runtime.PromiseFinallyHelperMethod, 1);
 
+        // ECMA-262 §27.2.5.5: Promise.prototype[@@toStringTag] = "Promise".
+        // Attributes per spec: writable:false, enumerable:false, configurable:true.
+        // GetSymbolDict(PromisePrototype)[SymbolToStringTag] = "Promise".
+        il.Emit(OpCodes.Ldsfld, runtime.PromisePrototypeField);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolToStringTag);
+        il.Emit(OpCodes.Ldstr, "Promise");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "set_Item",
+            _types.Object, _types.Object));
+
         il.Emit(OpCodes.Ret);
     }
 }

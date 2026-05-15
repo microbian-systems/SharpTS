@@ -489,6 +489,24 @@ public partial class ILEmitter
             IL.MarkLabel(notTSErrorLabel);
         }
 
+        // $TSPromise + raw Task<object> — branded via Promise.prototype[@@toStringTag]
+        // = "Promise". Mirrors the runtime ladder in ObjectProtoToStringHelper.
+        if (runtime.TSPromiseType != null)
+        {
+            var notTSPromiseLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+            IL.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+            IL.Emit(OpCodes.Brfalse, notTSPromiseLabel);
+            EmitTag("[object Promise]");
+            IL.MarkLabel(notTSPromiseLabel);
+        }
+        var notTaskInlineLabel = IL.DefineLabel();
+        IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Isinst, _ctx.Types.TaskOfObject);
+        IL.Emit(OpCodes.Brfalse, notTaskInlineLabel);
+        EmitTag("[object Promise]");
+        IL.MarkLabel(notTaskInlineLabel);
+
         // Default
         IL.Emit(OpCodes.Ldstr, "[object Object]");
 
