@@ -543,6 +543,30 @@ public partial class RuntimeEmitter
         // because each Foo reference creates a fresh $TSFunction with its
         // own PDS key.
         il.MarkLabel(checkProtoLabel);
+        // ECMA-262 §20.2.3: every Function instance inherits from
+        // %Function.prototype%. `fn.constructor` walks the proto chain to
+        // Function.prototype.constructor === Function (= typeof($TSFunction)).
+        // The PDS lookup above already handles user overrides
+        // (`fn.constructor = X`), so we only reach this when the user hasn't
+        // set their own. Required for Test262 patterns like
+        // `Object(fn).constructor === Function`.
+        var notConstructorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notConstructorLabel);
+        il.Emit(OpCodes.Call, runtime.FunctionPrototypePopulateMethod);
+        var ctorSlotLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldsfld, runtime.FunctionPrototypeField);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Ldloca, ctorSlotLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue",
+            _types.String, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, ctorSlotLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notConstructorLabel);
+
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldstr, "prototype");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
