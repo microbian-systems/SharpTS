@@ -56,6 +56,22 @@ public partial class RuntimeEmitter
         // 1000 to value (the first arg) and lose the receiver.
         // Built-in §17 attrs: W:T, E:F, C:T. Install a PDS data descriptor.
         var numDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        // Also install non-enumerable PDS descriptor for "constructor" per
+        // ECMA-262 §17 (built-in constructor property is W:T,E:F,C:T).
+        il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+        il.Emit(OpCodes.Stloc, numDescLocal);
+        il.Emit(OpCodes.Ldloc, numDescLocal);
+        il.Emit(OpCodes.Ldtoken, _types.Double);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+        il.Emit(OpCodes.Ldloc, numDescLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetSetMethod()!);
+        il.Emit(OpCodes.Ldsfld, runtime.NumberPrototypeField);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Ldloc, numDescLocal);
+        il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+        il.Emit(OpCodes.Pop);
         void InstallNonEnumerableNum(string jsName, System.Action emitValue)
         {
             il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
