@@ -452,6 +452,16 @@ public class EmittedRuntime
     public FieldBuilder RegExpPrototypeField { get; set; } = null!;
     /// <summary>Idempotent populate for <see cref="RegExpPrototypeField"/>.</summary>
     public MethodBuilder RegExpPrototypePopulateMethod { get; set; } = null!;
+    /// <summary>Promise.prototype singleton dict (ECMA-262 §27.2.5): then/catch/finally/constructor + @@toStringTag.</summary>
+    public FieldBuilder PromisePrototypeField { get; set; } = null!;
+    /// <summary>Idempotent populate for <see cref="PromisePrototypeField"/>.</summary>
+    public MethodBuilder PromisePrototypePopulateMethod { get; set; } = null!;
+    /// <summary>$Runtime.PromiseThenHelper(__this, args) — wraps PromiseThen for Promise.prototype.then.call patterns.</summary>
+    public MethodBuilder PromiseThenHelperMethod { get; set; } = null!;
+    /// <summary>$Runtime.PromiseCatchHelper(__this, args) — wraps PromiseCatch for Promise.prototype.catch.call patterns.</summary>
+    public MethodBuilder PromiseCatchHelperMethod { get; set; } = null!;
+    /// <summary>$Runtime.PromiseFinallyHelper(__this, args) — wraps PromiseFinally for Promise.prototype.finally.call patterns.</summary>
+    public MethodBuilder PromiseFinallyHelperMethod { get; set; } = null!;
     /// <summary>$Runtime.FunctionProtoCall(__this, args) — ECMA-262 §20.2.3.3 Function.prototype.call. Dispatches __this with args[0] as thisArg, args[1..] as call args.</summary>
     public MethodBuilder FunctionProtoCallHelper { get; set; } = null!;
     /// <summary>$Runtime.FunctionProtoApply(__this, args) — ECMA-262 §20.2.3.1 Function.prototype.apply. Dispatches __this with args[0] as thisArg, args[1] (array-like) as call args.</summary>

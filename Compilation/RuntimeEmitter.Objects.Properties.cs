@@ -1748,6 +1748,20 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notFunctionLabel);
 
+            // typeof(Task<object>) → return Promise.prototype singleton.
+            // Hosts then/catch/finally + constructor pointer. Required for
+            // Test262 patterns like `Promise.prototype.then instanceof Function`
+            // and `typeof Promise.prototype.finally === "function"`.
+            var notPromiseProtoLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldtoken, _types.TaskOfObject);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Bne_Un, notPromiseProtoLabel);
+            il.Emit(OpCodes.Call, runtime.PromisePrototypePopulateMethod);
+            il.Emit(OpCodes.Ldsfld, runtime.PromisePrototypeField);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notPromiseProtoLabel);
+
             // typeof($RegExp) → return RegExp.prototype singleton. Hosts the
             // five well-known-symbol-keyed methods (@@match, etc.) used by
             // ECMA-262 §22.2.5 protocol tests. Gated on UsesRegExp because

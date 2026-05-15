@@ -178,6 +178,15 @@ public partial class RuntimeEmitter
         // proto-accessor helpers can compare against it. Reuse here.
         var regexpPrototypeField = runtime.RegExpPrototypeField;
 
+        // Promise.prototype field — Dict<string,object> populated lazily on
+        // first read by EmitPromisePrototypePopulate. Forward-declared so
+        // EmitGetProperty's Type branch can emit the Ldsfld + Call sequence
+        // when `Promise.prototype` is read as a value.
+        runtime.PromisePrototypeField = typeBuilder.DefineField(
+            "_promisePrototype",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
+
         // CheckCancellation(): if (_cancelRequested) throw new
         //   OperationCanceledException("Compiled execution cancelled.");
         // Called by loop emitters at each backedge. Method body is emitted
@@ -298,6 +307,7 @@ public partial class RuntimeEmitter
         DefineErrorPrototypePopulateShell(typeBuilder, runtime);
         DefineFunctionPrototypePopulateShell(typeBuilder, runtime);
         DefineRegExpPrototypePopulateShell(typeBuilder, runtime);
+        DefinePromisePrototypePopulateShell(typeBuilder, runtime);
 
         // Static constructor to initialize Random and symbol storage
         var cctorBuilder = typeBuilder.DefineConstructor(
@@ -350,6 +360,11 @@ public partial class RuntimeEmitter
         // EmitRegExpPrototypePopulate (eagerly invoked from cctor tail).
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         cctorIL.Emit(OpCodes.Stsfld, regexpPrototypeField);
+
+        // Promise.prototype starts empty; populated lazily by
+        // EmitPromisePrototypePopulate on first `Promise.prototype` read.
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        cctorIL.Emit(OpCodes.Stsfld, runtime.PromisePrototypeField);
 
         // Initialize _symbolStorage = new ConditionalWeakTable<object, Dictionary<object, object?>>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(symbolStorageType));
@@ -879,6 +894,13 @@ public partial class RuntimeEmitter
         // were never created.
         if (_features.UsesRegExp)
             EmitRegExpPrototypePopulate(typeBuilder, runtime);
+        // Promise.prototype helpers + populate. Helpers wrap runtime.PromiseThen
+        // /PromiseCatch/PromiseFinally with an `__this`-aware signature so
+        // `Promise.prototype.then.call(p, fn)` routes correctly. Must come
+        // after EmitPromiseMethods so the helper bodies can reference the
+        // state-machine entry points.
+        EmitPromisePrototypeHelpers(typeBuilder, runtime);
+        EmitPromisePrototypePopulate(typeBuilder, runtime);
         // Map methods — gated on UsesMap. EmitMapGroupBy (`Map.groupBy(...)`)
         // depends on Map's own MapHas/Set/Get methods so it folds up under
         // the same gate. ObjectGroupBy stays unconditional (it builds a plain
