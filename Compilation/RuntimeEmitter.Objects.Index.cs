@@ -159,6 +159,33 @@ public partial class RuntimeEmitter
             il.MarkLabel(notRegExpForSymbolLabel);
         }
 
+        // ECMA-262 §21.3.2.34 / §25.5.4: Math[@@toStringTag] = "Math",
+        // JSON[@@toStringTag] = "JSON". Singletons aren't populated via a
+        // dedicated init helper (would need a forward-declared MethodBuilder
+        // and a reorder of cctor emission to reach GetSymbolDictMethod); emit
+        // an inline ref-equality + symbol-equality check here instead.
+        var notMathSingletonTagLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.MathSingletonField);
+        il.Emit(OpCodes.Bne_Un, notMathSingletonTagLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolToStringTag);
+        il.Emit(OpCodes.Bne_Un, notMathSingletonTagLabel);
+        il.Emit(OpCodes.Ldstr, "Math");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notMathSingletonTagLabel);
+
+        var notJsonSingletonTagLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.JsonSingletonField);
+        il.Emit(OpCodes.Bne_Un, notJsonSingletonTagLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolToStringTag);
+        il.Emit(OpCodes.Bne_Un, notJsonSingletonTagLabel);
+        il.Emit(OpCodes.Ldstr, "JSON");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notJsonSingletonTagLabel);
+
         // Return undefined for missing symbol properties (JavaScript semantics)
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);

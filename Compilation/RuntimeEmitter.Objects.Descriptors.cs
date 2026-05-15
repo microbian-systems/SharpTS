@@ -2088,24 +2088,63 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
         il.Emit(OpCodes.Brtrue, foundLabel);
 
+        // Synth @@toStringTag for Math/JSON singletons — the singleton dicts
+        // don't carry a populated symbol entry (no populate hook for these
+        // ad-hoc dicts), but gOPD on them must still report the spec
+        // descriptor. Loads value into valueLocal then falls into the shared
+        // descriptor-builder below.
+        var notMathTagLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.MathSingletonField);
+        il.Emit(OpCodes.Bne_Un, notMathTagLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolToStringTag);
+        il.Emit(OpCodes.Bne_Un, notMathTagLabel);
+        il.Emit(OpCodes.Ldstr, "Math");
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.Emit(OpCodes.Br, foundLabel);
+        il.MarkLabel(notMathTagLabel);
+
+        var notJsonTagLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.JsonSingletonField);
+        il.Emit(OpCodes.Bne_Un, notJsonTagLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolToStringTag);
+        il.Emit(OpCodes.Bne_Un, notJsonTagLabel);
+        il.Emit(OpCodes.Ldstr, "JSON");
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.Emit(OpCodes.Br, foundLabel);
+        il.MarkLabel(notJsonTagLabel);
+
         // Not in user symbol-dict — return undefined.
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(foundLabel);
-        // Build descriptor dict — default attributes for symbol-keyed entries
-        // match the spec-standard built-in default {writable:true,
-        // enumerable:false, configurable:true} (ECMA-262 §17). RegExp.prototype
-        // installs Symbol.match/matchAll/replace/search/split this way; user-
-        // installed `defineProperty(obj, sym, {enumerable:true})` semantics
-        // would need a symbol-key PDS store, deferred.
+        // Build descriptor dict — attributes for symbol-keyed entries match
+        // the spec-standard built-in default {writable:true,
+        // enumerable:false, configurable:true} (ECMA-262 §17). Exception:
+        // @@toStringTag entries are {writable:false, enumerable:false,
+        // configurable:true} per ECMA-262 §25.5.4 / §27.2.5.5 / §22.2.6.13.
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stloc, resultDictLocal);
         il.Emit(OpCodes.Ldloc, resultDictLocal);
         il.Emit(OpCodes.Ldstr, "value");
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        // writable: false when key is Symbol.toStringTag, else true.
+        var notToStringTagLabel = il.DefineLabel();
+        var writableDoneLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolToStringTag);
+        il.Emit(OpCodes.Bne_Un, notToStringTagLabel);
+        // matches Symbol.toStringTag → writable:false
+        EmitDescriptorBoolField(il, resultDictLocal, "writable", false);
+        il.Emit(OpCodes.Br, writableDoneLabel);
+        il.MarkLabel(notToStringTagLabel);
         EmitDescriptorBoolField(il, resultDictLocal, "writable", true);
+        il.MarkLabel(writableDoneLabel);
         EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
         EmitDescriptorBoolField(il, resultDictLocal, "configurable", true);
         il.Emit(OpCodes.Ldloc, resultDictLocal);
