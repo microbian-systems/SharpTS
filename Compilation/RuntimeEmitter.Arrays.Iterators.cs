@@ -320,12 +320,19 @@ public partial class RuntimeEmitter
         il.MarkLabel(doneLabel);
     }
 
-    private void EmitCallbackArgsAndInvoke(ILGenerator il, LocalBuilder indexLocal, EmittedRuntime runtime, LocalBuilder isLazyLocal, LocalBuilder argsLocal, LocalBuilder skipIndexBoxLocal)
+    private void EmitCallbackArgsAndInvoke(ILGenerator il, LocalBuilder indexLocal, EmittedRuntime runtime, LocalBuilder isLazyLocal, LocalBuilder argsLocal, LocalBuilder skipIndexBoxLocal, Action<ILGenerator>? loadElementOverride = null)
     {
-        // args[0] = unholed list[i]
+        // args[0] = element value. Default: unholed list[i]. When the caller
+        // already knows list[i] would IOOB (e.g. find/findIndex after callback
+        // truncated the array), it passes a loader that emits undefined —
+        // ECMA-262 §23.1.3.10/§23.1.3.11 still invoke the callback with
+        // `kValue = ? Get(O, ToString(k))` which is undefined for OOB.
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Ldc_I4_0);
-        EmitLoadElementUnholed(il, indexLocal, runtime, isLazyLocal);
+        if (loadElementOverride is not null)
+            loadElementOverride(il);
+        else
+            EmitLoadElementUnholed(il, indexLocal, runtime, isLazyLocal);
         il.Emit(OpCodes.Stelem_Ref);
 
         // args[1] = (double)i — but skip the box+store entirely when the
@@ -389,17 +396,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, indexLocal);
 
+        // ECMA-262 §23.1.3.19 step 2: cache len ONCE before the loop. Callback
+        // mutations to list.Count (e.g. arr[1000]=v) must not affect iteration.
+        var lenLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocal);
+
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
         var holeLabel = il.DefineLabel();
         var addedLabel = il.DefineLabel();
 
-        // Loop: for (int i = 0; i < list.Count; i++)
+        // Loop: for (int i = 0; i < cached_len; i++)
         il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // If list shrunk during callback (e.g. arr.length=N), treat the absent
+        // slot as a hole — preserved in output, callback not invoked.
+        var inBoundsLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Bge, loopEnd);
+        il.Emit(OpCodes.Blt, inBoundsLabel);
+        il.Emit(OpCodes.Br, holeLabel);
+        il.MarkLabel(inBoundsLabel);
 
         // ECMA-262 23.1.3.19: map SKIPS the callback on holes but PRESERVES
         // the hole in the output at the same position. So a `map` over
@@ -1223,16 +1246,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, indexLocal);
 
+        // ECMA-262 §23.1.3.8 step 2: cache len ONCE before the loop.
+        var lenLocalFilter = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocalFilter);
+
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
         var skipAdd = il.DefineLabel();
 
-        // Loop: for (int i = 0; i < list.Count; i++)
+        // Loop: for (int i = 0; i < cached_len; i++)
         il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, lenLocalFilter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // Re-check current count for truncation (treat absent as hole → skip).
+        var inBoundsLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Bge, loopEnd);
+        il.Emit(OpCodes.Blt, inBoundsLabel);
+        il.Emit(OpCodes.Br, skipAdd);
+        il.MarkLabel(inBoundsLabel);
 
         // ECMA-262 23.1.3.8: filter skips holes (callback not invoked, element
         // not copied into output — filter densifies).
@@ -1291,16 +1328,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, indexLocal);
 
+        // ECMA-262 §23.1.3.15 step 2: cache len.
+        var lenLocalFE = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocalFE);
+
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
         var advance = il.DefineLabel();
 
-        // Loop: for (int i = 0; i < list.Count; i++)
+        // Loop: for (int i = 0; i < cached_len; i++)
         il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, lenLocalFE);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // Truncation check.
+        var inBoundsLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Bge, loopEnd);
+        il.Emit(OpCodes.Blt, inBoundsLabel);
+        il.Emit(OpCodes.Br, advance);
+        il.MarkLabel(inBoundsLabel);
 
         // ECMA-262 23.1.3.15: forEach skips holes.
         EmitSkipIfHole(il, indexLocal, advance, runtime, isLazyLocal);
@@ -1340,21 +1391,50 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, indexLocal);
 
+        // ECMA-262 §23.1.3.10 step 2: cache len.
+        var lenLocalFind = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocalFind);
+
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
 
         il.MarkLabel(loopStart);
         il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, lenLocalFind);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // Truncation check: if callback truncated list past current index, the
+        // element is treated as missing per ECMA-262 §23.1.3.10 step 6.b:
+        // `kValue = ? Get(O, ToString(k))` returns undefined for OOB, and
+        // step 6.c still invokes the predicate with that undefined. Skipping
+        // the call (an earlier shortcut justified as "undefined ≡ falsy")
+        // breaks side-effecting predicates and the `find(x => x === undefined)`
+        // probe. Synthesize the undefined element and run the spec path.
+        var notFound = il.DefineLabel();
+        var inBoundsLabel = il.DefineLabel();
+        var oobTruthyReturnLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Bge, loopEnd);
+        il.Emit(OpCodes.Blt, inBoundsLabel);
+        // OOB: invoke predicate with undefined element; if truthy, return undefined.
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal,
+            loadElementOverride: oobIl => oobIl.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance));
+        il.Emit(OpCodes.Call, runtime.IsTruthy);
+        il.Emit(OpCodes.Brtrue, oobTruthyReturnLabel);
+        il.Emit(OpCodes.Br, notFound);
+        il.MarkLabel(oobTruthyReturnLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(inBoundsLabel);
 
         EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal);
 
         // if (IsTruthy(result)) return list[i] (unholed — spec: find returns
         // `undefined` when the matched slot is a hole, not the sentinel).
         il.Emit(OpCodes.Call, runtime.IsTruthy);
-        var notFound = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notFound);
         EmitLoadElementUnholed(il, indexLocal, runtime, isLazyLocal);
         il.Emit(OpCodes.Ret);
@@ -1392,20 +1472,43 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, indexLocal);
 
+        // ECMA-262 §23.1.3.11 step 2: cache len.
+        var lenLocalFI = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocalFI);
+
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
 
         il.MarkLabel(loopStart);
         il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, lenLocalFI);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // ECMA-262 §23.1.3.11 step 6.b-d: same OOB-still-invokes-predicate
+        // semantics as find() above. On truthy at OOB we return the index k
+        // (already in indexLocal), so both branches share the truthy tail.
+        var notFound = il.DefineLabel();
+        var inBoundsLabel = il.DefineLabel();
+        var truthyReturnIndexLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Bge, loopEnd);
+        il.Emit(OpCodes.Blt, inBoundsLabel);
+        // OOB: invoke predicate with undefined element; truthy → return index.
+        EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal,
+            loadElementOverride: oobIl => oobIl.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance));
+        il.Emit(OpCodes.Call, runtime.IsTruthy);
+        il.Emit(OpCodes.Brtrue, truthyReturnIndexLabel);
+        il.Emit(OpCodes.Br, notFound);
+        il.MarkLabel(inBoundsLabel);
 
         EmitCallbackArgsAndInvoke(il, indexLocal, runtime, isLazyLocal, argsLocal, skipIndexBoxLocal);
         il.Emit(OpCodes.Call, runtime.IsTruthy);
 
-        var notFound = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notFound);
+        il.MarkLabel(truthyReturnIndexLabel);
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Ret);
@@ -1443,15 +1546,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, indexLocal);
 
+        // ECMA-262 §23.1.3.29 step 2: cache len.
+        var lenLocalSome = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocalSome);
+
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
         var advance = il.DefineLabel();
 
         il.MarkLabel(loopStart);
         il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, lenLocalSome);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // Truncation check.
+        var inBoundsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Bge, loopEnd);
+        il.Emit(OpCodes.Blt, inBoundsLabel);
+        il.Emit(OpCodes.Br, advance);
+        il.MarkLabel(inBoundsLabel);
 
         // ECMA-262 23.1.3.29: some skips holes.
         EmitSkipIfHole(il, indexLocal, advance, runtime, isLazyLocal);
@@ -1498,15 +1615,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, indexLocal);
 
+        // ECMA-262 §23.1.3.6 step 2: cache len ONCE before the loop. Callbacks
+        // that mutate list.Count (e.g. arr[1000]=v adding a new element) must
+        // NOT cause iteration past the original len.
+        var lenLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, lenLocal);
+
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
         var continueLoop = il.DefineLabel();
 
         il.MarkLabel(loopStart);
         il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, lenLocal);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // Re-check that the index is still within list.Count (callback may have
+        // truncated the array via `arr.length = N` — in that case, treat the
+        // out-of-range slot as a hole and skip without invoking callback).
+        var inBoundsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Bge, loopEnd);
+        il.Emit(OpCodes.Blt, inBoundsLabel);
+        il.Emit(OpCodes.Br, continueLoop);
+        il.MarkLabel(inBoundsLabel);
 
         // ECMA-262 23.1.3.6: every skips holes (callback not invoked; doesn't
         // affect "all match" result).

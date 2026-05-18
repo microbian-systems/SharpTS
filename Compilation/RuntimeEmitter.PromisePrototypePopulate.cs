@@ -37,6 +37,22 @@ public partial class RuntimeEmitter
             runtime.PromiseThenHelperMethod = m;
 
             var il = m.GetILGenerator();
+            // ECMA-262 §27.2.5.4 step 2: If IsPromise(promise) is false, throw
+            // TypeError. then is more restrictive than catch/finally — must be
+            // a real Promise (not just any thenable).
+            EmitThrowIfNullOrUndefined(il, runtime, "Promise.prototype.then called on null or undefined");
+            var isPromiseOkLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+            il.Emit(OpCodes.Brtrue, isPromiseOkLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, _types.TaskOfObject);
+            il.Emit(OpCodes.Brtrue, isPromiseOkLabel);
+            il.Emit(OpCodes.Ldstr, "Promise.prototype.then called on non-Promise");
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(isPromiseOkLabel);
             var taskLocal = il.DeclareLocal(_types.TaskOfObject);
             EmitUnwrapToTask(il, runtime, taskLocal);
             il.Emit(OpCodes.Ldloc, taskLocal);
@@ -46,7 +62,7 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
         }
 
-        // PromiseCatchHelper(object __this, object onRejected) -> Task<object>
+        // PromiseCatchHelper(object __this, object onRejected) -> object
         {
             var m = typeBuilder.DefineMethod(
                 "PromiseCatchHelper",
@@ -58,15 +74,17 @@ public partial class RuntimeEmitter
             runtime.PromiseCatchHelperMethod = m;
 
             var il = m.GetILGenerator();
-            var taskLocal = il.DeclareLocal(_types.TaskOfObject);
-            EmitUnwrapToTask(il, runtime, taskLocal);
-            il.Emit(OpCodes.Ldloc, taskLocal);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Call, runtime.PromiseCatch);
+            // ECMA-262 §27.2.5.1: catch(onRejected) is `this.then(undefined, onRejected)`.
+            // The `this.then` lookup begins with ToObject(this), which throws TypeError
+            // on null/undefined. Per the spec invariant, surface that synchronously
+            // before any Task-conversion or PromiseThen dispatch.
+            EmitThrowIfNullOrUndefined(il, runtime, "Promise.prototype.catch called on null or undefined");
+            // Fast path: real $TSPromise / Task<object> receiver → direct PromiseCatch.
+            EmitFastPathOrUserThenInvoke(il, runtime, isCatch: true, methodNameForError: "Promise.prototype.catch");
             il.Emit(OpCodes.Ret);
         }
 
-        // PromiseFinallyHelper(object __this, object onFinally) -> Task<object>
+        // PromiseFinallyHelper(object __this, object onFinally) -> object
         {
             var m = typeBuilder.DefineMethod(
                 "PromiseFinallyHelper",
@@ -78,13 +96,155 @@ public partial class RuntimeEmitter
             runtime.PromiseFinallyHelperMethod = m;
 
             var il = m.GetILGenerator();
-            var taskLocal = il.DeclareLocal(_types.TaskOfObject);
-            EmitUnwrapToTask(il, runtime, taskLocal);
-            il.Emit(OpCodes.Ldloc, taskLocal);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Call, runtime.PromiseFinally);
+            EmitThrowIfNullOrUndefined(il, runtime, "Promise.prototype.finally called on null or undefined");
+            // Fast path or user-then-invoke shape. For finally, the spec
+            // (§27.2.5.3 step 7) does `Invoke(promise, "then", « thenFinally,
+            // catchFinally »)` where both args wrap onFinally so it runs on
+            // both fulfillment and rejection. The fast path's PromiseFinally
+            // builds those wrappers natively. For the user-then dispatch path
+            // we approximate with [onFinally, onFinally], which matches the
+            // arg-count and both-branches-fire shape that user-then probes
+            // expect — losing the wrapper's "preserve original value/reason"
+            // semantics until we can emit closures here.
+            EmitFastPathOrUserThenInvoke(il, runtime, isCatch: false, methodNameForError: "Promise.prototype.finally");
             il.Emit(OpCodes.Ret);
         }
+    }
+
+    /// <summary>
+    /// Emits IL that branches on receiver shape and leaves a result on the
+    /// stack (caller emits Ret):
+    /// - $TSPromise / Task&lt;object&gt; → direct call to PromiseCatch/Finally (fast path).
+    /// - Anything else (user object with a custom `then`) → spec-compliant
+    ///   `Invoke(this, "then", « onFulfilled, onRejected »)` via GetProperty +
+    ///   IsCallable check + InvokeMethodValue.
+    /// </summary>
+    /// <param name="isCatch">
+    /// true → emit catch dispatch: fast path calls PromiseCatch, user-then
+    /// invokes <c>this.then(undefined, onRejected)</c> per §27.2.5.1.
+    /// false → emit finally dispatch: fast path calls PromiseFinally, user-then
+    /// invokes <c>this.then(onFinally, onFinally)</c> as the closure-free
+    /// approximation of §27.2.5.3 step 7.
+    /// </param>
+    /// <param name="methodNameForError">
+    /// User-facing method name (e.g. "Promise.prototype.catch") prepended to
+    /// the "this.then is not callable" TypeError message so finally callers
+    /// don't see a catch-prefixed message.
+    /// </param>
+    private void EmitFastPathOrUserThenInvoke(ILGenerator il, EmittedRuntime runtime, bool isCatch, string methodNameForError)
+    {
+        var taskLocal = il.DeclareLocal(_types.TaskOfObject);
+        var notTSPromiseLabel = il.DefineLabel();
+        var fastPathLabel = il.DefineLabel();
+        var userThenPathLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        // Branch A: $TSPromise → fast path with extracted Task. EXCEPT when
+        // the user installed an own `then` descriptor on the instance, in
+        // which case spec requires invoking that user-installed function.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+        il.Emit(OpCodes.Brfalse, notTSPromiseLabel);
+        // Check PDS for own "then" — if present, user has installed it →
+        // user-then path (preserves spec-compliant `Invoke(this, "then", ...)`).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "then");
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Brtrue, userThenPathLabel);
+        // No user override → extract Task and use fast path.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSPromiseType);
+        il.Emit(OpCodes.Callvirt, runtime.TSPromiseTaskGetter);
+        il.Emit(OpCodes.Stloc, taskLocal);
+        il.Emit(OpCodes.Br, fastPathLabel);
+
+        // Branch B: raw Task<object> → fast path directly.
+        il.MarkLabel(notTSPromiseLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.TaskOfObject);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stloc, taskLocal);
+        il.Emit(OpCodes.Brfalse, userThenPathLabel);
+        il.Emit(OpCodes.Br, fastPathLabel);
+
+        il.MarkLabel(fastPathLabel);
+        il.Emit(OpCodes.Ldloc, taskLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, isCatch ? runtime.PromiseCatch : runtime.PromiseFinally);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Branch C: user object — look up `then`, validate callable, invoke.
+        il.MarkLabel(userThenPathLabel);
+        // then = GetProperty(this, "then")
+        var thenLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "then");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, thenLocal);
+        // if (!IsCallable(then)) throw TypeError. Inline check — Isinst against
+        // each known callable shape. Mirrors $Runtime's typeof "function" branch
+        // dispatch (TSFunction + bind/call/apply wrappers + bound array methods).
+        var thenCallableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, thenLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, thenCallableLabel);
+        il.Emit(OpCodes.Ldloc, thenLocal);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brtrue, thenCallableLabel);
+        il.Emit(OpCodes.Ldloc, thenLocal);
+        il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Brtrue, thenCallableLabel);
+        // Not callable — throw TypeError. Message is parameterized so finally
+        // callers don't see a "Promise.prototype.catch:" prefix.
+        il.Emit(OpCodes.Ldstr, methodNameForError + ": this.then is not callable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(thenCallableLabel);
+        // args[0]: undefined (catch) or onFinally (finally — both slots fire
+        //         the callback so it runs on fulfillment AND rejection).
+        // args[1]: onRejected (catch) or onFinally (finally) — Ldarg_1 either way.
+        il.Emit(OpCodes.Ldarg_0);  // receiver for InvokeMethodValue
+        il.Emit(OpCodes.Ldloc, thenLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        if (isCatch)
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        else
+            il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+
+        il.MarkLabel(endLabel);
+    }
+
+    /// <summary>
+    /// Emits IL that throws TypeError if arg0 is null or $Undefined. Mirrors
+    /// ECMA-262 ToObject step 1 for Promise.prototype.{then,catch,finally}
+    /// which all begin with `ToObject(this)`.
+    /// </summary>
+    private void EmitThrowIfNullOrUndefined(ILGenerator il, EmittedRuntime runtime, string message)
+    {
+        var okLabel = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, throwLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, throwLabel);
+        il.Emit(OpCodes.Br, okLabel);
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, message);
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(okLabel);
     }
 
     /// <summary>
