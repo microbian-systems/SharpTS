@@ -97,7 +97,13 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
             [.. BaseIgnored, "SetFromEpochMilliseconds", "ToLocalTime"]),
 
         new(typeof(SharpTSRegExp), "RegExp",
-            [.. BaseIgnored]),
+            [.. BaseIgnored,
+             // Per-instance accessor map (interpreter-only path). Compiled $RegExp
+             // routes defineProperty accessors through the central PropertyDescriptor
+             // Store (PDS), so emitting equivalent instance methods would just be
+             // dead code. See SharpTSRegExp.DefineAccessor / TryGetAccessor
+             // (added in ad935b84 for ECMA-262 §22.2 configurable-accessor parity).
+             "DefineAccessor", "TryGetAccessor"]),
 
         new(typeof(SharpTSError), "Error",
             [.. BaseIgnored, "GetMember"]),

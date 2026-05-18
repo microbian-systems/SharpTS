@@ -18,6 +18,8 @@ public partial class RuntimeEmitter
     /// - $TSFunction: name is "name"/"length" (always cached) or PDS has a
     ///   user-defined descriptor for it.
     /// - $Object: name is in _fields or _getters.
+    /// - $IHasFields (user-defined class instances): per-class HasProperty
+    ///   knows typed backing fields + the dynamic _fields dict.
     /// - Dictionary: ContainsKey(name).
     /// - List/$Array: name is "length" or a numeric index in range.
     /// - String: numeric index in [0,len) or "length".
@@ -123,6 +125,32 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, trueLabel);
         il.Emit(OpCodes.Br, falseLabel);
         il.MarkLabel(notTSObject);
+
+        // $IHasFields branch — user-defined class instances. Each compiled
+        // class implements $IHasFields with a per-class HasProperty that
+        // checks typed backing field names + the dynamic _fields dict
+        // (see ILCompiler.Classes.HasFields.EmitHasPropertyBodyCore).
+        // PDS fallback covers `Object.defineProperty(instance, name, ...)`.
+        //
+        // Must run after $TSObject (which also implements $IHasFields but
+        // has its own richer dispatch via TSObjectHasProperty) and before
+        // the Dictionary branch (a class instance isn't a Dictionary, but
+        // ordering here documents the precedence).
+        var notIHasFieldsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Brfalse, notIHasFieldsLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsHasProperty);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.Emit(OpCodes.Br, falseLabel);
+        il.MarkLabel(notIHasFieldsLabel);
 
         // Dictionary<string,object> — own property is either a direct key in
         // the backing dict (\"foo\" = 1 syntax) OR a PDS-stored descriptor
@@ -429,28 +457,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(pieAfterNullLabel);
 
-        // Symbol-keyed lookup: same routing as HasOwnPropertyHelper.
+        // Symbol-keyed lookup. PDSGetPropertyDescriptor's name parameter is
+        // string-typed, so symbol keys can't live there — defineProperty with
+        // a symbol key writes to the per-receiver symbol dict (GetSymbolDict).
+        // Presence in that dict is the spec-default enumerable=true for plain
+        // `obj[sym] = v` assignments; an earlier attempt to honor PDS-installed
+        // descriptors here passed the symbol as the string `name`, which IL-
+        // Verify flagged (StackUnexpected) and would have thrown at runtime if
+        // the path ever ran with a defineProperty-installed symbol descriptor.
+        // ECMA-262 §17 specifies enumerable=true as the default for own data
+        // properties of ordinary objects.
         var pieNotSymbolLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
         il.Emit(OpCodes.Brfalse, pieNotSymbolLabel);
-        // For Symbol keys: lookup descriptor in PDS (Object.defineProperty-
-        // installed descriptors hold the Enumerable bit). If missing, fall
-        // back to whether the symbol exists in GetSymbolDict (then default
-        // enumerable=true for plain `obj[sym] = v` assignments).
-        var pieSymPdsLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
-        var pieSymNoPdsLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
-        il.Emit(OpCodes.Stloc, pieSymPdsLocal);
-        il.Emit(OpCodes.Ldloc, pieSymPdsLocal);
-        il.Emit(OpCodes.Brfalse, pieSymNoPdsLabel);
-        il.Emit(OpCodes.Ldloc, pieSymPdsLocal);
-        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(pieSymNoPdsLabel);
-        // No PDS: check symbol dict. Present → enumerable by default; absent → false.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
         il.Emit(OpCodes.Ldarg_1);
