@@ -116,7 +116,7 @@ public partial class RuntimeEmitter
     /// Emits the MoveNext body for PromiseRace state machine.
     /// Implements: convert list to tasks, await Task.WhenAny, await winning task.
     /// </summary>
-    private void EmitPromiseRaceMoveNext(PromiseRaceStateMachine sm)
+    private void EmitPromiseRaceMoveNext(PromiseRaceStateMachine sm, EmittedRuntime runtime)
     {
         var il = sm.MoveNextMethod.GetILGenerator();
         var listType = typeof(List<object?>);
@@ -149,6 +149,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Beq, state1Label);  // state == 1
 
         // ========== STATE -1: Initial execution ==========
+
+        // ECMA-262 §27.2.4.5 Promise.race: If iterable is not Object → throw TypeError.
+        // Without this, a non-iterable arg falls through to Castclass which throws
+        // InvalidCastException (string err), failing test262 `err instanceof TypeError`.
+        var iterableOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.IterableField);
+        il.Emit(OpCodes.Isinst, listType);
+        il.Emit(OpCodes.Brtrue, iterableOkLabel);
+        il.Emit(OpCodes.Ldstr, "Promise.race argument is not iterable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(iterableOkLabel);
 
         // Cast iterable to List<object?>
         var listLocal = il.DeclareLocal(listType);

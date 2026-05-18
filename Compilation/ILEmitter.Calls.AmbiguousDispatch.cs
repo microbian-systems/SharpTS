@@ -88,7 +88,12 @@ public partial class ILEmitter
                 {
                     EmitExpression(arguments[0]);
                     EmitBoxIfNeeded(arguments[0]);
-                    IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+                    // ECMA-262 §22.1.3.8 step 3: searchString = ? ToString(searchString).
+                    // Castclass-to-string would either NRE on null (→ String.IndexOf
+                    // throws ArgumentNullException) or InvalidCastException on
+                    // $Undefined/other objects. ToJsString handles all primitives
+                    // and invokes the @@toPrimitive/toString protocol for objects.
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.ToJsString);
                 }
                 else
                 {
@@ -118,7 +123,8 @@ public partial class ILEmitter
                 {
                     EmitExpression(arguments[0]);
                     EmitBoxIfNeeded(arguments[0]);
-                    IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+                    // ECMA-262 §22.1.3.9 step 3: searchString = ? ToString(searchString).
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.ToJsString);
                 }
                 else
                 {

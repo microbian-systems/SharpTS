@@ -160,6 +160,31 @@ public partial class RuntimeEmitter
             FieldAttributes.Public | FieldAttributes.Static);
         runtime.ErrorPrototypeField = errorPrototypeField;
 
+        // Native-error subclass prototype singletons (TypeError/RangeError/...).
+        // Per ECMA-262 §20.5.6.4 each NativeError prototype is a *distinct*
+        // object whose [[Prototype]] is Error.prototype, with own constructor/
+        // name/message slots. Previously all subclass instances pointed to the
+        // shared Error.prototype, which made `TypeError.prototype` resolve to
+        // undefined and `Object.getPrototypeOf(new TypeError()) === TypeError.prototype`
+        // fail (test262 Promise/any/iter-* checks this identity).
+        FieldBuilder DefineSubclassProto(string fieldName) =>
+            typeBuilder.DefineField(fieldName, _types.DictionaryStringObject,
+                FieldAttributes.Public | FieldAttributes.Static);
+        var typeErrorPrototypeField = DefineSubclassProto("_typeErrorPrototype");
+        var rangeErrorPrototypeField = DefineSubclassProto("_rangeErrorPrototype");
+        var referenceErrorPrototypeField = DefineSubclassProto("_referenceErrorPrototype");
+        var syntaxErrorPrototypeField = DefineSubclassProto("_syntaxErrorPrototype");
+        var uriErrorPrototypeField = DefineSubclassProto("_uriErrorPrototype");
+        var evalErrorPrototypeField = DefineSubclassProto("_evalErrorPrototype");
+        var aggregateErrorPrototypeField = DefineSubclassProto("_aggregateErrorPrototype");
+        runtime.TypeErrorPrototypeField = typeErrorPrototypeField;
+        runtime.RangeErrorPrototypeField = rangeErrorPrototypeField;
+        runtime.ReferenceErrorPrototypeField = referenceErrorPrototypeField;
+        runtime.SyntaxErrorPrototypeField = syntaxErrorPrototypeField;
+        runtime.URIErrorPrototypeField = uriErrorPrototypeField;
+        runtime.EvalErrorPrototypeField = evalErrorPrototypeField;
+        runtime.AggregateErrorPrototypeField = aggregateErrorPrototypeField;
+
         // Function.prototype singleton — populated lazily with $TSFunction
         // wrappers for call/apply/bind/toString/constructor. test262's
         // propertyHelper.js opens with
@@ -305,6 +330,7 @@ public partial class RuntimeEmitter
         DefineNumberPrototypePopulateShell(typeBuilder, runtime);
         DefineBooleanPrototypePopulateShell(typeBuilder, runtime);
         DefineErrorPrototypePopulateShell(typeBuilder, runtime);
+        DefineNativeErrorPrototypePopulateShells(typeBuilder, runtime);
         DefineFunctionPrototypePopulateShell(typeBuilder, runtime);
         DefineRegExpPrototypePopulateShell(typeBuilder, runtime);
         DefinePromisePrototypePopulateShell(typeBuilder, runtime);
@@ -350,6 +376,17 @@ public partial class RuntimeEmitter
         // (eagerly invoked from cctor tail below).
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         cctorIL.Emit(OpCodes.Stsfld, errorPrototypeField);
+
+        // Native-error subclass prototypes — empty dicts; populated lazily on
+        // first `<X>Error.prototype` read or `Object.getPrototypeOf(<x>err)`.
+        foreach (var f in new[] {
+            typeErrorPrototypeField, rangeErrorPrototypeField, referenceErrorPrototypeField,
+            syntaxErrorPrototypeField, uriErrorPrototypeField, evalErrorPrototypeField,
+            aggregateErrorPrototypeField })
+        {
+            cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+            cctorIL.Emit(OpCodes.Stsfld, f);
+        }
 
         // Function.prototype starts empty; populated by
         // EmitFunctionPrototypePopulate (eagerly invoked from cctor tail).
@@ -656,6 +693,12 @@ public partial class RuntimeEmitter
         // original site at the end of the runtime emit. Dep: runtime.ToNumber
         // (emitted at line 580, before this site).
         EmitMathAdapters(typeBuilder, runtime);
+        // EmitRandom moved here from the original late-site so gOPD's Math
+        // singleton synth can reach runtime.Random and produce an identity-
+        // stable `desc.value === Math.random` descriptor. The Random method
+        // builder only needs randomField (defined at line 215) — both
+        // available now.
+        EmitRandom(typeBuilder, runtime, randomField);
         EmitObjectGetOwnPropertyDescriptor(typeBuilder, runtime);
         EmitObjectDefineProperties(typeBuilder, runtime);
         // GetOwnPropertySymbols must precede gOPDs (gOPDs now also iterates
@@ -827,7 +870,8 @@ public partial class RuntimeEmitter
         EmitGetSuperMethod(typeBuilder, runtime);
         // EmitCreateException and EmitWrapException moved earlier (before Promise methods)
         EmitThrowUndefinedVariable(typeBuilder, runtime);
-        EmitRandom(typeBuilder, runtime, randomField);
+        // EmitRandom moved to before gOPD (see line ~660). The original site
+        // here is now empty.
         EmitMathSumPrecise(typeBuilder, runtime);
         EmitDefineSymbolAccessor(typeBuilder, runtime);
         EmitTSObjectMergeEnumerable(typeBuilder, runtime);
@@ -883,6 +927,10 @@ public partial class RuntimeEmitter
         // the spec-compliant ErrorToStringSpec helper can reference $Error
         // metadata (TSErrorType, ErrorGetName/ErrorGetMessage already populated).
         EmitErrorPrototypePopulate(typeBuilder, runtime);
+        // Native-error subclass prototypes — distinct per ECMA-262 §20.5.6.4.
+        // Must run after EmitErrorPrototypePopulate so PDSSetPrototype can chain
+        // each subclass-proto's [[Prototype]] to %Error.prototype%.
+        EmitNativeErrorPrototypePopulates(typeBuilder, runtime);
         // Function.prototype populate body — must come after $TSFunction +
         // $BoundTSFunction emission and after InvokeMethodValue is wired
         // (the call/apply helpers route through it). Emitted in the same tail

@@ -570,7 +570,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldstr, "prototype");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brfalse, nullLabel);
+        var fnProtoFallbackLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, fnProtoFallbackLabel);
 
         // Only auto-create for actual $TSFunction callees (has an inner _method
         // field). Other callable shapes ($BoundArrayMethod, $FunctionCallWrapper,
@@ -754,6 +755,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
 
         il.MarkLabel(nameEndLabel);
+        il.Emit(OpCodes.Ret);
+
+        // Fallback: walk Function.prototype dict for user-installed properties.
+        // ECMA-262 §20.2.3 — every function inherits from Function.prototype.
+        // Test262 patterns: `Function.prototype.X = v; fn.X` must surface v.
+        // Skipped for "prototype" because the auto-create logic above handles
+        // it (and we don't want user-set Function.prototype.prototype to
+        // shadow that).
+        il.MarkLabel(fnProtoFallbackLabel);
+        il.Emit(OpCodes.Call, runtime.FunctionPrototypePopulateMethod);
+        var fpSlotLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldsfld, runtime.FunctionPrototypeField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, fpSlotLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue",
+            _types.String, _types.Object.MakeByRefType()));
+        il.Emit(OpCodes.Brfalse, nullLabel);
+        il.Emit(OpCodes.Ldloc, fpSlotLocal);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(nullLabel);

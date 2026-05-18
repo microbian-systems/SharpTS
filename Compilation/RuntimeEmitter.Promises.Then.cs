@@ -212,11 +212,32 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, awaiterType.GetMethod("GetResult")!);
         il.Emit(OpCodes.Stfld, sm.ValueField);
 
-        // Check if onFulfilled is null
+        // Check if onFulfilled is callable (ECMA-262 §27.2.5.4 step 3):
+        // not just null — also $Undefined.Instance and any non-callable value
+        // must fall through to the identity-pass branch. Without this,
+        // `then(undefined, ...)` on a fulfilled promise tries to invoke
+        // $Undefined as a callback and the SM treats the resulting throw
+        // as a value, masking the rejection chain (test262 then/A4.1_T2).
         var noCallbackLabel = il.DefineLabel();
+        var onFulfilledCallableLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.OnFulfilledField);
         il.Emit(OpCodes.Brfalse, noCallbackLabel);
+        // Isinst against known callable shapes; anything else → pass-through.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.OnFulfilledField);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, onFulfilledCallableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.OnFulfilledField);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brtrue, onFulfilledCallableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.OnFulfilledField);
+        il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Brtrue, onFulfilledCallableLabel);
+        il.Emit(OpCodes.Br, noCallbackLabel);
+        il.MarkLabel(onFulfilledCallableLabel);
 
         // Invoke callback: result = InvokeCallback(onFulfilled, value)
         il.Emit(OpCodes.Ldarg_0);
@@ -307,17 +328,38 @@ public partial class RuntimeEmitter
         il.BeginCatchBlock(typeof(Exception));
         il.Emit(OpCodes.Stloc, exceptionLocal);
 
-        // Check if onRejected is null
+        // Check if onRejected is callable (ECMA-262 §27.2.5.4 step 4):
+        // null, undefined, or any non-callable value → rethrow (propagate
+        // rejection). Mirrors the onFulfilled IsCallable check above.
         var noRejectCallbackLabel = il.DefineLabel();
+        var onRejectedCallableLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.OnRejectedField);
         il.Emit(OpCodes.Brfalse, noRejectCallbackLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.OnRejectedField);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brtrue, onRejectedCallableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.OnRejectedField);
+        il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
+        il.Emit(OpCodes.Brtrue, onRejectedCallableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.OnRejectedField);
+        il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
+        il.Emit(OpCodes.Brtrue, onRejectedCallableLabel);
+        il.Emit(OpCodes.Br, noRejectCallbackLabel);
+        il.MarkLabel(onRejectedCallableLabel);
 
-        // Invoke onRejected: result = InvokeCallback(onRejected, exception.Message)
+        // Invoke onRejected: result = InvokeCallback(onRejected, WrapException(exception))
+        // Use WrapException so the user-thrown value (TypeError instance,
+        // AggregateError, primitive payloads via $PromiseRejectedException, etc.)
+        // is preserved instead of falling back to Exception.Message (a string).
+        // Required for spec patterns like `err instanceof TypeError`.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.OnRejectedField);
         il.Emit(OpCodes.Ldloc, exceptionLocal);
-        il.Emit(OpCodes.Callvirt, typeof(Exception).GetProperty("Message")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.WrapException);
         il.Emit(OpCodes.Call, runtime.InvokeCallback);
         il.Emit(OpCodes.Stloc, resultLocal);
 

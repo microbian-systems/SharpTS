@@ -537,16 +537,36 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notTSObjForProtoLabel);
 
-        // $Error instances → Error.prototype (Error.prototype.isPrototypeOf(new
-        // Error()) === true per ECMA-262 §20.5.3). The wrapped Error/TypeError/
-        // RangeError etc. instances all share Error.prototype as their direct
-        // [[Prototype]] (subclass error prototypes themselves inherit from
-        // Error.prototype, so a one-step walk to Error.prototype suffices for
-        // isPrototypeOf to work).
+        // Native-error subclass instances → their distinct subclass prototype
+        // (ECMA-262 §20.5.6.4: `Object.getPrototypeOf(new TypeError())` ===
+        // %TypeError.prototype%, which is itself %Error.prototype%'s child).
+        // MUST check subclasses BEFORE the base $Error check, since
+        // `Isinst $Error` succeeds for any subclass.
+        void EmitErrorInstanceBranch(Type subclassType, MethodBuilder populate, FieldBuilder protoField)
+        {
+            var notMatch = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, subclassType);
+            il.Emit(OpCodes.Brfalse, notMatch);
+            il.Emit(OpCodes.Call, populate);
+            il.Emit(OpCodes.Ldsfld, protoField);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notMatch);
+        }
+        EmitErrorInstanceBranch(runtime.TSTypeErrorType,      runtime.TypeErrorPrototypePopulateMethod,      runtime.TypeErrorPrototypeField);
+        EmitErrorInstanceBranch(runtime.TSRangeErrorType,     runtime.RangeErrorPrototypePopulateMethod,     runtime.RangeErrorPrototypeField);
+        EmitErrorInstanceBranch(runtime.TSReferenceErrorType, runtime.ReferenceErrorPrototypePopulateMethod, runtime.ReferenceErrorPrototypeField);
+        EmitErrorInstanceBranch(runtime.TSSyntaxErrorType,    runtime.SyntaxErrorPrototypePopulateMethod,    runtime.SyntaxErrorPrototypeField);
+        EmitErrorInstanceBranch(runtime.TSURIErrorType,       runtime.URIErrorPrototypePopulateMethod,       runtime.URIErrorPrototypeField);
+        EmitErrorInstanceBranch(runtime.TSEvalErrorType,      runtime.EvalErrorPrototypePopulateMethod,      runtime.EvalErrorPrototypeField);
+        EmitErrorInstanceBranch(runtime.TSAggregateErrorType, runtime.AggregateErrorPrototypePopulateMethod, runtime.AggregateErrorPrototypeField);
+
+        // Base $Error instances (plain `new Error(...)`) → Error.prototype.
         var notTSErrForProtoLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSErrorType);
         il.Emit(OpCodes.Brfalse, notTSErrForProtoLabel);
+        il.Emit(OpCodes.Call, runtime.ErrorPrototypePopulateMethod);
         il.Emit(OpCodes.Ldsfld, runtime.ErrorPrototypeField);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notTSErrForProtoLabel);

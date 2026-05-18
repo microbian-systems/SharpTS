@@ -134,20 +134,44 @@ public sealed class BatchedSubprocessRunner
             }
         }
 
+        // Run N parallel "worker slots". Each slot holds one worker subprocess;
+        // when that worker hits the 1.5GB memory ceiling and exits cleanly, the
+        // slot SPAWNS A REPLACEMENT and keeps draining the queue. Without this
+        // respawn loop, parallelism degrades 6→5→4→…→1 over the run as workers
+        // hit the ceiling (each handles ~500-1000 tests before recycling), and
+        // the tail of an 11K-test regen processes at single-worker speed. With
+        // respawn, all 6 slots stay busy until the shared queue is empty.
+        // Each slot's task runs serially on its own thread; new workers spawn
+        // inline so timing/sequencing is identical to the pre-fix single-spawn.
         int workerCount = Math.Min(WorkerCount, total);
-        var workers = new PersistentWorker[workerCount];
+        var slotTasks = new Task[workerCount];
+        var slotDisposables = new ConcurrentBag<PersistentWorker>();
+        for (int slotIndex = 0; slotIndex < workerCount; slotIndex++)
+        {
+            int id = slotIndex;
+            slotTasks[slotIndex] = Task.Run(() =>
+            {
+                while (true)
+                {
+                    if (!workQueue.TryPeek(out _)) return; // queue empty → slot done
+                    var worker = new PersistentWorker(BuildWorkerArgs(), workQueue, OnResult, IdleResultBudget, id);
+                    slotDisposables.Add(worker);
+                    worker.Start();
+                    worker.WaitForCompletion();
+                    // Worker exited (memory ceiling, watchdog, crash, or queue
+                    // drained). Loop checks queue and respawns if more work
+                    // remains. The new worker reuses the same slot id for
+                    // trace-file naming continuity.
+                }
+            });
+        }
         try
         {
-            for (int i = 0; i < workerCount; i++)
-            {
-                workers[i] = new PersistentWorker(BuildWorkerArgs(), workQueue, OnResult, IdleResultBudget, i);
-                workers[i].Start();
-            }
-            foreach (var w in workers) w.WaitForCompletion();
+            Task.WaitAll(slotTasks);
         }
         finally
         {
-            foreach (var w in workers) w?.Dispose();
+            foreach (var w in slotDisposables) w?.Dispose();
         }
 
         // Recovery sweep: if any worker's HandleCompletion requeued paths during

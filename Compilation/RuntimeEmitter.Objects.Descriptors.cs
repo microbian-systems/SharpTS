@@ -262,6 +262,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, descThrowLabel);
+        // BigInt and Symbol are also primitives per ECMA-262 — reject them too.
+        // BigInt: System.Numerics.BigInteger (boxed). Symbol: $TSSymbol.
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, typeof(System.Numerics.BigInteger));
+        il.Emit(OpCodes.Brtrue, descThrowLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brtrue, descThrowLabel);
         il.Emit(OpCodes.Br, descTypeOkLabel);
 
         il.MarkLabel(descThrowLabel);
@@ -719,6 +727,46 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, throwRedefineLabel);
         il.MarkLabel(typeSwapDoneLabel);
 
+        // Accessor-redefine validation: when existing is accessor + new is
+        // accessor + existing.configurable=false, ECMA-262 §10.1.6.3
+        // ValidateAndApplyPropertyDescriptor step 7.b/7.c require:
+        //   - if Desc has [[Get]] and !SameValue(Desc.[[Get]], current.[[Get]]) → throw
+        //   - if Desc has [[Set]] and !SameValue(Desc.[[Set]], current.[[Set]]) → throw
+        // Test262 15.2.3.6-4-{97,99,etc.} cover this. Without this check,
+        // accessor descriptors silently accept incompatible redefines.
+        var skipAccessorCheck = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, existingIsAccessor);
+        il.Emit(OpCodes.Brfalse, skipAccessorCheck);
+        // existing is accessor. Check new "get" / "set" if present.
+        var accessorGetKeyLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "get");
+        il.Emit(OpCodes.Ldloca, accessorGetKeyLocal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        var skipGetCheck = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, skipGetCheck);
+        // SameValue(new.get, existing.get); throw if false.
+        il.Emit(OpCodes.Ldloc, accessorGetKeyLocal);
+        il.Emit(OpCodes.Ldloc, existingDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.ObjectIs);
+        il.Emit(OpCodes.Brfalse, throwRedefineLabel);
+        il.MarkLabel(skipGetCheck);
+        var accessorSetKeyLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "set");
+        il.Emit(OpCodes.Ldloca, accessorSetKeyLocal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        var skipSetCheck = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, skipSetCheck);
+        il.Emit(OpCodes.Ldloc, accessorSetKeyLocal);
+        il.Emit(OpCodes.Ldloc, existingDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.ObjectIs);
+        il.Emit(OpCodes.Brfalse, throwRedefineLabel);
+        il.MarkLabel(skipSetCheck);
+        il.MarkLabel(skipAccessorCheck);
+
         // Rule (d): data with existing.writable=false: cannot set writable=true.
         // (writable: false → true is forbidden when configurable=false.)
         // Existing is data when existingIsAccessor=false.
@@ -785,9 +833,14 @@ public partial class RuntimeEmitter
 
         il.Emit(OpCodes.Ldloc, existingValueForCompare);
         il.Emit(OpCodes.Brfalse, skipWritableCheck);  // null existing → skip
+        // ECMA-262 SameValue (Object.is) not Object.Equals: distinguishes
+        // +0 vs -0 (returns false) and equates NaN with itself (returns true).
+        // Test262 15.2.3.6-4-87 asserts redefining {value:+0,writable:false}
+        // with {value:-0} throws TypeError. runtime.ObjectIs implements proper
+        // SameValue per §7.2.10.
         il.Emit(OpCodes.Ldloc, valueKeyLocal);
         il.Emit(OpCodes.Ldloc, existingValueForCompare);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Object, "Equals", _types.Object, _types.Object));
+        il.Emit(OpCodes.Call, runtime.ObjectIs);
         il.Emit(OpCodes.Brfalse, throwRedefineLabel);
         il.MarkLabel(skipWritableCheck);
 
@@ -1274,14 +1327,19 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldstr, n);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
             il.Emit(OpCodes.Brfalse, skipLabel);
-            // Build descriptor { value: <placeholder $Undefined>, W:true, E:false, C:true }.
-            // verifyProperty's spec-check shape for built-in methods doesn't
-            // compare value, only the writable/enumerable/configurable bits.
+            // Build descriptor { value: LookupBuiltInStaticMember(receiver, n),
+            // W:true, E:false, C:true }. The lookup helper returns the SAME
+            // $TSFunction wrapper that syntactic `Object.X` resolves to (via
+            // TSFunctionGetOrCreate cache), so `desc.value === Object.X` holds.
+            // Test262 15.2.3.3-4-{14,15,...} rely on this identity.
             il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
             il.Emit(OpCodes.Stloc, resultDictLocal);
             il.Emit(OpCodes.Ldloc, resultDictLocal);
             il.Emit(OpCodes.Ldstr, "value");
-            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Ldarg_0);  // receiver (typeof(Object))
+            il.Emit(OpCodes.Castclass, _types.Type);
+            il.Emit(OpCodes.Ldloc, propNameLocal);
+            il.Emit(OpCodes.Call, runtime.LookupBuiltInStaticMember);
             il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
             EmitDescriptorBoolField(il, resultDictLocal, "writable", true);
             EmitDescriptorBoolField(il, resultDictLocal, "enumerable", false);
@@ -1698,9 +1756,10 @@ public partial class RuntimeEmitter
             ("max",    runtime.MathMaxAdapter,    2),
             ("min",    runtime.MathMinAdapter,    2),
             ("pow",    runtime.MathPowAdapter,    2),
-            // "random" → uses runtime.Random which is emitted later than gOPD,
-            // so emit it as undefined-value here (fallback to non-value-aware).
-            ("random", null,                       0),
+            // "random" → runtime.Random; EmitRandom now precedes gOPD emit
+            // (see RuntimeEmitter.RuntimeClass.cs ~line 660), so we can wire
+            // the actual MethodBuilder here for `desc.value === Math.random`.
+            ("random", runtime.Random,             0),
             ("round",  runtime.MathRoundAdapter,  1),
             ("sign",   runtime.MathSignAdapter,   1),
             ("sin",    runtime.MathSinAdapter,    1),

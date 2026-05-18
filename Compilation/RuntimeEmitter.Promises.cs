@@ -204,6 +204,46 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
         }
 
+        // Value-form `Promise.resolve` / `Promise.reject` — wraps the direct
+        // helpers above with ECMA-262 §27.2.5.1 step 2 `this`-is-Object check.
+        // The direct PromiseResolve/PromiseReject keep their (object value)
+        // signature so syntactic dispatch (`Promise.resolve(x)`) doesn't pay
+        // the extra check. Value-form (`let r = Promise.resolve; r.call(this, x)`)
+        // routes through these wrappers via the $TSFunction __this param.
+        var resolveStatic = typeBuilder.DefineMethod(
+            "PromiseResolveStatic",
+            MethodAttributes.Public | MethodAttributes.Static,
+            taskType,
+            [_types.Object, _types.Object]);
+        resolveStatic.DefineParameter(1, ParameterAttributes.None, "__this");
+        resolveStatic.DefineParameter(2, ParameterAttributes.None, "value");
+        runtime.PromiseResolveStatic = resolveStatic;
+        {
+            var il = resolveStatic.GetILGenerator();
+            EmitPromiseStaticThisObjectCheck(il, runtime,
+                "Promise.resolve called on non-Object");
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, resolve);
+            il.Emit(OpCodes.Ret);
+        }
+
+        var rejectStatic = typeBuilder.DefineMethod(
+            "PromiseRejectStatic",
+            MethodAttributes.Public | MethodAttributes.Static,
+            taskType,
+            [_types.Object, _types.Object]);
+        rejectStatic.DefineParameter(1, ParameterAttributes.None, "__this");
+        rejectStatic.DefineParameter(2, ParameterAttributes.None, "reason");
+        runtime.PromiseRejectStatic = rejectStatic;
+        {
+            var il = rejectStatic.GetILGenerator();
+            EmitPromiseStaticThisObjectCheck(il, runtime,
+                "Promise.reject called on non-Object");
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, reject);
+            il.Emit(OpCodes.Ret);
+        }
+
         // Promise.withResolvers() - returns object? ($Object with {promise, resolve, reject})
         // Unlike other Promise statics, withResolvers is synchronous and returns a plain object.
         var withResolvers = typeBuilder.DefineMethod(
@@ -380,7 +420,7 @@ public partial class RuntimeEmitter
         );
         runtime.PromiseAll = all;
         EmitPromiseAllWrapper(all.GetILGenerator(), promiseAllSM);
-        EmitPromiseAllMoveNext(promiseAllSM);
+        EmitPromiseAllMoveNext(promiseAllSM, runtime);
         promiseAllSM.Type.CreateType();
 
         // Promise.race(iterable) - async state machine using Task.WhenAny
@@ -393,7 +433,7 @@ public partial class RuntimeEmitter
         );
         runtime.PromiseRace = race;
         EmitPromiseRaceWrapper(race.GetILGenerator(), promiseRaceSM);
-        EmitPromiseRaceMoveNext(promiseRaceSM);
+        EmitPromiseRaceMoveNext(promiseRaceSM, runtime);
         promiseRaceSM.Type.CreateType();
 
         // First emit the ProcessElementSettled helper for PromiseAllSettled
@@ -419,7 +459,7 @@ public partial class RuntimeEmitter
         );
         runtime.PromiseAllSettled = allSettled;
         EmitPromiseAllSettledWrapper(allSettled.GetILGenerator(), promiseAllSettledSM, processElementSettled);
-        EmitPromiseAllSettledMoveNext(promiseAllSettledSM, processElementSettled);
+        EmitPromiseAllSettledMoveNext(promiseAllSettledSM, processElementSettled, runtime);
         promiseAllSettledSM.Type.CreateType();
 
         // Promise.any(iterable) - pure IL implementation with state machine
@@ -459,8 +499,33 @@ public partial class RuntimeEmitter
         );
         runtime.PromiseAny = any;
         EmitPromiseAnyWrapper(any.GetILGenerator(), promiseAnySM);
-        EmitPromiseAnyMoveNext(promiseAnySM, anyState, handleAnyCompletionShim);
+        EmitPromiseAnyMoveNext(promiseAnySM, anyState, handleAnyCompletionShim, runtime);
         promiseAnySM.Type.CreateType();
+
+        // Value-form wrappers for all/race/allSettled/any — validate `this` is
+        // Object per ECMA-262 §27.2.4 step 1 ("Let C be the this value.").
+        // Tests like `Promise.race.call(undefined, [...])` rely on this throw.
+        void EmitAllRaceVariantStaticWrapper(string name, string jsName, MethodBuilder target, Action<MethodBuilder> assign)
+        {
+            var sw = typeBuilder.DefineMethod(
+                name,
+                MethodAttributes.Public | MethodAttributes.Static,
+                taskType,
+                [_types.Object, _types.Object]);
+            sw.DefineParameter(1, ParameterAttributes.None, "__this");
+            sw.DefineParameter(2, ParameterAttributes.None, "iterable");
+            assign(sw);
+            var il = sw.GetILGenerator();
+            EmitPromiseStaticThisObjectCheck(il, runtime,
+                $"Promise.{jsName} called on non-Object");
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, target);
+            il.Emit(OpCodes.Ret);
+        }
+        EmitAllRaceVariantStaticWrapper("PromiseAllStatic", "all", all, m => runtime.PromiseAllStatic = m);
+        EmitAllRaceVariantStaticWrapper("PromiseRaceStatic", "race", race, m => runtime.PromiseRaceStatic = m);
+        EmitAllRaceVariantStaticWrapper("PromiseAllSettledStatic", "allSettled", allSettled, m => runtime.PromiseAllSettledStatic = m);
+        EmitAllRaceVariantStaticWrapper("PromiseAnyStatic", "any", any, m => runtime.PromiseAnyStatic = m);
 
         // Callback invocation helpers must be emitted first (used by then/finally)
         EmitCallbackHelpers(typeBuilder, runtime);
@@ -510,6 +575,48 @@ public partial class RuntimeEmitter
 
         // PromiseFromExecutor - emitted in RuntimeEmitter.Promises.Executor.cs
         EmitPromiseExecutorSupport(typeBuilder, runtime, moduleBuilder);
+    }
+
+    /// <summary>
+    /// Emits IL that throws TypeError if arg0 (the `this`/C-constructor slot)
+    /// is not an Object per ECMA-262 §27.2.5.1 step 2. Null, undefined,
+    /// booleans, numbers, strings, symbols all fail.
+    /// </summary>
+    private void EmitPromiseStaticThisObjectCheck(ILGenerator il, EmittedRuntime runtime, string message)
+    {
+        var okLabel = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+        // null → throw
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, throwLabel);
+        // $Undefined → throw
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, throwLabel);
+        // primitive types → throw
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brtrue, throwLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brtrue, throwLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, throwLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brtrue, throwLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, typeof(System.Numerics.BigInteger));
+        il.Emit(OpCodes.Brtrue, throwLabel);
+        il.Emit(OpCodes.Br, okLabel);
+
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, message);
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(okLabel);
     }
 
     /// <summary>

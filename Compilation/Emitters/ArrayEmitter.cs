@@ -100,15 +100,18 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
 
             case "forEach":
             {
+                // Spec: forEach returns undefined (not null). Push
+                // $Undefined.Instance so `arr.forEach(...) === undefined`
+                // holds — test262 callback-related tests rely on this.
                 if (TryEmitDirectDelegateCall(emitter, arguments, ctx.Runtime!.ArrayForEachDirect))
                 {
-                    il.Emit(OpCodes.Ldnull); // forEach returns undefined; helper is void
+                    il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
                     break;
                 }
                 var saved = EmitCallbackAndStashThisArg(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayForEach);
                 EmitRestoreCallbackThisArg(emitter, saved);
-                il.Emit(OpCodes.Ldnull); // forEach returns undefined
+                il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
                 break;
             }
 

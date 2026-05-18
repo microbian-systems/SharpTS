@@ -270,6 +270,443 @@ public class SmokeTest
         }
     }
 
+    /// <summary>
+    /// Diagnostic: verify the BoundArrayMethod thisArg / Promise non-iterable
+    /// reject-with-TypeError / Promise.then WrapException / Function.prototype
+    /// proto-walk / RangeError-for-huge-length cluster of #101 fixes by running
+    /// a curated set of previously-failing tests in-process and reporting outcomes.
+    /// </summary>
+    [Fact]
+    public void Diagnostic_ClusterFixes()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) return;
+        var tests = new[] {
+            // BoundArrayMethod thisArg fix (compiled-mode dynamic dispatch)
+            "test/built-ins/Array/prototype/map/15.4.4.19-5-10.js",
+            "test/built-ins/Array/prototype/map/15.4.4.19-5-11.js",
+            "test/built-ins/Array/prototype/every/15.4.4.16-5-10.js",
+            "test/built-ins/Array/prototype/every/15.4.4.16-5-11.js",
+            "test/built-ins/Array/prototype/forEach/15.4.4.18-5-10.js",
+            "test/built-ins/Array/prototype/some/15.4.4.17-5-10.js",
+            "test/built-ins/Array/prototype/filter/15.4.4.20-5-10.js",
+            // RangeError for huge length
+            "test/built-ins/Array/prototype/map/15.4.4.19-3-14.js",
+            "test/built-ins/Array/prototype/map/15.4.4.19-3-28.js",
+            "test/built-ins/Array/prototype/map/15.4.4.19-3-29.js",
+            // BigInt/Symbol descriptor rejection
+            "test/built-ins/Object/defineProperty/property-description-must-be-an-object-not-bigint.js",
+            "test/built-ins/Object/defineProperty/property-description-must-be-an-object-not-symbol.js",
+            // Function.prototype walk
+            "test/built-ins/Object/defineProperty/15.2.3.6-3-139-1.js",
+            // Promise non-iterable → TypeError
+            "test/built-ins/Promise/race/S25.4.4.3_A2.2_T1.js",
+            "test/built-ins/Promise/all/S25.4.4.1_A3.1_T1.js",
+            // Promise unwrap: rejection with TypeError instance preserved
+            "test/built-ins/Promise/prototype/catch/S25.4.5.1_A3.1_T2.js",
+            // Sparse-array iteration (cached length fix)
+            "test/built-ins/Array/prototype/every/15.4.4.16-7-5.js",
+            // Object.getOwnPropertyDescriptor identity fix (Object["X"] →
+            // same $TSFunction as Object.X via LookupBuiltInStaticMember)
+            "test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-14.js",
+            "test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-15.js",
+            "test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-17.js",
+            "test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-19.js",
+            "test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-22.js",
+            "test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-25.js",
+            // Sticky RegExp lastIndex reset on test() failure
+            "test/built-ins/RegExp/prototype/test/y-fail-lastindex.js",
+            "test/built-ins/RegExp/prototype/test/y-fail-return.js",
+            "test/built-ins/RegExp/prototype/test/y-init-lastindex.js",
+            // Promise.prototype.{then,catch,finally}.call(null|undefined) → TypeError
+            "test/built-ins/Promise/prototype/catch/this-value-non-object.js",
+            // catch invokes user-installed then per spec
+            "test/built-ins/Promise/prototype/catch/invokes-then.js",
+            "test/built-ins/Promise/prototype/catch/this-value-then-not-callable.js",
+            "test/built-ins/Promise/prototype/catch/this-value-then-throws.js",
+            "test/built-ins/Promise/prototype/catch/this-value-then-poisoned.js",
+            "test/built-ins/Promise/prototype/finally/this-value-non-object.js",
+            // then requires IsPromise(this)
+            "test/built-ins/Promise/prototype/then/context-check-on-entry.js",
+            "test/built-ins/Promise/prototype/then/S25.4.5.3_A2.1_T1.js",
+            // Promise.resolve/reject value-form requires this to be Object
+            "test/built-ins/Promise/resolve/ctx-non-object.js",
+            "test/built-ins/Promise/reject/ctx-non-object.js",
+            // Promise.all/race/allSettled/any value-form: same check
+            "test/built-ins/Promise/all/ctx-non-object.js",
+            "test/built-ins/Promise/race/ctx-non-object.js",
+            "test/built-ins/Promise/allSettled/ctx-non-object.js",
+            "test/built-ins/Promise/any/ctx-non-object.js",
+        };
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        int pass = 0, fail = 0;
+        foreach (var t in tests)
+        {
+            var path = Path.Combine(Test262Paths.TestDir(root), t.Substring("test/".Length));
+            if (!File.Exists(path)) { _output.WriteLine($"  MISSING {t}"); continue; }
+            var r = runner.RunOne(path, Test262ExecutionMode.Compiled);
+            var status = r.Outcome == Test262Outcome.Pass ? "PASS" : $"{r.Outcome}";
+            if (r.Outcome == Test262Outcome.Pass) pass++; else fail++;
+            _output.WriteLine($"  {status}: {t}");
+            if (r.Outcome != Test262Outcome.Pass && r.Message != null)
+                _output.WriteLine($"    msg: {r.Message.Substring(0, Math.Min(120, r.Message.Length))}");
+        }
+        _output.WriteLine($"\nSummary: {pass} pass / {fail} fail out of {tests.Length}");
+    }
+
+    /// <summary>
+    /// Diagnostic: scan ALL previously-failing Object.getOwnPropertyDescriptor
+    /// tests to count impact of the LookupBuiltInStaticMember fix.
+    /// </summary>
+    [Fact]
+    public void Diagnostic_GopdCluster()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) return;
+        var baselineFile = Path.Combine(Path.GetDirectoryName(typeof(SmokeTest).Assembly.Location)!,
+            "..", "..", "..", "baselines", "compiled.txt");
+        baselineFile = Path.GetFullPath(baselineFile);
+        if (!File.Exists(baselineFile)) return;
+        var allFails = File.ReadAllLines(baselineFile)
+            .Where(l => l.EndsWith(" Fail"))
+            .Select(l => l.Substring(0, l.Length - 5))
+            .Where(p => p.Contains("Object/getOwnPropertyDescriptor/"))
+            .ToList();
+        _output.WriteLine($"checking {allFails.Count} gOPD failing tests");
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        int pass = 0, stillFail = 0;
+        foreach (var rel in allFails)
+        {
+            var abs = Path.Combine(Test262Paths.TestDir(root), rel.Substring("test/".Length));
+            if (!File.Exists(abs)) continue;
+            var r = runner.RunOne(abs, Test262ExecutionMode.Compiled);
+            if (r.Outcome == Test262Outcome.Pass) pass++; else stillFail++;
+        }
+        _output.WriteLine($"Result: {pass} now pass, {stillFail} still fail");
+    }
+
+    /// <summary>
+    /// Diagnostic: scan a sample of currently-Passing tests to verify the
+    /// cluster fixes don't regress them.
+    /// </summary>
+    [Fact]
+    public void Diagnostic_NoRegressions()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) return;
+        var baselineFile = Path.Combine(Path.GetDirectoryName(typeof(SmokeTest).Assembly.Location)!,
+            "..", "..", "..", "baselines", "compiled.txt");
+        baselineFile = Path.GetFullPath(baselineFile);
+        if (!File.Exists(baselineFile))
+        {
+            _output.WriteLine($"baseline not found at {baselineFile}");
+            return;
+        }
+        // Sample: pick every Nth Pass test from the categories my fixes touched.
+        // Goal: ensure none regress to Fail/RuntimeError.
+        var allPasses = File.ReadAllLines(baselineFile)
+            .Where(l => l.EndsWith(" Pass"))
+            .Select(l => l.Substring(0, l.Length - 5))
+            .Where(p => p.Contains("Array/prototype/map/")
+                     || p.Contains("Array/prototype/filter/")
+                     || p.Contains("Array/prototype/forEach/")
+                     || p.Contains("Array/prototype/every/")
+                     || p.Contains("Array/prototype/some/")
+                     || p.Contains("Array/prototype/find/")
+                     || p.Contains("Array/prototype/flatMap/")
+                     || p.Contains("Object/defineProperty/")
+                     || p.Contains("Promise/race/")
+                     || p.Contains("Promise/all/")
+                     || p.Contains("Promise/any/")
+                     || p.Contains("Promise/prototype/"))
+            .ToList();
+        // Sample every 20th to keep this fast (~50-100 tests, ~30s).
+        var sample = allPasses.Where((_, i) => i % 20 == 0).ToList();
+        _output.WriteLine($"sampling {sample.Count} of {allPasses.Count} previously-passing tests");
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        int pass = 0, fail = 0;
+        var regressions = new List<string>();
+        foreach (var rel in sample)
+        {
+            var abs = Path.Combine(Test262Paths.TestDir(root), rel.Substring("test/".Length));
+            if (!File.Exists(abs)) continue;
+            var r = runner.RunOne(abs, Test262ExecutionMode.Compiled);
+            if (r.Outcome == Test262Outcome.Pass) pass++;
+            else { fail++; regressions.Add($"{r.Outcome}: {rel}"); }
+        }
+        _output.WriteLine($"Result: {pass} still pass, {fail} regressed");
+        foreach (var r in regressions.Take(20)) _output.WriteLine($"  {r}");
+        Assert.Equal(0, fail);
+    }
+
+    /// <summary>
+    /// Diagnostic: re-run ALL currently-baseline-failing tests in clusters my
+    /// recent fixes touched. Reports how many now pass vs still fail. Used in
+    /// lieu of full regen when xunit baseline write is acting up.
+    /// </summary>
+    [Fact]
+    public void Diagnostic_PostFixAudit()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) return;
+        var baselineFile = Path.Combine(Path.GetDirectoryName(typeof(SmokeTest).Assembly.Location)!,
+            "..", "..", "..", "baselines", "compiled.txt");
+        baselineFile = Path.GetFullPath(baselineFile);
+        if (!File.Exists(baselineFile)) return;
+
+        // Clusters touched by recent fixes (Array iterator thisArg, Promise
+        // statics/proto, RegExp sticky, Object defineProperty/gOPD).
+        bool InCluster(string p) =>
+            p.Contains("Array/prototype/map/") ||
+            p.Contains("Array/prototype/filter/") ||
+            p.Contains("Array/prototype/forEach/") ||
+            p.Contains("Array/prototype/every/") ||
+            p.Contains("Array/prototype/some/") ||
+            p.Contains("Array/prototype/find/") ||
+            p.Contains("Array/prototype/findIndex/") ||
+            p.Contains("Array/prototype/findLast/") ||
+            p.Contains("Array/prototype/findLastIndex/") ||
+            p.Contains("Array/prototype/flatMap/") ||
+            p.Contains("Promise/prototype/then/") ||
+            p.Contains("Promise/prototype/catch/") ||
+            p.Contains("Promise/prototype/finally/") ||
+            p.Contains("Promise/resolve/") ||
+            p.Contains("Promise/reject/") ||
+            p.Contains("Promise/all/") ||
+            p.Contains("Promise/race/") ||
+            p.Contains("Promise/allSettled/") ||
+            p.Contains("Promise/any/") ||
+            p.Contains("RegExp/prototype/test/") ||
+            p.Contains("Object/defineProperty/") ||
+            p.Contains("Object/getOwnPropertyDescriptor/") ||
+            p.Contains("Number/prototype/toExponential/");
+
+        var lines = File.ReadAllLines(baselineFile);
+        var failing = lines
+            .Where(l => l.EndsWith(" Fail") || l.EndsWith(" RuntimeError"))
+            .Select(l => l.Substring(0, l.LastIndexOf(' ')))
+            .Where(InCluster)
+            .ToList();
+        _output.WriteLine($"checking {failing.Count} baseline-failing tests across touched clusters");
+
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        int nowPass = 0, stillFail = 0;
+        var newPassesByCluster = new Dictionary<string, int>();
+        foreach (var rel in failing)
+        {
+            var abs = Path.Combine(Test262Paths.TestDir(root), rel.Substring("test/".Length));
+            if (!File.Exists(abs)) continue;
+            var r = runner.RunOne(abs, Test262ExecutionMode.Compiled);
+            if (r.Outcome == Test262Outcome.Pass)
+            {
+                nowPass++;
+                var cluster = GetClusterName(rel);
+                newPassesByCluster.TryGetValue(cluster, out var c);
+                newPassesByCluster[cluster] = c + 1;
+            }
+            else stillFail++;
+        }
+        var summary = new System.Text.StringBuilder();
+        summary.AppendLine($"Result: {nowPass} now pass, {stillFail} still fail");
+        foreach (var kv in newPassesByCluster.OrderByDescending(kv => kv.Value))
+            summary.AppendLine($"  +{kv.Value,3} {kv.Key}");
+        _output.WriteLine(summary.ToString());
+        File.WriteAllText(Path.Combine(Path.GetTempPath(), "post_fix_audit.txt"), summary.ToString());
+    }
+
+    private static string GetClusterName(string testPath)
+    {
+        // Extract the method-level cluster (e.g., "Array/prototype/map")
+        var parts = testPath.Split('/');
+        if (parts.Length >= 4 && parts[1] == "built-ins")
+        {
+            if (parts.Length >= 6 && parts[3] == "prototype")
+                return $"{parts[2]}/{parts[3]}/{parts[4]}";
+            return $"{parts[2]}/{parts[3]}";
+        }
+        return testPath;
+    }
+
+    /// <summary>
+    /// Diagnostic: focused subset audit. Re-runs only error-related baseline
+    /// failures in a single cluster (Promise/* / Error/* / Object/get*proto*)
+    /// to measure the impact of the native-error subclass prototype work
+    /// without paying the full ~12-min audit cost (which is currently
+    /// crashing testhost on memory pressure when the assembly load count
+    /// gets too high).
+    /// </summary>
+    [Fact]
+    public void Diagnostic_NativeErrorSubclassAudit()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) return;
+        var baselineFile = Path.Combine(Path.GetDirectoryName(typeof(SmokeTest).Assembly.Location)!,
+            "..", "..", "..", "baselines", "compiled.txt");
+        baselineFile = Path.GetFullPath(baselineFile);
+        if (!File.Exists(baselineFile)) return;
+
+        // Tests where Object.getPrototypeOf(error) === SubclassError.prototype
+        // checks or SubclassError.prototype property reads are the failure
+        // mode — Promise iter-* rejects and Error subclass usage.
+        bool InCluster(string p) =>
+            p.Contains("Promise/any/iter-") ||
+            p.Contains("Promise/all/iter-") ||
+            p.Contains("Promise/race/iter-") ||
+            p.Contains("Promise/allSettled/iter-") ||
+            p.Contains("Error/isError") ||
+            p.Contains("Error/proto") ||
+            p.Contains("String/prototype/indexOf/") ||
+            p.Contains("String/prototype/lastIndexOf/") ||
+            p.Contains("String/prototype/includes/") ||
+            p.Contains("String/prototype/split/") ||
+            p.Contains("TypeError") ||
+            p.Contains("RangeError") ||
+            p.Contains("ReferenceError") ||
+            p.Contains("SyntaxError") ||
+            p.Contains("URIError") ||
+            p.Contains("EvalError") ||
+            p.Contains("AggregateError");
+
+        var lines = File.ReadAllLines(baselineFile);
+        var failing = lines
+            .Where(l => l.EndsWith(" Fail") || l.EndsWith(" RuntimeError"))
+            .Select(l => l.Substring(0, l.LastIndexOf(' ')))
+            .Where(InCluster)
+            .ToList();
+        _output.WriteLine($"checking {failing.Count} baseline-failing tests");
+        if (failing.Count == 0) return;
+
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        int nowPass = 0, stillFail = 0;
+        var byCluster = new Dictionary<string, int>();
+        foreach (var rel in failing)
+        {
+            var abs = Path.Combine(Test262Paths.TestDir(root), rel.Substring("test/".Length));
+            if (!File.Exists(abs)) continue;
+            var r = runner.RunOne(abs, Test262ExecutionMode.Compiled);
+            if (r.Outcome == Test262Outcome.Pass)
+            {
+                nowPass++;
+                var cluster = GetClusterName(rel);
+                byCluster.TryGetValue(cluster, out var c);
+                byCluster[cluster] = c + 1;
+            }
+            else stillFail++;
+        }
+        var summary = new System.Text.StringBuilder();
+        summary.AppendLine($"Result: {nowPass} now pass, {stillFail} still fail");
+        foreach (var kv in byCluster.OrderByDescending(kv => kv.Value))
+            summary.AppendLine($"  +{kv.Value,3} {kv.Key}");
+        _output.WriteLine(summary.ToString());
+        File.WriteAllText(Path.Combine(Path.GetTempPath(), "native_error_audit.txt"), summary.ToString());
+    }
+
+    /// <summary>
+    /// Diagnostic: probe a small set of failing tests for their actual error
+    /// messages. Lets me see why iter-* Promise tests are failing without
+    /// running a full regen. Writes to /tmp/probe.txt.
+    /// </summary>
+    [Fact]
+    public void Diagnostic_ProbeFailingTests()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) return;
+        var probes = new[] {
+            "test/built-ins/Promise/any/iter-arg-is-undefined-reject.js",
+            "test/built-ins/Promise/any/iter-arg-is-null-reject.js",
+            "test/built-ins/Promise/any/iter-arg-is-false-reject.js",
+            "test/built-ins/Promise/any/iter-arg-is-string-resolve.js",
+            "test/built-ins/Promise/allSettled/iter-arg-is-undefined-reject.js",
+            "test/built-ins/String/prototype/split/separator-null.js",
+        };
+        var sb = new System.Text.StringBuilder();
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        foreach (var rel in probes)
+        {
+            var abs = Path.Combine(Test262Paths.TestDir(root), rel.Substring("test/".Length));
+            if (!File.Exists(abs)) { sb.AppendLine($"{rel} -- MISSING"); continue; }
+            var r = runner.RunOne(abs, Test262ExecutionMode.Compiled);
+            sb.AppendLine($"{rel}: {r.Outcome}");
+            if (!string.IsNullOrEmpty(r.Message)) sb.AppendLine($"  msg: {r.Message}");
+        }
+        _output.WriteLine(sb.ToString());
+        File.WriteAllText(Path.Combine(Path.GetTempPath(), "probe.txt"), sb.ToString());
+    }
+
+    /// <summary>
+    /// Diagnostic: invoke BatchedSubprocessRunner directly with a 600-test
+    /// sample. Compares wall-clock against the direct-shell experiment
+    /// (92s for 600 tests, 391 tests/min) to isolate whether the xunit
+    /// orchestrator path adds significant overhead vs raw subprocess
+    /// pipe IPC.
+    /// </summary>
+    [Fact]
+    public void Diagnostic_BatchedRunnerThroughput()
+    {
+        var root = Test262Paths.TryFindRoot();
+        if (root is null) return;
+        var testDir = Test262Paths.TestDir(root);
+        // Throughput experiment: take a 1500-test mix matching the proportions
+        // of the full subset.json — half Object (~3411/11K), then Array, Promise,
+        // RegExp, String, Math, others. This isolates whether the regen's
+        // never-completes behavior is just N * per-test or worse-than-linear.
+        var paths = new List<string>();
+        var sample = new (string dir, int count)[]
+        {
+            ("Array", 400),
+            ("Object", 450),
+            ("RegExp", 250),
+            ("Promise", 90),
+            ("String", 160),
+            ("Math", 50),
+            ("Number", 50),
+            ("Error", 25),
+            ("JSON", 20),
+            ("Boolean", 5),
+        };
+        foreach (var (dir, count) in sample)
+        {
+            paths.AddRange(Directory.EnumerateFiles(Path.Combine(testDir, "built-ins", dir), "*.js", SearchOption.AllDirectories)
+                .Where(f => !f.EndsWith("FIXTURE.js", StringComparison.Ordinal))
+                .Take(count));
+        }
+        _output.WriteLine($"Running {paths.Count} tests through BatchedSubprocessRunner...");
+
+        var workerExe = Path.GetFullPath(Path.Combine(
+            Path.GetDirectoryName(typeof(SmokeTest).Assembly.Location)!,
+            "..", "..", "..", "..", "SharpTS.Test262.Worker", "bin", "Debug", "net10.0",
+            "SharpTS.Test262.Worker.dll"));
+        if (!File.Exists(workerExe))
+        {
+            _output.WriteLine($"Worker DLL not found: {workerExe}");
+            return;
+        }
+
+        var skipFeatures = Path.GetFullPath(Path.Combine(
+            Path.GetDirectoryName(typeof(SmokeTest).Assembly.Location)!,
+            "..", "..", "..", "config", "skip-features.txt"));
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var runner = new BatchedSubprocessRunner(
+            root,
+            Test262ExecutionMode.Compiled,
+            TimeSpan.FromSeconds(15),
+            File.Exists(skipFeatures) ? skipFeatures : null,
+            workerExe);
+        var results = runner.RunAll(paths);
+        sw.Stop();
+
+        var pass = results.Values.Count(b => b == "Pass");
+        var fail = results.Values.Count(b => b != "Pass" && !b.StartsWith("Skipped"));
+        var skip = results.Values.Count(b => b.StartsWith("Skipped"));
+        _output.WriteLine($"Elapsed: {sw.Elapsed.TotalSeconds:F1}s for {paths.Count} tests");
+        _output.WriteLine($"Throughput: {paths.Count / sw.Elapsed.TotalMinutes:F0} tests/min");
+        _output.WriteLine($"Pass: {pass}, Fail: {fail}, Skip: {skip}");
+        File.WriteAllText(Path.Combine(Path.GetTempPath(), "batched_throughput.txt"),
+            $"{sw.Elapsed.TotalSeconds:F1}s for {paths.Count} tests = {paths.Count / sw.Elapsed.TotalMinutes:F0} tests/min\n" +
+            $"Pass: {pass}, Fail: {fail}, Skip: {skip}\n");
+    }
+
     [Fact(Skip = "diagnostic only — kept for repro of the issue#101 cross-test prototype leak")]
     public void Diagnostic_SpeciesCtor()
     {

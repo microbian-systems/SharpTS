@@ -1353,7 +1353,10 @@ public partial class RuntimeEmitter
             else if (runtimeMethod.ReturnType == _types.Boolean)
                 il.Emit(OpCodes.Box, _types.Boolean);
             else if (runtimeMethod.ReturnType == _types.Void)
-                il.Emit(OpCodes.Ldnull);
+                // ECMA-262: void-returning prototype methods (forEach) return
+                // undefined, not null. Push $Undefined.Instance for spec-aligned
+                // `arr.forEach(...) === undefined` strict-equality tests.
+                il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
             // Object/String/ListOfObject/etc. are already object-compatible.
         }
 
@@ -1412,6 +1415,70 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, runtimeMethod);
             EmitReturnBoxing(runtimeMethod);
 
+            il.Emit(OpCodes.Br, endLabel);
+            il.MarkLabel(skipLabel);
+        }
+
+        // Case: callback-taking method (map/filter/forEach/find/findIndex/some/every/flatMap/...).
+        // The runtime helper takes (list, callback), but the spec also accepts an
+        // optional thisArg as args[1] which must be plumbed via the
+        // `_currentCallbackThisArg` thread-static — same mechanism the direct
+        // ArrayEmitter path uses via EmitCallbackAndStashThisArg. Without this,
+        // `Array.prototype.map.call(obj, cb, thisArg)` and (more importantly)
+        // dynamic dispatch where the receiver type is unknown silently drop
+        // thisArg and the callback's `this` defaults to undefined.
+        void EmitCallbackCase(string methodName, MethodBuilder runtimeMethod)
+        {
+            var skipLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, methodNameField);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, skipLabel);
+
+            // Save prior thread-static value so nested forEach/map calls don't
+            // see ours leak out.
+            var savedThisArg = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldsfld, runtime.CurrentCallbackThisArgField);
+            il.Emit(OpCodes.Stloc, savedThisArg);
+
+            // Stash args[1] into _currentCallbackThisArg; default to $Undefined
+            // when args.Length < 2 so strict-mode callbacks see `this===undefined`.
+            var haveThisArgLabel = il.DefineLabel();
+            var afterStashLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Bge, haveThisArgLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Br, afterStashLabel);
+            il.MarkLabel(haveThisArgLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.MarkLabel(afterStashLabel);
+            il.Emit(OpCodes.Stsfld, runtime.CurrentCallbackThisArgField);
+
+            // Wrap the call in try/finally so the thread-static is restored
+            // even if the callback throws (Test262Error etc).
+            il.BeginExceptionBlock();
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, listField);
+            EmitArgZeroOrNull();
+            il.Emit(OpCodes.Call, runtimeMethod);
+            EmitReturnBoxing(runtimeMethod);
+
+            // Result needs to leave the protected region; stash to local.
+            var resultLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            il.BeginFinallyBlock();
+            il.Emit(OpCodes.Ldloc, savedThisArg);
+            il.Emit(OpCodes.Stsfld, runtime.CurrentCallbackThisArgField);
+            il.EndExceptionBlock();
+
+            il.Emit(OpCodes.Ldloc, resultLocal);
             il.Emit(OpCodes.Br, endLabel);
             il.MarkLabel(skipLabel);
         }
@@ -1553,19 +1620,21 @@ public partial class RuntimeEmitter
         EmitSingleArgCase("includes", runtime.ArrayIncludes);
         EmitArgsArrayCase("concat", runtime.ArrayConcat);
         EmitSingleArgCase("join", runtime.ArrayJoin);
-        EmitSingleArgCase("map", runtime.ArrayMap);
-        EmitSingleArgCase("filter", runtime.ArrayFilter);
-        EmitSingleArgCase("forEach", runtime.ArrayForEach);
-        EmitSingleArgCase("find", runtime.ArrayFind);
-        EmitSingleArgCase("findIndex", runtime.ArrayFindIndex);
-        EmitSingleArgCase("findLast", runtime.ArrayFindLast);
-        EmitSingleArgCase("findLastIndex", runtime.ArrayFindLastIndex);
-        EmitSingleArgCase("some", runtime.ArraySome);
-        EmitSingleArgCase("every", runtime.ArrayEvery);
+        // Callback methods accept (callback, thisArg). thisArg is plumbed via
+        // the `_currentCallbackThisArg` thread-static; see EmitCallbackCase.
+        EmitCallbackCase("map", runtime.ArrayMap);
+        EmitCallbackCase("filter", runtime.ArrayFilter);
+        EmitCallbackCase("forEach", runtime.ArrayForEach);
+        EmitCallbackCase("find", runtime.ArrayFind);
+        EmitCallbackCase("findIndex", runtime.ArrayFindIndex);
+        EmitCallbackCase("findLast", runtime.ArrayFindLast);
+        EmitCallbackCase("findLastIndex", runtime.ArrayFindLastIndex);
+        EmitCallbackCase("some", runtime.ArraySome);
+        EmitCallbackCase("every", runtime.ArrayEvery);
         EmitSingleArgCase("sort", runtime.ArraySort);
         EmitSingleArgCase("toSorted", runtime.ArrayToSorted);
         EmitSingleArgCase("flat", runtime.ArrayFlat);
-        EmitSingleArgCase("flatMap", runtime.ArrayFlatMap);
+        EmitCallbackCase("flatMap", runtime.ArrayFlatMap);
         EmitSingleArgCase("at", runtime.ArrayAt);
 
         // object[]-args methods (runtime helper takes the whole object[] args).

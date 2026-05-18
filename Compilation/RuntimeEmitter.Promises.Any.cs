@@ -313,7 +313,7 @@ public partial class RuntimeEmitter
     /// Emits the MoveNext body for PromiseAny state machine.
     /// Creates state, fires ContinueWith per element, awaits Tcs.Task.
     /// </summary>
-    private void EmitPromiseAnyMoveNext(PromiseAnyStateMachine sm, AnyStateClass anyState, MethodBuilder handleAnyCompletion)
+    private void EmitPromiseAnyMoveNext(PromiseAnyStateMachine sm, AnyStateClass anyState, MethodBuilder handleAnyCompletion, EmittedRuntime runtime)
     {
         var il = sm.MoveNextMethod.GetILGenerator();
         var listType = _types.ListOfObject;
@@ -336,6 +336,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, state0Label);
 
         // ========== STATE -1: Initial execution ==========
+
+        // ECMA-262 §27.2.4.2 Promise.any: non-iterable → reject with TypeError.
+        var iterableOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.IterableField);
+        il.Emit(OpCodes.Isinst, listType);
+        il.Emit(OpCodes.Brtrue, iterableOkLabel);
+        il.Emit(OpCodes.Ldstr, "Promise.any argument is not iterable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(iterableOkLabel);
 
         // Cast iterable to List<object?>
         var listLocal = il.DeclareLocal(listType);

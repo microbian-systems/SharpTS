@@ -60,7 +60,7 @@ public sealed class SetEmitter : ITypeEmitterStrategy
             case "forEach":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.SetForEach);
-                il.Emit(OpCodes.Ldnull); // forEach returns undefined
+                il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
                 return true;
 
             // ES2025 Set Operations

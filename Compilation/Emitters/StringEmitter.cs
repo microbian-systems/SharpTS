@@ -361,7 +361,10 @@ public sealed class StringEmitter : ITypeEmitterStrategy
         }
         else
         {
-            il.Emit(OpCodes.Ldstr, "");
+            // ECMA-262 22.1.3.21 step 4: missing separator is `undefined`,
+            // not `""`. The helper's undefined-arm returns [str], so push
+            // the $Undefined singleton.
+            il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
         }
         il.Emit(OpCodes.Call, ctx.Runtime!.StringSplitRegExp);
 

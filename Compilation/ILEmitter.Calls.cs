@@ -612,6 +612,33 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Dup);
         IL.Emit(OpCodes.Stloc, receiverLocal);
 
+        // ECMA-262: methods that allocate a new array via ArraySpeciesCreate(O, len)
+        // must throw RangeError if len > 2^32 - 1 (ArrayCreate length check).
+        // Done BEFORE stashing thread-statics so a throw doesn't leak state.
+        // NaN comparisons via Ble_Un fall through (no throw) for non-coercible
+        // lengths — those get clamped to 0 / 1M by the materializer below.
+        bool createsNewArrayPre = methodGet.Name.Lexeme is "map" or "filter" or "slice" or "concat"
+            or "splice" or "toSpliced" or "with" or "flat" or "flatMap"
+            or "toReversed" or "toSorted";
+        if (createsNewArrayPre)
+        {
+            var lengthOkLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+            IL.Emit(OpCodes.Ldstr, "length");
+            IL.Emit(OpCodes.Call, runtime.GetProperty);
+            IL.Emit(OpCodes.Call, runtime.ToNumber);
+            IL.Emit(OpCodes.Ldc_R8, 4294967295.0); // 2^32 - 1
+            IL.Emit(OpCodes.Ble_Un, lengthOkLabel);
+            // Pop the duplicated receiver since we're going to throw and skip
+            // the materialize call that would have consumed it.
+            IL.Emit(OpCodes.Pop);
+            IL.Emit(OpCodes.Ldstr, "Invalid array length");
+            IL.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+            IL.Emit(OpCodes.Call, runtime.CreateException);
+            IL.Emit(OpCodes.Throw);
+            IL.MarkLabel(lengthOkLabel);
+        }
+
         var prevReceiverLocal = IL.DeclareLocal(_ctx.Types.Object);
         IL.Emit(OpCodes.Ldsfld, runtime.CurrentArrayLikeReceiverField);
         IL.Emit(OpCodes.Stloc, prevReceiverLocal);
@@ -812,7 +839,10 @@ public partial class ILEmitter
         // because the double-box yielded a different object identity).
         var rt = runtimeMethod.ReturnType;
         if (rt == typeof(void))
-            IL.Emit(OpCodes.Ldnull);
+            // Spec: void-returning prototype methods (forEach) return undefined.
+            // Push $Undefined.Instance, not C# null — test262 call-with-boolean
+            // tests `Array.prototype.forEach.call(true, () => {}) === undefined`.
+            IL.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         else if (rt == _ctx.Types.Double)
             IL.Emit(OpCodes.Box, _ctx.Types.Double);
         else if (rt == _ctx.Types.Boolean)

@@ -269,4 +269,112 @@ public partial class RuntimeEmitter
 
         return method;
     }
+
+    /// <summary>
+    /// Pre-declares the populate-method shells for each NativeError subclass
+    /// prototype. Same idempotent pattern as Error.prototype: each method
+    /// fills the dict with constructor/name/message + non-enumerable PDS
+    /// descriptors, and chains [[Prototype]] to %Error.prototype%.
+    /// </summary>
+    private void DefineNativeErrorPrototypePopulateShells(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        MethodBuilder DefineShell(string name) => typeBuilder.DefineMethod(
+            name, MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void, Type.EmptyTypes);
+        runtime.TypeErrorPrototypePopulateMethod      = DefineShell("_TypeErrorPrototypePopulate");
+        runtime.RangeErrorPrototypePopulateMethod     = DefineShell("_RangeErrorPrototypePopulate");
+        runtime.ReferenceErrorPrototypePopulateMethod = DefineShell("_ReferenceErrorPrototypePopulate");
+        runtime.SyntaxErrorPrototypePopulateMethod    = DefineShell("_SyntaxErrorPrototypePopulate");
+        runtime.URIErrorPrototypePopulateMethod       = DefineShell("_URIErrorPrototypePopulate");
+        runtime.EvalErrorPrototypePopulateMethod      = DefineShell("_EvalErrorPrototypePopulate");
+        runtime.AggregateErrorPrototypePopulateMethod = DefineShell("_AggregateErrorPrototypePopulate");
+    }
+
+    private void EmitNativeErrorPrototypePopulates(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        EmitOneNativeErrorPopulate(runtime, runtime.TypeErrorPrototypePopulateMethod,
+            runtime.TypeErrorPrototypeField, runtime.TSTypeErrorType, "TypeError");
+        EmitOneNativeErrorPopulate(runtime, runtime.RangeErrorPrototypePopulateMethod,
+            runtime.RangeErrorPrototypeField, runtime.TSRangeErrorType, "RangeError");
+        EmitOneNativeErrorPopulate(runtime, runtime.ReferenceErrorPrototypePopulateMethod,
+            runtime.ReferenceErrorPrototypeField, runtime.TSReferenceErrorType, "ReferenceError");
+        EmitOneNativeErrorPopulate(runtime, runtime.SyntaxErrorPrototypePopulateMethod,
+            runtime.SyntaxErrorPrototypeField, runtime.TSSyntaxErrorType, "SyntaxError");
+        EmitOneNativeErrorPopulate(runtime, runtime.URIErrorPrototypePopulateMethod,
+            runtime.URIErrorPrototypeField, runtime.TSURIErrorType, "URIError");
+        EmitOneNativeErrorPopulate(runtime, runtime.EvalErrorPrototypePopulateMethod,
+            runtime.EvalErrorPrototypeField, runtime.TSEvalErrorType, "EvalError");
+        EmitOneNativeErrorPopulate(runtime, runtime.AggregateErrorPrototypePopulateMethod,
+            runtime.AggregateErrorPrototypeField, runtime.TSAggregateErrorType, "AggregateError");
+    }
+
+    private void EmitOneNativeErrorPopulate(EmittedRuntime runtime, MethodBuilder method,
+        FieldBuilder protoField, Type ctorType, string errorName)
+    {
+        var il = ((MethodBuilder)method).GetILGenerator();
+        var setItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item",
+            _types.String, _types.Object);
+
+        // Idempotent guard — Count > 0 means already populated.
+        var doFillLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, protoField);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.DictionaryStringObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, doFillLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(doFillLabel);
+
+        // constructor = typeof(<ctorType>)
+        il.Emit(OpCodes.Ldsfld, protoField);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Ldtoken, ctorType);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Callvirt, setItem);
+
+        // name = "<errorName>" and message = "".
+        il.Emit(OpCodes.Ldsfld, protoField);
+        il.Emit(OpCodes.Ldstr, "name");
+        il.Emit(OpCodes.Ldstr, errorName);
+        il.Emit(OpCodes.Callvirt, setItem);
+        il.Emit(OpCodes.Ldsfld, protoField);
+        il.Emit(OpCodes.Ldstr, "message");
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Callvirt, setItem);
+
+        // Install non-enumerable PDS descriptors for constructor/name/message
+        // (ECMA-262 §17 — built-in data properties are W:T, E:F, C:T).
+        var descLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        void InstallNonEnum(string jsName, System.Action emitValue)
+        {
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, descLocal);
+            il.Emit(OpCodes.Ldloc, descLocal);
+            emitValue();
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldloc, descLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetSetMethod()!);
+            il.Emit(OpCodes.Ldsfld, protoField);
+            il.Emit(OpCodes.Ldstr, jsName);
+            il.Emit(OpCodes.Ldloc, descLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+        }
+        InstallNonEnum("constructor", () =>
+        {
+            il.Emit(OpCodes.Ldtoken, ctorType);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        });
+        InstallNonEnum("name", () => il.Emit(OpCodes.Ldstr, errorName));
+        InstallNonEnum("message", () => il.Emit(OpCodes.Ldstr, ""));
+
+        // Per ECMA-262 §20.5.6.4 the subclass prototype's [[Prototype]] is
+        // %Error.prototype% (not %Object.prototype%). Eagerly ensure Error
+        // proto is populated so subsequent walks see its slots.
+        il.Emit(OpCodes.Call, runtime.ErrorPrototypePopulateMethod);
+        il.Emit(OpCodes.Ldsfld, protoField);
+        il.Emit(OpCodes.Ldsfld, runtime.ErrorPrototypeField);
+        il.Emit(OpCodes.Call, runtime.PDSSetPrototype);
+
+        il.Emit(OpCodes.Ret);
+    }
 }

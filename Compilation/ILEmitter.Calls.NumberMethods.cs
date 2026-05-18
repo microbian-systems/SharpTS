@@ -147,6 +147,9 @@ public partial class ILEmitter
                 break;
 
             case "toExponential":
+                // 0-arg → JS `undefined` (shortest-form branch). Push
+                // UndefinedInstance, not Ldnull (null coerces to 0). Same
+                // distinction as the typed-double dispatch site above.
                 if (arguments.Count > 0)
                 {
                     EmitExpression(arguments[0]);
@@ -154,7 +157,7 @@ public partial class ILEmitter
                 }
                 else
                 {
-                    IL.Emit(OpCodes.Ldnull);
+                    IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.UndefinedInstance);
                 }
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.NumberToExponential);
                 break;

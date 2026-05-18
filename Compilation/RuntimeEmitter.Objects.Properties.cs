@@ -1716,23 +1716,32 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldsfld, runtime.StringPrototypeField);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notStringLabel);
-            // typeof($Error) and its subclasses → return Error.prototype singleton
-            // so `Error.prototype.toString.call(non-error)` hits the brand-checking
-            // helper instead of routing through generic class reflection on $Error.
-            // IsAssignableFrom would be ideal (covers TypeError/RangeError/etc.) but
-            // requires runtime introspection on the Type token — emitting Bne_Un
-            // against TSErrorType handles the base Error case; subclasses still
-            // fall through to PDS / class reflection (acceptable: tests in scope
-            // hit `Error.prototype` only).
-            var notErrorLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldtoken, runtime.TSErrorType);
-            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
-            il.Emit(OpCodes.Bne_Un, notErrorLabel);
-            il.Emit(OpCodes.Call, runtime.ErrorPrototypePopulateMethod);
-            il.Emit(OpCodes.Ldsfld, runtime.ErrorPrototypeField);
-            il.Emit(OpCodes.Ret);
-            il.MarkLabel(notErrorLabel);
+            // typeof($Error) and its native-error subclasses → return the
+            // matching prototype singleton. Each subclass has a *distinct*
+            // prototype object per ECMA-262 §20.5.6.4 (TypeError.prototype !==
+            // Error.prototype, etc.). The shell helpers populate constructor/
+            // name/message lazily and wire [[Prototype]] to Error.prototype.
+            void EmitErrorTypeBranch(Type ctorType, MethodBuilder populate, FieldBuilder protoField)
+            {
+                var notMatch = il.DefineLabel();
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldtoken, ctorType);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+                il.Emit(OpCodes.Bne_Un, notMatch);
+                il.Emit(OpCodes.Call, populate);
+                il.Emit(OpCodes.Ldsfld, protoField);
+                il.Emit(OpCodes.Ret);
+                il.MarkLabel(notMatch);
+            }
+            EmitErrorTypeBranch(runtime.TSTypeErrorType,      runtime.TypeErrorPrototypePopulateMethod,      runtime.TypeErrorPrototypeField);
+            EmitErrorTypeBranch(runtime.TSRangeErrorType,     runtime.RangeErrorPrototypePopulateMethod,     runtime.RangeErrorPrototypeField);
+            EmitErrorTypeBranch(runtime.TSReferenceErrorType, runtime.ReferenceErrorPrototypePopulateMethod, runtime.ReferenceErrorPrototypeField);
+            EmitErrorTypeBranch(runtime.TSSyntaxErrorType,    runtime.SyntaxErrorPrototypePopulateMethod,    runtime.SyntaxErrorPrototypeField);
+            EmitErrorTypeBranch(runtime.TSURIErrorType,       runtime.URIErrorPrototypePopulateMethod,       runtime.URIErrorPrototypeField);
+            EmitErrorTypeBranch(runtime.TSEvalErrorType,      runtime.EvalErrorPrototypePopulateMethod,      runtime.EvalErrorPrototypeField);
+            EmitErrorTypeBranch(runtime.TSAggregateErrorType, runtime.AggregateErrorPrototypePopulateMethod, runtime.AggregateErrorPrototypeField);
+            // Base Error last (its Type token is distinct from the subclass tokens).
+            EmitErrorTypeBranch(runtime.TSErrorType, runtime.ErrorPrototypePopulateMethod, runtime.ErrorPrototypeField);
 
             // typeof($TSFunction) → return Function.prototype singleton.
             // Required so `Function.prototype.call.bind(...)` (test262

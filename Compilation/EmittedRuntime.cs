@@ -441,6 +441,21 @@ public class EmittedRuntime
     public FieldBuilder ErrorPrototypeField { get; set; } = null!;
     /// <summary>Idempotent populate for <see cref="ErrorPrototypeField"/>.</summary>
     public MethodBuilder ErrorPrototypePopulateMethod { get; set; } = null!;
+    /// <summary>TypeError.prototype singleton dict. Per ECMA-262 §20.5.6.4 each NativeError prototype is a distinct object whose [[Prototype]] is Error.prototype, with own `constructor` / `name` / `message` slots. Lazy-populated.</summary>
+    public FieldBuilder TypeErrorPrototypeField { get; set; } = null!;
+    public MethodBuilder TypeErrorPrototypePopulateMethod { get; set; } = null!;
+    public FieldBuilder RangeErrorPrototypeField { get; set; } = null!;
+    public MethodBuilder RangeErrorPrototypePopulateMethod { get; set; } = null!;
+    public FieldBuilder ReferenceErrorPrototypeField { get; set; } = null!;
+    public MethodBuilder ReferenceErrorPrototypePopulateMethod { get; set; } = null!;
+    public FieldBuilder SyntaxErrorPrototypeField { get; set; } = null!;
+    public MethodBuilder SyntaxErrorPrototypePopulateMethod { get; set; } = null!;
+    public FieldBuilder URIErrorPrototypeField { get; set; } = null!;
+    public MethodBuilder URIErrorPrototypePopulateMethod { get; set; } = null!;
+    public FieldBuilder EvalErrorPrototypeField { get; set; } = null!;
+    public MethodBuilder EvalErrorPrototypePopulateMethod { get; set; } = null!;
+    public FieldBuilder AggregateErrorPrototypeField { get; set; } = null!;
+    public MethodBuilder AggregateErrorPrototypePopulateMethod { get; set; } = null!;
     /// <summary>$Runtime.ErrorToStringSpec(this) — ECMA-262 20.5.3.4 Error.prototype.toString. Throws TypeError on non-object receiver; otherwise reads name/message via Get and returns the formatted string.</summary>
     public MethodBuilder ErrorToStringSpec { get; set; } = null!;
 
@@ -736,6 +751,17 @@ public class EmittedRuntime
     // Promise support
     public MethodBuilder PromiseResolve { get; set; } = null!;
     public MethodBuilder PromiseReject { get; set; } = null!;
+    // Value-form `Promise.resolve` / `Promise.reject` wrappers that validate
+    // `this` is Object per ECMA-262 §27.2.5.1 step 2. Used by the $TSFunction
+    // value-form path so `let r = Promise.resolve; r.call(undefined, x)` throws.
+    public MethodBuilder PromiseResolveStatic { get; set; } = null!;
+    public MethodBuilder PromiseRejectStatic { get; set; } = null!;
+    // Same pattern for all/race/allSettled/any — value-form invocation must
+    // validate `this` is Object before delegating to the iteration helper.
+    public MethodBuilder PromiseAllStatic { get; set; } = null!;
+    public MethodBuilder PromiseRaceStatic { get; set; } = null!;
+    public MethodBuilder PromiseAllSettledStatic { get; set; } = null!;
+    public MethodBuilder PromiseAnyStatic { get; set; } = null!;
     public MethodBuilder PromiseAll { get; set; } = null!;
     public MethodBuilder PromiseRace { get; set; } = null!;
     public MethodBuilder PromiseThen { get; set; } = null!;

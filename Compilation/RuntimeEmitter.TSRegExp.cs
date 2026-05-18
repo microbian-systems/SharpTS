@@ -741,12 +741,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, inputLocal);
         il.MarkLabel(inputAssignedLabel);
 
-        // if (_global) goto globalLabel
+        // if (_global || _sticky) goto globalLabel — sticky shares lastIndex
+        // semantics with global per ECMA-262 §22.2.5.2.2 step 8.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpGlobalField);
         il.Emit(OpCodes.Brtrue, globalLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsRegExpStickyField);
+        il.Emit(OpCodes.Brtrue, globalLabel);
 
-        // Non-global: return _regex.IsMatch(input)
+        // Non-global, non-sticky: return _regex.IsMatch(input)
         il.MarkLabel(notGlobalLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpRegexField);
@@ -754,7 +758,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, typeof(Regex).GetMethod("IsMatch", [_types.String])!);
         il.Emit(OpCodes.Ret);
 
-        // Global path
+        // Global / sticky path: uses lastIndex.
         il.MarkLabel(globalLabel);
 
         // if (LastIndex > input.Length) { LastIndex = 0; return false; }
@@ -800,8 +804,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
 
-        // Match found: LastIndex = match.Index + match.Length; return true
+        // Match found path. If sticky requires match.Index == startIndex
+        // (already-clamped LastIndex). If not, treat as no-match per
+        // ECMA-262 §22.2.5.2.2 (sticky doesn't forward-scan).
         il.MarkLabel(matchFoundLabel);
+        var matchAcceptedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsRegExpStickyField);
+        il.Emit(OpCodes.Brfalse, matchAcceptedLabel);
+        il.Emit(OpCodes.Ldloc, matchLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Capture).GetProperty("Index")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, startIndexLocal);
+        il.Emit(OpCodes.Beq, matchAcceptedLabel);
+        // Sticky mismatch — reset LastIndex and return false.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, _tsRegExpLastIndexField);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(matchAcceptedLabel);
+        // Set LastIndex = match.Index + match.Length; return true
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, matchLocal);
         il.Emit(OpCodes.Callvirt, typeof(Capture).GetProperty("Index")!.GetGetMethod()!);

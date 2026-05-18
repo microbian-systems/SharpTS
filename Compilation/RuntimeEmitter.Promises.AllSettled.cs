@@ -372,7 +372,7 @@ public partial class RuntimeEmitter
     /// Emits the MoveNext body for PromiseAllSettled state machine.
     /// Maps elements to ProcessElementSettled helper, uses WhenAll pattern.
     /// </summary>
-    private void EmitPromiseAllSettledMoveNext(PromiseAllSettledStateMachine sm, MethodBuilder processElementSettled)
+    private void EmitPromiseAllSettledMoveNext(PromiseAllSettledStateMachine sm, MethodBuilder processElementSettled, EmittedRuntime runtime)
     {
         var il = sm.MoveNextMethod.GetILGenerator();
         var listType = typeof(List<object?>);
@@ -397,6 +397,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, state0Label);
 
         // ========== STATE -1: Initial execution ==========
+
+        // ECMA-262 §27.2.4.3 Promise.allSettled: non-iterable → reject with TypeError.
+        var iterableOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.IterableField);
+        il.Emit(OpCodes.Isinst, listType);
+        il.Emit(OpCodes.Brtrue, iterableOkLabel);
+        il.Emit(OpCodes.Ldstr, "Promise.allSettled argument is not iterable");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(iterableOkLabel);
 
         // Cast iterable to List<object?>
         var listLocal = il.DeclareLocal(listType);

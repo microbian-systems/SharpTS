@@ -66,7 +66,7 @@ public sealed class MapEmitter : ITypeEmitterStrategy
             case "forEach":
                 EmitSingleArgOrNull(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.MapForEach);
-                il.Emit(OpCodes.Ldnull); // forEach returns undefined
+                il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
                 return true;
 
             default:

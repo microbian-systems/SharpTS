@@ -117,11 +117,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
         il.Emit(OpCodes.Brtrue, tsFunctionIdxLabel);
 
+        // System.Type indexed get: route through $Runtime.GetProperty so the
+        // Type branch (LookupBuiltInStaticMember + per-type handlers) fires —
+        // matches the syntactic `Object.assign` dispatch identity. Without
+        // this, `Object["assign"]` falls through to GetFieldsProperty which
+        // doesn't recognize built-in static-method names.
+        var typeIdxGetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Brtrue, typeIdxGetLabel);
+
         // Class instance — any non-Symbol key coerces to a property-key string
         // via Stringify (ECMA-262 §7.1.19). Earlier branches already split out
         // arrays / typed-arrays / dicts / $Object / $TSFunction; whatever is
         // left is a class instance whose fields are string-keyed.
         il.Emit(OpCodes.Br, classInstanceLabel);
+
+        il.MarkLabel(typeIdxGetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Ret);
 
         // Fallthrough: return null
         il.MarkLabel(nullLabel);

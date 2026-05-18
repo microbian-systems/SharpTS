@@ -19,13 +19,17 @@ public static class ArrayBuiltIns
             // specLength when (a) the spec mandates a value other than
             // MinArity, AND (b) MinArity isn't already that value.
             .MethodV2("slice", 0, 2, specLength: 2, SliceV2)
-            .MethodV2("map", 1, MapV2)
-            .MethodV2("filter", 1, FilterV2)
-            .MethodV2("forEach", 1, ForEachV2)
-            .MethodV2("find", 1, FindV2)
-            .MethodV2("findIndex", 1, FindIndexV2)
-            .MethodV2("some", 1, SomeV2)
-            .MethodV2("every", 1, EveryV2)
+            // Callback-taking methods accept (callback, thisArg) per ECMA-262
+            // §23.1.3. thisArg is forwarded as the callback's `this`.
+            // CallbackIterator.Create reads args[1] and BindThis-es a
+            // SharpTSFunction callback when present.
+            .MethodV2("map", 1, 2, specLength: 1, MapV2)
+            .MethodV2("filter", 1, 2, specLength: 1, FilterV2)
+            .MethodV2("forEach", 1, 2, specLength: 1, ForEachV2)
+            .MethodV2("find", 1, 2, specLength: 1, FindV2)
+            .MethodV2("findIndex", 1, 2, specLength: 1, FindIndexV2)
+            .MethodV2("some", 1, 2, specLength: 1, SomeV2)
+            .MethodV2("every", 1, 2, specLength: 1, EveryV2)
             .MethodV2("reduce", 1, 2, ReduceV2)
             .MethodV2("reduceRight", 1, 2, ReduceRightV2)
             .MethodV2("includes", 1, IncludesV2)
@@ -36,13 +40,13 @@ public static class ArrayBuiltIns
             .MethodV2("concat", 0, int.MaxValue, specLength: 1, ConcatV2)
             .MethodV2("reverse", 0, ReverseV2)
             .MethodV2("flat", 0, 1, FlatV2)
-            .MethodV2("flatMap", 1, FlatMapV2)
+            .MethodV2("flatMap", 1, 2, specLength: 1, FlatMapV2)
             .MethodV2("sort", 0, 1, specLength: 1, SortV2)
             .MethodV2("toSorted", 0, 1, specLength: 1, ToSortedV2)
             .MethodV2("splice", 0, int.MaxValue, specLength: 2, SpliceV2)
             .MethodV2("toSpliced", 0, int.MaxValue, specLength: 2, ToSplicedV2)
-            .MethodV2("findLast", 1, FindLastV2)
-            .MethodV2("findLastIndex", 1, FindLastIndexV2)
+            .MethodV2("findLast", 1, 2, specLength: 1, FindLastV2)
+            .MethodV2("findLastIndex", 1, 2, specLength: 1, FindLastIndexV2)
             .MethodV2("toReversed", 0, ToReversedV2)
             .MethodV2("with", 2, WithV2)
             .MethodV2("at", 1, AtV2)
@@ -969,6 +973,11 @@ public static class ArrayBuiltIns
         {
             var callback = args[0] as ISharpTSCallable
                 ?? throw new Exception($"Runtime Error: {methodName} requires a function argument.");
+            // ECMA-262 §23.1.3 callback methods accept (cb, thisArg). If thisArg
+            // is supplied, re-bind regular functions and function expressions.
+            // Arrow functions (HasOwnThis=false) ignore the binding per spec.
+            if (args.Count >= 2)
+                callback = BindCallbackThis(callback, args[1]);
             var callbackArgs = ArgumentListPool.Rent();
             callbackArgs.Add(null);
             callbackArgs.Add(null);
@@ -980,6 +989,8 @@ public static class ArrayBuiltIns
         {
             var callback = args[0].ToObject() as ISharpTSCallable
                 ?? throw new Exception($"Runtime Error: {methodName} requires a function argument.");
+            if (args.Length >= 2)
+                callback = BindCallbackThis(callback, args[1].ToObject());
             var callbackArgs = ArgumentListPool.Rent();
             callbackArgs.Add(null);
             callbackArgs.Add(null);
@@ -1020,6 +1031,24 @@ public static class ArrayBuiltIns
         }
 
         public void Dispose() => ArgumentListPool.Return(_args);
+
+        /// <summary>
+        /// Re-binds the callback's `this` to <paramref name="thisValue"/> if the
+        /// callback is a regular function (`SharpTSFunction`) or a function
+        /// expression (`SharpTSArrowFunction` with HasOwnThis). True arrow
+        /// functions (HasOwnThis=false) ignore the thisArg per ECMA-262 spec.
+        /// Other callable shapes (BuiltInMethod etc.) are returned unchanged.
+        /// </summary>
+        private static ISharpTSCallable BindCallbackThis(ISharpTSCallable callback, object? thisValue)
+        {
+            return callback switch
+            {
+                SharpTSFunction fn => fn.BindThis(thisValue),
+                SharpTSArrowFunction afn when afn.HasOwnThis && thisValue is not null
+                    => afn.Bind(thisValue),
+                _ => callback,
+            };
+        }
     }
 
     // ===================== V2 Wrappers (RuntimeValue boundary) =====================

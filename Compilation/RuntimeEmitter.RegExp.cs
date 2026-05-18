@@ -1487,20 +1487,14 @@ public partial class RuntimeEmitter
         var loopEndLabel = il.DefineLabel();
 
         // ECMA-262 22.1.3.21 step 4: if separator is undefined, return [str].
-        // Pre-fix this fell through to ToJsString → "undefined", then split
-        // "undefinedd" by "undefined" produced ["", "d"] (length 2) instead
-        // of ["undefinedd"] (length 1). Check both null (passed for absent
-        // arg) and $Undefined.Instance (passed via explicit `undefined`).
-        var sepNotNullLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brtrue, sepNotNullLabel);
-        // separator is null: return [str]
-        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(sepNotNullLabel);
+        // Note: only $Undefined.Instance — null is a distinct JS value that
+        // ToString-coerces to "null" per ECMA-262 7.1.17 ToString. Previously
+        // null also short-circuited here, causing `"anullb".split(null)` to
+        // return `["anullb"]` instead of the spec-correct `["a", "b"]`. The
+        // no-args dispatch sites (StringEmitter.EmitSplit /
+        // ILEmitter.Calls.StringMethods.cs split case) now push
+        // UndefinedInstance instead of "" when no separator was provided, so
+        // that the spec-correct undefined-arm fires through this branch.
         var sepNotUndefSingletonLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);

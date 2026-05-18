@@ -124,14 +124,18 @@ public sealed class PromiseStaticEmitter : IStaticTypeEmitterStrategy
         var runtime = ctx.Runtime!;
         // Stage 4y: Promise.* statics as values for `let r = Promise.resolve;
         // r(42).then(...)` patterns + test262 isConstructor harness.
+        // ECMA-262 §27.2.5.1: value-form Promise.resolve/reject route through
+        // wrappers that validate `this` is Object before delegating. Direct
+        // syntactic dispatch (`Promise.resolve(x)`) skips the check (since
+        // `Promise` is always an Object).
         MethodInfo? method = propertyName switch
         {
-            "resolve"        => runtime.PromiseResolve,
-            "reject"         => runtime.PromiseReject,
-            "all"            => runtime.PromiseAll,
-            "race"           => runtime.PromiseRace,
-            "allSettled"     => runtime.PromiseAllSettled,
-            "any"            => runtime.PromiseAny,
+            "resolve"        => runtime.PromiseResolveStatic,
+            "reject"         => runtime.PromiseRejectStatic,
+            "all"            => runtime.PromiseAllStatic,
+            "race"           => runtime.PromiseRaceStatic,
+            "allSettled"     => runtime.PromiseAllSettledStatic,
+            "any"            => runtime.PromiseAnyStatic,
             "withResolvers"  => runtime.PromiseWithResolvers,
             _ => null
         };

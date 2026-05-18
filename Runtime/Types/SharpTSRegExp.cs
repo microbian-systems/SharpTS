@@ -263,7 +263,10 @@ public class SharpTSRegExp : ITypeCategorized
     /// <returns>True if the pattern matches, false otherwise.</returns>
     public bool Test(string input)
     {
-        if (_global)
+        bool sticky = Sticky;
+        // Sticky AND global both honor lastIndex; sticky additionally requires
+        // the match to start exactly at lastIndex (no forward scan).
+        if (_global || sticky)
         {
             if (LastIndex > input.Length)
             {
@@ -272,6 +275,12 @@ public class SharpTSRegExp : ITypeCategorized
             }
 
             var match = _regex.Match(input, Math.Min(LastIndex, input.Length));
+            // Sticky requires match.Index == LastIndex; otherwise treat as no-match.
+            if (sticky && match.Success && match.Index != LastIndex)
+            {
+                LastIndex = 0;
+                return false;
+            }
             if (match.Success)
             {
                 LastIndex = match.Index + match.Length;
@@ -279,6 +288,8 @@ public class SharpTSRegExp : ITypeCategorized
             }
             else
             {
+                // ECMA-262 §22.2.5.2.2 step 15.c.i: sticky-OR-global failed match
+                // resets lastIndex to 0.
                 LastIndex = 0;
                 return false;
             }

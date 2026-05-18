@@ -1224,14 +1224,15 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Box, typeof(bool));
                 break;
             case "indexOf":
-                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); IL.Emit(OpCodes.Castclass, typeof(string)); }
-                else { IL.Emit(OpCodes.Ldstr, ""); }
+                // ECMA-262 §22.1.3.8 step 3: searchString = ? ToString(searchString).
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); IL.Emit(OpCodes.Call, Ctx.Runtime!.ToJsString); }
+                else { IL.Emit(OpCodes.Ldstr, "undefined"); }
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.StringIndexOf);
                 IL.Emit(OpCodes.Box, typeof(double));
                 break;
             case "lastIndexOf":
-                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); IL.Emit(OpCodes.Castclass, typeof(string)); }
-                else { IL.Emit(OpCodes.Ldstr, ""); }
+                if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); IL.Emit(OpCodes.Call, Ctx.Runtime!.ToJsString); }
+                else { IL.Emit(OpCodes.Ldstr, "undefined"); }
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.StringLastIndexOf);
                 IL.Emit(OpCodes.Box, typeof(double));
                 break;
