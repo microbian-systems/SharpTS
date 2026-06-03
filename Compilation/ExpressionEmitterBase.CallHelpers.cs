@@ -1270,8 +1270,9 @@ public abstract partial class ExpressionEmitterBase
         {
             case "includes":
                 if (arguments.Count > 0) { EmitExpression(arguments[0]); EnsureBoxed(); } else { IL.Emit(OpCodes.Ldnull); }
+                // ArrayIncludes already returns a boxed bool — do not re-box
+                // (double-boxing reinterprets the object reference as a bool).
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.ArrayIncludes);
-                IL.Emit(OpCodes.Box, typeof(bool));
                 break;
             case "indexOf":
             case "lastIndexOf":

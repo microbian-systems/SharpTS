@@ -261,8 +261,13 @@ public partial class ILEmitter
                 {
                     IL.Emit(OpCodes.Ldnull);
                 }
+                // ArrayIncludes already returns a boxed bool (object). The
+                // earlier `Box Boolean` here double-boxed it — reinterpreting
+                // the non-null object reference's bits as a bool, which yields
+                // `true` almost always and flakily `false` when the pointer's
+                // low byte happened to be 0. (Contrast ArrayIndexOf below, which
+                // returns a native double, so its Box is correct.)
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.ArrayIncludes);
-                IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
                 break;
 
             case "indexOf":
