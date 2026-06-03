@@ -3026,7 +3026,7 @@ test/built-ins/Array/prototype/toString/non-callable-join-string-tag.js Fail
 test/built-ins/Array/prototype/toString/not-a-constructor.js Pass
 test/built-ins/Array/prototype/toString/prop-desc.js Pass
 test/built-ins/Array/prototype/unshift/S15.4.4.13_A1_T1.js Pass
-test/built-ins/Array/prototype/unshift/S15.4.4.13_A1_T2.js Fail
+test/built-ins/Array/prototype/unshift/S15.4.4.13_A1_T2.js Pass
 test/built-ins/Array/prototype/unshift/S15.4.4.13_A2_T1.js Fail
 test/built-ins/Array/prototype/unshift/S15.4.4.13_A2_T2.js Fail
 test/built-ins/Array/prototype/unshift/S15.4.4.13_A2_T3.js Pass
