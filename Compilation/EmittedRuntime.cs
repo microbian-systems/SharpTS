@@ -553,6 +553,11 @@ public class EmittedRuntime
     public MethodBuilder InvokeMethodValue { get; set; } = null!;
     public MethodBuilder GetSuperMethod { get; set; } = null!;
 
+    // Dynamic JS iterator-protocol bridge (.next()/.return()) for any-typed
+    // receivers that are bare IEnumerator<object> — array .values()/.keys()/
+    // .entries() return these. See EmitIteratorProtocolCall.
+    public MethodBuilder IteratorProtocolCall { get; set; } = null!;
+
     // Function methods (bind/call/apply)
     public TypeBuilder BoundTSFunctionType { get; set; } = null!;
     public ConstructorBuilder BoundTSFunctionCtor { get; set; } = null!;
