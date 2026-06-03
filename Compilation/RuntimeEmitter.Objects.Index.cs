@@ -459,6 +459,21 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, idxLocal);
             il.Emit(OpCodes.Callvirt, _types.GetMethod(listType, "get_Item", _types.Int32));
             desc.EmitBoxElement(il, _types);
+            // Unhole: an in-range slot holding $ArrayHole.Instance reads as
+            // `undefined` per ECMA-262 (holes are absent, not present-with-hole).
+            // The $Array path already unholes via TSArrayGetLong; plain
+            // List<object> receivers (e.g. the List returned by ArrayMap, or a
+            // list mutated by `delete arr[i]`) reached here and leaked the raw
+            // sentinel — so `[1,2,3,4,5].map(cb-that-deletes)[i]` compared
+            // unequal to `undefined`. The isinst is a no-op for value-typed
+            // backing lists, which never contain holes.
+            var notHoleLabel = il.DefineLabel();
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Isinst, runtime.ArrayHoleType);
+            il.Emit(OpCodes.Brfalse, notHoleLabel);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.MarkLabel(notHoleLabel);
             il.Emit(OpCodes.Ret);
         }
 
