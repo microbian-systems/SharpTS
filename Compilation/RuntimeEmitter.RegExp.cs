@@ -28,8 +28,10 @@ public partial class RuntimeEmitter
         EmitRegExpSetLastIndex(typeBuilder, runtime);
         EmitStringMatchRegExp(typeBuilder, runtime);
         EmitStringMatchAllRegExp(typeBuilder, runtime);
-        EmitStringReplaceRegExp(typeBuilder, runtime);
+        // WithFunction first: StringReplaceRegExp delegates to it for callable
+        // replacements, so its MethodBuilder must be assigned beforehand.
         EmitStringReplaceWithFunction(typeBuilder, runtime);
+        EmitStringReplaceRegExp(typeBuilder, runtime);
         EmitStringReplaceAllRegExp(typeBuilder, runtime);
         EmitStringSearchRegExp(typeBuilder, runtime);
         EmitStringSplitRegExp(typeBuilder, runtime);
@@ -1052,6 +1054,27 @@ public partial class RuntimeEmitter
         var replacementLocal = il.DeclareLocal(_types.String);
         var idxLocal = il.DeclareLocal(_types.Int32);
         var notFoundLabel = il.DefineLabel();
+
+        // ECMA-262 22.1.3.18 step 3: when replaceValue is callable, the
+        // per-match substitution invokes it with (matched, ...captures, position,
+        // string) rather than ToString-coercing it. StringReplaceWithFunction
+        // implements that for both regex and string patterns. Without this the
+        // function was ToJsString'd to "function () {...}" and spliced in
+        // literally (e.g. `s.replace(/re/, fn)` yielded "[Function] ..."). The
+        // typed string path already routes callables correctly; this covers the
+        // any-typed dynamic path that Test262 .js sources take.
+        var notCallableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.TypeOf);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notCallableLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.StringReplaceWithFunction);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notCallableLabel);
 
         // var regexp = pattern as $RegExp
         il.Emit(OpCodes.Ldarg_1);
