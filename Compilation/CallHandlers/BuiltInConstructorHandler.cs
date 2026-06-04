@@ -25,6 +25,7 @@ public class BuiltInConstructorHandler : ICallHandler
             "BigInt" => EmitBigInt(emitter, call),
             "Date" => EmitDate(emitter, call),
             "Array" => EmitArray(emitter, call),
+            "RegExp" => EmitRegExp(emitter, call),
             "Error" or "TypeError" or "RangeError" or "ReferenceError" or
             "SyntaxError" or "URIError" or "EvalError" or "AggregateError" =>
                 EmitError(emitter, call, v.Name.Lexeme),
@@ -102,6 +103,47 @@ public class BuiltInConstructorHandler : ICallHandler
             il.Emit(OpCodes.Stelem_Ref);
         }
         il.Emit(OpCodes.Call, ctx.Runtime!.ArrayConstructor);
+        emitter.SetStackUnknown();
+        return true;
+    }
+
+    /// <summary>
+    /// Emits <c>RegExp(…)</c> called without <c>new</c>. Per ECMA-262 §22.2.4.1
+    /// the call form is (for these purposes) identical to the construct form:
+    /// <c>RegExp("a","g")</c> produces a RegExp object. Route through the same
+    /// <c>RegExpFromArgs</c> helper as <c>new RegExp</c> (it handles the
+    /// pattern-is-RegExp and undefined-argument coercions). Without this the
+    /// call falls through to the generic value-call path and returns null, so a
+    /// RegExp is never produced (e.g. test262 S15.10.7_A1_T2).
+    /// </summary>
+    private static bool EmitRegExp(IEmitterContext emitter, Expr.Call call)
+    {
+        var il = emitter.IL;
+        var ctx = emitter.Context;
+        if (ctx.Runtime?.RegExpFromArgs == null)
+            return false;
+
+        // pattern arg (null → coerced to "" by RegExpFromArgs)
+        if (call.Arguments.Count >= 1)
+        {
+            emitter.EmitExpression(call.Arguments[0]);
+            emitter.EmitBoxIfNeeded(call.Arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+        // flags arg (null → treated as undefined)
+        if (call.Arguments.Count >= 2)
+        {
+            emitter.EmitExpression(call.Arguments[1]);
+            emitter.EmitBoxIfNeeded(call.Arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+        il.Emit(OpCodes.Call, ctx.Runtime!.RegExpFromArgs);
         emitter.SetStackUnknown();
         return true;
     }

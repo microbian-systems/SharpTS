@@ -95,6 +95,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
+        // ECMA-262 §22.2.6: a RegExp object is not callable — calling one throws
+        // TypeError rather than falling through to the null fallback. Targeted
+        // so the general non-callable→null behavior is unchanged.
+        if (runtime.TSRegExpType != null)
+        {
+            var notRegExpCallee = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+            il.Emit(OpCodes.Brfalse, notRegExpCallee);
+            il.Emit(OpCodes.Ldstr, "called value is not a function");
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(notRegExpCallee);
+        }
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
         il.Emit(OpCodes.Brtrue, tsFunctionLabel);
@@ -449,6 +465,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notNullLabel);
+
+        // ECMA-262 §22.2.6: a RegExp object has no [[Call]] — calling one
+        // (`/x/()`, `RegExp("a","g")()`) must throw TypeError, not fall through
+        // to the null fallback (which would silently return null). Targeted
+        // check so the general non-callable→null behavior is untouched.
+        if (runtime.TSRegExpType != null)
+        {
+            var notRegExpCallee = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+            il.Emit(OpCodes.Brfalse, notRegExpCallee);
+            il.Emit(OpCodes.Ldstr, "called value is not a function");
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(notRegExpCallee);
+        }
 
         // if (function is $TSFunction tsFunc)
         il.Emit(OpCodes.Ldarg_1);
