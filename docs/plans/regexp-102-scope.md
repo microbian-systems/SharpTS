@@ -5,6 +5,16 @@ into clusters with effort/risk estimates.
 
 ## Progress
 
+- **Invalid-regex → guest `SyntaxError` (both modes) — DONE.** The biggest single
+  lever. `SharpTSRegExp` (interp) and the `$RegExp` ctor (compiled) caught the
+  .NET `ArgumentException` and threw a generic host `Exception`, so
+  `e instanceof SyntaxError` was false and `assert.throws(SyntaxError, …)` failed.
+  Now both throw a guest `SharpTSSyntaxError` / `$SyntaxError`. Measured RegExp-folder
+  impact: **compiled Fail 286 → 172 (+113 Pass), interp Fail 368 → 254 (+114 Pass)**.
+  This only covers patterns .NET already rejects; ECMAScript-specific invalid
+  forms .NET accepts (modifier early errors, some ranges, `unicode_restricted`)
+  still need explicit validation (next sub-phase).
+
 - **`RegExp.escape` (ES2025) — DONE.** Implemented in both runtimes (interp:
   `RegExpBuiltIns.EscapeString` + a `RegExp` static namespace; compiled: a
   standalone BCL-only `$RegExp.Escape` IL method + `RegExpStaticEmitter`

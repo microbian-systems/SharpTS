@@ -579,7 +579,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stfld, _tsRegExpRegexField);
         il.Emit(OpCodes.Leave, endLabel);
 
-        // catch (ArgumentException ex) { throw new Exception("Invalid regular expression: " + ex.Message); }
+        // catch (ArgumentException ex) { throw new $SyntaxError("Invalid regular expression: " + ex.Message); }
+        // ECMA-262 §22.2.3.1: an invalid pattern is a SyntaxError. Throw a guest
+        // $SyntaxError (via CreateException) so guest try/catch and
+        // `e instanceof SyntaxError` observe the spec type, not a host Exception.
         il.BeginCatchBlock(typeof(ArgumentException));
         var exLocal = il.DeclareLocal(typeof(ArgumentException));
         il.Emit(OpCodes.Stloc, exLocal);
@@ -587,7 +590,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, exLocal);
         il.Emit(OpCodes.Callvirt, typeof(Exception).GetProperty("Message")!.GetGetMethod()!);
         il.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.String])!);
-        il.Emit(OpCodes.Newobj, _types.Exception.GetConstructor([_types.String])!);
+        il.Emit(OpCodes.Newobj, runtime.TSSyntaxErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         il.EndExceptionBlock();

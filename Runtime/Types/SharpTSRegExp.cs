@@ -177,8 +177,13 @@ public class SharpTSRegExp : ITypeCategorized
             // .NET wraps the underlying RegexParseException in
             // ArgumentException; ConcurrentDictionary.GetOrAdd will surface
             // it as-is on the first failed compile (and won't cache the
-            // failure — subsequent retries can re-attempt).
-            throw new Exception($"Invalid regular expression: {ex.Message}");
+            // failure — subsequent retries can re-attempt). ECMA-262 §22.2.3.1
+            // mandates a SyntaxError for an invalid pattern, so surface it as a
+            // guest-catchable SharpTSSyntaxError (so `e instanceof SyntaxError`
+            // and `assert.throws(SyntaxError, ...)` hold) rather than a bare
+            // host Exception.
+            throw new Exceptions.ThrowException(
+                new SharpTSSyntaxError($"Invalid regular expression: {ex.Message}"));
         }
     }
 
