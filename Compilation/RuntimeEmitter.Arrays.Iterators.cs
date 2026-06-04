@@ -306,6 +306,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, runtime.TSFunctionExpectsThisField);
         il.Emit(OpCodes.Brtrue, doneLabel);
 
+        // if (tsFn._capturesArguments) goto doneLabel — `this`-less function
+        // DECLARATIONS have _expectsThis=false (no __this param) yet can still
+        // observe the index via `arguments`. Without this guard the index box
+        // was skipped and `function(){...arguments[1]...}` callbacks read a null
+        // index (#101). Arrows never set this flag (they can't bind their own
+        // `arguments`), so the unary-arrow fast path is preserved.
+        il.Emit(OpCodes.Ldloc, tsFnLocal);
+        il.Emit(OpCodes.Ldfld, runtime.TSFunctionCapturesArgumentsField);
+        il.Emit(OpCodes.Brtrue, doneLabel);
+
         // if (tsFn._paramCount > 1) goto doneLabel
         il.Emit(OpCodes.Ldloc, tsFnLocal);
         il.Emit(OpCodes.Ldfld, runtime.TSFunctionParamCountField);

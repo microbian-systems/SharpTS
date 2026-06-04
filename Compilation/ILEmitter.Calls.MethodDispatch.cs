@@ -142,6 +142,35 @@ public partial class ILEmitter
             return;
         }
 
+        // Iterator protocol (.next() / .return()) for any/unknown receivers.
+        // Array .values()/.keys()/.entries() return a bare IEnumerator<object>
+        // that has no JS-shaped next/value/done members, so the generic
+        // GetProperty+InvokeMethodValue fallback below would resolve `next` to
+        // undefined and yield null. IteratorProtocolCall synthesizes the result
+        // object for enumerator receivers and falls back to the normal dynamic
+        // dispatch for everything else (generators, user iterators). Typed
+        // iterators are already handled by the type-first dispatch above, so
+        // only any/unknown receivers reach here.
+        if (methodName is "next" or "return")
+        {
+            EmitExpression(methodGet.Object);
+            EmitBoxIfNeeded(methodGet.Object);
+            IL.Emit(OpCodes.Ldstr, methodName);
+            IL.Emit(OpCodes.Ldc_I4, arguments.Count);
+            IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+            for (int i = 0; i < arguments.Count; i++)
+            {
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldc_I4, i);
+                EmitExpression(arguments[i]);
+                EmitBoxIfNeeded(arguments[i]);
+                IL.Emit(OpCodes.Stelem_Ref);
+            }
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.IteratorProtocolCall);
+            SetStackUnknown();
+            return;
+        }
+
         // For object method calls, we need to pass the receiver as 'this'
         // Stack order: receiver, function, args
 

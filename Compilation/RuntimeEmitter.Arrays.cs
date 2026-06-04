@@ -1525,7 +1525,12 @@ public partial class RuntimeEmitter
         // behave the same as JS `arr.push(1, 2, 3)`.
         //   forEach arg in args: runtime.Method(_list, arg)
         //   return (double)_list.Count
-        void EmitVariadicElementCase(string methodName, MethodBuilder runtimeMethod)
+        // reverse: iterate args from last to first. Required for unshift —
+        // ArrayUnshift prepends a single element, so `arr.unshift(a, b, c)`
+        // must insert c, then b, then a to land as [a, b, c, ...orig]. Forward
+        // iteration would reverse the arguments. Mirrors ArrayEmitter's typed
+        // path, which calls EmitVariadicListMutation(..., reverse: true).
+        void EmitVariadicElementCase(string methodName, MethodBuilder runtimeMethod, bool reverse = false)
         {
             var skipLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldarg_0);
@@ -1535,18 +1540,42 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brfalse, skipLabel);
 
             var indexLocal = il.DeclareLocal(_types.Int32);
-            il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Stloc, indexLocal);
+            if (reverse)
+            {
+                // index = args.Length - 1
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldlen);
+                il.Emit(OpCodes.Conv_I4);
+                il.Emit(OpCodes.Ldc_I4_1);
+                il.Emit(OpCodes.Sub);
+                il.Emit(OpCodes.Stloc, indexLocal);
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Stloc, indexLocal);
+            }
 
             var loopStartLabel = il.DefineLabel();
             var loopEndLabel = il.DefineLabel();
 
             il.MarkLabel(loopStartLabel);
-            il.Emit(OpCodes.Ldloc, indexLocal);
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Ldlen);
-            il.Emit(OpCodes.Conv_I4);
-            il.Emit(OpCodes.Bge, loopEndLabel);
+            if (reverse)
+            {
+                // while (index >= 0)
+                il.Emit(OpCodes.Ldloc, indexLocal);
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Blt, loopEndLabel);
+            }
+            else
+            {
+                // while (index < args.Length)
+                il.Emit(OpCodes.Ldloc, indexLocal);
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldlen);
+                il.Emit(OpCodes.Conv_I4);
+                il.Emit(OpCodes.Bge, loopEndLabel);
+            }
 
             // runtime.Method(_list, args[index])  — return value popped (use Count afterward)
             il.Emit(OpCodes.Ldarg_0);
@@ -1559,7 +1588,7 @@ public partial class RuntimeEmitter
 
             il.Emit(OpCodes.Ldloc, indexLocal);
             il.Emit(OpCodes.Ldc_I4_1);
-            il.Emit(OpCodes.Add);
+            il.Emit(reverse ? OpCodes.Sub : OpCodes.Add);
             il.Emit(OpCodes.Stloc, indexLocal);
             il.Emit(OpCodes.Br, loopStartLabel);
 
@@ -1609,7 +1638,7 @@ public partial class RuntimeEmitter
         // JS-variadic methods — loop through args, calling the single-element helper
         // for each. Matches JS semantics: `arr.push(1, 2, 3)` pushes three elements.
         EmitVariadicElementCase("push", runtime.ArrayPush);
-        EmitVariadicElementCase("unshift", runtime.ArrayUnshift);
+        EmitVariadicElementCase("unshift", runtime.ArrayUnshift, reverse: true);
 
         // Single-arg methods (runtime helper takes `object`, not `object[]`).
         // Aligns with Emitters/ArrayEmitter.cs which also uses EmitSingleArgOrNull

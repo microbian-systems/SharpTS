@@ -57,6 +57,11 @@ public partial class RuntimeEmitter
         // that type's field layout; isolating keeps $TSFunction's layout unchanged.
         EmitArgumentsContextClass(moduleBuilder, runtime);
 
+        // Marker attribute for "this method's body reads JS `arguments`".
+        // Must be defined+created before EmitTSFunctionClass so its ctor IL can
+        // ldtoken the type for the IsDefined read.
+        EmitCapturesArgumentsAttribute(moduleBuilder, runtime);
+
         // Emit TSFunction class first (other methods depend on it)
         EmitTSFunctionClass(moduleBuilder, runtime);
 

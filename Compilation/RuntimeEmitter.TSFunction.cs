@@ -30,6 +30,32 @@ public partial class RuntimeEmitter
         typeBuilder.CreateType();
     }
 
+    /// <summary>
+    /// Emits a minimal marker attribute <c>$CapturesArguments</c> (empty
+    /// <see cref="System.Attribute"/> subclass). Applied to function-declaration
+    /// methods whose body reads JS <c>arguments</c>; read back via
+    /// <see cref="System.Reflection.MemberInfo.IsDefined(Type, bool)"/> at
+    /// <c>$TSFunction</c> construction. Lives in the output assembly so the
+    /// compiled DLL stays standalone.
+    /// </summary>
+    private void EmitCapturesArgumentsAttribute(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$CapturesArguments",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            typeof(System.Attribute));
+        var ctor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
+        var ctorIl = ctor.GetILGenerator();
+        ctorIl.Emit(OpCodes.Ldarg_0);
+        ctorIl.Emit(OpCodes.Call, typeof(System.Attribute).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null)!);
+        ctorIl.Emit(OpCodes.Ret);
+        runtime.CapturesArgumentsAttrCtor = ctor;
+        runtime.CapturesArgumentsAttrType = typeBuilder;
+        typeBuilder.CreateType();
+    }
+
     private void EmitTSFunctionClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
         // Define class: public sealed class $TSFunction
@@ -57,6 +83,11 @@ public partial class RuntimeEmitter
         // for the "unary-arrow fast path" without going through a method call.
         var expectsThisField = typeBuilder.DefineField("_expectsThis", _types.Boolean, FieldAttributes.Public);
         runtime.TSFunctionExpectsThisField = expectsThisField;
+        // True when the wrapped method's body reads JS `arguments` (marked with
+        // the $CapturesArguments attribute). Public so the iterator-helper
+        // skip-index-box detection can read it without a method call.
+        var capturesArgumentsField = typeBuilder.DefineField("_capturesArguments", _types.Boolean, FieldAttributes.Public);
+        runtime.TSFunctionCapturesArgumentsField = capturesArgumentsField;
         // Cached MethodInvoker. .NET 8+'s MethodInvoker.Create() pre-builds
         // the JIT'd dispatch stub for a method, then Invoke(...) calls it
         // directly — measured ~10× faster than MethodInfo.Invoke per call.
@@ -201,6 +232,8 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Stfld, cachedNameField);
         // this._expectsThis = (method.GetParameters().Length > 0 && params[0].Name == "__this")
         EmitComputeExpectsThis(ctorIL, expectsThisField, methodArgIndex: 2);
+        // this._capturesArguments = method.IsDefined($CapturesArguments)
+        EmitComputeCapturesArguments(ctorIL, capturesArgumentsField, runtime, methodArgIndex: 2);
         // this._paramCount, _hasListRest, _hasArrayRest: cached by AdjustArgs.
         EmitComputeAdjustArgsCache(ctorIL, paramCountField, hasListRestField, hasArrayRestField, methodArgIndex: 2);
         EmitComputeNeedsArgConversion(ctorIL, needsArgConversionField, methodArgIndex: 2);
@@ -239,6 +272,7 @@ public partial class RuntimeEmitter
         ctorCacheIL.Emit(OpCodes.Stfld, cachedLengthField);
         // this._expectsThis = (method.GetParameters().Length > 0 && params[0].Name == "__this")
         EmitComputeExpectsThis(ctorCacheIL, expectsThisField, methodArgIndex: 2);
+        EmitComputeCapturesArguments(ctorCacheIL, capturesArgumentsField, runtime, methodArgIndex: 2);
         EmitComputeAdjustArgsCache(ctorCacheIL, paramCountField, hasListRestField, hasArrayRestField, methodArgIndex: 2);
         EmitComputeNeedsArgConversion(ctorCacheIL, needsArgConversionField, methodArgIndex: 2);
         // this._invoker = LookupOrAdd(_invokerCache, method)
@@ -1231,6 +1265,24 @@ public partial class RuntimeEmitter
         il.MarkLabel(doneLabel);
         // Stack: [this, bool] → stfld
         il.Emit(OpCodes.Stfld, expectsThisField);
+    }
+
+    /// <summary>
+    /// Emits <c>this._capturesArguments = method.IsDefined(typeof($CapturesArguments), false)</c>.
+    /// True for function-declaration methods whose body reads JS <c>arguments</c>;
+    /// see <see cref="EmitCapturesArgumentsAttribute"/>.
+    /// </summary>
+    private void EmitComputeCapturesArguments(ILGenerator il, FieldBuilder capturesArgumentsField, EmittedRuntime runtime, int methodArgIndex)
+    {
+        // this._capturesArguments = method.IsDefined(attrType, false)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg, methodArgIndex);
+        il.Emit(OpCodes.Ldtoken, runtime.CapturesArgumentsAttrType);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ldc_I4_0);
+        // MemberInfo.IsDefined(Type, bool) — looked up via MethodInfo (inherited).
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "IsDefined", _types.Type, _types.Boolean));
+        il.Emit(OpCodes.Stfld, capturesArgumentsField);
     }
 
     /// <summary>

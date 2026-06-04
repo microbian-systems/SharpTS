@@ -743,6 +743,178 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Emits <c>object IteratorProtocolCall(object recv, string name, object[] args)</c>.
+    ///
+    /// Bridges the JS iterator protocol (<c>.next()</c> / <c>.return()</c>) for
+    /// <em>any-typed</em> receivers that are a bare <see cref="IEnumerator{T}"/>
+    /// of object — which is exactly what array <c>.values()</c> / <c>.keys()</c> /
+    /// <c>.entries()</c> return (via <c>NormalizeToEnumerator</c>). A BCL
+    /// enumerator has no JS-shaped <c>next</c>/<c>value</c>/<c>done</c> members,
+    /// so the generic <c>GetProperty + InvokeMethodValue</c> fallback resolves
+    /// <c>next</c> to <c>undefined</c> and the call yields <c>null</c>. The typed
+    /// call path (handled by the iterator emitter) is unaffected; this only kicks
+    /// in when the receiver's type is unknown at compile time (e.g. Test262 <c>.js</c>
+    /// sources run without type-checking, so <c>var it = arr.values()</c> is
+    /// <c>any</c>).
+    ///
+    /// Non-enumerator receivers fall through to the normal dynamic dispatch,
+    /// preserving existing behavior for user objects that carry their own
+    /// <c>next</c>/<c>return</c> method (generators, custom iterators).
+    /// </summary>
+    private void EmitIteratorProtocolCall(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "IteratorProtocolCall",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.String, _types.ObjectArray]);
+        runtime.IteratorProtocolCall = method;
+
+        var il = method.GetILGenerator();
+        var setItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object);
+
+        var enumLocal = il.DeclareLocal(_types.IEnumeratorOfObject);
+        var resultLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var fnLocal = il.DeclareLocal(_types.Object);
+
+        var notEnumeratorLabel = il.DefineLabel();
+        var returnBranchLabel = il.DefineLabel();
+
+        // Resolve the JS-level member first. Generators and user-defined
+        // iterators expose a real `next`/`return` callable here; only when the
+        // receiver has NO such member (a bare BCL enumerator) do we synthesize
+        // the result object below. This ordering guarantees generators keep
+        // their own next(value)/return(value) semantics — the enumerator branch
+        // is a pure rescue for values()/keys()/entries().
+        var fn = fnLocal;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, fn);
+        // if (fn == null) goto notEnumerator-or-synth
+        il.Emit(OpCodes.Ldloc, fn);
+        il.Emit(OpCodes.Brfalse, notEnumeratorLabel);
+        // if (fn == $Undefined.Instance) goto notEnumerator-or-synth
+        il.Emit(OpCodes.Ldloc, fn);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Beq, notEnumeratorLabel);
+        // Real JS method present → normal dispatch.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, fn);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Ret);
+
+        // No JS-level next/return. var en = recv as IEnumerator<object>;
+        // if (en == null) fall back to normal (null-yielding) dispatch.
+        il.MarkLabel(notEnumeratorLabel);
+        var synthLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.IEnumeratorOfObject);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stloc, enumLocal);
+        il.Emit(OpCodes.Brtrue, synthLabel);
+        // Not an enumerator and no JS method → preserve prior behavior:
+        // InvokeMethodValue(recv, fn, args) (fn is null/undefined → null).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, fn);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(synthLabel);
+        // result = new Dictionary<string, object>()
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.DictionaryStringObject, _types.EmptyTypes));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // if (name == "return") goto returnBranch
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "return");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brtrue, returnBranchLabel);
+
+        // --- next(): { value: en.Current, done: false } | { value: undefined, done: true } ---
+        var nextDoneLabel = il.DefineLabel();
+        var nextEndLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, enumLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IEnumerator, "MoveNext"));
+        il.Emit(OpCodes.Brfalse, nextDoneLabel);
+
+        // result["value"] = en.Current
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldloc, enumLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.IEnumeratorOfObject, "Current"));
+        il.Emit(OpCodes.Callvirt, setItem);
+        // result["done"] = false
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldstr, "done");
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Callvirt, setItem);
+        il.Emit(OpCodes.Br, nextEndLabel);
+
+        il.MarkLabel(nextDoneLabel);
+        // result["value"] = undefined
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Callvirt, setItem);
+        // result["done"] = true
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldstr, "done");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Callvirt, setItem);
+
+        il.MarkLabel(nextEndLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        // --- return(value): close the iterator, yield { value: value, done: true } ---
+        il.MarkLabel(returnBranchLabel);
+        // if (en is IDisposable d) d.Dispose();
+        var disposableLocal = il.DeclareLocal(_types.IDisposable);
+        var notDisposableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, enumLocal);
+        il.Emit(OpCodes.Isinst, _types.IDisposable);
+        il.Emit(OpCodes.Stloc, disposableLocal);
+        il.Emit(OpCodes.Ldloc, disposableLocal);
+        il.Emit(OpCodes.Brfalse, notDisposableLabel);
+        il.Emit(OpCodes.Ldloc, disposableLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.IDisposable, "Dispose"));
+        il.MarkLabel(notDisposableLabel);
+
+        // result["value"] = (args != null && args.Length > 0) ? args[0] : undefined
+        var useUndefLabel = il.DefineLabel();
+        var haveValueLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Brfalse, useUndefLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brfalse, useUndefLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Br, haveValueLabel);
+        il.MarkLabel(useUndefLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.MarkLabel(haveValueLabel);
+        il.Emit(OpCodes.Callvirt, setItem);
+        // result["done"] = true
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldstr, "done");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Callvirt, setItem);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitGetSuperMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // GetSuperMethod(object instance, string methodName) -> object

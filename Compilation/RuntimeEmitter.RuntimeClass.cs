@@ -619,6 +619,9 @@ public partial class RuntimeEmitter
         // String/Number/Boolean populate shells already defined above
         // (before cctor) so the cctor can call them eagerly.
         EmitGetProperty(typeBuilder, runtime);
+        // Dynamic iterator-protocol bridge — must come after GetProperty +
+        // InvokeMethodValue since its non-enumerator fallback calls both.
+        EmitIteratorProtocolCall(typeBuilder, runtime);
         // GetSymbolDict / IsSymbol already emitted above (moved earlier so
         // HasOwnPropertyHelper's Symbol-key arm can call them).
         // ToJsString depends on GetProperty + InvokeMethodValue + Stringify; emit after those.
