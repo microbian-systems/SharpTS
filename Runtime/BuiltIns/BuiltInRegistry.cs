@@ -177,6 +177,7 @@ public sealed class BuiltInRegistry
         RegisterProcessNamespace(registry);
         RegisterGlobalThisNamespace(registry);
         RegisterIteratorNamespace(registry);
+        RegisterRegExpNamespace(registry);
 
         // Register instance types
         RegisterStringType(registry);
@@ -447,6 +448,19 @@ public sealed class BuiltInRegistry
     {
         registry.RegisterInstanceType(typeof(SharpTSPromise), (instance, name) =>
             PromiseBuiltIns.GetMember((SharpTSPromise)instance, name));
+    }
+
+    private static void RegisterRegExpNamespace(BuiltInRegistry registry)
+    {
+        // RegExp is registered as a SharpTSBuiltInConstructor, not a singleton
+        // object; its GetMember routes static lookups (RegExp.escape) here via
+        // GetStaticMethod("RegExp", name). Only the method table is needed.
+        registry.RegisterNamespace(new BuiltInNamespace(
+            Name: "RegExp",
+            IsSingleton: false,
+            SingletonFactory: null,
+            GetMethod: RegExpBuiltIns.GetStaticMember
+        ));
     }
 
     private static void RegisterNumberNamespace(BuiltInRegistry registry)

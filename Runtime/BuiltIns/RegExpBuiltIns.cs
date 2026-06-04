@@ -1,3 +1,4 @@
+using System.Text;
 using SharpTS.Execution;
 using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
@@ -10,6 +11,157 @@ namespace SharpTS.Runtime.BuiltIns;
 /// </summary>
 public static class RegExpBuiltIns
 {
+    /// <summary>
+    /// Resolves a static member on the <c>RegExp</c> constructor (e.g.
+    /// <c>RegExp.escape</c>). Returns null for unknown names. Routed here by
+    /// <see cref="SharpTSBuiltInConstructor.GetMember"/> via the built-in
+    /// namespace registry.
+    /// </summary>
+    public static ISharpTSCallable? GetStaticMember(string name) => name switch
+    {
+        "escape" => _escape,
+        _ => null
+    };
+
+    // ECMA-262 (ES2025) §sec-regexp.escape. minArity 0 so a missing/non-string
+    // argument reaches the body and throws the spec TypeError (rather than the
+    // runtime arity check rejecting it). Visible `length` is 1 (WithSpecLength).
+    private static readonly BuiltInMethod _escape =
+        new BuiltInMethod("escape", 0, int.MaxValue, (_, _, args) =>
+        {
+            var arg = args.Count > 0 ? args[0] : (object?)SharpTSUndefined.Instance;
+            // Step 1: If S is not a String, throw a TypeError exception.
+            if (arg is not string s)
+                throw new ThrowException(new SharpTSTypeError(
+                    "RegExp.escape called with a non-string argument"));
+            return EscapeString(s);
+        }).WithSpecLength(1);
+
+    /// <summary>
+    /// ECMA-262 (ES2025) §sec-regexp.escape EncodeForRegExpEscape applied across
+    /// the whole string, including the leading-character rule (a leading ASCII
+    /// digit or letter is emitted as <c>\xHH</c> so it can't merge with a
+    /// preceding <c>\0</c>/<c>\1</c>/<c>\c</c> escape when the result is spliced
+    /// into a larger pattern). Iterates by code point so surrogate pairs are
+    /// preserved and lone surrogates are escaped as <c>\uXXXX</c>.
+    /// </summary>
+    internal static string EscapeString(string s)
+    {
+        var sb = new StringBuilder(s.Length + 8);
+        bool first = true;
+        int i = 0;
+        while (i < s.Length)
+        {
+            char ch = s[i];
+            int c;
+            int units;
+            if (char.IsHighSurrogate(ch) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1]))
+            {
+                c = char.ConvertToUtf32(ch, s[i + 1]);
+                units = 2;
+            }
+            else
+            {
+                c = ch; // BMP char or lone surrogate value
+                units = 1;
+            }
+
+            // Step 4.a: leading ASCII digit/letter → \xHH.
+            if (first && IsAsciiAlphaNumeric(c))
+            {
+                sb.Append("\\x");
+                AppendHex2(sb, c);
+            }
+            else
+            {
+                AppendEncodedCodePoint(sb, s, i, c, units);
+            }
+            first = false;
+            i += units;
+        }
+        return sb.ToString();
+    }
+
+    private static bool IsAsciiAlphaNumeric(int c) =>
+        (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+
+    // SyntaxCharacter :: one of ^ $ \ . * + ? ( ) [ ] { } | (and SOLIDUS / is
+    // handled alongside per step 1). otherPunctuators per the spec table,
+    // including the QUOTATION MARK (0x0022).
+    private const string SyntaxChars = "^$\\.*+?()[]{}|";
+    private const string OtherPunctuators = ",-=<>#&!%:;@~'`\"";
+
+    /// <summary>EncodeForRegExpEscape(c) — appends the encoded form of a single
+    /// code point. <paramref name="i"/>/<paramref name="units"/> locate the
+    /// original UTF-16 code unit(s) in <paramref name="s"/> for literal/unicode
+    /// emission.</summary>
+    private static void AppendEncodedCodePoint(StringBuilder sb, string s, int i, int c, int units)
+    {
+        // Step 1: SyntaxCharacter or '/' → REVERSE SOLIDUS + the character.
+        if (c <= 0xFFFF && (c == '/' || SyntaxChars.IndexOf((char)c) >= 0))
+        {
+            sb.Append('\\').Append((char)c);
+            return;
+        }
+        // Step 2: ControlEscape table.
+        switch (c)
+        {
+            case '\t': sb.Append("\\t"); return;
+            case '\n': sb.Append("\\n"); return;
+            case '\v': sb.Append("\\v"); return;
+            case '\f': sb.Append("\\f"); return;
+            case '\r': sb.Append("\\r"); return;
+        }
+        // Step 5: otherPunctuators / WhiteSpace / LineTerminator / lone surrogate.
+        bool needsHex =
+            (c <= 0xFFFF && OtherPunctuators.IndexOf((char)c) >= 0)
+            || IsEsWhiteSpaceOrLineTerminator(c)
+            || (c >= 0xD800 && c <= 0xDFFF);
+        if (needsHex)
+        {
+            if (c <= 0xFF)
+            {
+                sb.Append("\\x");
+                AppendHex2(sb, c);
+            }
+            else
+            {
+                // UnicodeEscape each UTF-16 code unit of the original source.
+                for (int k = 0; k < units; k++)
+                {
+                    sb.Append("\\u");
+                    AppendHex4(sb, s[i + k]);
+                }
+            }
+            return;
+        }
+        // Step 6: otherwise emit the code point unchanged.
+        for (int k = 0; k < units; k++)
+            sb.Append(s[i + k]);
+    }
+
+    // ES WhiteSpace ∪ LineTerminator, minus the chars already handled by the
+    // ControlEscape table (\t \n \v \f \r). SpaceSeparator (Zs) covers
+    // 0x20/0xA0/0x1680/0x2000-200A/0x202F/0x205F/0x3000; ZWNBSP (0xFEFF) is
+    // category Format and the two line separators (0x2028/0x2029) are added
+    // explicitly.
+    private static bool IsEsWhiteSpaceOrLineTerminator(int c)
+    {
+        if (c == 0xFEFF || c == 0x2028 || c == 0x2029) return true;
+        if (c > 0xFFFF) return false;
+        return char.GetUnicodeCategory((char)c)
+            == System.Globalization.UnicodeCategory.SpaceSeparator;
+    }
+
+    private const string HexDigits = "0123456789abcdef";
+
+    private static void AppendHex2(StringBuilder sb, int c) =>
+        sb.Append(HexDigits[(c >> 4) & 0xF]).Append(HexDigits[c & 0xF]);
+
+    private static void AppendHex4(StringBuilder sb, int c) =>
+        sb.Append(HexDigits[(c >> 12) & 0xF]).Append(HexDigits[(c >> 8) & 0xF])
+          .Append(HexDigits[(c >> 4) & 0xF]).Append(HexDigits[c & 0xF]);
+
     /// <summary>
     /// Gets an instance member (property or method) for a RegExp object.
     /// Pass <paramref name="interpreter"/> when the caller has one available

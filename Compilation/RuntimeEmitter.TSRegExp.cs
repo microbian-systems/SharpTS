@@ -97,6 +97,7 @@ public partial class RuntimeEmitter
         EmitTSRegExpTest(typeBuilder, runtime);
         EmitTSRegExpExec(typeBuilder, runtime);
         EmitTSRegExpToStringMethod(typeBuilder, runtime);
+        EmitTSRegExpEscape(typeBuilder, runtime);
 
         // Internal methods for string operations
         EmitTSRegExpMatchAll(typeBuilder, runtime);
@@ -1189,6 +1190,338 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsRegExpFlagsField);
         il.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.String, _types.String, _types.String])!);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits the standalone (BCL-only) ECMA-262 (ES2025) RegExp.escape static:
+    /// <c>public static object Escape(object arg)</c>. Throws TypeError when
+    /// <paramref name="arg"/> is not a String; otherwise applies
+    /// EncodeForRegExpEscape across the string, including the leading
+    /// ASCII-alphanumeric → <c>\xHH</c> rule. Mirrors
+    /// <see cref="SharpTS.Runtime.BuiltIns.RegExpBuiltIns.EscapeString"/>; kept
+    /// in pure IL so the emitted $RegExp stays self-contained (no SharpTS.dll
+    /// runtime dependency).
+    /// </summary>
+    private void EmitTSRegExpEscape(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "Escape",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.TSRegExpEscapeMethod = method;
+
+        var il = method.GetILGenerator();
+
+        var getLength = _types.String.GetProperty("Length")!.GetGetMethod()!;
+        var getChars = _types.String.GetMethod("get_Chars", [_types.Int32])!;
+        var indexOfChar = _types.String.GetMethod("IndexOf", [_types.Char])!;
+        var appendStr = _types.GetMethod(_types.StringBuilder, "Append", _types.String);
+        var appendChar = _types.StringBuilderAppendChar;
+        var int32ToStr = _types.Int32.GetMethod("ToString", [_types.String])!;
+        var isHigh = _types.Char.GetMethod("IsHighSurrogate", [_types.Char])!;
+        var isLow = _types.Char.GetMethod("IsLowSurrogate", [_types.Char])!;
+        var toUtf32 = _types.Char.GetMethod("ConvertToUtf32", [_types.Char, _types.Char])!;
+        var getCat = _types.Char.GetMethod("GetUnicodeCategory", [_types.Char])!;
+
+        var strLocal = il.DeclareLocal(_types.String);
+        var sbLocal = il.DeclareLocal(_types.StringBuilder);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var firstLocal = il.DeclareLocal(_types.Int32);
+        var chLocal = il.DeclareLocal(_types.Char);
+        var cLocal = il.DeclareLocal(_types.Int32);
+        var unitsLocal = il.DeclareLocal(_types.Int32);
+        var kLocal = il.DeclareLocal(_types.Int32);
+        var cuLocal = il.DeclareLocal(_types.Int32);
+
+        // Appends intLocal.ToString(fmt) to sbLocal (lowercase zero-padded hex).
+        void AppendHex(LocalBuilder intLocal, string fmt)
+        {
+            il.Emit(OpCodes.Ldloc, sbLocal);
+            il.Emit(OpCodes.Ldloca, intLocal);
+            il.Emit(OpCodes.Ldstr, fmt);
+            il.Emit(OpCodes.Call, int32ToStr);
+            il.Emit(OpCodes.Callvirt, appendStr);
+            il.Emit(OpCodes.Pop);
+        }
+        void AppendLiteralStr(string s)
+        {
+            il.Emit(OpCodes.Ldloc, sbLocal);
+            il.Emit(OpCodes.Ldstr, s);
+            il.Emit(OpCodes.Callvirt, appendStr);
+            il.Emit(OpCodes.Pop);
+        }
+
+        var argOk = il.DefineLabel();
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var afterPair = il.DefineLabel();
+        var notFirst = il.DefineLabel();
+        var leadingEscape = il.DefineLabel();
+        var checkUpper = il.DefineLabel();
+        var checkLower = il.DefineLabel();
+        var afterCharEmit = il.DefineLabel();
+
+        // strLocal = arg as string; if null throw TypeError
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Stloc, strLocal);
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Brtrue, argOk);
+        il.Emit(OpCodes.Ldstr, "RegExp.escape called with a non-string argument");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(argOk);
+
+        // sb = new StringBuilder(); first = 1; i = 0
+        il.Emit(OpCodes.Newobj, _types.StringBuilderDefaultCtor);
+        il.Emit(OpCodes.Stloc, sbLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, firstLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(loopStart);
+        // if (i >= str.Length) goto loopEnd
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Callvirt, getLength);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // ch = str[i]; units = 1; c = (int)ch
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, getChars);
+        il.Emit(OpCodes.Stloc, chLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, unitsLocal);
+        il.Emit(OpCodes.Ldloc, chLocal);
+        il.Emit(OpCodes.Stloc, cLocal);
+
+        // surrogate pair: if (IsHigh(ch) && i+1<len && IsLow(str[i+1])) { c=ConvertToUtf32; units=2 }
+        il.Emit(OpCodes.Ldloc, chLocal);
+        il.Emit(OpCodes.Call, isHigh);
+        il.Emit(OpCodes.Brfalse, afterPair);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Callvirt, getLength);
+        il.Emit(OpCodes.Bge, afterPair);
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Callvirt, getChars);
+        il.Emit(OpCodes.Call, isLow);
+        il.Emit(OpCodes.Brfalse, afterPair);
+        il.Emit(OpCodes.Ldloc, chLocal);
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Callvirt, getChars);
+        il.Emit(OpCodes.Call, toUtf32);
+        il.Emit(OpCodes.Stloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Stloc, unitsLocal);
+        il.MarkLabel(afterPair);
+
+        // if (first==0) goto notFirst; else test ASCII alphanumeric
+        il.Emit(OpCodes.Ldloc, firstLocal);
+        il.Emit(OpCodes.Brfalse, notFirst);
+        // (c>='0' && c<='9')
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'0');
+        il.Emit(OpCodes.Blt, checkUpper);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'9');
+        il.Emit(OpCodes.Ble, leadingEscape);
+        il.MarkLabel(checkUpper);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'A');
+        il.Emit(OpCodes.Blt, checkLower);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'Z');
+        il.Emit(OpCodes.Ble, leadingEscape);
+        il.MarkLabel(checkLower);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'a');
+        il.Emit(OpCodes.Blt, notFirst);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'z');
+        il.Emit(OpCodes.Bgt, notFirst);
+
+        // leading escape: sb.Append("\x"); hex2(c)
+        il.MarkLabel(leadingEscape);
+        AppendLiteralStr("\\x");
+        AppendHex(cLocal, "x2");
+        il.Emit(OpCodes.Br, afterCharEmit);
+
+        // === AppendEncoded ===
+        il.MarkLabel(notFirst);
+
+        // rule 1: SyntaxCharacter or '/' → '\' + char  (only when c <= 0xFFFF)
+        var afterRule1 = il.DefineLabel();
+        var rule1Emit = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xFFFF);
+        il.Emit(OpCodes.Bgt, afterRule1);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'/');
+        il.Emit(OpCodes.Beq, rule1Emit);
+        il.Emit(OpCodes.Ldstr, "^$\\.*+?()[]{}|");
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Conv_U2);
+        il.Emit(OpCodes.Callvirt, indexOfChar);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, afterRule1);
+        il.MarkLabel(rule1Emit);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldc_I4, (int)'\\');
+        il.Emit(OpCodes.Callvirt, appendChar);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Conv_U2);
+        il.Emit(OpCodes.Callvirt, appendChar);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, afterCharEmit);
+        il.MarkLabel(afterRule1);
+
+        // rule 2: ControlEscape table (9,10,11,12,13)
+        var afterRule2 = il.DefineLabel();
+        void ControlCase(int code, string esc)
+        {
+            var skip = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, cLocal);
+            il.Emit(OpCodes.Ldc_I4, code);
+            il.Emit(OpCodes.Bne_Un, skip);
+            AppendLiteralStr(esc);
+            il.Emit(OpCodes.Br, afterCharEmit);
+            il.MarkLabel(skip);
+        }
+        ControlCase(9, "\\t");
+        ControlCase(10, "\\n");
+        ControlCase(11, "\\v");
+        ControlCase(12, "\\f");
+        ControlCase(13, "\\r");
+        il.MarkLabel(afterRule2);
+
+        // rule 5: needsHex = otherPunctuator | whitespace | lineterminator | lone surrogate
+        var needsHexEmit = il.DefineLabel();
+        var checkWs = il.DefineLabel();
+        var checkCat = il.DefineLabel();
+        var afterRule5 = il.DefineLabel();
+        // otherPunctuators (c <= 0xFFFF)
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xFFFF);
+        il.Emit(OpCodes.Bgt, checkWs);
+        il.Emit(OpCodes.Ldstr, ",-=<>#&!%:;@~'`\"");
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Conv_U2);
+        il.Emit(OpCodes.Callvirt, indexOfChar);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bge, needsHexEmit);
+        il.MarkLabel(checkWs);
+        // 0xFEFF / 0x2028 / 0x2029
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xFEFF);
+        il.Emit(OpCodes.Beq, needsHexEmit);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0x2028);
+        il.Emit(OpCodes.Beq, needsHexEmit);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0x2029);
+        il.Emit(OpCodes.Beq, needsHexEmit);
+        // lone surrogate value: 0xD800..0xDFFF
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xD800);
+        il.Emit(OpCodes.Blt, checkCat);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xDFFF);
+        il.Emit(OpCodes.Ble, needsHexEmit);
+        il.MarkLabel(checkCat);
+        // SpaceSeparator category (c <= 0xFFFF)
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xFFFF);
+        il.Emit(OpCodes.Bgt, afterRule5);
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Conv_U2);
+        il.Emit(OpCodes.Call, getCat);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Globalization.UnicodeCategory.SpaceSeparator);
+        il.Emit(OpCodes.Bne_Un, afterRule5);
+
+        il.MarkLabel(needsHexEmit);
+        // if (c <= 0xFF) { sb.Append("\x"); hex2(c) } else { for k: sb.Append("\u"); hex4(str[i+k]) }
+        var hexUnicode = il.DefineLabel();
+        var uLoopStart = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, cLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xFF);
+        il.Emit(OpCodes.Bgt, hexUnicode);
+        AppendLiteralStr("\\x");
+        AppendHex(cLocal, "x2");
+        il.Emit(OpCodes.Br, afterCharEmit);
+        il.MarkLabel(hexUnicode);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, kLocal);
+        il.MarkLabel(uLoopStart);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldloc, unitsLocal);
+        il.Emit(OpCodes.Bge, afterCharEmit);
+        AppendLiteralStr("\\u");
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Callvirt, getChars);
+        il.Emit(OpCodes.Stloc, cuLocal);
+        AppendHex(cuLocal, "x4");
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, kLocal);
+        il.Emit(OpCodes.Br, uLoopStart);
+        il.MarkLabel(afterRule5);
+
+        // rule 6: literal — for (k=0;k<units;k++) sb.Append(str[i+k])
+        var litLoopStart = il.DefineLabel();
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, kLocal);
+        il.MarkLabel(litLoopStart);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldloc, unitsLocal);
+        il.Emit(OpCodes.Bge, afterCharEmit);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Callvirt, getChars);
+        il.Emit(OpCodes.Callvirt, appendChar);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, kLocal);
+        il.Emit(OpCodes.Br, litLoopStart);
+
+        il.MarkLabel(afterCharEmit);
+        // first = 0; i += units
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, firstLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, unitsLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Callvirt, _types.StringBuilderToString);
         il.Emit(OpCodes.Ret);
     }
 
