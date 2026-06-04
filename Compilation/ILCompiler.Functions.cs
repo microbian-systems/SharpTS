@@ -110,6 +110,15 @@ public partial class ILCompiler
         if (funcStmt.Body != null && ReferencesArgumentsIdentifier(funcStmt.Body))
         {
             _functions.CapturingArguments.Add(qualifiedFunctionName);
+            // Mark the method so $TSFunction can detect (at runtime, via
+            // IsDefined) that this callback may observe the iteration index
+            // through `arguments`. Without it, the iterator-helper
+            // skip-index-box optimization treats this `this`-less declaration
+            // like an arrow and drops args[1], so `function(){...arguments[1]...}`
+            // used as a map/forEach/every callback reads a null index (#101).
+            if (_runtime?.CapturesArgumentsAttrCtor != null)
+                methodBuilder.SetCustomAttribute(
+                    new System.Reflection.Emit.CustomAttributeBuilder(_runtime.CapturesArgumentsAttrCtor, []));
         }
 
         // Generate overloads for functions with default parameters

@@ -227,6 +227,17 @@ public class EmittedRuntime
     // path — read at runtime to detect callback arity without reflection.
     public FieldBuilder TSFunctionParamCountField { get; set; } = null!;
     public FieldBuilder TSFunctionExpectsThisField { get; set; } = null!;
+    // True when the wrapped method's body reads JS `arguments`. Set via the
+    // $CapturesArguments marker attribute (function declarations only — function
+    // expressions already get _expectsThis=true via their __this param). Read by
+    // the iterator-helper skip-index-box detection so it never drops the index
+    // arg for a callback that could observe it through `arguments`.
+    public FieldBuilder TSFunctionCapturesArgumentsField { get; set; } = null!;
+    // Marker attribute applied to function-declaration methods that reference
+    // `arguments`. Its ctor is invoked via CustomAttributeBuilder at method
+    // definition; the type token is read back via MethodInfo.IsDefined.
+    public TypeBuilder CapturesArgumentsAttrType { get; set; } = null!;
+    public ConstructorBuilder CapturesArgumentsAttrCtor { get; set; } = null!;
 
     // String methods
     public MethodBuilder StringCharAt { get; set; } = null!;
