@@ -5,6 +5,17 @@ into clusters with effort/risk estimates.
 
 ## Progress
 
+- **RegExp call-form identity (S15.10.3.1) — ATTEMPTED, REVERTED (deferred).**
+  `RegExp(re)` (call form, undefined flags) should return the *same* object. A
+  simple `pattern is $RegExp && flags undefined` short-circuit gave +5 compiled
+  but regressed 2 previously-passing tests (`call_with_regexp_not_same_constructor`,
+  `call_with_regexp_match_falsy`): §22.2.4.1 only short-circuits when
+  `IsRegExp(pattern)` (i.e. `pattern[Symbol.match]` is truthy) AND
+  `pattern.constructor === RegExp`. Doing that correctly needs symbol-property +
+  constructor reads on `$RegExp`/`SharpTSRegExp` (uncertain support; both modes
+  incl. IL) for a modest +5 — not worth the risk now, so reverted to keep the
+  baseline regression-free. Revisit once `$RegExp` has a proper IsRegExp brand check.
+
 - **RegExp flags validation (both modes) — DONE.** ECMA-262 §22.2.3.3: each flag
   must be one of d/g/i/m/s/u/v/y, no duplicates, not both u and v. `NormalizeFlags`
   silently dropped invalid flags; now `ValidateFlags` (interp C# + compiled IL)
