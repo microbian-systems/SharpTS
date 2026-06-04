@@ -14,8 +14,24 @@ into clusters with effort/risk estimates.
   (name/length/prop-desc/not-a-constructor) pass in compiled; in interp they hit
   a separate generic gap (built-in statics aren't introspectable own properties —
   `getOwnPropertyDescriptor(Object,"keys")` is also null).
-- **`regexp-modifiers` feature-skip — REJECTED (see cluster 1).** Data showed it
-  would discard far more passing tests than it cleans up.
+- **`regexp-modifiers` feature-skip — REJECTED, but it IS a genuine both-mode
+  feature gap (see cluster 1).** A first analysis used the swallow-inflated
+  pre-signal-fix interp baseline and wrongly concluded interp passed 145/147.
+  Re-measured against the corrected post-fix baselines, `regexp-modifiers` fails
+  ~equally in both modes (interp 90 Fail / 55 Pass; compiled 87 Fail / 58 Pass)
+  — an unimplemented feature (modifier early-error validation), not a
+  compiled-only bug. Skip still rejected because it would convert the 55–58
+  genuinely passing tests (native `(?i:…)`) to Skipped; the right fix is to
+  implement the validation, which helps both modes.
+
+- **Corrected #102 framing.** Of the 289 compiled RegExp Fails, **273 also fail
+  in interp** — genuine spec/feature gaps shared by both modes, not compiled
+  divergences. Only **16 are compiled-only** (compiled Fail, interp Pass), and
+  **14 of those are Symbol.replace/Symbol.split → #101**. So #102 has just **2**
+  genuine compiled-only bugs (`S15.10.7_A1_T1/T2`: calling a RegExp as a function
+  must throw TypeError). The headline lesson: measure against the post-fix
+  baseline — "compiled diverges from interp" is mostly an artifact of the old
+  swallow bug.
 
 ## What changed during investigation
 
@@ -50,7 +66,7 @@ Symbol.match 5, Symbol.search 1, Symbol.species 4) belong to **#101** — exclud
 
 | # | Cluster | Compiled Fails | Nature | Effort | Risk | Hot-path? |
 |---|---|---:|---|---|---|---|
-| 1 | `regexp-modifiers` (ES2025 inline `(?ims-ims:…)`) | 87 of 147 tagged | **Compiled-mode bug, NOT a missing feature.** Interp passes **145/147** (native .NET `Regex` handles inline modifiers); compiled fails 87 (Fail) / passes 58. The compiled `$RegExp` construction/dispatch diverges from interp for modifier patterns. **Do NOT feature-skip** — skipping discards 145 passing interp + 58 passing compiled tests. Fix compiled to match interp instead. | MEDIUM (find the compiled divergence) | MEDIUM (touches $RegExp construction) | No |
+| 1 | `regexp-modifiers` (ES2025 inline `(?ims-ims:…)`) | 87 compiled / 90 interp of 147 tagged | **Genuine both-mode feature gap** (missing modifier early-error validation), NOT a compiled-only bug. Positive `(?i:…)` patterns already pass (~55–58/mode via native `Regex`); the failures are `syntax-err-*`/`early-err-*` tests expecting a **SyntaxError** for invalid modifier forms (`(?i-i:)` add+remove same flag, `(?ii:)` duplicate, non-`ims` flags) which neither mode throws. Fix = implement the validation in the shared regex-construction path and raise a SyntaxError-typed error. Do NOT feature-skip (would drop the 55–58 passing tests). | MEDIUM–HIGH (spec-detailed validator + SyntaxError typing, both modes) | MEDIUM (construction path) | No |
 | 2 | `escape/` — `RegExp.escape` (ES2025 static) | 19 (+1 cross-realm RuntimeError) | Unimplemented in both modes; compiled dispatch returns `null`. 20 tagged. Cannot delegate to .NET `Regex.Escape` (ES `EncodeForRegExpEscape` escapes a different, leading-char-aware set). | LOW–MEDIUM | LOW (new static) | No |
 | 3 | `prototype/exec/` lastIndex | 12 | `lastIndex` stored as typed `int` → loses object identity (`r.lastIndex = obj`) and skips ToLength-on-read `valueOf` side effects; plus `u`-flag surrogate advancement. Shared interp+compile design. | MEDIUM–HIGH | MEDIUM (exec hot path — must keep typed-int fast path; add boxed slot only when a non-number is assigned) | **Yes** |
 | 4 | Root Sputnik `S15.10.2.x` (NonemptyClassRanges) | 44 | Character-class range validation/semantics (`/[\d-a]/` etc.). Mostly missing SyntaxError + .NET-vs-ES class semantics. | HIGH | MEDIUM–HIGH (pattern translation changes can regress passing patterns) | No (construction) |
@@ -63,28 +79,33 @@ Symbol.match 5, Symbol.search 1, Symbol.species 4) belong to **#101** — exclud
 
 1. **`RegExp.escape` (cluster 2) — DONE.** +18 compiled Pass, +15 interp Pass; no hot-path risk.
 
-2. **Compiled regexp-modifiers bug (cluster 1)** — highest remaining payoff: ~87 compiled Fails
-   where interp already passes 145/147. Diff the compiled `$RegExp` construction/dispatch against
-   interp's native-`Regex` path for `(?i:…)`-style patterns. Do NOT feature-skip.
+2. **`S15.10.7_A1_T1/T2` (the 2 genuine compiled-only #102 bugs)** — calling a RegExp as a
+   function (`/x/()`, `RegExp("a","g")()`) must throw TypeError; interp does, compiled doesn't.
+   Small, low-risk "make compiled match interp" win.
 
-3. **lastIndex semantics** (cluster 3) — ~12 tests; the only hot-path-sensitive change. Preserve
-   the typed-`int` fast path; only allocate a boxed `lastIndex` slot when a non-number is assigned,
-   and apply ToLength coercion on read. Benefits both runtimes.
+3. **regexp-modifiers early-error validation (cluster 1)** — largest single cluster (~87 compiled /
+   90 interp). Implement the ECMAScript modifier early errors (SyntaxError for `(?i-i:)`, `(?ii:)`,
+   non-`ims` flags) in the shared regex-construction path. Benefits both modes; preserves the 55–58
+   already-passing positive tests.
 
-4. **`u`-mode + class-range validation** (clusters 4 & 6) — add ECMAScript pattern validation that
-   emits SyntaxError for restricted forms. Start with the homogeneous `S15.10.2.15` range cluster.
+4. **`u`-mode + class-range validation** (clusters 4 & 6) — ECMAScript pattern validation emitting
+   SyntaxError for restricted forms. Both modes. Start with the homogeneous `S15.10.2.15` cluster.
 
-5. **Engine-semantics** (cluster 7) and **misc triage** (clusters 5, 8) — lowest priority; per-test.
+5. **lastIndex semantics** (cluster 3) — ~12 tests; the only hot-path-sensitive change. Preserve
+   the typed-`int` fast path; allocate a boxed `lastIndex` slot only when a non-number is assigned,
+   and apply ToLength coercion on read. Both modes.
 
-6. **Defer Symbol.* (clusters under #101).** Both committed baselines were regenerated at HEAD with
-   the signal fix + escape, so they are consistent.
+6. **Engine-semantics** (cluster 7) and **misc triage** (clusters 5, 8) — lowest priority; per-test.
 
-## Lesson: don't feature-skip a category the interp already passes
+7. **Symbol.* clusters → #101** (incl. 14 of the 16 compiled-only bugs).
 
-Feature-skip is honest only when the feature is genuinely unimplemented in *both* modes. For
-`regexp-modifiers`, interp passes 145/147 via native `Regex`, so the failures are a compiled-mode
-divergence. Always check the per-tag Pass/Fail split in *both* modes before adding a skip — a skip
-that converts Pass→Skipped is a coverage regression, not a cleanup.
+## Lesson: measure feature gaps against the post-signal-fix baseline
+
+Before the signal fix, interp could not report Fail, so any "interp passes / compiled fails"
+comparison was an artifact. The first `regexp-modifiers` read ("interp passes 145/147 → compiled
+bug") came from that broken baseline; the corrected data shows it fails ~equally in both modes.
+Always cross-reference compiled Fails against the *post-fix* interp baseline: 273 of 289 are shared
+gaps (real features to implement), not compiled divergences.
 
 ## Performance note (original concern)
 
