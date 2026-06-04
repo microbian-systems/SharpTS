@@ -80,24 +80,24 @@ into clusters with effort/risk estimates.
   baseline — "compiled diverges from interp" is mostly an artifact of the old
   swallow bug.
 
-## Remaining #102 work (after the fixes above)
+## Remaining #102 work (current: compiled RegExp Fail **134**)
 
-Compiled RegExp Fail is **307 → 172**. Of the 172, **63 are `Symbol.*` (→ #101)**,
-leaving **109 in #102 scope** (159 of the 172 also fail interp — genuine both-mode
-gaps). Remaining clusters, largest first:
+Compiled RegExp Fail **307 → 134** (~56%). Of the 134, **63 are `Symbol.*` (→ #101)**,
+leaving **~71 in #102 scope**. The clean validation/coercion wins are done; what
+remains is hard-tier, grouped by the work it actually needs:
 
-| Cluster | Compiled Fails | Work |
+| Cluster | Compiled Fails | Nature / blocker |
 |---|---:|---|
-| `regexp-modifiers` (syntax-err 23 + early-err 6 + subdir 10) | ~39 | ES2025 modifier **early-error** validation — scan `(?ims-ims:…)` groups, throw SyntaxError on dup/overlap/non-`ims` flags. .NET accepts these, so needs an explicit validator in the construction path (both modes; compiled needs an IL scanner like HasNamedGroups/Escape). SyntaxError typing is already in place. |
-| `prototype/exec` lastIndex | 12 | Typed-`int` lastIndex loses object identity + ToLength-on-read; `u`-flag surrogate advance. Hot-path-sensitive. |
-| Sputnik ctor/syntax (`S15.10.3.1` 9, `S15.10.4.1` 11, `S15.10.5` 2, `S15.10.2.11` 2, `S15.10.7` 2) | ~26 | Per-test triage; constructor coercion + a few remaining syntax edge cases. |
-| `unicode_restricted_*` + `unicode_full_case_folding` | ~9 | Annex B `u`-mode restricted-syntax SyntaxErrors. |
-| `from-regexp-like*` | 6 | `RegExp(regexLike)` — read source/flags via Get, Symbol.match brand check. |
-| `dotall` 3, `CharacterClassEscapes` 2, class-escape 1 | 6 | .NET-vs-ES `\s/\d` membership + dotAll×unicode. |
-| `prototype/{test,multiline,ignoreCase,global}` 4, misc 4 | ~8 | Small dispatch/coercion edge cases. |
+| `prototype/exec` lastIndex | 12 | Typed-`int` lastIndex storage rework on the match **hot path** — loses object identity + ToLength-on-read `valueOf`; `u`-flag surrogate advance. Risky (perf + correctness). |
+| `regexp-modifiers` u-fold (10), `dotall` (3), `CharacterClassEscapes`/class-escape (3) | ~16 | **Engine semantics** — `u`-flag Unicode case-folding and `\s`/`\d` class membership differ between .NET and ECMAScript. Likely needs a custom matcher layer. |
+| `from-regexp-like` (6) + call-form identity `S15.10.3.1` (7) + `S15.10.4.1` boxed (5) | ~18 | **Need a proper `IsRegExp` brand check** on `$RegExp` (`Symbol.match`-aware) + `Get`-based `source`/`flags` coercion + `constructor===RegExp`. A cohesive §22.2.4.1 feature shared by all three. **Blockers:** symbol-keyed get on `$RegExp` (compiled) and interp's static `CreateRegExp` factory has no interpreter access for getter invocation. A simple short-circuit was tried and reverted (regressed `not_same_constructor`/`match_falsy` — the brand check is mandatory). |
+| `unicode_restricted` | 8 | 8 distinct finicky Annex B `u`-mode rules (octal/identity escape, quantified assertion, …); each `.NET`-behavior-dependent. |
+| `prototype/{global,ignoreCase,multiline}` A10, `test/y-fail`, misc | ~8 | Descriptor introspection on `RegExp.prototype` (`hasOwnProperty`/`verifyNotWritable`) + misc. |
 
-Recommended next: **regexp-modifiers validation** (largest cluster, self-contained
-now that SyntaxError typing exists), then `prototype/exec` lastIndex.
+**Highest-leverage next investment:** a real `IsRegExp` brand check on `$RegExp`
+(Symbol.match + constructor) — unblocks ~18 tests across `from-regexp-like`,
+call-form identity, and boxed-constructor cases. It's a genuine feature (symbol
+property support on `$RegExp` + interp-aware factory), not a quick win.
 
 ## What changed during investigation
 
