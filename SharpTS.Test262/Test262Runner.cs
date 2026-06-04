@@ -354,9 +354,18 @@ public sealed class Test262Runner
                 // statements, so a Promise chain ending in `.then($DONE, $DONE)`
                 // resolves to a $DONE call before this returns.
                 interpreter.Interpret(parseResult.Statements, typeMap);
-                result = doneCallback is not null
-                    ? ClassifyAsyncDone(doneCallback)
-                    : new Test262Result(Test262Outcome.Pass, null, null);
+                // Interpret() swallows a top-level guest `throw` (prints "Runtime
+                // Error: …" and returns) so the CLI need not surface a .NET stack
+                // trace. Without inspecting LastUncaughtError here, a thrown
+                // assertion (Test262Error) or runtime TypeError would be scored a
+                // Pass — the interp baseline could not report Fail at all. Route
+                // the swallowed error through the same classifier the propagated
+                // path uses so it buckets as Fail / RuntimeError correctly.
+                result = interpreter.LastUncaughtError is { } swallowed
+                    ? ClassifyExecutionException(swallowed, harnessLength)
+                    : doneCallback is not null
+                        ? ClassifyAsyncDone(doneCallback)
+                        : new Test262Result(Test262Outcome.Pass, null, null);
             }
             catch (Exception ex)
             {

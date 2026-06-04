@@ -199,6 +199,19 @@ public partial class Interpreter : IDisposable
     internal TextWriter Error { get; }
 
     /// <summary>
+    /// The last uncaught top-level error swallowed by <see cref="Interpret"/>.
+    /// <see cref="Interpret"/> intentionally catches a top-level guest
+    /// <c>throw</c>, prints "Runtime Error: …" to <see cref="Out"/>, and returns
+    /// normally (so the CLI prints the error without a .NET stack trace). That
+    /// swallow hides the failure from hosts that bucket on a propagated
+    /// exception — notably the Test262 runner, which would otherwise score a
+    /// thrown assertion (or TypeError) as a Pass. Hosts that need to observe the
+    /// failure read this after <see cref="Interpret"/> returns; it is reset to
+    /// null at the start of each <see cref="Interpret"/> call.
+    /// </summary>
+    public Exception? LastUncaughtError { get; private set; }
+
+    /// <summary>
     /// Gets the sync evaluation context for use in unified core methods.
     /// </summary>
     internal SyncEvaluationContext SyncContext => _syncContext;
@@ -912,6 +925,7 @@ public partial class Interpreter : IDisposable
     public void Interpret(List<Stmt> statements, TypeMap? typeMap = null)
     {
         _typeMap = typeMap;
+        LastUncaughtError = null;
         ProcessBuiltIns.ResetScriptStartTime();
         try
         {
@@ -943,6 +957,7 @@ public partial class Interpreter : IDisposable
                     }
                     catch (ThrowException tex)
                     {
+                        LastUncaughtError = tex;
                         Out.WriteLine($"Runtime Error: {Stringify(tex.Value)}");
                         return;
                     }
@@ -952,6 +967,7 @@ public partial class Interpreter : IDisposable
                     var result = Execute(statement);
                     if (result.Type == ExecutionResult.ResultType.Throw)
                     {
+                        LastUncaughtError = ThrowException.FromResult(result.Value.ToObject());
                         Out.WriteLine($"Runtime Error: {Stringify(result.Value.ToObject())}");
                         return;
                     }
