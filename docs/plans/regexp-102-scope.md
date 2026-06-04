@@ -51,6 +51,25 @@ into clusters with effort/risk estimates.
   baseline — "compiled diverges from interp" is mostly an artifact of the old
   swallow bug.
 
+## Remaining #102 work (after the fixes above)
+
+Compiled RegExp Fail is **307 → 172**. Of the 172, **63 are `Symbol.*` (→ #101)**,
+leaving **109 in #102 scope** (159 of the 172 also fail interp — genuine both-mode
+gaps). Remaining clusters, largest first:
+
+| Cluster | Compiled Fails | Work |
+|---|---:|---|
+| `regexp-modifiers` (syntax-err 23 + early-err 6 + subdir 10) | ~39 | ES2025 modifier **early-error** validation — scan `(?ims-ims:…)` groups, throw SyntaxError on dup/overlap/non-`ims` flags. .NET accepts these, so needs an explicit validator in the construction path (both modes; compiled needs an IL scanner like HasNamedGroups/Escape). SyntaxError typing is already in place. |
+| `prototype/exec` lastIndex | 12 | Typed-`int` lastIndex loses object identity + ToLength-on-read; `u`-flag surrogate advance. Hot-path-sensitive. |
+| Sputnik ctor/syntax (`S15.10.3.1` 9, `S15.10.4.1` 11, `S15.10.5` 2, `S15.10.2.11` 2, `S15.10.7` 2) | ~26 | Per-test triage; constructor coercion + a few remaining syntax edge cases. |
+| `unicode_restricted_*` + `unicode_full_case_folding` | ~9 | Annex B `u`-mode restricted-syntax SyntaxErrors. |
+| `from-regexp-like*` | 6 | `RegExp(regexLike)` — read source/flags via Get, Symbol.match brand check. |
+| `dotall` 3, `CharacterClassEscapes` 2, class-escape 1 | 6 | .NET-vs-ES `\s/\d` membership + dotAll×unicode. |
+| `prototype/{test,multiline,ignoreCase,global}` 4, misc 4 | ~8 | Small dispatch/coercion edge cases. |
+
+Recommended next: **regexp-modifiers validation** (largest cluster, self-contained
+now that SyntaxError typing exists), then `prototype/exec` lastIndex.
+
 ## What changed during investigation
 
 1. **Interp Test262 signal fix (applied).** `Execution/Interpreter.cs` `Interpret()`
