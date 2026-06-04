@@ -5,6 +5,17 @@ into clusters with effort/risk estimates.
 
 ## Progress
 
+- **`regexp-modifiers` early-error validation (both modes) — DONE.** Added an
+  ES2025 modifier-group validator (`ValidateModifiers`) to both ctors:
+  `SharpTSRegExp` (interp C#) and `$RegExp` (compiled IL, standalone — mirrors the
+  C# single-pass logic). It scans `(?addFlags-removeFlags:…)` groups (skipping
+  escapes, char classes, and the non-modifier `(?:`/`(?=`/`(?!`/`(?<…` forms) and
+  throws SyntaxError on a non-i/m/s flag, a duplicate within a set, a flag in
+  both sets, a second dash, or `(?-:)`. Compiled RegExp Fail **172 → 143 (+29
+  Pass)**. The ~10 `u`-flag Unicode case-folding modifier tests remain (separate
+  engine-semantics issue). Verified: 19 invalid → SyntaxError, 16 valid (incl.
+  `(?i-:…)`, `[(?x:]`, nested) pass with no false positives, in both modes.
+
 - **Invalid-regex → guest `SyntaxError` (both modes) — DONE.** The biggest single
   lever. `SharpTSRegExp` (interp) and the `$RegExp` ctor (compiled) caught the
   .NET `ArgumentException` and threw a generic host `Exception`, so

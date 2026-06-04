@@ -157,6 +157,10 @@ public class SharpTSRegExp : ITypeCategorized
         _multiline = _flags.Contains('m');
         LastIndex = 0;
 
+        // ES2025 modifier-group early errors (e.g. (?i-i:), (?ii:), (?-:)) — .NET
+        // accepts several of these, so validate up front and throw SyntaxError.
+        ValidateModifiers(pattern);
+
         // Named groups ((?<name>...)) are not supported in ECMAScript mode in .NET.
         // Detect them and fall back to non-ECMAScript mode.
         // .NET also rejects combining ECMAScript with Singleline, so drop ECMAScript
@@ -211,6 +215,96 @@ public class SharpTSRegExp : ITypeCategorized
         if (flags.Contains('v')) sb.Append('v');
         return sb.ToString();
     }
+
+    /// <summary>
+    /// ECMA-262 (ES2025) modifier-group early errors. A modifier group
+    /// <c>(?addFlags-removeFlags:…)</c> (or <c>(?addFlags:…)</c>) is a SyntaxError
+    /// when any flag is not one of i/m/s, a flag repeats within addFlags or within
+    /// removeFlags, a flag appears in both sets, or both sets are empty with a dash
+    /// (<c>(?-:…)</c>). .NET's engine accepts several of these, so validate up
+    /// front and throw a guest SyntaxError. Valid groups (and the non-modifier
+    /// <c>(?:</c>, <c>(?=</c>, <c>(?!</c>, <c>(?&lt;…</c> forms) pass through.
+    /// Kept in sync with the emitted <c>$RegExp.ValidateModifiers</c> (compiled).
+    /// </summary>
+    internal static void ValidateModifiers(string pattern)
+    {
+        int n = pattern.Length;
+        int i = 0;
+        while (i < n)
+        {
+            char c = pattern[i];
+            if (c == '\\') { i += 2; continue; }          // skip escaped char
+            if (c == '[') { i = SkipCharClass(pattern, i); continue; } // class chars are literal
+            if (c == '(' && i + 1 < n && pattern[i + 1] == '?')
+            {
+                int j = i + 2;
+                if (j >= n) { i++; continue; }
+                char d = pattern[j];
+                // Non-modifier (?…) constructs.
+                if (d == ':' || d == '=' || d == '!' || d == '<') { i += 2; continue; }
+                // Candidate modifier: scan flag chars up to ':' (else not a modifier).
+                int k = j;
+                while (k < n && pattern[k] != ':' && pattern[k] != ')') k++;
+                if (k >= n || pattern[k] != ':') { i++; continue; }
+                ValidateModifierFlags(pattern.Substring(j, k - j));
+                i = k + 1;
+                continue;
+            }
+            i++;
+        }
+    }
+
+    /// <summary>Returns the index just past the matching <c>]</c> of a character
+    /// class beginning at <paramref name="i"/> (<c>p[i] == '['</c>), honoring
+    /// <c>\]</c>. Unterminated → end of string (.NET surfaces the error).</summary>
+    private static int SkipCharClass(string p, int i)
+    {
+        int n = p.Length, k = i + 1;
+        while (k < n)
+        {
+            if (p[k] == '\\') { k += 2; continue; }
+            if (p[k] == ']') return k + 1;
+            k++;
+        }
+        return n;
+    }
+
+    /// <summary>Validates the flag text between <c>(?</c> and <c>:</c> (e.g.
+    /// "i", "ims", "i-m", "-i", "-", "i-i") in a single pass; throws SyntaxError
+    /// on an early error. Single-pass (no substrings) so the emitted IL mirror
+    /// stays simple.</summary>
+    private static void ValidateModifierFlags(string mod)
+    {
+        int addMask = 0, removeMask = 0;
+        bool sawDash = false;
+        foreach (char f in mod)
+        {
+            if (f == '-')
+            {
+                if (sawDash) ThrowModifierSyntax();   // a second dash
+                sawDash = true;
+                continue;
+            }
+            int bit = f switch { 'i' => 1, 'm' => 2, 's' => 4, _ => 0 };
+            if (bit == 0) ThrowModifierSyntax();      // not an i/m/s flag
+            if (!sawDash)
+            {
+                if ((addMask & bit) != 0) ThrowModifierSyntax();    // duplicate in addFlags
+                addMask |= bit;
+            }
+            else
+            {
+                if ((removeMask & bit) != 0) ThrowModifierSyntax(); // duplicate in removeFlags
+                removeMask |= bit;
+            }
+        }
+        if ((addMask & removeMask) != 0) ThrowModifierSyntax();     // flag in both sets
+        if (sawDash && addMask == 0 && removeMask == 0) ThrowModifierSyntax(); // (?-:)
+    }
+
+    private static void ThrowModifierSyntax() =>
+        throw new Exceptions.ThrowException(new SharpTSSyntaxError(
+            "Invalid regular expression: invalid modifier group"));
 
     /// <summary>
     /// Detects whether a regex pattern contains named capture groups (?&lt;name&gt;...).

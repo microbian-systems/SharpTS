@@ -28,6 +28,9 @@ public partial class RuntimeEmitter
     private MethodBuilder _tsRegExpSearchMethod = null!;
     private MethodBuilder _tsRegExpSplitMethod = null!;
     private MethodBuilder _tsRegExpHasNamedGroupsMethod = null!;
+    private MethodBuilder _tsRegExpValidateModifiersMethod = null!;
+    private MethodBuilder _tsRegExpValidateModifierFlagsMethod = null!;
+    private MethodBuilder _tsRegExpSkipCharClassMethod = null!;
     private FieldBuilder _tsRegExpCompileCacheField = null!;
     private MethodBuilder _tsRegExpGetCachedRegexMethod = null!;
     private MethodBuilder _tsRegExpSetLastIndexStrictMethod = null!;
@@ -72,6 +75,13 @@ public partial class RuntimeEmitter
 
         // Static helper for detecting named groups (must be emitted before constructors which use it)
         EmitTSRegExpHasNamedGroups(typeBuilder);
+
+        // ES2025 modifier-group early-error validators (emitted before the
+        // constructors, which call ValidateModifiers). Mirrors
+        // SharpTSRegExp.ValidateModifiers (interp).
+        EmitTSRegExpSkipCharClass(typeBuilder);
+        EmitTSRegExpValidateModifierFlags(typeBuilder, runtime);
+        EmitTSRegExpValidateModifiers(typeBuilder);
 
         // Constructors (pattern+flags first because pattern-only calls it)
         EmitTSRegExpCtorPatternFlags(typeBuilder, runtime);
@@ -420,6 +430,245 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Emits <c>static int SkipCharClass(string p, int i)</c> — returns the index
+    /// just past the matching <c>]</c> of a class starting at <paramref name="i"/>
+    /// (<c>p[i]=='['</c>), honoring <c>\]</c>. Unterminated → length.
+    /// </summary>
+    private void EmitTSRegExpSkipCharClass(TypeBuilder typeBuilder)
+    {
+        var method = typeBuilder.DefineMethod(
+            "SkipCharClass", MethodAttributes.Private | MethodAttributes.Static,
+            _types.Int32, [_types.String, _types.Int32]);
+        _tsRegExpSkipCharClassMethod = method;
+        var il = method.GetILGenerator();
+        var getLen = _types.String.GetProperty("Length")!.GetGetMethod()!;
+        var getChars = _types.String.GetMethod("get_Chars", [_types.Int32])!;
+        var nLocal = il.DeclareLocal(_types.Int32);
+        var kLocal = il.DeclareLocal(_types.Int32);
+        var loop = il.DefineLabel();
+        var retN = il.DefineLabel();
+        var notEsc = il.DefineLabel();
+        var notClose = il.DefineLabel();
+        // n = p.Length
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Callvirt, getLen); il.Emit(OpCodes.Stloc, nLocal);
+        // k = i + 1
+        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, kLocal);
+        il.MarkLabel(loop);
+        il.Emit(OpCodes.Ldloc, kLocal); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, retN);
+        // ch = p[k]
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, kLocal); il.Emit(OpCodes.Callvirt, getChars);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4, (int)'\\'); il.Emit(OpCodes.Bne_Un, notEsc);
+        il.Emit(OpCodes.Pop); // drop ch
+        il.Emit(OpCodes.Ldloc, kLocal); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, kLocal);
+        il.Emit(OpCodes.Br, loop);
+        il.MarkLabel(notEsc);
+        il.Emit(OpCodes.Ldc_I4, (int)']'); il.Emit(OpCodes.Bne_Un, notClose);
+        // return k + 1
+        il.Emit(OpCodes.Ldloc, kLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Ret);
+        il.MarkLabel(notClose);
+        il.Emit(OpCodes.Ldloc, kLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, kLocal);
+        il.Emit(OpCodes.Br, loop);
+        il.MarkLabel(retN);
+        il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits <c>static void ValidateModifierFlags(string mod)</c> — single-pass
+    /// validation of the flag text between <c>(?</c> and <c>:</c>; throws
+    /// <c>$SyntaxError</c> on a non-i/m/s flag, a duplicate within a set, a flag
+    /// in both sets, a second dash, or <c>(?-:)</c>. Mirrors the interp method.
+    /// </summary>
+    private void EmitTSRegExpValidateModifierFlags(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ValidateModifierFlags", MethodAttributes.Private | MethodAttributes.Static,
+            _types.Void, [_types.String]);
+        _tsRegExpValidateModifierFlagsMethod = method;
+        var il = method.GetILGenerator();
+        var getLen = _types.String.GetProperty("Length")!.GetGetMethod()!;
+        var getChars = _types.String.GetMethod("get_Chars", [_types.Int32])!;
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var addMask = il.DeclareLocal(_types.Int32);
+        var removeMask = il.DeclareLocal(_types.Int32);
+        var sawDash = il.DeclareLocal(_types.Int32);
+        var fLocal = il.DeclareLocal(_types.Char);
+        var bitLocal = il.DeclareLocal(_types.Int32);
+
+        var loop = il.DefineLabel();
+        var afterLoop = il.DefineLabel();
+        var notDash = il.DefineLabel();
+        var cont = il.DefineLabel();
+        var setI = il.DefineLabel();
+        var setM = il.DefineLabel();
+        var setS = il.DefineLabel();
+        var haveBit = il.DefineLabel();
+        var inRemove = il.DefineLabel();
+        var retLabel = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+
+        // addMask=removeMask=sawDash=i=0
+        foreach (var loc in new[] { addMask, removeMask, sawDash, iLocal })
+        { il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, loc); }
+
+        il.MarkLabel(loop);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Callvirt, getLen);
+        il.Emit(OpCodes.Bge, afterLoop);
+        // f = mod[i]
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Callvirt, getChars);
+        il.Emit(OpCodes.Stloc, fLocal);
+        // if (f != '-') goto notDash
+        il.Emit(OpCodes.Ldloc, fLocal); il.Emit(OpCodes.Ldc_I4, (int)'-'); il.Emit(OpCodes.Bne_Un, notDash);
+        //   if (sawDash != 0) throw; sawDash=1; cont
+        il.Emit(OpCodes.Ldloc, sawDash); il.Emit(OpCodes.Brtrue, throwLabel);
+        il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Stloc, sawDash);
+        il.Emit(OpCodes.Br, cont);
+        il.MarkLabel(notDash);
+        // bit = i?1:m?2:s?4:0
+        il.Emit(OpCodes.Ldloc, fLocal); il.Emit(OpCodes.Ldc_I4, (int)'i'); il.Emit(OpCodes.Beq, setI);
+        il.Emit(OpCodes.Ldloc, fLocal); il.Emit(OpCodes.Ldc_I4, (int)'m'); il.Emit(OpCodes.Beq, setM);
+        il.Emit(OpCodes.Ldloc, fLocal); il.Emit(OpCodes.Ldc_I4, (int)'s'); il.Emit(OpCodes.Beq, setS);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, bitLocal); il.Emit(OpCodes.Br, haveBit);
+        il.MarkLabel(setI); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Stloc, bitLocal); il.Emit(OpCodes.Br, haveBit);
+        il.MarkLabel(setM); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Stloc, bitLocal); il.Emit(OpCodes.Br, haveBit);
+        il.MarkLabel(setS); il.Emit(OpCodes.Ldc_I4_4); il.Emit(OpCodes.Stloc, bitLocal);
+        il.MarkLabel(haveBit);
+        // if (bit==0) throw
+        il.Emit(OpCodes.Ldloc, bitLocal); il.Emit(OpCodes.Brfalse, throwLabel);
+        // if (sawDash != 0) goto inRemove
+        il.Emit(OpCodes.Ldloc, sawDash); il.Emit(OpCodes.Brtrue, inRemove);
+        //   if ((addMask & bit)!=0) throw; addMask|=bit
+        il.Emit(OpCodes.Ldloc, addMask); il.Emit(OpCodes.Ldloc, bitLocal); il.Emit(OpCodes.And); il.Emit(OpCodes.Brtrue, throwLabel);
+        il.Emit(OpCodes.Ldloc, addMask); il.Emit(OpCodes.Ldloc, bitLocal); il.Emit(OpCodes.Or); il.Emit(OpCodes.Stloc, addMask);
+        il.Emit(OpCodes.Br, cont);
+        il.MarkLabel(inRemove);
+        //   if ((removeMask & bit)!=0) throw; removeMask|=bit
+        il.Emit(OpCodes.Ldloc, removeMask); il.Emit(OpCodes.Ldloc, bitLocal); il.Emit(OpCodes.And); il.Emit(OpCodes.Brtrue, throwLabel);
+        il.Emit(OpCodes.Ldloc, removeMask); il.Emit(OpCodes.Ldloc, bitLocal); il.Emit(OpCodes.Or); il.Emit(OpCodes.Stloc, removeMask);
+        il.MarkLabel(cont);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+
+        il.MarkLabel(afterLoop);
+        // if ((addMask & removeMask)!=0) throw
+        il.Emit(OpCodes.Ldloc, addMask); il.Emit(OpCodes.Ldloc, removeMask); il.Emit(OpCodes.And); il.Emit(OpCodes.Brtrue, throwLabel);
+        // if (sawDash!=0 && addMask==0 && removeMask==0) throw
+        il.Emit(OpCodes.Ldloc, sawDash); il.Emit(OpCodes.Brfalse, retLabel);
+        il.Emit(OpCodes.Ldloc, addMask); il.Emit(OpCodes.Brtrue, retLabel);
+        il.Emit(OpCodes.Ldloc, removeMask); il.Emit(OpCodes.Brtrue, retLabel);
+        il.Emit(OpCodes.Br, throwLabel);
+
+        il.MarkLabel(retLabel);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, "Invalid regular expression: invalid modifier group");
+        il.Emit(OpCodes.Newobj, runtime.TSSyntaxErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+    }
+
+    /// <summary>
+    /// Emits <c>static void ValidateModifiers(string pattern)</c> — scans for
+    /// <c>(?flags-flags:…)</c> modifier groups (skipping escapes, char classes,
+    /// and the non-modifier <c>(?:</c>/<c>(?=</c>/<c>(?!</c>/<c>(?&lt;…</c> forms)
+    /// and validates each via ValidateModifierFlags. Mirrors the interp method.
+    /// </summary>
+    private void EmitTSRegExpValidateModifiers(TypeBuilder typeBuilder)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ValidateModifiers", MethodAttributes.Private | MethodAttributes.Static,
+            _types.Void, [_types.String]);
+        _tsRegExpValidateModifiersMethod = method;
+        var il = method.GetILGenerator();
+        var getLen = _types.String.GetProperty("Length")!.GetGetMethod()!;
+        var getChars = _types.String.GetMethod("get_Chars", [_types.Int32])!;
+        var substr = _types.String.GetMethod("Substring", [_types.Int32, _types.Int32])!;
+        var nLocal = il.DeclareLocal(_types.Int32);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var jLocal = il.DeclareLocal(_types.Int32);
+        var kLocal = il.DeclareLocal(_types.Int32);
+        var cLocal = il.DeclareLocal(_types.Char);
+        var dLocal = il.DeclareLocal(_types.Char);
+
+        var loop = il.DefineLabel();
+        var end = il.DefineLabel();
+        var incr = il.DefineLabel();
+        var skip2 = il.DefineLabel();
+        var notBackslash = il.DefineLabel();
+        var notClass = il.DefineLabel();
+        var scanLoop = il.DefineLabel();
+        var foundColon = il.DefineLabel();
+
+        // n = pattern.Length; i = 0
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Callvirt, getLen); il.Emit(OpCodes.Stloc, nLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(loop);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, end);
+        // c = pattern[i]
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Callvirt, getChars); il.Emit(OpCodes.Stloc, cLocal);
+        // if (c=='\\') { i+=2; loop }
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)'\\'); il.Emit(OpCodes.Bne_Un, notBackslash);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+        il.MarkLabel(notBackslash);
+        // if (c=='[') { i = SkipCharClass(pattern, i); loop }
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)'['); il.Emit(OpCodes.Bne_Un, notClass);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Call, _tsRegExpSkipCharClassMethod); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+        il.MarkLabel(notClass);
+        // if (c != '(') goto incr
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)'('); il.Emit(OpCodes.Bne_Un, incr);
+        // if (i+1 >= n) goto incr
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, incr);
+        // if (pattern[i+1] != '?') goto incr
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Callvirt, getChars);
+        il.Emit(OpCodes.Ldc_I4, (int)'?'); il.Emit(OpCodes.Bne_Un, incr);
+        // j = i+2; if (j>=n) goto incr
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, jLocal);
+        il.Emit(OpCodes.Ldloc, jLocal); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, incr);
+        // d = pattern[j]; if d in {':','=','!','<'} goto skip2
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, jLocal); il.Emit(OpCodes.Callvirt, getChars); il.Emit(OpCodes.Stloc, dLocal);
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)':'); il.Emit(OpCodes.Beq, skip2);
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)'='); il.Emit(OpCodes.Beq, skip2);
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)'!'); il.Emit(OpCodes.Beq, skip2);
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)'<'); il.Emit(OpCodes.Beq, skip2);
+        // k = j
+        il.Emit(OpCodes.Ldloc, jLocal); il.Emit(OpCodes.Stloc, kLocal);
+        il.MarkLabel(scanLoop);
+        // if (k>=n) goto incr
+        il.Emit(OpCodes.Ldloc, kLocal); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, incr);
+        // ch = pattern[k]; if ch==':' foundColon; if ch==')' incr; k++
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, kLocal); il.Emit(OpCodes.Callvirt, getChars);
+        il.Emit(OpCodes.Dup); il.Emit(OpCodes.Ldc_I4, (int)':'); il.Emit(OpCodes.Beq, foundColon);
+        il.Emit(OpCodes.Ldc_I4, (int)')'); il.Emit(OpCodes.Beq, incr);
+        il.Emit(OpCodes.Ldloc, kLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, kLocal);
+        il.Emit(OpCodes.Br, scanLoop);
+        il.MarkLabel(foundColon);
+        il.Emit(OpCodes.Pop); // drop the duped ':'
+        // ValidateModifierFlags(pattern.Substring(j, k-j))
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Ldloc, kLocal); il.Emit(OpCodes.Ldloc, jLocal); il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Callvirt, substr);
+        il.Emit(OpCodes.Call, _tsRegExpValidateModifierFlagsMethod);
+        // i = k+1; loop
+        il.Emit(OpCodes.Ldloc, kLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+
+        il.MarkLabel(skip2);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+
+        il.MarkLabel(incr);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+
+        il.MarkLabel(end);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitTSRegExpCtorPattern(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // public $RegExp(string pattern) : this(pattern, "") { }
@@ -458,6 +707,10 @@ public partial class RuntimeEmitter
         // Call base constructor
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, _types.Object.GetConstructor(Type.EmptyTypes)!);
+
+        // ES2025 modifier-group early errors — throw $SyntaxError before compiling.
+        il.Emit(OpCodes.Ldarg_1); // pattern
+        il.Emit(OpCodes.Call, _tsRegExpValidateModifiersMethod);
 
         // _source = pattern
         il.Emit(OpCodes.Ldarg_0);
