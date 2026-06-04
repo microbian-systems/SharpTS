@@ -31,6 +31,7 @@ public partial class RuntimeEmitter
     private MethodBuilder _tsRegExpValidateModifiersMethod = null!;
     private MethodBuilder _tsRegExpValidateModifierFlagsMethod = null!;
     private MethodBuilder _tsRegExpSkipCharClassMethod = null!;
+    private MethodBuilder _tsRegExpValidateFlagsMethod = null!;
     private FieldBuilder _tsRegExpCompileCacheField = null!;
     private MethodBuilder _tsRegExpGetCachedRegexMethod = null!;
     private MethodBuilder _tsRegExpSetLastIndexStrictMethod = null!;
@@ -82,6 +83,7 @@ public partial class RuntimeEmitter
         EmitTSRegExpSkipCharClass(typeBuilder);
         EmitTSRegExpValidateModifierFlags(typeBuilder, runtime);
         EmitTSRegExpValidateModifiers(typeBuilder);
+        EmitTSRegExpValidateFlags(typeBuilder, runtime);
 
         // Constructors (pattern+flags first because pattern-only calls it)
         EmitTSRegExpCtorPatternFlags(typeBuilder, runtime);
@@ -669,6 +671,87 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Emits <c>static void ValidateFlags(string flags)</c> — ECMA-262 §22.2.3.3:
+    /// throws <c>$SyntaxError</c> on an unknown flag, a duplicate flag, or both
+    /// u and v. Mirrors the interp <c>SharpTSRegExp.ValidateFlags</c>.
+    /// </summary>
+    private void EmitTSRegExpValidateFlags(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ValidateFlags", MethodAttributes.Private | MethodAttributes.Static,
+            _types.Void, [_types.String]);
+        _tsRegExpValidateFlagsMethod = method;
+        var il = method.GetILGenerator();
+        var getLen = _types.String.GetProperty("Length")!.GetGetMethod()!;
+        var getChars = _types.String.GetMethod("get_Chars", [_types.Int32])!;
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var seenLocal = il.DeclareLocal(_types.Int32);
+        var fLocal = il.DeclareLocal(_types.Char);
+        var bitLocal = il.DeclareLocal(_types.Int32);
+
+        var loop = il.DefineLabel();
+        var afterLoop = il.DefineLabel();
+        var haveBit = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+        var retLabel = il.DefineLabel();
+
+        // (char, bit) table → a labelled set-and-jump per flag
+        (char ch, int bit)[] flags =
+        [
+            ('d', 1), ('g', 2), ('i', 4), ('m', 8),
+            ('s', 16), ('u', 32), ('v', 64), ('y', 128)
+        ];
+
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, seenLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(loop);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Callvirt, getLen);
+        il.Emit(OpCodes.Bge, afterLoop);
+        // f = flags[i]
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Callvirt, getChars);
+        il.Emit(OpCodes.Stloc, fLocal);
+        // bit = switch(f)
+        var setLabels = flags.Select(_ => il.DefineLabel()).ToArray();
+        for (int fi = 0; fi < flags.Length; fi++)
+        {
+            il.Emit(OpCodes.Ldloc, fLocal); il.Emit(OpCodes.Ldc_I4, (int)flags[fi].ch);
+            il.Emit(OpCodes.Beq, setLabels[fi]);
+        }
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, bitLocal); il.Emit(OpCodes.Br, haveBit);
+        for (int fi = 0; fi < flags.Length; fi++)
+        {
+            il.MarkLabel(setLabels[fi]);
+            il.Emit(OpCodes.Ldc_I4, flags[fi].bit); il.Emit(OpCodes.Stloc, bitLocal); il.Emit(OpCodes.Br, haveBit);
+        }
+        il.MarkLabel(haveBit);
+        // if (bit==0) throw
+        il.Emit(OpCodes.Ldloc, bitLocal); il.Emit(OpCodes.Brfalse, throwLabel);
+        // if ((seen & bit)!=0) throw
+        il.Emit(OpCodes.Ldloc, seenLocal); il.Emit(OpCodes.Ldloc, bitLocal); il.Emit(OpCodes.And); il.Emit(OpCodes.Brtrue, throwLabel);
+        // seen |= bit
+        il.Emit(OpCodes.Ldloc, seenLocal); il.Emit(OpCodes.Ldloc, bitLocal); il.Emit(OpCodes.Or); il.Emit(OpCodes.Stloc, seenLocal);
+        // i++
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+
+        il.MarkLabel(afterLoop);
+        // if ((seen & 32)!=0 && (seen & 64)!=0) throw   (u and v)
+        il.Emit(OpCodes.Ldloc, seenLocal); il.Emit(OpCodes.Ldc_I4, 32); il.Emit(OpCodes.And); il.Emit(OpCodes.Brfalse, retLabel);
+        il.Emit(OpCodes.Ldloc, seenLocal); il.Emit(OpCodes.Ldc_I4, 64); il.Emit(OpCodes.And); il.Emit(OpCodes.Brfalse, retLabel);
+        il.Emit(OpCodes.Br, throwLabel);
+
+        il.MarkLabel(retLabel);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, "Invalid regular expression flags");
+        il.Emit(OpCodes.Newobj, runtime.TSSyntaxErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+    }
+
     private void EmitTSRegExpCtorPattern(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // public $RegExp(string pattern) : this(pattern, "") { }
@@ -711,6 +794,10 @@ public partial class RuntimeEmitter
         // ES2025 modifier-group early errors — throw $SyntaxError before compiling.
         il.Emit(OpCodes.Ldarg_1); // pattern
         il.Emit(OpCodes.Call, _tsRegExpValidateModifiersMethod);
+
+        // §22.2.3.3 flag validation (unknown/duplicate flag, u+v) → SyntaxError.
+        il.Emit(OpCodes.Ldarg_2); // flags
+        il.Emit(OpCodes.Call, _tsRegExpValidateFlagsMethod);
 
         // _source = pattern
         il.Emit(OpCodes.Ldarg_0);

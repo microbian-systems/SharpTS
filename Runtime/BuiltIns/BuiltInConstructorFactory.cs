@@ -201,8 +201,24 @@ public static class BuiltInConstructorFactory
 
     private static object CreateRegExp(IReadOnlyList<object?> args)
     {
-        var pattern = args.Count > 0 ? args[0]?.ToString() ?? "" : "";
-        var flags = args.Count > 1 ? args[1]?.ToString() ?? "" : "";
+        // ECMA-262 §22.2.4.1: undefined pattern/flags coerce to "" (NOT the
+        // string "undefined" — SharpTSUndefined.ToString() would give that and
+        // surface as bogus flags). When pattern is itself a RegExp, copy its
+        // source and (when flags is undefined) its flags rather than stringifying
+        // it to "/source/flags". Mirrors the compiled RegExpFromArgs/RegExpCoerceArg.
+        object? patternArg = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
+        object? flagsArg = args.Count > 1 ? args[1] : SharpTSUndefined.Instance;
+        string pattern, flags;
+        if (patternArg is SharpTSRegExp rx)
+        {
+            pattern = rx.Source;
+            flags = flagsArg is null or SharpTSUndefined ? rx.Flags : flagsArg.ToString() ?? "";
+        }
+        else
+        {
+            pattern = patternArg is null or SharpTSUndefined ? "" : patternArg.ToString() ?? "";
+            flags = flagsArg is null or SharpTSUndefined ? "" : flagsArg.ToString() ?? "";
+        }
         return new SharpTSRegExp(pattern, flags);
     }
 

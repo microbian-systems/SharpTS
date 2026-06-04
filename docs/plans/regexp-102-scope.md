@@ -5,6 +5,13 @@ into clusters with effort/risk estimates.
 
 ## Progress
 
+- **RegExp flags validation (both modes) — DONE.** ECMA-262 §22.2.3.3: each flag
+  must be one of d/g/i/m/s/u/v/y, no duplicates, not both u and v. `NormalizeFlags`
+  silently dropped invalid flags; now `ValidateFlags` (interp C# + compiled IL)
+  runs first and throws SyntaxError. Catches `new RegExp("a","ii")` (dup),
+  `new RegExp("","migr")` (unknown `r`), `new RegExp(/x/, {})` (object→invalid
+  flags), etc. Compiled RegExp Fail **143 → 134 (+9 Pass)**.
+
 - **`regexp-modifiers` early-error validation (both modes) — DONE.** Added an
   ES2025 modifier-group validator (`ValidateModifiers`) to both ctors:
   `SharpTSRegExp` (interp C#) and `$RegExp` (compiled IL, standalone — mirrors the

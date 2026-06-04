@@ -151,6 +151,10 @@ public class SharpTSRegExp : ITypeCategorized
     public SharpTSRegExp(string pattern, string flags = "")
     {
         _source = pattern;
+        // ECMA-262 §22.2.3.3: each flag must be one of d/g/i/m/s/u/v/y, with no
+        // duplicates and not both u and v. NormalizeFlags silently drops invalid
+        // flags, so validate the raw string first and throw SyntaxError.
+        ValidateFlags(flags);
         _flags = NormalizeFlags(flags);
         _global = _flags.Contains('g');
         _ignoreCase = _flags.Contains('i');
@@ -190,6 +194,33 @@ public class SharpTSRegExp : ITypeCategorized
                 new SharpTSSyntaxError($"Invalid regular expression: {ex.Message}"));
         }
     }
+
+    /// <summary>
+    /// ECMA-262 §22.2.3.3 flag validation: throws SyntaxError if a flag is not
+    /// one of d/g/i/m/s/u/v/y, a flag repeats, or both u and v are present.
+    /// Kept in sync with the emitted <c>$RegExp.ValidateFlags</c> (compiled).
+    /// </summary>
+    private static void ValidateFlags(string flags)
+    {
+        int seen = 0;
+        foreach (char f in flags)
+        {
+            int bit = f switch
+            {
+                'd' => 1, 'g' => 2, 'i' => 4, 'm' => 8,
+                's' => 16, 'u' => 32, 'v' => 64, 'y' => 128,
+                _ => 0
+            };
+            if (bit == 0) ThrowFlagsSyntax();          // unknown flag
+            if ((seen & bit) != 0) ThrowFlagsSyntax(); // duplicate flag
+            seen |= bit;
+        }
+        if ((seen & 32) != 0 && (seen & 64) != 0) ThrowFlagsSyntax(); // u and v
+    }
+
+    private static void ThrowFlagsSyntax() =>
+        throw new Exceptions.ThrowException(new SharpTSSyntaxError(
+            "Invalid regular expression flags"));
 
     /// <summary>
     /// Normalize and deduplicate flags, preserving only valid flags.
