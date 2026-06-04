@@ -24,7 +24,15 @@ into clusters with effort/risk estimates.
   genuinely passing tests (native `(?i:…)`) to Skipped; the right fix is to
   implement the validation, which helps both modes.
 
-- **Corrected #102 framing.** Of the 289 compiled RegExp Fails, **273 also fail
+- **2 compiled-only #102 bugs (`S15.10.7_A1_T1/T2`) — DONE.** (a) Calling a
+  RegExp (`/x/()`, `r()`) returned null instead of throwing TypeError — added a
+  targeted `$RegExp`-callee check in `InvokeValue`/`InvokeMethodValue`. (b)
+  `RegExp(p, f)` without `new` returned null instead of a RegExp — routed the
+  call form through `RegExpFromArgs` in `BuiltInConstructorHandler`. Compiled
+  RegExp Fail **289 → 286**. Cumulative with escape: **307 → 286** (Pass +21),
+  no regressions.
+
+- **Corrected #102 framing.** Of the (pre-fix) 289 compiled RegExp Fails, **273 also fail
   in interp** — genuine spec/feature gaps shared by both modes, not compiled
   divergences. Only **16 are compiled-only** (compiled Fail, interp Pass), and
   **14 of those are Symbol.replace/Symbol.split → #101**. So #102 has just **2**
@@ -79,9 +87,8 @@ Symbol.match 5, Symbol.search 1, Symbol.species 4) belong to **#101** — exclud
 
 1. **`RegExp.escape` (cluster 2) — DONE.** +18 compiled Pass, +15 interp Pass; no hot-path risk.
 
-2. **`S15.10.7_A1_T1/T2` (the 2 genuine compiled-only #102 bugs)** — calling a RegExp as a
-   function (`/x/()`, `RegExp("a","g")()`) must throw TypeError; interp does, compiled doesn't.
-   Small, low-risk "make compiled match interp" win.
+2. **`S15.10.7_A1_T1/T2` (the 2 genuine compiled-only #102 bugs) — DONE.** RegExp-not-callable
+   → TypeError, plus `RegExp(…)` call-form → real RegExp.
 
 3. **regexp-modifiers early-error validation (cluster 1)** — largest single cluster (~87 compiled /
    90 interp). Implement the ECMAScript modifier early errors (SyntaxError for `(?i-i:)`, `(?ii:)`,
