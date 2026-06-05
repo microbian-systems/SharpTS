@@ -105,8 +105,25 @@ remains is hard-tier, grouped by the work it actually needs:
 
 **Highest-leverage next investment:** a real `IsRegExp` brand check on `$RegExp`
 (Symbol.match + constructor) — unblocks ~18 tests across `from-regexp-like`,
-call-form identity, and boxed-constructor cases. It's a genuine feature (symbol
-property support on `$RegExp` + interp-aware factory), not a quick win.
+call-form identity, and boxed-constructor cases. The `Symbol.match` half is now
+available (`GetIndex`, used by the `from-regexp-like` new-path). The blocker is
+the `constructor` half: **`(/x/).constructor === RegExp` is currently false in
+both modes** (RegExp.prototype.constructor isn't wired to the RegExp constructor),
+so the spec-mandatory `SameValue(newTarget, patternConstructor)` check can't pass
+for real regexes — fixing that prototype-constructor wiring is the prerequisite,
+and is its own sub-task (likely helps other prototype/constructor tests too).
+
+## Practical ceiling (this session)
+
+Compiled RegExp Fail **307 → 128 (~58%)**, regression-free, across these landed
+fixes (see Progress above). Every remaining cluster has now been *probed* and
+found to require one of: a prerequisite fix (prototype-`constructor` wiring for
+call-form identity), hard `.NET`-vs-ECMAScript **engine semantics** (Unicode
+case-folding, `\s`/`\d` membership, dotAll×unicode), a **risky hot-path** rework
+(`prototype/exec` lastIndex storage), interp-factory plumbing (interp `Get`-based
+coercion), or many finicky per-rule validations (`unicode_restricted`). These are
+feature-sized follow-ups, not clean wins — recommend tracking each as its own
+issue off #102.
 
 ## What changed during investigation
 
