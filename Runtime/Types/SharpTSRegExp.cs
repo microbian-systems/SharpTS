@@ -165,6 +165,12 @@ public class SharpTSRegExp : ITypeCategorized
         // accepts several of these, so validate up front and throw SyntaxError.
         ValidateModifiers(pattern);
 
+        // ECMA-262 Annex B distinguishes Unicode (`u`/`v`) mode, where several
+        // forms .NET tolerates are SyntaxErrors. We validate the clearly-invalid,
+        // false-positive-free subset here (others are a deferred follow-up).
+        if (_flags.Contains('u') || _flags.Contains('v'))
+            ValidateUnicodePattern(pattern);
+
         // Named groups ((?<name>...)) are not supported in ECMAScript mode in .NET.
         // Detect them and fall back to non-ECMAScript mode.
         // .NET also rejects combining ECMAScript with Singleline, so drop ECMAScript
@@ -336,6 +342,77 @@ public class SharpTSRegExp : ITypeCategorized
     private static void ThrowModifierSyntax() =>
         throw new Exceptions.ThrowException(new SharpTSSyntaxError(
             "Invalid regular expression: invalid modifier group"));
+
+    /// <summary>
+    /// ECMA-262 Annex B Unicode-mode (`u`/`v`) early errors — the safe,
+    /// false-positive-free subset: (1) a lookaround assertion immediately
+    /// followed by a quantifier is a SyntaxError; (2) <c>\c</c> not followed by
+    /// an ASCII letter (a ControlLetter) is a SyntaxError. Other u-mode
+    /// restrictions (identity-escape allowlist, octal/backreference rules,
+    /// character-class ranges, incomplete quantifiers) need lookahead that risks
+    /// rejecting valid patterns, so they're deferred. Kept in sync with the
+    /// emitted <c>$RegExp.ValidateUnicodePattern</c>.
+    /// </summary>
+    private static void ValidateUnicodePattern(string pattern)
+    {
+        int n = pattern.Length;
+        for (int i = 0; i < n; i++)
+        {
+            char c = pattern[i];
+            if (c == '\\')
+            {
+                // \c (anywhere) must be followed by an ASCII letter.
+                if (i + 1 < n && pattern[i + 1] == 'c')
+                {
+                    char after = i + 2 < n ? pattern[i + 2] : '\0';
+                    if (!IsAsciiLetter(after)) ThrowUnicodeSyntax();
+                }
+                i++;                    // skip the escaped char
+                continue;
+            }
+            // Quantifying a lookaround assertion → SyntaxError.
+            if (c == '(' && i + 2 < n && pattern[i + 1] == '?')
+            {
+                char d = pattern[i + 2];
+                bool isAssertion = d == '=' || d == '!'
+                    || (d == '<' && i + 3 < n && (pattern[i + 3] == '=' || pattern[i + 3] == '!'));
+                if (isAssertion)
+                {
+                    int close = FindGroupClose(pattern, i);
+                    if (close >= 0 && close + 1 < n && IsRegexQuantifierStart(pattern[close + 1]))
+                        ThrowUnicodeSyntax();
+                }
+            }
+        }
+    }
+
+    private static bool IsAsciiLetter(char c) =>
+        (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+
+    private static bool IsRegexQuantifierStart(char c) =>
+        c == '*' || c == '+' || c == '?' || c == '{';
+
+    /// <summary>Index of the <c>)</c> matching the group opening at
+    /// <paramref name="openIdx"/> (honoring escapes and char classes), or -1.</summary>
+    private static int FindGroupClose(string p, int openIdx)
+    {
+        int n = p.Length, depth = 0;
+        bool inClass = false;
+        for (int i = openIdx; i < n; i++)
+        {
+            char c = p[i];
+            if (c == '\\') { i++; continue; }
+            if (inClass) { if (c == ']') inClass = false; continue; }
+            if (c == '[') inClass = true;
+            else if (c == '(') depth++;
+            else if (c == ')') { depth--; if (depth == 0) return i; }
+        }
+        return -1;
+    }
+
+    private static void ThrowUnicodeSyntax() =>
+        throw new Exceptions.ThrowException(new SharpTSSyntaxError(
+            "Invalid regular expression: invalid Unicode-mode pattern"));
 
     /// <summary>
     /// Detects whether a regex pattern contains named capture groups (?&lt;name&gt;...).

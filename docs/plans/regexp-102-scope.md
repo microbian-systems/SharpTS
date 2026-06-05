@@ -5,6 +5,22 @@ into clusters with effort/risk estimates.
 
 ## Progress
 
+- **`unicode_restricted` u/v-mode early errors (safe subset) — DONE.** ECMA-262
+  Annex B distinguishes `u`/`v` mode, where several forms .NET tolerates are
+  SyntaxErrors. Implemented the false-positive-free subset shared by interp and
+  compiled: (1) a lookaround assertion (`(?=…)`/`(?!…)`/`(?<=…)`/`(?<!…)`)
+  immediately followed by a quantifier (`* + ? {`) → SyntaxError
+  (`quantifiable_assertion`); (2) `\c` not followed by an ASCII letter →
+  SyntaxError (`identity_escape_c`). Interp: `ValidateUnicodePattern` +
+  `FindGroupClose` in `SharpTSRegExp.cs`, gated on `_flags` containing `u`/`v`,
+  called after `ValidateModifiers`. Compiled: `EmitTSRegExpValidateUnicodePattern`
+  + `EmitTSRegExpFindGroupClose` (pure BCL-only IL) in `RuntimeEmitter.TSRegExp.cs`,
+  gated in the ctor on `flags.Contains('u'|'v')` after `ValidateFlags`. Verified
+  no false positives against valid u-mode patterns (`(?:.)*`, `(abc)*`,
+  `(?<n>a)*`, `\cA`, `\d+`, `\bfoo\b`, `[\cA]`). The other Annex B u-mode rules
+  (identity-escape allowlist, octal/backreference, class ranges, incomplete
+  quantifiers) need lookahead that risks rejecting valid patterns — deferred.
+
 - **`prototype/exec` lastIndex object-identity (compiled) — DONE.** ECMA-262
   §22.2.5.2.2: lastIndex is an ordinary writable data property; ToLength runs at
   exec read time (one `valueOf`), not at assignment. Compiled coerced at write

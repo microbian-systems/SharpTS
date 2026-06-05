@@ -9980,12 +9980,12 @@ test/built-ins/RegExp/unicode_restricted_brackets.js Fail
 test/built-ins/RegExp/unicode_restricted_character_class_escape.js Fail
 test/built-ins/RegExp/unicode_restricted_identity_escape.js Fail
 test/built-ins/RegExp/unicode_restricted_identity_escape_alpha.js Fail
-test/built-ins/RegExp/unicode_restricted_identity_escape_c.js Fail
+test/built-ins/RegExp/unicode_restricted_identity_escape_c.js Pass
 test/built-ins/RegExp/unicode_restricted_identity_escape_u.js Pass
 test/built-ins/RegExp/unicode_restricted_identity_escape_x.js Pass
 test/built-ins/RegExp/unicode_restricted_incomplete_quantifier.js Fail
 test/built-ins/RegExp/unicode_restricted_octal_escape.js Fail
-test/built-ins/RegExp/unicode_restricted_quantifiable_assertion.js Fail
+test/built-ins/RegExp/unicode_restricted_quantifiable_assertion.js Pass
 test/built-ins/RegExp/unicode_restricted_quantifier_without_atom.js Pass
 test/built-ins/RegExp/valid-flags-y.js Pass
 test/built-ins/String/15.5.5.5.2-1-1.js Pass

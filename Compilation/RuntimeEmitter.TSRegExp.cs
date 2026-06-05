@@ -38,6 +38,8 @@ public partial class RuntimeEmitter
     private MethodBuilder _tsRegExpValidateModifierFlagsMethod = null!;
     private MethodBuilder _tsRegExpSkipCharClassMethod = null!;
     private MethodBuilder _tsRegExpValidateFlagsMethod = null!;
+    private MethodBuilder _tsRegExpValidateUnicodePatternMethod = null!;
+    private MethodBuilder _tsRegExpFindGroupCloseMethod = null!;
     private FieldBuilder _tsRegExpCompileCacheField = null!;
     private MethodBuilder _tsRegExpGetCachedRegexMethod = null!;
     private MethodBuilder _tsRegExpSetLastIndexStrictMethod = null!;
@@ -92,6 +94,8 @@ public partial class RuntimeEmitter
         EmitTSRegExpValidateModifierFlags(typeBuilder, runtime);
         EmitTSRegExpValidateModifiers(typeBuilder);
         EmitTSRegExpValidateFlags(typeBuilder, runtime);
+        EmitTSRegExpFindGroupClose(typeBuilder);
+        EmitTSRegExpValidateUnicodePattern(typeBuilder, runtime);
 
         // Constructors (pattern+flags first because pattern-only calls it)
         EmitTSRegExpCtorPatternFlags(typeBuilder, runtime);
@@ -761,6 +765,204 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
     }
 
+    /// <summary>
+    /// Emits <c>static int FindGroupClose(string p, int openIdx)</c> — index of
+    /// the <c>)</c> matching the group opening at <paramref name="openIdx"/>
+    /// (honoring <c>\</c> escapes and <c>[…]</c> char classes), or -1. Mirrors
+    /// the interp <c>SharpTSRegExp.FindGroupClose</c>.
+    /// </summary>
+    private void EmitTSRegExpFindGroupClose(TypeBuilder typeBuilder)
+    {
+        var method = typeBuilder.DefineMethod(
+            "FindGroupClose", MethodAttributes.Private | MethodAttributes.Static,
+            _types.Int32, [_types.String, _types.Int32]);
+        _tsRegExpFindGroupCloseMethod = method;
+        var il = method.GetILGenerator();
+        var getLen = _types.String.GetProperty("Length")!.GetGetMethod()!;
+        var getChars = _types.String.GetMethod("get_Chars", [_types.Int32])!;
+        var nLocal = il.DeclareLocal(_types.Int32);
+        var depthLocal = il.DeclareLocal(_types.Int32);
+        var inClassLocal = il.DeclareLocal(_types.Int32);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var cLocal = il.DeclareLocal(_types.Char);
+
+        var loop = il.DefineLabel();
+        var retNeg = il.DefineLabel();
+        var notEsc = il.DefineLabel();
+        var notInClass = il.DefineLabel();
+        var afterClassClose = il.DefineLabel();
+        var notOpenClass = il.DefineLabel();
+        var notOpenParen = il.DefineLabel();
+        var notCloseParen = il.DefineLabel();
+        var depthNotZero = il.DefineLabel();
+
+        // n = p.Length; depth = 0; inClass = 0; i = openIdx
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Callvirt, getLen); il.Emit(OpCodes.Stloc, nLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, depthLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, inClassLocal);
+        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(loop);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, retNeg);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Callvirt, getChars); il.Emit(OpCodes.Stloc, cLocal);
+        // if (c=='\\') { i += 2; loop }
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)'\\'); il.Emit(OpCodes.Bne_Un, notEsc);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+        il.MarkLabel(notEsc);
+        // if (inClass) { if (c==']') inClass=0; i++; loop }
+        il.Emit(OpCodes.Ldloc, inClassLocal); il.Emit(OpCodes.Brfalse, notInClass);
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)']'); il.Emit(OpCodes.Bne_Un, afterClassClose);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, inClassLocal);
+        il.MarkLabel(afterClassClose);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+        il.MarkLabel(notInClass);
+        // if (c=='[') { inClass=1; i++; loop }
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)'['); il.Emit(OpCodes.Bne_Un, notOpenClass);
+        il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Stloc, inClassLocal);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+        il.MarkLabel(notOpenClass);
+        // if (c=='(') { depth++; i++; loop }
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)'('); il.Emit(OpCodes.Bne_Un, notOpenParen);
+        il.Emit(OpCodes.Ldloc, depthLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, depthLocal);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+        il.MarkLabel(notOpenParen);
+        // if (c==')') { depth--; if (depth==0) return i; i++; loop }
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)')'); il.Emit(OpCodes.Bne_Un, notCloseParen);
+        il.Emit(OpCodes.Ldloc, depthLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Sub); il.Emit(OpCodes.Stloc, depthLocal);
+        il.Emit(OpCodes.Ldloc, depthLocal); il.Emit(OpCodes.Brtrue, depthNotZero);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ret);
+        il.MarkLabel(depthNotZero);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+        il.MarkLabel(notCloseParen);
+        // default: i++; loop
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+
+        il.MarkLabel(retNeg);
+        il.Emit(OpCodes.Ldc_I4_M1); il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits <c>static void ValidateUnicodePattern(string pattern)</c> — the
+    /// safe, false-positive-free subset of ECMA-262 Annex B u/v-mode early
+    /// errors: (1) a lookaround assertion immediately followed by a quantifier;
+    /// (2) <c>\c</c> not followed by an ASCII letter. Mirrors the interp
+    /// <c>SharpTSRegExp.ValidateUnicodePattern</c>.
+    /// </summary>
+    private void EmitTSRegExpValidateUnicodePattern(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ValidateUnicodePattern", MethodAttributes.Private | MethodAttributes.Static,
+            _types.Void, [_types.String]);
+        _tsRegExpValidateUnicodePatternMethod = method;
+        var il = method.GetILGenerator();
+        var getLen = _types.String.GetProperty("Length")!.GetGetMethod()!;
+        var getChars = _types.String.GetMethod("get_Chars", [_types.Int32])!;
+        var nLocal = il.DeclareLocal(_types.Int32);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var cLocal = il.DeclareLocal(_types.Char);
+        var dLocal = il.DeclareLocal(_types.Char);
+        var afterLocal = il.DeclareLocal(_types.Char);
+        var closeLocal = il.DeclareLocal(_types.Int32);
+
+        var loop = il.DefineLabel();
+        var end = il.DefineLabel();
+        var incr = il.DefineLabel();
+        var throwLabel = il.DefineLabel();
+        var notBackslash = il.DefineLabel();
+        var afterCCheck = il.DefineLabel();
+        var afterIsZero = il.DefineLabel();
+        var haveAfter = il.DefineLabel();
+        var checkLower = il.DefineLabel();
+        var isAssertion = il.DefineLabel();
+
+        // n = pattern.Length; i = 0
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Callvirt, getLen); il.Emit(OpCodes.Stloc, nLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(loop);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, end);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Callvirt, getChars); il.Emit(OpCodes.Stloc, cLocal);
+
+        // --- backslash branch ---
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)'\\'); il.Emit(OpCodes.Bne_Un, notBackslash);
+        //   if (i+1 < n && pattern[i+1]=='c')
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, afterCCheck);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Callvirt, getChars);
+        il.Emit(OpCodes.Ldc_I4, (int)'c'); il.Emit(OpCodes.Bne_Un, afterCCheck);
+        //     after = i+2<n ? pattern[i+2] : '\0'
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Add); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, afterIsZero);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Add); il.Emit(OpCodes.Callvirt, getChars); il.Emit(OpCodes.Stloc, afterLocal);
+        il.Emit(OpCodes.Br, haveAfter);
+        il.MarkLabel(afterIsZero);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, afterLocal);
+        il.MarkLabel(haveAfter);
+        //     if (!IsAsciiLetter(after)) throw
+        il.Emit(OpCodes.Ldloc, afterLocal); il.Emit(OpCodes.Ldc_I4, (int)'A'); il.Emit(OpCodes.Blt, checkLower);
+        il.Emit(OpCodes.Ldloc, afterLocal); il.Emit(OpCodes.Ldc_I4, (int)'Z'); il.Emit(OpCodes.Ble, afterCCheck);
+        il.MarkLabel(checkLower);
+        il.Emit(OpCodes.Ldloc, afterLocal); il.Emit(OpCodes.Ldc_I4, (int)'a'); il.Emit(OpCodes.Blt, throwLabel);
+        il.Emit(OpCodes.Ldloc, afterLocal); il.Emit(OpCodes.Ldc_I4, (int)'z'); il.Emit(OpCodes.Bgt, throwLabel);
+        // letter ok -> fall through to afterCCheck
+        il.MarkLabel(afterCCheck);
+        //   i += 2; continue
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+
+        il.MarkLabel(notBackslash);
+        // --- assertion branch: if (c=='(' && i+2<n && pattern[i+1]=='?') ---
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)'('); il.Emit(OpCodes.Bne_Un, incr);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Add); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, incr);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Callvirt, getChars);
+        il.Emit(OpCodes.Ldc_I4, (int)'?'); il.Emit(OpCodes.Bne_Un, incr);
+        //   d = pattern[i+2]
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Add); il.Emit(OpCodes.Callvirt, getChars); il.Emit(OpCodes.Stloc, dLocal);
+        //   if (d=='=' || d=='!') isAssertion
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)'='); il.Emit(OpCodes.Beq, isAssertion);
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)'!'); il.Emit(OpCodes.Beq, isAssertion);
+        //   if (d!='<') incr
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)'<'); il.Emit(OpCodes.Bne_Un, incr);
+        //   if (i+3>=n) incr
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_3); il.Emit(OpCodes.Add); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, incr);
+        //   d = pattern[i+3]; if (d=='='||d=='!') isAssertion else incr
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_3); il.Emit(OpCodes.Add); il.Emit(OpCodes.Callvirt, getChars); il.Emit(OpCodes.Stloc, dLocal);
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)'='); il.Emit(OpCodes.Beq, isAssertion);
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)'!'); il.Emit(OpCodes.Beq, isAssertion);
+        il.Emit(OpCodes.Br, incr);
+
+        il.MarkLabel(isAssertion);
+        //   close = FindGroupClose(pattern, i)
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Call, _tsRegExpFindGroupCloseMethod); il.Emit(OpCodes.Stloc, closeLocal);
+        //   if (close < 0) incr
+        il.Emit(OpCodes.Ldloc, closeLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Blt, incr);
+        //   if (close+1 >= n) incr
+        il.Emit(OpCodes.Ldloc, closeLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, incr);
+        //   d = pattern[close+1]; if IsQuantifier(d) throw
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, closeLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Callvirt, getChars); il.Emit(OpCodes.Stloc, dLocal);
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)'*'); il.Emit(OpCodes.Beq, throwLabel);
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)'+'); il.Emit(OpCodes.Beq, throwLabel);
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)'?'); il.Emit(OpCodes.Beq, throwLabel);
+        il.Emit(OpCodes.Ldloc, dLocal); il.Emit(OpCodes.Ldc_I4, (int)'{'); il.Emit(OpCodes.Beq, throwLabel);
+
+        il.MarkLabel(incr);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+
+        il.MarkLabel(end);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, "Invalid regular expression: invalid Unicode-mode pattern");
+        il.Emit(OpCodes.Newobj, runtime.TSSyntaxErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+    }
+
     private void EmitTSRegExpCtorPattern(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // public $RegExp(string pattern) : this(pattern, "") { }
@@ -807,6 +1009,20 @@ public partial class RuntimeEmitter
         // §22.2.3.3 flag validation (unknown/duplicate flag, u+v) → SyntaxError.
         il.Emit(OpCodes.Ldarg_2); // flags
         il.Emit(OpCodes.Call, _tsRegExpValidateFlagsMethod);
+
+        // Annex B u/v-mode early errors (safe subset).
+        // if (flags.Contains('u') || flags.Contains('v')) ValidateUnicodePattern(pattern);
+        var doUnicodeLabel = il.DefineLabel();
+        var skipUnicodeLabel = il.DefineLabel();
+        var containsChar = _types.String.GetMethod("Contains", [_types.Char])!;
+        il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Ldc_I4, (int)'u');
+        il.Emit(OpCodes.Call, containsChar); il.Emit(OpCodes.Brtrue, doUnicodeLabel);
+        il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Ldc_I4, (int)'v');
+        il.Emit(OpCodes.Call, containsChar); il.Emit(OpCodes.Brfalse, skipUnicodeLabel);
+        il.MarkLabel(doUnicodeLabel);
+        il.Emit(OpCodes.Ldarg_1); // pattern
+        il.Emit(OpCodes.Call, _tsRegExpValidateUnicodePatternMethod);
+        il.MarkLabel(skipUnicodeLabel);
 
         // _source = pattern
         il.Emit(OpCodes.Ldarg_0);
