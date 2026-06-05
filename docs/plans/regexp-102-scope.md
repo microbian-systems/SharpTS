@@ -3,6 +3,42 @@
 Status: investigation complete; first fix landed. This document scopes the work
 into clusters with effort/risk estimates.
 
+## Survey: remaining work is past the clean-win frontier (2026-06-04)
+
+After landing escape, the IsRegExp/constructor-identity family, and the generic
+`flags` accessor (both modes), a full survey of the remaining ~84 #102-scope
+Fail/RuntimeError shows no more clean wins — each remaining cluster needs core
+infrastructure or hard engine work:
+
+- **Descriptor introspection** (`flags/{length,name,prop-desc}`, per-flag
+  `global/ignoreCase/multiline` `A8/A9/A10`): the **interp side is blocked by a
+  foundational, non-RegExp gap** — interp plain objects do NOT inherit
+  `Object.prototype` methods via the prototype chain (`({}).hasOwnProperty('x')`
+  throws "undefined is not a function", though `Object.prototype.hasOwnProperty`
+  itself exists; **compiled works**). `A8/A9` call `RegExp.prototype.hasOwnProperty`,
+  so they RuntimeError. Also the interp `DefineGetter` path yields enumerable:true
+  (defineProperty getters correctly yield enumerable:false), so the accessor would
+  need non-enumerable exposure. Fixing `Object.prototype`-method inheritance is a
+  large, high-blast-radius interpreter change well beyond #102. The compiled
+  remainder (`length`/`name`/`prop-desc`, `A10`) needs per-attribute
+  `verifyProperty` infrastructure (getter-fn `name`/`length` own-descriptors,
+  instance `verifyNotWritable`).
+- **Engine semantics** (`regexp-modifiers` 12, `CharacterClassEscapes` 8,
+  `dotall`, `exec/u-*`): .NET-regex-vs-ECMAScript divergences (inline-modifier
+  application to `\b`/`\w`/dotAll, `\d`/`\s`/`\w` membership, u-mode code points).
+  Likely need a custom matcher/translation layer. High risk.
+- **Char-class ranges** (`S15.10.2.x`): missing SyntaxErrors + class semantics;
+  pattern-translation changes risk regressing currently-passing patterns.
+- **Harness-blocked** (~15): `*/cross-realm.js` need `$262.createRealm()`;
+  `source/value*` use `eval()` (unavailable in compiled).
+- **Singletons** (`toString/called-as-function`, `S15.10.5.1_A2`,
+  `test/y-fail-lastindex-no-write`): each needs its own descriptor /
+  lastIndex-writability / global-`this` plumbing — low confidence, 1 test each.
+
+Recommendation: track these as separate issues off #102 (foundational
+`Object.prototype` inheritance, a RegExp engine-semantics matcher layer,
+descriptor-attribute infrastructure). #102's clean-win phase is complete.
+
 ## Progress
 
 - **`get RegExp.prototype.flags` generic accessor (interp) — DONE.** ECMA-262
