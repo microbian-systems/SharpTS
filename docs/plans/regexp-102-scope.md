@@ -116,6 +116,25 @@ so the spec-mandatory `SameValue(newTarget, patternConstructor)` check can't pas
 for real regexes — fixing that prototype-constructor wiring is the prerequisite,
 and is its own sub-task (likely helps other prototype/constructor tests too).
 
+## Precise next steps (investigated, deferred)
+
+- **`new RegExp(null)` → source `"null"`; `new RegExp(".", null)` → SyntaxError
+  (`S15.10.4.1_A4_T1/T4/A5_T6`, ~3 tests).** Spec: only `undefined` coerces to `""`;
+  `null` → `ToString(null)` = `"null"`. Blocked by an absent-vs-null conflation:
+  `EmitNewRegExpConstructor` case 1 and `EmitRegExp` push `Ldnull` for *absent*
+  flags, indistinguishable from an explicit JS `null`. Fix = route absent
+  pattern/flags as `$Undefined` (not null) at every construction site, then change
+  `RegExpCoerceArg` to `null → ToJsString` (keeping `$Undefined → ""`). Touches
+  ubiquitous single-arg `new RegExp("a")`, so must be done carefully + full-suite
+  verified — risk disproportionate to ~3 tests for now.
+- **`RegExp.prototype.<arbitrary>` inheritance (`S15.10.4.1_A7_T1`).** `re.indicator`
+  should walk to `RegExp.prototype.indicator`; the `$RegExp` GetProperty arm
+  doesn't fall through to the prototype for arbitrary names (only the wired
+  accessors + the new `constructor` branch). Needs a general prototype-walk
+  fallthrough.
+- **interp `RegExp.prototype.constructor`** is still unwired (the compiled fix was
+  IL-side); wiring it would let interp's call-form identity work too.
+
 ## Practical ceiling (this session)
 
 Compiled RegExp Fail **307 → 128 (~58%)**, regression-free, across these landed
