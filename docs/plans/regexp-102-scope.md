@@ -5,6 +5,15 @@ into clusters with effort/risk estimates.
 
 ## Progress
 
+- **`from-regexp-like` new-path (compiled) — DONE.** ECMA-262 §22.2.4.1: a
+  non-RegExp object with truthy `[Symbol.match]` (IsRegExp) supplies `source`/`flags`
+  via `Get` instead of ToString→"[object Object]". Added a regexp-like branch to
+  the compiled `RegExpFromArgs` (reads `pattern[Symbol.match]` via `GetIndex`;
+  `source` before `flags`; honors a supplied flags arg). 4 of 6 pass
+  (`from-regexp-like`, `-flag-override`, `-get-source-err`, `-get-flags-err`); the
+  other 2 (`-short-circuit`, `-get-ctor-err`) need the deferred call-form identity.
+  Compiled-only (interp's static `CreateRegExp` lacks interpreter access for `Get`).
+
 - **RegExp call-form identity (S15.10.3.1) — ATTEMPTED, REVERTED (deferred).**
   `RegExp(re)` (call form, undefined flags) should return the *same* object. A
   simple `pattern is $RegExp && flags undefined` short-circuit gave +5 compiled

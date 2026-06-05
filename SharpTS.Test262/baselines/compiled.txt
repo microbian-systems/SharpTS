@@ -8499,7 +8499,7 @@ test/built-ins/RegExp/Symbol.species/length.js Fail
 test/built-ins/RegExp/Symbol.species/return-value.js Fail
 test/built-ins/RegExp/Symbol.species/symbol-species-name.js Fail
 test/built-ins/RegExp/Symbol.species/symbol-species.js Fail
-test/built-ins/RegExp/call_with_non_regexp_same_constructor.js Fail
+test/built-ins/RegExp/call_with_non_regexp_same_constructor.js RuntimeError
 test/built-ins/RegExp/call_with_regexp_match_falsy.js Pass
 test/built-ins/RegExp/call_with_regexp_not_same_constructor.js Pass
 test/built-ins/RegExp/character-class-escape-non-whitespace-u180e.js Pass
@@ -8552,12 +8552,12 @@ test/built-ins/RegExp/escape/not-a-constructor.js Pass
 test/built-ins/RegExp/escape/not-escaped-underscore.js Pass
 test/built-ins/RegExp/escape/not-escaped.js Pass
 test/built-ins/RegExp/escape/prop-desc.js Fail
-test/built-ins/RegExp/from-regexp-like-flag-override.js Fail
+test/built-ins/RegExp/from-regexp-like-flag-override.js Pass
 test/built-ins/RegExp/from-regexp-like-get-ctor-err.js Fail
-test/built-ins/RegExp/from-regexp-like-get-flags-err.js Fail
-test/built-ins/RegExp/from-regexp-like-get-source-err.js Fail
-test/built-ins/RegExp/from-regexp-like-short-circuit.js Fail
-test/built-ins/RegExp/from-regexp-like.js Fail
+test/built-ins/RegExp/from-regexp-like-get-flags-err.js Pass
+test/built-ins/RegExp/from-regexp-like-get-source-err.js Pass
+test/built-ins/RegExp/from-regexp-like-short-circuit.js RuntimeError
+test/built-ins/RegExp/from-regexp-like.js Pass
 test/built-ins/RegExp/is-a-constructor.js Pass
 test/built-ins/RegExp/lastIndex.js Fail
 test/built-ins/RegExp/lookBehind/alternations.js Skipped:skip-feature:regexp-lookbehind
