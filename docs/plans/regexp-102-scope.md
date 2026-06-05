@@ -14,16 +14,19 @@ into clusters with effort/risk estimates.
   other 2 (`-short-circuit`, `-get-ctor-err`) need the deferred call-form identity.
   Compiled-only (interp's static `CreateRegExp` lacks interpreter access for `Get`).
 
-- **RegExp call-form identity (S15.10.3.1) — ATTEMPTED, REVERTED (deferred).**
-  `RegExp(re)` (call form, undefined flags) should return the *same* object. A
-  simple `pattern is $RegExp && flags undefined` short-circuit gave +5 compiled
-  but regressed 2 previously-passing tests (`call_with_regexp_not_same_constructor`,
-  `call_with_regexp_match_falsy`): §22.2.4.1 only short-circuits when
-  `IsRegExp(pattern)` (i.e. `pattern[Symbol.match]` is truthy) AND
-  `pattern.constructor === RegExp`. Doing that correctly needs symbol-property +
-  constructor reads on `$RegExp`/`SharpTSRegExp` (uncertain support; both modes
-  incl. IL) for a modest +5 — not worth the risk now, so reverted to keep the
-  baseline regression-free. Revisit once `$RegExp` has a proper IsRegExp brand check.
+- **RegExp call-form identity + `constructor` wiring (compiled) — DONE.**
+  Two parts: (1) `$RegExp` instance reads of `constructor` now resolve to the
+  RegExp constructor (the `$RegExp` Type token, == `RegExp` as a value) — a new
+  `constructor` branch in the compiled `$RegExp` GetProperty arm, after the PDS
+  check so `re.constructor = x` still wins. Fixes `(/x/).constructor === RegExp`
+  (was false). (2) The proper §22.2.4.1 step-1 call-form short-circuit in
+  `BuiltInConstructorHandler.EmitRegExp`: `RegExp(pattern)` returns the SAME
+  object iff flags is undefined, `IsRegExp(pattern)` (`pattern[Symbol.match]`
+  truthy, via `GetIndex`), and `pattern.constructor === %RegExp%`. Fixes
+  `S15.10.3.1`, `from-regexp-like-short-circuit`/`-get-ctor-err`, while keeping
+  `call_with_regexp_{not_same_constructor,match_falsy}` copying (the earlier
+  simple-short-circuit regression is resolved by the brand checks). Compiled-only
+  (interp's `RegExp.prototype.constructor` is also unwired — separate follow-up).
 
 - **RegExp flags validation (both modes) — DONE.** ECMA-262 §22.2.3.3: each flag
   must be one of d/g/i/m/s/u/v/y, no duplicates, not both u and v. `NormalizeFlags`

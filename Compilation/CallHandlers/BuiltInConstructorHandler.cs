@@ -120,10 +120,14 @@ public class BuiltInConstructorHandler : ICallHandler
     {
         var il = emitter.IL;
         var ctx = emitter.Context;
-        if (ctx.Runtime?.RegExpFromArgs == null)
+        var runtime = ctx.Runtime;
+        if (runtime?.RegExpFromArgs == null)
             return false;
 
-        // pattern arg (null → coerced to "" by RegExpFromArgs)
+        var patternLocal = il.DeclareLocal(ctx.Types.Object);
+        var flagsLocal = il.DeclareLocal(ctx.Types.Object);
+
+        // pattern → patternLocal (null when no arg)
         if (call.Arguments.Count >= 1)
         {
             emitter.EmitExpression(call.Arguments[0]);
@@ -133,7 +137,8 @@ public class BuiltInConstructorHandler : ICallHandler
         {
             il.Emit(OpCodes.Ldnull);
         }
-        // flags arg (null → treated as undefined)
+        il.Emit(OpCodes.Stloc, patternLocal);
+        // flags → flagsLocal (null when no arg → treated as undefined)
         if (call.Arguments.Count >= 2)
         {
             emitter.EmitExpression(call.Arguments[1]);
@@ -143,7 +148,53 @@ public class BuiltInConstructorHandler : ICallHandler
         {
             il.Emit(OpCodes.Ldnull);
         }
-        il.Emit(OpCodes.Call, ctx.Runtime!.RegExpFromArgs);
+        il.Emit(OpCodes.Stloc, flagsLocal);
+
+        // ECMA-262 §22.2.4.1 step 1: the RegExp *call* form returns the SAME
+        // object when flags is undefined AND IsRegExp(pattern) (pattern[Symbol.match]
+        // truthy) AND pattern.constructor is %RegExp%. `new RegExp(re)` copies
+        // (separate path). test262 S15.10.3.1 + from-regexp-like-short-circuit;
+        // the brand checks keep call_with_regexp_{not_same_constructor,match_falsy}
+        // copying as required.
+        var doFromArgs = il.DefineLabel();
+        var done = il.DefineLabel();
+        if (runtime.TSRegExpType != null)
+        {
+            var flagsOk = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, flagsLocal);
+            il.Emit(OpCodes.Brfalse, flagsOk);                       // null flags → ok
+            il.Emit(OpCodes.Ldloc, flagsLocal);
+            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+            il.Emit(OpCodes.Brfalse, doFromArgs);                    // defined flags → copy
+            il.MarkLabel(flagsOk);
+            // pattern must be a non-null, non-string object
+            il.Emit(OpCodes.Ldloc, patternLocal);
+            il.Emit(OpCodes.Brfalse, doFromArgs);
+            il.Emit(OpCodes.Ldloc, patternLocal);
+            il.Emit(OpCodes.Isinst, ctx.Types.String);
+            il.Emit(OpCodes.Brtrue, doFromArgs);
+            // IsRegExp: pattern[Symbol.match] truthy
+            il.Emit(OpCodes.Ldloc, patternLocal);
+            il.Emit(OpCodes.Ldsfld, runtime.SymbolMatch);
+            il.Emit(OpCodes.Call, runtime.GetIndex);
+            il.Emit(OpCodes.Call, runtime.IsTruthy);
+            il.Emit(OpCodes.Brfalse, doFromArgs);
+            // pattern.constructor === %RegExp% (the $RegExp Type token)
+            il.Emit(OpCodes.Ldloc, patternLocal);
+            il.Emit(OpCodes.Ldstr, "constructor");
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Ldtoken, runtime.TSRegExpType);
+            il.Emit(OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Type, "GetTypeFromHandle", ctx.Types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Bne_Un, doFromArgs);                     // constructor !== RegExp → copy
+            // short-circuit: return pattern unchanged
+            il.Emit(OpCodes.Ldloc, patternLocal);
+            il.Emit(OpCodes.Br, done);
+        }
+        il.MarkLabel(doFromArgs);
+        il.Emit(OpCodes.Ldloc, patternLocal);
+        il.Emit(OpCodes.Ldloc, flagsLocal);
+        il.Emit(OpCodes.Call, runtime.RegExpFromArgs);
+        il.MarkLabel(done);
         emitter.SetStackUnknown();
         return true;
     }

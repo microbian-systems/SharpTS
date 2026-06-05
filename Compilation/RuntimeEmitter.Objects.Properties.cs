@@ -2321,6 +2321,18 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Conv_R8);
                 il.Emit(OpCodes.Box, _types.Double);
             });
+            // "constructor" — inherited from RegExp.prototype.constructor, which
+            // is the RegExp constructor (the $RegExp Type token, == what `RegExp`
+            // evaluates to as a value). Without this an instance read returns
+            // undefined and `re.constructor === RegExp` is false, blocking the
+            // §22.2.4.1 call-form same-object check. PDS is checked above, so a
+            // user `Object.defineProperty(re,'constructor',…)` / `re.constructor=x`
+            // still wins.
+            NameMatchBranch("constructor", () =>
+            {
+                il.Emit(OpCodes.Ldtoken, runtime.TSRegExpType);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+            });
             // "source" / "flags" — string fields.
             NameMatchBranch("source", () =>
             {
