@@ -54,6 +54,16 @@ public partial class Interpreter : IDisposable
     /// </summary>
     private static readonly FrozenDictionary<string, object> _globalConstants = CreateGlobalsLookup();
 
+    // The process-wide RegExp constructor singleton (a SharpTSBuiltInConstructor),
+    // resolved once from the static globals table. ECMA-262 §22.2.6.1 requires
+    // `RegExp.prototype.constructor === RegExp` and, by inheritance,
+    // `(/x/).constructor === RegExp` — both must reference this exact instance
+    // for strict-equality identity to hold. Cached so the regex property hot
+    // path returns it without a dictionary probe. Mirrors the compiled side,
+    // where the `$RegExp` Type token plays the same role.
+    internal static readonly object? RegExpConstructorObject =
+        _globalConstants.TryGetValue(BuiltInNames.RegExp, out var rxCtor) ? rxCtor : null;
+
     private static FrozenDictionary<string, object> CreateGlobalsLookup()
     {
         var globals = new Dictionary<string, object>

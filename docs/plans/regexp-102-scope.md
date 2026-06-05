@@ -5,6 +5,24 @@ into clusters with effort/risk estimates.
 
 ## Progress
 
+- **`RegExp.prototype.constructor` wiring (interp) — DONE.** ECMA-262 §22.2.6.1:
+  `RegExp.prototype.constructor === RegExp`, and by inheritance
+  `(/x/).constructor === RegExp`. The compiled side already held (the `$RegExp`
+  Type token backs both the `RegExp` identifier and the GetProperty
+  `constructor` arm); interp returned `undefined`. Fixed interp by caching the
+  process-wide RegExp constructor singleton (`Interpreter.RegExpConstructorObject`,
+  read once from the static globals table), returning it from a `constructor`
+  arm in `EvaluateGetOnRegExp`, and setting it on the prototype object in
+  `RegExpBuiltIns.BuildPrototype`. The instance arm yields to a user-set own
+  `constructor` (`re.constructor = fn`) via a cheap `TryGetProperty` probe —
+  caught a regression where the bare singleton shadowed the own property and
+  broke `RegExp.prototype[@@split]`'s SpeciesConstructor path (3 Symbol.split
+  tests). Flips 5 interp tests Fail→Pass (`S15.10.3.1_A3_T1`, `S15.10.7_A3_T1/T2`,
+  `prototype/S15.10.6.1_A1_T1/T2`), no regressions. This is the prerequisite for
+  the §22.2.4.1 IsRegExp brand check (`SameValue(newTarget, Get(O,"constructor"))`)
+  that unblocks the ~18-test from-regexp-like / call-form-identity family — that
+  brand-check short-circuit remains the next follow-up.
+
 - **`unicode_restricted` u/v-mode early errors (safe subset) — DONE.** ECMA-262
   Annex B distinguishes `u`/`v` mode, where several forms .NET tolerates are
   SyntaxErrors. Implemented the false-positive-free subset shared by interp and

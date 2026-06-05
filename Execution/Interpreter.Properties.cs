@@ -597,6 +597,19 @@ public partial class Interpreter
                 return RuntimeValue.FromBoxed(rxGetter.Call(this, []));
             if (memberName == "flags")
                 return RuntimeValue.FromBoxed(Runtime.BuiltIns.RegExpBuiltIns.GetMember(regex, memberName, this));
+            // ECMA-262 §22.2.6.1: `constructor` is inherited from
+            // RegExp.prototype and must be the RegExp constructor itself, so
+            // `(/x/).constructor === RegExp` and the §22.2.4.1 IsRegExp
+            // brand check (`SameValue(newTarget, Get(O, "constructor"))`)
+            // hold. Return the singleton directly — faster than a prototype
+            // dictionary walk, and matches the compiled `$RegExp` behavior.
+            // An own `constructor` set by user code (`re.constructor = fn`,
+            // as RegExp.prototype[@@split]'s SpeciesConstructor test exercises)
+            // shadows the inherited one, so yield to it when present. The
+            // TryGetProperty probe is a cheap null check for the common case
+            // (no own properties) and only hits the dict when one was set.
+            if (memberName == "constructor" && !regex.TryGetProperty("constructor", out _))
+                return RuntimeValue.FromBoxed(RegExpConstructorObject);
         }
 
         var member = BuiltInRegistry.Instance.GetMemberByCategory(category, obj, memberName);

@@ -6428,7 +6428,7 @@ test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-16.js RuntimeError
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-160.js RuntimeError
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-161.js RuntimeError
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-162.js RuntimeError
-test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-163.js RuntimeError
+test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-163.js Fail
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-165.js Fail
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-166.js Fail
 test/built-ins/Object/getOwnPropertyDescriptor/15.2.3.3-4-167.js Fail
@@ -8441,7 +8441,7 @@ test/built-ins/RegExp/S15.10.3.1_A1_T4.js Fail
 test/built-ins/RegExp/S15.10.3.1_A1_T5.js Fail
 test/built-ins/RegExp/S15.10.3.1_A2_T1.js Pass
 test/built-ins/RegExp/S15.10.3.1_A2_T2.js Pass
-test/built-ins/RegExp/S15.10.3.1_A3_T1.js Fail
+test/built-ins/RegExp/S15.10.3.1_A3_T1.js Pass
 test/built-ins/RegExp/S15.10.3.1_A3_T2.js Fail
 test/built-ins/RegExp/S15.10.4.1_A1_T1.js Pass
 test/built-ins/RegExp/S15.10.4.1_A1_T2.js RuntimeError
@@ -8493,8 +8493,8 @@ test/built-ins/RegExp/S15.10.7_A1_T1.js Pass
 test/built-ins/RegExp/S15.10.7_A1_T2.js Pass
 test/built-ins/RegExp/S15.10.7_A2_T1.js Pass
 test/built-ins/RegExp/S15.10.7_A2_T2.js Pass
-test/built-ins/RegExp/S15.10.7_A3_T1.js Fail
-test/built-ins/RegExp/S15.10.7_A3_T2.js Fail
+test/built-ins/RegExp/S15.10.7_A3_T1.js Pass
+test/built-ins/RegExp/S15.10.7_A3_T2.js Pass
 test/built-ins/RegExp/Symbol.species/length.js RuntimeError
 test/built-ins/RegExp/Symbol.species/return-value.js RuntimeError
 test/built-ins/RegExp/Symbol.species/symbol-species-name.js RuntimeError
@@ -9249,8 +9249,8 @@ test/built-ins/RegExp/prototype/S15.10.5.1_A1.js RuntimeError
 test/built-ins/RegExp/prototype/S15.10.5.1_A2.js RuntimeError
 test/built-ins/RegExp/prototype/S15.10.5.1_A3.js RuntimeError
 test/built-ins/RegExp/prototype/S15.10.5.1_A4.js RuntimeError
-test/built-ins/RegExp/prototype/S15.10.6.1_A1_T1.js Fail
-test/built-ins/RegExp/prototype/S15.10.6.1_A1_T2.js RuntimeError
+test/built-ins/RegExp/prototype/S15.10.6.1_A1_T1.js Pass
+test/built-ins/RegExp/prototype/S15.10.6.1_A1_T2.js Pass
 test/built-ins/RegExp/prototype/S15.10.6_A1_T1.js Fail
 test/built-ins/RegExp/prototype/S15.10.6_A1_T2.js RuntimeError
 test/built-ins/RegExp/prototype/Symbol.match/builtin-coerce-lastindex.js Pass
@@ -9980,12 +9980,12 @@ test/built-ins/RegExp/unicode_restricted_brackets.js Fail
 test/built-ins/RegExp/unicode_restricted_character_class_escape.js Fail
 test/built-ins/RegExp/unicode_restricted_identity_escape.js Fail
 test/built-ins/RegExp/unicode_restricted_identity_escape_alpha.js Fail
-test/built-ins/RegExp/unicode_restricted_identity_escape_c.js Fail
+test/built-ins/RegExp/unicode_restricted_identity_escape_c.js Pass
 test/built-ins/RegExp/unicode_restricted_identity_escape_u.js Pass
 test/built-ins/RegExp/unicode_restricted_identity_escape_x.js Pass
 test/built-ins/RegExp/unicode_restricted_incomplete_quantifier.js Fail
 test/built-ins/RegExp/unicode_restricted_octal_escape.js Fail
-test/built-ins/RegExp/unicode_restricted_quantifiable_assertion.js Fail
+test/built-ins/RegExp/unicode_restricted_quantifiable_assertion.js Pass
 test/built-ins/RegExp/unicode_restricted_quantifier_without_atom.js Pass
 test/built-ins/RegExp/valid-flags-y.js Pass
 test/built-ins/String/15.5.5.5.2-1-1.js RuntimeError

@@ -345,6 +345,14 @@ public static class RegExpBuiltIns
         proto.SetProperty("exec", _protoExec);
         proto.SetProperty("test", _protoTest);
         proto.SetProperty("toString", _protoToString);
+        // ECMA-262 §22.2.6.1: RegExp.prototype.constructor is the RegExp
+        // constructor. Wiring it here makes `RegExp.prototype.constructor ===
+        // RegExp` hold and gives property-descriptor introspection
+        // (propertyHelper verifyProperty) something to read. The same
+        // singleton is returned for instance `.constructor` access (see
+        // Interpreter EvaluateGetOnRegExp).
+        if (Execution.Interpreter.RegExpConstructorObject is { } rxCtor)
+            proto.SetProperty("constructor", rxCtor);
         return proto;
     }
 
