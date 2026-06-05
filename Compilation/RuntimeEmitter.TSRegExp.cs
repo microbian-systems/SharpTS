@@ -20,6 +20,12 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsRegExpMultilineField = null!;
     private FieldBuilder _tsRegExpStickyField = null!;
     private FieldBuilder _tsRegExpLastIndexField = null!;
+    // Holds the raw value last assigned to `lastIndex` when it is NOT a plain
+    // number (e.g. `r.lastIndex = {valueOf(){…}}`), so the object identity is
+    // preserved per ECMA-262 (lastIndex is an ordinary writable data property;
+    // ToLength runs at RegExpBuiltinExec read time, not at assignment). null for
+    // the common numeric case, which stays on the typed `_lastIndex` fast path.
+    private FieldBuilder _tsRegExpLastIndexBoxedField = null!;
 
     // $RegExp internal methods
     private MethodBuilder _tsRegExpMatchAllMethod = null!;
@@ -35,6 +41,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsRegExpCompileCacheField = null!;
     private MethodBuilder _tsRegExpGetCachedRegexMethod = null!;
     private MethodBuilder _tsRegExpSetLastIndexStrictMethod = null!;
+    private MethodBuilder _tsRegExpResolveLastIndexMethod = null!;
 
     private void EmitTSRegExpClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
@@ -55,6 +62,7 @@ public partial class RuntimeEmitter
         _tsRegExpMultilineField = typeBuilder.DefineField("_multiline", _types.Boolean, FieldAttributes.Private);
         _tsRegExpStickyField = typeBuilder.DefineField("_sticky", _types.Boolean, FieldAttributes.Private);
         _tsRegExpLastIndexField = typeBuilder.DefineField("_lastIndex", _types.Int32, FieldAttributes.Public);
+        _tsRegExpLastIndexBoxedField = typeBuilder.DefineField("_lastIndexBoxed", _types.Object, FieldAttributes.Public);
 
         // Compile cache: shared static ConcurrentDictionary<string, Regex>
         // keyed by `pattern + "\x00" + (int)options`. Each TS regex literal
@@ -106,6 +114,7 @@ public partial class RuntimeEmitter
         // calls it. Throws TypeError when PDS has data descriptor with
         // writable=false (Object.defineProperty(r, 'lastIndex', {writable:false})).
         EmitTSRegExpSetLastIndexStrict(typeBuilder, runtime);
+        EmitTSRegExpResolveLastIndex(typeBuilder, runtime);
         EmitTSRegExpTest(typeBuilder, runtime);
         EmitTSRegExpExec(typeBuilder, runtime);
         EmitTSRegExpToStringMethod(typeBuilder, runtime);
@@ -1050,6 +1059,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Stfld, _tsRegExpLastIndexField);
+        // A numeric set supersedes any boxed non-numeric lastIndex.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stfld, _tsRegExpLastIndexBoxedField);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1085,6 +1098,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Stloc, inputLocal);
         il.MarkLabel(inputAssignedLabel);
+
+        // ECMA-262 §22.2.5.2.2 step 4: resolve a non-numeric boxed lastIndex
+        // (valueOf once) before reading it for global/sticky matching.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _tsRegExpResolveLastIndexMethod);
 
         // if (_global || _sticky) goto globalLabel — sticky shares lastIndex
         // semantics with global per ECMA-262 §22.2.5.2.2 step 8.
@@ -1239,6 +1257,73 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Stfld, _tsRegExpLastIndexField);
+        // A numeric write supersedes any boxed non-numeric lastIndex (global/
+        // sticky write-back makes lastIndex an ordinary number again).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stfld, _tsRegExpLastIndexBoxedField);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits <c>void ResolveLastIndex()</c>: when a non-numeric value was
+    /// assigned to <c>lastIndex</c> (held in <c>_lastIndexBoxed</c>), ToLength-
+    /// coerce it into the typed <c>_lastIndex</c> for matching — invoking the
+    /// value's <c>valueOf</c> exactly once per exec (ECMA-262 §22.2.5.2.2 step 4).
+    /// The boxed slot is left intact so a non-global exec (which doesn't write
+    /// lastIndex back) preserves the original object identity for `r.lastIndex`.
+    /// No-op (single null check) on the common numeric fast path.
+    /// </summary>
+    private void EmitTSRegExpResolveLastIndex(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ResolveLastIndex", MethodAttributes.Private, _types.Void, Type.EmptyTypes);
+        _tsRegExpResolveLastIndexMethod = method;
+        var il = method.GetILGenerator();
+        var doneLabel = il.DefineLabel();
+        var setZeroLabel = il.DefineLabel();
+        var setMaxLabel = il.DefineLabel();
+        var haveVLabel = il.DefineLabel();
+        var dLocal = il.DeclareLocal(_types.Double);
+        var vLocal = il.DeclareLocal(_types.Int32);
+
+        // if (_lastIndexBoxed == null) return;  (numeric fast path)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsRegExpLastIndexBoxedField);
+        il.Emit(OpCodes.Brfalse, doneLabel);
+        // d = ToNumber(_lastIndexBoxed)   (invokes valueOf once; ToNumber is
+        // forward-declared, so it's available during $RegExp emission)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsRegExpLastIndexBoxedField);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, dLocal);
+        // ToLength: NaN or d<=0 → 0; d>int.MaxValue → int.MaxValue; else (int)d.
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Bne_Un, setZeroLabel);                 // NaN (d != d)
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Ble, setZeroLabel);                    // d <= 0
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Ldc_R8, (double)int.MaxValue);
+        il.Emit(OpCodes.Bgt, setMaxLabel);                     // d > int.MaxValue
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Conv_I4);                              // ToInteger (truncate)
+        il.Emit(OpCodes.Stloc, vLocal);
+        il.Emit(OpCodes.Br, haveVLabel);
+        il.MarkLabel(setMaxLabel);
+        il.Emit(OpCodes.Ldc_I4, int.MaxValue);
+        il.Emit(OpCodes.Stloc, vLocal);
+        il.Emit(OpCodes.Br, haveVLabel);
+        il.MarkLabel(setZeroLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, vLocal);
+        il.MarkLabel(haveVLabel);
+        // _lastIndex = v;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, vLocal);
+        il.Emit(OpCodes.Stfld, _tsRegExpLastIndexField);
+        il.MarkLabel(doneLabel);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1277,6 +1362,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "undefined");
         il.Emit(OpCodes.Starg_S, (byte)1);
         il.MarkLabel(inputOkLabel);
+
+        // ECMA-262 §22.2.5.2.2 step 4: lastIndex = ToLength(Get(R,"lastIndex")).
+        // Resolve any non-numeric boxed lastIndex into the typed slot (valueOf
+        // fires once here, even for non-global where lastIndex is otherwise
+        // unused — S15.10.6.2 .../success-lastindex-access expects gets===1).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _tsRegExpResolveLastIndexMethod);
 
         // ECMA-262 §22.2.5.2.2 RegExpBuiltinExec: when global OR sticky,
         // use lastIndex as the match start. Sticky additionally enforces
