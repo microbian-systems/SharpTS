@@ -474,6 +474,98 @@ public static class RegExpBuiltIns
         => value is null ? "undefined" : interp.Stringify(value);
 
     /// <summary>
+    /// ECMA-262 §22.2.4.1 RegExp(pattern, flags). Runs with interpreter access
+    /// so the brand-aware steps work: IsRegExp (§22.2.7.2, reads
+    /// <c>Get(pattern, @@match)</c>), the call-form same-constructor identity
+    /// short-circuit (step 4.b — returns <paramref name="pattern"/> unchanged),
+    /// and regexp-like <c>source</c>/<c>flags</c> extraction via <c>Get</c>
+    /// (honoring user getters and propagating their throws, <c>source</c>
+    /// before <c>flags</c>). <paramref name="isCallForm"/> is true for the
+    /// <c>RegExp(...)</c> call form (NewTarget undefined); false for
+    /// <c>new RegExp(...)</c>. Mirrors the compiled <c>RegExpFromArgs</c> /
+    /// <c>BuiltInConstructorHandler.EmitRegExp</c>.
+    /// </summary>
+    public static object? ConstructRegExp(Interpreter interp, IReadOnlyList<object?> args, bool isCallForm)
+    {
+        object? pattern = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
+        object? flags = args.Count > 1 ? args[1] : SharpTSUndefined.Instance;
+        bool flagsUndefined = flags is null or SharpTSUndefined;
+
+        bool patternIsRegExp = IsRegExp(interp, pattern);
+
+        // Step 4.b (call form only): if pattern is regexp-like, flags is
+        // undefined, and SameValue(RegExp, Get(pattern, "constructor")) — return
+        // the input object itself. The constructor Get can throw (a user getter).
+        if (isCallForm && patternIsRegExp && flagsUndefined)
+        {
+            var patternConstructor = interp.GetProperty(pattern, "constructor");
+            if (ReferenceEquals(patternConstructor, Execution.Interpreter.RegExpConstructorObject))
+                return pattern;
+        }
+
+        string p, f;
+        if (pattern is SharpTSRegExp realRx)
+        {
+            // pattern has [[RegExpMatcher]] — read its internal slots directly.
+            p = realRx.Source;
+            f = flagsUndefined ? realRx.Flags : ToStr(interp, flags);
+        }
+        else if (patternIsRegExp)
+        {
+            // Step 6: regexp-like — Get(source), then Get(flags) only when no
+            // flags arg was supplied. `source` is read before `flags` (spec
+            // order); both Gets may invoke user getters and propagate throws.
+            p = ToStr(interp, interp.GetProperty(pattern, "source"));
+            f = flagsUndefined ? ToStr(interp, interp.GetProperty(pattern, "flags")) : ToStr(interp, flags);
+        }
+        else
+        {
+            // Step 7: ordinary coercion — only `undefined` becomes "" (not the
+            // literal "undefined"); everything else is ToString'd.
+            p = pattern is null or SharpTSUndefined ? "" : ToStr(interp, pattern);
+            f = flagsUndefined ? "" : ToStr(interp, flags);
+        }
+        return new SharpTSRegExp(p, f);
+    }
+
+    /// <summary>
+    /// ECMA-262 §22.2.7.2 IsRegExp(argument): true when <paramref name="argument"/>
+    /// is an object whose <c>@@match</c> is truthy, or (when <c>@@match</c> is
+    /// absent) a real RegExp. A real regex with <c>re[@@match] = false</c> is
+    /// NOT regexp-like.
+    /// </summary>
+    private static bool IsRegExp(Interpreter interp, object? argument)
+    {
+        if (argument is not (SharpTSObject or SharpTSRegExp or SharpTSInstance
+            or SharpTSArray or ISharpTSCallable))
+            return false;
+        object? matcher = GetMatchMember(argument);
+        if (matcher is not (null or SharpTSUndefined))
+            return Compilation.RuntimeTypes.IsTruthy(matcher);
+        return argument is SharpTSRegExp;
+    }
+
+    /// <summary>
+    /// Reads <c>Get(argument, @@match)</c> — a user-set own symbol property
+    /// wins over the inherited RegExp.prototype[@@match] method.
+    /// </summary>
+    private static object? GetMatchMember(object? argument)
+    {
+        switch (argument)
+        {
+            case SharpTSRegExp rx:
+                return rx.TryGetSymbolProperty(SharpTSSymbol.Match, out var ov)
+                    ? ov : GetSymbolMember(rx, SharpTSSymbol.Match);
+            case SharpTSObject o:
+                return o.GetBySymbol(SharpTSSymbol.Match);
+            case SharpTSInstance inst:
+                return inst.GetBySymbol(SharpTSSymbol.Match);
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
     /// ECMA-262 §22.2.5.3 RegExp.prototype.get flags: build the canonical
     /// flags string by ToBoolean'ing each per-flag property via Get. Routes
     /// through the user-overridable property pipeline so that

@@ -21,7 +21,17 @@ public sealed class SharpTSBuiltInConstructor : ISharpTSCallable
 
     public int Arity() => 0;
 
-    public object? Call(Interp interpreter, List<object?> arguments) => _factory(arguments);
+    public object? Call(Interp interpreter, List<object?> arguments)
+    {
+        // ECMA-262 §22.2.4.1: the `RegExp(...)` call form (NewTarget undefined)
+        // does an IsRegExp brand check + same-constructor identity short-circuit
+        // that needs interpreter access (Get(@@match)/Get("constructor") may
+        // invoke user getters). Route it through the interpreter-aware helper;
+        // the static `_factory` can't see the interpreter.
+        if (Name == BuiltInNames.RegExp)
+            return RegExpBuiltIns.ConstructRegExp(interpreter, arguments, isCallForm: true);
+        return _factory(arguments);
+    }
 
     /// <summary>
     /// Resolves static methods like <c>Map.groupBy()</c> via the built-in registry.

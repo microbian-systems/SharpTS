@@ -1617,7 +1617,7 @@ public static class ObjectBuiltIns
         return new SharpTSArray(symbols);
     }
 
-    private static RuntimeValue GetPrototypeOfV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    private static RuntimeValue GetPrototypeOfV2(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var target = args[0].ToObject()
             ?? throw new Exception("TypeError: Cannot convert null to object");
@@ -1627,6 +1627,10 @@ public static class ObjectBuiltIns
             SharpTSObject obj => obj.Prototype,
             SharpTSInstance inst => inst.Prototype,
             SharpTSArray => null,
+            // ECMA-262 §22.2.6: a RegExp instance's [[Prototype]] is the
+            // per-realm RegExp.prototype object, so `Object.getPrototypeOf(/x/)
+            // === RegExp.prototype` (the from-regexp-like tests assert this).
+            SharpTSRegExp => interp.GetRegExpPrototype(),
             Dictionary<string, object?> dict => PropertyDescriptorStore.GetPrototype(dict),
             _ => null
         };

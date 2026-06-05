@@ -99,6 +99,15 @@ public static class BuiltInConstructorFactory
     /// <returns>The constructed object, or null if not a recognized built-in.</returns>
     public static object? TryCreate(string name, IReadOnlyList<object?> args, Interpreter? interpreter = null)
     {
+        // ECMA-262 §22.2.4.1 `new RegExp(...)`: when the interpreter is available,
+        // use the brand-aware path (IsRegExp + regexp-like source/flags via Get,
+        // honoring user getters/throws). The static CreateRegExp below stays the
+        // fallback for interpreter-less callers.
+        if (name == BuiltInNames.RegExp && interpreter != null)
+        {
+            return RegExpBuiltIns.ConstructRegExp(interpreter, args, isCallForm: false);
+        }
+
         // Check simple constructors first
         if (_simpleConstructors.TryGetValue(name, out var handler))
         {

@@ -5,6 +5,28 @@ into clusters with effort/risk estimates.
 
 ## Progress
 
+- **§22.2.4.1 IsRegExp brand check (interp) — DONE.** Brought the interp RegExp
+  constructor to parity with the compiled reference (which already passed all 18
+  brand-check-family tests). Added `RegExpBuiltIns.ConstructRegExp(interp, args,
+  isCallForm)` implementing §22.2.4.1 with interpreter access: IsRegExp (§22.2.7.2,
+  reads `Get(pattern, @@match)` and ToBooleans it; a real regex with
+  `re[@@match]=false` is NOT regexp-like), the call-form same-constructor identity
+  short-circuit (`RegExp(re)` with `re.constructor===RegExp` and no flags returns
+  `re` unchanged — depends on the prototype-`constructor` wiring above), and
+  regexp-like `source`/`flags` extraction via `Get` (honoring user getters,
+  propagating throws, `source` before `flags`, flags-arg overrides the getter).
+  Wired into both forms: call form via `SharpTSBuiltInConstructor.Call` (was
+  ignoring its `interpreter` param), new form via `BuiltInConstructorFactory.
+  TryCreate` (already had the interpreter). Supporting fixes: (1) symbol-keyed
+  storage on `SharpTSRegExp` (`SetBySymbol`/`TryGetSymbolProperty`, internal so
+  the runtime↔emitted parity test is unaffected) + regex+symbol get/set dispatch
+  in the interpreter (`re[Symbol.match]=false` previously threw); (2)
+  `Object.getPrototypeOf(regex)` now returns the per-realm RegExp.prototype
+  (was null → `Object.getPrototypeOf(/x/) === RegExp.prototype` was false for
+  *all* interp regexes). No compiled changes. Targets ~14 interp Fail→Pass across
+  `S15.10.3.1_A1_T1..T5`/`A3_T2`, `call_with_*`, `from-regexp-like*`. Verified all
+  scenarios in both modes; no unit regressions.
+
 - **`RegExp.prototype.constructor` wiring (interp) — DONE.** ECMA-262 §22.2.6.1:
   `RegExp.prototype.constructor === RegExp`, and by inheritance
   `(/x/).constructor === RegExp`. The compiled side already held (the `$RegExp`

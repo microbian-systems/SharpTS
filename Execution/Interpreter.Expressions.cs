@@ -828,6 +828,11 @@ public partial class Interpreter
         // and don't appear in ResolveIndexTarget — dispatch them here.
         if (obj is SharpTSRegExp regexObj && index is SharpTSSymbol regexSym)
         {
+            // A user-set own symbol property (`re[Symbol.match] = false`) shadows
+            // the inherited RegExp.prototype well-known-symbol method — IsRegExp
+            // depends on this override winning.
+            if (regexObj.TryGetSymbolProperty(regexSym, out var ownSym))
+                return RuntimeValue.FromBoxed(ownSym ?? SharpTSUndefined.Instance);
             var member = Runtime.BuiltIns.RegExpBuiltIns.GetSymbolMember(regexObj, regexSym);
             if (member is BuiltInMethod bim) return RuntimeValue.FromBoxed(bim.Bind(regexObj));
             return RuntimeValue.FromBoxed(member ?? SharpTSUndefined.Instance);
@@ -909,6 +914,16 @@ public partial class Interpreter
         if (obj is SharpTSMath math)
         {
             math.SetExtra(index?.ToString() ?? "", value);
+            return RuntimeValue.FromBoxed(value);
+        }
+
+        // RegExp symbol-keyed assignment (`re[Symbol.match] = false`) stores an
+        // own symbol property that shadows the inherited prototype method —
+        // IsRegExp (§22.2.7.2) reads it via Get(re, @@match). Without this branch
+        // the symbol key falls through to the Unsupported bucket and throws.
+        if (obj is SharpTSRegExp regexSet && index is SharpTSSymbol regexSetSym)
+        {
+            regexSet.SetBySymbol(regexSetSym, value);
             return RuntimeValue.FromBoxed(value);
         }
 

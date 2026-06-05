@@ -55,6 +55,30 @@ public class SharpTSRegExp : ITypeCategorized
     // .../get-flags-throws.js, etc.) bypass the user code entirely. Stored
     // here as a tuple so a single dictionary lookup retrieves both halves.
     private Dictionary<string, (ISharpTSCallable? Getter, ISharpTSCallable? Setter)>? _accessors;
+    // Symbol-keyed own properties. ECMA-262 lets a regex carry symbol keys
+    // (e.g. `re[Symbol.match] = false`), and IsRegExp (§22.2.7.2) reads
+    // `Get(re, @@match)` — a user override must win over the inherited
+    // RegExp.prototype[@@match] method. Lazily allocated; kept internal so the
+    // runtime↔emitted public-method parity test (RuntimeTypeSyncTests) isn't
+    // affected (the emitted $RegExp has its own symbol storage).
+    private Dictionary<SharpTSSymbol, object?>? _symbolProps;
+
+    internal bool TryGetSymbolProperty(SharpTSSymbol symbol, out object? value)
+    {
+        if (_symbolProps != null && _symbolProps.TryGetValue(symbol, out value))
+            return true;
+        value = null;
+        return false;
+    }
+
+    internal void SetBySymbol(SharpTSSymbol symbol, object? value)
+    {
+        _symbolProps ??= [];
+        _symbolProps[symbol] = value;
+    }
+
+    internal bool HasSymbolProperty(SharpTSSymbol symbol) =>
+        _symbolProps != null && _symbolProps.ContainsKey(symbol);
 
     internal bool TryGetProperty(string name, out object? value)
     {
