@@ -3946,7 +3946,11 @@ public partial class RuntimeEmitter
     private void EmitTSRegExpProtoAccessors(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         runtime.TSRegExpProtoGetSource    = EmitProtoAccessor(typeBuilder, runtime, "ProtoGetSource",    () => true,  EmitSourceBody);
-        runtime.TSRegExpProtoGetFlags     = EmitProtoAccessor(typeBuilder, runtime, "ProtoGetFlags",     () => true,  EmitFlagsBody);
+        // `flags` is a GENERIC accessor (§22.2.5.3) — dedicated emit so a
+        // non-RegExp object `this` builds the flag string via Get+ToBoolean
+        // instead of throwing (the shared prologue throws, correct only for the
+        // per-flag accessors below).
+        runtime.TSRegExpProtoGetFlags     = EmitProtoFlagsAccessor(typeBuilder, runtime);
         runtime.TSRegExpProtoGetGlobal    = EmitProtoBoolAccessor(typeBuilder, runtime, "ProtoGetGlobal",    'g');
         runtime.TSRegExpProtoGetIgnoreCase = EmitProtoBoolAccessor(typeBuilder, runtime, "ProtoGetIgnoreCase", 'i');
         runtime.TSRegExpProtoGetMultiline = EmitProtoBoolAccessor(typeBuilder, runtime, "ProtoGetMultiline", 'm');
@@ -3962,12 +3966,102 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldloc, rx);
             il.Emit(OpCodes.Callvirt, runtime.TSRegExpSourceGetter);
         }
-        // flags body: return rx._flags
-        void EmitFlagsBody(ILGenerator il, LocalBuilder rx)
+    }
+
+    /// <summary>
+    /// Emits <c>ProtoGetFlags(object __this)</c> — ECMA-262 §22.2.5.3
+    /// <c>get RegExp.prototype.flags</c>, a GENERIC accessor: it requires only
+    /// that <c>this</c> be an Object and builds the flag string by reading each
+    /// flag via <c>Get</c> + ToBoolean. A real <c>$RegExp</c> takes the fast
+    /// path (its cached <c>_flags</c>); any other object goes through the
+    /// generic build (so <c>get.call(plainObj)</c> works — the
+    /// <c>flags/coercion-*</c> tests). Primitive <c>this</c> → TypeError.
+    /// Mirrors the interp generic <c>flags</c> getter (BuildFlagsString).
+    /// </summary>
+    private MethodBuilder EmitProtoFlagsAccessor(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var helper = typeBuilder.DefineMethod(
+            "ProtoGetFlags",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+        try { helper.DefineParameter(1, ParameterAttributes.None, "__this"); }
+        catch { /* already named — ignore */ }
+
+        var il = helper.GetILGenerator();
+        var throwLabel = il.DefineLabel();
+        var genericLabel = il.DefineLabel();
+        var rxLocal = il.DeclareLocal(runtime.TSRegExpType);
+        var sbLocal = il.DeclareLocal(typeof(System.Text.StringBuilder));
+
+        // 1. Type(R) is not Object → TypeError. Reject every primitive kind.
+        void RejectIsinst(Type t)
         {
-            il.Emit(OpCodes.Ldloc, rx);
-            il.Emit(OpCodes.Callvirt, runtime.TSRegExpFlagsGetter);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, t);
+            il.Emit(OpCodes.Brtrue, throwLabel);
         }
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Brfalse, throwLabel); // null
+        RejectIsinst(runtime.UndefinedType);
+        RejectIsinst(_types.String);
+        RejectIsinst(_types.Boolean);
+        RejectIsinst(_types.Double);
+        RejectIsinst(_types.Int32);
+        RejectIsinst(runtime.TSSymbolType);
+        RejectIsinst(_types.BigInteger); // BigInt is a primitive, not an Object.
+
+        // 2. Fast path: a real $RegExp returns its cached flags.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+        il.Emit(OpCodes.Stloc, rxLocal);
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        il.Emit(OpCodes.Brfalse, genericLabel);
+        il.Emit(OpCodes.Ldloc, rxLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSRegExpFlagsGetter);
+        il.Emit(OpCodes.Ret);
+
+        // 3. Generic build: for each flag, append its char when truthy. The
+        //    RegExp.prototype object itself lands here too and yields "" (every
+        //    Get returns undefined).
+        il.MarkLabel(genericLabel);
+        var sbCtor = typeof(System.Text.StringBuilder).GetConstructor(Type.EmptyTypes)!;
+        var sbAppendChar = typeof(System.Text.StringBuilder).GetMethod("Append", [_types.Char])!;
+        var sbToString = typeof(System.Text.StringBuilder).GetMethod("ToString", Type.EmptyTypes)!;
+        il.Emit(OpCodes.Newobj, sbCtor);
+        il.Emit(OpCodes.Stloc, sbLocal);
+
+        (string name, char ch)[] flags =
+        [
+            ("hasIndices", 'd'), ("global", 'g'), ("ignoreCase", 'i'),
+            ("multiline", 'm'), ("dotAll", 's'), ("unicode", 'u'),
+            ("unicodeSets", 'v'), ("sticky", 'y'),
+        ];
+        foreach (var (name, ch) in flags)
+        {
+            var skip = il.DefineLabel();
+            // if (IsTruthy(GetProperty(__this, name))) sb.Append(ch);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Call, runtime.IsTruthy);
+            il.Emit(OpCodes.Brfalse, skip);
+            il.Emit(OpCodes.Ldloc, sbLocal);
+            il.Emit(OpCodes.Ldc_I4, (int)ch);
+            il.Emit(OpCodes.Callvirt, sbAppendChar);
+            il.Emit(OpCodes.Pop);
+            il.MarkLabel(skip);
+        }
+        il.Emit(OpCodes.Ldloc, sbLocal);
+        il.Emit(OpCodes.Callvirt, sbToString);
+        il.Emit(OpCodes.Ret);
+
+        // TypeError for primitive `this`.
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, "RegExp.prototype.flags called on non-object");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        return helper;
     }
 
     /// <summary>

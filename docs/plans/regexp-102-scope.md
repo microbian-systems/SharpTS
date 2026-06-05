@@ -26,14 +26,15 @@ into clusters with effort/risk estimates.
   near-misses shifted RuntimeError→Fail — they use `verifyProperty` mutation
   testing (delete/redefine) on the getter function's `length`/`name` and the
   prototype accessor's attributes, which needs the descriptor-attribute
-  infrastructure below. **Compiled remainder (deferred):** the compiled `flags`
-  accessor shares `EmitProtoAccessorPrologue`, which throws for any non-RegExp
-  `this` — correct for `global`/`ignoreCase`/… (§22.2.5.4+, which DO require a
-  RegExp/prototype `this`) but wrong for the generic `flags` getter. Making it
-  generic needs a separate prologue + generic flag-building in IL (read each flag
-  via `Get`+ToBoolean on an arbitrary object) under the standalone-DLL constraint —
-  a contained but non-trivial IL follow-up that would flip the 6 compiled
-  `flags/coercion-*`. The broader descriptor cluster (`global`/`ignoreCase`/
+  infrastructure below. **Compiled `flags` generic getter — DONE.** The compiled
+  `flags` accessor previously shared `EmitProtoAccessorPrologue`, which throws for
+  any non-RegExp `this` — correct for `global`/`ignoreCase`/… (§22.2.5.4+, which
+  DO require a RegExp/prototype `this`) but wrong for the generic `flags` getter.
+  Replaced it with a dedicated `EmitProtoFlagsAccessor` (pure BCL-only IL +
+  standalone `runtime.GetProperty`/`runtime.IsTruthy` helpers): primitive `this`
+  → TypeError; real `$RegExp` → cached-flags fast path; any other object → build
+  the flag string via `Get`+ToBoolean (so `get.call(plainObj)` works). Flips the
+  6 compiled `flags/coercion-*`. The broader descriptor cluster (`global`/`ignoreCase`/
   `multiline` `S15.10.7.x_A8/A9/A10`) additionally needs accessor exposure for the
   per-flag getters plus delete-of-getter / for-in / enumerable correctness on the
   prototype object (core `SharpTSObject` semantics) — a larger, riskier follow-up.
