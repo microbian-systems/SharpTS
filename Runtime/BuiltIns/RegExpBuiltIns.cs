@@ -353,12 +353,28 @@ public static class RegExpBuiltIns
         // Interpreter EvaluateGetOnRegExp).
         if (Execution.Interpreter.RegExpConstructorObject is { } rxCtor)
             proto.SetProperty("constructor", rxCtor);
-        // ECMA-262 §22.2.5.3: `flags` is a generic accessor on the prototype.
-        // Exposed via DefineGetter so descriptor introspection
-        // (`Object.getOwnPropertyDescriptor(RegExp.prototype, "flags").get`)
-        // resolves to a callable that works on an arbitrary `this`. Instance
-        // `re.flags` continues to resolve through EvaluateGetOnRegExp.
-        proto.DefineGetter("flags", _protoFlagsGetter);
+        // ECMA-262 §22.2.5: the flag/source accessors live on the prototype as
+        // accessor properties { enumerable: false, configurable: true } so
+        // descriptor introspection works (getOwnPropertyDescriptor returns a
+        // callable `get`, propertyIsEnumerable is false, the property is
+        // deletable). Instance `re.flags`/`re.global`/… continue to resolve
+        // through EvaluateGetOnRegExp; these are for prototype/introspection use.
+        void DefineAccessor(string name, BuiltInMethod getter) =>
+            proto.DefineProperty(name, new SharpTSPropertyDescriptor
+            {
+                Get = getter,
+                Set = null,
+                Enumerable = false,
+                Configurable = true,
+            });
+        DefineAccessor("flags", _protoFlagsGetter);
+        DefineAccessor("source", _protoSourceGetter);
+        DefineAccessor("global", _protoGlobalGetter);
+        DefineAccessor("ignoreCase", _protoIgnoreCaseGetter);
+        DefineAccessor("multiline", _protoMultilineGetter);
+        DefineAccessor("dotAll", _protoDotAllGetter);
+        DefineAccessor("sticky", _protoStickyGetter);
+        DefineAccessor("unicode", _protoUnicodeGetter);
         return proto;
     }
 
@@ -399,6 +415,44 @@ public static class RegExpBuiltIns
         {
             RequireObject(recv, ".flags");
             return BuildFlagsString(interp!, recv);
+        }).WithSpecLength(0);
+
+    /// <summary>
+    /// Builds a per-flag accessor getter (§22.2.5.4/.6/.8/.10/.12/.14): on a
+    /// real RegExp returns whether <paramref name="flagChar"/> is set; on
+    /// %RegExp.prototype% returns undefined; otherwise throws TypeError. Unlike
+    /// the generic <c>flags</c> getter these require an actual RegExp/prototype
+    /// <c>this</c>.
+    /// </summary>
+    private static BuiltInMethod MakeProtoFlagGetter(string accessor, char flagChar) =>
+        new BuiltInMethod("get " + accessor, 0, (interp, recv, _) =>
+        {
+            if (recv is SharpTSRegExp rx) return rx.Flags.Contains(flagChar);
+            RequireObject(recv, "." + accessor);
+            if (ReferenceEquals(recv, interp!.GetRegExpPrototype())) return SharpTSUndefined.Instance;
+            throw new ThrowException(new SharpTSTypeError(
+                $"RegExp.prototype.{accessor} getter called on non-RegExp"));
+        }).WithSpecLength(0);
+
+    private static readonly BuiltInMethod _protoGlobalGetter = MakeProtoFlagGetter("global", 'g');
+    private static readonly BuiltInMethod _protoIgnoreCaseGetter = MakeProtoFlagGetter("ignoreCase", 'i');
+    private static readonly BuiltInMethod _protoMultilineGetter = MakeProtoFlagGetter("multiline", 'm');
+    private static readonly BuiltInMethod _protoDotAllGetter = MakeProtoFlagGetter("dotAll", 's');
+    private static readonly BuiltInMethod _protoStickyGetter = MakeProtoFlagGetter("sticky", 'y');
+    private static readonly BuiltInMethod _protoUnicodeGetter = MakeProtoFlagGetter("unicode", 'u');
+
+    /// <summary>
+    /// §22.2.5.12 <c>get RegExp.prototype.source</c>: a real RegExp returns its
+    /// source; %RegExp.prototype% returns "(?:)"; otherwise TypeError.
+    /// </summary>
+    private static readonly BuiltInMethod _protoSourceGetter =
+        new BuiltInMethod("get source", 0, (interp, recv, _) =>
+        {
+            if (recv is SharpTSRegExp rx) return rx.Source;
+            RequireObject(recv, ".source");
+            if (ReferenceEquals(recv, interp!.GetRegExpPrototype())) return "(?:)";
+            throw new ThrowException(new SharpTSTypeError(
+                "RegExp.prototype.source getter called on non-RegExp"));
         }).WithSpecLength(0);
 
     /// <summary>

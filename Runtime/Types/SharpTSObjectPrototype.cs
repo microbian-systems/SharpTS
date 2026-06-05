@@ -143,7 +143,11 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable
         var key = args[0]?.ToString() ?? "";
         return target switch
         {
-            SharpTSObject obj => obj.HasProperty(key),
+            // ECMA-262 §20.1.3.4: O.[[GetOwnProperty]](P) then return its
+            // [[Enumerable]] — a non-enumerable own property (e.g. the
+            // RegExp.prototype flag accessors) must return false, not just
+            // "is present".
+            SharpTSObject obj => obj.GetOwnPropertyDescriptor(key) is { Enumerable: true },
             IDictionary<string, object?> dict => dict.ContainsKey(key),
             _ => false,
         };

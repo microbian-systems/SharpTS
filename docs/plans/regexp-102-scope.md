@@ -41,6 +41,30 @@ descriptor-attribute infrastructure). #102's clean-win phase is complete.
 
 ## Progress
 
+- **Descriptor cluster (interp, clean subset) — DONE.** Exposed the §22.2.5
+  flag/source accessors (`global`/`ignoreCase`/`multiline`/`dotAll`/`sticky`/
+  `unicode`/`source`, plus the generic `flags`) on `RegExp.prototype` as
+  accessor properties `{ enumerable: false, configurable: true }` with spec
+  `this`-handling (real regex → value; %RegExp.prototype% → undefined/"(?:)";
+  else TypeError). Fixed `propertyIsEnumerable` to honor the descriptor's
+  `Enumerable` flag (it returned `HasProperty`, so non-enumerable own props
+  wrongly reported true). **+36 interp Pass, 0 regressions** (29 RegExp:
+  `global/ignoreCase/multiline` `A8` + `15.10.7.x-2`, all `this-val-*` across
+  the 7 accessors, `sticky/unicode` `prop-desc`; +7 Object descriptor tests).
+  **Deferred (needs deeper infra, not shipped):** `A9` (delete) and
+  `flags`/per-flag `prop-desc` need delete-of-getter **plus** correct
+  configurability — and a correct config check requires interpreter-aware
+  ToPropertyDescriptor coercion (`Get` that walks the proto chain AND invokes
+  getters; the static `SharpTSPropertyDescriptor.FromObject` does neither, so
+  `configurable` supplied as a truthy string / inherited / accessor resolves
+  wrong). Attempted delete-of-getter + a config check + own-only ToBoolean
+  coercion, but it regressed 6–30 `Object/{create,defineProperty,defineProperties}`
+  attribute-coercion tests; reverted to the zero-regression subset. `A10` needs
+  instance `verifyNotWritable` (instance-write behavior) — separate. The
+  getter-fn `length`/`name` tests need `verifyProperty` on built-in function
+  metadata. Tracked as follow-ups: interpreter-aware descriptor coercion +
+  delete-of-getter.
+
 - **Foundational: interp plain objects inherit `Object.prototype` methods — DONE.**
   The descriptor-cluster blocker from the survey above: interp ordinary objects
   didn't inherit `Object.prototype`'s methods via the prototype chain
