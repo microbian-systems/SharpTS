@@ -5,6 +5,20 @@ into clusters with effort/risk estimates.
 
 ## Progress
 
+- **`prototype/exec` lastIndex object-identity (compiled) — DONE.** ECMA-262
+  §22.2.5.2.2: lastIndex is an ordinary writable data property; ToLength runs at
+  exec read time (one `valueOf`), not at assignment. Compiled coerced at write
+  (and didn't call `valueOf` for objects), losing identity. Added a
+  `$RegExp._lastIndexBoxed` slot, `ResolveLastIndex()` (ToLength via `ToNumber`
+  at Exec/Test start; non-global doesn't write back, so identity survives), and
+  box-clearing on numeric/strict write-back. Only objects are boxed —
+  `null`/number/string/bool fold to the typed-int fast path (so `lastIndex=null`
+  ToLengths to 0, not aliased to "no box"). Numeric fast path unchanged. Fixed
+  the 4 lastindex-access tests + `S15.10.6.2_A4_T10/T11/T12` + 2 `Symbol.match`
+  coercion tests (+9). Remaining exec: u-mode code-point matching (3) + `A1_T6`
+  captures + `A1_T17` exec(null). Compiled-only (interp Exec lacks an interpreter
+  for `valueOf`).
+
 - **`from-regexp-like` new-path (compiled) — DONE.** ECMA-262 §22.2.4.1: a
   non-RegExp object with truthy `[Symbol.match]` (IsRegExp) supplies `source`/`flags`
   via `Get` instead of ToString→"[object Object]". Added a regexp-like branch to
