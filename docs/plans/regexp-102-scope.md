@@ -41,6 +41,24 @@ descriptor-attribute infrastructure). #102's clean-win phase is complete.
 
 ## Progress
 
+- **Foundational: interp plain objects inherit `Object.prototype` methods — DONE.**
+  The descriptor-cluster blocker from the survey above: interp ordinary objects
+  didn't inherit `Object.prototype`'s methods via the prototype chain
+  (`({}).hasOwnProperty('x')` threw "undefined is not a function"; compiled
+  worked). Fixed by a FINAL fallback in `EvaluateGetOnRecord`/`RV` (after own
+  props + the `__proto__` chain, so user overrides always win): resolve
+  `SharpTSObjectPrototype.GetMember(name)` and return it bound to the receiver
+  (`hasOwnProperty`/`propertyIsEnumerable`/`isPrototypeOf`/`toString`/`valueOf`).
+  Added an `IsNullPrototype` flag to `SharpTSObject` (set by `Object.create(null)`
+  and `Object.groupBy`) so genuine null-prototype objects correctly inherit
+  nothing — without it, `Object/groupBy/null-prototype` (which asserts
+  `obj.hasOwnProperty === undefined`) regressed. **+318 interp Test262 Pass, 0
+  regressions** (315 in `built-ins/Object`, 3 `built-ins/Array`). Interp-only;
+  `Stringify` uses `HasProperty` (own/`__proto__`), so the fallback doesn't
+  affect object stringification. This unblocks the descriptor cluster's `A8/A9`
+  reads (`RegExp.prototype.hasOwnProperty(...)`), though those still need the
+  per-flag accessors exposed + non-enumerable + delete-of-getter to fully pass.
+
 - **`get RegExp.prototype.flags` generic accessor (interp) — DONE.** ECMA-262
   §22.2.5.3: `flags` is a GENERIC accessor — it requires only that `this` be an
   Object (not a RegExp) and builds the flag string by reading each flag via

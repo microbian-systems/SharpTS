@@ -823,6 +823,12 @@ public partial class Interpreter
             current = next;
         }
 
+        // Final fallback: inherited Object.prototype methods (see the RV
+        // overload for rationale). Excluded for null-prototype objects.
+        if (!simpleObj.IsNullPrototype
+            && SharpTSObjectPrototype.Instance.GetMember(memberName) is SharpTSObjectUnboundMethod protoMethod)
+            return protoMethod.BindTo(simpleObj);
+
         return SharpTSUndefined.Instance;
     }
 
@@ -898,6 +904,17 @@ public partial class Interpreter
             }
             break;
         }
+
+        // ECMA-262: every ORDINARY object inherits Object.prototype's methods
+        // (hasOwnProperty, propertyIsEnumerable, isPrototypeOf, toString,
+        // valueOf). Resolve them as a FINAL fallback — after own properties and
+        // the __proto__ chain — so a user override always wins, and bound to the
+        // receiver so `obj.hasOwnProperty(k)` passes `obj` as the target.
+        // A genuine null-prototype object (Object.create(null), groupBy result)
+        // inherits nothing, so it is excluded.
+        if (!simpleObj.IsNullPrototype
+            && SharpTSObjectPrototype.Instance.GetMember(memberName) is SharpTSObjectUnboundMethod protoMethod)
+            return RuntimeValue.FromObject(protoMethod.BindTo(simpleObj));
 
         return RuntimeValue.Undefined;
     }

@@ -46,6 +46,15 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
     public object? Prototype { get; set; }
 
     /// <summary>
+    /// True for a genuine null-prototype object (<c>Object.create(null)</c>,
+    /// <c>Object.groupBy</c>/<c>Map.groupBy</c> results, etc.). Distinguishes
+    /// these from an ordinary object whose <see cref="Prototype"/> is also null
+    /// by default — an ordinary object inherits <c>Object.prototype</c>'s methods
+    /// (hasOwnProperty, …), a null-prototype object does not.
+    /// </summary>
+    public bool IsNullPrototype { get; set; }
+
+    /// <summary>
     /// Freezes this object, preventing any property changes.
     /// </summary>
     public void Freeze()

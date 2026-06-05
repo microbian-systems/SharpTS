@@ -1335,6 +1335,11 @@ public static class ObjectBuiltIns
         // Object.keys.
         var result = new SharpTSObject([]);
         result.Prototype = proto;
+        // Object.create(null) → a null-prototype object that inherits nothing
+        // (not even Object.prototype's methods). Distinguishes it from an
+        // ordinary object, whose Prototype is also null by default.
+        if (proto is null or SharpTSUndefined)
+            result.IsNullPrototype = true;
 
         // If propertiesObject is provided, define properties using defineProperty semantics
         if (propertiesObject != null)
@@ -1880,7 +1885,9 @@ public static class ObjectBuiltIns
             ((SharpTSArray)existing!).Add(element);
         }
 
-        return new SharpTSObject(groups);
+        // ECMA-262 §20.1.2.13: the result is OrdinaryObjectCreate(null) — a
+        // null-prototype object, so it does not inherit Object.prototype.
+        return new SharpTSObject(groups) { IsNullPrototype = true };
     }
 
     // ===================== V2 Wrappers (RuntimeValue boundary — delegates to internal logic) =====================
