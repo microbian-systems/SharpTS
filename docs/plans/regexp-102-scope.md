@@ -5,6 +5,39 @@ into clusters with effort/risk estimates.
 
 ## Progress
 
+- **`get RegExp.prototype.flags` generic accessor (interp) — DONE.** ECMA-262
+  §22.2.5.3: `flags` is a GENERIC accessor — it requires only that `this` be an
+  Object (not a RegExp) and builds the flag string by reading each flag via
+  `Get`+ToBoolean. Interp previously didn't expose any accessor descriptor on
+  `RegExp.prototype` at all, so `Object.getOwnPropertyDescriptor(RegExp.prototype,
+  "flags").get` was undefined → the `flags/coercion-*` tests crashed (RuntimeError
+  in both modes). Fix: generalized `BuildFlagsString` to `object?` receiver, added
+  a generic `flags` getter (`BuiltInMethod`, requires-Object then `BuildFlagsString`),
+  exposed it via `proto.DefineGetter("flags", …)` in `BuildPrototype`, and taught
+  `BindAccessorToObject` to bind `BuiltInMethod` getters (so direct
+  `RegExp.prototype.flags` access passes the right `this`); and broadened
+  `RequireObject` (the shared "Type(R) is not Object" guard) to reject every
+  primitive kind (number forms, string, boolean, Symbol, BigInt), not just
+  null/undefined/bool/double/string. Instance `re.flags` unchanged (separate
+  path). **10 interp Fail→Pass:** the 6 `flags/coercion-*`,
+  `flags/this-val-regexp-prototype`, `flags/this-val-non-obj`, plus 2 bonus
+  (`Symbol.search`/`Symbol.split` `this-val-non-obj`, from the broader
+  `RequireObject`). No Pass regressions. The 3 `flags/{length,name,prop-desc}`
+  near-misses shifted RuntimeError→Fail — they use `verifyProperty` mutation
+  testing (delete/redefine) on the getter function's `length`/`name` and the
+  prototype accessor's attributes, which needs the descriptor-attribute
+  infrastructure below. **Compiled remainder (deferred):** the compiled `flags`
+  accessor shares `EmitProtoAccessorPrologue`, which throws for any non-RegExp
+  `this` — correct for `global`/`ignoreCase`/… (§22.2.5.4+, which DO require a
+  RegExp/prototype `this`) but wrong for the generic `flags` getter. Making it
+  generic needs a separate prologue + generic flag-building in IL (read each flag
+  via `Get`+ToBoolean on an arbitrary object) under the standalone-DLL constraint —
+  a contained but non-trivial IL follow-up that would flip the 6 compiled
+  `flags/coercion-*`. The broader descriptor cluster (`global`/`ignoreCase`/
+  `multiline` `S15.10.7.x_A8/A9/A10`) additionally needs accessor exposure for the
+  per-flag getters plus delete-of-getter / for-in / enumerable correctness on the
+  prototype object (core `SharpTSObject` semantics) — a larger, riskier follow-up.
+
 - **§22.2.4.1 IsRegExp brand check (interp) — DONE.** Brought the interp RegExp
   constructor to parity with the compiled reference (which already passed all 18
   brand-check-family tests). Added `RegExpBuiltIns.ConstructRegExp(interp, args,

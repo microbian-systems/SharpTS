@@ -353,6 +353,12 @@ public static class RegExpBuiltIns
         // Interpreter EvaluateGetOnRegExp).
         if (Execution.Interpreter.RegExpConstructorObject is { } rxCtor)
             proto.SetProperty("constructor", rxCtor);
+        // ECMA-262 §22.2.5.3: `flags` is a generic accessor on the prototype.
+        // Exposed via DefineGetter so descriptor introspection
+        // (`Object.getOwnPropertyDescriptor(RegExp.prototype, "flags").get`)
+        // resolves to a callable that works on an arbitrary `this`. Instance
+        // `re.flags` continues to resolve through EvaluateGetOnRegExp.
+        proto.DefineGetter("flags", _protoFlagsGetter);
         return proto;
     }
 
@@ -381,6 +387,18 @@ public static class RegExpBuiltIns
                 throw new ThrowException(new SharpTSTypeError(
                     "RegExp.prototype.toString called on non-RegExp"));
             return regex.ToString();
+        }).WithSpecLength(0);
+
+    // ECMA-262 §22.2.5.3 `get RegExp.prototype.flags` — a GENERIC accessor: it
+    // requires only that `this` be an Object (not necessarily a RegExp) and
+    // builds the flag string by reading each flag via Get + ToBoolean. Exposed
+    // on the prototype so `Object.getOwnPropertyDescriptor(RegExp.prototype,
+    // "flags").get.call(plainObj)` works (the flags/coercion-* tests).
+    private static readonly BuiltInMethod _protoFlagsGetter =
+        new BuiltInMethod("get flags", 0, (interp, recv, _) =>
+        {
+            RequireObject(recv, ".flags");
+            return BuildFlagsString(interp!, recv);
         }).WithSpecLength(0);
 
     /// <summary>
@@ -460,7 +478,11 @@ public static class RegExpBuiltIns
     /// </summary>
     private static void RequireObject(object? rx, string siteName)
     {
-        if (rx is null or SharpTSUndefined or bool or double or string)
+        // ECMA-262 "Type(R) is not Object" — reject every primitive kind
+        // (number forms, string, boolean, null/undefined, Symbol, BigInt).
+        if (rx is null or SharpTSUndefined or bool or double or int or long
+            or float or decimal or char or string or SharpTSSymbol
+            or SharpTSBigInt or System.Numerics.BigInteger)
             throw new ThrowException(new SharpTSTypeError(
                 $"RegExp.prototype{siteName} called on non-object"));
     }
@@ -571,7 +593,7 @@ public static class RegExpBuiltIns
     /// through the user-overridable property pipeline so that
     /// <c>r.global = false</c> after a writable redefine drops 'g', etc.
     /// </summary>
-    private static string BuildFlagsString(Interpreter interp, SharpTSRegExp receiver)
+    private static string BuildFlagsString(Interpreter interp, object? receiver)
     {
         var sb = new System.Text.StringBuilder(8);
         if (Compilation.RuntimeTypes.IsTruthy(interp.GetProperty(receiver, "hasIndices"))) sb.Append('d');

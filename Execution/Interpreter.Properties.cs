@@ -911,6 +911,13 @@ public partial class Interpreter
         {
             return arrow.Bind(obj);
         }
+        // Built-in accessor getters (e.g. the generic RegExp.prototype `flags`
+        // getter) carry their receiver through Bind so direct access like
+        // `RegExp.prototype.flags` invokes them with the right `this`.
+        if (accessor is Runtime.BuiltIns.BuiltInMethod bm && !bm.IsBound)
+        {
+            return bm.Bind(obj);
+        }
         // For callables that don't support binding, return as-is
         return accessor;
     }
