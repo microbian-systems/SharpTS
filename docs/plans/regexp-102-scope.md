@@ -51,19 +51,34 @@ descriptor-attribute infrastructure). #102's clean-win phase is complete.
   wrongly reported true). **+36 interp Pass, 0 regressions** (29 RegExp:
   `global/ignoreCase/multiline` `A8` + `15.10.7.x-2`, all `this-val-*` across
   the 7 accessors, `sticky/unicode` `prop-desc`; +7 Object descriptor tests).
-  **Deferred (needs deeper infra, not shipped):** `A9` (delete) and
-  `flags`/per-flag `prop-desc` need delete-of-getter **plus** correct
-  configurability — and a correct config check requires interpreter-aware
-  ToPropertyDescriptor coercion (`Get` that walks the proto chain AND invokes
-  getters; the static `SharpTSPropertyDescriptor.FromObject` does neither, so
-  `configurable` supplied as a truthy string / inherited / accessor resolves
-  wrong). Attempted delete-of-getter + a config check + own-only ToBoolean
-  coercion, but it regressed 6–30 `Object/{create,defineProperty,defineProperties}`
-  attribute-coercion tests; reverted to the zero-regression subset. `A10` needs
-  instance `verifyNotWritable` (instance-write behavior) — separate. The
-  getter-fn `length`/`name` tests need `verifyProperty` on built-in function
-  metadata. Tracked as follow-ups: interpreter-aware descriptor coercion +
-  delete-of-getter.
+  `A10` needs instance `verifyNotWritable` (instance-write behavior) — separate.
+  The getter-fn `length`/`name` tests need `verifyProperty` on built-in function
+  metadata — separate.
+
+- **Descriptor cluster (interp, delete-of-getter + interp-aware coercion) — DONE
+  (with 8 accepted spec-edge regressions).** Followed up the clean subset:
+  (1) interp-aware ToPropertyDescriptor boolean coercion — `ObjectBuiltIns
+  .ApplyBooleanAttributes` reads writable/enumerable/configurable via
+  `interp.GetProperty` (walks the proto chain AND invokes getters) and
+  ToBoolean-coerces (fixes truthy-string / inherited / accessor-sourced
+  attributes; the static `FromObject` only handled own `is bool` values);
+  (2) delete-of-getter — `SharpTSObject` delete now removes accessor entries and
+  honors configurability (a non-configurable property blocks delete). **+173
+  interp Test262 Pass, −8** (net +165). New passes: `A9` (global/ignoreCase/
+  multiline delete) + `flags`/per-flag `prop-desc`, plus a broad sweep of
+  `Object/{defineProperty,create,defineProperties}` `verifyProperty` tests
+  (delete-of-accessor) and correct `delete`-vs-configurability behavior (a real
+  bug: `delete` previously ignored configurability). **The 8 regressions** are
+  pre-existing foundational bugs the configurability check merely exposes, all in
+  spec-edge inputs no real code uses: (a) `new Number()/Boolean()/String()`
+  return primitives not wrapper objects, so `ToBoolean(new Boolean(false))` is
+  wrongly false (`15.2.3.6-3-115/125`, `create-151`, `defineProperties-111`);
+  (b) descriptor attributes supplied as get-less accessors overriding inherited
+  ones (`15.2.3.6-3-163`, `create-189`, `defineProperties-149`); (c) a RegExp
+  used as a descriptor — `Get` doesn't walk `RegExp.prototype` (`15.2.3.6-3-93-1`).
+  Shipped on the user's call after confirming the regressions are rare/pathological
+  and net real-world correctness improves. **Filed as follow-ups:** wrapper-object
+  semantics (`new Number/Boolean/String`), and RegExp `[[Get]]` prototype-chain walk.
 
 - **Foundational: interp plain objects inherit `Object.prototype` methods — DONE.**
   The descriptor-cluster blocker from the survey above: interp ordinary objects

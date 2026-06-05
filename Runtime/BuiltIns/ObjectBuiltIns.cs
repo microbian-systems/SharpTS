@@ -402,7 +402,7 @@ public static class ObjectBuiltIns
     /// <summary>
     /// Object.defineProperty(obj, prop, descriptor) - defines a new property or modifies an existing one.
     /// </summary>
-    private static object? DefineProperty(Interpreter _, List<object?> args)
+    private static object? DefineProperty(Interpreter interpreter, List<object?> args)
     {
         var target = args[0];
         var descriptorArg = args[2];
@@ -419,6 +419,14 @@ public static class ObjectBuiltIns
 
         // Parse descriptor from object - use FromAnyObject to handle any object type
         SharpTSPropertyDescriptor descriptor = SharpTSPropertyDescriptor.FromAnyObject(descriptorArg);
+        // ECMA-262 §6.2.5.5 ToPropertyDescriptor: the boolean attributes are read
+        // via Get (walking the prototype chain and invoking getters) and
+        // ToBoolean-coerced. FromAnyObject only handles own `is bool` values, so
+        // re-derive them with interpreter access — covers truthy non-booleans
+        // (e.g. the string "false"), inherited attributes, and accessor-sourced
+        // attributes. Correct flags are required for the delete configurability
+        // check in SharpTSObject.
+        ApplyBooleanAttributes(descriptor, descriptorArg, interpreter);
 
         // Handle Symbol-keyed property definition — route through Symbol storage.
         // Per ECMA-262 §10.1.6 / §6.2.5.6, a descriptor that omits `value` (only
@@ -1319,7 +1327,7 @@ public static class ObjectBuiltIns
     /// Since SharpTS doesn't have a true prototype chain, this copies properties from proto
     /// to simulate inheritance.
     /// </summary>
-    private static object? Create(Interpreter _, List<object?> args)
+    private static object? Create(Interpreter interpreter, List<object?> args)
     {
         var proto = args[0];
         var propertiesObject = args.Count > 1 ? args[1] : null;
@@ -1344,7 +1352,7 @@ public static class ObjectBuiltIns
         // If propertiesObject is provided, define properties using defineProperty semantics
         if (propertiesObject != null)
         {
-            DefinePropertiesFromDescriptors(propertiesObject, result);
+            DefinePropertiesFromDescriptors(propertiesObject, result, interpreter);
         }
 
         return result;
@@ -1394,7 +1402,7 @@ public static class ObjectBuiltIns
     /// Defines properties on target using property descriptors from propertiesObject.
     /// Each property in propertiesObject should be a descriptor object.
     /// </summary>
-    private static void DefinePropertiesFromDescriptors(object propertiesObject, SharpTSObject target)
+    private static void DefinePropertiesFromDescriptors(object propertiesObject, SharpTSObject target, Interpreter interpreter)
     {
         IEnumerable<KeyValuePair<string, object?>>? entries = propertiesObject switch
         {
@@ -1410,8 +1418,29 @@ public static class ObjectBuiltIns
             if (kv.Value == null) continue;
 
             var descriptor = SharpTSPropertyDescriptor.FromAnyObject(kv.Value);
+            ApplyBooleanAttributes(descriptor, kv.Value, interpreter);
             target.DefineProperty(kv.Key, descriptor);
         }
+    }
+
+    /// <summary>
+    /// ECMA-262 §6.2.5.5 ToPropertyDescriptor boolean-attribute coercion done
+    /// with interpreter access: each of writable/enumerable/configurable, when
+    /// resolvable via <c>Get</c> (own or inherited, data or accessor), is
+    /// ToBoolean-coerced. A non-undefined result means the attribute is present
+    /// (for these three, "absent" and "present-but-undefined" both yield the
+    /// false default, so this matches spec). Overrides the own-only <c>is bool</c>
+    /// values from <see cref="SharpTSPropertyDescriptor.FromAnyObject"/>.
+    /// </summary>
+    private static void ApplyBooleanAttributes(SharpTSPropertyDescriptor descriptor, object? descObj, Interpreter interpreter)
+    {
+        if (descObj is null) return;
+        var w = interpreter.GetProperty(descObj, "writable");
+        if (w is not (null or SharpTSUndefined)) descriptor.Writable = Compilation.RuntimeTypes.IsTruthy(w);
+        var e = interpreter.GetProperty(descObj, "enumerable");
+        if (e is not (null or SharpTSUndefined)) descriptor.Enumerable = Compilation.RuntimeTypes.IsTruthy(e);
+        var c = interpreter.GetProperty(descObj, "configurable");
+        if (c is not (null or SharpTSUndefined)) descriptor.Configurable = Compilation.RuntimeTypes.IsTruthy(c);
     }
 
     /// <summary>
