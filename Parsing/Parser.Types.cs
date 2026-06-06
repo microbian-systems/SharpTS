@@ -160,6 +160,10 @@ public partial class Parser
 
     private string ParseUnionType()
     {
+        // Tolerate a leading '|' before the first member (common when each member
+        // is written on its own line):  type T = | A | B;
+        Match(TokenType.PIPE);
+
         // Union has lower precedence than intersection, so parse intersection first
         List<string> types = [ParseIntersectionType()];
 
@@ -177,6 +181,10 @@ public partial class Parser
     /// </summary>
     private string ParseIntersectionType()
     {
+        // Tolerate a leading '&' before the first member (common when each member
+        // is written on its own line):  type T = & A & B;
+        Match(TokenType.AMPERSAND);
+
         List<string> types = [ParsePrimaryType()];
 
         while (Match(TokenType.AMPERSAND))
