@@ -136,6 +136,8 @@ The same applies to `PropertyDescriptorStore`, `ObjectBuiltIns`, and any other S
 
 **Why:** When emitting IL with `typeof(X).GetMethod(...)`, the method token references the SharpTS assembly directly. This creates a hard dependency. The reflection pattern emits IL that does `Type.GetType("..., SharpTS")` at runtime, allowing graceful degradation if SharpTS isn't present.
 
+**Soft-dependency signal + auto-copy:** Some features (eval, Proxy, Intl, vm, dns, `@DotNetType` dynamic events) emit a `Type.GetType("…, SharpTS")` path whose *normal* execution needs SharpTS.dll present. When such a path is emitted, the emit site records a reason via `EmittedRuntime.RequireSharpTSRuntime(reason)`, surfaced through `ILCompiler.RequiredSharpTSRuntimeReasons`. After `Save`, the CLI (`Program.cs` `CopySharpTSRuntimeIfNeeded`) co-locates SharpTS.dll with the output **only when** that set is non-empty — programs using none of these stay fully standalone. `--compile … --standalone` suppresses the copy (those features then throw a clear "not supported" error at runtime). Do NOT record reasons for pure-BCL features (zlib, child_process, JSON) or unconditional graceful-fallback plumbing (`process`) — only paths a normal program actually reaches.
+
 ### Error Handling Conventions
 
 - Type errors: "Type Error:" prefix

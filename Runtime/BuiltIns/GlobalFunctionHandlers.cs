@@ -20,6 +20,9 @@ internal static class GlobalFunctionHandlers
         registry.RegisterV2(BuiltInNames.BigInt, HandleBigInt);
         registry.RegisterV2(BuiltInNames.Date, HandleDate);
 
+        // Dynamic code evaluation
+        registry.RegisterV2(BuiltInNames.Eval, HandleEval);
+
         // Parsing functions
         registry.RegisterV2(BuiltInNames.ParseInt, HandleParseInt);
         registry.RegisterV2(BuiltInNames.ParseFloat, HandleParseFloat);
@@ -101,6 +104,23 @@ internal static class GlobalFunctionHandlers
         Interpreter interpreter)
     {
         return ValueTask.FromResult(RuntimeValue.FromString(new SharpTSDate().ToString()));
+    }
+
+    private static async ValueTask<RuntimeValue> HandleEval(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
+        IReadOnlyList<Expr> arguments,
+        Interpreter interpreter)
+    {
+        if (arguments.Count < 1)
+            return RuntimeValue.Undefined;
+
+        var argRV = await evaluateArg(arguments[0]);
+
+        // Per ECMA-262 §19.2.1: if the argument is not a string, eval returns it unchanged.
+        if (!argRV.IsString)
+            return argRV;
+
+        return RuntimeValue.FromBoxed(interpreter.Eval(argRV.AsString()));
     }
 
     private static async ValueTask<RuntimeValue> HandleParseInt(

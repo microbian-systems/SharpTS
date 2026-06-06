@@ -1051,6 +1051,39 @@ public partial class Interpreter : IDisposable
     }
 
     /// <summary>
+    /// Implements the global <c>eval(source)</c> function. Lexes, parses, and interprets
+    /// <paramref name="source"/> in the interpreter's current environment, returning the
+    /// completion value (the value of the last expression statement, or <c>undefined</c>).
+    /// </summary>
+    /// <remarks>
+    /// This is "direct eval" semantics: the evaluated code runs against the current scope
+    /// chain. It is intentionally NOT type-checked — <c>eval</c> is typed as
+    /// <c>(s: string) =&gt; any</c>, matching tsc, so the string body is dynamic. The
+    /// variable resolver is also skipped so identifier lookups fall back to runtime
+    /// scope-chain traversal (<see cref="LookupVariableRV"/>), which resolves names against
+    /// the live caller environment rather than a from-scratch resolution that would compute
+    /// wrong scope depths. A parse failure throws a <c>SyntaxError</c>.
+    /// </remarks>
+    public object? Eval(string source)
+    {
+        var lexer = new Lexer(source);
+        List<Token> tokens = lexer.ScanTokens();
+        var parser = new Parser(tokens);
+        var parseResult = parser.Parse();
+        if (!parseResult.IsSuccess)
+        {
+            var detail = parseResult.Diagnostics.Count > 0
+                ? parseResult.Diagnostics[0].ToString()
+                : "invalid syntax";
+            throw new ThrowException(new SharpTSError($"SyntaxError: {detail}"));
+        }
+
+        // Preserve the outer type map: InterpretRepl assigns _typeMap, and passing null
+        // would clobber type-aware dispatch for the remainder of the outer program.
+        return InterpretRepl(parseResult.Statements, _typeMap);
+    }
+
+    /// <summary>
     /// Interprets multiple modules in dependency order.
     /// </summary>
     /// <param name="modules">Modules in dependency order (dependencies first)</param>

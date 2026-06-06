@@ -353,7 +353,7 @@ This section documents JavaScript/TypeScript features that are **not currently i
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| `eval()` | ❌ | No dynamic code evaluation |
+| `eval()` | ⚠️ | Typed as `(s: string) => any`. **Interpreted:** direct eval — source runs against the caller's scope chain. **Compiled:** indirect eval via the SharpTS runtime (`EvalBridge`) — global builtins resolve but compiled locals are not visible. The build auto-copies SharpTS.dll next to the output when eval is used (see "Standalone DLL Constraint" in CLAUDE.md); with `--standalone` it is not copied and eval throws "eval not supported" at runtime. Eval'd source is not type-checked. Non-string args returned unchanged (ECMA-262 §19.2.1). |
 | `Function` constructor | ❌ | Cannot create functions from strings |
 | `queueMicrotask()` | ✅ | Schedules microtask for execution |
 

@@ -17,6 +17,28 @@ namespace SharpTS.Compilation;
 /// <seealso cref="ILEmitter"/>
 public class EmittedRuntime
 {
+    /// <summary>
+    /// Human-readable reasons this compilation emitted late binding into the SharpTS runtime
+    /// assembly (e.g. "eval()", "Proxy", "Intl"). Populated during emission by
+    /// <see cref="RequireSharpTSRuntime"/> at the feature gates / call sites that emit a
+    /// <c>Type.GetType("…, SharpTS")</c> reflection path whose <em>normal</em> execution needs
+    /// SharpTS.dll present. When non-empty, the build copies SharpTS.dll next to the output so
+    /// the soft dependency resolves; when empty, the output is fully standalone.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately excludes graceful-fallback-only late binding that a normal program never
+    /// reaches (e.g. the unconditional <c>process</c> helper), and pure-BCL features that emit
+    /// no late binding at all (zlib, child_process, JSON). See <c>RuntimeEmitter.RuntimeClass</c>
+    /// and <c>GlobalFunctionHandler.EmitEval</c> for the recording sites.
+    /// </remarks>
+    public SortedSet<string> RequiredSharpTSRuntimeReasons { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Records that <paramref name="reason"/> emitted a SharpTS-runtime late-binding path that a
+    /// normal execution will hit. Idempotent.
+    /// </summary>
+    public void RequireSharpTSRuntime(string reason) => RequiredSharpTSRuntimeReasons.Add(reason);
+
     // The emitted $Undefined singleton class
     public Type UndefinedType { get; set; } = null!;
     public FieldInfo UndefinedInstance { get; set; } = null!;

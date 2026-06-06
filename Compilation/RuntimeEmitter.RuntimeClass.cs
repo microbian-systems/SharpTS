@@ -976,8 +976,13 @@ public partial class RuntimeEmitter
         // FinalizationRegistry methods
         EmitFinalizationRegistryMethods(typeBuilder, runtime);
         // Proxy methods — gated on UsesProxy (`new Proxy()` / bare `Proxy`).
+        // Proxy trap dispatch late-binds to SharpTSProxy on its normal path, so the
+        // compiled output needs SharpTS.dll present at runtime when Proxy is used.
         if (_features.UsesProxy)
+        {
+            runtime.RequireSharpTSRuntime("Proxy");
             EmitProxyMethods(typeBuilder, runtime);
+        }
         // AbortController/AbortSignal methods (FireAbortEvent must be emitted
         // before AbortController methods). Gated on UsesAbortController, also
         // implied by UsesWebStreams (ReadableStream pipeTo checks abort state).
@@ -1005,6 +1010,8 @@ public partial class RuntimeEmitter
             EmitOsModuleMethods(typeBuilder, runtime);
         if (_features.UsesDns)
         {
+            // dns.Resolver late-binds to RuntimeTypes.DnsCreateResolver — needs SharpTS at runtime.
+            runtime.RequireSharpTSRuntime("dns module");
             EmitDnsModuleMethods(typeBuilder, runtime);
             EmitDnsPromisesMethods(typeBuilder, runtime);
         }
@@ -1084,8 +1091,12 @@ public partial class RuntimeEmitter
         // string_decoder module migrated to stdlib/node/string_decoder.ts.
 
         // Intl support (Intl.NumberFormat / DateTimeFormat / Collator) — gated.
+        // Every Intl operation late-binds to RuntimeTypes — needs SharpTS at runtime.
         if (_features.UsesIntl)
+        {
+            runtime.RequireSharpTSRuntime("Intl");
             EmitIntlMethods(typeBuilder, runtime);
+        }
 
         // TLS handshake helpers — only meaningful with TLS types emitted.
         if (_features.UsesTls)
@@ -1099,8 +1110,12 @@ public partial class RuntimeEmitter
             EmitClusterHelpers(typeBuilder, runtime);
 
         // Vm module support — gated on UsesVm (set by `import 'vm'`).
+        // vm delegates to VmModuleInterpreter via late binding — needs SharpTS at runtime.
         if (_features.UsesVm)
+        {
+            runtime.RequireSharpTSRuntime("vm module");
             EmitVmMethods(typeBuilder, runtime);
+        }
 
         // Web Streams API (stream/web) is now fully pure-IL emitted via
         // RuntimeEmitter.QueuingStrategy.cs / WritableStream.cs /

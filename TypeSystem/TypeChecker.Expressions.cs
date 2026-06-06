@@ -1224,6 +1224,7 @@ public partial class TypeChecker
         if (name.Lexeme == "parseFloat") return new TypeInfo.Any(); // Global parseFloat function
         if (name.Lexeme == "isNaN") return new TypeInfo.Any(); // Global isNaN function
         if (name.Lexeme == "isFinite") return new TypeInfo.Any(); // Global isFinite function
+        if (name.Lexeme == "eval") return new TypeInfo.Any(); // Global eval(): (s: string) => any
         if (name.Lexeme == "globalThis") return new TypeInfo.Any(); // globalThis ES2020
         if (name.Lexeme == "fetch") return new TypeInfo.Any(); // fetch() global function
         if (name.Lexeme == "setTimeout") return new TypeInfo.Any(); // setTimeout() global function

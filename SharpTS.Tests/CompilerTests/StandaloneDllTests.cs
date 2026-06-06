@@ -41,6 +41,7 @@ public class StandaloneDllTests
         "Compilation/RuntimeEmitter.DnsPromises.cs",           // dns/promises delegation to RuntimeTypes via reflection
         "Compilation/RuntimeEmitter.DnsResolver.cs",           // dns.Resolver factory via RuntimeTypes
         "Compilation/ILEmitter.Calls.ExternalInterop.cs",      // @DotNetType delegate shim + event subscription via DotNetDelegateShim/DotNetEventBinder
+        "Compilation/CallHandlers/GlobalFunctionHandler.cs",   // eval() indirect dispatch via EvalBridge (graceful throw when SharpTS absent)
     };
 
     /// <summary>
