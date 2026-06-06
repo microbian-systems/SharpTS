@@ -275,19 +275,21 @@ public partial class Parser
         }
 
         // Handle tuple type syntax: [string, number, boolean?]
+        // Assigns typeName (rather than returning) so the array-suffix / indexed-access
+        // loop below applies, e.g. [string, number][0] or [string, number][].
         if (Match(TokenType.LEFT_BRACKET))
         {
-            return ParseTupleType();
+            typeName = ParseTupleType();
         }
-
         // Handle inline object type syntax: { name: string; age?: number }
-        if (Match(TokenType.LEFT_BRACE))
+        // Assigns typeName (rather than returning) so postfix indexed access applies to
+        // object/mapped type literals, e.g. { [K in keyof T]: T[K] }[keyof T].
+        else if (Match(TokenType.LEFT_BRACE))
         {
-            return ParseInlineObjectType();
+            typeName = ParseInlineObjectType();
         }
-
         // Handle parenthesized types: (string | number) or function types: (x: number) => number
-        if (Match(TokenType.LEFT_PAREN))
+        else if (Match(TokenType.LEFT_PAREN))
         {
             // Check if this is a function type by looking for:
             // 1. Empty params: () =>
