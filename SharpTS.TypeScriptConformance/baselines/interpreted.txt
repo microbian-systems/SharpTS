@@ -1,6 +1,6 @@
 # TS conformance baseline — do not hand-edit. Regenerate with SHARPTS_TSCONFORMANCE_UPDATE_BASELINE=1.
 tests/cases/conformance/types/conditional/conditionalTypes1.ts ParseError
-tests/cases/conformance/types/conditional/conditionalTypes2.ts ParseError
+tests/cases/conformance/types/conditional/conditionalTypes2.ts Fail
 tests/cases/conformance/types/conditional/conditionalTypesExcessProperties.ts ParseError
 tests/cases/conformance/types/conditional/inferTypes1.ts ParseError
 tests/cases/conformance/types/conditional/inferTypes2.ts ParseError
@@ -68,7 +68,7 @@ tests/cases/conformance/types/typeRelationships/assignmentCompatibility/enumAssi
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/enumAssignabilityInInheritance.ts ParseError
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/everyTypeAssignableToAny.ts ParseError
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/genericCallWithObjectTypeArgsAndInitializers.ts Fail
-tests/cases/conformance/types/typeRelationships/assignmentCompatibility/intersectionIncludingPropFromGlobalAugmentation.ts ParseError
+tests/cases/conformance/types/typeRelationships/assignmentCompatibility/intersectionIncludingPropFromGlobalAugmentation.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/nullAssignableToEveryType.ts ParseError
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/nullAssignedToUndefined.ts ParseError
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/numberAssignableToEnum.ts Pass
