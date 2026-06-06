@@ -433,6 +433,21 @@ public partial class TypeChecker
     private static int _typeAliasExpansionDepth;
 
     /// <summary>
+    /// Maximum recursion depth for string-based type resolution (ToTypeInfo and the
+    /// generic/mapped/indexed-access helpers that funnel back through it). A backstop
+    /// against pathological self-referential type strings: it converts what would be an
+    /// uncatchable StackOverflowException (which crashes the whole process) into a normal
+    /// catchable type error. Set well above any legitimate nesting depth.
+    /// </summary>
+    private const int MaxTypeResolutionDepth = 400;
+
+    /// <summary>
+    /// Current recursion depth through <c>ToTypeInfo</c>.
+    /// </summary>
+    [ThreadStatic]
+    private static int _typeResolutionDepth;
+
+    /// <summary>
     /// Cache for expanded type aliases to ensure the same TypeInfo object is reused.
     /// This enables identity-based caching in IsCompatible to work correctly with recursive types.
     /// Key: alias name (or "name&lt;arg1,arg2&gt;" for generic), Value: expanded TypeInfo

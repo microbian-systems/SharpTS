@@ -17,6 +17,28 @@ public partial class TypeChecker
 {
     private TypeInfo ToTypeInfo(string typeName)
     {
+        // Backstop against runaway recursion through the string-based type resolver
+        // (e.g. self-referential mapped/indexed-access/generic type strings). Throwing a
+        // catchable exception here prevents an uncatchable StackOverflowException from
+        // tearing down the whole process.
+        if (++_typeResolutionDepth > MaxTypeResolutionDepth)
+        {
+            _typeResolutionDepth--;
+            throw new TypeCheckException(
+                $"Type '{typeName}' is too deeply nested or circularly references itself.", tsCode: "TS2456");
+        }
+        try
+        {
+            return ToTypeInfoCore(typeName);
+        }
+        finally
+        {
+            _typeResolutionDepth--;
+        }
+    }
+
+    private TypeInfo ToTypeInfoCore(string typeName)
+    {
         // Check for type parameter in current scope first
         var typeParam = _environment.GetTypeParameter(typeName);
         if (typeParam != null)
@@ -918,18 +940,37 @@ public partial class TypeChecker
         TypeInfo indexTypeInfo = ToTypeInfo(indexType);
         TypeInfo result = new TypeInfo.IndexedAccess(baseTypeInfo, indexTypeInfo);
 
-        // Handle chained indexed access: T[K][J]
-        if (!string.IsNullOrEmpty(remaining) && remaining.StartsWith("["))
+        // Consume trailing suffixes iteratively against the already-built `result`:
+        // chained indexed access (T[K][J]) and array suffixes (T[K][]), in any order.
+        // (Recursing on $"{result}{remaining}" would re-render `result` to the same
+        // string and loop forever — see the IndexedAccess ToString round-trip.)
+        while (!string.IsNullOrEmpty(remaining) && remaining[0] == '[')
         {
-            // Recurse with the remaining part
-            return TryParseIndexedAccessType($"{result}{remaining}");
-        }
+            // Array suffix: []
+            if (remaining.StartsWith("[]"))
+            {
+                result = new TypeInfo.Array(result);
+                remaining = remaining[2..];
+                continue;
+            }
 
-        // Handle array suffix after indexed access: T[K][]
-        while (remaining.StartsWith("[]"))
-        {
-            result = new TypeInfo.Array(result);
-            remaining = remaining[2..];
+            // Indexed access suffix: [SomeIndex] — find the matching ']' (bracket-depth aware).
+            int suffixDepth = 0;
+            int suffixEnd = -1;
+            for (int i = 0; i < remaining.Length; i++)
+            {
+                if (remaining[i] == '[') suffixDepth++;
+                else if (remaining[i] == ']')
+                {
+                    suffixDepth--;
+                    if (suffixDepth == 0) { suffixEnd = i; break; }
+                }
+            }
+            if (suffixEnd <= 1) break; // malformed or empty — stop consuming
+
+            string nextIndex = remaining[1..suffixEnd];
+            result = new TypeInfo.IndexedAccess(result, ToTypeInfo(nextIndex));
+            remaining = remaining[(suffixEnd + 1)..];
         }
 
         return result;
