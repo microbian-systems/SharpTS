@@ -180,7 +180,7 @@ public partial class TypeChecker
         {
             _typeAliasExpansionDepth--;
             throw new TypeCheckException(
-                $"Type alias '{rta.AliasName}' circularly references itself.");
+                $"Type alias '{rta.AliasName}' circularly references itself.", tsCode: "TS2456");
         }
 
         // Set up the expansion stack to prevent infinite recursion when ToTypeInfo
@@ -207,7 +207,7 @@ public partial class TypeChecker
                 }
                 else
                 {
-                    throw new TypeCheckException($"Unknown type '{rta.AliasName}'.");
+                    throw new TypeCheckException($"Unknown type '{rta.AliasName}'.", tsCode: "TS2304");
                 }
             }
 

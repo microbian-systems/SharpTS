@@ -20,11 +20,11 @@ public partial class TypeChecker
     {
         if (_currentClass == null)
         {
-            throw new TypeCheckException("Cannot use 'super' outside of a class.");
+            throw new TypeCheckException("Cannot use 'super' outside of a class.", tsCode: "TS2335");
         }
         if (_currentClass.Superclass == null)
         {
-            throw new TypeCheckException($" Class '{_currentClass.Name}' does not have a superclass.");
+            throw new TypeCheckException($" Class '{_currentClass.Name}' does not have a superclass.", tsCode: "TS2335");
         }
 
         // Get methods from superclass, handling both Class and InstantiatedGeneric
@@ -54,7 +54,7 @@ public partial class TypeChecker
             return methodType;
         }
 
-        throw new TypeCheckException($" Property '{expr.Method.Lexeme}' does not exist on superclass '{superName}'.");
+        throw new TypeCheckException($" Property '{expr.Method.Lexeme}' does not exist on superclass '{superName}'.", tsCode: "TS2339");
     }
 
     private TypeInfo CheckThis(Expr.This expr)
@@ -122,7 +122,7 @@ public partial class TypeChecker
         {
             var memberType = ResolveBuiltInMemberType(category, objType, memberName);
             if (memberType != null) return memberType;
-            throw new TypeCheckException($" Property '{memberName}' does not exist on type '{GetTypeDisplayName(category, objType)}'.");
+            throw new TypeCheckException($" Property '{memberName}' does not exist on type '{GetTypeDisplayName(category, objType)}'.", tsCode: "TS2339");
         }
 
         // Category-based dispatch for user-defined and special types
@@ -174,7 +174,7 @@ public partial class TypeChecker
                     hasNullOrUndefined = true;
                     continue;
                 }
-                throw new TypeCheckException($"Property '{memberName.Lexeme}' cannot be accessed on '{member}'. Object is possibly null or undefined.", memberName.Line);
+                throw new TypeCheckException($"Property '{memberName.Lexeme}' cannot be accessed on '{member}'. Object is possibly null or undefined.", memberName.Line, tsCode: "TS2533");
             }
 
             try
@@ -230,7 +230,7 @@ public partial class TypeChecker
                 // Continue to next type in intersection
             }
         }
-        throw new TypeCheckException($"Property '{memberName.Lexeme}' does not exist on type '{intersection}'.");
+        throw new TypeCheckException($"Property '{memberName.Lexeme}' does not exist on type '{intersection}'.", tsCode: "TS2339");
     }
 
     /// <summary>
@@ -376,12 +376,12 @@ public partial class TypeChecker
                 TypeInfo valueType = CheckExpr(set.Value);
                 if (!IsCompatible(propType, valueType))
                 {
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to property '{set.Name.Lexeme}' of type '{propType}'.");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to property '{set.Name.Lexeme}' of type '{propType}'.", tsCode: "TS2322");
                 }
                 if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, propType, valueType);
                 return valueType;
             }
-            throw new TypeCheckException($" Property '{set.Name.Lexeme}' does not exist on type '{tp.Name}'. Consider adding a constraint to the type parameter.");
+            throw new TypeCheckException($" Property '{set.Name.Lexeme}' does not exist on type '{tp.Name}'. Consider adding a constraint to the type parameter.", tsCode: "TS2339");
         }
 
         // Handle static property assignment
@@ -396,7 +396,7 @@ public partial class TypeChecker
                     TypeInfo valueType = CheckExpr(set.Value);
                     if (!IsCompatible(staticPropType, valueType))
                     {
-                        throw new TypeCheckException($" Cannot assign '{valueType}' to static property '{set.Name.Lexeme}' of type '{staticPropType}'.");
+                        throw new TypeCheckException($" Cannot assign '{valueType}' to static property '{set.Name.Lexeme}' of type '{staticPropType}'.", tsCode: "TS2322");
                     }
                     if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, staticPropType, valueType);
                     return valueType;
@@ -426,7 +426,7 @@ public partial class TypeChecker
                      TypeInfo valueType = CheckExpr(set.Value);
                      if (!IsCompatible(substitutedType, valueType))
                      {
-                         throw new TypeCheckException($" Cannot assign '{valueType}' to property '{memberName}' expecting '{substitutedType}'.");
+                         throw new TypeCheckException($" Cannot assign '{valueType}' to property '{memberName}' expecting '{substitutedType}'.", tsCode: "TS2322");
                      }
                      if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, substitutedType, valueType);
                      return valueType;
@@ -439,7 +439,7 @@ public partial class TypeChecker
                      TypeInfo valueType = CheckExpr(set.Value);
                      if (!IsCompatible(substitutedType, valueType))
                      {
-                         throw new TypeCheckException($" Cannot assign '{valueType}' to field '{memberName}' of type '{substitutedType}'.");
+                         throw new TypeCheckException($" Cannot assign '{valueType}' to field '{memberName}' of type '{substitutedType}'.", tsCode: "TS2322");
                      }
                      if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, substitutedType, valueType);
                      return valueType;
@@ -464,7 +464,7 @@ public partial class TypeChecker
                      TypeInfo valueType = CheckExpr(set.Value);
                      if (!IsCompatible(setterType, valueType))
                      {
-                         throw new TypeCheckException($" Cannot assign '{valueType}' to property '{memberName}' expecting '{setterType}'.");
+                         throw new TypeCheckException($" Cannot assign '{valueType}' to property '{memberName}' expecting '{setterType}'.", tsCode: "TS2322");
                      }
                      if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, setterType, valueType);
                      return valueType;
@@ -473,7 +473,7 @@ public partial class TypeChecker
                  // Check if there's a getter but no setter (read-only property)
                  if (getters != null && getters.ContainsKey(memberName) && (setters == null || !setters.ContainsKey(memberName)))
                  {
-                     throw new TypeCheckException($" Cannot assign to '{memberName}' because it is a read-only property (has getter but no setter).");
+                     throw new TypeCheckException($" Cannot assign to '{memberName}' because it is a read-only property (has getter but no setter).", tsCode: "TS2540");
                  }
 
                  current = GetSuperclass(current);
@@ -494,12 +494,12 @@ public partial class TypeChecker
                  var currentName = GetClassName(current);
                  if (access == AccessModifier.Private && _currentClass?.Name != currentName)
                  {
-                     throw new TypeCheckException($" Property '{memberName}' is private and only accessible within class '{currentName}'.");
+                     throw new TypeCheckException($" Property '{memberName}' is private and only accessible within class '{currentName}'.", tsCode: "TS2341");
                  }
                  var currentClass2 = AsClass(current);
                  if (access == AccessModifier.Protected && currentClass2 != null && !IsSubclassOf(_currentClass, currentClass2))
                  {
-                     throw new TypeCheckException($" Property '{memberName}' is protected and only accessible within class '{currentName}' and its subclasses.");
+                     throw new TypeCheckException($" Property '{memberName}' is protected and only accessible within class '{currentName}' and its subclasses.", tsCode: "TS2445");
                  }
 
                  // Check readonly - only allow assignment in constructor
@@ -512,7 +512,7 @@ public partial class TypeChecker
                      // Simplified check - just allow if we're in the same class
                      if (_currentClass?.Name != currentName)
                      {
-                         throw new TypeCheckException($" Cannot assign to '{memberName}' because it is a read-only property.");
+                         throw new TypeCheckException($" Cannot assign to '{memberName}' because it is a read-only property.", tsCode: "TS2540");
                      }
                  }
 
@@ -533,13 +533,13 @@ public partial class TypeChecker
                  }
                  if (!IsCompatible(fieldType, valueType))
                  {
-                     throw new TypeCheckException($" Cannot assign '{valueType}' to property '{set.Name.Lexeme}' of type '{fieldType}'.");
+                     throw new TypeCheckException($" Cannot assign '{valueType}' to property '{set.Name.Lexeme}' of type '{fieldType}'.", tsCode: "TS2322");
                  }
                  if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, fieldType, valueType);
                  return valueType;
              }
              // For now, disallow adding new properties to records via assignment to mimic strictness
-             throw new TypeCheckException($" Property '{set.Name.Lexeme}' does not exist on type '{record}'.");
+             throw new TypeCheckException($" Property '{set.Name.Lexeme}' does not exist on type '{record}'.", tsCode: "TS2339");
         }
         else if (objType is TypeInfo.Interface itf)
         {
@@ -550,13 +550,13 @@ public partial class TypeChecker
                     TypeInfo valueType = CheckExpr(set.Value);
                     if (!IsCompatible(member.Value, valueType))
                     {
-                        throw new TypeCheckException($" Cannot assign '{valueType}' to property '{set.Name.Lexeme}' of type '{member.Value}'.");
+                        throw new TypeCheckException($" Cannot assign '{valueType}' to property '{set.Name.Lexeme}' of type '{member.Value}'.", tsCode: "TS2322");
                     }
                     if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, member.Value, valueType);
                     return valueType;
                 }
             }
-            throw new TypeCheckException($" Property '{set.Name.Lexeme}' does not exist on interface '{itf.Name}'.");
+            throw new TypeCheckException($" Property '{set.Name.Lexeme}' does not exist on interface '{itf.Name}'.", tsCode: "TS2339");
         }
         // Handle Error property assignment (name, message, stack are mutable strings; cause is any)
         if (objType is TypeInfo.Error)
@@ -568,7 +568,7 @@ public partial class TypeChecker
                 // cause accepts any type; name, message, stack must be string
                 if (propName != "cause" && !IsCompatible(new TypeInfo.String(), valueType))
                 {
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to property '{propName}' of type 'string'.");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to property '{propName}' of type 'string'.", tsCode: "TS2322");
                 }
                 return valueType;
             }
@@ -612,12 +612,12 @@ public partial class TypeChecker
                 TypeInfo valueType = CheckExpr(set.Value);
                 var numberType = new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
                 if (!IsCompatible(numberType, valueType))
-                    throw new TypeCheckException($" Cannot assign '{valueType}' to array 'length' (expected number).");
+                    throw new TypeCheckException($" Cannot assign '{valueType}' to array 'length' (expected number).", tsCode: "TS2322");
                 return valueType;
             }
             return CheckExpr(set.Value);
         }
-        throw new TypeCheckException("Only instances and objects have properties.");
+        throw new TypeCheckException("Only instances and objects have properties.", tsCode: "TS2339");
     }
 
     /// <summary>
@@ -640,7 +640,7 @@ public partial class TypeChecker
             {
                 return CheckGetOnType(tp.Constraint, memberName);
             }
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{tp.Name}'. Consider adding a constraint to the type parameter.");
+            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{tp.Name}'. Consider adding a constraint to the type parameter.", tsCode: "TS2339");
         }
 
         // Handle Interface - check own and inherited members
@@ -653,7 +653,7 @@ public partial class TypeChecker
                     return member.Value;
                 }
             }
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on interface '{itf.Name}'.");
+            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on interface '{itf.Name}'.", tsCode: "TS2339");
         }
 
         // Handle Record type - check fields and index signatures
@@ -667,7 +667,7 @@ public partial class TypeChecker
             {
                 return record.StringIndexType;
             }
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{record}'.");
+            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{record}'.", tsCode: "TS2339");
         }
 
         // Handle built-in types via category-based dispatch
@@ -676,13 +676,13 @@ public partial class TypeChecker
         {
             var builtInMemberType = ResolveBuiltInMemberType(builtInCategory, objType, memberName.Lexeme);
             if (builtInMemberType != null) return builtInMemberType;
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{GetTypeDisplayName(builtInCategory, objType)}'.");
+            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{GetTypeDisplayName(builtInCategory, objType)}'.", tsCode: "TS2339");
         }
 
         // Handle primitive number type - no methods
         if (objType is TypeInfo.Primitive p && p.Type == TokenType.TYPE_NUMBER)
         {
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'number'.");
+            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type 'number'.", tsCode: "TS2339");
         }
 
         // Handle Class type - check static members
@@ -769,7 +769,7 @@ public partial class TypeChecker
                 catch (TypeCheckException)
                 {
                     // If any member doesn't have the property, it's an error
-                    throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on all members of union type '{union}'.");
+                    throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on all members of union type '{union}'.", tsCode: "TS2339");
                 }
             }
             // Return union of all member types
@@ -792,7 +792,7 @@ public partial class TypeChecker
                     // Continue to next type in intersection
                 }
             }
-            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{intersection}'.");
+            throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{intersection}'.", tsCode: "TS2339");
         }
 
         // Handle Any type
@@ -813,7 +813,7 @@ public partial class TypeChecker
         // Verify we're inside a class body
         if (_currentClass == null)
         {
-            throw new TypeCheckException($" Cannot access private field '{get.Name.Lexeme}' outside of a class body.");
+            throw new TypeCheckException($" Cannot access private field '{get.Name.Lexeme}' outside of a class body.", tsCode: "TS18013");
         }
 
         // Check the object expression
@@ -834,7 +834,7 @@ public partial class TypeChecker
             return staticFieldType;
         }
 
-        throw new TypeCheckException($" Private field '{fieldName}' does not exist on class '{_currentClass.Name}'.");
+        throw new TypeCheckException($" Private field '{fieldName}' does not exist on class '{_currentClass.Name}'.", tsCode: "TS2339");
     }
 
     /// <summary>
@@ -845,7 +845,7 @@ public partial class TypeChecker
         // Verify we're inside a class body
         if (_currentClass == null)
         {
-            throw new TypeCheckException($" Cannot access private field '{set.Name.Lexeme}' outside of a class body.");
+            throw new TypeCheckException($" Cannot access private field '{set.Name.Lexeme}' outside of a class body.", tsCode: "TS18013");
         }
 
         TypeInfo objType = CheckExpr(set.Object);
@@ -865,12 +865,12 @@ public partial class TypeChecker
 
         if (fieldType == null)
         {
-            throw new TypeCheckException($" Private field '{fieldName}' does not exist on class '{_currentClass.Name}'.");
+            throw new TypeCheckException($" Private field '{fieldName}' does not exist on class '{_currentClass.Name}'.", tsCode: "TS2339");
         }
 
         if (!IsCompatible(fieldType, valueType))
         {
-            throw new TypeCheckException($" Cannot assign type '{valueType}' to private field '{fieldName}' of type '{fieldType}'.");
+            throw new TypeCheckException($" Cannot assign type '{valueType}' to private field '{fieldName}' of type '{fieldType}'.", tsCode: "TS2322");
         }
 
         return valueType;
@@ -884,7 +884,7 @@ public partial class TypeChecker
         // Verify we're inside a class body
         if (_currentClass == null)
         {
-            throw new TypeCheckException($" Cannot call private method '{call.Name.Lexeme}' outside of a class body.");
+            throw new TypeCheckException($" Cannot call private method '{call.Name.Lexeme}' outside of a class body.", tsCode: "TS18013");
         }
 
         TypeInfo objType = CheckExpr(call.Object);
@@ -903,24 +903,24 @@ public partial class TypeChecker
 
         if (methodType == null)
         {
-            throw new TypeCheckException($" Private method '{methodName}' does not exist on class '{_currentClass.Name}'.");
+            throw new TypeCheckException($" Private method '{methodName}' does not exist on class '{_currentClass.Name}'.", tsCode: "TS2339");
         }
 
         // Check argument types against method signature
         if (methodType is not TypeInfo.Function funcType)
         {
-            throw new TypeCheckException($" Private member '{methodName}' is not a method.");
+            throw new TypeCheckException($" Private member '{methodName}' is not a method.", tsCode: "TS2349");
         }
 
         // Check argument count
         if (call.Arguments.Count < funcType.RequiredParams)
         {
-            throw new TypeCheckException($" Private method '{methodName}' requires at least {funcType.RequiredParams} arguments, got {call.Arguments.Count}.");
+            throw new TypeCheckException($" Private method '{methodName}' requires at least {funcType.RequiredParams} arguments, got {call.Arguments.Count}.", tsCode: "TS2554");
         }
 
         if (!funcType.HasRestParam && call.Arguments.Count > funcType.ParamTypes.Count)
         {
-            throw new TypeCheckException($" Private method '{methodName}' accepts at most {funcType.ParamTypes.Count} arguments, got {call.Arguments.Count}.");
+            throw new TypeCheckException($" Private method '{methodName}' accepts at most {funcType.ParamTypes.Count} arguments, got {call.Arguments.Count}.", tsCode: "TS2554");
         }
 
         // Check each argument type
@@ -933,7 +933,7 @@ public partial class TypeChecker
 
             if (!IsCompatible(paramType, argType))
             {
-                throw new TypeCheckException($" Argument {i + 1} to private method '{methodName}' has type '{argType}' but expected '{paramType}'.");
+                throw new TypeCheckException($" Argument {i + 1} to private method '{methodName}' has type '{argType}' but expected '{paramType}'.", tsCode: "TS2345");
             }
         }
 

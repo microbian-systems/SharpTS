@@ -1,0 +1,7 @@
+# Individual tests to wholesale skip (bucketed as Skipped:explicitly-skipped).
+# One path per line, relative to the conformance corpus root, forward slashes.
+# Lines starting with # and blank lines are ignored.
+#
+# Use sparingly — this is the escape hatch for tests that crash the runner
+# in ways the normal bucket model can't recover from. Most divergences should
+# show up as Fail in the baseline, not as explicit skips.

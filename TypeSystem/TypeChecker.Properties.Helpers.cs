@@ -97,7 +97,7 @@ public partial class TypeChecker
         {
             return CheckGetOnType(tp.Constraint, memberName);
         }
-        throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{tp.Name}'. Consider adding a constraint to the type parameter.");
+        throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{tp.Name}'. Consider adding a constraint to the type parameter.", tsCode: "TS2339");
     }
 
     /// <summary>
@@ -133,7 +133,7 @@ public partial class TypeChecker
         {
             return memberType;
         }
-        throw new TypeCheckException($" '{memberName.Lexeme}' does not exist on namespace '{nsType.Name}'.");
+        throw new TypeCheckException($" '{memberName.Lexeme}' does not exist on namespace '{nsType.Name}'.", tsCode: "TS2694");
     }
 
     /// <summary>
@@ -147,10 +147,11 @@ public partial class TypeChecker
             {
                 double => new TypeInfo.Primitive(TokenType.TYPE_NUMBER),
                 string => new TypeInfo.String(),
+                // SharpTS-only: internal invariant
                 _ => throw new TypeCheckException($" Unexpected enum member type for '{memberName.Lexeme}'.")
             };
         }
-        throw new TypeCheckException($" '{memberName.Lexeme}' does not exist on enum '{enumType.Name}'.");
+        throw new TypeCheckException($" '{memberName.Lexeme}' does not exist on enum '{enumType.Name}'.", tsCode: "TS2339");
     }
 
     /// <summary>
@@ -165,7 +166,7 @@ public partial class TypeChecker
                 return member.Value;
             }
         }
-        throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on interface '{itf.Name}'.");
+        throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on interface '{itf.Name}'.", tsCode: "TS2339");
     }
 
     /// <summary>
@@ -181,7 +182,7 @@ public partial class TypeChecker
         {
             return record.StringIndexType;
         }
-        throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{record}'.");
+        throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{record}'.", tsCode: "TS2339");
     }
 
     /// <summary>
@@ -326,12 +327,12 @@ public partial class TypeChecker
             var currentName = GetClassName(current);
             if (access == AccessModifier.Private && _currentClass?.Name != currentName)
             {
-                throw new TypeCheckException($" Property '{memberNameStr}' is private and only accessible within class '{currentName}'.");
+                throw new TypeCheckException($" Property '{memberNameStr}' is private and only accessible within class '{currentName}'.", tsCode: "TS2341");
             }
             var currentClassForAccess = AsClass(current);
             if (access == AccessModifier.Protected && currentClassForAccess != null && !IsSubclassOf(_currentClass, currentClassForAccess))
             {
-                throw new TypeCheckException($" Property '{memberNameStr}' is protected and only accessible within class '{currentName}' and its subclasses.");
+                throw new TypeCheckException($" Property '{memberNameStr}' is protected and only accessible within class '{currentName}' and its subclasses.", tsCode: "TS2445");
             }
 
             var methods = GetMethods(current);

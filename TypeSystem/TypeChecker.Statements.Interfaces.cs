@@ -273,17 +273,17 @@ public partial class TypeChecker
                 {
                     case TokenType.TYPE_STRING:
                         if (stringIndexType != null)
-                            throw new TypeCheckException($" Duplicate string index signature in interface '{interfaceStmt.Name.Lexeme}'.");
+                            throw new TypeCheckException($" Duplicate string index signature in interface '{interfaceStmt.Name.Lexeme}'.", tsCode: "TS2374");
                         stringIndexType = valueType;
                         break;
                     case TokenType.TYPE_NUMBER:
                         if (numberIndexType != null)
-                            throw new TypeCheckException($" Duplicate number index signature in interface '{interfaceStmt.Name.Lexeme}'.");
+                            throw new TypeCheckException($" Duplicate number index signature in interface '{interfaceStmt.Name.Lexeme}'.", tsCode: "TS2374");
                         numberIndexType = valueType;
                         break;
                     case TokenType.TYPE_SYMBOL:
                         if (symbolIndexType != null)
-                            throw new TypeCheckException($" Duplicate symbol index signature in interface '{interfaceStmt.Name.Lexeme}'.");
+                            throw new TypeCheckException($" Duplicate symbol index signature in interface '{interfaceStmt.Name.Lexeme}'.", tsCode: "TS2374");
                         symbolIndexType = valueType;
                         break;
                 }
@@ -294,7 +294,7 @@ public partial class TypeChecker
             {
                 if (!IsCompatible(stringIndexType, numberIndexType))
                 {
-                    throw new TypeCheckException($" Number index type '{numberIndexType}' is not assignable to string index type '{stringIndexType}' in interface '{interfaceStmt.Name.Lexeme}'.");
+                    throw new TypeCheckException($" Number index type '{numberIndexType}' is not assignable to string index type '{stringIndexType}' in interface '{interfaceStmt.Name.Lexeme}'.", tsCode: "TS2413");
                 }
             }
 
@@ -305,7 +305,7 @@ public partial class TypeChecker
                 {
                     if (!IsCompatible(stringIndexType, type))
                     {
-                        throw new TypeCheckException($" Property '{name}' of type '{type}' is not assignable to string index type '{stringIndexType}' in interface '{interfaceStmt.Name.Lexeme}'.");
+                        throw new TypeCheckException($" Property '{name}' of type '{type}' is not assignable to string index type '{stringIndexType}' in interface '{interfaceStmt.Name.Lexeme}'.", tsCode: "TS2411");
                     }
                 }
             }
@@ -326,7 +326,7 @@ public partial class TypeChecker
                 }
                 else
                 {
-                    throw new TypeCheckException($" Interface '{interfaceStmt.Name.Lexeme}' can only extend other interfaces, but '{extendTypeName}' is not an interface.");
+                    throw new TypeCheckException($" Interface '{interfaceStmt.Name.Lexeme}' can only extend other interfaces, but '{extendTypeName}' is not an interface.", tsCode: "TS2312");
                 }
             }
             extends = extendsList.ToFrozenSet();

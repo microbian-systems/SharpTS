@@ -47,6 +47,8 @@
     <None Remove="SharpTS.Test262/**" />
     <Compile Remove="SharpTS.Test262.Worker/**" />
     <None Remove="SharpTS.Test262.Worker/**" />
+    <Compile Remove="SharpTS.TypeScriptConformance/**" />
+    <None Remove="SharpTS.TypeScriptConformance/**" />
     <Compile Remove="SharpTS.Benchmarks/**" />
     <None Remove="SharpTS.Benchmarks/**" />
     <Compile Remove="SharpTS.Example.Interop/**" />

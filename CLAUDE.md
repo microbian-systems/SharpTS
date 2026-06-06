@@ -151,6 +151,13 @@ The same applies to `PropertyDescriptorStore`, `ObjectBuiltIns`, and any other S
 - **Inner function declarations:** Supported in IL compiler with hoisting, closure capture, and recursion
 - **Method Lookup:** Searches up inheritance chain (see `TypeChecker.cs` CheckGet, `Interpreter.Properties.cs` EvaluateGet)
 
+## Conformance Suites
+
+Two standalone test projects pin SharpTS against external corpora. Neither is in `SharpTS.sln`; invoke explicitly. Both use a committed-baseline + diff harness — runs hard-fail on regression or new-pass.
+
+- **`SharpTS.Test262/`** — TC39 ECMA-262 (interpreter + compiled). Update baseline: `SHARPTS_TEST262_UPDATE_BASELINE=1`.
+- **`SharpTS.TypeScriptConformance/`** — `microsoft/TypeScript` conformance (type-checker only). Update baseline: `SHARPTS_TSCONFORMANCE_UPDATE_BASELINE=1`. Bucket model: Pass/Fail/ParseError/TypeCheckError/Skipped/HarnessError. Match strategy: `(line, tsCode)` tuples — `tsCode` is the canonical `TSnnnn` code carried on every type-checker `Diagnostic` (see `Diagnostics/Diagnostic.cs`). See `SharpTS.TypeScriptConformance/README.md`.
+
 ## See Also
 
 - `STATUS.md` - Feature implementation status and known bugs

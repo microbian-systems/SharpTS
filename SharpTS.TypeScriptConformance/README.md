@@ -1,0 +1,94 @@
+# SharpTS TypeScript Conformance Runner
+
+Runs SharpTS's type checker against the canonical [microsoft/TypeScript](https://github.com/microsoft/TypeScript) conformance corpus and diffs our diagnostics against `tsc`'s `*.errors.txt` baselines. Mirrors the shape of `SharpTS.Test262/`.
+
+Tracking epic: [#80](https://github.com/nickna/SharpTS/issues/80).
+
+## Pinned TypeScript version
+
+The corpus is vendored as a git submodule at `external/typescript/`, pinned to **`v5.5.4`**. TypeScript rewords its diagnostic messages between versions, so the pin is load-bearing for baseline stability — bumping it is intentional, not incidental.
+
+## Initial setup
+
+```bash
+git submodule update --init external/typescript
+```
+
+The TypeScript repo contains paths that exceed Windows' default 260-character `MAX_PATH`. On Windows you'll need long-path support enabled globally before initializing the submodule:
+
+```bash
+git config --global core.longpaths true
+```
+
+## Running locally
+
+This project is **not** included in `SharpTS.sln`. Solution-level `dotnet build` and `dotnet test` (what CI runs) won't pick it up. Invoke explicitly:
+
+```bash
+dotnet test SharpTS.TypeScriptConformance/SharpTS.TypeScriptConformance.csproj
+```
+
+The suite runs in well under a second on the current subset (~70 tests). It type-checks each test, diffs the resulting diagnostics against `tsc`'s `*.errors.txt` baseline, classifies into a bucket, and compares the bucket distribution against the committed baseline at `baselines/interpreted.txt`.
+
+## Updating the baseline
+
+After an intentional change (new feature, fixed parser bug, refined diagnostic), regenerate the committed baseline:
+
+```bash
+SHARPTS_TSCONFORMANCE_UPDATE_BASELINE=1 dotnet test SharpTS.TypeScriptConformance/SharpTS.TypeScriptConformance.csproj
+```
+
+Same shape as `SHARPTS_TEST262_UPDATE_BASELINE=1`. Commit the regenerated `baselines/interpreted.txt` alongside the change so reviewers see what shifted.
+
+## Bucket model
+
+Each test classifies into one of:
+
+| Bucket | Meaning |
+|---|---|
+| `Pass` | Diagnostic set matches the baseline (or both empty). |
+| `Fail` | Diagnostic set differs from the baseline. |
+| `ParseError` | Source failed to lex or parse before the type checker ran. |
+| `TypeCheckError` | Checker threw something unrecoverable — distinct from "checker found errors." |
+| `Skipped` | Skipped per directive policy, lib-drift filter, multi-file deferral, or explicit by-path skip. |
+| `HarnessError` | Setup error: couldn't read test, baseline parse failed, etc. |
+
+`Skipped` carries a reason suffix (`Skipped:lib-drift`, `Skipped:multi-file-deferred`, `Skipped:directive:experimentaldecorators`, `Skipped:explicitly-skipped`) so the diff harness can tell different skip causes apart.
+
+## Match strategy
+
+Diagnostics match on `(line, tsCode)` tuples. Column is intentionally dropped — TS rewords messages and column drift is endemic. The `tsCode` field on every type-checker diagnostic comes from the work in [#95](https://github.com/nickna/SharpTS/issues/95): each `throw new TypeCheckException(...)` site in `TypeSystem/` is tagged with the closest canonical `TSnnnn` code.
+
+Diagnostics with no `tsCode` (SharpTS-only — e.g. `@DotNetType` integration errors) are excluded from baseline matching for that test rather than forcing a fail.
+
+## Lib-drift skip filter
+
+Conformance tests that exercise lib-version-conditional surface (`// @lib: es5` expecting "method doesn't exist" errors that SharpTS doesn't reproduce because we have it always-available) get bucketed as `Skipped:lib-drift` rather than `Fail`. This stops the baseline from drowning in noise from a divergence that's not actually a checker bug.
+
+The filter is conservative — it only fires when our checker produces zero errors AND every expected baseline code is one of `TS2339` (property missing), `TS2304` (cannot find name), `TS2551` ("did you mean"), or `TS7053` (no index signature). Tests with mixed shapes fall through to normal Pass/Fail comparison.
+
+Loading `tsc`'s `lib.*.d.ts` files into the type checker would eliminate this whole class of drift but is a substantial refactor — tracked as deferred work in [#99](https://github.com/nickna/SharpTS/issues/99).
+
+## Configuration
+
+| File | Purpose |
+|---|---|
+| `config/subset.json` | Folders to enumerate, per-test timeout, paths to skip-files. |
+| `config/skip-directives.txt` | Directive names (lower-cased) whose presence in a test's `// @<key>: <value>` header short-circuits the run as `Skipped:directive:<name>`. |
+| `config/skip-tests.txt` | Test paths (relative to the conformance corpus root) to wholesale skip. Escape hatch for tests that crash the runner. |
+
+## Layout
+
+| Path | Purpose |
+|---|---|
+| `external/typescript/` | Vendored TS repo (submodule, pinned to v5.5.4) |
+| `external/typescript/tests/cases/conformance/` | The conformance corpus (~10–15k `.ts` files) |
+| `external/typescript/tests/baselines/reference/` | `tsc`'s `*.errors.txt` / `*.js` / `*.types` baselines |
+| `external/typescript/src/lib/` | `lib.es*.d.ts`, `lib.dom.d.ts`, etc. (not loaded today; see #99) |
+| `SharpTS.TypeScriptConformance/baselines/interpreted.txt` | Our committed baseline |
+
+## See also
+
+- `SharpTS.Test262/` — equivalent project for the ECMA-262 / JavaScript spec; this one mirrors its harness shape.
+- [#80](https://github.com/nickna/SharpTS/issues/80) — tracking epic for the conformance runner.
+- [#99](https://github.com/nickna/SharpTS/issues/99) — deferred Phase-1.5 work (load `tsc`'s lib files into the type checker).

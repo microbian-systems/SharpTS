@@ -44,14 +44,25 @@ public partial class Parser
                 return DeclareGlobalDeclaration(declareKeyword);
             }
 
-            // declare class is for ambient declarations (external types)
+            // declare [abstract] class — ambient class declarations (external types)
             if (Match(TokenType.ABSTRACT))
             {
                 Consume(TokenType.CLASS, "Expect 'class' after 'declare abstract'.");
                 return ClassDeclaration(isAbstract: true, classDecorators: decorators, isDeclare: true);
             }
-            Consume(TokenType.CLASS, "Expect 'class' after 'declare'.");
-            return ClassDeclaration(isAbstract: false, classDecorators: decorators, isDeclare: true);
+            if (Match(TokenType.CLASS))
+            {
+                return ClassDeclaration(isAbstract: false, classDecorators: decorators, isDeclare: true);
+            }
+
+            // Decorators are only valid on classes; reject them on other declare forms.
+            if (decorators != null && decorators.Count > 0)
+            {
+                throw new Exception($"Parse Error at line {decorators[0].AtToken.Line}: Decorators are not valid here. Decorators can only be applied to classes and class members.");
+            }
+
+            // Other ambient declarations: declare function/const/let/var/enum/interface/type/namespace
+            return AmbientDeclaration();
         }
         if (Match(TokenType.ABSTRACT))
         {
@@ -123,6 +134,55 @@ public partial class Parser
         }
 
         return Statement();
+    }
+
+    /// <summary>
+    /// Parses a non-class ambient declaration following the `declare` keyword, after the
+    /// `declare module`/`declare global`/`declare [abstract] class` forms have been ruled out:
+    /// declare function/const/let/var/enum/interface/type/namespace. Bodies and initializers are
+    /// absent in ambient context — the underlying parsers already accept the bodyless forms
+    /// (FunctionDeclaration via its overload-signature path, AmbientVarDeclaration with no '=').
+    /// </summary>
+    private Stmt AmbientDeclaration()
+    {
+        if (Match(TokenType.FUNCTION))
+        {
+            bool isGenerator = Match(TokenType.STAR);
+            return FunctionDeclaration("function", isAsync: false, isGenerator: isGenerator);
+        }
+        if (Match(TokenType.CONST))
+        {
+            // declare const enum E { ... }
+            if (Match(TokenType.ENUM)) return EnumDeclaration(isConst: true);
+            return AmbientVarDeclaration(isConst: true);
+        }
+        if (Match(TokenType.LET) || Match(TokenType.VAR))
+        {
+            return AmbientVarDeclaration(isConst: false);
+        }
+        if (Match(TokenType.ENUM))
+        {
+            return EnumDeclaration(isConst: false);
+        }
+        if (Match(TokenType.INTERFACE))
+        {
+            return InterfaceDeclaration();
+        }
+        // 'type' is a contextual keyword — only a type alias when followed by an identifier.
+        if (Check(TokenType.TYPE) && PeekNext().Type == TokenType.IDENTIFIER)
+        {
+            Advance(); // consume TYPE
+            return TypeAliasDeclaration();
+        }
+        // 'namespace' is a contextual keyword — only a namespace when followed by a name.
+        if (Check(TokenType.NAMESPACE) &&
+            (PeekNext().Type == TokenType.IDENTIFIER || IsContextualKeyword(PeekNext().Type)))
+        {
+            Advance(); // consume NAMESPACE
+            return NamespaceDeclaration();
+        }
+
+        throw new Exception($"Parse Error at line {Peek().Line}: Expected 'class', 'function', 'const', 'let', 'var', 'enum', 'interface', 'type', 'namespace', 'module', or 'global' after 'declare'.");
     }
 
     private Stmt TypeAliasDeclaration()
@@ -482,18 +542,7 @@ public partial class Parser
         string genericPrefix = "";
         if (Check(TokenType.LESS))
         {
-            List<TypeParam>? typeParams = ParseTypeParameters();
-            if (typeParams != null && typeParams.Count > 0)
-            {
-                var parts = typeParams.Select(tp =>
-                {
-                    string part = tp.Name.Lexeme;
-                    if (tp.Constraint != null) part += $" extends {tp.Constraint}";
-                    if (tp.Default != null) part += $" = {tp.Default}";
-                    return part;
-                });
-                genericPrefix = $"<{string.Join(", ", parts)}>";
-            }
+            genericPrefix = FormatTypeParams(ParseTypeParameters());
         }
 
         Consume(TokenType.LEFT_PAREN, "Expect '(' for method parameters.");

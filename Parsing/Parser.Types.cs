@@ -160,6 +160,10 @@ public partial class Parser
 
     private string ParseUnionType()
     {
+        // Tolerate a leading '|' before the first member (common when each member
+        // is written on its own line):  type T = | A | B;
+        Match(TokenType.PIPE);
+
         // Union has lower precedence than intersection, so parse intersection first
         List<string> types = [ParseIntersectionType()];
 
@@ -177,6 +181,10 @@ public partial class Parser
     /// </summary>
     private string ParseIntersectionType()
     {
+        // Tolerate a leading '&' before the first member (common when each member
+        // is written on its own line):  type T = & A & B;
+        Match(TokenType.AMPERSAND);
+
         List<string> types = [ParsePrimaryType()];
 
         while (Match(TokenType.AMPERSAND))
@@ -274,20 +282,34 @@ public partial class Parser
             return sb.ToString();
         }
 
+        // Handle generic function type: <T>(params) => ReturnType
+        // A leading '<' in type position can only begin a generic function type's
+        // type-parameter list (e.g. `<U extends boolean>(a: U) => never`).
+        if (Check(TokenType.LESS))
+        {
+            List<TypeParam>? typeParams = ParseTypeParameters(); // consumes <...>
+            Consume(TokenType.LEFT_PAREN, "Expect '(' after type parameters in function type.");
+            string body = ParseFunctionTypeBody(); // returns "(params) => ReturnType"
+            string genericPrefix = FormatTypeParams(typeParams);
+            return $"{genericPrefix}{body}";
+        }
+
         // Handle tuple type syntax: [string, number, boolean?]
+        // Assigns typeName (rather than returning) so the array-suffix / indexed-access
+        // loop below applies, e.g. [string, number][0] or [string, number][].
         if (Match(TokenType.LEFT_BRACKET))
         {
-            return ParseTupleType();
+            typeName = ParseTupleType();
         }
-
         // Handle inline object type syntax: { name: string; age?: number }
-        if (Match(TokenType.LEFT_BRACE))
+        // Assigns typeName (rather than returning) so postfix indexed access applies to
+        // object/mapped type literals, e.g. { [K in keyof T]: T[K] }[keyof T].
+        else if (Match(TokenType.LEFT_BRACE))
         {
-            return ParseInlineObjectType();
+            typeName = ParseInlineObjectType();
         }
-
         // Handle parenthesized types: (string | number) or function types: (x: number) => number
-        if (Match(TokenType.LEFT_PAREN))
+        else if (Match(TokenType.LEFT_PAREN))
         {
             // Check if this is a function type by looking for:
             // 1. Empty params: () =>
@@ -353,6 +375,7 @@ public partial class Parser
                  Check(TokenType.TYPE_BOOLEAN) || Check(TokenType.TYPE_SYMBOL) ||
                  Check(TokenType.TYPE_BIGINT) ||
                  Check(TokenType.IDENTIFIER) ||
+                 Check(TokenType.THIS) ||  // polymorphic 'this' type (e.g. `): this`, `keyof this`)
                  Check(TokenType.VOID) ||  // void type
                  Check(TokenType.NULL) || Check(TokenType.UNDEFINED) || Check(TokenType.UNKNOWN) || Check(TokenType.NEVER))
         {
@@ -797,6 +820,25 @@ public partial class Parser
 
         ConsumeGreaterInTypeContext("Expect '>' after type parameters.");
         return typeParams;
+    }
+
+    /// <summary>
+    /// Renders a parsed type-parameter list back to its string form, e.g.
+    /// &lt;T, U extends Base = number&gt;. Returns "" for null/empty so callers can
+    /// unconditionally prepend it to a function/method type string.
+    /// </summary>
+    private static string FormatTypeParams(List<TypeParam>? typeParams)
+    {
+        if (typeParams == null || typeParams.Count == 0) return "";
+
+        var parts = typeParams.Select(tp =>
+        {
+            string part = tp.Name.Lexeme;
+            if (tp.Constraint != null) part += $" extends {tp.Constraint}";
+            if (tp.Default != null) part += $" = {tp.Default}";
+            return part;
+        });
+        return $"<{string.Join(", ", parts)}>";
     }
 
     /// <summary>
