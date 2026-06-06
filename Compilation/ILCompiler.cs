@@ -801,6 +801,7 @@ public partial class ILCompiler
         _typeEmitterRegistry.RegisterStatic("AbortSignal", new AbortSignalStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("Response", new ResponseStaticEmitter());
         _typeEmitterRegistry.RegisterStatic("Iterator", new IteratorStaticEmitter());
+        _typeEmitterRegistry.RegisterStatic("RegExp", new RegExpStaticEmitter());
 
         // Built-in module emitters
         _builtInModuleEmitterRegistry.Register(new OsModuleEmitter());

@@ -1,3 +1,4 @@
+using System.Text;
 using SharpTS.Execution;
 using SharpTS.Runtime.Exceptions;
 using SharpTS.Runtime.Types;
@@ -10,6 +11,157 @@ namespace SharpTS.Runtime.BuiltIns;
 /// </summary>
 public static class RegExpBuiltIns
 {
+    /// <summary>
+    /// Resolves a static member on the <c>RegExp</c> constructor (e.g.
+    /// <c>RegExp.escape</c>). Returns null for unknown names. Routed here by
+    /// <see cref="SharpTSBuiltInConstructor.GetMember"/> via the built-in
+    /// namespace registry.
+    /// </summary>
+    public static ISharpTSCallable? GetStaticMember(string name) => name switch
+    {
+        "escape" => _escape,
+        _ => null
+    };
+
+    // ECMA-262 (ES2025) §sec-regexp.escape. minArity 0 so a missing/non-string
+    // argument reaches the body and throws the spec TypeError (rather than the
+    // runtime arity check rejecting it). Visible `length` is 1 (WithSpecLength).
+    private static readonly BuiltInMethod _escape =
+        new BuiltInMethod("escape", 0, int.MaxValue, (_, _, args) =>
+        {
+            var arg = args.Count > 0 ? args[0] : (object?)SharpTSUndefined.Instance;
+            // Step 1: If S is not a String, throw a TypeError exception.
+            if (arg is not string s)
+                throw new ThrowException(new SharpTSTypeError(
+                    "RegExp.escape called with a non-string argument"));
+            return EscapeString(s);
+        }).WithSpecLength(1);
+
+    /// <summary>
+    /// ECMA-262 (ES2025) §sec-regexp.escape EncodeForRegExpEscape applied across
+    /// the whole string, including the leading-character rule (a leading ASCII
+    /// digit or letter is emitted as <c>\xHH</c> so it can't merge with a
+    /// preceding <c>\0</c>/<c>\1</c>/<c>\c</c> escape when the result is spliced
+    /// into a larger pattern). Iterates by code point so surrogate pairs are
+    /// preserved and lone surrogates are escaped as <c>\uXXXX</c>.
+    /// </summary>
+    internal static string EscapeString(string s)
+    {
+        var sb = new StringBuilder(s.Length + 8);
+        bool first = true;
+        int i = 0;
+        while (i < s.Length)
+        {
+            char ch = s[i];
+            int c;
+            int units;
+            if (char.IsHighSurrogate(ch) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1]))
+            {
+                c = char.ConvertToUtf32(ch, s[i + 1]);
+                units = 2;
+            }
+            else
+            {
+                c = ch; // BMP char or lone surrogate value
+                units = 1;
+            }
+
+            // Step 4.a: leading ASCII digit/letter → \xHH.
+            if (first && IsAsciiAlphaNumeric(c))
+            {
+                sb.Append("\\x");
+                AppendHex2(sb, c);
+            }
+            else
+            {
+                AppendEncodedCodePoint(sb, s, i, c, units);
+            }
+            first = false;
+            i += units;
+        }
+        return sb.ToString();
+    }
+
+    private static bool IsAsciiAlphaNumeric(int c) =>
+        (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+
+    // SyntaxCharacter :: one of ^ $ \ . * + ? ( ) [ ] { } | (and SOLIDUS / is
+    // handled alongside per step 1). otherPunctuators per the spec table,
+    // including the QUOTATION MARK (0x0022).
+    private const string SyntaxChars = "^$\\.*+?()[]{}|";
+    private const string OtherPunctuators = ",-=<>#&!%:;@~'`\"";
+
+    /// <summary>EncodeForRegExpEscape(c) — appends the encoded form of a single
+    /// code point. <paramref name="i"/>/<paramref name="units"/> locate the
+    /// original UTF-16 code unit(s) in <paramref name="s"/> for literal/unicode
+    /// emission.</summary>
+    private static void AppendEncodedCodePoint(StringBuilder sb, string s, int i, int c, int units)
+    {
+        // Step 1: SyntaxCharacter or '/' → REVERSE SOLIDUS + the character.
+        if (c <= 0xFFFF && (c == '/' || SyntaxChars.IndexOf((char)c) >= 0))
+        {
+            sb.Append('\\').Append((char)c);
+            return;
+        }
+        // Step 2: ControlEscape table.
+        switch (c)
+        {
+            case '\t': sb.Append("\\t"); return;
+            case '\n': sb.Append("\\n"); return;
+            case '\v': sb.Append("\\v"); return;
+            case '\f': sb.Append("\\f"); return;
+            case '\r': sb.Append("\\r"); return;
+        }
+        // Step 5: otherPunctuators / WhiteSpace / LineTerminator / lone surrogate.
+        bool needsHex =
+            (c <= 0xFFFF && OtherPunctuators.IndexOf((char)c) >= 0)
+            || IsEsWhiteSpaceOrLineTerminator(c)
+            || (c >= 0xD800 && c <= 0xDFFF);
+        if (needsHex)
+        {
+            if (c <= 0xFF)
+            {
+                sb.Append("\\x");
+                AppendHex2(sb, c);
+            }
+            else
+            {
+                // UnicodeEscape each UTF-16 code unit of the original source.
+                for (int k = 0; k < units; k++)
+                {
+                    sb.Append("\\u");
+                    AppendHex4(sb, s[i + k]);
+                }
+            }
+            return;
+        }
+        // Step 6: otherwise emit the code point unchanged.
+        for (int k = 0; k < units; k++)
+            sb.Append(s[i + k]);
+    }
+
+    // ES WhiteSpace ∪ LineTerminator, minus the chars already handled by the
+    // ControlEscape table (\t \n \v \f \r). SpaceSeparator (Zs) covers
+    // 0x20/0xA0/0x1680/0x2000-200A/0x202F/0x205F/0x3000; ZWNBSP (0xFEFF) is
+    // category Format and the two line separators (0x2028/0x2029) are added
+    // explicitly.
+    private static bool IsEsWhiteSpaceOrLineTerminator(int c)
+    {
+        if (c == 0xFEFF || c == 0x2028 || c == 0x2029) return true;
+        if (c > 0xFFFF) return false;
+        return char.GetUnicodeCategory((char)c)
+            == System.Globalization.UnicodeCategory.SpaceSeparator;
+    }
+
+    private const string HexDigits = "0123456789abcdef";
+
+    private static void AppendHex2(StringBuilder sb, int c) =>
+        sb.Append(HexDigits[(c >> 4) & 0xF]).Append(HexDigits[c & 0xF]);
+
+    private static void AppendHex4(StringBuilder sb, int c) =>
+        sb.Append(HexDigits[(c >> 12) & 0xF]).Append(HexDigits[(c >> 8) & 0xF])
+          .Append(HexDigits[(c >> 4) & 0xF]).Append(HexDigits[c & 0xF]);
+
     /// <summary>
     /// Gets an instance member (property or method) for a RegExp object.
     /// Pass <paramref name="interpreter"/> when the caller has one available
@@ -193,6 +345,36 @@ public static class RegExpBuiltIns
         proto.SetProperty("exec", _protoExec);
         proto.SetProperty("test", _protoTest);
         proto.SetProperty("toString", _protoToString);
+        // ECMA-262 §22.2.6.1: RegExp.prototype.constructor is the RegExp
+        // constructor. Wiring it here makes `RegExp.prototype.constructor ===
+        // RegExp` hold and gives property-descriptor introspection
+        // (propertyHelper verifyProperty) something to read. The same
+        // singleton is returned for instance `.constructor` access (see
+        // Interpreter EvaluateGetOnRegExp).
+        if (Execution.Interpreter.RegExpConstructorObject is { } rxCtor)
+            proto.SetProperty("constructor", rxCtor);
+        // ECMA-262 §22.2.5: the flag/source accessors live on the prototype as
+        // accessor properties { enumerable: false, configurable: true } so
+        // descriptor introspection works (getOwnPropertyDescriptor returns a
+        // callable `get`, propertyIsEnumerable is false, the property is
+        // deletable). Instance `re.flags`/`re.global`/… continue to resolve
+        // through EvaluateGetOnRegExp; these are for prototype/introspection use.
+        void DefineAccessor(string name, BuiltInMethod getter) =>
+            proto.DefineProperty(name, new SharpTSPropertyDescriptor
+            {
+                Get = getter,
+                Set = null,
+                Enumerable = false,
+                Configurable = true,
+            });
+        DefineAccessor("flags", _protoFlagsGetter);
+        DefineAccessor("source", _protoSourceGetter);
+        DefineAccessor("global", _protoGlobalGetter);
+        DefineAccessor("ignoreCase", _protoIgnoreCaseGetter);
+        DefineAccessor("multiline", _protoMultilineGetter);
+        DefineAccessor("dotAll", _protoDotAllGetter);
+        DefineAccessor("sticky", _protoStickyGetter);
+        DefineAccessor("unicode", _protoUnicodeGetter);
         return proto;
     }
 
@@ -221,6 +403,56 @@ public static class RegExpBuiltIns
                 throw new ThrowException(new SharpTSTypeError(
                     "RegExp.prototype.toString called on non-RegExp"));
             return regex.ToString();
+        }).WithSpecLength(0);
+
+    // ECMA-262 §22.2.5.3 `get RegExp.prototype.flags` — a GENERIC accessor: it
+    // requires only that `this` be an Object (not necessarily a RegExp) and
+    // builds the flag string by reading each flag via Get + ToBoolean. Exposed
+    // on the prototype so `Object.getOwnPropertyDescriptor(RegExp.prototype,
+    // "flags").get.call(plainObj)` works (the flags/coercion-* tests).
+    private static readonly BuiltInMethod _protoFlagsGetter =
+        new BuiltInMethod("get flags", 0, (interp, recv, _) =>
+        {
+            RequireObject(recv, ".flags");
+            return BuildFlagsString(interp!, recv);
+        }).WithSpecLength(0);
+
+    /// <summary>
+    /// Builds a per-flag accessor getter (§22.2.5.4/.6/.8/.10/.12/.14): on a
+    /// real RegExp returns whether <paramref name="flagChar"/> is set; on
+    /// %RegExp.prototype% returns undefined; otherwise throws TypeError. Unlike
+    /// the generic <c>flags</c> getter these require an actual RegExp/prototype
+    /// <c>this</c>.
+    /// </summary>
+    private static BuiltInMethod MakeProtoFlagGetter(string accessor, char flagChar) =>
+        new BuiltInMethod("get " + accessor, 0, (interp, recv, _) =>
+        {
+            if (recv is SharpTSRegExp rx) return rx.Flags.Contains(flagChar);
+            RequireObject(recv, "." + accessor);
+            if (ReferenceEquals(recv, interp!.GetRegExpPrototype())) return SharpTSUndefined.Instance;
+            throw new ThrowException(new SharpTSTypeError(
+                $"RegExp.prototype.{accessor} getter called on non-RegExp"));
+        }).WithSpecLength(0);
+
+    private static readonly BuiltInMethod _protoGlobalGetter = MakeProtoFlagGetter("global", 'g');
+    private static readonly BuiltInMethod _protoIgnoreCaseGetter = MakeProtoFlagGetter("ignoreCase", 'i');
+    private static readonly BuiltInMethod _protoMultilineGetter = MakeProtoFlagGetter("multiline", 'm');
+    private static readonly BuiltInMethod _protoDotAllGetter = MakeProtoFlagGetter("dotAll", 's');
+    private static readonly BuiltInMethod _protoStickyGetter = MakeProtoFlagGetter("sticky", 'y');
+    private static readonly BuiltInMethod _protoUnicodeGetter = MakeProtoFlagGetter("unicode", 'u');
+
+    /// <summary>
+    /// §22.2.5.12 <c>get RegExp.prototype.source</c>: a real RegExp returns its
+    /// source; %RegExp.prototype% returns "(?:)"; otherwise TypeError.
+    /// </summary>
+    private static readonly BuiltInMethod _protoSourceGetter =
+        new BuiltInMethod("get source", 0, (interp, recv, _) =>
+        {
+            if (recv is SharpTSRegExp rx) return rx.Source;
+            RequireObject(recv, ".source");
+            if (ReferenceEquals(recv, interp!.GetRegExpPrototype())) return "(?:)";
+            throw new ThrowException(new SharpTSTypeError(
+                "RegExp.prototype.source getter called on non-RegExp"));
         }).WithSpecLength(0);
 
     /// <summary>
@@ -300,7 +532,11 @@ public static class RegExpBuiltIns
     /// </summary>
     private static void RequireObject(object? rx, string siteName)
     {
-        if (rx is null or SharpTSUndefined or bool or double or string)
+        // ECMA-262 "Type(R) is not Object" — reject every primitive kind
+        // (number forms, string, boolean, null/undefined, Symbol, BigInt).
+        if (rx is null or SharpTSUndefined or bool or double or int or long
+            or float or decimal or char or string or SharpTSSymbol
+            or SharpTSBigInt or System.Numerics.BigInteger)
             throw new ThrowException(new SharpTSTypeError(
                 $"RegExp.prototype{siteName} called on non-object"));
     }
@@ -314,12 +550,104 @@ public static class RegExpBuiltIns
         => value is null ? "undefined" : interp.Stringify(value);
 
     /// <summary>
+    /// ECMA-262 §22.2.4.1 RegExp(pattern, flags). Runs with interpreter access
+    /// so the brand-aware steps work: IsRegExp (§22.2.7.2, reads
+    /// <c>Get(pattern, @@match)</c>), the call-form same-constructor identity
+    /// short-circuit (step 4.b — returns <paramref name="pattern"/> unchanged),
+    /// and regexp-like <c>source</c>/<c>flags</c> extraction via <c>Get</c>
+    /// (honoring user getters and propagating their throws, <c>source</c>
+    /// before <c>flags</c>). <paramref name="isCallForm"/> is true for the
+    /// <c>RegExp(...)</c> call form (NewTarget undefined); false for
+    /// <c>new RegExp(...)</c>. Mirrors the compiled <c>RegExpFromArgs</c> /
+    /// <c>BuiltInConstructorHandler.EmitRegExp</c>.
+    /// </summary>
+    public static object? ConstructRegExp(Interpreter interp, IReadOnlyList<object?> args, bool isCallForm)
+    {
+        object? pattern = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
+        object? flags = args.Count > 1 ? args[1] : SharpTSUndefined.Instance;
+        bool flagsUndefined = flags is null or SharpTSUndefined;
+
+        bool patternIsRegExp = IsRegExp(interp, pattern);
+
+        // Step 4.b (call form only): if pattern is regexp-like, flags is
+        // undefined, and SameValue(RegExp, Get(pattern, "constructor")) — return
+        // the input object itself. The constructor Get can throw (a user getter).
+        if (isCallForm && patternIsRegExp && flagsUndefined)
+        {
+            var patternConstructor = interp.GetProperty(pattern, "constructor");
+            if (ReferenceEquals(patternConstructor, Execution.Interpreter.RegExpConstructorObject))
+                return pattern;
+        }
+
+        string p, f;
+        if (pattern is SharpTSRegExp realRx)
+        {
+            // pattern has [[RegExpMatcher]] — read its internal slots directly.
+            p = realRx.Source;
+            f = flagsUndefined ? realRx.Flags : ToStr(interp, flags);
+        }
+        else if (patternIsRegExp)
+        {
+            // Step 6: regexp-like — Get(source), then Get(flags) only when no
+            // flags arg was supplied. `source` is read before `flags` (spec
+            // order); both Gets may invoke user getters and propagate throws.
+            p = ToStr(interp, interp.GetProperty(pattern, "source"));
+            f = flagsUndefined ? ToStr(interp, interp.GetProperty(pattern, "flags")) : ToStr(interp, flags);
+        }
+        else
+        {
+            // Step 7: ordinary coercion — only `undefined` becomes "" (not the
+            // literal "undefined"); everything else is ToString'd.
+            p = pattern is null or SharpTSUndefined ? "" : ToStr(interp, pattern);
+            f = flagsUndefined ? "" : ToStr(interp, flags);
+        }
+        return new SharpTSRegExp(p, f);
+    }
+
+    /// <summary>
+    /// ECMA-262 §22.2.7.2 IsRegExp(argument): true when <paramref name="argument"/>
+    /// is an object whose <c>@@match</c> is truthy, or (when <c>@@match</c> is
+    /// absent) a real RegExp. A real regex with <c>re[@@match] = false</c> is
+    /// NOT regexp-like.
+    /// </summary>
+    private static bool IsRegExp(Interpreter interp, object? argument)
+    {
+        if (argument is not (SharpTSObject or SharpTSRegExp or SharpTSInstance
+            or SharpTSArray or ISharpTSCallable))
+            return false;
+        object? matcher = GetMatchMember(argument);
+        if (matcher is not (null or SharpTSUndefined))
+            return Compilation.RuntimeTypes.IsTruthy(matcher);
+        return argument is SharpTSRegExp;
+    }
+
+    /// <summary>
+    /// Reads <c>Get(argument, @@match)</c> — a user-set own symbol property
+    /// wins over the inherited RegExp.prototype[@@match] method.
+    /// </summary>
+    private static object? GetMatchMember(object? argument)
+    {
+        switch (argument)
+        {
+            case SharpTSRegExp rx:
+                return rx.TryGetSymbolProperty(SharpTSSymbol.Match, out var ov)
+                    ? ov : GetSymbolMember(rx, SharpTSSymbol.Match);
+            case SharpTSObject o:
+                return o.GetBySymbol(SharpTSSymbol.Match);
+            case SharpTSInstance inst:
+                return inst.GetBySymbol(SharpTSSymbol.Match);
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
     /// ECMA-262 §22.2.5.3 RegExp.prototype.get flags: build the canonical
     /// flags string by ToBoolean'ing each per-flag property via Get. Routes
     /// through the user-overridable property pipeline so that
     /// <c>r.global = false</c> after a writable redefine drops 'g', etc.
     /// </summary>
-    private static string BuildFlagsString(Interpreter interp, SharpTSRegExp receiver)
+    private static string BuildFlagsString(Interpreter interp, object? receiver)
     {
         var sb = new System.Text.StringBuilder(8);
         if (Compilation.RuntimeTypes.IsTruthy(interp.GetProperty(receiver, "hasIndices"))) sb.Append('d');

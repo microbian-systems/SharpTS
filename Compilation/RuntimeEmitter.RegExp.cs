@@ -285,6 +285,47 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, rxLocal);
         il.Emit(OpCodes.Brtrue, patternIsRegExpLabel);
 
+        // ECMA-262 §22.2.4.1: a non-RegExp object whose [Symbol.match] is truthy
+        // (IsRegExp) is "regexp-like" — read its `source`/`flags` via Get (so
+        // getters fire and throw-ordering is source-before-flags) instead of
+        // ToString-ing the object to "[object Object]". test262 from-regexp-like*.
+        var skipRegexLike = il.DefineLabel();
+        var objFlagsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, skipRegexLike);                 // null → not regexp-like
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brtrue, skipRegexLike);                  // string → not regexp-like
+        il.Emit(OpCodes.Ldarg_0);                                // receiver
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolMatch);            // Symbol.match (symbol object)
+        il.Emit(OpCodes.Call, runtime.GetIndex);                 // pattern[Symbol.match]
+        il.Emit(OpCodes.Call, runtime.IsTruthy);
+        il.Emit(OpCodes.Brfalse, skipRegexLike);
+        // src = ToJsString(Get(pattern, "source"))
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "source");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Stloc, srcLocal);
+        // flags = arg1 undefined ? ToJsString(Get(pattern,"flags")) : RegExpCoerceArg(arg1)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, objFlagsLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, objFlagsLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.RegExpCoerceArg);
+        il.Emit(OpCodes.Stloc, flagsLocal);
+        il.Emit(OpCodes.Br, flagsResolvedLabel);
+        il.MarkLabel(objFlagsLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "flags");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Stloc, flagsLocal);
+        il.Emit(OpCodes.Br, flagsResolvedLabel);
+        il.MarkLabel(skipRegexLike);
+
         // Non-RegExp: src = RegExpCoerceArg(pattern)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.RegExpCoerceArg);

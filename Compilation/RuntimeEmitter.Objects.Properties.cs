@@ -2312,14 +2312,37 @@ public partial class RuntimeEmitter
                 il.MarkLabel(notThisName);
             }
 
-            // "lastIndex" — int field, return boxed double for JS-side
-            // number identity (assignments coerce via the SetProperty arm).
+            // "lastIndex" — return the raw boxed value when a non-numeric value
+            // was assigned (object identity preserved per spec); otherwise the
+            // typed int as a boxed double.
             NameMatchBranch("lastIndex", () =>
             {
+                var numericLabel = il.DefineLabel();
+                var doneLabel = il.DefineLabel();
+                il.Emit(OpCodes.Ldloc, rxLocal);
+                il.Emit(OpCodes.Ldfld, _tsRegExpLastIndexBoxedField);
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Brfalse, numericLabel);
+                il.Emit(OpCodes.Br, doneLabel);            // boxed non-null → return it
+                il.MarkLabel(numericLabel);
+                il.Emit(OpCodes.Pop);                      // drop the null
                 il.Emit(OpCodes.Ldloc, rxLocal);
                 il.Emit(OpCodes.Callvirt, runtime.TSRegExpLastIndexGetter);
                 il.Emit(OpCodes.Conv_R8);
                 il.Emit(OpCodes.Box, _types.Double);
+                il.MarkLabel(doneLabel);
+            });
+            // "constructor" — inherited from RegExp.prototype.constructor, which
+            // is the RegExp constructor (the $RegExp Type token, == what `RegExp`
+            // evaluates to as a value). Without this an instance read returns
+            // undefined and `re.constructor === RegExp` is false, blocking the
+            // §22.2.4.1 call-form same-object check. PDS is checked above, so a
+            // user `Object.defineProperty(re,'constructor',…)` / `re.constructor=x`
+            // still wins.
+            NameMatchBranch("constructor", () =>
+            {
+                il.Emit(OpCodes.Ldtoken, runtime.TSRegExpType);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
             });
             // "source" / "flags" — string fields.
             NameMatchBranch("source", () =>
@@ -3315,11 +3338,42 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
             il.Emit(OpCodes.Brfalse, notLastIndexLabel);
 
+            // ECMA-262: lastIndex is an ordinary writable data property — store
+            // the assigned value as-is (ToLength is deferred to RegExpBuiltinExec).
+            // Only an OBJECT (whose ToLength would run user `valueOf`) needs the
+            // boxed slot to defer that call + preserve identity; primitives
+            // (null/undefined/number/string/bool) ToLength with no user code, so
+            // they fold straight into the typed int slot (and clear the box).
+            // NB: JS `null` ToLengths to 0 — it must take the primitive path, not
+            // the box (a boxed C# null is indistinguishable from "no box").
+            var numericSetLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Brfalse, numericSetLabel);                 // null
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Isinst, _types.Double);
+            il.Emit(OpCodes.Brtrue, numericSetLabel);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Brtrue, numericSetLabel);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Isinst, _types.Boolean);
+            il.Emit(OpCodes.Brtrue, numericSetLabel);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+            il.Emit(OpCodes.Brtrue, numericSetLabel);
+            // object → rx._lastIndexBoxed = value (defer ToLength/valueOf to exec)
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.TSRegExpType);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stfld, _tsRegExpLastIndexBoxedField);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(numericSetLabel);
+            // primitive: rx._lastIndex = ToLength(value); rx._lastIndexBoxed = null
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Castclass, runtime.TSRegExpType);
             il.Emit(OpCodes.Ldarg_2);
             EmitToLengthBoxed(il, runtime);
-            il.Emit(OpCodes.Callvirt, runtime.TSRegExpLastIndexSetter);
+            il.Emit(OpCodes.Callvirt, runtime.TSRegExpLastIndexSetter);  // also clears boxed
             il.Emit(OpCodes.Ret);
 
             il.MarkLabel(notLastIndexLabel);

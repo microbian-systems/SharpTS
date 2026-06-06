@@ -55,6 +55,30 @@ public class SharpTSRegExp : ITypeCategorized
     // .../get-flags-throws.js, etc.) bypass the user code entirely. Stored
     // here as a tuple so a single dictionary lookup retrieves both halves.
     private Dictionary<string, (ISharpTSCallable? Getter, ISharpTSCallable? Setter)>? _accessors;
+    // Symbol-keyed own properties. ECMA-262 lets a regex carry symbol keys
+    // (e.g. `re[Symbol.match] = false`), and IsRegExp (§22.2.7.2) reads
+    // `Get(re, @@match)` — a user override must win over the inherited
+    // RegExp.prototype[@@match] method. Lazily allocated; kept internal so the
+    // runtime↔emitted public-method parity test (RuntimeTypeSyncTests) isn't
+    // affected (the emitted $RegExp has its own symbol storage).
+    private Dictionary<SharpTSSymbol, object?>? _symbolProps;
+
+    internal bool TryGetSymbolProperty(SharpTSSymbol symbol, out object? value)
+    {
+        if (_symbolProps != null && _symbolProps.TryGetValue(symbol, out value))
+            return true;
+        value = null;
+        return false;
+    }
+
+    internal void SetBySymbol(SharpTSSymbol symbol, object? value)
+    {
+        _symbolProps ??= [];
+        _symbolProps[symbol] = value;
+    }
+
+    internal bool HasSymbolProperty(SharpTSSymbol symbol) =>
+        _symbolProps != null && _symbolProps.ContainsKey(symbol);
 
     internal bool TryGetProperty(string name, out object? value)
     {
@@ -151,11 +175,25 @@ public class SharpTSRegExp : ITypeCategorized
     public SharpTSRegExp(string pattern, string flags = "")
     {
         _source = pattern;
+        // ECMA-262 §22.2.3.3: each flag must be one of d/g/i/m/s/u/v/y, with no
+        // duplicates and not both u and v. NormalizeFlags silently drops invalid
+        // flags, so validate the raw string first and throw SyntaxError.
+        ValidateFlags(flags);
         _flags = NormalizeFlags(flags);
         _global = _flags.Contains('g');
         _ignoreCase = _flags.Contains('i');
         _multiline = _flags.Contains('m');
         LastIndex = 0;
+
+        // ES2025 modifier-group early errors (e.g. (?i-i:), (?ii:), (?-:)) — .NET
+        // accepts several of these, so validate up front and throw SyntaxError.
+        ValidateModifiers(pattern);
+
+        // ECMA-262 Annex B distinguishes Unicode (`u`/`v`) mode, where several
+        // forms .NET tolerates are SyntaxErrors. We validate the clearly-invalid,
+        // false-positive-free subset here (others are a deferred follow-up).
+        if (_flags.Contains('u') || _flags.Contains('v'))
+            ValidateUnicodePattern(pattern);
 
         // Named groups ((?<name>...)) are not supported in ECMAScript mode in .NET.
         // Detect them and fall back to non-ECMAScript mode.
@@ -177,10 +215,42 @@ public class SharpTSRegExp : ITypeCategorized
             // .NET wraps the underlying RegexParseException in
             // ArgumentException; ConcurrentDictionary.GetOrAdd will surface
             // it as-is on the first failed compile (and won't cache the
-            // failure — subsequent retries can re-attempt).
-            throw new Exception($"Invalid regular expression: {ex.Message}");
+            // failure — subsequent retries can re-attempt). ECMA-262 §22.2.3.1
+            // mandates a SyntaxError for an invalid pattern, so surface it as a
+            // guest-catchable SharpTSSyntaxError (so `e instanceof SyntaxError`
+            // and `assert.throws(SyntaxError, ...)` hold) rather than a bare
+            // host Exception.
+            throw new Exceptions.ThrowException(
+                new SharpTSSyntaxError($"Invalid regular expression: {ex.Message}"));
         }
     }
+
+    /// <summary>
+    /// ECMA-262 §22.2.3.3 flag validation: throws SyntaxError if a flag is not
+    /// one of d/g/i/m/s/u/v/y, a flag repeats, or both u and v are present.
+    /// Kept in sync with the emitted <c>$RegExp.ValidateFlags</c> (compiled).
+    /// </summary>
+    private static void ValidateFlags(string flags)
+    {
+        int seen = 0;
+        foreach (char f in flags)
+        {
+            int bit = f switch
+            {
+                'd' => 1, 'g' => 2, 'i' => 4, 'm' => 8,
+                's' => 16, 'u' => 32, 'v' => 64, 'y' => 128,
+                _ => 0
+            };
+            if (bit == 0) ThrowFlagsSyntax();          // unknown flag
+            if ((seen & bit) != 0) ThrowFlagsSyntax(); // duplicate flag
+            seen |= bit;
+        }
+        if ((seen & 32) != 0 && (seen & 64) != 0) ThrowFlagsSyntax(); // u and v
+    }
+
+    private static void ThrowFlagsSyntax() =>
+        throw new Exceptions.ThrowException(new SharpTSSyntaxError(
+            "Invalid regular expression flags"));
 
     /// <summary>
     /// Normalize and deduplicate flags, preserving only valid flags.
@@ -206,6 +276,167 @@ public class SharpTSRegExp : ITypeCategorized
         if (flags.Contains('v')) sb.Append('v');
         return sb.ToString();
     }
+
+    /// <summary>
+    /// ECMA-262 (ES2025) modifier-group early errors. A modifier group
+    /// <c>(?addFlags-removeFlags:…)</c> (or <c>(?addFlags:…)</c>) is a SyntaxError
+    /// when any flag is not one of i/m/s, a flag repeats within addFlags or within
+    /// removeFlags, a flag appears in both sets, or both sets are empty with a dash
+    /// (<c>(?-:…)</c>). .NET's engine accepts several of these, so validate up
+    /// front and throw a guest SyntaxError. Valid groups (and the non-modifier
+    /// <c>(?:</c>, <c>(?=</c>, <c>(?!</c>, <c>(?&lt;…</c> forms) pass through.
+    /// Kept in sync with the emitted <c>$RegExp.ValidateModifiers</c> (compiled).
+    /// </summary>
+    internal static void ValidateModifiers(string pattern)
+    {
+        int n = pattern.Length;
+        int i = 0;
+        while (i < n)
+        {
+            char c = pattern[i];
+            if (c == '\\') { i += 2; continue; }          // skip escaped char
+            if (c == '[') { i = SkipCharClass(pattern, i); continue; } // class chars are literal
+            if (c == '(' && i + 1 < n && pattern[i + 1] == '?')
+            {
+                int j = i + 2;
+                if (j >= n) { i++; continue; }
+                char d = pattern[j];
+                // Non-modifier (?…) constructs.
+                if (d == ':' || d == '=' || d == '!' || d == '<') { i += 2; continue; }
+                // Candidate modifier: scan flag chars up to ':' (else not a modifier).
+                int k = j;
+                while (k < n && pattern[k] != ':' && pattern[k] != ')') k++;
+                if (k >= n || pattern[k] != ':') { i++; continue; }
+                ValidateModifierFlags(pattern.Substring(j, k - j));
+                i = k + 1;
+                continue;
+            }
+            i++;
+        }
+    }
+
+    /// <summary>Returns the index just past the matching <c>]</c> of a character
+    /// class beginning at <paramref name="i"/> (<c>p[i] == '['</c>), honoring
+    /// <c>\]</c>. Unterminated → end of string (.NET surfaces the error).</summary>
+    private static int SkipCharClass(string p, int i)
+    {
+        int n = p.Length, k = i + 1;
+        while (k < n)
+        {
+            if (p[k] == '\\') { k += 2; continue; }
+            if (p[k] == ']') return k + 1;
+            k++;
+        }
+        return n;
+    }
+
+    /// <summary>Validates the flag text between <c>(?</c> and <c>:</c> (e.g.
+    /// "i", "ims", "i-m", "-i", "-", "i-i") in a single pass; throws SyntaxError
+    /// on an early error. Single-pass (no substrings) so the emitted IL mirror
+    /// stays simple.</summary>
+    private static void ValidateModifierFlags(string mod)
+    {
+        int addMask = 0, removeMask = 0;
+        bool sawDash = false;
+        foreach (char f in mod)
+        {
+            if (f == '-')
+            {
+                if (sawDash) ThrowModifierSyntax();   // a second dash
+                sawDash = true;
+                continue;
+            }
+            int bit = f switch { 'i' => 1, 'm' => 2, 's' => 4, _ => 0 };
+            if (bit == 0) ThrowModifierSyntax();      // not an i/m/s flag
+            if (!sawDash)
+            {
+                if ((addMask & bit) != 0) ThrowModifierSyntax();    // duplicate in addFlags
+                addMask |= bit;
+            }
+            else
+            {
+                if ((removeMask & bit) != 0) ThrowModifierSyntax(); // duplicate in removeFlags
+                removeMask |= bit;
+            }
+        }
+        if ((addMask & removeMask) != 0) ThrowModifierSyntax();     // flag in both sets
+        if (sawDash && addMask == 0 && removeMask == 0) ThrowModifierSyntax(); // (?-:)
+    }
+
+    private static void ThrowModifierSyntax() =>
+        throw new Exceptions.ThrowException(new SharpTSSyntaxError(
+            "Invalid regular expression: invalid modifier group"));
+
+    /// <summary>
+    /// ECMA-262 Annex B Unicode-mode (`u`/`v`) early errors — the safe,
+    /// false-positive-free subset: (1) a lookaround assertion immediately
+    /// followed by a quantifier is a SyntaxError; (2) <c>\c</c> not followed by
+    /// an ASCII letter (a ControlLetter) is a SyntaxError. Other u-mode
+    /// restrictions (identity-escape allowlist, octal/backreference rules,
+    /// character-class ranges, incomplete quantifiers) need lookahead that risks
+    /// rejecting valid patterns, so they're deferred. Kept in sync with the
+    /// emitted <c>$RegExp.ValidateUnicodePattern</c>.
+    /// </summary>
+    private static void ValidateUnicodePattern(string pattern)
+    {
+        int n = pattern.Length;
+        for (int i = 0; i < n; i++)
+        {
+            char c = pattern[i];
+            if (c == '\\')
+            {
+                // \c (anywhere) must be followed by an ASCII letter.
+                if (i + 1 < n && pattern[i + 1] == 'c')
+                {
+                    char after = i + 2 < n ? pattern[i + 2] : '\0';
+                    if (!IsAsciiLetter(after)) ThrowUnicodeSyntax();
+                }
+                i++;                    // skip the escaped char
+                continue;
+            }
+            // Quantifying a lookaround assertion → SyntaxError.
+            if (c == '(' && i + 2 < n && pattern[i + 1] == '?')
+            {
+                char d = pattern[i + 2];
+                bool isAssertion = d == '=' || d == '!'
+                    || (d == '<' && i + 3 < n && (pattern[i + 3] == '=' || pattern[i + 3] == '!'));
+                if (isAssertion)
+                {
+                    int close = FindGroupClose(pattern, i);
+                    if (close >= 0 && close + 1 < n && IsRegexQuantifierStart(pattern[close + 1]))
+                        ThrowUnicodeSyntax();
+                }
+            }
+        }
+    }
+
+    private static bool IsAsciiLetter(char c) =>
+        (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+
+    private static bool IsRegexQuantifierStart(char c) =>
+        c == '*' || c == '+' || c == '?' || c == '{';
+
+    /// <summary>Index of the <c>)</c> matching the group opening at
+    /// <paramref name="openIdx"/> (honoring escapes and char classes), or -1.</summary>
+    private static int FindGroupClose(string p, int openIdx)
+    {
+        int n = p.Length, depth = 0;
+        bool inClass = false;
+        for (int i = openIdx; i < n; i++)
+        {
+            char c = p[i];
+            if (c == '\\') { i++; continue; }
+            if (inClass) { if (c == ']') inClass = false; continue; }
+            if (c == '[') inClass = true;
+            else if (c == '(') depth++;
+            else if (c == ')') { depth--; if (depth == 0) return i; }
+        }
+        return -1;
+    }
+
+    private static void ThrowUnicodeSyntax() =>
+        throw new Exceptions.ThrowException(new SharpTSSyntaxError(
+            "Invalid regular expression: invalid Unicode-mode pattern"));
 
     /// <summary>
     /// Detects whether a regex pattern contains named capture groups (?&lt;name&gt;...).

@@ -54,6 +54,16 @@ public partial class Interpreter : IDisposable
     /// </summary>
     private static readonly FrozenDictionary<string, object> _globalConstants = CreateGlobalsLookup();
 
+    // The process-wide RegExp constructor singleton (a SharpTSBuiltInConstructor),
+    // resolved once from the static globals table. ECMA-262 §22.2.6.1 requires
+    // `RegExp.prototype.constructor === RegExp` and, by inheritance,
+    // `(/x/).constructor === RegExp` — both must reference this exact instance
+    // for strict-equality identity to hold. Cached so the regex property hot
+    // path returns it without a dictionary probe. Mirrors the compiled side,
+    // where the `$RegExp` Type token plays the same role.
+    internal static readonly object? RegExpConstructorObject =
+        _globalConstants.TryGetValue(BuiltInNames.RegExp, out var rxCtor) ? rxCtor : null;
+
     private static FrozenDictionary<string, object> CreateGlobalsLookup()
     {
         var globals = new Dictionary<string, object>
@@ -197,6 +207,19 @@ public partial class Interpreter : IDisposable
     /// Defaults to Console.Error when not explicitly provided.
     /// </summary>
     internal TextWriter Error { get; }
+
+    /// <summary>
+    /// The last uncaught top-level error swallowed by <see cref="Interpret"/>.
+    /// <see cref="Interpret"/> intentionally catches a top-level guest
+    /// <c>throw</c>, prints "Runtime Error: …" to <see cref="Out"/>, and returns
+    /// normally (so the CLI prints the error without a .NET stack trace). That
+    /// swallow hides the failure from hosts that bucket on a propagated
+    /// exception — notably the Test262 runner, which would otherwise score a
+    /// thrown assertion (or TypeError) as a Pass. Hosts that need to observe the
+    /// failure read this after <see cref="Interpret"/> returns; it is reset to
+    /// null at the start of each <see cref="Interpret"/> call.
+    /// </summary>
+    public Exception? LastUncaughtError { get; private set; }
 
     /// <summary>
     /// Gets the sync evaluation context for use in unified core methods.
@@ -912,6 +935,7 @@ public partial class Interpreter : IDisposable
     public void Interpret(List<Stmt> statements, TypeMap? typeMap = null)
     {
         _typeMap = typeMap;
+        LastUncaughtError = null;
         ProcessBuiltIns.ResetScriptStartTime();
         try
         {
@@ -943,6 +967,7 @@ public partial class Interpreter : IDisposable
                     }
                     catch (ThrowException tex)
                     {
+                        LastUncaughtError = tex;
                         Out.WriteLine($"Runtime Error: {Stringify(tex.Value)}");
                         return;
                     }
@@ -952,6 +977,7 @@ public partial class Interpreter : IDisposable
                     var result = Execute(statement);
                     if (result.Type == ExecutionResult.ResultType.Throw)
                     {
+                        LastUncaughtError = ThrowException.FromResult(result.Value.ToObject());
                         Out.WriteLine($"Runtime Error: {Stringify(result.Value.ToObject())}");
                         return;
                     }

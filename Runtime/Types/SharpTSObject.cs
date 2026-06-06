@@ -46,6 +46,15 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
     public object? Prototype { get; set; }
 
     /// <summary>
+    /// True for a genuine null-prototype object (<c>Object.create(null)</c>,
+    /// <c>Object.groupBy</c>/<c>Map.groupBy</c> results, etc.). Distinguishes
+    /// these from an ordinary object whose <see cref="Prototype"/> is also null
+    /// by default — an ordinary object inherits <c>Object.prototype</c>'s methods
+    /// (hasOwnProperty, …), a null-prototype object does not.
+    /// </summary>
+    public bool IsNullPrototype { get; set; }
+
+    /// <summary>
     /// Freezes this object, preventing any property changes.
     /// </summary>
     public void Freeze()
@@ -236,7 +245,7 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             SloppyModeWarnings.Warn("delete from frozen/sealed", $"Delete from frozen/sealed object property '{name}' returns false");
             return false;
         }
-        return _fields.Remove(name);
+        return RemoveOwnProperty(name);
     }
 
     /// <summary>
@@ -257,7 +266,29 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             SloppyModeWarnings.Warn("delete from frozen/sealed", $"Delete from frozen/sealed object property '{name}' returns false");
             return false;
         }
-        return _fields.Remove(name);
+        return RemoveOwnProperty(name);
+    }
+
+    /// <summary>
+    /// Removes an own property (data OR accessor) and its descriptor, honoring
+    /// configurability. Returns true when something was removed, false when a
+    /// present non-configurable property blocks the delete (or nothing matched,
+    /// preserving the legacy absent → false result). Accessors live in
+    /// <c>_getters</c>/<c>_setters</c>, so a getter-only property (e.g.
+    /// RegExp.prototype.global) is now deletable. The configurability check
+    /// relies on correct ToBoolean attribute coercion (interpreter-aware
+    /// ApplyBooleanAttributes in ObjectBuiltIns).
+    /// </summary>
+    private bool RemoveOwnProperty(string name)
+    {
+        if (_descriptors != null && _descriptors.TryGetValue(name, out var flags)
+            && flags.HasExplicitDescriptor && !flags.Configurable)
+            return false;
+        bool removed = _fields.Remove(name);
+        if (_getters?.Remove(name) == true) removed = true;
+        if (_setters?.Remove(name) == true) removed = true;
+        if (removed) _descriptors?.Remove(name);
+        return removed;
     }
 
     public bool HasProperty(string name)

@@ -1070,6 +1070,8 @@ public class EmittedRuntime
     public MethodBuilder TSRegExpTestMethod { get; set; } = null!;
     public MethodBuilder TSRegExpExecMethod { get; set; } = null!;
     public MethodBuilder TSRegExpToStringMethod { get; set; } = null!;
+    // ECMA-262 (ES2025) RegExp.escape static — emitted standalone on $RegExp.
+    public MethodBuilder TSRegExpEscapeMethod { get; set; } = null!;
     public MethodBuilder BuildNamedGroups { get; set; } = null!;
 
     // RegExp.prototype well-known-symbol-keyed methods (ECMA-262 §22.2.5).
