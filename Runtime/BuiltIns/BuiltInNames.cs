@@ -157,6 +157,7 @@ public static class BuiltInNames
     ];
 
     // Individual function constants
+    public const string Eval = "eval";
     public const string ParseInt = "parseInt";
     public const string ParseFloat = "parseFloat";
     public const string IsNaN = "isNaN";

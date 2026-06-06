@@ -21,6 +21,7 @@ public class GlobalFunctionHandler : ICallHandler
 
         return v.Name.Lexeme switch
         {
+            "eval" => EmitEval(emitter, il, ctx, call),
             "parseInt" => EmitParseInt(emitter, il, ctx, call),
             "parseFloat" => EmitParseFloat(emitter, il, ctx, call),
             "isNaN" => EmitIsNaN(emitter, il, ctx, call),
@@ -32,6 +33,55 @@ public class GlobalFunctionHandler : ICallHandler
             "decodeURIComponent" => EmitDecodeURIComponent(emitter, il, ctx, call),
             _ => false
         };
+    }
+
+    /// <summary>
+    /// Emits a compiled <c>eval(arg)</c>. Compiled output has no live interpreter/scope, so this
+    /// reflectively invokes <c>SharpTS.Execution.EvalBridge.Eval(object)</c> (indirect, global-scope
+    /// eval) only when the SharpTS runtime is present, degrading to a deterministic throw otherwise.
+    /// The reflection pattern keeps the output DLL free of a hard SharpTS.dll reference.
+    /// </summary>
+    private static bool EmitEval(IEmitterContext emitter, System.Reflection.Emit.ILGenerator il, CompilationContext ctx, Expr.Call call)
+    {
+        // object arg = <arg0 boxed> (or null when called with no arguments)
+        var argLocal = il.DeclareLocal(ctx.Types.Object);
+        if (call.Arguments.Count > 0) { emitter.EmitExpression(call.Arguments[0]); emitter.EmitBoxIfNeeded(call.Arguments[0]); }
+        else { il.Emit(System.Reflection.Emit.OpCodes.Ldnull); }
+        il.Emit(System.Reflection.Emit.OpCodes.Stloc, argLocal);
+
+        // Type t = Type.GetType("SharpTS.Execution.EvalBridge, SharpTS");
+        il.Emit(System.Reflection.Emit.OpCodes.Ldstr, "SharpTS.Execution.EvalBridge, SharpTS");
+        il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Types.GetMethod(ctx.Types.Type, "GetType", ctx.Types.String));
+
+        // Graceful degradation: if the SharpTS runtime isn't present, t is null — throw a clear error
+        // instead of letting the subsequent virtual calls NRE.
+        var present = il.DefineLabel();
+        il.Emit(System.Reflection.Emit.OpCodes.Dup);
+        il.Emit(System.Reflection.Emit.OpCodes.Brtrue, present);
+        il.Emit(System.Reflection.Emit.OpCodes.Pop);
+        il.Emit(System.Reflection.Emit.OpCodes.Ldstr, "eval is not supported in standalone compiled output (SharpTS runtime not present).");
+        il.Emit(System.Reflection.Emit.OpCodes.Newobj, ctx.Types.ExceptionCtorString);
+        il.Emit(System.Reflection.Emit.OpCodes.Throw);
+        il.MarkLabel(present);
+
+        // MethodInfo m = t.GetMethod("Eval");
+        il.Emit(System.Reflection.Emit.OpCodes.Ldstr, "Eval");
+        il.Emit(System.Reflection.Emit.OpCodes.Callvirt, ctx.Types.GetMethod(ctx.Types.Type, "GetMethod", ctx.Types.String));
+
+        // return (object) m.Invoke(null, new object[] { arg });
+        il.Emit(System.Reflection.Emit.OpCodes.Ldnull);
+        il.Emit(System.Reflection.Emit.OpCodes.Ldc_I4_1);
+        il.Emit(System.Reflection.Emit.OpCodes.Newarr, ctx.Types.Object);
+        il.Emit(System.Reflection.Emit.OpCodes.Dup);
+        il.Emit(System.Reflection.Emit.OpCodes.Ldc_I4_0);
+        il.Emit(System.Reflection.Emit.OpCodes.Ldloc, argLocal);
+        il.Emit(System.Reflection.Emit.OpCodes.Stelem_Ref);
+        il.Emit(System.Reflection.Emit.OpCodes.Callvirt, ctx.Types.GetMethod(
+            ctx.Types.MethodInfo, "Invoke", ctx.Types.Object, ctx.Types.ObjectArray));
+
+        // Result is an arbitrary JS value (boxed object) of statically unknown type.
+        emitter.SetStackUnknown();
+        return true;
     }
 
     private static bool EmitParseInt(IEmitterContext emitter, System.Reflection.Emit.ILGenerator il, CompilationContext ctx, Expr.Call call)

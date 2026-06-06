@@ -288,6 +288,14 @@ public partial class TypeChecker
             return new TypeInfo.Primitive(Parsing.TokenType.TYPE_BOOLEAN);
         }
 
+        // Handle global eval() — typed as (s: string) => any. The argument string is
+        // not statically analyzed (matching tsc's `eval` lib typing), so the result is Any.
+        if (call.Callee is Expr.Variable evalVar && evalVar.Name.Lexeme == "eval")
+        {
+            foreach (var arg in call.Arguments) CheckExpr(arg);
+            return new TypeInfo.Any();
+        }
+
         // Timer functions (setTimeout / clearTimeout / setInterval / clearInterval)
         // have two resolutions: the JS globals (untyped, `_environment.Get` returns
         // null — handled here) and imports from stdlib/node/timers{,/promises}.ts
