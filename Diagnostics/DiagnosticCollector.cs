@@ -62,17 +62,17 @@ public class DiagnosticCollector
     /// <summary>
     /// Adds an error diagnostic.
     /// </summary>
-    public bool AddError(DiagnosticCode code, string message, SourceLocation? location = null)
+    public bool AddError(DiagnosticCode code, string message, SourceLocation? location = null, string? tsCode = null)
     {
-        return Add(new Diagnostic(DiagnosticSeverity.Error, code, message, location));
+        return Add(new Diagnostic(DiagnosticSeverity.Error, code, message, location, TsCode: tsCode));
     }
 
     /// <summary>
     /// Adds a warning diagnostic.
     /// </summary>
-    public bool AddWarning(DiagnosticCode code, string message, SourceLocation? location = null)
+    public bool AddWarning(DiagnosticCode code, string message, SourceLocation? location = null, string? tsCode = null)
     {
-        return Add(new Diagnostic(DiagnosticSeverity.Warning, code, message, location));
+        return Add(new Diagnostic(DiagnosticSeverity.Warning, code, message, location, TsCode: tsCode));
     }
 
     /// <summary>

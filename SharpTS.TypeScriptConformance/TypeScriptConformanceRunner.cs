@@ -133,7 +133,10 @@ public sealed class TypeScriptConformanceRunner
         TypeCheckDiagnosticResult checkResult;
         try
         {
-            var checker = new TypeChecker();
+            // strictNullChecks follows the test's directives (strictNullChecks overrides strict),
+            // defaulting off — matching how tsc generated the legacy *.errors.txt baselines.
+            bool strictNullChecks = metadata.StrictNullChecks ?? metadata.Strict;
+            var checker = new TypeChecker(strictNullChecks: strictNullChecks);
             checkResult = checker.CheckWithRecovery(parseResult.Statements);
         }
         catch (Exception ex)

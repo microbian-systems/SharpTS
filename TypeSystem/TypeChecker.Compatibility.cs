@@ -268,6 +268,11 @@ public partial class TypeChecker
     {
         if (expected is TypeInfo.Any or TypeInfo.Inferred || actual is TypeInfo.Any or TypeInfo.Inferred) return true;
 
+        // strictNullChecks: off — null/undefined are assignable to every type except `never`.
+        // Checked early so it short-circuits before any expected-type-specific rejection.
+        if (!_strictNullChecks && actual is TypeInfo.Null or TypeInfo.Undefined)
+            return expected is not TypeInfo.Never;
+
         // Expand recursive type aliases lazily
         if (expected is TypeInfo.RecursiveTypeAlias expectedRTA)
         {
@@ -360,7 +365,7 @@ public partial class TypeChecker
             return expected is TypeInfo.Object or TypeInfo.Any or TypeInfo.Unknown;
         }
 
-        // Null compatibility
+        // Null compatibility (strictNullChecks: on — the off case is handled early in IsCompatibleCore)
         if (actual is TypeInfo.Null)
         {
             if (expected is TypeInfo.Union u && u.ContainsNull) return true;
@@ -368,7 +373,7 @@ public partial class TypeChecker
             return false;
         }
 
-        // Undefined compatibility
+        // Undefined compatibility (strictNullChecks: on)
         if (actual is TypeInfo.Undefined)
         {
             if (expected is TypeInfo.Union u && u.ContainsUndefined) return true;
