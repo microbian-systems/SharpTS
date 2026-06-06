@@ -15,36 +15,83 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Checks if a function type matches a single call signature.
+    /// Checks if a function type matches a single call signature. A call signature <c>(p): r</c>
+    /// is itself a function type, so assignability is just function-to-function assignability —
+    /// route through the shared logic so void-return covariance and parameter-arity rules stay
+    /// consistent in one place.
     /// </summary>
     private bool FunctionMatchesCallSignature(TypeInfo.Function func, TypeInfo.CallSignature sig)
     {
-        // Generic signatures need special handling
+        // Generic call signatures are complex to match structurally - defer to the actual call.
         if (sig.IsGeneric)
+            return false;
+
+        return IsCompatible(CallSignatureToFunction(sig), func);
+    }
+
+    /// <summary>Views a call signature as the function type it denotes.</summary>
+    private static TypeInfo.Function CallSignatureToFunction(TypeInfo.CallSignature sig) =>
+        new(sig.ParamTypes, sig.ReturnType, sig.RequiredParams, sig.HasRestParam, ThisType: null, sig.ParamNames);
+
+    /// <summary>
+    /// Call signatures carried by a callable type (interface or inline object type), or null if the
+    /// type is not callable. Used to make callable interfaces and object types interchangeable in
+    /// assignability checks.
+    /// </summary>
+    private static List<TypeInfo.CallSignature>? GetCallSignatures(TypeInfo type) => type switch
+    {
+        TypeInfo.Interface { IsCallable: true } itf => itf.CallSignatures,
+        TypeInfo.Record { IsCallable: true } rec => rec.CallSignatures,
+        _ => null,
+    };
+
+    /// <summary>
+    /// Checks that every call signature of a callable source type is assignable to the target
+    /// function type — i.e. the callable can stand in for the function.
+    /// </summary>
+    private bool CallableAssignableToFunction(List<TypeInfo.CallSignature> sourceSignatures, TypeInfo.Function target)
+    {
+        foreach (var sig in sourceSignatures)
         {
-            // For generic call signatures, check if function can satisfy the signature
-            // For now, require exact structural match (this could be relaxed later)
-            return false; // Generic call signatures are complex to match - defer to actual call
+            if (sig.IsGeneric) continue; // best-effort: skip generic signatures
+            if (IsCompatible(target, CallSignatureToFunction(sig)))
+                return true;
         }
+        return false;
+    }
 
-        // Check parameter count compatibility
-        if (func.MinArity > sig.ParamTypes.Count)
-            return false;
+    /// <summary>
+    /// Construct signatures carried by a constructable type (interface or inline object type), or
+    /// null if the type is not constructable.
+    /// </summary>
+    private static List<TypeInfo.ConstructorSignature>? GetConstructorSignatures(TypeInfo type) => type switch
+    {
+        TypeInfo.Interface { IsConstructable: true } itf => itf.ConstructorSignatures,
+        TypeInfo.Record { IsConstructable: true } rec => rec.ConstructorSignatures,
+        _ => null,
+    };
 
-        if (func.ParamTypes.Count < sig.MinArity)
-            return false;
+    /// <summary>Views a construct signature as the (constructor) function type it denotes.</summary>
+    private static TypeInfo.Function ConstructorSignatureToFunction(TypeInfo.ConstructorSignature sig) =>
+        new(sig.ParamTypes, sig.ReturnType, sig.RequiredParams, sig.HasRestParam, ThisType: null, sig.ParamNames);
 
-        // Check parameter type compatibility (contravariant - signature params must be assignable FROM function params)
-        int paramCount = Math.Min(func.ParamTypes.Count, sig.ParamTypes.Count);
-        for (int i = 0; i < paramCount; i++)
+    /// <summary>
+    /// Checks that every construct signature required by the target is satisfied by one of the
+    /// source's construct signatures (parameter contravariance, return covariance via the shared
+    /// function-compatibility logic).
+    /// </summary>
+    private bool ConstructorSignaturesSatisfiedBy(
+        List<TypeInfo.ConstructorSignature> targetSignatures,
+        List<TypeInfo.ConstructorSignature> sourceSignatures)
+    {
+        foreach (var ts in targetSignatures)
         {
-            // Function parameter type should accept what the signature requires
-            if (!IsCompatible(func.ParamTypes[i], sig.ParamTypes[i]))
+            if (ts.IsGeneric) continue; // best-effort: skip generic signatures
+            var targetFunc = ConstructorSignatureToFunction(ts);
+            if (!sourceSignatures.Any(ss => !ss.IsGeneric && IsCompatible(targetFunc, ConstructorSignatureToFunction(ss))))
                 return false;
         }
-
-        // Check return type compatibility (covariant - function return must be assignable TO signature return)
-        return IsCompatible(sig.ReturnType, func.ReturnType);
+        return true;
     }
 
     /// <summary>

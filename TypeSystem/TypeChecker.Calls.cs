@@ -615,6 +615,11 @@ public partial class TypeChecker
         {
             return CheckGenericCallableInterfaceCall(gi, call.TypeArgs, call.Arguments);
         }
+        // Handle callable inline object types: `{ (x): T }`
+        if (calleeType is TypeInfo.Record callableRec && callableRec.IsCallable)
+        {
+            return CheckCallSignaturesCall(callableRec.CallSignatures!, "object type", call.TypeArgs, call.Arguments);
+        }
 
         // Handle union types containing functions (e.g., from property access on union type)
         if (calleeType is TypeInfo.Union unionCallee)
@@ -683,10 +688,23 @@ public partial class TypeChecker
             throw new TypeCheckException($"Interface '{itf.Name}' is not callable.", tsCode: "TS2349");
         }
 
+        return CheckCallSignaturesCall(itf.CallSignatures, $"interface '{itf.Name}'", typeArgs, arguments);
+    }
+
+    /// <summary>
+    /// Resolves a call against a set of call signatures (shared by callable interfaces and callable
+    /// inline object types). Returns the matching signature's return type.
+    /// </summary>
+    private TypeInfo CheckCallSignaturesCall(
+        List<TypeInfo.CallSignature> callSignatures,
+        string calleeDescription,
+        List<string>? typeArgs,
+        List<Expr> arguments)
+    {
         List<TypeInfo> argTypes = arguments.Select(CheckExpr).ToList();
 
         // Try each call signature
-        foreach (var callSig in itf.CallSignatures)
+        foreach (var callSig in callSignatures)
         {
             if (callSig.IsGeneric)
             {
@@ -705,7 +723,7 @@ public partial class TypeChecker
             }
         }
 
-        throw new TypeCheckException($"No call signature matches the call for interface '{itf.Name}'.", tsCode: "TS2769");
+        throw new TypeCheckException($"No call signature matches the call for {calleeDescription}.", tsCode: "TS2769");
     }
 
     /// <summary>
