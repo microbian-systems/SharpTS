@@ -86,6 +86,15 @@ public partial class ILCompiler
     // Emitted runtime (for standalone DLLs)
     private EmittedRuntime _runtime = null!;
 
+    /// <summary>
+    /// Reasons this compilation emitted SharpTS-runtime late binding whose normal execution
+    /// needs SharpTS.dll present (e.g. "eval()", "Proxy", "Intl"). Empty ⇒ fully standalone.
+    /// Valid after <see cref="Compile"/> / <see cref="CompileModules"/> have run. The CLI uses
+    /// this to decide whether to co-locate SharpTS.dll with the output.
+    /// </summary>
+    public IReadOnlyCollection<string> RequiredSharpTSRuntimeReasons =>
+        _runtime?.RequiredSharpTSRuntimeReasons ?? (IReadOnlyCollection<string>)Array.Empty<string>();
+
     // Type information from static analysis
     private TypeMap _typeMap = null!;
 

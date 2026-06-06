@@ -82,7 +82,7 @@ switch (command)
         break;
 
     case ParsedCommand.Compile compile:
-        var outputOptions = new OutputOptions(compile.CompileOptions.MsBuildErrors, compile.CompileOptions.QuietMode);
+        var outputOptions = new OutputOptions(compile.CompileOptions.MsBuildErrors, compile.CompileOptions.QuietMode, compile.CompileOptions.Standalone);
         CompileFile(
             compile.InputFile,
             compile.OutputFile,
@@ -504,6 +504,7 @@ static void CompileModuleFile(string absolutePath, string outputPath, bool prese
         compiler.Save(outputPath);
 
         GenerateRuntimeConfig(outputPath);
+        CopySharpTSRuntimeIfNeeded(compiler, outputPath, outputOptions);
         if (!outputOptions.QuietMode)
         {
             Console.WriteLine($"Compiled to {outputPath}");
@@ -604,6 +605,7 @@ static void CompileSingleFile(List<Stmt> statements, string outputPath, bool pre
         compiler.Save(outputPath);
 
         GenerateRuntimeConfig(outputPath);
+        CopySharpTSRuntimeIfNeeded(compiler, outputPath, outputOptions);
         if (!outputOptions.QuietMode)
         {
             Console.WriteLine($"Compiled to {outputPath}");
@@ -614,6 +616,54 @@ static void CompileSingleFile(List<Stmt> statements, string outputPath, bool pre
         {
             VerifyCompiledAssembly(outputPath, sdkPath);
         }
+    }
+}
+
+/// <summary>
+/// Co-locates SharpTS.dll with the compiled output when, and only when, the compilation emitted
+/// late binding into the SharpTS runtime whose normal execution needs it (eval, Proxy, Intl, vm,
+/// dns, @DotNetType dynamic events). Programs that use none of these stay fully standalone — no
+/// copy. <c>--standalone</c> suppresses the copy (the soft-dependent features then throw a clear
+/// "not supported" error at runtime instead).
+/// </summary>
+static void CopySharpTSRuntimeIfNeeded(ILCompiler compiler, string outputPath, OutputOptions outputOptions)
+{
+    var reasons = compiler.RequiredSharpTSRuntimeReasons;
+    if (reasons.Count == 0)
+        return; // fully standalone — nothing to co-locate
+
+    string reasonList = string.Join(", ", reasons);
+
+    if (outputOptions.Standalone)
+    {
+        if (!outputOptions.QuietMode)
+            Console.WriteLine(
+                $"Note: output uses features needing the SharpTS runtime ({reasonList}); " +
+                "--standalone set, so SharpTS.dll was not copied. These features will throw at runtime unless SharpTS.dll is present.");
+        return;
+    }
+
+    var sharpTsPath = typeof(SharpTS.Execution.Interpreter).Assembly.Location;
+    var outDir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
+    if (string.IsNullOrEmpty(sharpTsPath) || !File.Exists(sharpTsPath) || outDir == null)
+    {
+        if (!outputOptions.QuietMode)
+            Console.WriteLine($"Warning: could not locate SharpTS.dll to co-locate with output; features ({reasonList}) may fail at runtime.");
+        return;
+    }
+
+    var destPath = Path.Combine(outDir, Path.GetFileName(sharpTsPath));
+    try
+    {
+        if (!string.Equals(Path.GetFullPath(sharpTsPath), Path.GetFullPath(destPath), StringComparison.OrdinalIgnoreCase))
+            File.Copy(sharpTsPath, destPath, overwrite: true);
+        if (!outputOptions.QuietMode)
+            Console.WriteLine($"Copied SharpTS.dll next to output — required at runtime by: {reasonList}");
+    }
+    catch (Exception ex)
+    {
+        if (!outputOptions.QuietMode)
+            Console.WriteLine($"Warning: failed to co-locate SharpTS.dll with output ({reasonList}): {ex.Message}");
     }
 }
 
@@ -874,4 +924,4 @@ static void PrintCompileUsage()
     Console.WriteLine("  --version <ver>        Override package version");
 }
 
-record OutputOptions(bool MsBuildErrors, bool QuietMode);
+record OutputOptions(bool MsBuildErrors, bool QuietMode, bool Standalone = false);

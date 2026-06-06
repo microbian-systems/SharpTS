@@ -43,6 +43,10 @@ public class GlobalFunctionHandler : ICallHandler
     /// </summary>
     private static bool EmitEval(IEmitterContext emitter, System.Reflection.Emit.ILGenerator il, CompilationContext ctx, Expr.Call call)
     {
+        // eval always routes through EvalBridge in the SharpTS runtime — record the soft
+        // dependency so the build co-locates SharpTS.dll with the output.
+        ctx.Runtime?.RequireSharpTSRuntime("eval()");
+
         // object arg = <arg0 boxed> (or null when called with no arguments)
         var argLocal = il.DeclareLocal(ctx.Types.Object);
         if (call.Arguments.Count > 0) { emitter.EmitExpression(call.Arguments[0]); emitter.EmitBoxIfNeeded(call.Arguments[0]); }

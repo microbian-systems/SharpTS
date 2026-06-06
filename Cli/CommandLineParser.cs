@@ -52,7 +52,8 @@ public record CompileOptions(
     bool MsBuildErrors = false,
     bool QuietMode = false,
     IReadOnlyList<string>? References = null,
-    BundlerMode Bundler = BundlerMode.Auto
+    BundlerMode Bundler = BundlerMode.Auto,
+    bool Standalone = false
 )
 {
     public IReadOnlyList<string> References { get; init; } = References ?? [];
@@ -277,6 +278,7 @@ public class CommandLineParser
         bool verifyIL = false;
         bool msbuildErrors = false;
         bool quietMode = false;
+        bool standalone = false;
         string? sdkPath = null;
         BundlerMode bundlerMode = BundlerMode.Auto;
 
@@ -376,6 +378,10 @@ public class CommandLineParser
             {
                 quietMode = true;
             }
+            else if (args[i] == "--standalone")
+            {
+                standalone = true;
+            }
             else if (args[i] == "--pack")
             {
                 pack = true;
@@ -415,7 +421,8 @@ public class CommandLineParser
             MsBuildErrors: msbuildErrors,
             QuietMode: quietMode,
             References: references,
-            Bundler: bundlerMode
+            Bundler: bundlerMode,
+            Standalone: standalone
         );
 
         var packOptions = new PackOptions(
