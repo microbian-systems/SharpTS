@@ -378,7 +378,7 @@ public abstract record Stmt
     /// Class declaration. IsDeclare indicates an ambient declaration (declare class) which has no implementation.
     /// StaticInitializers contains static fields and static blocks in declaration order for proper initialization sequencing.
     /// </summary>
-    public record Class(Token Name, List<TypeParam>? TypeParams, Expr? SuperclassExpr, List<string>? SuperclassTypeArgs, List<Stmt.Function> Methods, List<Stmt.Field> Fields, List<Stmt.Accessor>? Accessors = null, List<Stmt.AutoAccessor>? AutoAccessors = null, List<Token>? Interfaces = null, List<List<string>>? InterfaceTypeArgs = null, bool IsAbstract = false, List<Decorator>? Decorators = null, bool IsDeclare = false, List<Stmt>? StaticInitializers = null) : Stmt;
+    public record Class(Token Name, List<TypeParam>? TypeParams, Expr? SuperclassExpr, List<string>? SuperclassTypeArgs, List<Stmt.Function> Methods, List<Stmt.Field> Fields, List<Stmt.Accessor>? Accessors = null, List<Stmt.AutoAccessor>? AutoAccessors = null, List<Token>? Interfaces = null, List<List<string>>? InterfaceTypeArgs = null, bool IsAbstract = false, List<Decorator>? Decorators = null, bool IsDeclare = false, List<Stmt>? StaticInitializers = null, List<Stmt.IndexSignature>? IndexSignatures = null) : Stmt;
     /// <summary>
     /// Static block: static { statements }
     /// Executes once when the class is initialized, in declaration order with static fields.

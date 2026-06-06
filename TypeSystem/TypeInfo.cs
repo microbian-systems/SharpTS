@@ -212,6 +212,10 @@ public abstract record TypeInfo
         public FrozenDictionary<string, TypeInfo>? PrivateMethods => Core.PrivateMethods;
         public FrozenDictionary<string, TypeInfo>? StaticPrivateFields => Core.StaticPrivateFields;
         public FrozenDictionary<string, TypeInfo>? StaticPrivateMethods => Core.StaticPrivateMethods;
+        public TypeInfo? StringIndexType => Core.StringIndexType;
+        public TypeInfo? NumberIndexType => Core.NumberIndexType;
+        public TypeInfo? SymbolIndexType => Core.SymbolIndexType;
+        public bool HasIndexSignature => Core.HasIndexSignature;
 
         // Computed properties delegate to Core
         public FrozenSet<string> AbstractMethodSet => Core.AbstractMethodSet;
@@ -258,6 +262,10 @@ public abstract record TypeInfo
         public Dictionary<string, TypeInfo> PrivateMethods { get; } = [];
         public Dictionary<string, TypeInfo> StaticPrivateFields { get; } = [];
         public Dictionary<string, TypeInfo> StaticPrivateMethods { get; } = [];
+        // Index signatures: [key: string|number|symbol]: ValueType
+        public TypeInfo? StringIndexType { get; set; }
+        public TypeInfo? NumberIndexType { get; set; }
+        public TypeInfo? SymbolIndexType { get; set; }
 
         private ClassMetadataCore? _frozenCore;
         private TypeInfo.Class? _frozen;
@@ -286,7 +294,10 @@ public abstract record TypeInfo
                 PrivateFields.Count > 0 ? PrivateFields.ToFrozenDictionary() : null,
                 PrivateMethods.Count > 0 ? PrivateMethods.ToFrozenDictionary() : null,
                 StaticPrivateFields.Count > 0 ? StaticPrivateFields.ToFrozenDictionary() : null,
-                StaticPrivateMethods.Count > 0 ? StaticPrivateMethods.ToFrozenDictionary() : null);
+                StaticPrivateMethods.Count > 0 ? StaticPrivateMethods.ToFrozenDictionary() : null,
+                StringIndexType,
+                NumberIndexType,
+                SymbolIndexType);
             return _frozenCore;
         }
 
@@ -1180,6 +1191,10 @@ public abstract record TypeInfo
         public FrozenDictionary<string, TypeInfo>? PrivateMethods => Core.PrivateMethods;
         public FrozenDictionary<string, TypeInfo>? StaticPrivateFields => Core.StaticPrivateFields;
         public FrozenDictionary<string, TypeInfo>? StaticPrivateMethods => Core.StaticPrivateMethods;
+        public TypeInfo? StringIndexType => Core.StringIndexType;
+        public TypeInfo? NumberIndexType => Core.NumberIndexType;
+        public TypeInfo? SymbolIndexType => Core.SymbolIndexType;
+        public bool HasIndexSignature => Core.HasIndexSignature;
 
         // Computed properties delegate to Core
         public FrozenSet<string> AbstractMethodSet => Core.AbstractMethodSet;

@@ -38,6 +38,7 @@ public partial class Parser
         List<Stmt.Accessor> accessors = [];
         List<Stmt.AutoAccessor> autoAccessors = [];
         List<Stmt> staticInitializers = [];
+        List<Stmt.IndexSignature> indexSignatures = [];
         while (!Check(TokenType.RIGHT_BRACKET) && !Check(TokenType.RIGHT_BRACE) && !IsAtEnd())
         {
             try
@@ -308,10 +309,9 @@ public partial class Parser
             {
                 // Index signature: [key: string|number|symbol]: ValueType. Distinguished from a
                 // computed property name ([expr]: T) by an identifier immediately followed by ':'.
-                // Parsed here so the class body no longer hits a ParseError; full modeling of the
-                // index type on the class is deferred (see issue #121).
-                if (TryConsumeClassIndexSignature())
+                if (TryParseClassIndexSignature() is { } indexSig)
                 {
+                    indexSignatures.Add(indexSig);
                     continue;
                 }
 
@@ -503,35 +503,36 @@ public partial class Parser
         }
 
         Consume(TokenType.RIGHT_BRACE, "Expect '}' after class body.");
-        return new Stmt.Class(name, typeParams, superclassExpr, superclassTypeArgs, methods, fields, accessors.Count > 0 ? accessors : null, autoAccessors.Count > 0 ? autoAccessors : null, interfaces, interfaceTypeArgs, isAbstract, classDecorators, isDeclare, staticInitializers.Count > 0 ? staticInitializers : null);
+        return new Stmt.Class(name, typeParams, superclassExpr, superclassTypeArgs, methods, fields, accessors.Count > 0 ? accessors : null, autoAccessors.Count > 0 ? autoAccessors : null, interfaces, interfaceTypeArgs, isAbstract, classDecorators, isDeclare, staticInitializers.Count > 0 ? staticInitializers : null, indexSignatures.Count > 0 ? indexSignatures : null);
     }
 
     /// <summary>
     /// Probes for a class index signature: <c>[key: string|number|symbol]: ValueType</c>.
     /// Must be called positioned at the opening <c>[</c>. On a match, consumes the whole signature
-    /// (and its terminator) and returns true; on no match, restores position and returns false so
-    /// the caller can fall through to computed-property-name parsing. The parsed value type is
-    /// currently discarded — modeling the index type on the class type is deferred (issue #121).
+    /// (and its terminator) and returns the parsed <see cref="Stmt.IndexSignature"/>; on no match,
+    /// restores position and returns null so the caller can fall through to computed-property-name
+    /// parsing.
     /// </summary>
-    private bool TryConsumeClassIndexSignature()
+    private Stmt.IndexSignature? TryParseClassIndexSignature()
     {
         int saved = _current;
 
-        if (!Match(TokenType.LEFT_BRACKET)) { _current = saved; return false; }
-        if (!Check(TokenType.IDENTIFIER)) { _current = saved; return false; }
-        Advance(); // key name
-        if (!Match(TokenType.COLON)) { _current = saved; return false; }
+        if (!Match(TokenType.LEFT_BRACKET)) { _current = saved; return null; }
+        if (!Check(TokenType.IDENTIFIER)) { _current = saved; return null; }
+        Token keyName = Advance(); // key name
+        if (!Match(TokenType.COLON)) { _current = saved; return null; }
         if (!Match(TokenType.TYPE_STRING, TokenType.TYPE_NUMBER, TokenType.TYPE_SYMBOL))
         {
             _current = saved;
-            return false;
+            return null;
         }
-        if (!Match(TokenType.RIGHT_BRACKET)) { _current = saved; return false; }
-        if (!Match(TokenType.COLON)) { _current = saved; return false; }
+        TokenType keyType = Previous().Type;
+        if (!Match(TokenType.RIGHT_BRACKET)) { _current = saved; return null; }
+        if (!Match(TokenType.COLON)) { _current = saved; return null; }
 
-        ParseTypeAnnotation(); // value type (validated, then discarded)
+        string valueType = ParseTypeAnnotation();
         ConsumeSemicolon("Expect ';' after index signature.");
-        return true;
+        return new Stmt.IndexSignature(keyName, keyType, valueType);
     }
 
     /// <summary>
