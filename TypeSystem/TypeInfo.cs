@@ -673,10 +673,24 @@ public abstract record TypeInfo
         TypeInfo? SymbolIndexType = null,
         FrozenSet<string>? OptionalFields = null,
         bool IsReadonly = false,
-        FrozenSet<string>? GetterOnlyFields = null
+        FrozenSet<string>? GetterOnlyFields = null,
+        List<CallSignature>? CallSignatures = null,
+        List<ConstructorSignature>? ConstructorSignatures = null
     ) : TypeInfo
     {
         public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;
+
+        /// <summary>True when this object type has at least one call signature (`{ (x): T }`).</summary>
+        public bool HasCallSignature => CallSignatures is { Count: > 0 };
+
+        /// <summary>True when this object type has at least one construct signature (`{ new (x): T }`).</summary>
+        public bool HasConstructorSignature => ConstructorSignatures is { Count: > 0 };
+
+        /// <summary>An object type with a call signature is callable, like a callable interface.</summary>
+        public bool IsCallable => HasCallSignature;
+
+        /// <summary>An object type with a construct signature is constructable.</summary>
+        public bool IsConstructable => HasConstructorSignature;
 
         /// <summary>
         /// Checks if a field is optional.
@@ -691,7 +705,10 @@ public abstract record TypeInfo
         public override string ToString()
         {
             var prefix = IsReadonly ? "readonly " : "";
-            return $"{prefix}{{ {string.Join(", ", Fields.Select(f => $"{f.Key}{(IsFieldOptional(f.Key) ? "?" : "")}: {f.Value}"))} }}";
+            var parts = Fields.Select(f => $"{f.Key}{(IsFieldOptional(f.Key) ? "?" : "")}: {f.Value}").ToList();
+            if (CallSignatures != null) parts.InsertRange(0, CallSignatures.Select(s => s.ToString()));
+            if (ConstructorSignatures != null) parts.InsertRange(0, ConstructorSignatures.Select(s => s.ToString()));
+            return $"{prefix}{{ {string.Join(", ", parts)} }}";
         }
     }
     

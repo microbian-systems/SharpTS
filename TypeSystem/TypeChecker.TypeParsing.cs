@@ -797,7 +797,7 @@ public partial class TypeChecker
         TypeInfo? numberIndexType = null;
         TypeInfo? symbolIndexType = null;
         List<string> callSignatures = [];
-        bool hasConstructSignature = false;
+        List<string> constructSignatures = [];
 
         // Split by semicolon (the separator used in ParseInlineObjectType)
         var members = SplitObjectMembers(inner.AsSpan());
@@ -808,10 +808,9 @@ public partial class TypeChecker
             if (string.IsNullOrEmpty(m)) continue;
 
             // Construct signature: "new (params) => ret" (emitted by ParseInlineObjectType).
-            // Not yet modeled on object types; recognized here so it doesn't mis-parse as a field.
             if (m.StartsWith("new ") && m.Contains("=>"))
             {
-                hasConstructSignature = true;
+                constructSignatures.Add(m["new ".Length..].Trim());
                 continue;
             }
 
@@ -872,21 +871,74 @@ public partial class TypeChecker
         }
 
         // A pure single call-signature object type (e.g. `{ (x: number): void }`) is structurally
-        // a function type — resolve it as such so it type-checks against function types correctly.
-        // Mixed/overloaded/construct cases aren't modeled yet; their named fields still form a
-        // Record that reaches the checker (signatures are dropped, not turned into bogus fields).
-        if (callSignatures.Count == 1 && fields.Count == 0 && !hasConstructSignature
+        // a plain function type — resolve it as such so it type-checks against function types
+        // (and other callables) through the well-trodden Function paths.
+        if (callSignatures.Count == 1 && constructSignatures.Count == 0 && fields.Count == 0
             && stringIndexType == null && numberIndexType == null && symbolIndexType == null)
         {
             return ToTypeInfo(callSignatures[0]);
         }
+
+        // Richer object types — mixed call-sig + fields, overloads, or construct signatures —
+        // carry their signatures on the Record so it is callable/constructable and structurally
+        // comparable against callable interfaces and other object types.
+        List<TypeInfo.CallSignature>? recCallSigs = ConvertCallSignatures(callSignatures);
+        List<TypeInfo.ConstructorSignature>? recCtorSigs = ConvertConstructSignatures(constructSignatures);
 
         return new TypeInfo.Record(
             fields.ToFrozenDictionary(),
             stringIndexType,
             numberIndexType,
             symbolIndexType,
-            optionalFields.Count > 0 ? optionalFields.ToFrozenSet() : null);
+            optionalFields.Count > 0 ? optionalFields.ToFrozenSet() : null,
+            CallSignatures: recCallSigs,
+            ConstructorSignatures: recCtorSigs);
+    }
+
+    /// <summary>
+    /// Converts call-signature member strings ("(params) =&gt; ret") into <see cref="TypeInfo.CallSignature"/>s
+    /// by routing through the function-type resolver. Signatures that don't resolve to a function
+    /// (e.g. exotic generics) are skipped rather than aborting the whole object type.
+    /// </summary>
+    private List<TypeInfo.CallSignature>? ConvertCallSignatures(List<string> sigStrings)
+    {
+        if (sigStrings.Count == 0) return null;
+        List<TypeInfo.CallSignature> result = [];
+        foreach (var s in sigStrings)
+        {
+            if (TryResolveFunction(s) is { } f)
+                result.Add(new TypeInfo.CallSignature(null, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
+        }
+        return result.Count > 0 ? result : null;
+    }
+
+    /// <summary>
+    /// Converts construct-signature member strings (the "(params) =&gt; ret" remainder after "new ")
+    /// into <see cref="TypeInfo.ConstructorSignature"/>s.
+    /// </summary>
+    private List<TypeInfo.ConstructorSignature>? ConvertConstructSignatures(List<string> sigStrings)
+    {
+        if (sigStrings.Count == 0) return null;
+        List<TypeInfo.ConstructorSignature> result = [];
+        foreach (var s in sigStrings)
+        {
+            if (TryResolveFunction(s) is { } f)
+                result.Add(new TypeInfo.ConstructorSignature(null, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
+        }
+        return result.Count > 0 ? result : null;
+    }
+
+    /// <summary>Resolves a function-type string to a <see cref="TypeInfo.Function"/>, or null on failure.</summary>
+    private TypeInfo.Function? TryResolveFunction(string sigString)
+    {
+        try
+        {
+            return ToTypeInfo(sigString) as TypeInfo.Function;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private List<string> SplitObjectMembers(ReadOnlySpan<char> inner)

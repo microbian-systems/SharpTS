@@ -700,16 +700,39 @@ public partial class TypeChecker
 
         if (expected is TypeInfo.Interface itf)
         {
-            // Function assignable to callable interface
-            if (itf.IsCallable && actual is TypeInfo.Function func)
+            // Callable interface: the source must satisfy the call signatures.
+            if (itf.IsCallable)
             {
-                return FunctionMatchesCallSignatures(func, itf.CallSignatures!);
+                if (actual is TypeInfo.Function func)
+                    return FunctionMatchesCallSignatures(func, itf.CallSignatures!);
+
+                if (GetCallSignatures(actual) is { } actualCallSigs)
+                {
+                    foreach (var es in itf.CallSignatures!)
+                        if (!actualCallSigs.Any(@as => IsCompatible(CallSignatureToFunction(es), CallSignatureToFunction(@as))))
+                            return false;
+                    // Non-signature members (if any) still checked by the structural path below.
+                    if (itf.Members.Count == 0) return true;
+                }
+                // Other actuals (e.g. generic functions) may still be callable via downstream
+                // paths — fall through rather than rejecting here.
             }
 
-            // Class assignable to constructable interface
-            if (itf.IsConstructable && actual is TypeInfo.Class cls)
+            // Constructable interface: the source must satisfy the construct signatures.
+            if (itf.IsConstructable)
             {
-                return ClassMatchesConstructorSignatures(cls, itf.ConstructorSignatures!);
+                if (actual is TypeInfo.Class cls)
+                    return ClassMatchesConstructorSignatures(cls, itf.ConstructorSignatures!);
+
+                if (GetConstructorSignatures(actual) is { } actualCtorSigs)
+                {
+                    if (!ConstructorSignaturesSatisfiedBy(itf.ConstructorSignatures!, actualCtorSigs)) return false;
+                    if (itf.Members.Count == 0) return true;
+                }
+                else if (actual is not TypeInfo.Any)
+                {
+                    return false; // a constructable interface is not satisfied by a non-constructable source
+                }
             }
 
             // If actual is also an interface, compare member-to-member structurally
@@ -774,6 +797,48 @@ public partial class TypeChecker
         if (expected is TypeInfo.Array a1 && actual is TypeInfo.Array a2)
         {
             return IsCompatible(a1.ElementType, a2.ElementType);
+        }
+
+        // Callable / constructable inline object types: `{ (x): T }`, `{ new (x): T }`, and mixed
+        // forms with named fields. Mirrors the callable-interface handling above.
+        if (expected is TypeInfo.Record exSigRec && (exSigRec.IsCallable || exSigRec.IsConstructable))
+        {
+            if (exSigRec.IsCallable)
+            {
+                if (actual is TypeInfo.Function callableFunc)
+                {
+                    if (!FunctionMatchesCallSignatures(callableFunc, exSigRec.CallSignatures!)) return false;
+                }
+                else if (GetCallSignatures(actual) is { } actualSigs)
+                {
+                    // Callable interface/object source: each expected signature must be matched.
+                    foreach (var es in exSigRec.CallSignatures!)
+                        if (!actualSigs.Any(@as => IsCompatible(CallSignatureToFunction(es), CallSignatureToFunction(@as))))
+                            return false;
+                }
+                // Other actuals (e.g. generic functions) may still be callable via downstream paths.
+            }
+
+            if (exSigRec.IsConstructable)
+            {
+                if (actual is TypeInfo.Class constructableCls)
+                {
+                    if (!ClassMatchesConstructorSignatures(constructableCls, exSigRec.ConstructorSignatures!)) return false;
+                }
+                else if (GetConstructorSignatures(actual) is { } actualCtorSigs)
+                {
+                    if (!ConstructorSignaturesSatisfiedBy(exSigRec.ConstructorSignatures!, actualCtorSigs)) return false;
+                }
+                else if (actual is not TypeInfo.Any)
+                {
+                    return false; // a constructable object type is not satisfied by a non-constructable source
+                }
+            }
+
+            // Mixed object types still must match their named fields structurally.
+            if (exSigRec.Fields.Count > 0)
+                return CheckStructuralCompatibility(exSigRec.Fields, actual, exSigRec.OptionalFields);
+            return true;
         }
 
         // Record-to-Record compatibility (inline object types)
@@ -841,6 +906,13 @@ public partial class TypeChecker
         }
 
         // Function type compatibility
+        // A callable interface or object type (`{ (x): T }`) is assignable to a function-typed
+        // target when one of its call signatures satisfies that function type.
+        if (expected is TypeInfo.Function expectedFunc && GetCallSignatures(actual) is { } sourceCallSigs)
+        {
+            return CallableAssignableToFunction(sourceCallSigs, expectedFunc);
+        }
+
         if (expected is TypeInfo.Function f1 && actual is TypeInfo.Function f2)
         {
             // Actual can have fewer params (unused callback params) or more optional params
