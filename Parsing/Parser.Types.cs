@@ -282,6 +282,18 @@ public partial class Parser
             return sb.ToString();
         }
 
+        // Handle generic function type: <T>(params) => ReturnType
+        // A leading '<' in type position can only begin a generic function type's
+        // type-parameter list (e.g. `<U extends boolean>(a: U) => never`).
+        if (Check(TokenType.LESS))
+        {
+            List<TypeParam>? typeParams = ParseTypeParameters(); // consumes <...>
+            Consume(TokenType.LEFT_PAREN, "Expect '(' after type parameters in function type.");
+            string body = ParseFunctionTypeBody(); // returns "(params) => ReturnType"
+            string genericPrefix = FormatTypeParams(typeParams);
+            return $"{genericPrefix}{body}";
+        }
+
         // Handle tuple type syntax: [string, number, boolean?]
         // Assigns typeName (rather than returning) so the array-suffix / indexed-access
         // loop below applies, e.g. [string, number][0] or [string, number][].
@@ -808,6 +820,25 @@ public partial class Parser
 
         ConsumeGreaterInTypeContext("Expect '>' after type parameters.");
         return typeParams;
+    }
+
+    /// <summary>
+    /// Renders a parsed type-parameter list back to its string form, e.g.
+    /// &lt;T, U extends Base = number&gt;. Returns "" for null/empty so callers can
+    /// unconditionally prepend it to a function/method type string.
+    /// </summary>
+    private static string FormatTypeParams(List<TypeParam>? typeParams)
+    {
+        if (typeParams == null || typeParams.Count == 0) return "";
+
+        var parts = typeParams.Select(tp =>
+        {
+            string part = tp.Name.Lexeme;
+            if (tp.Constraint != null) part += $" extends {tp.Constraint}";
+            if (tp.Default != null) part += $" = {tp.Default}";
+            return part;
+        });
+        return $"<{string.Join(", ", parts)}>";
     }
 
     /// <summary>

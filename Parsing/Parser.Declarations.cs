@@ -542,18 +542,7 @@ public partial class Parser
         string genericPrefix = "";
         if (Check(TokenType.LESS))
         {
-            List<TypeParam>? typeParams = ParseTypeParameters();
-            if (typeParams != null && typeParams.Count > 0)
-            {
-                var parts = typeParams.Select(tp =>
-                {
-                    string part = tp.Name.Lexeme;
-                    if (tp.Constraint != null) part += $" extends {tp.Constraint}";
-                    if (tp.Default != null) part += $" = {tp.Default}";
-                    return part;
-                });
-                genericPrefix = $"<{string.Join(", ", parts)}>";
-            }
+            genericPrefix = FormatTypeParams(ParseTypeParameters());
         }
 
         Consume(TokenType.LEFT_PAREN, "Expect '(' for method parameters.");
