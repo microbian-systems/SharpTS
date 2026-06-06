@@ -62,6 +62,20 @@ public partial class TypeChecker
     private TypeEnvironment _environment = new();
     private TypeMap _typeMap = new();
 
+    /// <summary>
+    /// When false (TypeScript's <c>strictNullChecks: off</c>), <c>null</c> and <c>undefined</c>
+    /// are assignable to every type (except <c>never</c>). Defaults to true to preserve SharpTS's
+    /// strict behavior; the TS conformance runner sets it from each test's <c>@strict</c> /
+    /// <c>@strictNullChecks</c> directive (which default off for the legacy corpus).
+    /// </summary>
+    private readonly bool _strictNullChecks;
+
+    /// <summary>Creates a type checker. <paramref name="strictNullChecks"/> defaults to true.</summary>
+    public TypeChecker(bool strictNullChecks = true)
+    {
+        _strictNullChecks = strictNullChecks;
+    }
+
     // We need to track the current function's expected return type to validate 'return' statements
     private TypeInfo? _currentFunctionReturnType = null;
     // When non-null, VisitReturn collects return expression types here instead of validating (for inference)
@@ -761,10 +775,14 @@ public partial class TypeChecker
             ? new SourceLocation(_filePath, line.Value, ex.Column ?? 1)
             : null;
 
+        // Preserve the canonical TSnnnn code from the throw site so the TS conformance
+        // runner (which diffs on (line, tsCode)) can match against *.errors.txt baselines.
+        string? tsCode = ex.Diagnostic.TsCode;
+
         if (IsLenientModule())
-            _diagnostics.AddWarning(code, message, location);
+            _diagnostics.AddWarning(code, message, location, tsCode);
         else
-            _diagnostics.AddError(code, message, location);
+            _diagnostics.AddError(code, message, location, tsCode);
     }
 
     /// <summary>
