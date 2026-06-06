@@ -796,6 +796,8 @@ public partial class TypeChecker
         TypeInfo? stringIndexType = null;
         TypeInfo? numberIndexType = null;
         TypeInfo? symbolIndexType = null;
+        List<string> callSignatures = [];
+        bool hasConstructSignature = false;
 
         // Split by semicolon (the separator used in ParseInlineObjectType)
         var members = SplitObjectMembers(inner.AsSpan());
@@ -804,6 +806,22 @@ public partial class TypeChecker
         {
             string m = member.Trim();
             if (string.IsNullOrEmpty(m)) continue;
+
+            // Construct signature: "new (params) => ret" (emitted by ParseInlineObjectType).
+            // Not yet modeled on object types; recognized here so it doesn't mis-parse as a field.
+            if (m.StartsWith("new ") && m.Contains("=>"))
+            {
+                hasConstructSignature = true;
+                continue;
+            }
+
+            // Call signature: "(params) => ret" or "<T>(params) => ret" — a bare signature with
+            // no leading "name:". (Method/arrow properties start with their name, so don't collide.)
+            if ((m.StartsWith("(") || m.StartsWith("<")) && m.Contains("=>"))
+            {
+                callSignatures.Add(m);
+                continue;
+            }
 
             // Check for index signature: [string]: type, [number]: type, [symbol]: type
             if (m.StartsWith("["))
@@ -851,6 +869,16 @@ public partial class TypeChecker
             }
 
             fields[propName] = ToTypeInfo(propType);
+        }
+
+        // A pure single call-signature object type (e.g. `{ (x: number): void }`) is structurally
+        // a function type — resolve it as such so it type-checks against function types correctly.
+        // Mixed/overloaded/construct cases aren't modeled yet; their named fields still form a
+        // Record that reaches the checker (signatures are dropped, not turned into bogus fields).
+        if (callSignatures.Count == 1 && fields.Count == 0 && !hasConstructSignature
+            && stringIndexType == null && numberIndexType == null && symbolIndexType == null)
+        {
+            return ToTypeInfo(callSignatures[0]);
         }
 
         return new TypeInfo.Record(

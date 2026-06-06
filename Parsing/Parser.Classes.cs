@@ -306,6 +306,15 @@ public partial class Parser
             // Check for computed property name: [expression]: type = value
             else if (Check(TokenType.LEFT_BRACKET))
             {
+                // Index signature: [key: string|number|symbol]: ValueType. Distinguished from a
+                // computed property name ([expr]: T) by an identifier immediately followed by ':'.
+                // Parsed here so the class body no longer hits a ParseError; full modeling of the
+                // index type on the class is deferred (see issue #121).
+                if (TryConsumeClassIndexSignature())
+                {
+                    continue;
+                }
+
                 // Validate: computed properties cannot have access modifiers in TypeScript
                 // Actually TypeScript does allow this, so we'll support it
 
@@ -495,6 +504,34 @@ public partial class Parser
 
         Consume(TokenType.RIGHT_BRACE, "Expect '}' after class body.");
         return new Stmt.Class(name, typeParams, superclassExpr, superclassTypeArgs, methods, fields, accessors.Count > 0 ? accessors : null, autoAccessors.Count > 0 ? autoAccessors : null, interfaces, interfaceTypeArgs, isAbstract, classDecorators, isDeclare, staticInitializers.Count > 0 ? staticInitializers : null);
+    }
+
+    /// <summary>
+    /// Probes for a class index signature: <c>[key: string|number|symbol]: ValueType</c>.
+    /// Must be called positioned at the opening <c>[</c>. On a match, consumes the whole signature
+    /// (and its terminator) and returns true; on no match, restores position and returns false so
+    /// the caller can fall through to computed-property-name parsing. The parsed value type is
+    /// currently discarded — modeling the index type on the class type is deferred (issue #121).
+    /// </summary>
+    private bool TryConsumeClassIndexSignature()
+    {
+        int saved = _current;
+
+        if (!Match(TokenType.LEFT_BRACKET)) { _current = saved; return false; }
+        if (!Check(TokenType.IDENTIFIER)) { _current = saved; return false; }
+        Advance(); // key name
+        if (!Match(TokenType.COLON)) { _current = saved; return false; }
+        if (!Match(TokenType.TYPE_STRING, TokenType.TYPE_NUMBER, TokenType.TYPE_SYMBOL))
+        {
+            _current = saved;
+            return false;
+        }
+        if (!Match(TokenType.RIGHT_BRACKET)) { _current = saved; return false; }
+        if (!Match(TokenType.COLON)) { _current = saved; return false; }
+
+        ParseTypeAnnotation(); // value type (validated, then discarded)
+        ConsumeSemicolon("Expect ';' after index signature.");
+        return true;
     }
 
     /// <summary>
