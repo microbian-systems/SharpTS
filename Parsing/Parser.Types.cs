@@ -562,8 +562,26 @@ public partial class Parser
 
                 members.Add($"[{keyType}]: {valueType}");
             }
+            // Construct signature: new (params): ReturnType or new <T>(params): ReturnType
+            else if (Check(TokenType.NEW))
+            {
+                Advance(); // consume 'new'
+                // ParseMethodSignature consumes optional <generics>, the params, and the return
+                // type, producing an arrow string "(params) => ret"; prefix "new " for a
+                // construct signature so ParseInlineObjectTypeInfo can tell the two apart.
+                members.Add("new " + ParseMethodSignature());
+            }
+            // Call signature: (params): ReturnType or <T>(params): ReturnType
+            else if (Check(TokenType.LEFT_PAREN) || (Check(TokenType.LESS) && IsCallSignatureStart()))
+            {
+                members.Add(ParseMethodSignature());
+            }
             else
             {
+                // Optional readonly modifier on a property member
+                bool isReadonly = Match(TokenType.READONLY);
+                _ = isReadonly; // readonly is parsed but not yet modeled on inline object types
+
                 // Parse property/method name
                 Token propertyName = Consume(TokenType.IDENTIFIER, "Expect property name in object type.");
 
