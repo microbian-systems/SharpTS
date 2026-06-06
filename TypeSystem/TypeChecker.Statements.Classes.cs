@@ -94,6 +94,22 @@ public partial class TypeChecker
         using (new EnvironmentScope(this, classTypeEnv))
         {
 
+        // Index signatures: [key: string|number|symbol]: ValueType. Resolved inside the class
+        // type-environment scope so value types can reference the class's own type parameters.
+        if (classStmt.IndexSignatures != null)
+        {
+            foreach (var indexSig in classStmt.IndexSignatures)
+            {
+                TypeInfo valueType = ToTypeInfo(indexSig.ValueType);
+                switch (indexSig.KeyType)
+                {
+                    case TokenType.TYPE_STRING: mutableClass.StringIndexType = valueType; break;
+                    case TokenType.TYPE_NUMBER: mutableClass.NumberIndexType = valueType; break;
+                    case TokenType.TYPE_SYMBOL: mutableClass.SymbolIndexType = valueType; break;
+                }
+            }
+        }
+
         // Helper to build a TypeInfo.Function from a method declaration
         TypeInfo.Function BuildMethodFuncType(Stmt.Function method)
         {
@@ -837,6 +853,22 @@ public partial class TypeChecker
 
         using (new EnvironmentScope(this, classTypeEnv))
         {
+
+        // Index signatures: [key: string|number|symbol]: ValueType. Resolved inside the class
+        // type-environment scope so value types can reference the class's own type parameters.
+        if (classStmt.IndexSignatures != null)
+        {
+            foreach (var indexSig in classStmt.IndexSignatures)
+            {
+                TypeInfo valueType = ToTypeInfo(indexSig.ValueType);
+                switch (indexSig.KeyType)
+                {
+                    case TokenType.TYPE_STRING: mutableClass.StringIndexType = valueType; break;
+                    case TokenType.TYPE_NUMBER: mutableClass.NumberIndexType = valueType; break;
+                    case TokenType.TYPE_SYMBOL: mutableClass.SymbolIndexType = valueType; break;
+                }
+            }
+        }
 
         // Helper to build a TypeInfo.Function from a method declaration
         TypeInfo.Function BuildMethodFuncType(Stmt.Function method)

@@ -154,6 +154,8 @@ public partial class TypeChecker
                 return rec2.StringIndexType;
             if (objType is TypeInfo.Interface itf2 && itf2.StringIndexType != null)
                 return itf2.StringIndexType;
+            if (GetClassIndexType(objType, TokenType.TYPE_STRING) is { } clsStr)
+                return clsStr;
 
             // Allow bracket access on any object/interface (returns any for unknown keys)
             if (objType is TypeInfo.Record or TypeInfo.Interface or TypeInfo.Instance)
@@ -230,6 +232,12 @@ public partial class TypeChecker
                 return itf3.NumberIndexType;
             if (objType is TypeInfo.Record rec3 && rec3.NumberIndexType != null)
                 return rec3.NumberIndexType;
+            // A class with only a string index signature still accepts numeric keys (number keys
+            // are a subset of string keys), matching TypeScript.
+            if (GetClassIndexType(objType, TokenType.TYPE_NUMBER) is { } clsNum)
+                return clsNum;
+            if (GetClassIndexType(objType, TokenType.TYPE_STRING) is { } clsNumStr)
+                return clsNumStr;
         }
 
         // Handle symbol index (Symbol and UniqueSymbol both qualify)
@@ -239,6 +247,8 @@ public partial class TypeChecker
                 return itf4.SymbolIndexType;
             if (objType is TypeInfo.Record rec4 && rec4.SymbolIndexType != null)
                 return rec4.SymbolIndexType;
+            if (GetClassIndexType(objType, TokenType.TYPE_SYMBOL) is { } clsSym)
+                return clsSym;
 
             // Allow symbol bracket access on any object (returns any)
             if (objType is TypeInfo.Record or TypeInfo.Interface or TypeInfo.Instance)
@@ -251,6 +261,29 @@ public partial class TypeChecker
         }
 
         throw new TypeCheckException($" Index type '{indexType}' is not valid for indexing '{objType}'.", tsCode: "TS7053");
+    }
+
+    /// <summary>
+    /// Returns the value type of a class's index signature for the given key type, or null if the
+    /// type is not a class instance (or has no such index signature). Accepts both a bare
+    /// <see cref="TypeInfo.Class"/> and a <see cref="TypeInfo.Instance"/> wrapping one.
+    /// </summary>
+    private static TypeInfo? GetClassIndexType(TypeInfo objType, TokenType keyType)
+    {
+        TypeInfo.Class? cls = objType switch
+        {
+            TypeInfo.Class c => c,
+            TypeInfo.Instance { ClassType: TypeInfo.Class ic } => ic,
+            _ => null
+        };
+        if (cls == null) return null;
+        return keyType switch
+        {
+            TokenType.TYPE_STRING => cls.StringIndexType,
+            TokenType.TYPE_NUMBER => cls.NumberIndexType,
+            TokenType.TYPE_SYMBOL => cls.SymbolIndexType,
+            _ => null
+        };
     }
 
     private TypeInfo CheckSetIndex(Expr.SetIndex setIndex)

@@ -26,9 +26,15 @@ public sealed record ClassMetadataCore(
     FrozenDictionary<string, TypeInfo>? PrivateFields = null,
     FrozenDictionary<string, TypeInfo>? PrivateMethods = null,
     FrozenDictionary<string, TypeInfo>? StaticPrivateFields = null,
-    FrozenDictionary<string, TypeInfo>? StaticPrivateMethods = null
+    FrozenDictionary<string, TypeInfo>? StaticPrivateMethods = null,
+    TypeInfo? StringIndexType = null,
+    TypeInfo? NumberIndexType = null,
+    TypeInfo? SymbolIndexType = null
 )
 {
+    /// <summary>True when the class declares any index signature.</summary>
+    public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;
+
     /// <summary>Abstract method names with empty fallback.</summary>
     public FrozenSet<string> AbstractMethodSet => AbstractMethods ?? FrozenSet<string>.Empty;
 

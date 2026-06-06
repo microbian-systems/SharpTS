@@ -82,6 +82,9 @@ public partial class TypeChecker
             {
                 expectedKeys.Add(setter.Key);
             }
+            // A class index signature accepts arbitrary keys, like Record/Interface index signatures.
+            hasStringIndex = cls.StringIndexType != null;
+            hasNumberIndex = cls.NumberIndexType != null;
         }
         else
         {
