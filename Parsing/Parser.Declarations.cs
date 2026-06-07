@@ -94,6 +94,15 @@ public partial class Parser
             Advance(); // consume NAMESPACE
             return NamespaceDeclaration();
         }
+        // `module Foo { }` is the older spelling of `namespace Foo { }`. Only treat it as a
+        // namespace when followed by an identifier name; `module "path" { }` (string name) is an
+        // ambient module declaration handled under `declare`.
+        if (Check(TokenType.MODULE) &&
+            (PeekNext().Type == TokenType.IDENTIFIER || IsContextualKeyword(PeekNext().Type)))
+        {
+            Advance(); // consume MODULE
+            return NamespaceDeclaration();
+        }
         if (Match(TokenType.INTERFACE)) return InterfaceDeclaration();
         // 'type' is a contextual keyword — only treat as type alias when followed by an identifier
         // (e.g. `type Foo = string`), not when used as a variable name (e.g. `var type = "x"`).
