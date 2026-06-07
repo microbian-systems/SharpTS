@@ -28,7 +28,7 @@ This project is **not** included in `SharpTS.sln`. Solution-level `dotnet build`
 dotnet test SharpTS.TypeScriptConformance/SharpTS.TypeScriptConformance.csproj
 ```
 
-The suite runs in well under a second on the current subset (~70 tests). It type-checks each test, diffs the resulting diagnostics against `tsc`'s `*.errors.txt` baseline, classifies into a bucket, and compares the bucket distribution against the committed baseline at `baselines/interpreted.txt`.
+The suite runs in well under a second on the current subset (~79 tests, across `assignmentCompatibility/` and `conditional/`). It type-checks each test, diffs the resulting diagnostics against `tsc`'s `*.errors.txt` baseline, classifies into a bucket, and compares the bucket distribution against the committed baseline at `baselines/interpreted.txt`.
 
 ## Updating the baseline
 
