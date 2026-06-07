@@ -440,6 +440,7 @@ public partial class TypeChecker
                 IReadOnlySet<string>? optionals = type switch
                 {
                     TypeInfo.Interface i => i.OptionalMembers,
+                    TypeInfo.Record r => r.OptionalFields,
                     _ => null
                 };
 

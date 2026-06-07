@@ -437,6 +437,59 @@ public partial class TypeChecker
         };
     }
 
+    /// <summary>
+    /// Merges the known fields of a spread source (<c>{ ...source }</c>) into <paramref name="fields"/>.
+    /// Spread accepts any object-like type per TS, not just object literals. Returns false for
+    /// non-object types (primitives, void, etc.) which should be reported as TS2698.
+    /// Class-like and dynamic sources (Instance/Class/Any/Unknown) are accepted without merging
+    /// concrete fields, mirroring the pre-existing Instance behavior.
+    /// </summary>
+    private bool TryMergeSpreadFields(TypeInfo spreadType, Dictionary<string, TypeInfo> fields)
+    {
+        switch (spreadType)
+        {
+            case TypeInfo.Record record:
+                foreach (var kv in record.Fields)
+                {
+                    fields[kv.Key] = kv.Value;
+                }
+                return true;
+
+            case TypeInfo.Interface iface:
+                foreach (var kv in iface.GetAllMembers())
+                {
+                    fields[kv.Key] = kv.Value;
+                }
+                return true;
+
+            case TypeInfo.Intersection intersection:
+                // Spread of an intersection contributes the fields of every object-like constituent.
+                // Reject only if no constituent is object-like (e.g. `string & number`).
+                bool anyObjectLike = false;
+                foreach (var part in intersection.Types)
+                {
+                    if (TryMergeSpreadFields(part, fields))
+                    {
+                        anyObjectLike = true;
+                    }
+                }
+                return anyObjectLike;
+
+            // Class-like / dynamic sources: accept but don't enumerate concrete fields here.
+            case TypeInfo.Instance:
+            case TypeInfo.Class:
+            case TypeInfo.GenericClass:
+            case TypeInfo.InstantiatedGeneric:
+            case TypeInfo.Any:
+            case TypeInfo.Unknown:
+            case TypeInfo.Object:
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
     private TypeInfo CheckObject(Expr.ObjectLiteral obj)
     {
         Dictionary<string, TypeInfo> fields = [];
@@ -459,22 +512,7 @@ public partial class TypeChecker
             {
                 // Spread property - merge fields from the spread object
                 TypeInfo spreadType = CheckExpr(prop.Value);
-                if (spreadType is TypeInfo.Record record)
-                {
-                    foreach (var kv in record.Fields)
-                    {
-                        fields[kv.Key] = kv.Value;
-                    }
-                }
-                else if (spreadType is TypeInfo.Instance inst)
-                {
-                    // Instance fields are dynamic, just accept
-                }
-                else if (spreadType is TypeInfo.Any)
-                {
-                    // Any is fine
-                }
-                else
+                if (!TryMergeSpreadFields(spreadType, fields))
                 {
                     throw new TypeCheckException($" Spread in object literal requires an object, got '{spreadType}'.", tsCode: "TS2698");
                 }
