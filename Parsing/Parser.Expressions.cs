@@ -1289,6 +1289,9 @@ public partial class Parser
                     Token paramName = paramTok.Type == TokenType.IDENTIFIER
                         ? paramTok
                         : new Token(TokenType.IDENTIFIER, paramTok.Lexeme, null, paramTok.Line);
+                    // Optional parameter marker: (x?: T) => ...  (if this isn't an arrow, the
+                    // outer speculative parse backtracks, so consuming '?' here is safe).
+                    bool isOptional = Match(TokenType.QUESTION);
                     string? paramType = null;
                     if (Match(TokenType.COLON))
                     {
@@ -1299,7 +1302,7 @@ public partial class Parser
                     {
                         defaultValue = Expression();
                     }
-                    parameters.Add(new Stmt.Parameter(paramName, paramType, defaultValue, isRest));
+                    parameters.Add(new Stmt.Parameter(paramName, paramType, defaultValue, isRest, IsOptional: isOptional));
 
                     // Rest parameter must be last
                     if (isRest && Check(TokenType.COMMA))
