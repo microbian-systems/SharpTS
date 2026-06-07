@@ -206,6 +206,21 @@ public partial class Parser
             return $"infer {paramName.Lexeme}";
         }
 
+        // Handle constructor type: new (params) => ReturnType  or  new <T>(params) => ReturnType.
+        // Represented as an object type with a construct signature so it flows through the existing
+        // constructable-object-type modelling.
+        if (Match(TokenType.NEW))
+        {
+            string genericPrefix = "";
+            if (Check(TokenType.LESS))
+            {
+                genericPrefix = FormatTypeParams(ParseTypeParameters());
+            }
+            Consume(TokenType.LEFT_PAREN, "Expect '(' in constructor type.");
+            string ctorBody = ParseFunctionTypeBody(); // returns "(params) => ReturnType"
+            return $"{{ new {genericPrefix}{ctorBody} }}";
+        }
+
         // Handle keyof prefix operator: keyof T
         if (Match(TokenType.KEYOF))
         {
