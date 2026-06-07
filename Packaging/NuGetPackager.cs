@@ -119,6 +119,22 @@ public class NuGetPackager(PackageJson packageJson, string? packageIdOverride = 
             });
         }
 
+        // Add the SharpTS runtime when it was co-located next to the output assembly. The compile
+        // step places SharpTS.dll there (consuming ILCompiler.RequiredSharpTSRuntimeReasons) only
+        // when the program uses a feature that late-binds into the runtime — eval, Proxy, Intl, vm,
+        // dns, @DotNetType dynamic events — and not under --standalone. Pure libraries stay
+        // dependency-free, so a package consumer can run those features without the gap.
+        var sharpTsRuntimePath = Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(assemblyPath)) ?? ".", "SharpTS.dll");
+        if (File.Exists(sharpTsRuntimePath))
+        {
+            builder.Files.Add(new PhysicalPackageFile
+            {
+                SourcePath = sharpTsRuntimePath,
+                TargetPath = $"lib/{targetFramework.GetShortFolderName()}/SharpTS.dll"
+            });
+        }
+
         // Build and save the package
         var packagePath = Path.Combine(outputDirectory, $"{packageId}.{version}.nupkg");
         using var stream = File.Create(packagePath);

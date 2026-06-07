@@ -208,6 +208,35 @@ public class NuGetPackagerTests : IDisposable
         Assert.Equal("3.0.0", packager.Version);
     }
 
+    [Fact]
+    public void CreatePackage_IncludesSharpTSRuntime_WhenCoLocated()
+    {
+        // The compile step co-locates SharpTS.dll next to the output when the program uses a
+        // runtime-dependent feature (#117). The package must carry it so consumers don't hit the gap.
+        var package = new PackageJson { Name = "TestLib", Version = "1.0.0" };
+        var assemblyPath = CreateDummyAssembly("TestLib.dll");
+        File.WriteAllBytes(Path.Combine(_tempDir, "SharpTS.dll"), [0x4D, 0x5A]);
+
+        var nupkgPath = new NuGetPackager(package).CreatePackage(assemblyPath, _tempDir);
+
+        using var archive = ZipFile.OpenRead(nupkgPath);
+        Assert.NotNull(archive.GetEntry("lib/net10.0/SharpTS.dll"));
+    }
+
+    [Fact]
+    public void CreatePackage_OmitsSharpTSRuntime_WhenNotCoLocated()
+    {
+        // A pure library (no runtime-dependent feature) has no co-located SharpTS.dll, so the
+        // package stays dependency-free.
+        var package = new PackageJson { Name = "TestLib", Version = "1.0.0" };
+        var assemblyPath = CreateDummyAssembly("TestLib.dll");
+
+        var nupkgPath = new NuGetPackager(package).CreatePackage(assemblyPath, _tempDir);
+
+        using var archive = ZipFile.OpenRead(nupkgPath);
+        Assert.Null(archive.GetEntry("lib/net10.0/SharpTS.dll"));
+    }
+
     private string CreateDummyAssembly(string fileName)
     {
         var path = Path.Combine(_tempDir, fileName);
