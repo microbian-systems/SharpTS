@@ -603,8 +603,9 @@ public partial class Parser
                 bool isReadonly = Match(TokenType.READONLY);
                 _ = isReadonly; // readonly is parsed but not yet modeled on inline object types
 
-                // Parse property/method name
-                Token propertyName = Consume(TokenType.IDENTIFIER, "Expect property name in object type.");
+                // Parse property/method name — an identifier, a keyword (e.g. `type`, `set`),
+                // or a string/numeric literal name (e.g. `"1"`, `1`).
+                Token propertyName = ConsumePropertyNameOrLiteral("Expect property name in object type.");
 
                 // Check for optional marker
                 bool isOptional = Match(TokenType.QUESTION);

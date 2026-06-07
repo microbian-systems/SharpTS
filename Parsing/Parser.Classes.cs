@@ -347,15 +347,15 @@ public partial class Parser
                     staticInitializers.Add(field);
                 }
             }
-            else if ((Peek().Type == TokenType.IDENTIFIER || IsContextualKeyword(Peek().Type)) &&
+            else if ((Peek().Type == TokenType.IDENTIFIER || IsContextualKeyword(Peek().Type)
+                      || Peek().Type == TokenType.STRING || Peek().Type == TokenType.NUMBER) &&
                      IsFieldDeclarationOpener(PeekNext().Type))
             {
                 // Field declaration. Supports TS (`name: T`, `name?: T`,
                 // `name!: T`, `name: T = value`) and ES (`name`, `name = value`,
-                // `name;`) forms.
-                Token fieldName = Peek().Type == TokenType.IDENTIFIER
-                    ? Consume(TokenType.IDENTIFIER, "Expect field name.")
-                    : ConsumeIdentifierName("Expect field name.");
+                // `name;`) forms. The name may be an identifier, keyword, or
+                // string/numeric literal (e.g. `1: string`, `"1": string`).
+                Token fieldName = ConsumePropertyNameOrLiteral("Expect field name.");
                 bool isOptional = Match(TokenType.QUESTION);
                 bool hasDefiniteAssignment = Match(TokenType.BANG);
 

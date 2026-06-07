@@ -304,7 +304,8 @@ public partial class Parser
             // Check for readonly modifier
             bool isReadonly = Match(TokenType.READONLY);
 
-            Token memberName = Consume(TokenType.IDENTIFIER, "Expect member name.");
+            // Member name — identifier, keyword, or string/numeric literal (e.g. `1: T`, `"1": T`).
+            Token memberName = ConsumePropertyNameOrLiteral("Expect member name.");
             bool isOptional = Match(TokenType.QUESTION);
 
             string type;
