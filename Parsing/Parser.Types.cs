@@ -199,11 +199,24 @@ public partial class Parser
     {
         string typeName;
 
-        // Handle infer keyword for conditional types: infer U
+        // Handle infer keyword for conditional types: infer U, or constrained infer: infer U extends C
         if (Match(TokenType.INFER))
         {
             Token paramName = Consume(TokenType.IDENTIFIER, "Expect type parameter name after 'infer'.");
+            if (Match(TokenType.EXTENDS))
+            {
+                // Constraint binds tighter than the enclosing conditional's `?`, so stop at union level.
+                string constraint = ParseUnionType();
+                return $"infer {paramName.Lexeme} extends {constraint}";
+            }
             return $"infer {paramName.Lexeme}";
+        }
+
+        // `abstract` constructor type: abstract new (params) => ReturnType. The abstract modifier
+        // doesn't change the structural shape, so parse it like a regular constructor type.
+        if (Check(TokenType.ABSTRACT) && PeekNext().Type == TokenType.NEW)
+        {
+            Advance(); // consume 'abstract'
         }
 
         // Handle constructor type: new (params) => ReturnType  or  new <T>(params) => ReturnType.
@@ -359,8 +372,10 @@ public partial class Parser
             }
             else
             {
-                // Parse as grouped type: (type1 | type2)
-                typeName = "(" + ParseUnionType() + ")";
+                // Parse as grouped type: (type1 | type2), or a parenthesized conditional type
+                // (T extends U ? X : Y). Use ParseConditionalType so the grouped body can contain
+                // `extends ? :` rather than stopping at `extends`.
+                typeName = "(" + ParseConditionalType() + ")";
                 Consume(TokenType.RIGHT_PAREN, "Expect ')' after grouped type.");
             }
         }
