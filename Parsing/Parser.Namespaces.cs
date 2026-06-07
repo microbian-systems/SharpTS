@@ -71,6 +71,18 @@ public partial class Parser
         {
             return WrapIfExported(NamespaceDeclaration(), isExported);
         }
+        // `module Foo { }` — the older spelling of a nested namespace (identifier name).
+        if (Check(TokenType.MODULE) &&
+            (PeekNext().Type == TokenType.IDENTIFIER || IsContextualKeyword(PeekNext().Type)))
+        {
+            Advance(); // consume MODULE
+            return WrapIfExported(NamespaceDeclaration(), isExported);
+        }
+        // Ambient declarations inside a namespace: `declare class/function/var/...`.
+        if (Check(TokenType.DECLARE))
+        {
+            return WrapIfExported(Declaration(), isExported);
+        }
         if (Match(TokenType.ABSTRACT))
         {
             Consume(TokenType.CLASS, "Expect 'class' after 'abstract'.");
@@ -123,7 +135,11 @@ public partial class Parser
             return WrapIfExported(VarDeclaration(), isExported);
         }
 
-        throw new Exception($"Parse Error at line {Peek().Line}: Unexpected token in namespace body: {Peek().Lexeme}");
+        // Namespace bodies may also contain ordinary statements (e.g. `s = t;` expression
+        // statements). `export` must be followed by a declaration, so it can't reach here.
+        if (isExported)
+            throw new Exception($"Parse Error at line {Peek().Line}: 'export' must be followed by a declaration in a namespace body.");
+        return Statement();
     }
 
     /// <summary>
