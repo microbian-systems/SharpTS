@@ -497,9 +497,13 @@ Two external corpora pin SharpTS against canonical references. Both run as stand
 
 | Subset | Tests | Pass | Fail | ParseError | Skipped |
 |---|---:|---:|---:|---:|---:|
-| `types/typeRelationships/assignmentCompatibility/` | 70 | 4 (5.7%) | 9 (12.9%) | 57 (81.4%) | 0 |
+| `types/typeRelationships/assignmentCompatibility/` | 70 | 16 (22.9%) | 50 | 4 | 0 |
+| `types/conditional/` | 9 | 0 | 5 | 3 | 1 |
+| **Total** | **79** | **16 (20.3%)** | **55** | **7** | **1** |
 
-The high `ParseError` rate is dominated by `declare function` (and related ambient declarations) — the parser doesn't fully support that surface yet. Supporting it is the largest single lever to lift conformance pass rate; tracked as follow-up work, not yet scheduled.
+The parser is no longer the bottleneck. An extended parser sweep took the subset's `ParseError` count from 57 → 7 (≈86%): ambient `declare` of non-class declarations, `declare function`, generic/this/conditional/mapped/indexed-access/constructor/leading-operator types, `module Foo {}` namespaces, call/construct/index signatures, keyword & string/numeric property names, function-type and arrow optional/rest parameters, and more. Negative-test matching itself was unlocked by propagating canonical `TSnnnn` codes through the type-checker's error-recovery path ([#125](https://github.com/nickna/SharpTS/issues/125)), which also added a `strictNullChecks` option (default on; the runner follows each test's `@strict`/`@strictNullChecks` directive).
+
+The dominant bucket is now `Fail` — tests that parse and reach the type checker but whose diagnostic set doesn't yet match `tsc`'s. These are mostly the `assignmentCompatibility` cases, which require deeper callable / constructable / structural assignability. The largest remaining levers are structural class-to-class assignability ([#129](https://github.com/nickna/SharpTS/issues/129) — SharpTS is nominal by design) and loading `tsc`'s `lib.*.d.ts` ([#99](https://github.com/nickna/SharpTS/issues/99)).
 
 `Skipped` includes:
 - **Multi-file tests** (`Skipped:multi-file-deferred`) — cross-file resolution into the runner is follow-up work.
