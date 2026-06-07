@@ -334,6 +334,25 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
     /// Consumes a token that can be used as a property name after '.'.
     /// This includes identifiers and reserved keywords (JavaScript allows keywords as property names).
     /// </summary>
+    /// <summary>
+    /// Consumes a property name that may be an identifier, a keyword (e.g. <c>type</c>, <c>set</c>),
+    /// or a string/numeric literal (e.g. <c>"1"</c>, <c>1</c>), returning it as an identifier-like token.
+    /// </summary>
+    private Token ConsumePropertyNameOrLiteral(string message)
+    {
+        if (Check(TokenType.STRING))
+        {
+            var lit = Advance();
+            return new Token(TokenType.IDENTIFIER, (string)lit.Literal!, null, lit.Line);
+        }
+        if (Check(TokenType.NUMBER))
+        {
+            var lit = Advance();
+            return new Token(TokenType.IDENTIFIER, lit.Literal!.ToString()!, null, lit.Line);
+        }
+        return ConsumePropertyName(message);
+    }
+
     private Token ConsumePropertyName(string message)
     {
         Token current = Peek();

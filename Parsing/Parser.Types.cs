@@ -341,9 +341,15 @@ public partial class Parser
                 }
                 _current = saved; // backtrack
             }
-            else if ((Check(TokenType.IDENTIFIER) || Check(TokenType.THIS)) && PeekNext().Type == TokenType.COLON)
+            else if ((Check(TokenType.IDENTIFIER) || Check(TokenType.THIS)) &&
+                     (PeekNext().Type == TokenType.COLON || PeekNext().Type == TokenType.QUESTION))
             {
-                // (identifier: or (this: - this is a function parameter
+                // (identifier: / (this: / (identifier? - a (possibly optional) function parameter
+                isFunctionType = true;
+            }
+            else if (Check(TokenType.DOT_DOT_DOT))
+            {
+                // (...rest: T) => R - rest parameter as the first parameter
                 isFunctionType = true;
             }
 
@@ -597,8 +603,9 @@ public partial class Parser
                 bool isReadonly = Match(TokenType.READONLY);
                 _ = isReadonly; // readonly is parsed but not yet modeled on inline object types
 
-                // Parse property/method name
-                Token propertyName = Consume(TokenType.IDENTIFIER, "Expect property name in object type.");
+                // Parse property/method name — an identifier, a keyword (e.g. `type`, `set`),
+                // or a string/numeric literal name (e.g. `"1"`, `1`).
+                Token propertyName = ConsumePropertyNameOrLiteral("Expect property name in object type.");
 
                 // Check for optional marker
                 bool isOptional = Match(TokenType.QUESTION);
