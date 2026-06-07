@@ -480,6 +480,11 @@ static void CompileModuleFile(string absolutePath, string outputPath, bool prese
                 {
                     Console.WriteLine($"Compiled to {outputPath} (using {bundleResult.TechniqueDescription})");
                 }
+
+                // Co-locate SharpTS.dll next to the EXE when the program uses a feature that
+                // late-binds into the SharpTS runtime (eval, Proxy, Intl, vm, dns, @DotNetType
+                // dynamic events). Honors --standalone. Pure programs stay a single file.
+                CopySharpTSRuntimeIfNeeded(compiler, outputPath, outputOptions);
             }
             catch (Exception ex) when (bundlerMode != BundlerMode.Auto)
             {
@@ -581,6 +586,11 @@ static void CompileSingleFile(List<Stmt> statements, string outputPath, bool pre
                 {
                     Console.WriteLine($"Compiled to {outputPath} (using {bundleResult.TechniqueDescription})");
                 }
+
+                // Co-locate SharpTS.dll next to the EXE when the program uses a feature that
+                // late-binds into the SharpTS runtime (eval, Proxy, Intl, vm, dns, @DotNetType
+                // dynamic events). Honors --standalone. Pure programs stay a single file.
+                CopySharpTSRuntimeIfNeeded(compiler, outputPath, outputOptions);
             }
             catch (Exception ex) when (bundlerMode != BundlerMode.Auto)
             {

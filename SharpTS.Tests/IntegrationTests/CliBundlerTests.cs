@@ -319,4 +319,39 @@ public class CliBundlerTests
         Assert.NotEqual(0, result.ExitCode);
         Assert.Contains("--bundler requires a value", result.StandardOutput);
     }
+
+    [Fact]
+    public void Compile_TargetExe_WithRuntimeFeature_CoLocatesSharpTSDll()
+    {
+        // A program using a feature that late-binds into the SharpTS runtime (Intl) must get
+        // SharpTS.dll alongside the EXE so the feature works at runtime (#117).
+        if (!SdkBundlerDetector.IsSdkAvailable) return;
+
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var scriptPath = tempDir.CreateFile("app.ts",
+            "const f = new Intl.NumberFormat(\"en-US\"); console.log(f.format(1234));");
+
+        var result = CliTestHelper.RunCli($"-c \"{scriptPath}\" -t exe", tempDir.Path);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(File.Exists(tempDir.GetPath("app.exe")));
+        Assert.True(File.Exists(tempDir.GetPath("SharpTS.dll")),
+            "SharpTS.dll should be co-located next to the EXE for an Intl-using program");
+    }
+
+    [Fact]
+    public void Compile_TargetExe_PureProgram_StaysSingleFile()
+    {
+        if (!SdkBundlerDetector.IsSdkAvailable) return;
+
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var scriptPath = tempDir.CreateFile("app.ts", CliFixtures.SimpleHelloWorld);
+
+        var result = CliTestHelper.RunCli($"-c \"{scriptPath}\" -t exe", tempDir.Path);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.True(File.Exists(tempDir.GetPath("app.exe")));
+        Assert.False(File.Exists(tempDir.GetPath("SharpTS.dll")),
+            "a pure program should stay a single file (no co-located SharpTS.dll)");
+    }
 }
