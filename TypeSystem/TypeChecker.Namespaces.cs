@@ -165,6 +165,10 @@ public partial class TypeChecker
             member = export.Declaration;
         }
 
+        // Track the member's line so diagnostics raised while checking it (which often don't carry
+        // their own line) are reported against the member, not the enclosing namespace.
+        _currentStatementLine = TryGetStmtLine(member);
+
         switch (member)
         {
             case Stmt.Function funcStmt:
@@ -201,6 +205,13 @@ public partial class TypeChecker
             case Stmt.TypeAlias:
             case Stmt.ImportAlias:
                 // Already handled in first pass
+                break;
+
+            default:
+                // Any other statement — `const`, expression statements (e.g. `s = t;`),
+                // control flow — is type-checked normally so errors inside a namespace body
+                // are reported just like at the top level.
+                CheckStmt(member);
                 break;
         }
     }
