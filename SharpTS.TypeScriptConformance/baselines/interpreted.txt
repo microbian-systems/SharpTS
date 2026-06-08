@@ -8,9 +8,9 @@ tests/cases/conformance/types/conditional/inferTypesInvalidExtendsDeclaration.ts
 tests/cases/conformance/types/conditional/inferTypesWithExtends1.ts ParseError
 tests/cases/conformance/types/conditional/inferTypesWithExtends2.ts Fail
 tests/cases/conformance/types/conditional/variance.ts Fail
-tests/cases/conformance/types/typeRelationships/assignmentCompatibility/anyAssignabilityInInheritance.ts ParseError
+tests/cases/conformance/types/typeRelationships/assignmentCompatibility/anyAssignabilityInInheritance.ts Fail
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/anyAssignableToEveryType.ts Pass
-tests/cases/conformance/types/typeRelationships/assignmentCompatibility/anyAssignableToEveryType2.ts ParseError
+tests/cases/conformance/types/typeRelationships/assignmentCompatibility/anyAssignableToEveryType2.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatBetweenTupleAndArray.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithCallSignatures.ts Fail
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatWithCallSignatures2.ts Fail
@@ -65,7 +65,7 @@ tests/cases/conformance/types/typeRelationships/assignmentCompatibility/construc
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/constructSignatureAssignabilityInInheritance6.ts Fail
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/covariantCallbacks.ts Fail
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/enumAssignability.ts Fail
-tests/cases/conformance/types/typeRelationships/assignmentCompatibility/enumAssignabilityInInheritance.ts ParseError
+tests/cases/conformance/types/typeRelationships/assignmentCompatibility/enumAssignabilityInInheritance.ts Fail
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/everyTypeAssignableToAny.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/genericCallWithObjectTypeArgsAndInitializers.ts Fail
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/intersectionIncludingPropFromGlobalAugmentation.ts Pass
