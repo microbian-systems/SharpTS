@@ -220,4 +220,49 @@ public class FunctionTypeAnnotationTests
     }
 
     #endregion
+
+    #region Untyped (implicit-any) parameters in function types
+
+    [Fact]
+    public void FunctionType_BareParameterName_Parses()
+    {
+        // `(x) => number`: x is a parameter name with implicit `any`, not a grouped type.
+        Assert.NotEmpty(Parse("let f: (x) => number;"));
+    }
+
+    [Fact]
+    public void FunctionType_MultipleBareParameters_Parses()
+    {
+        Assert.NotEmpty(Parse("let f: (x, y) => number;"));
+    }
+
+    [Fact]
+    public void FunctionType_MixedTypedAndBareParameters_Parses()
+    {
+        Assert.NotEmpty(Parse("let f: (x: number, y) => number;"));
+    }
+
+    [Fact]
+    public void FunctionType_BareOptionalParameter_Parses()
+    {
+        // `(x?) => number`: optional parameter with implicit `any`.
+        Assert.NotEmpty(Parse("let f: (x?) => number;"));
+    }
+
+    [Fact]
+    public void FunctionType_BareParameterInIndexSignature_Parses()
+    {
+        // The function type appears as an index-signature value: `[k: string]: (x) => number`.
+        Assert.NotEmpty(Parse("interface I { [k: string]: (x) => number; }"));
+    }
+
+    [Fact]
+    public void GroupedType_StillParses_NotMistakenForFunctionType()
+    {
+        // Regression guard: a grouped/parenthesized type with no trailing `=>` stays a grouped type.
+        Assert.NotEmpty(Parse("let a: (number | string)[];"));
+        Assert.NotEmpty(Parse("let b: (Foo);"));
+    }
+
+    #endregion
 }

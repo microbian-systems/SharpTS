@@ -80,7 +80,9 @@ public partial class Parser
                 // Handle optional parameter marker: x?: number
                 bool isOptional = false;
 
-                // Parameter can be: name: type, name?: type, or just type
+                // Parameter can be: name: type, name?: type, name (bare, implicit any),
+                // name? (bare optional, implicit any), or just a type expression.
+                string paramType;
                 if (Check(TokenType.IDENTIFIER) &&
                     (PeekNext().Type == TokenType.COLON || PeekNext().Type == TokenType.QUESTION))
                 {
@@ -89,10 +91,21 @@ public partial class Parser
                     {
                         isOptional = true;
                     }
-                    Consume(TokenType.COLON, "Expect ':' after parameter name in function type.");
+                    // The type annotation is optional: `(x?) => R` / `(x) => R` give the parameter
+                    // an implicit `any` type (the name is a label only).
+                    paramType = Match(TokenType.COLON) ? ParseTypeAnnotation() : "any";
                 }
-
-                string paramType = ParseTypeAnnotation();
+                else if (!isRest && Check(TokenType.IDENTIFIER) &&
+                         (PeekNext().Type == TokenType.RIGHT_PAREN || PeekNext().Type == TokenType.COMMA))
+                {
+                    // Bare parameter name with no annotation: implicit `any`.
+                    Advance(); // consume name
+                    paramType = "any";
+                }
+                else
+                {
+                    paramType = ParseTypeAnnotation();
+                }
 
                 // Preserve optional/rest info in the type string representation
                 if (isRest)
@@ -115,6 +128,27 @@ public partial class Parser
             return $"(this: {thisType}, {string.Join(", ", paramTypes)}) => {returnType}";
         }
         return $"({string.Join(", ", paramTypes)}) => {returnType}";
+    }
+
+    /// <summary>
+    /// Speculative lookahead used in type position: with the opening '(' already consumed, scans to
+    /// the matching ')' and reports whether a '=>' immediately follows. This distinguishes a function
+    /// type whose first parameter is a bare untyped name — <c>(x) =&gt; R</c>, <c>(x, y) =&gt; R</c> —
+    /// from a grouped type such as <c>(Foo)</c> or <c>(A | B)</c>. Restores the position before returning.
+    /// </summary>
+    private bool ParenGroupFollowedByArrow()
+    {
+        int saved = _current;
+        int depth = 1; // the opening '(' has already been consumed
+        while (!IsAtEnd() && depth > 0)
+        {
+            var type = Advance().Type;
+            if (type == TokenType.LEFT_PAREN) depth++;
+            else if (type == TokenType.RIGHT_PAREN) depth--;
+        }
+        bool followedByArrow = depth == 0 && Check(TokenType.ARROW);
+        _current = saved;
+        return followedByArrow;
     }
 
     /// <summary>
@@ -363,6 +397,13 @@ public partial class Parser
             else if (Check(TokenType.DOT_DOT_DOT))
             {
                 // (...rest: T) => R - rest parameter as the first parameter
+                isFunctionType = true;
+            }
+            else if (Check(TokenType.IDENTIFIER) && ParenGroupFollowedByArrow())
+            {
+                // (x) => R, (x, y) => R - function type with bare (implicitly-`any`) parameter
+                // names. Disambiguated from a grouped type (e.g. `(Foo)` or `(A | B)`) by the `=>`
+                // that follows the matching ')'.
                 isFunctionType = true;
             }
 
