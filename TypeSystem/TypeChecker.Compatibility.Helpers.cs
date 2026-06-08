@@ -84,6 +84,24 @@ public partial class TypeChecker
         => !access.TryGetValue(name, out var mod) || mod == AccessModifier.Public;
 
     /// <summary>
+    /// Returns the parameter type of <paramref name="f"/> at <paramref name="index"/>, expanding a
+    /// trailing rest parameter to its element type so it covers any position at or beyond the rest
+    /// slot (e.g. <c>(...a: number[])</c> yields <c>number</c> for every position). Returns null when
+    /// the position is past a non-rest parameter list.
+    /// </summary>
+    private static TypeInfo? EffectiveParamType(TypeInfo.Function f, int index)
+    {
+        int count = f.ParamTypes.Count;
+        if (f.HasRestParam && count > 0)
+        {
+            int restIndex = count - 1;
+            if (index < restIndex) return f.ParamTypes[index];
+            return f.ParamTypes[restIndex] is TypeInfo.Array arr ? arr.ElementType : f.ParamTypes[restIndex];
+        }
+        return index < count ? f.ParamTypes[index] : null;
+    }
+
+    /// <summary>
     /// Collects the public instance members (fields, methods, getters) of a class and its
     /// superclasses into a structural member map. Derived members shadow inherited ones.
     /// Used to check structural assignability against an unbranded target class.
