@@ -57,6 +57,60 @@ public partial class TypeChecker
     private static TypeInfo? GetSuperclass(TypeInfo? classType) =>
         ClassInfoAccessor.Get(classType, c => c.Superclass, gc => gc.Superclass);
 
+    /// <summary>
+    /// True when <paramref name="cls"/> (or any class in its hierarchy) carries a nominal brand,
+    /// i.e. declares a private or protected member. TypeScript compares classes structurally for
+    /// assignment except when the target type is so branded, in which case it requires the source
+    /// to originate from the same class.
+    /// </summary>
+    private static bool HasNominalClassBrand(TypeInfo.Class cls)
+    {
+        TypeInfo? current = cls;
+        while (current is TypeInfo.Class c)
+        {
+            var core = c.Core;
+            if (core.PrivateFieldTypes.Count > 0 || core.PrivateMethodTypes.Count > 0)
+                return true;
+            foreach (var access in core.FieldAccess.Values)
+                if (access != AccessModifier.Public) return true;
+            foreach (var access in core.MethodAccess.Values)
+                if (access != AccessModifier.Public) return true;
+            current = GetSuperclass(current);
+        }
+        return false;
+    }
+
+    private static bool IsPublicMember(FrozenDictionary<string, AccessModifier> access, string name)
+        => !access.TryGetValue(name, out var mod) || mod == AccessModifier.Public;
+
+    /// <summary>
+    /// Collects the public instance members (fields, methods, getters) of a class and its
+    /// superclasses into a structural member map. Derived members shadow inherited ones.
+    /// Used to check structural assignability against an unbranded target class.
+    /// </summary>
+    private static Dictionary<string, TypeInfo> CollectPublicInstanceMembers(TypeInfo.Class cls)
+    {
+        Dictionary<string, TypeInfo> members = [];
+        TypeInfo? current = cls;
+        while (current is TypeInfo.Class c)
+        {
+            var core = c.Core;
+            foreach (var (name, type) in core.FieldTypes)
+                if (IsPublicMember(core.FieldAccess, name) && !members.ContainsKey(name))
+                    members[name] = type;
+            foreach (var (name, type) in core.Methods)
+                // The constructor is keyed as a method named "constructor" but is not part of the
+                // instance type's structural surface in TypeScript — exclude it.
+                if (name != "constructor" && IsPublicMember(core.MethodAccess, name) && !members.ContainsKey(name))
+                    members[name] = type;
+            foreach (var (name, type) in core.Getters)
+                if (!members.ContainsKey(name))
+                    members[name] = type;
+            current = GetSuperclass(current);
+        }
+        return members;
+    }
+
     private static FrozenDictionary<string, TypeInfo>? GetMethods(TypeInfo? classType) =>
         ClassInfoAccessor.Get(classType, c => c.Methods, gc => gc.Methods);
 

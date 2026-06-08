@@ -61,7 +61,7 @@ Source → Lexer → Parser → TypeChecker → Interpreter (tree-walk)
 
 **Type System:**
 - Structural typing for interfaces (duck typing)
-- Nominal typing for classes (inheritance-based)
+- Classes are compared **structurally** for assignment compatibility (matching `tsc`), **except** when the target class is branded by a private/protected member anywhere in its hierarchy — then it is nominal (source must be the same class or a subclass). Inheritance/subtyping is still nominal (name-based) for the hierarchy walk. See `TypeChecker.Compatibility.cs` (`Instance` vs `Instance`) and `HasNominalClassBrand`.
 - `TypeInfo` records represent types statically; runtime objects are independent
 
 ### RuntimeValue Boxing Elimination (Active Optimization)
