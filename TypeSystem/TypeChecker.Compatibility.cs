@@ -692,6 +692,21 @@ public partial class TypeChecker
                     if (current is TypeInfo.Class cls && cls.Name == expectedClass.Name) return true;
                     current = GetSuperclass(current);
                 }
+
+                // Structural compatibility (TypeScript): when the target class carries no nominal
+                // brand (no private/protected member in its hierarchy), a source instance is
+                // assignable if it structurally provides the target's public members. A branded
+                // target stays nominal — handled entirely by the hierarchy walk above. A member-less
+                // target stays nominal too, so an empty base instance is not assignable to an empty
+                // subclass variable (preserves subclass-safety).
+                if (!HasNominalClassBrand(expectedClass))
+                {
+                    var targetMembers = CollectPublicInstanceMembers(expectedClass);
+                    if (targetMembers.Count > 0 && CheckStructuralCompatibility(targetMembers, i2))
+                    {
+                        return true;
+                    }
+                }
             }
             // Handle MutableClass (unfrozen) comparison by name - occurs during signature collection
             else if (resolvedExpected is TypeInfo.MutableClass mc1 && resolvedActual is TypeInfo.MutableClass mc2)
@@ -701,6 +716,22 @@ public partial class TypeChecker
 
             // Mixed case: InstantiatedGeneric vs regular Class - not compatible unless in hierarchy
             return false;
+        }
+
+        // Structural (TypeScript): an unbranded target class instance accepts any structurally-
+        // matching object-like source (an interface value or object literal/record). Class-instance
+        // sources are handled by the Instance-vs-Instance block above; the reverse directions (a
+        // class instance assignable to an interface/record) are handled by the structural paths below.
+        if (expected is TypeInfo.Instance targetInst &&
+            targetInst.ResolvedClassType is TypeInfo.Class targetClass &&
+            actual is TypeInfo.Interface or TypeInfo.Record &&
+            !HasNominalClassBrand(targetClass))
+        {
+            var targetMembers = CollectPublicInstanceMembers(targetClass);
+            if (targetMembers.Count > 0 && CheckStructuralCompatibility(targetMembers, actual))
+            {
+                return true;
+            }
         }
 
         if (expected is TypeInfo.Interface itf)

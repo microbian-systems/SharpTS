@@ -72,8 +72,11 @@ public class NominalTypingTests
     }
 
     [Fact]
-    public void UnrelatedClasses_Incompatible()
+    public void UnrelatedSameShapeClasses_StructurallyCompatible()
     {
+        // Two unrelated, identically-shaped, all-public classes are mutually assignable in
+        // TypeScript (classes are compared structurally unless branded by private/protected
+        // members). Issue #129.
         var source = """
             class Cat {
                 constructor(public name: string) {}
@@ -84,10 +87,54 @@ public class NominalTypingTests
 
             let cat: Cat = new Cat("Whiskers");
             let dog: Dog = cat;
+            console.log(dog.name);
+            """;
+
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("Whiskers\n", result);
+    }
+
+    [Fact]
+    public void UnrelatedClassesWithPrivateMembers_NominallyIncompatible()
+    {
+        // A private (or protected) member brands the target nominally: an identically-shaped but
+        // unrelated class is NOT assignable, matching TypeScript. Issue #129.
+        var source = """
+            class A {
+                private id: number = 1;
+            }
+            class B {
+                private id: number = 1;
+            }
+
+            let a: A = new A();
+            let b: B = a;
             """;
 
         var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
         Assert.Contains("Type Error", ex.Message);
+    }
+
+    [Fact]
+    public void SameShapeClass_WithExtraMembers_AssignableToSmallerTarget()
+    {
+        // Width subtyping: a source with extra public members is assignable to an unbranded
+        // target that needs only a subset. Issue #129.
+        var source = """
+            class Detailed {
+                constructor(public name: string, public age: number) {}
+            }
+            class Named {
+                constructor(public name: string) {}
+            }
+
+            let d: Detailed = new Detailed("Rex", 3);
+            let n: Named = d;
+            console.log(n.name);
+            """;
+
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("Rex\n", result);
     }
 
     [Fact]
