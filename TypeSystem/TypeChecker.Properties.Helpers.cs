@@ -155,6 +155,30 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Resolves a member inherited from <c>Object.prototype</c>, available on every object type
+    /// (`hasOwnProperty`, `toString`, `valueOf`, ...). Returns null if <paramref name="name"/> is
+    /// not an Object.prototype member. Used as a fallback by the object-like member-access paths
+    /// before reporting TS2339.
+    /// </summary>
+    private static TypeInfo? ResolveObjectPrototypeMember(string name)
+    {
+        var boolean = new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
+        var str = new TypeInfo.String();
+        var anyArg = new List<TypeInfo> { new TypeInfo.Any() };
+        return name switch
+        {
+            "hasOwnProperty" => new TypeInfo.Function(anyArg, boolean, RequiredParams: 1),
+            "isPrototypeOf" => new TypeInfo.Function(anyArg, boolean, RequiredParams: 1),
+            "propertyIsEnumerable" => new TypeInfo.Function(anyArg, boolean, RequiredParams: 1),
+            "toString" => new TypeInfo.Function([], str),
+            "toLocaleString" => new TypeInfo.Function([], str),
+            "valueOf" => new TypeInfo.Function([], new TypeInfo.Object()),
+            "constructor" => new TypeInfo.Function([], new TypeInfo.Any()),
+            _ => null
+        };
+    }
+
+    /// <summary>
     /// Type checks member access on an interface type.
     /// </summary>
     private TypeInfo CheckGetOnInterface(TypeInfo.Interface itf, Token memberName)
@@ -165,6 +189,10 @@ public partial class TypeChecker
             {
                 return member.Value;
             }
+        }
+        if (ResolveObjectPrototypeMember(memberName.Lexeme) is { } protoMember)
+        {
+            return protoMember;
         }
         throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on interface '{itf.Name}'.", tsCode: "TS2339");
     }
@@ -181,6 +209,10 @@ public partial class TypeChecker
         if (record.StringIndexType != null)
         {
             return record.StringIndexType;
+        }
+        if (ResolveObjectPrototypeMember(memberName.Lexeme) is { } protoMember)
+        {
+            return protoMember;
         }
         throw new TypeCheckException($" Property '{memberName.Lexeme}' does not exist on type '{record}'.", tsCode: "TS2339");
     }
