@@ -73,6 +73,33 @@ public class LibDtsParsingTests
     }
 
     [Fact]
+    public void ComputedSymbolMethodName_Parses()
+    {
+        // `[Symbol.iterator](): Iterator<T>` — computed member name via a well-known symbol.
+        Assert.NotEmpty(Parse("interface I<T> { [Symbol.iterator](): Iterator<T>; }"));
+    }
+
+    [Fact]
+    public void ComputedSymbolPropertyName_ReadonlyAndLiteral_Parses()
+    {
+        Assert.NotEmpty(Parse("interface B { readonly [Symbol.toStringTag]: \"BigInt\"; }"));
+    }
+
+    [Fact]
+    public void ReadonlyTuple_InGenericArgument_Parses()
+    {
+        // `Iterable<readonly [K, V]>` — a readonly tuple as a generic type argument.
+        Assert.NotEmpty(Parse("interface I<K, V> { new (iterable?: Iterable<readonly [K, V]> | null): Map<K, V>; }"));
+    }
+
+    [Fact]
+    public void ContextualKeywordParameterName_InFunctionType_Parses()
+    {
+        // `set: Set<T>` — a function-type parameter named with a contextual keyword.
+        Assert.NotEmpty(Parse("interface S<T> { forEach(cb: (value: T, set: Set<T>) => void): void; }"));
+    }
+
+    [Fact]
     public void SymbolAsTypeName_Parses()
     {
         Assert.NotEmpty(Parse("interface SymbolConstructor { readonly prototype: Symbol; }"));

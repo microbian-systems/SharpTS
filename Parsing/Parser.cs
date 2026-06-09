@@ -504,7 +504,11 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         Check(TokenType.TEMPLATE_FULL) ||  // for template literal types: `literal`
         Check(TokenType.TEMPLATE_HEAD) ||  // for template literal types: `prefix${
         Check(TokenType.TYPEOF) ||  // for typeof in type position: typeof someVar
-        Check(TokenType.KEYOF);  // for keyof operator: keyof T
+        Check(TokenType.KEYOF) ||  // for keyof operator: keyof T
+        Check(TokenType.READONLY) ||  // readonly array/tuple modifier: readonly T[], readonly [A, B]
+        Check(TokenType.TYPE_SYMBOL) || Check(TokenType.TYPE_BIGINT) ||  // symbol / bigint primitive types
+        Check(TokenType.SYMBOL) || Check(TokenType.BIGINT) ||  // `Symbol` / `BigInt` as type names
+        Check(TokenType.THIS);  // polymorphic `this` type
 
     // ============== GENERIC TYPE CLOSING BRACKET HANDLING ==============
     //

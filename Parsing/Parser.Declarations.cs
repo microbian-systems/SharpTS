@@ -315,6 +315,38 @@ public partial class Parser
                 }
             }
 
+            // Computed member name using a well-known symbol: `[Symbol.iterator](): T`,
+            // `readonly [Symbol.toStringTag]: "X"` (lib.d.ts). Index signatures were ruled out above,
+            // so a leading '[' here is a computed name. Map `Symbol.x` to the canonical `@@x`.
+            bool computedReadonly = Check(TokenType.READONLY) && PeekNext().Type == TokenType.LEFT_BRACKET;
+            if (computedReadonly) Advance(); // consume readonly
+            if (Check(TokenType.LEFT_BRACKET))
+            {
+                int computedLine = Peek().Line;
+                Advance(); // consume '['
+                string raw = "";
+                while (!Check(TokenType.RIGHT_BRACKET) && !IsAtEnd())
+                    raw += Advance().Lexeme;
+                Consume(TokenType.RIGHT_BRACKET, "Expect ']' after computed member name.");
+                string computedName = raw.StartsWith("Symbol.") ? "@@" + raw["Symbol.".Length..] : "@@" + raw;
+                var computedTok = new Token(TokenType.IDENTIFIER, computedName, null, computedLine);
+
+                bool computedOptional = Match(TokenType.QUESTION);
+                string computedType;
+                if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS))
+                {
+                    computedType = ParseMethodSignature();
+                }
+                else
+                {
+                    Consume(TokenType.COLON, "Expect ':' after computed member name.");
+                    computedType = ParseTypeAnnotation();
+                }
+                ConsumeInterfaceMemberSeparator();
+                members.Add(new Stmt.InterfaceMember(computedTok, computedType, computedOptional, computedReadonly));
+                continue;
+            }
+
             // Check for readonly modifier
             bool isReadonly = Match(TokenType.READONLY);
 

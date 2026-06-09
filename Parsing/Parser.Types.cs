@@ -82,10 +82,10 @@ public partial class Parser
                 // Parameter can be: name: type, name?: type, name (bare, implicit any),
                 // name? (bare optional, implicit any), or just a type expression.
                 string paramType;
-                if (Check(TokenType.IDENTIFIER) &&
+                if ((Check(TokenType.IDENTIFIER) || IsContextualKeyword(Peek().Type)) &&
                     (PeekNext().Type == TokenType.COLON || PeekNext().Type == TokenType.QUESTION))
                 {
-                    Advance(); // skip name
+                    Advance(); // skip name (may be a contextual keyword, e.g. `set: Set<T>`)
                     if (Match(TokenType.QUESTION))
                     {
                         isOptional = true;
