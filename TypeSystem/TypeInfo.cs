@@ -719,6 +719,11 @@ public abstract record TypeInfo
             var parts = Fields.Select(f => $"{f.Key}{(IsFieldOptional(f.Key) ? "?" : "")}: {f.Value}").ToList();
             if (CallSignatures != null) parts.InsertRange(0, CallSignatures.Select(s => s.ToString()));
             if (ConstructorSignatures != null) parts.InsertRange(0, ConstructorSignatures.Select(s => s.ToString()));
+            // Index signatures must be rendered so distinct index types don't collapse to the same
+            // string — ToString is used as the structural key for the compatibility cache.
+            if (StringIndexType != null) parts.Add($"[x: string]: {StringIndexType}");
+            if (NumberIndexType != null) parts.Add($"[x: number]: {NumberIndexType}");
+            if (SymbolIndexType != null) parts.Add($"[x: symbol]: {SymbolIndexType}");
             return $"{prefix}{{ {string.Join(", ", parts)} }}";
         }
     }
