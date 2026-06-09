@@ -944,38 +944,13 @@ public partial class TypeChecker
             return CallableAssignableToFunction(sourceCallSigs, expectedFunc);
         }
 
-        if (expected is TypeInfo.Function f1 && actual is TypeInfo.Function f2)
+        // Function / generic-function relation, unified. Normalize each side to a signature shape
+        // (optional type parameters + a function shape) and relate them, so plain `Function` and
+        // `GenericFunction` participate through one code path. Contextual signature instantiation is
+        // applied inside SignatureRelatedTo when the source is generic and the target is not.
+        if (NormalizeSignature(expected) is { } targetSig && NormalizeSignature(actual) is { } sourceSig)
         {
-            // Source (f2) must not require more parameters than the target (f1) can supply.
-            // A rest parameter on the target lets it supply unboundedly many, so the count check
-            // only applies when the target has no rest parameter.
-            if (!f1.HasRestParam && f2.MinArity > f1.ParamTypes.Count) return false;
-
-            // Compare parameter positions, expanding a rest parameter to its element type so it
-            // covers the other side's fixed parameters (e.g. `(...a: number[])` matches `(a, b)`).
-            int f1Fixed = f1.HasRestParam ? f1.ParamTypes.Count - 1 : f1.ParamTypes.Count;
-            int f2Fixed = f2.HasRestParam ? f2.ParamTypes.Count - 1 : f2.ParamTypes.Count;
-            int positions = Math.Max(f1Fixed, f2Fixed);
-            for (int i = 0; i < positions; i++)
-            {
-                var fp1 = EffectiveParamType(f1, i);
-                var fp2 = EffectiveParamType(f2, i);
-                // A position absent on one side (and not covered by a rest param) is unconstrained.
-                if (fp1 is null || fp2 is null) continue;
-                if (!IsCompatible(fp1, fp2)) return false;
-            }
-            // When both have rest parameters, their element types must also be compatible.
-            if (f1.HasRestParam && f2.HasRestParam)
-            {
-                var e1 = EffectiveParamType(f1, f1.ParamTypes.Count);
-                var e2 = EffectiveParamType(f2, f2.ParamTypes.Count);
-                if (e1 is not null && e2 is not null && !IsCompatible(e1, e2)) return false;
-            }
-            // Return type: if expected return type is void, any return type is acceptable
-            // This is standard TypeScript behavior - void context ignores the return value
-            if (f1.ReturnType is TypeInfo.Void) return true;
-            // Otherwise, actual must be compatible with expected
-            return IsCompatible(f1.ReturnType, f2.ReturnType);
+            return SignatureRelatedTo(sourceSig, targetSig);
         }
 
         return false;
