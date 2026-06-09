@@ -59,4 +59,51 @@ public class ClassIndexSignatureTests
         // [expr] (no `ident:` shape) must remain a computed property name, not an index signature.
         TestHarness.RunInterpreted("const k = \"key\"; class A { [k]: number = 1; } let a: A = new A();");
     }
+
+    #region Index-signature assignability (issue: index signatures must be compatible)
+
+    [Fact]
+    public void IndexSignature_SubtypeValue_AssignableToClassIndex()
+    {
+        // `{ [x: string]: Derived }` is assignable to a class with `{ [x: string]: Base }` (Derived <: Base).
+        TestHarness.RunInterpreted("""
+            interface Base { foo: string; }
+            interface Derived extends Base { bar: string; }
+            class A { [x: string]: Base; }
+            function g(b: { [x: string]: Derived }): A { return b; }
+            """);
+    }
+
+    [Fact]
+    public void IndexSignature_SupertypeValue_NotAssignableToNarrowerIndex()
+    {
+        // The reverse direction is unsafe: a Base-valued index is not assignable to a Derived-valued one.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            interface Base { foo: string; }
+            interface Derived extends Base { bar: string; }
+            function h(a: { [x: string]: Base }): { [x: string]: Derived } { return a; }
+            """));
+    }
+
+    [Fact]
+    public void IndexSignature_NamedMemberAssignableToIndexType_Ok()
+    {
+        // A source's named member compatible with the target's string index type is fine.
+        TestHarness.RunInterpreted("""
+            interface Base { foo: string; }
+            interface Derived extends Base { bar: string; }
+            function good(src: { p: Derived }): { [k: string]: Base } { return src; }
+            """);
+    }
+
+    [Fact]
+    public void IndexSignature_NamedMemberNotAssignableToIndexType_Error()
+    {
+        // A named member incompatible with the target's string index type is rejected.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            function bad(src: { p: number }): { [k: string]: string } { return src; }
+            """));
+    }
+
+    #endregion
 }
