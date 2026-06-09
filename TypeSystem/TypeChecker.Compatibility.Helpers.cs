@@ -83,33 +83,51 @@ public partial class TypeChecker
     private static bool IsPublicMember(FrozenDictionary<string, AccessModifier> access, string name)
         => !access.TryGetValue(name, out var mod) || mod == AccessModifier.Public;
 
-    /// <summary>The string index signature value type of any object-like type, or null.</summary>
-    private static TypeInfo? StringIndexOf(TypeInfo t) => t switch
+    /// <summary>Type-parameter substitution map for a generic-class instantiation.</summary>
+    private static Dictionary<string, TypeInfo> GenericClassSubs(TypeInfo.GenericClass gc, List<TypeInfo> args)
+    {
+        Dictionary<string, TypeInfo> subs = [];
+        for (int i = 0; i < gc.TypeParams.Count && i < args.Count; i++)
+            subs[gc.TypeParams[i].Name] = args[i];
+        return subs;
+    }
+
+    /// <summary>
+    /// The string index signature value type of any object-like type, with generic-class type
+    /// arguments substituted (e.g. <c>A&lt;Base&gt;</c> where <c>A&lt;T&gt;</c> has <c>[x]: T</c> yields Base). Null if none.
+    /// </summary>
+    private TypeInfo? StringIndexOf(TypeInfo t) => t switch
     {
         TypeInfo.Record r => r.StringIndexType,
         TypeInfo.Interface i => i.StringIndexType,
         TypeInfo.Class c => c.StringIndexType,
-        TypeInfo.Instance inst => inst.ResolvedClassType is TypeInfo.Class c ? c.StringIndexType : null,
+        TypeInfo.Instance inst => StringIndexOf(inst.ResolvedClassType),
+        TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig =>
+            gc.Core.StringIndexType is { } sit ? Substitute(sit, GenericClassSubs(gc, ig.TypeArguments)) : null,
         _ => null
     };
 
-    /// <summary>The number index signature value type of any object-like type, or null.</summary>
-    private static TypeInfo? NumberIndexOf(TypeInfo t) => t switch
+    /// <summary>The number index signature value type of any object-like type (generic args substituted), or null.</summary>
+    private TypeInfo? NumberIndexOf(TypeInfo t) => t switch
     {
         TypeInfo.Record r => r.NumberIndexType,
         TypeInfo.Interface i => i.NumberIndexType,
         TypeInfo.Class c => c.NumberIndexType,
-        TypeInfo.Instance inst => inst.ResolvedClassType is TypeInfo.Class c ? c.NumberIndexType : null,
+        TypeInfo.Instance inst => NumberIndexOf(inst.ResolvedClassType),
+        TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig =>
+            gc.Core.NumberIndexType is { } nit ? Substitute(nit, GenericClassSubs(gc, ig.TypeArguments)) : null,
         _ => null
     };
 
-    /// <summary>The named (non-index) member value types of any object-like type.</summary>
-    private static IEnumerable<TypeInfo> NamedMemberTypesOf(TypeInfo t) => t switch
+    /// <summary>The named (non-index) member value types of any object-like type (generic args substituted).</summary>
+    private IEnumerable<TypeInfo> NamedMemberTypesOf(TypeInfo t) => t switch
     {
         TypeInfo.Record r => r.Fields.Values,
         TypeInfo.Interface i => i.GetAllMembers().Select(m => m.Value),
         TypeInfo.Class c => CollectPublicInstanceMembers(c).Values,
-        TypeInfo.Instance inst => inst.ResolvedClassType is TypeInfo.Class c ? CollectPublicInstanceMembers(c).Values : [],
+        TypeInfo.Instance inst => NamedMemberTypesOf(inst.ResolvedClassType),
+        TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig =>
+            CollectGenericClassMembers(gc, ig.TypeArguments).Values,
         _ => []
     };
 
@@ -183,6 +201,82 @@ public partial class TypeChecker
             current = GetSuperclass(current);
         }
         return members;
+    }
+
+    /// <summary>True when a class metadata core declares a private/protected member (nominal brand).</summary>
+    private static bool CoreHasNominalBrand(ClassMetadataCore core)
+    {
+        if (core.PrivateFieldTypes.Count > 0 || core.PrivateMethodTypes.Count > 0) return true;
+        foreach (var access in core.FieldAccess.Values)
+            if (access != AccessModifier.Public) return true;
+        foreach (var access in core.MethodAccess.Values)
+            if (access != AccessModifier.Public) return true;
+        return false;
+    }
+
+    /// <summary>Nominal-brand check for a generic class (own core plus a non-generic superclass chain).</summary>
+    private static bool GenericClassHasNominalBrand(TypeInfo.GenericClass gc)
+    {
+        if (CoreHasNominalBrand(gc.Core)) return true;
+        return gc.Superclass is TypeInfo.Class sc && HasNominalClassBrand(sc);
+    }
+
+    /// <summary>
+    /// Collects the public instance members of a generic class with its type arguments substituted
+    /// (e.g. a field <c>item: T</c> on <c>A&lt;Base&gt;</c> becomes <c>item: Base</c>). Inherited members from a
+    /// non-generic superclass are included verbatim.
+    /// </summary>
+    private Dictionary<string, TypeInfo> CollectGenericClassMembers(TypeInfo.GenericClass gc, List<TypeInfo> args)
+    {
+        var subs = GenericClassSubs(gc, args);
+        Dictionary<string, TypeInfo> members = [];
+        var core = gc.Core;
+        foreach (var (name, type) in core.FieldTypes)
+            if (IsPublicMember(core.FieldAccess, name) && !members.ContainsKey(name))
+                members[name] = Substitute(type, subs);
+        foreach (var (name, type) in core.Methods)
+            if (name != "constructor" && IsPublicMember(core.MethodAccess, name) && !members.ContainsKey(name))
+                members[name] = Substitute(type, subs);
+        foreach (var (name, type) in core.Getters)
+            if (!members.ContainsKey(name))
+                members[name] = Substitute(type, subs);
+        if (gc.Superclass is TypeInfo.Class sc)
+            foreach (var (name, type) in CollectPublicInstanceMembers(sc))
+                members.TryAdd(name, type);
+        return members;
+    }
+
+    /// <summary>
+    /// Attempts structural assignment of <paramref name="source"/> to an unbranded class-like target —
+    /// a <see cref="TypeInfo.Class"/> or a generic-class instantiation (<see cref="TypeInfo.InstantiatedGeneric"/>
+    /// of a <see cref="TypeInfo.GenericClass"/>) — comparing public members and index signatures with the
+    /// generic type arguments substituted. Returns false for branded or member-less/index-less targets
+    /// (those stay nominal).
+    /// </summary>
+    private bool StructurallyAssignableToClassTarget(TypeInfo targetResolved, TypeInfo source)
+    {
+        Dictionary<string, TypeInfo> members;
+        bool hasIndex;
+        TypeInfo indexCarrier;
+        switch (targetResolved)
+        {
+            case TypeInfo.Class c:
+                if (HasNominalClassBrand(c)) return false;
+                members = CollectPublicInstanceMembers(c);
+                hasIndex = c.Core.HasIndexSignature;
+                indexCarrier = c;
+                break;
+            case TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig:
+                if (GenericClassHasNominalBrand(gc)) return false;
+                members = CollectGenericClassMembers(gc, ig.TypeArguments);
+                hasIndex = gc.Core.HasIndexSignature;
+                indexCarrier = targetResolved;
+                break;
+            default:
+                return false;
+        }
+        if (members.Count == 0 && !hasIndex) return false;
+        return CheckStructuralCompatibility(members, source) && IndexSignaturesSatisfied(indexCarrier, source);
     }
 
     private static FrozenDictionary<string, TypeInfo>? GetMethods(TypeInfo? classType) =>

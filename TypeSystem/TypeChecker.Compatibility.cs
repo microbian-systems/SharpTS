@@ -694,23 +694,11 @@ public partial class TypeChecker
                 }
 
                 // Structural compatibility (TypeScript): when the target class carries no nominal
-                // brand (no private/protected member in its hierarchy), a source instance is
-                // assignable if it structurally provides the target's public members. A branded
-                // target stays nominal — handled entirely by the hierarchy walk above. A member-less
-                // target stays nominal too, so an empty base instance is not assignable to an empty
-                // subclass variable (preserves subclass-safety).
-                if (!HasNominalClassBrand(expectedClass))
-                {
-                    var targetMembers = CollectPublicInstanceMembers(expectedClass);
-                    // A target with named members or an index signature can match structurally; both
-                    // the named members and the index signatures must be satisfied.
-                    if ((targetMembers.Count > 0 || expectedClass.Core.HasIndexSignature)
-                        && CheckStructuralCompatibility(targetMembers, i2)
-                        && IndexSignaturesSatisfied(expectedClass, i2))
-                    {
-                        return true;
-                    }
-                }
+                // brand, a source instance is assignable if it structurally provides the target's
+                // public members and satisfies its index signatures (generic args substituted). A
+                // branded or member-less/index-less target stays nominal (handled by the walk above,
+                // preserving subclass-safety).
+                if (StructurallyAssignableToClassTarget(expectedClass, i2)) return true;
             }
             // Handle MutableClass (unfrozen) comparison by name - occurs during signature collection
             else if (resolvedExpected is TypeInfo.MutableClass mc1 && resolvedActual is TypeInfo.MutableClass mc2)
@@ -722,22 +710,16 @@ public partial class TypeChecker
             return false;
         }
 
-        // Structural (TypeScript): an unbranded target class instance accepts any structurally-
-        // matching object-like source (an interface value or object literal/record). Class-instance
-        // sources are handled by the Instance-vs-Instance block above; the reverse directions (a
-        // class instance assignable to an interface/record) are handled by the structural paths below.
+        // Structural (TypeScript): an unbranded target class instance — including a generic-class
+        // instantiation like `A<Base>` — accepts any structurally-matching object-like source (an
+        // interface value or object literal/record). Class-instance sources are handled by the
+        // Instance-vs-Instance block above; the reverse directions (a class instance assignable to an
+        // interface/record) are handled by the structural paths below.
         if (expected is TypeInfo.Instance targetInst &&
-            targetInst.ResolvedClassType is TypeInfo.Class targetClass &&
             actual is TypeInfo.Interface or TypeInfo.Record &&
-            !HasNominalClassBrand(targetClass))
+            StructurallyAssignableToClassTarget(targetInst.ResolvedClassType, actual))
         {
-            var targetMembers = CollectPublicInstanceMembers(targetClass);
-            if ((targetMembers.Count > 0 || targetClass.Core.HasIndexSignature)
-                && CheckStructuralCompatibility(targetMembers, actual)
-                && IndexSignaturesSatisfied(targetClass, actual))
-            {
-                return true;
-            }
+            return true;
         }
 
         if (expected is TypeInfo.Interface itf)
