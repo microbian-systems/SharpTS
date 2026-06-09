@@ -702,7 +702,11 @@ public partial class TypeChecker
                 if (!HasNominalClassBrand(expectedClass))
                 {
                     var targetMembers = CollectPublicInstanceMembers(expectedClass);
-                    if (targetMembers.Count > 0 && CheckStructuralCompatibility(targetMembers, i2))
+                    // A target with named members or an index signature can match structurally; both
+                    // the named members and the index signatures must be satisfied.
+                    if ((targetMembers.Count > 0 || expectedClass.Core.HasIndexSignature)
+                        && CheckStructuralCompatibility(targetMembers, i2)
+                        && IndexSignaturesSatisfied(expectedClass, i2))
                     {
                         return true;
                     }
@@ -728,7 +732,9 @@ public partial class TypeChecker
             !HasNominalClassBrand(targetClass))
         {
             var targetMembers = CollectPublicInstanceMembers(targetClass);
-            if (targetMembers.Count > 0 && CheckStructuralCompatibility(targetMembers, actual))
+            if ((targetMembers.Count > 0 || targetClass.Core.HasIndexSignature)
+                && CheckStructuralCompatibility(targetMembers, actual)
+                && IndexSignaturesSatisfied(targetClass, actual))
             {
                 return true;
             }
@@ -792,12 +798,13 @@ public partial class TypeChecker
                         return false;
                     }
                 }
-                return true;
+                return IndexSignaturesSatisfied(itf, actualItf);
             }
             // Use GetAllMembers to include inherited members when checking structural compatibility
             var allMembers = itf.GetAllMembers().ToDictionary(m => m.Key, m => m.Value);
             var allOptional = itf.GetAllOptionalMembers().ToHashSet();
-            return CheckStructuralCompatibility(allMembers, actual, allOptional);
+            return CheckStructuralCompatibility(allMembers, actual, allOptional)
+                && IndexSignaturesSatisfied(itf, actual);
         }
 
         // Handle InstantiatedGeneric interface (e.g., Container<number>)
@@ -895,9 +902,9 @@ public partial class TypeChecker
                     return false;
                 }
             }
-            // If expected has only index signatures (no explicit fields), empty object is compatible
-            // Index signatures allow any number of keys (including zero)
-            return true;
+            // Named fields match; the target's index signatures (if any) must also be satisfied by
+            // the source's members and own index signatures.
+            return IndexSignaturesSatisfied(expRecord, actRecord);
         }
 
         // Record constraint compatibility with types that have members (String, Array, etc.)
@@ -905,7 +912,8 @@ public partial class TypeChecker
         if (expected is TypeInfo.Record expRec)
         {
             // Use CheckStructuralCompatibility to check if actual type has all required fields
-            return CheckStructuralCompatibility(expRec.Fields, actual, expRec.OptionalFields);
+            return CheckStructuralCompatibility(expRec.Fields, actual, expRec.OptionalFields)
+                && IndexSignaturesSatisfied(expRec, actual);
         }
 
         // Tuple-to-tuple compatibility

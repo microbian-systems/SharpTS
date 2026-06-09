@@ -83,6 +83,62 @@ public partial class TypeChecker
     private static bool IsPublicMember(FrozenDictionary<string, AccessModifier> access, string name)
         => !access.TryGetValue(name, out var mod) || mod == AccessModifier.Public;
 
+    /// <summary>The string index signature value type of any object-like type, or null.</summary>
+    private static TypeInfo? StringIndexOf(TypeInfo t) => t switch
+    {
+        TypeInfo.Record r => r.StringIndexType,
+        TypeInfo.Interface i => i.StringIndexType,
+        TypeInfo.Class c => c.StringIndexType,
+        TypeInfo.Instance inst => inst.ResolvedClassType is TypeInfo.Class c ? c.StringIndexType : null,
+        _ => null
+    };
+
+    /// <summary>The number index signature value type of any object-like type, or null.</summary>
+    private static TypeInfo? NumberIndexOf(TypeInfo t) => t switch
+    {
+        TypeInfo.Record r => r.NumberIndexType,
+        TypeInfo.Interface i => i.NumberIndexType,
+        TypeInfo.Class c => c.NumberIndexType,
+        TypeInfo.Instance inst => inst.ResolvedClassType is TypeInfo.Class c ? c.NumberIndexType : null,
+        _ => null
+    };
+
+    /// <summary>The named (non-index) member value types of any object-like type.</summary>
+    private static IEnumerable<TypeInfo> NamedMemberTypesOf(TypeInfo t) => t switch
+    {
+        TypeInfo.Record r => r.Fields.Values,
+        TypeInfo.Interface i => i.GetAllMembers().Select(m => m.Value),
+        TypeInfo.Class c => CollectPublicInstanceMembers(c).Values,
+        TypeInfo.Instance inst => inst.ResolvedClassType is TypeInfo.Class c ? CollectPublicInstanceMembers(c).Values : [],
+        _ => []
+    };
+
+    /// <summary>
+    /// True when <paramref name="actual"/> satisfies the index signatures of <paramref name="expected"/>
+    /// (TypeScript "index signatures must be compatible"). For a string index <c>[s: string]: V</c> on
+    /// the target, the source's string/number index types and every named member must be assignable to
+    /// <c>V</c>; likewise for a number index. Returns true when the target declares no index signature.
+    /// </summary>
+    private bool IndexSignaturesSatisfied(TypeInfo expected, TypeInfo actual)
+    {
+        var expStr = StringIndexOf(expected);
+        var expNum = NumberIndexOf(expected);
+        if (expStr is null && expNum is null) return true;
+
+        if (expStr is not null)
+        {
+            if (StringIndexOf(actual) is { } actStr && !IsCompatible(expStr, actStr)) return false;
+            if (NumberIndexOf(actual) is { } actNum && !IsCompatible(expStr, actNum)) return false;
+            foreach (var memberType in NamedMemberTypesOf(actual))
+                if (!IsCompatible(expStr, memberType)) return false;
+        }
+        if (expNum is not null)
+        {
+            if (NumberIndexOf(actual) is { } actNum && !IsCompatible(expNum, actNum)) return false;
+        }
+        return true;
+    }
+
     /// <summary>
     /// Returns the parameter type of <paramref name="f"/> at <paramref name="index"/>, expanding a
     /// trailing rest parameter to its element type so it covers any position at or beyond the rest
