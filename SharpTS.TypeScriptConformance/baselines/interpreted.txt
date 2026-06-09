@@ -75,6 +75,6 @@ tests/cases/conformance/types/typeRelationships/assignmentCompatibility/numberAs
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/optionalPropertyAssignableToStringIndexSignature.ts Fail
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/typeParameterAssignability.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/typeParameterAssignability2.ts Fail
-tests/cases/conformance/types/typeRelationships/assignmentCompatibility/typeParameterAssignability3.ts Fail
+tests/cases/conformance/types/typeRelationships/assignmentCompatibility/typeParameterAssignability3.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/undefinedAssignableToEveryType.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/unionTypesAssignability.ts Fail
