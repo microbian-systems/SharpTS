@@ -112,6 +112,45 @@ public partial class TypeChecker
     private static bool IsPublicMember(FrozenDictionary<string, AccessModifier> access, string name)
         => !access.TryGetValue(name, out var mod) || mod == AccessModifier.Public;
 
+    /// <summary>The required (non-optional) member names of an object-like type.</summary>
+    private IEnumerable<string> RequiredMemberNames(TypeInfo t)
+    {
+        switch (t)
+        {
+            case TypeInfo.Record r:
+                foreach (var k in r.Fields.Keys)
+                    if (!r.IsFieldOptional(k)) yield return k;
+                break;
+            case TypeInfo.Interface i:
+                var optional = i.GetAllOptionalMembers().ToHashSet();
+                foreach (var m in i.GetAllMembers())
+                    if (!optional.Contains(m.Key)) yield return m.Key;
+                break;
+            case TypeInfo.Class c:
+                foreach (var k in CollectPublicInstanceMembers(c).Keys) yield return k;
+                break;
+            case TypeInfo.Instance { ResolvedClassType: TypeInfo.Class ic }:
+                foreach (var k in CollectPublicInstanceMembers(ic).Keys) yield return k;
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Chooses the diagnostic code for a failed assignment: <c>TS2741</c> ("Property 'X' is missing in
+    /// type … but required in type …") when the object-like source lacks a property the target
+    /// requires, otherwise the generic <c>TS2322</c>. tsc reports missing-property failures with TS2741
+    /// distinctly from type mismatches (TS2322), and the conformance runner matches on the code.
+    /// </summary>
+    private string AssignmentDiagnosticCode(TypeInfo target, TypeInfo source)
+    {
+        if (source is not (TypeInfo.Record or TypeInfo.Interface or TypeInfo.Class or TypeInfo.Instance))
+            return "TS2322";
+        foreach (var name in RequiredMemberNames(target))
+            if (GetMemberType(source, name) is null)
+                return "TS2741";
+        return "TS2322";
+    }
+
     /// <summary>Type-parameter substitution map for a generic-class instantiation.</summary>
     private static Dictionary<string, TypeInfo> GenericClassSubs(TypeInfo.GenericClass gc, List<TypeInfo> args)
     {

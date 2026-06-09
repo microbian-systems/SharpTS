@@ -197,7 +197,7 @@ public partial class TypeChecker
 
                     if (!IsCompatible(declaredType, initializerType))
                     {
-                        throw new TypeMismatchException(declaredType, initializerType, stmt.Name.Line, tsCode: "TS2322");
+                        throw new TypeMismatchException(declaredType, initializerType, stmt.Name.Line, tsCode: AssignmentDiagnosticCode(declaredType, initializerType));
                     }
                 }
                 else
@@ -268,7 +268,7 @@ public partial class TypeChecker
             var initType = CheckExpr(stmt.Initializer);
             if (!IsCompatible(constDeclaredType, initType))
             {
-                throw new TypeMismatchException(constDeclaredType, initType, stmt.Name.Line, tsCode: "TS2322");
+                throw new TypeMismatchException(constDeclaredType, initType, stmt.Name.Line, tsCode: AssignmentDiagnosticCode(constDeclaredType, initType));
             }
         }
         else

@@ -1225,7 +1225,7 @@ public partial class TypeChecker
 
         if (!IsCompatible(declaredType, valueType))
         {
-            throw new TypeCheckException($" Cannot assign type '{valueType}' to variable '{assign.Name.Lexeme}' of type '{declaredType}'.", tsCode: "TS2322");
+            throw new TypeCheckException($" Cannot assign type '{valueType}' to variable '{assign.Name.Lexeme}' of type '{declaredType}'.", tsCode: AssignmentDiagnosticCode(declaredType, valueType));
         }
 
         // Invalidate any narrowings affected by this assignment
