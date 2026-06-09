@@ -588,6 +588,23 @@ public partial class TypeChecker
 
         try
         {
+            // Check instance field initializers (e.g. `x = 5`, `r = () => { ... }`) within the
+            // instance context so `this` and the class's type parameters resolve inside them. Static
+            // fields are checked separately at class scope. Inferred/Any field types skip the
+            // assignability check but the initializer is still type-checked.
+            foreach (var field in classStmt.Fields)
+            {
+                if (field.IsStatic || field.Initializer == null) continue;
+                TypeInfo initType = CheckExpr(field.Initializer);
+                var declaredTypes = field.IsPrivate ? classTypeForBody.PrivateFieldTypes : classTypeForBody.FieldTypes;
+                if (declaredTypes.TryGetValue(field.Name.Lexeme, out var fieldDeclaredType)
+                    && fieldDeclaredType is not (TypeInfo.Inferred or TypeInfo.Any)
+                    && !IsCompatible(fieldDeclaredType, initType))
+                {
+                    throw new TypeCheckException($" Cannot assign type '{initType}' to field '{field.Name.Lexeme}' of type '{fieldDeclaredType}'.", tsCode: "TS2322");
+                }
+            }
+
             // Only check methods that have bodies (skip overload signatures)
             foreach (var method in classStmt.Methods.Where(m => m.Body != null))
             {

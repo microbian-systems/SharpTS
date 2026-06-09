@@ -532,7 +532,26 @@ public partial class TypeChecker
                  current = GetSuperclass(current);
              }
 
-             return CheckExpr(set.Value);
+             // Check the assigned value against the field's declared type (walking the chain). Plain
+             // (non-setter) instance fields were previously assigned without a compatibility check.
+             TypeInfo fieldValueType = CheckExpr(set.Value);
+             current = startClass;
+             while (current != null)
+             {
+                 var fieldTypes = GetFieldTypes(current);
+                 if (fieldTypes != null && fieldTypes.TryGetValue(memberName, out var fieldDeclType))
+                 {
+                     if (fieldDeclType is not (TypeInfo.Inferred or TypeInfo.Any)
+                         && !IsCompatible(fieldDeclType, fieldValueType))
+                     {
+                         throw new TypeCheckException($" Cannot assign type '{fieldValueType}' to field '{memberName}' of type '{fieldDeclType}'.", tsCode: "TS2322");
+                     }
+                     if (assignedPath != null) InstallPostAssignmentNarrowing(assignedPath, fieldDeclType, fieldValueType);
+                     break;
+                 }
+                 current = GetSuperclass(current);
+             }
+             return fieldValueType;
         }
         else if (objType is TypeInfo.Record record)
         {
