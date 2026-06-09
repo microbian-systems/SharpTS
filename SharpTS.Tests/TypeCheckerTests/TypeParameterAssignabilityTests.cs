@@ -52,6 +52,32 @@ public class TypeParameterAssignabilityTests
     }
 
     [Fact]
+    public void MultiLevelConstraintChain_TransitivelyAssignable()
+    {
+        // T extends U extends V ⇒ T assignable to V (the constraint chain must link three deep).
+        TestHarness.RunInterpreted("function f<T extends U, U extends V, V>(t: T, v: V) { v = t; }");
+    }
+
+    [Fact]
+    public void MultiLevelConstraintChain_ReverseNotAssignable()
+    {
+        // V is not assignable to T across the same chain.
+        Assert.ThrowsAny<TypeCheckException>(() =>
+            TestHarness.RunInterpreted("function f<T extends U, U extends V, V>(t: T, v: V) { t = v; }"));
+    }
+
+    [Fact]
+    public void MultiLevelConstraintChain_AssignableToConcreteApparentType()
+    {
+        // T extends U extends V extends Date ⇒ T assignable to Date (apparent type via the chain).
+        TestHarness.RunInterpreted("""
+            function f<T extends U, U extends V, V extends Date>(t: T) {
+                let d: Date = t;
+            }
+            """);
+    }
+
+    [Fact]
     public void Parameter_AssignableToItsConstraint()
     {
         // A constrained parameter is assignable wherever its apparent (constraint) type is.

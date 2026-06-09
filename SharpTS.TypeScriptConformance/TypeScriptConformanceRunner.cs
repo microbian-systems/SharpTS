@@ -136,7 +136,9 @@ public sealed class TypeScriptConformanceRunner
             // strictNullChecks follows the test's directives (strictNullChecks overrides strict),
             // defaulting off — matching how tsc generated the legacy *.errors.txt baselines.
             bool strictNullChecks = metadata.StrictNullChecks ?? metadata.Strict;
-            var checker = new TypeChecker(strictNullChecks: strictNullChecks);
+            // Raise the error cap well above the product default (10) so we collect every diagnostic
+            // a test expects — *.errors.txt baselines can list many errors in one file.
+            var checker = new TypeChecker(strictNullChecks: strictNullChecks, maxErrors: 1000);
             checkResult = checker.CheckWithRecovery(parseResult.Statements);
         }
         catch (Exception ex)
