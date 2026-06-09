@@ -76,26 +76,106 @@ public partial class TypeChecker
 
     /// <summary>
     /// Instantiates a generic source signature against a concrete target by inferring each source
-    /// type parameter from the target's parameter at the same position. Un-inferred parameters
-    /// default to their constraint, or <c>{}</c> when unconstrained — matching TypeScript, where an
-    /// uninferable (typically return-only) type parameter collapses to the empty object type.
+    /// type parameter from the corresponding target type, then substituting. This is a dedicated
+    /// inference path — deliberately separate from the call-argument inference (<c>InferFromType</c>)
+    /// so changing it can't perturb generic call type-checking.
     /// </summary>
+    /// <remarks>
+    /// Inference is variance-aware. A type parameter is collected from every structural position it
+    /// occupies (recursing arrays, functions, objects, tuples, generic instantiations), and the
+    /// candidates are combined by the variance of those positions:
+    /// <list type="bullet">
+    /// <item>seen in any <em>contravariant</em> (parameter) position → intersection: the chosen type
+    /// must serve as every input it's used as, so <c>&lt;T&gt;(x: T, y: T)</c> matched against
+    /// <c>(x: {a}, y: {a;b})</c> yields <c>{a;b}</c>, not a first-wins <c>{a}</c> that then fails the
+    /// second parameter;</item>
+    /// <item>otherwise (purely covariant) → union.</item>
+    /// </list>
+    /// Un-inferred parameters default to their constraint, or <c>{}</c> when unconstrained — matching
+    /// TypeScript, where an uninferable (typically return-only) type parameter collapses to <c>{}</c>.
+    /// </remarks>
     private TypeInfo.Function InstantiateGenericSourceFromTarget(NormalizedSignature source, TypeInfo.Function target)
     {
-        var inferred = new Dictionary<string, TypeInfo>();
+        var paramNames = source.TypeParams!.Select(tp => tp.Name).ToHashSet();
+        var candidates = new Dictionary<string, List<TypeInfo>>();
+        var sawContravariant = new HashSet<string>();
+
         int positions = Math.Min(source.Func.ParamTypes.Count, target.ParamTypes.Count);
         for (int i = 0; i < positions; i++)
-            InferFromType(source.Func.ParamTypes[i], target.ParamTypes[i], inferred);
+            CollectInferenceCandidates(source.Func.ParamTypes[i], target.ParamTypes[i], contravariant: true, paramNames, candidates, sawContravariant);
+        CollectInferenceCandidates(source.Func.ReturnType, target.ReturnType, contravariant: false, paramNames, candidates, sawContravariant);
 
+        var inferred = new Dictionary<string, TypeInfo>();
         foreach (var tp in source.TypeParams!)
-            if (!inferred.ContainsKey(tp.Name))
+        {
+            if (candidates.TryGetValue(tp.Name, out var cands) && cands.Count > 0)
+            {
+                inferred[tp.Name] = sawContravariant.Contains(tp.Name)
+                    ? SimplifyIntersection(cands.Distinct().ToList())
+                    : cands.Aggregate(CreateUnion);
+            }
+            else
+            {
                 inferred[tp.Name] = tp.Constraint ?? EmptyObjectType;
+            }
+        }
 
         var paramTypes = source.Func.ParamTypes.Select(p => Substitute(p, inferred)).ToList();
         var returnType = Substitute(source.Func.ReturnType, inferred);
         return new TypeInfo.Function(
             paramTypes, returnType, source.Func.RequiredParams, source.Func.HasRestParam,
             source.Func.ThisType, source.Func.ParamNames);
+    }
+
+    /// <summary>
+    /// Recursively records, for each named type parameter of the source, the target types appearing
+    /// at the same structural position — tracking whether the position is contravariant so candidates
+    /// can later be combined correctly. Mirrors function-parameter contravariance (recursing into a
+    /// nested function flips the variance of its parameters).
+    /// </summary>
+    private void CollectInferenceCandidates(
+        TypeInfo sourceType, TypeInfo targetType, bool contravariant,
+        HashSet<string> paramNames, Dictionary<string, List<TypeInfo>> candidates, HashSet<string> sawContravariant)
+    {
+        switch (sourceType)
+        {
+            case TypeInfo.TypeParameter tp when paramNames.Contains(tp.Name):
+                if (!candidates.TryGetValue(tp.Name, out var list))
+                    candidates[tp.Name] = list = [];
+                list.Add(targetType);
+                if (contravariant) sawContravariant.Add(tp.Name);
+                return;
+
+            case TypeInfo.Array sa when targetType is TypeInfo.Array ta:
+                CollectInferenceCandidates(sa.ElementType, ta.ElementType, contravariant, paramNames, candidates, sawContravariant);
+                return;
+
+            case TypeInfo.Function sf when targetType is TypeInfo.Function tf:
+                int n = Math.Min(sf.ParamTypes.Count, tf.ParamTypes.Count);
+                for (int i = 0; i < n; i++)
+                    // Parameter positions of a nested function flip the variance.
+                    CollectInferenceCandidates(sf.ParamTypes[i], tf.ParamTypes[i], !contravariant, paramNames, candidates, sawContravariant);
+                CollectInferenceCandidates(sf.ReturnType, tf.ReturnType, contravariant, paramNames, candidates, sawContravariant);
+                return;
+
+            case TypeInfo.Record sr when targetType is TypeInfo.Record tr:
+                foreach (var (fieldName, fieldType) in sr.Fields)
+                    if (tr.Fields.TryGetValue(fieldName, out var targetFieldType))
+                        CollectInferenceCandidates(fieldType, targetFieldType, contravariant, paramNames, candidates, sawContravariant);
+                return;
+
+            case TypeInfo.Tuple stup when targetType is TypeInfo.Tuple ttup:
+                int m = Math.Min(stup.Elements.Count, ttup.Elements.Count);
+                for (int i = 0; i < m; i++)
+                    CollectInferenceCandidates(stup.Elements[i].Type, ttup.Elements[i].Type, contravariant, paramNames, candidates, sawContravariant);
+                return;
+
+            case TypeInfo.InstantiatedGeneric sg when targetType is TypeInfo.InstantiatedGeneric tg:
+                int k = Math.Min(sg.TypeArguments.Count, tg.TypeArguments.Count);
+                for (int i = 0; i < k; i++)
+                    CollectInferenceCandidates(sg.TypeArguments[i], tg.TypeArguments[i], contravariant, paramNames, candidates, sawContravariant);
+                return;
+        }
     }
 
     /// <summary>The empty object type <c>{}</c> — the default for an uninferable type parameter.</summary>
