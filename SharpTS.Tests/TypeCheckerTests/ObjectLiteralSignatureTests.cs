@@ -80,4 +80,29 @@ public class ObjectLiteralSignatureTests
         Assert.ThrowsAny<TypeCheckException>(() =>
             TestHarness.RunInterpreted("let C: { new (x: number): object }; let f: { (x: number): object }; C = f;"));
     }
+
+    // ---- Generic call/construct signatures (modeling) -------------------
+
+    [Fact]
+    public void GenericConstructSignatureType_IsModeled()
+    {
+        // `new <T>(x: T) => T[]` previously collapsed to `{}` (the generic prefix was dropped);
+        // it now type-checks as a modeled construct signature.
+        TestHarness.RunInterpreted("let c: new <T>(x: T) => T[];");
+    }
+
+    [Fact]
+    public void GenericCallSignatureType_IsModeled()
+    {
+        TestHarness.RunInterpreted("let f: <T>(x: T) => T[];");
+    }
+
+    [Fact]
+    public void GenericConstructSignatureType_RetainsConstructSignature()
+    {
+        // A modeled generic construct signature is still constructable, so a plain function (no
+        // construct signature) is not assignable to it.
+        Assert.ThrowsAny<TypeCheckException>(() =>
+            TestHarness.RunInterpreted("let c: new <T>(x: T) => T[]; let f: (x: number) => number[]; c = f;"));
+    }
 }
