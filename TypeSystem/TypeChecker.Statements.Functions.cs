@@ -9,6 +9,34 @@ namespace SharpTS.TypeSystem;
 public partial class TypeChecker
 {
     /// <summary>
+    /// Builds generic type parameters into <paramref name="env"/>, resolving constraints that may
+    /// reference other parameters. Parameters are first defined without constraints so they can
+    /// reference one another; the constraint-resolution pass then runs repeatedly so multi-level
+    /// chains (<c>T extends U extends V</c>) link fully — each pass deepens the captured chain by one
+    /// level, so <c>decls.Count</c> passes suffice for any depth.
+    /// </summary>
+    private List<TypeInfo.TypeParameter> BuildGenericTypeParameters(List<TypeParam> decls, TypeEnvironment env)
+    {
+        foreach (var tp in decls)
+            env.DefineTypeParameter(tp.Name.Lexeme, new TypeInfo.TypeParameter(tp.Name.Lexeme, null, null, tp.IsConst, tp.Variance));
+
+        List<TypeInfo.TypeParameter> result = [];
+        for (int pass = 0; pass < decls.Count; pass++)
+        {
+            result = [];
+            foreach (var tp in decls)
+            {
+                TypeInfo? constraint = tp.Constraint != null ? ToTypeInfo(tp.Constraint) : null;
+                TypeInfo? defaultType = tp.Default != null ? ToTypeInfo(tp.Default) : null;
+                var typeParam = new TypeInfo.TypeParameter(tp.Name.Lexeme, constraint, defaultType, tp.IsConst, tp.Variance);
+                result.Add(typeParam);
+                env.DefineTypeParameter(tp.Name.Lexeme, typeParam);
+            }
+        }
+        return result;
+    }
+
+    /// <summary>
     /// Hoists function declarations by registering their types before checking bodies.
     /// This enables functions to reference each other regardless of declaration order.
     /// </summary>
@@ -213,29 +241,10 @@ public partial class TypeChecker
             TypeEnvironment previousEnvForParsing = _environment;
             _environment = funcEnv;
 
-            // Handle generic type parameters
-            // First pass: define all type parameters so they can reference each other
-            List<TypeInfo.TypeParameter>? typeParams = null;
-            if (funcStmt.TypeParams != null && funcStmt.TypeParams.Count > 0)
-            {
-                typeParams = [];
-                // First, define all type parameters without constraints
-                foreach (var tp in funcStmt.TypeParams)
-                {
-                    var typeParam = new TypeInfo.TypeParameter(tp.Name.Lexeme, null, null, tp.IsConst, tp.Variance);
-                    funcEnv.DefineTypeParameter(tp.Name.Lexeme, typeParam);
-                }
-                // Second, parse constraints (which may reference other type parameters)
-                foreach (var tp in funcStmt.TypeParams)
-                {
-                    TypeInfo? constraint = tp.Constraint != null ? ToTypeInfo(tp.Constraint) : null;
-                    TypeInfo? defaultType = tp.Default != null ? ToTypeInfo(tp.Default) : null;
-                    var typeParam = new TypeInfo.TypeParameter(tp.Name.Lexeme, constraint, defaultType, tp.IsConst, tp.Variance);
-                    typeParams.Add(typeParam);
-                    // Redefine with the actual constraint
-                    funcEnv.DefineTypeParameter(tp.Name.Lexeme, typeParam);
-                }
-            }
+            // Handle generic type parameters (constraints may reference other parameters, incl.
+            // multi-level chains like `T extends U extends V`).
+            List<TypeInfo.TypeParameter>? typeParams =
+                funcStmt.TypeParams is { Count: > 0 } tps ? BuildGenericTypeParameters(tps, funcEnv) : null;
 
             // Parse parameter types and return type (environment already set above)
 
@@ -312,29 +321,10 @@ public partial class TypeChecker
         TypeEnvironment previousEnvForParsing = _environment;
         _environment = funcEnv;
 
-        // Handle generic type parameters
-        // First pass: define all type parameters so they can reference each other
-        List<TypeInfo.TypeParameter>? typeParams = null;
-        if (funcStmt.TypeParams != null && funcStmt.TypeParams.Count > 0)
-        {
-            typeParams = [];
-            // First, define all type parameters without constraints
-            foreach (var tp in funcStmt.TypeParams)
-            {
-                var typeParam = new TypeInfo.TypeParameter(tp.Name.Lexeme, null, null, tp.IsConst, tp.Variance);
-                funcEnv.DefineTypeParameter(tp.Name.Lexeme, typeParam);
-            }
-            // Second, parse constraints (which may reference other type parameters)
-            foreach (var tp in funcStmt.TypeParams)
-            {
-                TypeInfo? constraint = tp.Constraint != null ? ToTypeInfo(tp.Constraint) : null;
-                TypeInfo? defaultType = tp.Default != null ? ToTypeInfo(tp.Default) : null;
-                var typeParam = new TypeInfo.TypeParameter(tp.Name.Lexeme, constraint, defaultType, tp.IsConst, tp.Variance);
-                typeParams.Add(typeParam);
-                // Redefine with the actual constraint
-                funcEnv.DefineTypeParameter(tp.Name.Lexeme, typeParam);
-            }
-        }
+        // Handle generic type parameters (constraints may reference other parameters, incl.
+        // multi-level chains like `T extends U extends V`).
+        List<TypeInfo.TypeParameter>? typeParams =
+            funcStmt.TypeParams is { Count: > 0 } tps2 ? BuildGenericTypeParameters(tps2, funcEnv) : null;
 
         // Parse parameter types and return type (environment already set above)
 
