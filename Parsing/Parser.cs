@@ -420,6 +420,12 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         return _tokens[_current + 1];
     }
 
+    private Token PeekAt(int offset)
+    {
+        int i = _current + offset;
+        return i >= _tokens.Count ? _tokens[^1] : _tokens[i];
+    }
+
     private Token Previous() => _tokens[_current - 1];
 
     // ============== AUTOMATIC SEMICOLON INSERTION (ASI) ==============

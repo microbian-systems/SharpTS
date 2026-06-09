@@ -621,8 +621,35 @@ public partial class Parser
 
         while (!Check(TokenType.RIGHT_BRACE) && !IsAtEnd())
         {
+            // Optional readonly modifier before an index signature or computed member.
+            bool bracketReadonly = Check(TokenType.READONLY) && PeekNext().Type == TokenType.LEFT_BRACKET;
+            if (bracketReadonly) Advance();
+
+            // `[` begins either an index signature (`[k: string]: T`) or a computed member name
+            // (`[Symbol.iterator](): T`, `[Symbol.match]: T`). Distinguish by `identifier :`.
+            if (Check(TokenType.LEFT_BRACKET) && !(PeekNext().Type == TokenType.IDENTIFIER && PeekAt(2).Type == TokenType.COLON))
+            {
+                Advance(); // consume [
+                string raw = "";
+                while (!Check(TokenType.RIGHT_BRACKET) && !IsAtEnd())
+                    raw += Advance().Lexeme;
+                Consume(TokenType.RIGHT_BRACKET, "Expect ']' after computed member name.");
+                string computedName = raw.StartsWith("Symbol.") ? "@@" + raw["Symbol.".Length..] : "@@" + raw;
+                bool computedOptional = Match(TokenType.QUESTION);
+                string computedType;
+                if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS))
+                {
+                    computedType = ParseMethodSignature();
+                }
+                else
+                {
+                    Consume(TokenType.COLON, "Expect ':' after computed member name.");
+                    computedType = ParseUnionType();
+                }
+                members.Add($"{computedName}{(computedOptional ? "?" : "")}: {computedType}");
+            }
             // Check for index signature: [key: string]: type
-            if (Check(TokenType.LEFT_BRACKET))
+            else if (Check(TokenType.LEFT_BRACKET))
             {
                 Advance(); // consume [
                 Consume(TokenType.IDENTIFIER, "Expect index signature key name.");

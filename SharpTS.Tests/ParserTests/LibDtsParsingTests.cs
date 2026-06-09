@@ -100,6 +100,13 @@ public class LibDtsParsingTests
     }
 
     [Fact]
+    public void ComputedSymbolName_InsideInlineObjectType_Parses()
+    {
+        // `{ [Symbol.match](string: string): T }` — a computed member name inside an inline object type.
+        Assert.NotEmpty(Parse("interface R { match(m: { [Symbol.match](string: string): string; }): string; }"));
+    }
+
+    [Fact]
     public void SymbolAsTypeName_Parses()
     {
         Assert.NotEmpty(Parse("interface SymbolConstructor { readonly prototype: Symbol; }"));
