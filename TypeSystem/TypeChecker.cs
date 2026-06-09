@@ -71,9 +71,10 @@ public partial class TypeChecker
     private readonly bool _strictNullChecks;
 
     /// <summary>Creates a type checker. <paramref name="strictNullChecks"/> defaults to true.</summary>
-    public TypeChecker(bool strictNullChecks = true)
+    public TypeChecker(bool strictNullChecks = true, int maxErrors = 10)
     {
         _strictNullChecks = strictNullChecks;
+        _diagnostics.MaxErrors = maxErrors;
     }
 
     // We need to track the current function's expected return type to validate 'return' statements
