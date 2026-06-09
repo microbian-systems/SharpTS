@@ -59,10 +59,24 @@ public partial class TypeChecker
                 CollectNamespaceMemberType(member, types);
             }
 
-            // Second pass: fully type-check all members
+            // Second pass: fully type-check all members. In recovery mode, check each member
+            // independently so one type error doesn't abort the rest of the namespace.
             foreach (var member in ns.Members)
             {
-                CheckNamespaceMember(member, values);
+                if (_recoveryMode)
+                {
+                    if (_diagnostics.HitErrorLimit) break;
+                    int? saved = _currentStatementLine;
+                    _currentStatementLine = TryGetStmtLine(member) ?? saved;
+                    try { CheckNamespaceMember(member, values); }
+                    catch (TypeMismatchException ex) { RecordTypeError(ex); }
+                    catch (TypeCheckException ex) { RecordTypeError(ex); }
+                    finally { _currentStatementLine = saved; }
+                }
+                else
+                {
+                    CheckNamespaceMember(member, values);
+                }
             }
         }
 

@@ -13,10 +13,7 @@ public partial class TypeChecker
         try
         {
             _environment = environment;
-            foreach (Stmt statement in statements)
-            {
-                CheckStmt(statement);
-            }
+            CheckStmtList(statements);
         }
         finally
         {

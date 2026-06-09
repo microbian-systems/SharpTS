@@ -16,6 +16,19 @@ namespace SharpTS.TypeSystem;
 /// </remarks>
 public partial class TypeChecker
 {
+    /// <summary>
+    /// When the current class extends a generic-class instantiation (e.g. <c>extends Box&lt;number&gt;</c>),
+    /// substitutes the superclass's type arguments into a member type resolved from it — so a
+    /// <c>super(...)</c> call or <c>super.method(...)</c> sees the instantiated parameter/return types
+    /// (e.g. <c>T</c> → <c>number</c>) rather than the generic parameters.
+    /// </summary>
+    private TypeInfo SubstituteSuperclassTypeArgs(TypeInfo memberType)
+    {
+        if (_currentClass?.Superclass is TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig)
+            return Substitute(memberType, GenericClassSubs(gc, ig.TypeArguments));
+        return memberType;
+    }
+
     private TypeInfo CheckSuper(Expr.Super expr)
     {
         if (_currentClass == null)
@@ -43,7 +56,7 @@ public partial class TypeChecker
         {
             if (superMethods != null && superMethods.TryGetValue("constructor", out var ctorType))
             {
-                return ctorType;
+                return SubstituteSuperclassTypeArgs(ctorType);
             }
             // Default constructor with no parameters
             return new TypeInfo.Function([], new TypeInfo.Void());
@@ -51,7 +64,7 @@ public partial class TypeChecker
 
         if (superMethods != null && superMethods.TryGetValue(expr.Method.Lexeme, out var methodType))
         {
-            return methodType;
+            return SubstituteSuperclassTypeArgs(methodType);
         }
 
         throw new TypeCheckException($" Property '{expr.Method.Lexeme}' does not exist on superclass '{superName}'.", tsCode: "TS2339");

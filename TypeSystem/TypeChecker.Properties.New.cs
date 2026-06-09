@@ -36,6 +36,26 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Computes the substitution map for an inherited constructor's parameters. When the constructor
+    /// is declared on a generic-class instantiation in the inheritance chain (e.g. <c>Mixed&lt;X&gt; extends
+    /// Triple&lt;string, X, number&gt;</c>), maps that class's parameters to its type arguments and resolves
+    /// those through <paramref name="currentSubs"/> (the subclass's own bindings), composing the two
+    /// (so <c>B := X</c> then <c>X := boolean</c> ⇒ <c>B := boolean</c>). When the constructor is the class's
+    /// own (owner is not an instantiation), returns <paramref name="currentSubs"/> unchanged.
+    /// </summary>
+    private Dictionary<string, TypeInfo> ComposeConstructorSubs(TypeInfo? owningClass, Dictionary<string, TypeInfo> currentSubs)
+    {
+        if (owningClass is TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig)
+        {
+            Dictionary<string, TypeInfo> composed = [];
+            for (int i = 0; i < gc.TypeParams.Count && i < ig.TypeArguments.Count; i++)
+                composed[gc.TypeParams[i].Name] = Substitute(ig.TypeArguments[i], currentSubs);
+            return composed;
+        }
+        return currentSubs;
+    }
+
+    /// <summary>
     /// Extracts the simple class name from a new expression callee for error messages.
     /// </summary>
     private static string GetCalleeClassName(Expr callee)
@@ -665,18 +685,21 @@ public partial class TypeChecker
             for (int i = 0; i < genericClass.TypeParams.Count; i++)
                 subs[genericClass.TypeParams[i].Name] = typeArgs[i];
 
-            // Check constructor with substituted parameter types (walk inheritance chain)
-            var (ctorTypeInfo, _) = FindInheritedConstructor(genericClass);
-            ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName, subs);
+            // Check constructor with substituted parameter types (walk inheritance chain). When the
+            // constructor is inherited from a generic-class instantiation, compose the substitutions.
+            var (ctorTypeInfo, owningClass) = FindInheritedConstructor(genericClass);
+            ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName, ComposeConstructorSubs(owningClass, subs));
 
             return new TypeInfo.Instance(instantiated);
         }
 
         if (type is TypeInfo.Class classType)
         {
-            // Walk inheritance chain to find constructor
-            var (ctorTypeInfo, _) = FindInheritedConstructor(classType);
-            ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName);
+            // Walk inheritance chain to find constructor. When it's inherited from a generic-class
+            // instantiation (e.g. `class StringBox extends Box<string>`), substitute that parent's
+            // type arguments so the inherited constructor's parameters resolve (T → string).
+            var (ctorTypeInfo, owningClass) = FindInheritedConstructor(classType);
+            ValidateConstructorCall(ctorTypeInfo, newExpr, qualifiedName, ComposeConstructorSubs(owningClass, []));
 
             return new TypeInfo.Instance(classType);
         }

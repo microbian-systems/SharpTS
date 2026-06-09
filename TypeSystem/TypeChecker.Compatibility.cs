@@ -307,31 +307,36 @@ public partial class TypeChecker
             return actual is TypeInfo.Void or TypeInfo.Never;
         }
 
-        // Type parameter compatibility: same name = compatible
+        // Type-parameter compatibility (TypeScript: "type parameters are not assignable to one
+        // another unless directly or indirectly constrained to one another").
         if (expected is TypeInfo.TypeParameter expectedTp && actual is TypeInfo.TypeParameter actualTp)
         {
-            return expectedTp.Name == actualTp.Name;
+            // The same parameter, or a source transitively constrained to the target (U extends … extends T).
+            return expectedTp.Name == actualTp.Name || TypeParameterConstrainedTo(actualTp, expectedTp.Name);
         }
 
-        // Type parameter as expected: actual satisfies if it matches the constraint
-        if (expected is TypeInfo.TypeParameter tp)
+        // Expected is a bare type parameter and the source is some other type. An arbitrary concrete
+        // type is NOT assignable to a type parameter — only `never`. (any / inferred and, under
+        // non-strict, null / undefined are already accepted earlier in IsCompatibleCore; a source type
+        // parameter is handled by the case above.) This is the strict TypeScript rule.
+        if (expected is TypeInfo.TypeParameter)
         {
-            if (tp.Constraint != null)
-                return IsCompatible(tp.Constraint, actual);
-            return true; // Unconstrained type parameter accepts anything
+            return actual is TypeInfo.Never;
         }
 
-        // Type parameter as actual: can be assigned to any, same type parameter, or a union containing the type parameter
+        // Source is a type parameter assigned to a non-parameter target: it is assignable wherever its
+        // apparent (constraint) type is assignable. Also assignable into a union that contains it.
         if (actual is TypeInfo.TypeParameter actualTpOnly)
         {
-            if (expected is TypeInfo.Any) return true;
-            // T is assignable to T | U (union containing T)
-            if (expected is TypeInfo.Union expUnionForTp)
+            if (expected is TypeInfo.Any or TypeInfo.Unknown) return true;
+            if (expected is TypeInfo.Union expUnionForTp &&
+                expUnionForTp.FlattenedTypes.Any(t =>
+                    t is TypeInfo.TypeParameter unionTp && unionTp.Name == actualTpOnly.Name))
             {
-                return expUnionForTp.FlattenedTypes.Any(t =>
-                    t is TypeInfo.TypeParameter unionTp && unionTp.Name == actualTpOnly.Name);
+                return true;
             }
-            return false;
+            var apparent = ApparentTypeOf(actualTpOnly);
+            return apparent != null && IsCompatible(expected, apparent);
         }
 
         // never as actual: assignable to anything (bottom type)

@@ -58,6 +58,35 @@ public partial class TypeChecker
         ClassInfoAccessor.Get(classType, c => c.Superclass, gc => gc.Superclass);
 
     /// <summary>
+    /// True when type parameter <paramref name="tp"/> is directly or indirectly constrained to a type
+    /// parameter named <paramref name="targetName"/> (i.e. <c>tp extends … extends targetName</c>).
+    /// Per TypeScript, a source parameter is assignable to a target parameter only when its constraint
+    /// chain reaches it.
+    /// </summary>
+    private static bool TypeParameterConstrainedTo(TypeInfo.TypeParameter tp, string targetName)
+    {
+        var current = tp.Constraint;
+        for (int guard = 0; current is TypeInfo.TypeParameter c && guard < 64; guard++)
+        {
+            if (c.Name == targetName) return true;
+            current = c.Constraint;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// The apparent (constraint) type of a type parameter: walks the constraint chain to the first
+    /// non-parameter constraint (e.g. <c>T extends U extends Date</c> → Date). Null if unconstrained.
+    /// </summary>
+    private static TypeInfo? ApparentTypeOf(TypeInfo.TypeParameter tp)
+    {
+        TypeInfo? current = tp.Constraint;
+        for (int guard = 0; current is TypeInfo.TypeParameter c && guard < 64; guard++)
+            current = c.Constraint;
+        return current;
+    }
+
+    /// <summary>
     /// True when <paramref name="cls"/> (or any class in its hierarchy) carries a nominal brand,
     /// i.e. declares a private or protected member. TypeScript compares classes structurally for
     /// assignment except when the target type is so branded, in which case it requires the source
