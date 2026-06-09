@@ -183,6 +183,14 @@ public partial class TypeChecker
             }
         }
 
+        // Generic function type: "<T>(x: T) => T[]". Must be checked BEFORE the generic-reference
+        // branch below — it also starts with '<' and contains '<'/'>' but is a function type, not a
+        // type reference like Box<number>.
+        if (typeName.StartsWith("<") && TryParseGenericFunctionTypeInfo(typeName, out var genericFunc))
+        {
+            return genericFunc;
+        }
+
         // Handle generic type syntax: Box<number>, Map<string, number>
         // Must NOT match inline object types that contain generic types like { x: Box<T> }
         // or tuple types that contain generics like [Box<T>, string]
@@ -638,6 +646,105 @@ public partial class TypeChecker
 
         TypeInfo returnType = ToTypeInfo(returnTypeStr);
         return new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRestParam, thisType);
+    }
+
+    /// <summary>
+    /// Parses a generic function type annotation — <c>&lt;T, U extends Base&gt;(x: T) =&gt; U</c> — into a
+    /// <see cref="TypeInfo.GenericFunction"/>. The leading <c>&lt;…&gt;</c> type-parameter list is split,
+    /// each parameter registered in a fresh type-parameter scope (two passes so a later constraint can
+    /// reference an earlier parameter), and the function body parsed within that scope so its <c>T</c>s
+    /// resolve to type parameters rather than collapsing to <c>any</c>. Returns false when the string
+    /// isn't actually a generic function type (e.g. a generic type reference), so the caller falls
+    /// through to its other branches.
+    /// </summary>
+    private bool TryParseGenericFunctionTypeInfo(string typeName, out TypeInfo result)
+    {
+        result = new TypeInfo.Any();
+
+        // Find the '>' that closes the leading '<' (balanced over nesting, e.g. <T extends Array<U>>).
+        int depth = 0, close = -1;
+        for (int i = 0; i < typeName.Length; i++)
+        {
+            char c = typeName[i];
+            if (c == '<') depth++;
+            else if (c == '>' && --depth == 0) { close = i; break; }
+        }
+        if (close < 0) return false;
+
+        // What follows the type-parameter list must itself be a function type: "(...) => ...".
+        string remainder = typeName[(close + 1)..].Trim();
+        if (!remainder.StartsWith("(") || FindOutermostArrow(remainder) < 0)
+            return false;
+
+        var entries = SplitFunctionParams(typeName[1..close].AsSpan());
+        var typeParamEnv = new TypeEnvironment(_environment);
+
+        // First pass: define every type-parameter name (unconstrained) so constraints/defaults in
+        // the second pass can reference parameters declared later in the list.
+        foreach (var entry in entries)
+        {
+            string name = ParseTypeParamEntry(entry).Name;
+            if (name.Length > 0)
+                typeParamEnv.DefineTypeParameter(name, new TypeInfo.TypeParameter(name));
+        }
+
+        var typeParams = new List<TypeInfo.TypeParameter>();
+        TypeInfo.Function func;
+        using (new EnvironmentScope(this, typeParamEnv))
+        {
+            // Second pass: resolve constraints/defaults now that all names are in scope.
+            foreach (var entry in entries)
+            {
+                var (name, constraintStr, defaultStr) = ParseTypeParamEntry(entry);
+                if (name.Length == 0) continue;
+                TypeInfo? constraint = constraintStr is not null ? ToTypeInfo(constraintStr) : null;
+                TypeInfo? defaultType = defaultStr is not null ? ToTypeInfo(defaultStr) : null;
+                var tp = new TypeInfo.TypeParameter(name, constraint, defaultType);
+                typeParams.Add(tp);
+                typeParamEnv.DefineTypeParameter(name, tp);
+            }
+
+            // Parse the function shape with the type parameters in scope.
+            if (ParseFunctionTypeInfo(remainder) is not TypeInfo.Function parsed)
+                return false;
+            func = parsed;
+        }
+
+        if (typeParams.Count == 0) return false;
+
+        result = new TypeInfo.GenericFunction(
+            typeParams, func.ParamTypes, func.ReturnType, func.RequiredParams, func.HasRestParam,
+            func.ThisType, func.ParamNames);
+        return true;
+    }
+
+    /// <summary>
+    /// Splits one type-parameter list entry into its name and optional constraint/default strings:
+    /// <c>T</c>, <c>T extends Base</c>, <c>T = Default</c>, or <c>T extends Base = Default</c>. The
+    /// <c>extends</c>/<c>=</c> are located at the top level so nested generics don't confuse the split.
+    /// </summary>
+    private static (string Name, string? Constraint, string? Default) ParseTypeParamEntry(string entry)
+    {
+        string s = entry.Trim();
+        if (s.StartsWith("const ")) s = s["const ".Length..].TrimStart(); // const type parameter modifier
+
+        string? defaultStr = null;
+        int eq = FindTopLevelChar(s, '=');
+        if (eq >= 0)
+        {
+            defaultStr = s[(eq + 1)..].Trim();
+            s = s[..eq].Trim();
+        }
+
+        string? constraintStr = null;
+        int ext = FindTopLevelKeyword(s, " extends ");
+        if (ext >= 0)
+        {
+            constraintStr = s[(ext + " extends ".Length)..].Trim();
+            s = s[..ext].Trim();
+        }
+
+        return (s, constraintStr, defaultStr);
     }
 
     /// <summary>

@@ -63,6 +63,14 @@ public partial class TypeChecker
             return RelateFunctionShapes(target.Func, instantiatedSource);
         }
 
+        // GATE (Increment 1): relating two generic signatures requires instantiating each against
+        // the other (bidirectional contextual signature instantiation). Until that's implemented,
+        // comparing their distinct opaque type parameters directly emits false positives, so defer
+        // to the lenient result — the outcome these cases had before generic function-type
+        // annotations parsed to GenericFunction. To be replaced by faithful both-generic relating.
+        if (source.IsGeneric && target.IsGeneric)
+            return true;
+
         return RelateFunctionShapes(target.Func, source.Func);
     }
 
