@@ -558,6 +558,9 @@ public partial class TypeChecker
 
         TypeInfo? thisType = null;
         List<TypeInfo> paramTypes = [];
+        int requiredParams = 0;
+        bool hasRestParam = false;
+        bool sawOptionalOrRest = false;
 
         if (!string.IsNullOrWhiteSpace(paramsSection))
         {
@@ -566,21 +569,43 @@ public partial class TypeChecker
             {
                 var param = part.Trim();
 
-                // Check for 'this' parameter: "this: Type"
+                // Check for 'this' parameter: "this: Type" (not a real parameter, doesn't count)
                 if (param.StartsWith("this:"))
                 {
                     var thisTypeStr = param.Substring(5).Trim(); // Skip "this:"
                     thisType = ToTypeInfo(thisTypeStr);
+                    continue;
                 }
-                else
+
+                // ParseFunctionTypeBody encodes a rest parameter as "...T" and an optional
+                // parameter as "T?". Strip those markers, parse the bare type, and track arity so
+                // optional/rest params are not counted as required (drives MinArity in compat checks).
+                bool isRest = param.StartsWith("...");
+                if (isRest) param = param.Substring(3).Trim();
+
+                bool isOptional = param.EndsWith("?");
+                if (isOptional) param = param.Substring(0, param.Length - 1).Trim();
+
+                paramTypes.Add(ToTypeInfo(param));
+
+                if (isRest)
                 {
-                    paramTypes.Add(ToTypeInfo(param));
+                    hasRestParam = true;
+                    sawOptionalOrRest = true;
+                }
+                else if (isOptional)
+                {
+                    sawOptionalOrRest = true;
+                }
+                else if (!sawOptionalOrRest)
+                {
+                    requiredParams++;
                 }
             }
         }
 
         TypeInfo returnType = ToTypeInfo(returnTypeStr);
-        return new TypeInfo.Function(paramTypes, returnType, -1, false, thisType);
+        return new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRestParam, thisType);
     }
 
     /// <summary>

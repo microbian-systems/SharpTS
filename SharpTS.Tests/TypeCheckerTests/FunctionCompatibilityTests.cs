@@ -509,4 +509,60 @@ public class FunctionCompatibilityTests
     }
 
     #endregion
+
+    #region Optional / rest parameter arity (call-signature assignability)
+
+    [Fact]
+    public void OptionalParameter_CountsAsFewerRequired_Assignable()
+    {
+        // `(x?: number) => number` has zero required params, so it is assignable to `() => number`.
+        var source = """
+            let target: () => number;
+            let src: (x?: number) => number = (x) => 1;
+            target = src;
+            console.log("ok");
+            """;
+        Assert.Equal("ok\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void ExtraRequiredParameter_NotAssignableToFewerParamTarget()
+    {
+        // `(x: number) => number` requires one arg; `() => number` supplies none → not assignable.
+        var source = """
+            let target: () => number;
+            let src: (x: number) => number = (x) => x;
+            target = src;
+            """;
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
+        Assert.Contains("Type Error", ex.Message);
+    }
+
+    [Fact]
+    public void RestParameter_AbsorbsTargetArity_Assignable()
+    {
+        // `(...args: number[]) => void` is assignable to a fixed-arity target with number params.
+        var source = """
+            let target: (a: number, b: number) => void;
+            let src: (...args: number[]) => void = (...a) => {};
+            target = src;
+            console.log("ok");
+            """;
+        Assert.Equal("ok\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void RestParameter_ElementTypeMismatch_NotAssignable()
+    {
+        // The rest element type must still be compatible with the target's parameters.
+        var source = """
+            let target: (a: number, b: number) => void;
+            let src: (...args: string[]) => void = (...a) => {};
+            target = src;
+            """;
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
+        Assert.Contains("Type Error", ex.Message);
+    }
+
+    #endregion
 }
