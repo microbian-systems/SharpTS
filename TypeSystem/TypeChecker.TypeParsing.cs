@@ -932,10 +932,67 @@ public partial class TypeChecker
         List<TypeInfo.CallSignature> result = [];
         foreach (var s in sigStrings)
         {
-            if (TryResolveFunction(s) is { } f)
-                result.Add(new TypeInfo.CallSignature(null, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
+            var (tps, f) = ResolveSignature(s);
+            if (f is { })
+                result.Add(new TypeInfo.CallSignature(tps, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
         }
         return result.Count > 0 ? result : null;
+    }
+
+    /// <summary>
+    /// Splits an optional leading generic prefix (<c>&lt;T, U extends C&gt;</c>) off a signature string and
+    /// resolves the remaining <c>(params) =&gt; ret</c> body to a function, with the type parameters in
+    /// scope so their references resolve. Returns the parsed type parameters (or null) and the function
+    /// (or null on failure).
+    /// </summary>
+    private (List<TypeInfo.TypeParameter>? TypeParams, TypeInfo.Function? Func) ResolveSignature(string sig)
+    {
+        sig = sig.Trim();
+        if (sig.Length == 0 || sig[0] != '<')
+            return (null, TryResolveFunction(sig));
+
+        // Find the matching '>' for the generic prefix (depth-aware).
+        int depth = 0, end = -1;
+        for (int i = 0; i < sig.Length; i++)
+        {
+            if (sig[i] == '<') depth++;
+            else if (sig[i] == '>' && --depth == 0) { end = i; break; }
+        }
+        if (end < 0) return (null, TryResolveFunction(sig));
+
+        string body = sig[(end + 1)..].Trim();
+        List<TypeInfo.TypeParameter> tps = [];
+        foreach (var raw in SplitFunctionParams(sig[1..end].AsSpan()))
+        {
+            var p = raw.Trim();
+            if (p.Length == 0) continue;
+            string name = p;
+            TypeInfo? constraint = null;
+            int ext = p.IndexOf(" extends ", StringComparison.Ordinal);
+            if (ext >= 0)
+            {
+                name = p[..ext].Trim();
+                var constraintStr = p[(ext + 9)..].Trim();
+                int defIdx = constraintStr.IndexOf(" = ", StringComparison.Ordinal);
+                if (defIdx >= 0) constraintStr = constraintStr[..defIdx].Trim();
+                try { constraint = ToTypeInfo(constraintStr); } catch { /* leave unconstrained */ }
+            }
+            else
+            {
+                int defIdx = name.IndexOf(" = ", StringComparison.Ordinal);
+                if (defIdx >= 0) name = name[..defIdx].Trim();
+            }
+            tps.Add(new TypeInfo.TypeParameter(name, constraint));
+        }
+        if (tps.Count == 0) return (null, TryResolveFunction(body));
+
+        // Resolve the body with the signature's type parameters in scope.
+        var sigEnv = new TypeEnvironment(_environment);
+        foreach (var tp in tps) sigEnv.DefineTypeParameter(tp.Name, tp);
+        using (new EnvironmentScope(this, sigEnv))
+        {
+            return (tps, TryResolveFunction(body));
+        }
     }
 
     /// <summary>
@@ -948,8 +1005,9 @@ public partial class TypeChecker
         List<TypeInfo.ConstructorSignature> result = [];
         foreach (var s in sigStrings)
         {
-            if (TryResolveFunction(s) is { } f)
-                result.Add(new TypeInfo.ConstructorSignature(null, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
+            var (tps, f) = ResolveSignature(s);
+            if (f is { })
+                result.Add(new TypeInfo.ConstructorSignature(tps, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
         }
         return result.Count > 0 ? result : null;
     }
