@@ -39,6 +39,19 @@ public partial class TypeChecker
 
     private TypeInfo ToTypeInfoCore(string typeName)
     {
+        // `readonly` array/tuple modifier (preserved by ParseTypeAnnotation): mark the underlying
+        // array/tuple readonly. Other inner types ignore the modifier.
+        if (typeName.StartsWith("readonly ", StringComparison.Ordinal))
+        {
+            var inner = ToTypeInfo(typeName["readonly ".Length..].Trim());
+            return inner switch
+            {
+                TypeInfo.Array arr => arr with { IsReadonly = true },
+                TypeInfo.Tuple tup => tup with { IsReadonly = true },
+                _ => inner
+            };
+        }
+
         // Check for type parameter in current scope first
         var typeParam = _environment.GetTypeParameter(typeName);
         if (typeParam != null)

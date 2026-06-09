@@ -244,7 +244,8 @@ public partial class Parser
 
     private Stmt InterfaceDeclaration()
     {
-        Token name = Consume(TokenType.IDENTIFIER, "Expect interface name.");
+        // Allow contextual-keyword names (e.g. lib.d.ts declares `interface Symbol`, `interface BigInt`).
+        Token name = ConsumeIdentifierName("Expect interface name.");
         List<TypeParam>? typeParams = ParseTypeParameters();
 
         // Parse extends clause: interface Foo extends Bar, Baz { ... }
@@ -267,6 +268,19 @@ public partial class Parser
 
         while (!Check(TokenType.RIGHT_BRACE) && !IsAtEnd())
         {
+            // Readonly index signature: `readonly [index: number]: T` (lib.d.ts). Consume the
+            // `readonly` modifier so the index-signature parser sees the leading '['.
+            if (Check(TokenType.READONLY) && PeekNext().Type == TokenType.LEFT_BRACKET)
+            {
+                Advance(); // consume readonly
+                var roIndexSig = TryParseIndexSignature();
+                if (roIndexSig != null)
+                {
+                    indexSignatures.Add(roIndexSig);
+                    continue;
+                }
+            }
+
             // Check for index signature: [key: string]: valueType
             if (Check(TokenType.LEFT_BRACKET))
             {
@@ -299,6 +313,38 @@ public partial class Parser
                     callSignatures.Add(callSig);
                     continue;
                 }
+            }
+
+            // Computed member name using a well-known symbol: `[Symbol.iterator](): T`,
+            // `readonly [Symbol.toStringTag]: "X"` (lib.d.ts). Index signatures were ruled out above,
+            // so a leading '[' here is a computed name. Map `Symbol.x` to the canonical `@@x`.
+            bool computedReadonly = Check(TokenType.READONLY) && PeekNext().Type == TokenType.LEFT_BRACKET;
+            if (computedReadonly) Advance(); // consume readonly
+            if (Check(TokenType.LEFT_BRACKET))
+            {
+                int computedLine = Peek().Line;
+                Advance(); // consume '['
+                string raw = "";
+                while (!Check(TokenType.RIGHT_BRACKET) && !IsAtEnd())
+                    raw += Advance().Lexeme;
+                Consume(TokenType.RIGHT_BRACKET, "Expect ']' after computed member name.");
+                string computedName = raw.StartsWith("Symbol.") ? "@@" + raw["Symbol.".Length..] : "@@" + raw;
+                var computedTok = new Token(TokenType.IDENTIFIER, computedName, null, computedLine);
+
+                bool computedOptional = Match(TokenType.QUESTION);
+                string computedType;
+                if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS))
+                {
+                    computedType = ParseMethodSignature();
+                }
+                else
+                {
+                    Consume(TokenType.COLON, "Expect ':' after computed member name.");
+                    computedType = ParseTypeAnnotation();
+                }
+                ConsumeInterfaceMemberSeparator();
+                members.Add(new Stmt.InterfaceMember(computedTok, computedType, computedOptional, computedReadonly));
+                continue;
             }
 
             // Check for readonly modifier
@@ -517,6 +563,14 @@ public partial class Parser
             keyType = TokenType.TYPE_SYMBOL;
             Advance();
         }
+        else if (Check(TokenType.IDENTIFIER))
+        {
+            // Non-primitive key type, e.g. a type alias such as `PropertyKey`
+            // (= `string | number | symbol`). lib.d.ts uses these. Model as a string
+            // index — the broadest key kind — so the declaration parses.
+            keyType = TokenType.TYPE_STRING;
+            Advance();
+        }
         else
         {
             _current = savedPosition;
@@ -575,13 +629,15 @@ public partial class Parser
         {
             do
             {
+                bool isRest = Match(TokenType.DOT_DOT_DOT);
                 ConsumeIdentifierName("Expect parameter name.");
-                if (Match(TokenType.QUESTION))
-                {
-                    // Optional parameter marker
-                }
+                bool isOptional = Match(TokenType.QUESTION);
                 Consume(TokenType.COLON, "Expect ':' after parameter name.");
                 string paramType = ParseTypeAnnotation();
+                // Encode rest/optional the same way ParseFunctionTypeBody does so the signature
+                // resolver models arity correctly.
+                if (isRest) paramType = "..." + paramType;
+                else if (isOptional) paramType += "?";
                 paramTypes.Add(paramType);
             } while (Match(TokenType.COMMA));
         }

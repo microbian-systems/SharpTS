@@ -420,6 +420,12 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         return _tokens[_current + 1];
     }
 
+    private Token PeekAt(int offset)
+    {
+        int i = _current + offset;
+        return i >= _tokens.Count ? _tokens[^1] : _tokens[i];
+    }
+
     private Token Previous() => _tokens[_current - 1];
 
     // ============== AUTOMATIC SEMICOLON INSERTION (ASI) ==============
@@ -504,7 +510,11 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         Check(TokenType.TEMPLATE_FULL) ||  // for template literal types: `literal`
         Check(TokenType.TEMPLATE_HEAD) ||  // for template literal types: `prefix${
         Check(TokenType.TYPEOF) ||  // for typeof in type position: typeof someVar
-        Check(TokenType.KEYOF);  // for keyof operator: keyof T
+        Check(TokenType.KEYOF) ||  // for keyof operator: keyof T
+        Check(TokenType.READONLY) ||  // readonly array/tuple modifier: readonly T[], readonly [A, B]
+        Check(TokenType.TYPE_SYMBOL) || Check(TokenType.TYPE_BIGINT) ||  // symbol / bigint primitive types
+        Check(TokenType.SYMBOL) || Check(TokenType.BIGINT) ||  // `Symbol` / `BigInt` as type names
+        Check(TokenType.THIS);  // polymorphic `this` type
 
     // ============== GENERIC TYPE CLOSING BRACKET HANDLING ==============
     //

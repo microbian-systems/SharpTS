@@ -34,9 +34,8 @@ public partial class Parser
             }
         }
 
-        // Check for "x is T" pattern (regular type predicate)
-        // Must be: identifier followed by 'is' keyword
-        if (Check(TokenType.IDENTIFIER) && PeekNext().Type == TokenType.IS)
+        // Check for "x is T" / "this is T" type predicate: an identifier (or `this`) followed by `is`.
+        if ((Check(TokenType.IDENTIFIER) || Check(TokenType.THIS)) && PeekNext().Type == TokenType.IS)
         {
             string paramName = Advance().Lexeme;
             Consume(TokenType.IS, "Expected 'is' after parameter name.");
@@ -83,10 +82,10 @@ public partial class Parser
                 // Parameter can be: name: type, name?: type, name (bare, implicit any),
                 // name? (bare optional, implicit any), or just a type expression.
                 string paramType;
-                if (Check(TokenType.IDENTIFIER) &&
+                if ((Check(TokenType.IDENTIFIER) || IsContextualKeyword(Peek().Type)) &&
                     (PeekNext().Type == TokenType.COLON || PeekNext().Type == TokenType.QUESTION))
                 {
-                    Advance(); // skip name
+                    Advance(); // skip name (may be a contextual keyword, e.g. `set: Set<T>`)
                     if (Match(TokenType.QUESTION))
                     {
                         isOptional = true;
@@ -232,6 +231,15 @@ public partial class Parser
     private string ParsePrimaryType()
     {
         string typeName;
+
+        // `readonly` array/tuple modifier: `readonly T[]`, `readonly [A, B]` (lib.d.ts). Handled at
+        // the primary-type level so it binds correctly inside unions (`readonly T[] | U`) and other
+        // nested positions. ToTypeInfo marks the array/tuple readonly.
+        if (Check(TokenType.READONLY))
+        {
+            Advance();
+            return "readonly " + ParsePrimaryType();
+        }
 
         // Handle infer keyword for conditional types: infer U, or constrained infer: infer U extends C
         if (Match(TokenType.INFER))
@@ -452,11 +460,20 @@ public partial class Parser
                  Check(TokenType.TYPE_BOOLEAN) || Check(TokenType.TYPE_SYMBOL) ||
                  Check(TokenType.TYPE_BIGINT) ||
                  Check(TokenType.IDENTIFIER) ||
+                 Check(TokenType.SYMBOL) || Check(TokenType.BIGINT) ||  // `Symbol`/`BigInt` as type names (lib.d.ts: `interface Symbol`)
                  Check(TokenType.THIS) ||  // polymorphic 'this' type (e.g. `): this`, `keyof this`)
                  Check(TokenType.VOID) ||  // void type
                  Check(TokenType.NULL) || Check(TokenType.UNDEFINED) || Check(TokenType.UNKNOWN) || Check(TokenType.NEVER))
         {
             typeName = Advance().Lexeme;
+
+            // Qualified type name (namespace member): `Intl.CollatorOptions`, `NodeJS.Timer`.
+            while (Check(TokenType.DOT) &&
+                   (PeekNext().Type == TokenType.IDENTIFIER || IsContextualKeyword(PeekNext().Type)))
+            {
+                Advance(); // consume '.'
+                typeName += "." + Advance().Lexeme;
+            }
         }
         else
         {
@@ -604,8 +621,35 @@ public partial class Parser
 
         while (!Check(TokenType.RIGHT_BRACE) && !IsAtEnd())
         {
+            // Optional readonly modifier before an index signature or computed member.
+            bool bracketReadonly = Check(TokenType.READONLY) && PeekNext().Type == TokenType.LEFT_BRACKET;
+            if (bracketReadonly) Advance();
+
+            // `[` begins either an index signature (`[k: string]: T`) or a computed member name
+            // (`[Symbol.iterator](): T`, `[Symbol.match]: T`). Distinguish by `identifier :`.
+            if (Check(TokenType.LEFT_BRACKET) && !(PeekNext().Type == TokenType.IDENTIFIER && PeekAt(2).Type == TokenType.COLON))
+            {
+                Advance(); // consume [
+                string raw = "";
+                while (!Check(TokenType.RIGHT_BRACKET) && !IsAtEnd())
+                    raw += Advance().Lexeme;
+                Consume(TokenType.RIGHT_BRACKET, "Expect ']' after computed member name.");
+                string computedName = raw.StartsWith("Symbol.") ? "@@" + raw["Symbol.".Length..] : "@@" + raw;
+                bool computedOptional = Match(TokenType.QUESTION);
+                string computedType;
+                if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS))
+                {
+                    computedType = ParseMethodSignature();
+                }
+                else
+                {
+                    Consume(TokenType.COLON, "Expect ':' after computed member name.");
+                    computedType = ParseUnionType();
+                }
+                members.Add($"{computedName}{(computedOptional ? "?" : "")}: {computedType}");
+            }
             // Check for index signature: [key: string]: type
-            if (Check(TokenType.LEFT_BRACKET))
+            else if (Check(TokenType.LEFT_BRACKET))
             {
                 Advance(); // consume [
                 Consume(TokenType.IDENTIFIER, "Expect index signature key name.");
