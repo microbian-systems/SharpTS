@@ -526,10 +526,7 @@ public partial class TypeChecker
             // mirror that to accept well-formed mutually-recursive inner fns.
             HoistFunctionDeclarations(funcStmt.Body);
 
-            foreach (var bodyStmt in funcStmt.Body)
-            {
-                CheckStmt(bodyStmt);
-            }
+            CheckStmtList(funcStmt.Body);
 
             // Resolve inferred return type from collected return expressions
             if (inferringReturnType)

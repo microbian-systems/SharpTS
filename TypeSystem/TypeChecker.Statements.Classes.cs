@@ -680,10 +680,7 @@ public partial class TypeChecker
                     // Abstract methods have no body to check
                     if (method.Body != null)
                     {
-                        foreach (var bodyStmt in method.Body)
-                        {
-                            CheckStmt(bodyStmt);
-                        }
+                        CheckStmtList(method.Body);
                     }
 
                     // Resolve inferred method return type
@@ -792,10 +789,7 @@ public partial class TypeChecker
 
                     try
                     {
-                        foreach (var bodyStmt in accessor.Body)
-                        {
-                            CheckStmt(bodyStmt);
-                        }
+                        CheckStmtList(accessor.Body);
                     }
                     finally
                     {

@@ -1168,10 +1168,7 @@ public partial class TypeChecker
                 HoistFunctionDeclarations(arrow.BlockBody);
 
                 // Block body - check statements
-                foreach (var stmt in arrow.BlockBody)
-                {
-                    CheckStmt(stmt);
-                }
+                CheckStmtList(arrow.BlockBody);
 
                 // Resolve inferred return type for block-body arrows
                 if (inferringArrowReturn)

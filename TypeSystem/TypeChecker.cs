@@ -421,6 +421,42 @@ public partial class TypeChecker
     private int? _currentStatementLine = null;
 
     /// <summary>
+    /// True while checking via <see cref="CheckWithRecovery"/>. In this mode, a type error in one
+    /// statement is recorded and checking continues with the next statement (so all errors surface,
+    /// each at its own line) rather than the first error aborting the enclosing scope.
+    /// </summary>
+    private bool _recoveryMode = false;
+
+    /// <summary>
+    /// Checks a list of statements. In recovery mode each statement is checked independently — a
+    /// <see cref="TypeCheckException"/> is recorded against that statement's line and the remaining
+    /// statements are still checked. In strict mode the first error propagates as before.
+    /// </summary>
+    private void CheckStmtList(List<Stmt> statements)
+    {
+        if (!_recoveryMode)
+        {
+            foreach (Stmt statement in statements)
+                CheckStmt(statement);
+            return;
+        }
+
+        foreach (Stmt statement in statements)
+        {
+            if (_diagnostics.HitErrorLimit) return;
+            int? saved = _currentStatementLine;
+            _currentStatementLine = TryGetStmtLine(statement) ?? saved;
+            try
+            {
+                CheckStmt(statement);
+            }
+            catch (TypeMismatchException ex) { RecordTypeError(ex); }
+            catch (TypeCheckException ex) { RecordTypeError(ex); }
+            finally { _currentStatementLine = saved; }
+        }
+    }
+
+    /// <summary>
     /// Sets the file path for source location reporting.
     /// </summary>
     public TypeChecker WithFilePath(string? filePath)
@@ -687,6 +723,7 @@ public partial class TypeChecker
     public TypeCheckDiagnosticResult CheckWithRecovery(List<Stmt> statements)
     {
         _diagnostics.Clear();
+        _recoveryMode = true;
         // Clear caches for fresh check
         _compatibilityCache = null;
         _expandedTypeAliasCache = null;
@@ -714,7 +751,10 @@ public partial class TypeChecker
         foreach (Stmt statement in statements)
         {
             if (_diagnostics.HitErrorLimit)
+            {
+                _recoveryMode = false;
                 return new TypeCheckDiagnosticResult(_typeMap, _diagnostics.Diagnostics, HitErrorLimit: true);
+            }
 
             _currentStatementLine = TryGetStmtLine(statement);
             try
@@ -735,6 +775,7 @@ public partial class TypeChecker
             }
         }
         _currentStatementLine = null;
+        _recoveryMode = false;
 
         return new TypeCheckDiagnosticResult(_typeMap, _diagnostics.Diagnostics);
     }
