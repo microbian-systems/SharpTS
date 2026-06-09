@@ -254,6 +254,15 @@ public partial class Parser
         {
             do
             {
+                // Explicit `this` parameter (e.g. `call(this: Function, ...)` in lib.d.ts) — a
+                // type-only annotation, not a runtime parameter. Consume and skip it.
+                if (Check(TokenType.THIS))
+                {
+                    Advance(); // this
+                    if (Match(TokenType.COLON)) ParseTypeAnnotation();
+                    continue;
+                }
+
                 // Check for rest parameter
                 bool isRest = Match(TokenType.DOT_DOT_DOT);
 

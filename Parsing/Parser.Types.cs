@@ -34,9 +34,8 @@ public partial class Parser
             }
         }
 
-        // Check for "x is T" pattern (regular type predicate)
-        // Must be: identifier followed by 'is' keyword
-        if (Check(TokenType.IDENTIFIER) && PeekNext().Type == TokenType.IS)
+        // Check for "x is T" / "this is T" type predicate: an identifier (or `this`) followed by `is`.
+        if ((Check(TokenType.IDENTIFIER) || Check(TokenType.THIS)) && PeekNext().Type == TokenType.IS)
         {
             string paramName = Advance().Lexeme;
             Consume(TokenType.IS, "Expected 'is' after parameter name.");
@@ -232,6 +231,15 @@ public partial class Parser
     private string ParsePrimaryType()
     {
         string typeName;
+
+        // `readonly` array/tuple modifier: `readonly T[]`, `readonly [A, B]` (lib.d.ts). Handled at
+        // the primary-type level so it binds correctly inside unions (`readonly T[] | U`) and other
+        // nested positions. ToTypeInfo marks the array/tuple readonly.
+        if (Check(TokenType.READONLY))
+        {
+            Advance();
+            return "readonly " + ParsePrimaryType();
+        }
 
         // Handle infer keyword for conditional types: infer U, or constrained infer: infer U extends C
         if (Match(TokenType.INFER))
@@ -452,11 +460,20 @@ public partial class Parser
                  Check(TokenType.TYPE_BOOLEAN) || Check(TokenType.TYPE_SYMBOL) ||
                  Check(TokenType.TYPE_BIGINT) ||
                  Check(TokenType.IDENTIFIER) ||
+                 Check(TokenType.SYMBOL) || Check(TokenType.BIGINT) ||  // `Symbol`/`BigInt` as type names (lib.d.ts: `interface Symbol`)
                  Check(TokenType.THIS) ||  // polymorphic 'this' type (e.g. `): this`, `keyof this`)
                  Check(TokenType.VOID) ||  // void type
                  Check(TokenType.NULL) || Check(TokenType.UNDEFINED) || Check(TokenType.UNKNOWN) || Check(TokenType.NEVER))
         {
             typeName = Advance().Lexeme;
+
+            // Qualified type name (namespace member): `Intl.CollatorOptions`, `NodeJS.Timer`.
+            while (Check(TokenType.DOT) &&
+                   (PeekNext().Type == TokenType.IDENTIFIER || IsContextualKeyword(PeekNext().Type)))
+            {
+                Advance(); // consume '.'
+                typeName += "." + Advance().Lexeme;
+            }
         }
         else
         {

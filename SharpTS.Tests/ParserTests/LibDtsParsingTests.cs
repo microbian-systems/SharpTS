@@ -1,0 +1,80 @@
+using SharpTS.Parsing;
+using Xunit;
+
+namespace SharpTS.Tests.ParserTests;
+
+/// <summary>
+/// Parser coverage for dense `.d.ts` constructs that the bundled TypeScript lib files use
+/// (es5.d.ts / es2015.core.d.ts now parse clean). Part of #99 Phase A (parser hardening).
+/// </summary>
+public class LibDtsParsingTests
+{
+    private static System.Collections.Generic.List<Stmt> Parse(string source)
+    {
+        var parseResult = new Parser(new Lexer(source).ScanTokens()).Parse();
+        Assert.True(parseResult.IsSuccess,
+            parseResult.Diagnostics.Count > 0 ? parseResult.Diagnostics[0].ToString() : "parse failed");
+        return parseResult.Statements;
+    }
+
+    [Fact]
+    public void Interface_NamedAfterBuiltinSymbol_Parses()
+    {
+        // lib.d.ts declares `interface Symbol { ... }` / `interface BigInt { ... }`.
+        Assert.NotEmpty(Parse("interface Symbol { toString(): string; }"));
+        Assert.NotEmpty(Parse("interface BigInt { valueOf(): bigint; }"));
+    }
+
+    [Fact]
+    public void IndexSignature_WithTypeAliasKey_Parses()
+    {
+        // `[key: PropertyKey]: T` — a non-primitive (type-alias) index key.
+        Assert.NotEmpty(Parse("interface M { [key: PropertyKey]: number; }"));
+    }
+
+    [Fact]
+    public void Method_WithThisParameterAndRest_Parses()
+    {
+        // `call(this: Function, thisArg: any, ...argArray: any[]): any`.
+        Assert.NotEmpty(Parse("interface F { call(this: Function, thisArg: any, ...argArray: any[]): any; }"));
+    }
+
+    [Fact]
+    public void ReadonlyIndexSignature_Parses()
+    {
+        Assert.NotEmpty(Parse("interface S { readonly [index: number]: string; }"));
+    }
+
+    [Fact]
+    public void ReadonlyArrayType_Parses()
+    {
+        Assert.NotEmpty(Parse("interface T { raw: readonly string[]; }"));
+    }
+
+    [Fact]
+    public void ReadonlyArray_InsideUnion_Parses()
+    {
+        // `readonly` must bind to the array within a union member.
+        Assert.NotEmpty(Parse("interface T { raw: readonly string[] | ArrayLike<string>; }"));
+    }
+
+    [Fact]
+    public void ThisTypePredicate_Parses()
+    {
+        // `): this is readonly S[]` — a `this` type predicate.
+        Assert.NotEmpty(Parse("interface A<T> { every<S extends T>(p: (v: T) => v is S): this is readonly S[]; }"));
+    }
+
+    [Fact]
+    public void QualifiedTypeName_Parses()
+    {
+        // `Intl.CollatorOptions` — a namespace-qualified type reference.
+        Assert.NotEmpty(Parse("interface S { m(c?: Intl.CollatorOptions): number; }"));
+    }
+
+    [Fact]
+    public void SymbolAsTypeName_Parses()
+    {
+        Assert.NotEmpty(Parse("interface SymbolConstructor { readonly prototype: Symbol; }"));
+    }
+}
