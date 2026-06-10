@@ -234,6 +234,39 @@ public class NetModuleTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NetSocketCloseEmittedOnceWhenDestroyedAfterEnd(ExecutionMode mode)
+    {
+        // Node emits 'close' exactly once per socket lifetime. Calling destroy()
+        // from an 'end' handler used to fire it twice — once from Destroy and
+        // once from the read-loop EOF path (#213).
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = """
+                import * as net from 'net';
+                const server = net.createServer((socket) => {
+                    socket.end();
+                });
+                server.listen(0, () => {
+                    const addr = server.address();
+                    const client = net.createConnection({ port: addr.port, host: '127.0.0.1' });
+                    let closes = 0;
+                    client.on('close', () => { closes++; });
+                    client.on('end', () => {
+                        client.destroy();
+                        setTimeout(() => {
+                            console.log('close events: ' + closes);
+                            server.close();
+                        }, 100);
+                    });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Contains("close events: 1", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NetSocketProperties(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

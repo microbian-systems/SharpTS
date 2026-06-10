@@ -398,6 +398,19 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
             il.Emit(OpCodes.Pop);
 
+            // Skip 'close' if already emitted (e.g. an 'end' listener called
+            // destroy(), whose Destroy body fired 'close' synchronously).
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, socketField);
+            il.Emit(OpCodes.Ldfld, _netSocketCloseEmittedField);
+            il.Emit(OpCodes.Brtrue, checkReading);
+
+            // _socket._closeEmitted = true
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, socketField);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Stfld, _netSocketCloseEmittedField);
+
             // _socket.Emit("close", new object[] { false })
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, socketField);
