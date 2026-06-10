@@ -385,28 +385,47 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4, 5007);
         il.Emit(OpCodes.Stloc, intervalLocal);
 
-        // Check if arg1 is options dict with "interval"
+        // Check if arg1 is an options bag with "interval". Compiled object literals
+        // are Dictionary<string, object?> — NOT $IHasFields (only class instances
+        // implement that) — so both shapes must be handled or literal options bags
+        // (the normal calling convention) are silently ignored.
         var afterOptionsLabel = il.DefineLabel();
+        var haveValueLabel = il.DefineLabel();
+        var notHasFieldsLabel = il.DefineLabel();
+        var intervalObjLocal = il.DeclareLocal(_types.Object);
+
+        // if (arg1 is $IHasFields hf) intervalObj = hf.GetProperty("interval")
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
-        il.Emit(OpCodes.Brfalse, afterOptionsLabel);
-
+        il.Emit(OpCodes.Brfalse, notHasFieldsLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
         il.Emit(OpCodes.Ldstr, "interval");
         il.Emit(OpCodes.Callvirt, runtime.IHasFieldsGetProperty);
-        var intervalObjLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Stloc, intervalObjLocal);
+        il.Emit(OpCodes.Br, haveValueLabel);
 
-        var notDoubleLabel = il.DefineLabel();
+        // else if (arg1 is Dictionary<string, object> d) d.TryGetValue("interval", out intervalObj)
+        il.MarkLabel(notHasFieldsLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, afterOptionsLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Ldstr, "interval");
+        il.Emit(OpCodes.Ldloca, intervalObjLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue")!);
+        il.Emit(OpCodes.Pop);
+
+        // if (intervalObj is double) interval = (int)(double)intervalObj
+        il.MarkLabel(haveValueLabel);
         il.Emit(OpCodes.Ldloc, intervalObjLocal);
         il.Emit(OpCodes.Isinst, typeof(double));
-        il.Emit(OpCodes.Brfalse, notDoubleLabel);
+        il.Emit(OpCodes.Brfalse, afterOptionsLabel);
         il.Emit(OpCodes.Ldloc, intervalObjLocal);
         il.Emit(OpCodes.Unbox_Any, typeof(double));
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Stloc, intervalLocal);
-        il.MarkLabel(notDoubleLabel);
 
         il.MarkLabel(afterOptionsLabel);
 
