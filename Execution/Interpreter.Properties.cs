@@ -90,7 +90,7 @@ public partial class Interpreter
                 ["constructor"] = userFn,
             });
             var bound = userFn.BindThis(newThis);
-            var result = bound.Call(this, fnArgs);
+            var result = bound.CallV2(this, CallableInterop.ToRuntimeValues(fnArgs)).ToObject();
             // JS spec: if constructor returns an object, use it; otherwise use the new `this`.
             return result is SharpTSObject or SharpTSInstance or SharpTSArray
                 ? result
@@ -123,7 +123,7 @@ public partial class Interpreter
                 ["constructor"] = userArrowFn,
             });
             var bound = userArrowFn.Bind(newThis);
-            var result = bound.Call(this, arrowArgs);
+            var result = bound.CallV2(this, CallableInterop.ToRuntimeValues(arrowArgs)).ToObject();
             return result is SharpTSObject or SharpTSInstance or SharpTSArray
                 ? result
                 : newThis;
@@ -146,7 +146,7 @@ public partial class Interpreter
         if (klass is ISharpTSCallable callable && klass is not SharpTSClass && klass is not BoundFunction)
         {
             List<object?> ctorArgs = await ctx.EvaluateAllAsync(newExpr.Arguments);
-            return callable.Call(this, ctorArgs);
+            return callable.CallV2(this, CallableInterop.ToRuntimeValues(ctorArgs)).ToObject();
         }
 
         // Bound functions cannot be used as constructors (JS spec compliance)
@@ -170,7 +170,7 @@ public partial class Interpreter
         }
 
         List<object?> arguments = await ctx.EvaluateAllAsync(newExpr.Arguments);
-        return sharpClass.Call(this, arguments);
+        return sharpClass.CallV2(this, CallableInterop.ToRuntimeValues(arguments)).ToObject();
     }
 
     /// <summary>
@@ -209,7 +209,7 @@ public partial class Interpreter
                 ["constructor"] = userFn,
             });
             var bound = userFn.BindThis(newThis);
-            var result = bound.Call(this, [.. args]);
+            var result = bound.CallV2(this, CallableInterop.ToRuntimeValues([.. args])).ToObject();
             return result is SharpTSObject or SharpTSInstance or SharpTSArray
                 or SharpTSRegExp or SharpTSDate or SharpTSMap or SharpTSSet
                 ? result : newThis;
@@ -227,7 +227,7 @@ public partial class Interpreter
                 ["constructor"] = arrowFn,
             });
             var bound = arrowFn.Bind(newThis);
-            var result = bound.Call(this, [.. args]);
+            var result = bound.CallV2(this, CallableInterop.ToRuntimeValues([.. args])).ToObject();
             return result is SharpTSObject or SharpTSInstance or SharpTSArray
                 or SharpTSRegExp or SharpTSDate or SharpTSMap or SharpTSSet
                 ? result : newThis;
@@ -241,7 +241,7 @@ public partial class Interpreter
         // Fallback: treat as a callable; Reflect.construct shape.
         if (callable is ISharpTSCallable c)
         {
-            return c.Call(this, [.. args]);
+            return c.CallV2(this, CallableInterop.ToRuntimeValues([.. args])).ToObject();
         }
         throw new InterpreterException("TypeError: Construct called on non-callable.");
     }
@@ -314,7 +314,7 @@ public partial class Interpreter
                 ["constructor"] = userFn,
             });
             var bound = userFn.BindThis(newThis);
-            var result = bound.Call(this, fnArgs);
+            var result = bound.CallV2(this, CallableInterop.ToRuntimeValues(fnArgs)).ToObject();
             return RuntimeValue.FromBoxed(result is SharpTSObject or SharpTSInstance or SharpTSArray
                 or SharpTSRegExp or SharpTSDate or SharpTSMap or SharpTSSet
                 ? result
@@ -343,7 +343,7 @@ public partial class Interpreter
                 ["constructor"] = userArrowFn,
             });
             var bound = userArrowFn.Bind(newThis);
-            var result = bound.Call(this, arrowArgs);
+            var result = bound.CallV2(this, CallableInterop.ToRuntimeValues(arrowArgs)).ToObject();
             return RuntimeValue.FromBoxed(result is SharpTSObject or SharpTSInstance or SharpTSArray
                 or SharpTSRegExp or SharpTSDate or SharpTSMap or SharpTSSet
                 ? result
@@ -366,7 +366,7 @@ public partial class Interpreter
             {
                 ctorArgs.Add(Evaluate(arg));
             }
-            return RuntimeValue.FromBoxed(callable.Call(this, ctorArgs));
+            return callable.CallV2(this, CallableInterop.ToRuntimeValues(ctorArgs));
         }
 
         // Bound functions cannot be used as constructors (JS spec compliance)
@@ -440,7 +440,7 @@ public partial class Interpreter
                 // by BuiltInMethod.CreateConstant / BuiltInStaticBuilder.CallableConstant.
                 if (member is BuiltInMethod bm && bm.IsConstant)
                 {
-                    return RuntimeValue.FromBoxed(bm.Call(this, []));
+                    return bm.CallV2(this, []);
                 }
                 return RuntimeValue.FromObject(member);
             }
@@ -545,7 +545,7 @@ public partial class Interpreter
             // Accessor defined via Object.defineProperty(fn, name, {get, set}).
             if (fn.TryGetAccessor(memberName, out var getter, out _) && getter != null)
             {
-                return RuntimeValue.FromBoxed(getter.Call(this, []));
+                return getter.CallV2(this, []);
             }
             if (fn.TryGetProperty(memberName, out var userProp))
                 return RuntimeValue.FromBoxed(userProp);
@@ -560,7 +560,7 @@ public partial class Interpreter
         if (obj is SharpTSArrowFunction arrowFn)
         {
             if (arrowFn.TryGetAccessor(memberName, out var getter, out _) && getter != null)
-                return RuntimeValue.FromBoxed(getter.Call(this, []));
+                return getter.CallV2(this, []);
             if (arrowFn.TryGetProperty(memberName, out var arrowProp))
                 return RuntimeValue.FromBoxed(arrowProp);
             // Lazy-init `fn.prototype` for function expressions (HasOwnThis).
@@ -594,7 +594,7 @@ public partial class Interpreter
         if (obj is SharpTSRegExp regex)
         {
             if (regex.TryGetAccessor(memberName, out var rxGetter, out _) && rxGetter != null)
-                return RuntimeValue.FromBoxed(rxGetter.Call(this, []));
+                return rxGetter.CallV2(this, []);
             if (memberName == "flags")
                 return RuntimeValue.FromBoxed(Runtime.BuiltIns.RegExpBuiltIns.GetMember(regex, memberName, this));
             // ECMA-262 §22.2.6.1: `constructor` is inherited from
@@ -709,7 +709,7 @@ public partial class Interpreter
         var staticGetter = klass.FindStaticGetter(memberName);
         if (staticGetter != null)
         {
-            return staticGetter.BindStatic(klass).Call(this, []);
+            return staticGetter.BindStatic(klass).CallV2(this, []).ToObject();
         }
 
         // Try static method
@@ -781,7 +781,7 @@ public partial class Interpreter
         {
             // Invoke the getter with 'this' bound to the object
             var boundGetter = BindAccessorToObject(getter, simpleObj);
-            return boundGetter.Call(this, []);
+            return boundGetter.CallV2(this, []).ToObject();
         }
 
         // Own property
@@ -807,7 +807,7 @@ public partial class Interpreter
             if (protoGetter != null)
             {
                 var boundProtoGetter = BindAccessorToObject(protoGetter, simpleObj);
-                return boundProtoGetter.Call(this, []);
+                return boundProtoGetter.CallV2(this, []).ToObject();
             }
             if (proto.HasProperty(memberName))
             {
@@ -945,7 +945,7 @@ public partial class Interpreter
         if (obj is SharpTSFunction fn)
         {
             if (fn.TryGetAccessor(memberName, out var getter, out _) && getter != null)
-                return getter.Call(this, []);
+                return getter.CallV2(this, []).ToObject();
             if (fn.TryGetProperty(memberName, out var v)) return v;
             if (memberName == "name") return fn.TryGetProperty("name", out var n) ? n : "";
             if (memberName == "length") return (double)fn.Arity();
@@ -963,7 +963,7 @@ public partial class Interpreter
         if (obj is SharpTSArrowFunction arrowFn2)
         {
             if (arrowFn2.TryGetAccessor(memberName, out var arrowGetter, out _) && arrowGetter != null)
-                return arrowGetter.Call(this, []);
+                return arrowGetter.CallV2(this, []).ToObject();
             if (arrowFn2.TryGetProperty(memberName, out var arrowProp2)) return arrowProp2;
             if (memberName == "length") return (double)arrowFn2.Arity();
             return SharpTSUndefined.Instance;
@@ -1167,7 +1167,7 @@ public partial class Interpreter
             // Accessor set path (Object.defineProperty setter).
             if (userFn.TryGetAccessor(set.Name.Lexeme, out _, out var setter) && setter != null)
             {
-                setter.Call(this, [value]);
+                setter.CallV2(this, [RuntimeValue.FromBoxed(value)]);
                 return value;
             }
             userFn.SetProperty(set.Name.Lexeme, value);
@@ -1177,7 +1177,7 @@ public partial class Interpreter
         {
             if (arrowFn.TryGetAccessor(set.Name.Lexeme, out _, out var arrowSetter) && arrowSetter != null)
             {
-                arrowSetter.Call(this, [value]);
+                arrowSetter.CallV2(this, [RuntimeValue.FromBoxed(value)]);
                 return value;
             }
             arrowFn.SetProperty(set.Name.Lexeme, value);
@@ -1228,7 +1228,7 @@ public partial class Interpreter
                 var staticSetterClass = klass.FindStaticSetter(memberName);
                 if (staticSetterClass != null)
                 {
-                    staticSetterClass.BindStatic(klass).Call(this, [value]);
+                    staticSetterClass.BindStatic(klass).CallV2(this, [RuntimeValue.FromBoxed(value)]);
                     return value;
                 }
                 klass.SetStaticProperty(memberName, value);
@@ -1252,7 +1252,7 @@ public partial class Interpreter
                 if (regex.TryGetAccessor(memberName, out _, out var userSetter)
                     && userSetter != null)
                 {
-                    userSetter.Call(this, [value]);
+                    userSetter.CallV2(this, [RuntimeValue.FromBoxed(value)]);
                     return value;
                 }
                 if (memberName == "lastIndex")
@@ -1308,7 +1308,7 @@ public partial class Interpreter
             if (setter != null)
             {
                 var boundSetter = BindAccessorToObject(setter, simpleObj);
-                boundSetter.Call(this, [value]);
+                boundSetter.CallV2(this, [RuntimeValue.FromBoxed(value)]);
                 return value;
             }
 
@@ -1508,7 +1508,7 @@ public partial class Interpreter
                 throw new InterpreterException($"Static private method '{methodName}' does not exist on class '{klass.Name}'.");
             }
 
-            return RuntimeValue.FromBoxed(method.Call(this, arguments));
+            return method.CallV2(this, CallableInterop.ToRuntimeValues(arguments));
         }
 
         // Instance private method call
@@ -1524,7 +1524,7 @@ public partial class Interpreter
             }
 
             // Bind method to instance
-            return RuntimeValue.FromBoxed(SharpTSClass.BindMethod(method, instance).Call(this, arguments));
+            return SharpTSClass.BindMethod(method, instance).CallV2(this, CallableInterop.ToRuntimeValues(arguments));
         }
 
         throw new InterpreterException($"Cannot call private method '{methodName}' on non-class value.");

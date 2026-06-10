@@ -82,6 +82,9 @@ public class SharpTSClass(
     }
 
     public virtual object? Call(Interpreter interpreter, List<object?> arguments)
+        => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
+
+    public virtual RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         SharpTSInstance instance = new(this);
 
@@ -98,15 +101,15 @@ public class SharpTSClass(
         ISharpTSCallable? constructor = FindMethod("constructor");
         if (constructor != null)
         {
-            BindMethod(constructor, instance).Call(interpreter, arguments);
+            BindMethod(constructor, instance).CallV2(interpreter, arguments);
         }
         else if (Superclass != null)
         {
             // If no constructor, call super constructor
-            Superclass.Call(interpreter, arguments);
+            Superclass.CallV2(interpreter, arguments);
         }
 
-        return instance;
+        return RuntimeValue.FromObject(instance);
     }
 
     /// <summary>

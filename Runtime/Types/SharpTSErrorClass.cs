@@ -158,9 +158,10 @@ public class SharpTSErrorClass : SharpTSClass
     }
 
     /// <summary>
-    /// Overrides <see cref="SharpTSClass.Call"/> to initialise error fields after instance creation.
+    /// Overrides <see cref="SharpTSClass.CallV2"/> to initialise error fields after instance
+    /// creation. The base <c>Call</c> delegates here, so this is the single construct body.
     /// </summary>
-    public override object? Call(Interpreter interpreter, List<object?> arguments)
+    public override RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         SharpTSInstance instance = new(this);
 
@@ -174,15 +175,15 @@ public class SharpTSErrorClass : SharpTSClass
         if (hasUserConstructor && constructor != null)
         {
             // User-defined constructor — super() in body will call ErrorConstructorCallable
-            BindMethod(constructor, instance).Call(interpreter, arguments);
+            BindMethod(constructor, instance).CallV2(interpreter, arguments);
         }
         else
         {
             // No user constructor (or built-in Error class) — initialise error fields directly
-            InitializeErrorFields(instance, _errorTypeName, arguments);
+            InitializeErrorFields(instance, _errorTypeName, CallableInterop.ToBoxedList(arguments));
         }
 
-        return instance;
+        return RuntimeValue.FromObject(instance);
     }
 
     /// <summary>
@@ -208,6 +209,15 @@ public class SharpTSErrorClass : SharpTSClass
             if (instance != null)
                 InitializeErrorFields(instance, errorTypeName, arguments);
             return null;
+        }
+
+        public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        {
+            var instance = _boundInstance
+                ?? interpreter.GetCurrentThis() as SharpTSInstance;
+            if (instance != null)
+                InitializeErrorFields(instance, errorTypeName, CallableInterop.ToBoxedList(arguments));
+            return RuntimeValue.Null;
         }
     }
 }

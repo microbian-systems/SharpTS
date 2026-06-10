@@ -71,6 +71,16 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable
     }
 
     /// <summary>
+    /// RuntimeValue entry point. Copy-first: the span is materialized into a boxed
+    /// list before the async state machine starts — arguments must outlive suspension.
+    /// </summary>
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    {
+        var task = CallAsync(interpreter, CallableInterop.ToBoxedList(arguments));
+        return RuntimeValue.FromObject(new SharpTSPromise(task));
+    }
+
+    /// <summary>
     /// Asynchronously executes the function body.
     /// </summary>
     public async Task<object?> CallAsync(Interpreter interpreter, List<object?> arguments)
@@ -185,6 +195,16 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable
     {
         var task = CallAsync(interpreter, arguments);
         return new SharpTSPromise(task);
+    }
+
+    /// <summary>
+    /// RuntimeValue entry point. Copy-first: the span is materialized into a boxed
+    /// list before the async state machine starts — arguments must outlive suspension.
+    /// </summary>
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    {
+        var task = CallAsync(interpreter, CallableInterop.ToBoxedList(arguments));
+        return RuntimeValue.FromObject(new SharpTSPromise(task));
     }
 
     /// <summary>

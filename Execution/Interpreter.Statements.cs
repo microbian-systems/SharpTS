@@ -779,11 +779,11 @@ public partial class Interpreter
         object? iterator;
         if (iteratorFn is ISharpTSCallable callable)
         {
-            iterator = callable.Call(this, []);
+            iterator = callable.CallV2(this, []).ToObject();
         }
         else if (iteratorFn is SharpTSFunction fn)
         {
-            iterator = fn.Call(this, []);
+            iterator = fn.CallV2(this, []).ToObject();
         }
         else
         {
@@ -829,11 +829,11 @@ public partial class Interpreter
             object? result;
             if (nextMethod is ISharpTSCallable nextCallable)
             {
-                result = nextCallable.Call(this, []);
+                result = nextCallable.CallV2(this, []).ToObject();
             }
             else if (nextMethod is SharpTSFunction nextFn)
             {
-                result = nextFn.Call(this, []);
+                result = nextFn.CallV2(this, []).ToObject();
             }
             else
             {
@@ -1096,7 +1096,7 @@ public partial class Interpreter
             if (resource is SharpTSInstance instance)
             {
                 var boundFunc = func.Bind(instance);
-                result = boundFunc.Call(this, []);
+                result = boundFunc.CallV2(this, []).ToObject();
             }
             else
             {
@@ -1106,7 +1106,7 @@ public partial class Interpreter
                 _environment.Define("this", resource);
                 try
                 {
-                    result = func.Call(this, []);
+                    result = func.CallV2(this, []).ToObject();
                 }
                 finally
                 {
@@ -1120,17 +1120,17 @@ public partial class Interpreter
             if (arrowFunc.HasOwnThis)
             {
                 var boundFunc = arrowFunc.Bind(resource!);
-                result = boundFunc.Call(this, []);
+                result = boundFunc.CallV2(this, []).ToObject();
             }
             else
             {
                 // Arrow functions without own 'this' use lexical scope
-                result = arrowFunc.Call(this, []);
+                result = arrowFunc.CallV2(this, []).ToObject();
             }
         }
         else if (disposeMethod is ISharpTSCallable callable)
         {
-            result = callable.Call(this, []);
+            result = callable.CallV2(this, []).ToObject();
         }
 
         // Wait for async disposal to complete

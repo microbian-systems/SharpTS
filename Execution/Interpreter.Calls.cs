@@ -51,7 +51,7 @@ public partial class Interpreter
             {
                 pooledList.Add((await ctx.EvaluateExprAsync(arg)).ToObject());
             }
-            return method.Call(this, pooledList);
+            return method.CallV2(this, CallableInterop.ToRuntimeValues(pooledList)).ToObject();
         }
         finally
         {
@@ -183,7 +183,7 @@ public partial class Interpreter
             // Per ECMA-262 §10.2.1: missing arguments become undefined; do not
             // reject calls for user-defined functions. Built-in methods enforce
             // their own min-arity in BuiltInMethod.Call.
-            return function.Call(this, argumentsList);
+            return function.CallV2(this, CallableInterop.ToRuntimeValues(argumentsList)).ToObject();
         }
         finally
         {
@@ -253,7 +253,7 @@ public partial class Interpreter
             {
                 pooledList.Add(Evaluate(arg));
             }
-            return RuntimeValue.FromBoxed(method.Call(this, pooledList));
+            return method.CallV2(this, CallableInterop.ToRuntimeValues(pooledList));
         }
         finally
         {
@@ -411,7 +411,7 @@ public partial class Interpreter
 
             // Per ECMA-262 §10.2.1: missing arguments become undefined; do not
             // reject calls for user-defined functions.
-            return RuntimeValue.FromBoxed(function.Call(this, argumentsList));
+            return function.CallV2(this, CallableInterop.ToRuntimeValues(argumentsList));
         }
         finally
         {
