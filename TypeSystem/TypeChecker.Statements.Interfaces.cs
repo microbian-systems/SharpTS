@@ -410,6 +410,43 @@ public partial class TypeChecker
             );
             _environment.Define(interfaceStmt.Name.Lexeme, itfType);
         }
+
+        ValidateInterfaceExtends(interfaceStmt, members, extends);
+    }
+
+    /// <summary>
+    /// TS2430: every member this interface redeclares must be assignable to the corresponding
+    /// member of each extended interface. Runs AFTER the interface is defined in the environment,
+    /// so an incorrect extension still leaves the type resolvable (no cascading unknown-type
+    /// errors); the thrown error carries the interface name's line, and in recovery mode the
+    /// enclosing statement/namespace loop records it and keeps checking sibling declarations.
+    /// </summary>
+    private void ValidateInterfaceExtends(
+        Stmt.Interface interfaceStmt,
+        Dictionary<string, TypeInfo> members,
+        FrozenSet<TypeInfo.Interface>? extends)
+    {
+        if (extends is null) return;
+        foreach (var baseItf in extends)
+        {
+            foreach (var (memberName, baseMemberType) in baseItf.GetAllMembers())
+            {
+                if (!members.TryGetValue(memberName, out var derivedMemberType)) continue;
+                if (!IsCompatible(baseMemberType, derivedMemberType))
+                {
+                    var error = new TypeCheckException(
+                        $" Interface '{interfaceStmt.Name.Lexeme}' incorrectly extends interface '{baseItf.Name}'. Property '{memberName}' of type '{derivedMemberType}' is not assignable to '{baseMemberType}'.",
+                        line: interfaceStmt.Name.Line,
+                        tsCode: "TS2430");
+                    // Interfaces inside a namespace are checked in its (non-recovering) collection
+                    // pass — throwing there would abort the namespace's remaining declarations. In
+                    // recovery mode record the diagnostic directly and keep going; one error per
+                    // offending base matches tsc.
+                    if (_recoveryMode) { RecordTypeError(error); break; }
+                    throw error;
+                }
+            }
+        }
     }
 
     /// <summary>
