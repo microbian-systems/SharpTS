@@ -243,6 +243,18 @@ public partial class TypeChecker
                 string aliasKey = $"{baseName}<{string.Join(",", typeArgStrings)}>";
                 _typeAliasExpansionStack ??= new HashSet<string>(StringComparer.Ordinal);
 
+                // tsc bounds instantiation with a hard depth limit (checker.ts instantiationDepth →
+                // TS2589). Without one, alias expansions whose instantiation key never repeats —
+                // e.g. DeepReadonly<T> over a self-referential interface, where the still-unbound
+                // mapped param accumulates: Part[P], Part[P][P], … — recurse until stack overflow
+                // instead of hitting the same-key guard below. See #185.
+                if (_typeAliasExpansionStack.Count >= MaxTypeAliasExpansionDepth)
+                {
+                    throw new TypeCheckException(
+                        " Type instantiation is excessively deep and possibly infinite.",
+                        tsCode: "TS2589");
+                }
+
                 // Recursive reference detected - return deferred placeholder
                 if (_typeAliasExpansionStack.Contains(aliasKey))
                 {
