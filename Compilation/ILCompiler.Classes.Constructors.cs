@@ -157,7 +157,21 @@ public partial class ILCompiler
         string? qualifiedSuperclass = classStmt.SuperclassExpr != null ? defCtx.ResolveClassName(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!) : null;
         bool isErrorSubclass = classStmt.SuperclassExpr != null
             && Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!);
-        if (constructor == null && qualifiedSuperclass != null && isErrorSubclass)
+        // Direct `extends Array` (#233): base is the emitted $Array, chained
+        // via its ctor-args constructor.
+        bool isDirectArraySubclass = classStmt.SuperclassExpr != null
+            && Expr.GetSuperclassLeafName(classStmt.SuperclassExpr) == "Array"
+            && (qualifiedSuperclass == null || !_classes.Builders.ContainsKey(qualifiedSuperclass));
+        if (constructor == null && isDirectArraySubclass)
+        {
+            // No explicit constructor, extends Array — empty array per
+            // implicit `constructor(...args) { super(...args) }` with no args.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Newarr, typeof(object));
+            il.Emit(OpCodes.Call, _runtime.TSArrayCtorFromCtorArgs);
+        }
+        else if (constructor == null && qualifiedSuperclass != null && isErrorSubclass)
         {
             // No explicit constructor, extends Error — forward message arg to base Error constructor
             il.Emit(OpCodes.Ldarg_0);
@@ -188,11 +202,11 @@ public partial class ILCompiler
 
             il.Emit(OpCodes.Call, ctorToCall);
         }
-        else if (!isErrorSubclass)
+        else if (!isErrorSubclass && !isDirectArraySubclass)
         {
             // Has explicit constructor (which should have super() call) or no superclass.
-            // For Error subclasses with an explicit constructor, skip this — super() in the
-            // constructor body calls the Error base constructor via SuperConstructorHandler.
+            // For Error/Array subclasses with an explicit constructor, skip this — super()
+            // in the constructor body calls the base constructor via SuperConstructorHandler.
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Call, _types.ObjectDefaultCtor);
         }

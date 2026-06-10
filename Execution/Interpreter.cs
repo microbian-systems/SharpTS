@@ -2070,8 +2070,25 @@ public partial class Interpreter : IDisposable
         {
             superclass = Evaluate(classStmt.SuperclassExpr);
 
+            // `extends Array` (#233): the Array global is a constructor
+            // singleton, not a SharpTSClass — substitute the SharpTSArrayClass
+            // bridge so the class machinery (super(), method lookup,
+            // instanceof) sees a real superclass.
+            if (superclass is SharpTSArrayGlobal)
+            {
+                superclass = SharpTSArrayClass.ArrayBase;
+            }
+
             if (superclass is not SharpTSClass)
             {
+                // Built-in constructors that don't have a class bridge yet
+                // (Promise is the big one — see #221) get a precise error
+                // instead of the generic "Superclass must be a class".
+                if (superclass is SharpTSBuiltInConstructor builtInCtor)
+                {
+                    throw new InterpreterException(
+                        $"Class '{classStmt.Name.Lexeme}' cannot extend built-in '{builtInCtor.Name}': subclassing this built-in is not supported yet.");
+                }
                 throw new InterpreterException("Superclass must be a class.");
             }
         }
@@ -2238,10 +2255,31 @@ public partial class Interpreter : IDisposable
 
         // If the superclass is an Error type, create a SharpTSErrorClass so that
         // instances carry error fields (name, message, stack) and instanceof works.
+        // Likewise an Array superclass produces a SharpTSArrayClass whose
+        // instances are real arrays (#233).
         SharpTSClass klass = superclass is SharpTSErrorClass errorSuper
             ? new SharpTSErrorClass(
                 classStmt.Name.Lexeme,
                 errorSuper,
+                methods,
+                staticMethods,
+                staticProperties,
+                getters,
+                setters,
+                classStmt.IsAbstract,
+                instanceFields,
+                instancePrivateFields,
+                privateMethods,
+                staticPrivateFields,
+                staticPrivateMethods,
+                instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
+                staticGetters.Count > 0 ? staticGetters : null,
+                staticSetters.Count > 0 ? staticSetters : null)
+            : superclass is SharpTSArrayClass arraySuper
+            ? new SharpTSArrayClass(
+                classStmt.Name.Lexeme,
+                arraySuper,
                 methods,
                 staticMethods,
                 staticProperties,

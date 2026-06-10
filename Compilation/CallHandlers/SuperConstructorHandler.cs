@@ -40,6 +40,16 @@ public class SuperConstructorHandler : ICallHandler
             return true;
         }
 
+        // Built-in Array (#233): chain to $Array's ctor-args constructor,
+        // which applies ECMA-262 Array(...) semantics (single numeric arg
+        // sets the length; otherwise args become elements). Only reached when
+        // no user class claimed the name via ClassRegistry above.
+        if (ctx.CurrentSuperclassName == "Array" && ctx.Runtime?.TSArrayCtorFromCtorArgs != null)
+        {
+            EmitSuperArrayCtorCall(emitter, call.Arguments);
+            return true;
+        }
+
         // Try class expression constructors
         if (ctx.CurrentClassExpr != null &&
             ctx.ClassExprSuperclass?.TryGetValue(ctx.CurrentClassExpr, out var superclassName) == true &&
@@ -136,6 +146,33 @@ public class SuperConstructorHandler : ICallHandler
         }
 
         il.Emit(OpCodes.Call, baseCtor);
+
+        il.Emit(OpCodes.Ldnull); // super() returns undefined
+        emitter.SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits a super(...) call that chains to $Array's ctor-args constructor:
+    /// builds an object[] from the evaluated arguments and calls
+    /// $Array(object?[] ctorArgs).
+    /// </summary>
+    private static void EmitSuperArrayCtorCall(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var il = emitter.IL;
+        var ctx = emitter.Context;
+
+        il.Emit(OpCodes.Ldarg_0); // this
+        il.Emit(OpCodes.Ldc_I4, arguments.Count);
+        il.Emit(OpCodes.Newarr, typeof(object));
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4, i);
+            emitter.EmitExpression(arguments[i]);
+            emitter.EmitBoxIfNeeded(arguments[i]);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        il.Emit(OpCodes.Call, ctx.Runtime!.TSArrayCtorFromCtorArgs);
 
         il.Emit(OpCodes.Ldnull); // super() returns undefined
         emitter.SetStackUnknown();

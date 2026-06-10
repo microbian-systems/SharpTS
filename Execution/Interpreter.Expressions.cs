@@ -306,7 +306,9 @@ public partial class Interpreter
     private RuntimeValue EvaluateSuper(Expr.Super expr)
     {
         SharpTSClass superclass = _environment.Get(expr.Keyword).AsObject<SharpTSClass>()!;
-        SharpTSInstance instance = _environment.Get(new Token(TokenType.THIS, "this", null, 0)).AsObject<SharpTSInstance>()!;
+        // `this` is usually a SharpTSInstance, but built-in-backed instances
+        // (Array subclass instances) are SharpTSArrays — bind generically.
+        object? thisReceiver = _environment.Get(new Token(TokenType.THIS, "this", null, 0)).ToObject();
 
         // super() with null Method means constructor call
         string methodName = expr.Method?.Lexeme ?? "constructor";
@@ -324,7 +326,7 @@ public partial class Interpreter
             throw new InterpreterException($"Undefined property '{methodName}'.");
         }
 
-        return RuntimeValue.FromObject(SharpTSClass.BindMethod(method, instance));
+        return RuntimeValue.FromObject(SharpTSClass.BindMethodToReceiver(method, thisReceiver!));
     }
 
     /// <summary>
@@ -1098,8 +1100,19 @@ public partial class Interpreter
         if (classExpr.SuperclassExpr != null)
         {
             superclass = Evaluate(classExpr.SuperclassExpr);
+            // `extends Array` (#233): substitute the SharpTSArrayClass bridge,
+            // mirroring VisitClass.
+            if (superclass is SharpTSArrayGlobal)
+            {
+                superclass = SharpTSArrayClass.ArrayBase;
+            }
             if (superclass is not SharpTSClass)
             {
+                if (superclass is SharpTSBuiltInConstructor builtInCtor)
+                {
+                    throw new InterpreterException(
+                        $"Class expression cannot extend built-in '{builtInCtor.Name}': subclassing this built-in is not supported yet.");
+                }
                 throw new InterpreterException("Superclass must be a class.");
             }
         }
@@ -1202,16 +1215,40 @@ public partial class Interpreter
                 }
             }
 
-            SharpTSClass klass = new(
-                className,
-                (SharpTSClass?)superclass,
-                methods,
-                staticMethods,
-                staticProperties,
-                getters,
-                setters,
-                classExpr.IsAbstract,
-                instanceFields);
+            // Mirror VisitClass: Error/Array superclasses need their dedicated
+            // SharpTSClass subtypes so instances get the right backing.
+            SharpTSClass klass = superclass is SharpTSErrorClass errorSuper
+                ? new SharpTSErrorClass(
+                    className,
+                    errorSuper,
+                    methods,
+                    staticMethods,
+                    staticProperties,
+                    getters,
+                    setters,
+                    classExpr.IsAbstract,
+                    instanceFields)
+                : superclass is SharpTSArrayClass arraySuper
+                ? new SharpTSArrayClass(
+                    className,
+                    arraySuper,
+                    methods,
+                    staticMethods,
+                    staticProperties,
+                    getters,
+                    setters,
+                    classExpr.IsAbstract,
+                    instanceFields)
+                : new SharpTSClass(
+                    className,
+                    (SharpTSClass?)superclass,
+                    methods,
+                    staticMethods,
+                    staticProperties,
+                    getters,
+                    setters,
+                    classExpr.IsAbstract,
+                    instanceFields);
 
             // Execute static initializers in declaration order (if present)
             if (hasStaticInitializers)

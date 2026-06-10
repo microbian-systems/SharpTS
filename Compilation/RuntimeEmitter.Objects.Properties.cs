@@ -1466,6 +1466,31 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
+        // User Array subclass (#233): a guest class extending Array derives
+        // from $Array AND implements $IHasFields. Its class members (declared
+        // fields, getters, methods) take precedence over the built-in array
+        // surface; the per-class GetProperty returns $Undefined on miss, in
+        // which case we fall through to the ordinary $Array dispatch below.
+        var notArraySubclassLabel = il.DefineLabel();
+        var arraySubclassMissLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brfalse, notArraySubclassLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Brfalse, notArraySubclassLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsGetProperty);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Beq, arraySubclassMissLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(arraySubclassMissLabel);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(notArraySubclassLabel);
+
         // $Array - check for "length" (inherits List<object?>; MUST come
         // BEFORE the plain List check so sparse-aware length is used —
         // otherwise `new Array(10_000_000).length` returns 0).

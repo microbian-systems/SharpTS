@@ -27,6 +27,12 @@ public partial class ILCompiler
         /// Set during DefineClass and used by HasFields to emit Error property fallback.
         /// </summary>
         public HashSet<string> ErrorSubclasses { get; } = [];
+        /// <summary>
+        /// Qualified names of classes that (directly or transitively) extend the
+        /// built-in Array (#233). Set during DefineClass; used by constructor
+        /// emission to chain to $Array's ctor-args constructor.
+        /// </summary>
+        public HashSet<string> ArraySubclasses { get; } = [];
         public Dictionary<string, ConstructorBuilder> Constructors { get; } = [];
         public Dictionary<string, List<ConstructorBuilder>> ConstructorOverloads { get; } = [];
         public Dictionary<string, Dictionary<string, FieldBuilder>> StaticFields { get; } = [];
