@@ -294,6 +294,11 @@ public partial class TypeChecker
                 "'unique symbol' type is only valid on const declarations initialized with Symbol().", tsCode: "TS1331");
         }
         if (typeName == "bigint") return new TypeInfo.BigInt();
+        // The global Function type: any callable, i.e. (...args: any[]) => any. Parsing it to
+        // Any made `T[K] extends Function` filters (FunctionPropertyNames et al.) match every
+        // property — `X extends any` is always true — emptying the mapped result (#185).
+        if (typeName == "Function") return new TypeInfo.Function(
+            [new TypeInfo.Array(new TypeInfo.Any())], new TypeInfo.Any(), RequiredParams: 0, HasRestParam: true);
         if (typeName == "void") return new TypeInfo.Void();
         if (typeName == "null") return new TypeInfo.Null();
         if (typeName == "undefined") return new TypeInfo.Undefined();
@@ -301,6 +306,15 @@ public partial class TypeChecker
         if (typeName == "never") return new TypeInfo.Never();
         if (typeName == "object") return new TypeInfo.Object();
         if (typeName == "Buffer") return new TypeInfo.Buffer();
+
+        // A mapped-type parameter in scope (e.g. P in `{ [P in K]: DeepReadonly<T[P]> }`)
+        // parses to a TypeParameter so the body builds deferred forms (IndexedAccess,
+        // deferred alias references) that ExpandMappedType substitutes per key — instead
+        // of dissolving to Any or eagerly instantiating with an open argument (#185).
+        if (_openTypeVariablesInScope is { Count: > 0 } && _openTypeVariablesInScope.Contains(typeName))
+        {
+            return new TypeInfo.TypeParameter(typeName);
+        }
 
         TypeInfo? type = _environment.Get(typeName);
         if (type is TypeInfo.MutableClass mutableClass)
@@ -1217,15 +1231,14 @@ public partial class TypeChecker
         string paramName = bracketContent[..inIndex].Trim();
         string afterIn = bracketContent[(inIndex + 4)..].Trim();
 
-        // Check for 'as' clause
-        TypeInfo? asClause = null;
+        // Check for 'as' clause (parsed later, with the mapped parameter in scope)
         string constraintStr;
+        string? asTypeStr = null;
         int asIndex = FindTopLevelAs(afterIn);
         if (asIndex >= 0)
         {
             constraintStr = afterIn[..asIndex].Trim();
-            string asTypeStr = afterIn[(asIndex + 3)..].Trim();
-            asClause = ToTypeInfo(asTypeStr);
+            asTypeStr = afterIn[(asIndex + 3)..].Trim();
         }
         else
         {
@@ -1256,7 +1269,23 @@ public partial class TypeChecker
             throw new TypeCheckException("Expected ':' after mapped type parameter.");
 
         string valueTypeStr = afterBracket[1..].Trim();
-        TypeInfo valueType = ToTypeInfo(valueTypeStr);
+
+        // The mapped parameter is a bound type variable inside the as-clause and the value
+        // type (`[P in K as Uppercase<P>]: DeepReadonly<T[P]>`). Register it so those bodies
+        // parse to deferred forms that ExpandMappedType substitutes per key (#185).
+        TypeInfo? asClause = null;
+        TypeInfo valueType;
+        _openTypeVariablesInScope ??= new HashSet<string>(StringComparer.Ordinal);
+        bool openVarAdded = _openTypeVariablesInScope.Add(paramName);
+        try
+        {
+            if (asTypeStr is not null) asClause = ToTypeInfo(asTypeStr);
+            valueType = ToTypeInfo(valueTypeStr);
+        }
+        finally
+        {
+            if (openVarAdded) _openTypeVariablesInScope.Remove(paramName);
+        }
 
         return new TypeInfo.MappedType(paramName, constraint, valueType, modifiers, asClause);
     }

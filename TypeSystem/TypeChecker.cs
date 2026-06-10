@@ -484,6 +484,16 @@ public partial class TypeChecker
     private static int _typeAliasExpansionDepth;
 
     /// <summary>
+    /// Names of type variables that are bound but not yet substitutable — mapped-type
+    /// parameters whose owning body is currently being parsed (e.g. P while parsing the
+    /// value type of <c>{ [P in K]: DeepReadonly&lt;T[P]&gt; }</c>). Identifiers matching these
+    /// parse to <see cref="TypeInfo.TypeParameter"/>, and generic alias references whose
+    /// arguments mention them are deferred instead of instantiated (#185).
+    /// </summary>
+    [ThreadStatic]
+    private static HashSet<string>? _openTypeVariablesInScope;
+
+    /// <summary>
     /// Maximum recursion depth for string-based type resolution (ToTypeInfo and the
     /// generic/mapped/indexed-access helpers that funnel back through it). A backstop
     /// against pathological self-referential type strings: it converts what would be an
