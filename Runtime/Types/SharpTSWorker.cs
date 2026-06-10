@@ -492,7 +492,10 @@ internal class WorkerParentPort : SharpTSEventEmitter
 {
     private readonly SharpTSWorker _worker;
 
-    public override TypeCategory RuntimeCategory => TypeCategory.EventEmitter;
+    // RuntimeCategory deliberately not overridden — see SharpTSMessagePort.
+    // The EventEmitter category dispatched through a base-typed cast that
+    // hid this class's postMessage (#209); the per-type registration in
+    // BuiltInRegistry reaches the derived GetMember instead.
 
     public WorkerParentPort(SharpTSWorker worker)
     {

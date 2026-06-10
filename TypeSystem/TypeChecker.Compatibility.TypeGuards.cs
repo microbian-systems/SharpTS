@@ -710,6 +710,82 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Flattens an <c>||</c> chain and collects the type guard of each
+    /// disjunct (#216). Callers use the EXCLUDED types: in contexts where the
+    /// whole disjunction is known false — the right operand of <c>||</c>, or
+    /// code following a terminating <c>if (a == null || b == null) return;</c>
+    /// — De Morgan gives the negation of every disjunct. Disjuncts that are
+    /// not simple guards (including nested <c>&amp;&amp;</c>, whose negation
+    /// is itself a disjunction) contribute nothing. Later disjuncts are
+    /// analyzed under the accumulated exclusions of earlier ones so that
+    /// CheckExpr calls inside the analysis (e.g. <c>a.length === 0</c> after
+    /// <c>a == null</c>) see the narrowed receiver.
+    /// </summary>
+    private List<(Narrowing.NarrowingPath Path, TypeInfo NarrowedType, TypeInfo ExcludedType)> CollectDisjunctGuards(Expr condition)
+    {
+        var narrowings = new List<(Narrowing.NarrowingPath Path, TypeInfo NarrowedType, TypeInfo ExcludedType)>();
+
+        void Walk(Expr expr)
+        {
+            if (expr is Expr.Logical orExpr && orExpr.Operator.Type == TokenType.OR_OR)
+            {
+                Walk(orExpr.Left);
+
+                // Analyze the right disjunct with the left disjuncts' excluded
+                // types in scope (mirrors the && handling above).
+                if (narrowings.Count > 0)
+                {
+                    var narrowedEnv = new TypeEnvironment(_environment);
+                    var narrowedCtx = Narrowing.NarrowingContext.Empty;
+                    foreach (var (path, _, excludedType) in narrowings)
+                    {
+                        if (path is Narrowing.NarrowingPath.Variable v)
+                            narrowedEnv.Define(v.Name, excludedType);
+                        else
+                            narrowedCtx = narrowedCtx.WithNarrowing(path, excludedType);
+                    }
+
+                    using (new EnvironmentScope(this, narrowedEnv))
+                    {
+                        bool pushed = !narrowedCtx.IsEmpty;
+                        if (pushed) PushNarrowingContext(narrowedCtx);
+                        try
+                        {
+                            Walk(orExpr.Right);
+                        }
+                        finally
+                        {
+                            if (pushed) PopNarrowingContext();
+                        }
+                    }
+                }
+                else
+                {
+                    Walk(orExpr.Right);
+                }
+                return;
+            }
+
+            var guard = AnalyzePathTypeGuard(expr);
+            if (guard.Path != null && guard.NarrowedType != null && guard.ExcludedType != null)
+            {
+                narrowings.Add((guard.Path, guard.NarrowedType, guard.ExcludedType));
+                return;
+            }
+
+            var legacyGuard = AnalyzeTypeGuard(expr);
+            if (legacyGuard.VarName != null && legacyGuard.NarrowedType != null && legacyGuard.ExcludedType != null)
+            {
+                narrowings.Add((new Narrowing.NarrowingPath.Variable(legacyGuard.VarName),
+                    legacyGuard.NarrowedType, legacyGuard.ExcludedType));
+            }
+        }
+
+        Walk(condition);
+        return narrowings;
+    }
+
+    /// <summary>
     /// Analyzes a null check for a narrowable path.
     /// </summary>
     private (Narrowing.NarrowingPath? Path, TypeInfo? NarrowedType, TypeInfo? ExcludedType) AnalyzePathNullCheck(

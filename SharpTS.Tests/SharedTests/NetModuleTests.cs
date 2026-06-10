@@ -175,6 +175,33 @@ public class NetModuleTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NetConnectPositionalPortHostCallback(ExecutionMode mode)
+    {
+        // Node signature: net.connect(port[, host][, connectListener]) — the
+        // three-positional-arg idiom was rejected with an arity error (#211).
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = """
+                import * as net from 'net';
+                const server = net.createServer((socket) => {
+                    socket.destroy();
+                    server.close();
+                });
+                server.listen(0, () => {
+                    const addr = server.address();
+                    const client = net.connect(addr.port, '127.0.0.1', () => {
+                        console.log('connect listener fired');
+                        client.destroy();
+                    });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Contains("connect listener fired", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NetSocketWriteAndReceive(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

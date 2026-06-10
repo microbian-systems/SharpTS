@@ -1292,16 +1292,17 @@ public static class BuiltInModuleTypes
 
         return new Dictionary<string, TypeInfo>
         {
-            // dns.lookup(hostname, [options]) -> { address, family }
+            // dns.lookup(hostname[, options][, callback]) -> { address, family }
+            // (sync direct-return form when no callback; Node form invokes the callback)
             ["lookup"] = new TypeInfo.Function(
-                [stringType, anyType],
+                [stringType, anyType, anyType],
                 lookupResultType,
                 RequiredParams: 1
             ),
 
-            // dns.lookupService(address, port) -> { hostname, service }
+            // dns.lookupService(address, port[, callback]) -> { hostname, service }
             ["lookupService"] = new TypeInfo.Function(
-                [stringType, numberType],
+                [stringType, numberType, anyType],
                 lookupServiceResultType,
                 RequiredParams: 2
             ),
@@ -1541,8 +1542,9 @@ public static class BuiltInModuleTypes
         return new Dictionary<string, TypeInfo>
         {
             ["createServer"] = new TypeInfo.Function([anyType, anyType], serverType, RequiredParams: 0),
-            ["createConnection"] = new TypeInfo.Function([anyType, anyType], socketType, RequiredParams: 1),
-            ["connect"] = new TypeInfo.Function([anyType, anyType], socketType, RequiredParams: 1),
+            // connect(options|port|path[, host][, connectListener]) — three positional args
+            ["createConnection"] = new TypeInfo.Function([anyType, anyType, anyType], socketType, RequiredParams: 1),
+            ["connect"] = new TypeInfo.Function([anyType, anyType, anyType], socketType, RequiredParams: 1),
             ["isIP"] = new TypeInfo.Function([stringType], numberType),
             ["isIPv4"] = new TypeInfo.Function([stringType], booleanType),
             ["isIPv6"] = new TypeInfo.Function([stringType], booleanType),

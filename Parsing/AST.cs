@@ -447,7 +447,9 @@ public abstract record Stmt
     public record LabeledStatement(Token Label, Stmt Statement) : Stmt;
     public record SwitchCase(Expr Value, List<Stmt> Body);
     public record Switch(Expr Subject, List<SwitchCase> Cases, List<Stmt>? DefaultBody) : Stmt;
-    public record TryCatch(List<Stmt> TryBlock, Token? CatchParam, List<Stmt>? CatchBlock, List<Stmt>? FinallyBlock) : Stmt;
+    // CatchParamType: optional catch-binding annotation text (`catch (e: unknown)`).
+    // TS allows only 'any'/'unknown'; anything else is checker error TS1196.
+    public record TryCatch(List<Stmt> TryBlock, Token? CatchParam, List<Stmt>? CatchBlock, List<Stmt>? FinallyBlock, string? CatchParamType = null) : Stmt;
     public record Throw(Token Keyword, Expr Value) : Stmt;
     public record TypeAlias(Token Name, string TypeDefinition, List<TypeParam>? TypeParameters = null) : Stmt;
     public record EnumMember(Token Name, Expr? Value);

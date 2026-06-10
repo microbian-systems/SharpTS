@@ -24,6 +24,11 @@ public partial class RuntimeEmitter
         EmitRegExpGetGlobal(typeBuilder, runtime);
         EmitRegExpGetIgnoreCase(typeBuilder, runtime);
         EmitRegExpGetMultiline(typeBuilder, runtime);
+        runtime.RegExpGetSticky = EmitRegExpGetFlagBool(typeBuilder, runtime, "RegExpGetSticky", 'y');
+        runtime.RegExpGetUnicode = EmitRegExpGetFlagBool(typeBuilder, runtime, "RegExpGetUnicode", 'u');
+        runtime.RegExpGetDotAll = EmitRegExpGetFlagBool(typeBuilder, runtime, "RegExpGetDotAll", 's');
+        runtime.RegExpGetHasIndices = EmitRegExpGetFlagBool(typeBuilder, runtime, "RegExpGetHasIndices", 'd');
+        runtime.RegExpGetUnicodeSets = EmitRegExpGetFlagBool(typeBuilder, runtime, "RegExpGetUnicodeSets", 'v');
         EmitRegExpGetLastIndex(typeBuilder, runtime);
         EmitRegExpSetLastIndex(typeBuilder, runtime);
         EmitStringMatchRegExp(typeBuilder, runtime);
@@ -625,6 +630,47 @@ public partial class RuntimeEmitter
         il.MarkLabel(notRegExpLabel);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits a flag-bit getter (sticky/unicode/dotAll/hasIndices/unicodeSets)
+    /// that reads the $RegExp flags string and tests for
+    /// <paramref name="flagChar"/>. These flags have no dedicated instance
+    /// getter on $RegExp (unlike global/ignoreCase/multiline), so the wrapper
+    /// derives them from the flags string the same way the prototype
+    /// accessors do. Non-RegExp receivers return false, matching the other
+    /// RegExpGet* wrappers.
+    /// </summary>
+    private MethodBuilder EmitRegExpGetFlagBool(TypeBuilder typeBuilder, EmittedRuntime runtime, string name, char flagChar)
+    {
+        var method = typeBuilder.DefineMethod(
+            name,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var notRegExpLabel = il.DefineLabel();
+        var regexpLocal = il.DeclareLocal(runtime.TSRegExpType);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+        il.Emit(OpCodes.Stloc, regexpLocal);
+
+        il.Emit(OpCodes.Ldloc, regexpLocal);
+        il.Emit(OpCodes.Brfalse, notRegExpLabel);
+
+        il.Emit(OpCodes.Ldloc, regexpLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSRegExpFlagsGetter);
+        il.Emit(OpCodes.Ldc_I4, (int)flagChar);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "Contains", _types.Char));
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notRegExpLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        return method;
     }
 
     private void EmitRegExpGetLastIndex(TypeBuilder typeBuilder, EmittedRuntime runtime)

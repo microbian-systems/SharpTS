@@ -1009,8 +1009,54 @@ public partial class RuntimeEmitter
         listeningProp.SetGetMethod(getListening);
     }
 
+    /// <summary>
+    /// Emits <c>private static int ProbeFreePort()</c>: binds a temporary
+    /// TcpListener on loopback port 0 and returns the OS-assigned port.
+    /// HttpListener has no dynamic-port support, so <c>listen(0)</c> needs
+    /// the probe (#214). Small release/re-bind race window — standard
+    /// practice for this workaround. BCL-only, safe for standalone DLLs.
+    /// </summary>
+    private MethodBuilder EmitHttpServerProbeFreePort(TypeBuilder typeBuilder)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ProbeFreePort",
+            MethodAttributes.Private | MethodAttributes.Static,
+            _types.Int32,
+            Type.EmptyTypes
+        );
+
+        var il = method.GetILGenerator();
+        var tcpListenerType = typeof(System.Net.Sockets.TcpListener);
+        var probeLocal = il.DeclareLocal(tcpListenerType);
+        var portLocal = il.DeclareLocal(_types.Int32);
+
+        // var probe = new TcpListener(IPAddress.Loopback, 0); probe.Start();
+        il.Emit(OpCodes.Ldsfld, typeof(IPAddress).GetField("Loopback")!);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newobj, tcpListenerType.GetConstructor([typeof(IPAddress), _types.Int32])!);
+        il.Emit(OpCodes.Stloc, probeLocal);
+        il.Emit(OpCodes.Ldloc, probeLocal);
+        il.Emit(OpCodes.Callvirt, tcpListenerType.GetMethod("Start", Type.EmptyTypes)!);
+
+        // port = ((IPEndPoint)probe.LocalEndpoint).Port;
+        il.Emit(OpCodes.Ldloc, probeLocal);
+        il.Emit(OpCodes.Callvirt, tcpListenerType.GetProperty("LocalEndpoint")!.GetGetMethod()!);
+        il.Emit(OpCodes.Castclass, typeof(IPEndPoint));
+        il.Emit(OpCodes.Callvirt, typeof(IPEndPoint).GetProperty("Port")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, portLocal);
+
+        // probe.Stop(); return port;
+        il.Emit(OpCodes.Ldloc, probeLocal);
+        il.Emit(OpCodes.Callvirt, tcpListenerType.GetMethod("Stop")!);
+        il.Emit(OpCodes.Ldloc, portLocal);
+        il.Emit(OpCodes.Ret);
+        return method;
+    }
+
     private void EmitHttpServerListen(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerType)
     {
+        var probeFreePort = EmitHttpServerProbeFreePort(typeBuilder);
+
         // public object Listen(double port, object? callback)
         var method = typeBuilder.DefineMethod(
             "Listen",
@@ -1021,6 +1067,17 @@ public partial class RuntimeEmitter
         runtime.TSHttpServerListen = method;
 
         var il = method.GetILGenerator();
+
+        // listen(0): substitute an OS-assigned ephemeral port before any
+        // use of the port argument (#214).
+        var portNonZeroLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brtrue, portNonZeroLabel);
+        il.Emit(OpCodes.Call, probeFreePort);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Starg_S, (byte)1);
+        il.MarkLabel(portNonZeroLabel);
 
         // Store port
         il.Emit(OpCodes.Ldarg_0);

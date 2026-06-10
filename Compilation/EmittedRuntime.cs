@@ -1045,6 +1045,11 @@ public class EmittedRuntime
     public MethodBuilder RegExpGetGlobal { get; set; } = null!;
     public MethodBuilder RegExpGetIgnoreCase { get; set; } = null!;
     public MethodBuilder RegExpGetMultiline { get; set; } = null!;
+    public MethodBuilder RegExpGetSticky { get; set; } = null!;
+    public MethodBuilder RegExpGetUnicode { get; set; } = null!;
+    public MethodBuilder RegExpGetDotAll { get; set; } = null!;
+    public MethodBuilder RegExpGetHasIndices { get; set; } = null!;
+    public MethodBuilder RegExpGetUnicodeSets { get; set; } = null!;
     public MethodBuilder RegExpGetLastIndex { get; set; } = null!;
     public MethodBuilder RegExpSetLastIndex { get; set; } = null!;
     public MethodBuilder StringMatchRegExp { get; set; } = null!;

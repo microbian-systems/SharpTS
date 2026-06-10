@@ -107,6 +107,13 @@ public static class DnsModuleInterpreter
     /// <summary>
     /// dns.lookup(hostname[, options][, callback]) - Resolves a hostname to an IP address.
     /// </summary>
+    /// <remarks>
+    /// With a callback (the Node contract), resolution runs off-thread and the
+    /// callback is invoked asynchronously with (err, address, family) — or
+    /// (err, addresses) when options.all is set — with Ref/Unref keeping the
+    /// event loop alive (#206). Without a callback (no such form in Node) the
+    /// legacy synchronous direct-return behavior is preserved.
+    /// </remarks>
     private static RuntimeValue Lookup(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (args.Length == 0 || !args[0].IsString)
@@ -132,6 +139,45 @@ public static class DnsModuleInterpreter
             }
         }
 
+        var callback = args[^1].ToObject() as ISharpTSCallable;
+        if (callback == null)
+            return RuntimeValue.FromBoxed(LookupCore(hostname, family, all));
+
+        interpreter.Ref();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var result = LookupCore(hostname, family, all);
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    if (result is SharpTSObject single)
+                        callback.Call(interpreter,
+                            [null, single.Fields["address"], single.Fields["family"]]);
+                    else
+                        callback.Call(interpreter, [null, result]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+            catch (Exception ex)
+            {
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter,
+                        [CreateDnsError(ExtractErrorCode(ex), hostname), null, null]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+        });
+        return RuntimeValue.Undefined;
+    }
+
+    /// <summary>
+    /// Shared dns.lookup resolution: returns a single {address, family} object,
+    /// or an array of them when <paramref name="all"/> is set.
+    /// </summary>
+    private static object? LookupCore(string hostname, int family, bool all)
+    {
         try
         {
             var hostEntry = Dns.GetHostEntry(hostname);
@@ -161,7 +207,7 @@ public static class DnsModuleInterpreter
                     };
                     results.Add(new SharpTSObject(fields));
                 }
-                return RuntimeValue.FromObject(new SharpTSArray(results));
+                return new SharpTSArray(results);
             }
             else
             {
@@ -172,7 +218,7 @@ public static class DnsModuleInterpreter
                     ["address"] = addr.ToString(),
                     ["family"] = addr.AddressFamily == AddressFamily.InterNetwork ? 4.0 : 6.0
                 };
-                return RuntimeValue.FromObject(new SharpTSObject(fields));
+                return new SharpTSObject(fields);
             }
         }
         catch (SocketException ex)
@@ -184,6 +230,12 @@ public static class DnsModuleInterpreter
     /// <summary>
     /// dns.lookupService(address, port[, callback]) - Resolves address and port to hostname and service.
     /// </summary>
+    /// <remarks>
+    /// With a callback (the Node contract), resolution runs off-thread and the
+    /// callback receives (err, hostname, service) with Ref/Unref keeping the
+    /// event loop alive (#206). Without a callback the legacy synchronous
+    /// direct-return form is preserved.
+    /// </remarks>
     private static RuntimeValue LookupService(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (args.Length < 2)
@@ -199,6 +251,41 @@ public static class DnsModuleInterpreter
 
         int port = (int)portNum;
 
+        var callback = args[^1].ToObject() as ISharpTSCallable;
+        if (callback == null)
+            return RuntimeValue.FromObject(LookupServiceCore(address, port));
+
+        interpreter.Ref();
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                var result = LookupServiceCore(address, port);
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter,
+                        [null, result.Fields["hostname"], result.Fields["service"]]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+            catch (Exception ex)
+            {
+                interpreter.ScheduleTimer(0, 0, () =>
+                {
+                    callback.Call(interpreter,
+                        [CreateDnsError(ExtractErrorCode(ex), address), null, null]);
+                    interpreter.Unref();
+                }, isInterval: false);
+            }
+        });
+        return RuntimeValue.Undefined;
+    }
+
+    /// <summary>
+    /// Shared dns.lookupService resolution: returns a {hostname, service} object.
+    /// </summary>
+    private static SharpTSObject LookupServiceCore(string address, int port)
+    {
         try
         {
             // Parse the IP address
@@ -214,7 +301,7 @@ public static class DnsModuleInterpreter
                 // Note: .NET doesn't have built-in service name lookup, so we just return the port
                 ["service"] = port.ToString()
             };
-            return RuntimeValue.FromObject(new SharpTSObject(fields));
+            return new SharpTSObject(fields);
         }
         catch (SocketException ex)
         {

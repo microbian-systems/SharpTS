@@ -120,9 +120,15 @@ public partial class TypeChecker
 
         // Apply expression-level narrowing for the right operand
         // For &&: right is evaluated when left is truthy, so apply "narrowed" types
-        // For ||: right is evaluated when left is falsy, so apply "excluded" types
+        // For ||: right is evaluated when left is falsy, so apply "excluded" types.
+        //   The || case decomposes a disjunction LHS (De Morgan: !(A || B) =
+        //   !A && !B), so `a == null || b == null || a.length` narrows both
+        //   a and b for the last operand (#216). An && LHS contributes nothing
+        //   to || — its negation is itself a disjunction.
         TypeInfo rightType;
-        var narrowings = AnalyzeCompoundTypeGuards(logical.Left);
+        var narrowings = logical.Operator.Type == TokenType.OR_OR
+            ? CollectDisjunctGuards(logical.Left)
+            : AnalyzeCompoundTypeGuards(logical.Left);
 
         if (narrowings.Count > 0)
         {

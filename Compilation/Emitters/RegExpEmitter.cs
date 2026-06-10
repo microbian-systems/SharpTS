@@ -17,6 +17,11 @@ public sealed class RegExpEmitter : ITypeEmitterStrategy
         var ctx = emitter.Context;
         var il = ctx.IL;
 
+        // Bail before emitting the receiver for unknown methods — emitting
+        // first and returning false would leave an orphaned stack value.
+        if (methodName is not ("test" or "exec"))
+            return false;
+
         // Emit the RegExp object
         emitter.EmitExpression(receiver);
         emitter.EmitBoxIfNeeded(receiver);
@@ -30,14 +35,11 @@ public sealed class RegExpEmitter : ITypeEmitterStrategy
                 il.Emit(OpCodes.Box, ctx.Types.Boolean);
                 return true;
 
-            case "exec":
-                // regex.exec(str) -> array|null
+            default:
+                // exec: regex.exec(str) -> array|null
                 EmitStringArgOrEmpty(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.RegExpExec);
                 return true;
-
-            default:
-                return false;
         }
     }
 
@@ -50,42 +52,45 @@ public sealed class RegExpEmitter : ITypeEmitterStrategy
         var ctx = emitter.Context;
         var il = ctx.IL;
 
+        // Resolve the handler BEFORE emitting the receiver: returning false
+        // after emitting would leave an orphaned value on the IL stack and
+        // produce an invalid program when the caller falls back to another
+        // emission path.
+        var getter = propertyName switch
+        {
+            "source" => ctx.Runtime!.RegExpGetSource,
+            "flags" => ctx.Runtime!.RegExpGetFlags,
+            "global" => ctx.Runtime!.RegExpGetGlobal,
+            "ignoreCase" => ctx.Runtime!.RegExpGetIgnoreCase,
+            "multiline" => ctx.Runtime!.RegExpGetMultiline,
+            "sticky" => ctx.Runtime!.RegExpGetSticky,
+            "unicode" => ctx.Runtime!.RegExpGetUnicode,
+            "dotAll" => ctx.Runtime!.RegExpGetDotAll,
+            "hasIndices" => ctx.Runtime!.RegExpGetHasIndices,
+            "unicodeSets" => ctx.Runtime!.RegExpGetUnicodeSets,
+            "lastIndex" => ctx.Runtime!.RegExpGetLastIndex,
+            _ => null
+        };
+        if (getter is null)
+            return false;
+
         emitter.EmitExpression(receiver);
         emitter.EmitBoxIfNeeded(receiver);
+        il.Emit(OpCodes.Call, getter);
 
         switch (propertyName)
         {
             case "source":
-                il.Emit(OpCodes.Call, ctx.Runtime!.RegExpGetSource);
-                return true;
-
             case "flags":
-                il.Emit(OpCodes.Call, ctx.Runtime!.RegExpGetFlags);
-                return true;
-
-            case "global":
-                il.Emit(OpCodes.Call, ctx.Runtime!.RegExpGetGlobal);
-                il.Emit(OpCodes.Box, ctx.Types.Boolean);
-                return true;
-
-            case "ignoreCase":
-                il.Emit(OpCodes.Call, ctx.Runtime!.RegExpGetIgnoreCase);
-                il.Emit(OpCodes.Box, ctx.Types.Boolean);
-                return true;
-
-            case "multiline":
-                il.Emit(OpCodes.Call, ctx.Runtime!.RegExpGetMultiline);
-                il.Emit(OpCodes.Box, ctx.Types.Boolean);
-                return true;
-
+                break; // already a string reference
             case "lastIndex":
-                il.Emit(OpCodes.Call, ctx.Runtime!.RegExpGetLastIndex);
                 il.Emit(OpCodes.Box, ctx.Types.Double);
-                return true;
-
+                break;
             default:
-                return false;
+                il.Emit(OpCodes.Box, ctx.Types.Boolean);
+                break;
         }
+        return true;
     }
 
     /// <summary>

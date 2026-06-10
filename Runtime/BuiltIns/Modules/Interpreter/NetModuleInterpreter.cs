@@ -23,8 +23,10 @@ public static class NetModuleInterpreter
         return new Dictionary<string, object?>
         {
             ["createServer"] = BuiltInMethod.CreateV2("createServer", 0, 2, CreateServer),
-            ["createConnection"] = BuiltInMethod.CreateV2("createConnection", 1, 2, CreateConnection),
-            ["connect"] = BuiltInMethod.CreateV2("connect", 1, 2, CreateConnection),
+            // Node signature: connect(options|port|path[, host][, connectListener])
+            // — three positional args; the socket's own connect does the parsing.
+            ["createConnection"] = BuiltInMethod.CreateV2("createConnection", 1, 3, CreateConnection),
+            ["connect"] = BuiltInMethod.CreateV2("connect", 1, 3, CreateConnection),
             ["isIP"] = BuiltInMethod.CreateV2("isIP", 1, IsIP),
             ["isIPv4"] = BuiltInMethod.CreateV2("isIPv4", 1, IsIPv4),
             ["isIPv6"] = BuiltInMethod.CreateV2("isIPv6", 1, IsIPv6),

@@ -204,9 +204,90 @@ public class DnsModuleTests
         Assert.Equal("error thrown\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Dns_Lookup_Callback_InvokedWithAddressAndFamily(ExecutionMode mode)
+    {
+        // #206: the callback form must invoke (err, address, family)
+        // asynchronously and keep the event loop alive until it fires.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { lookup } from 'dns';
+                lookup('localhost', (err: any, address: any, family: any) => {
+                    console.log(err === null);
+                    console.log(address === '127.0.0.1' || address === '::1');
+                    console.log(family === 4 || family === 6);
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Dns_Lookup_Callback_AllOption_ReceivesArray(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { lookup } from 'dns';
+                lookup('localhost', { all: true }, (err: any, addresses: any) => {
+                    console.log(err === null);
+                    console.log(addresses.length > 0);
+                    console.log(typeof addresses[0].address === 'string');
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Dns_Lookup_Callback_InvalidHostname_ReceivesError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { lookup } from 'dns';
+                lookup('this.hostname.definitely.does.not.exist.example', (err: any, address: any) => {
+                    console.log(err !== null);
+                    console.log(address === null);
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
     #endregion
 
     #region dns.lookupService Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Dns_LookupService_Callback_InvokedWithHostnameAndService(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { lookupService } from 'dns';
+                lookupService('127.0.0.1', 80, (err: any, hostname: any, service: any) => {
+                    console.log(err === null);
+                    console.log(typeof hostname === 'string');
+                    console.log(service === '80');
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\ntrue\n", output);
+    }
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]

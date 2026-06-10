@@ -998,6 +998,12 @@ public sealed class BuiltInRegistry
             ((SharpTSQueuingStrategy)instance).GetMember(name));
         registry.RegisterInstanceType(typeof(SharpTSCountQueuingStrategy), (instance, name) =>
             ((SharpTSQueuingStrategy)instance).GetMember(name));
+
+        // The constructor wrapper itself carries static members
+        // (ReadableStream.from) — without this registration, property access
+        // on the imported constructor never reaches GetProperty (#210).
+        registry.RegisterInstanceType(typeof(SharpTSReadableStreamConstructor), (instance, name) =>
+            ((SharpTSReadableStreamConstructor)instance).GetProperty(name));
     }
 
     private static void RegisterWorkerTypes(BuiltInRegistry registry)
@@ -1034,6 +1040,12 @@ public sealed class BuiltInRegistry
         // Register MessagePort instance members
         registry.RegisterInstanceType(typeof(SharpTSMessagePort), (instance, name) =>
             ((SharpTSMessagePort)instance).GetMember(name));
+
+        // Register the worker-side parentPort (postMessage + EventEmitter members).
+        // Instance lookup is exact-type, so the WorkerParentPort subclass needs
+        // its own registration to reach its GetMember (#209).
+        registry.RegisterInstanceType(typeof(WorkerParentPort), (instance, name) =>
+            ((WorkerParentPort)instance).GetMember(name));
 
         // Register MessageChannel instance members
         registry.RegisterInstanceType(typeof(SharpTSMessageChannel), (instance, name) =>

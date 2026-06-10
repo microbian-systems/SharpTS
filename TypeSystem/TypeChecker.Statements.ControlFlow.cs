@@ -1,4 +1,5 @@
 using SharpTS.Parsing;
+using SharpTS.TypeSystem.Exceptions;
 
 namespace SharpTS.TypeSystem;
 
@@ -59,11 +60,26 @@ public partial class TypeChecker
             CheckStmt(stmt);
         }
 
+        // TS1196: a catch-binding annotation must be exactly 'any' or 'unknown'.
+        // The parser accepts any annotation (#215); the restriction is a
+        // checker diagnostic, matching tsc — never a parse error.
+        if (tryCatch.CatchParamType is { } catchAnnotation
+            && catchAnnotation != "any" && catchAnnotation != "unknown")
+        {
+            throw new TypeOperationException(
+                "Catch clause variable type annotation must be 'any' or 'unknown' if specified.",
+                tryCatch.CatchParam?.Line,
+                tsCode: "TS1196");
+        }
+
         // Check catch block with its parameter in scope
         if (tryCatch.CatchBlock != null && tryCatch.CatchParam != null)
         {
             TypeEnvironment catchEnv = new(_environment);
-            catchEnv.Define(tryCatch.CatchParam.Lexeme, new TypeInfo.Any());
+            catchEnv.Define(tryCatch.CatchParam.Lexeme,
+                tryCatch.CatchParamType == "unknown"
+                    ? new TypeInfo.Unknown()
+                    : new TypeInfo.Any());
 
             TypeEnvironment prevEnv = _environment;
             _environment = catchEnv;

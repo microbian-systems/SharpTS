@@ -45,8 +45,12 @@ public class SharpTSMessagePort : SharpTSEventEmitter
     /// </summary>
     internal Interp? OwnerInterpreter { get; set; }
 
-    /// <inheritdoc />
-    public override TypeCategory RuntimeCategory => TypeCategory.EventEmitter;
+    // NOTE: RuntimeCategory deliberately NOT overridden to EventEmitter.
+    // The base virtual returns Unknown for subclasses, which routes property
+    // access through the per-type instance registration (BuiltInRegistry) and
+    // reaches this class's GetMember. Forcing the EventEmitter category here
+    // dispatched through a base-typed cast, so the port-specific members
+    // (postMessage/start/close) resolved as undefined (#209).
 
     /// <summary>
     /// Represents a cloned message ready for delivery.
@@ -153,14 +157,10 @@ public class SharpTSMessagePort : SharpTSEventEmitter
 
         while (_queue.TryTake(out var message))
         {
-            // Create MessageEvent-like object
-            var eventData = new SharpTSObject(new Dictionary<string, object?>
-            {
-                ["data"] = message.Data,
-                ["ports"] = message.Transfer ?? new SharpTSArray()
-            });
-
-            EmitEvent("message", [eventData]);
+            // Node worker_threads semantics: 'message' listeners receive the
+            // cloned input value of postMessage() directly (not a browser-style
+            // MessageEvent wrapper).
+            EmitEvent("message", [message.Data]);
         }
     }
 
@@ -200,6 +200,26 @@ public class SharpTSMessagePort : SharpTSEventEmitter
             {
                 Close();
                 return RuntimeValue.Null;
+            }),
+
+            // Node semantics: attaching a 'message' listener implicitly starts
+            // the port (https://nodejs.org/api/worker_threads.html#event-message).
+            // MessageChannel-created ports also have no owner interpreter until
+            // someone interacts with them, so capture it here — without it,
+            // queued messages are never delivered.
+            "on" or "addListener" or "once" => BuiltInMethod.CreateV2(name, 2, (interp, _, args) =>
+            {
+                var eventName = args[0].ToObject()?.ToString()
+                    ?? throw new Exception("Event name must be a string");
+                var listener = args[1].ToObject()
+                    ?? throw new Exception("Listener must be a function");
+                AddListenerDirect(eventName, listener, once: name == "once");
+                if (eventName == "message")
+                {
+                    OwnerInterpreter ??= interp;
+                    Start();
+                }
+                return RuntimeValue.FromObject(this);
             }),
 
             // Inherit EventEmitter methods

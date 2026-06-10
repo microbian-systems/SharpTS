@@ -81,7 +81,12 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
                     return server.Close(args);
                 return receiver;
             }).Bind(this),
-            "address" => GetAddress(),
+            // Node API: server.address() is a method returning
+            // { address, family, port } (or null before listen).
+            "address" => BuiltInMethod.CreateV2("address", 0, (_, receiver, _) =>
+                RuntimeValue.FromBoxed(receiver.ToObject() is SharpTSHttpServer server
+                    ? server.GetAddress()
+                    : null)).Bind(this),
             // Inherit EventEmitter methods for on, once, off, emit, removeAllListeners, etc.
             _ => base.GetMember(name)
         };
@@ -120,6 +125,15 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         if (ClusterContext.IsWorker)
             return RuntimeValue.FromBoxed(ListenAsClusterWorker(interpreter, callback));
 
+        // Node semantics: listen(0) binds an OS-assigned ephemeral port.
+        // HttpListener has no dynamic-port support ("The parameter is
+        // incorrect"), so probe a free port by binding a temporary
+        // TcpListener and handing its assigned port to HttpListener. There
+        // is a small race window between release and re-bind, which is
+        // standard practice for this workaround (#214).
+        if (_port == 0)
+            _port = ProbeFreePort();
+
         _listener = new HttpListener();
         _listener.Prefixes.Add($"http://+:{_port}/");
 
@@ -154,6 +168,24 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         EmitEvent("listening", new List<object?>());
 
         return RuntimeValue.FromObject(this);
+    }
+
+    /// <summary>
+    /// Finds a free TCP port by binding a temporary listener on the loopback
+    /// interface with port 0 and reading back the OS-assigned port.
+    /// </summary>
+    private static int ProbeFreePort()
+    {
+        var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        probe.Start();
+        try
+        {
+            return ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        }
+        finally
+        {
+            probe.Stop();
+        }
     }
 
     /// <summary>
@@ -312,16 +344,18 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
 
         if (_listener == null) return null;
 
-        var prefix = _listener.Prefixes.FirstOrDefault();
-        if (prefix == null) return null;
-
-        // Parse the prefix to extract port
-        var uri = new Uri(prefix);
+        // Report the tracked port directly. Parsing the listener prefix with
+        // new Uri(...) throws "Invalid URI: The hostname could not be parsed"
+        // for the wildcard form "http://+:port/" — which is exactly what
+        // Listen registers on Linux/macOS (the wildcard only fails on Windows
+        // without admin rights, where the 127.0.0.1 fallback kicks in).
+        // _port is authoritative: listen(0) replaces it with the probed
+        // ephemeral port before HttpListener starts (#214).
         return new SharpTSObject(new Dictionary<string, object?>
         {
             ["address"] = "0.0.0.0",
             ["family"] = "IPv4",
-            ["port"] = (double)uri.Port
+            ["port"] = (double)_port
         });
     }
 

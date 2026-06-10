@@ -198,7 +198,7 @@ public partial class Interpreter
         // Unwrap Promise
         if (value is SharpTSPromise promise)
         {
-            return RuntimeValue.FromBoxed(await promise.GetValueAsync());
+            return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(promise.GetValueAsync()));
         }
 
         // Raw Task<object?> — returned by runtime methods (e.g., Web Streams
@@ -209,7 +209,7 @@ public partial class Interpreter
         // not unwrap).
         if (value is Task<object?> task)
         {
-            return RuntimeValue.FromBoxed(await task);
+            return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(task));
         }
 
         // Await on non-Promise returns the value (TypeScript behavior)
