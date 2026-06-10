@@ -33,9 +33,14 @@ jobs:
       # HttpListener's Prefixes.Add (Kerberos SPN setup) burns mDNSResponder's
       # full 5s timeout for every guest program that calls http server.listen().
       # Resolving it from /etc/hosts short-circuits that — saves ~2min of test time.
+      # Both address families are required: with only the 127.0.0.1 entry, the
+      # AAAA half of the dual-stack lookup still goes to mDNS and waits out the
+      # same 5s (measured on macos-latest: A-only 5053ms, A+AAAA 10ms).
       - name: Register hostname in /etc/hosts (macOS mDNS workaround)
         if: runner.os == 'macOS'
-        run: echo "127.0.0.1 $(hostname)" | sudo tee -a /etc/hosts
+        run: |
+          echo "127.0.0.1 $(hostname)" | sudo tee -a /etc/hosts
+          echo "::1 $(hostname)" | sudo tee -a /etc/hosts
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
