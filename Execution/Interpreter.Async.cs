@@ -21,6 +21,30 @@ public partial class Interpreter
     /// Asynchronously executes a block of statements.
     /// Uses registry-based dispatch via ExecuteStatementAsync.
     /// </summary>
+    /// <summary>
+    /// Awaits a guest task while preserving the interpreter's ambient
+    /// environment across the suspension (#207). The resume may run on a
+    /// later event-loop turn — after other callbacks ran, or after the
+    /// module-init/top-level frame that was active at suspension time
+    /// finished and restored <c>_environment</c> to an outer scope. The
+    /// tree-walk resolves variables through the ambient environment, so a
+    /// resumed async frame that doesn't re-assert its scope sees the wrong
+    /// chain ("Undefined variable 'x'" for closure/module bindings).
+    /// Every await of a guest-pending task must route through here.
+    /// </summary>
+    internal async Task<object?> AwaitPreservingEnvironment(Task<object?> task)
+    {
+        var saved = _environment;
+        try
+        {
+            return await task;
+        }
+        finally
+        {
+            _environment = saved;
+        }
+    }
+
     internal async Task<ExecutionResult> ExecuteBlockAsync(List<Stmt> statements, RuntimeEnvironment environment)
     {
         using (PushScope(environment))
@@ -56,7 +80,7 @@ public partial class Interpreter
             foreach (var item in syncIterator)
             {
                 // For 'for await...of', unwrap promises from sync iterators
-                object? value = forOf.IsAsync && item is Task<object?> t ? await t : item;
+                object? value = forOf.IsAsync && item is Task<object?> t ? await AwaitPreservingEnvironment(t) : item;
 
                 var result = await ExecuteLoopBodyAsync(forOf.Variable.Lexeme, value, forOf.Body);
                 if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == null) return ExecutionResult.Success();
@@ -180,9 +204,9 @@ public partial class Interpreter
 
             // Await the result if it's a promise/task
             if (nextResult is SharpTSPromise promise)
-                nextResult = await promise.Task;
+                nextResult = await AwaitPreservingEnvironment(promise.Task);
             else if (nextResult is Task<object?> task)
-                nextResult = await task;
+                nextResult = await AwaitPreservingEnvironment(task);
 
             // Check if the result is an iterator result object
             bool done = false;
