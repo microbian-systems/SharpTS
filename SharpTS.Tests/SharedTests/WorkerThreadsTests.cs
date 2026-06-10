@@ -293,6 +293,29 @@ public class WorkerThreadsTests
         Assert.Equal("true\ntrue\ntrue\n", output);
     }
 
+    // Interpreter-only: the compiled-mode MessageChannel drops messages
+    // entirely (listener never fires) — tracked separately from #209.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void MessageChannel_PortOnMessage_ReceivesPostedValue(ExecutionMode mode)
+    {
+        // #209: port.on() must dispatch through the port's own member table
+        // (postMessage/start/close reachable), a 'message' listener implicitly
+        // starts the port, and the listener receives the cloned value directly
+        // per Node worker_threads semantics.
+        var source = @"
+            let channel: any = new MessageChannel();
+            channel.port2.on('message', (value: any) => {
+                console.log('received: ' + value);
+                channel.port1.close();
+                channel.port2.close();
+            });
+            channel.port1.postMessage('hello');
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Contains("received: hello", output);
+    }
+
     #endregion
 
     #region StructuredClone Tests

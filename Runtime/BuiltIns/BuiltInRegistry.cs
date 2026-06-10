@@ -1035,6 +1035,12 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSMessagePort), (instance, name) =>
             ((SharpTSMessagePort)instance).GetMember(name));
 
+        // Register the worker-side parentPort (postMessage + EventEmitter members).
+        // Instance lookup is exact-type, so the WorkerParentPort subclass needs
+        // its own registration to reach its GetMember (#209).
+        registry.RegisterInstanceType(typeof(WorkerParentPort), (instance, name) =>
+            ((WorkerParentPort)instance).GetMember(name));
+
         // Register MessageChannel instance members
         registry.RegisterInstanceType(typeof(SharpTSMessageChannel), (instance, name) =>
             ((SharpTSMessageChannel)instance).GetMember(name));
