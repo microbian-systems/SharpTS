@@ -152,25 +152,25 @@ public class BuiltInMethodV2Tests
 
     #endregion
 
-    #region ISharpTSCallableV2 Interface Tests
+    #region Callable Interface Tests
 
     [Fact]
-    public void ImplementsISharpTSCallableV2()
+    public void ImplementsISharpTSCallable()
     {
         var method = new BuiltInMethod("test", 1,
             (Interpreter interp, object? receiver, List<object?> args) => args[0]);
 
-        Assert.IsAssignableFrom<ISharpTSCallableV2>(method);
+        Assert.IsAssignableFrom<ISharpTSCallable>(method);
     }
 
     [Fact]
-    public void ISharpTSCallableV2_Arity_MatchesMinArity()
+    public void Arity_MatchesMinArity()
     {
         var method = new BuiltInMethod("test", 1, 3,
             (Interpreter interp, object? receiver, List<object?> args) => args[0]);
 
-        ISharpTSCallableV2 v2 = method;
-        Assert.Equal(1, v2.Arity);
+        ISharpTSCallable callable = method;
+        Assert.Equal(1, callable.Arity());
     }
 
     #endregion

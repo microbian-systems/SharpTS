@@ -957,15 +957,11 @@ public static class ArrayBuiltIns
     private readonly struct CallbackIterator : IDisposable
     {
         private readonly ISharpTSCallable _callback;
-        private readonly ISharpTSCallableV2? _callbackV2;
-        private readonly PooledArgumentList _args;
         private readonly RuntimeValue[] _argsV2;
 
-        private CallbackIterator(ISharpTSCallable callback, PooledArgumentList args, RuntimeValue arrRV)
+        private CallbackIterator(ISharpTSCallable callback, RuntimeValue arrRV)
         {
             _callback = callback;
-            _callbackV2 = callback as ISharpTSCallableV2;
-            _args = args;
             _argsV2 = [default, default, arrRV];
         }
 
@@ -978,11 +974,7 @@ public static class ArrayBuiltIns
             // Arrow functions (HasOwnThis=false) ignore the binding per spec.
             if (args.Count >= 2)
                 callback = BindCallbackThis(callback, args[1]);
-            var callbackArgs = ArgumentListPool.Rent();
-            callbackArgs.Add(null);
-            callbackArgs.Add(null);
-            callbackArgs.Add(arr);
-            return new CallbackIterator(callback, callbackArgs, RuntimeValue.FromObject(arr));
+            return new CallbackIterator(callback, RuntimeValue.FromObject(arr));
         }
 
         public static CallbackIterator CreateFromRV(ReadOnlySpan<RuntimeValue> args, SharpTSArray arr, string methodName)
@@ -991,26 +983,14 @@ public static class ArrayBuiltIns
                 ?? throw new Exception($"Runtime Error: {methodName} requires a function argument.");
             if (args.Length >= 2)
                 callback = BindCallbackThis(callback, args[1].ToObject());
-            var callbackArgs = ArgumentListPool.Rent();
-            callbackArgs.Add(null);
-            callbackArgs.Add(null);
-            callbackArgs.Add(arr);
-            return new CallbackIterator(callback, callbackArgs, RuntimeValue.FromObject(arr));
+            return new CallbackIterator(callback, RuntimeValue.FromObject(arr));
         }
 
         public object? Invoke(Interpreter interp, object? element, int index)
         {
-            // V2 fast path — avoids boxing element and index
-            if (_callbackV2 != null)
-            {
-                _argsV2[0] = RuntimeValue.FromBoxed(element);
-                _argsV2[1] = RuntimeValue.FromNumber(index);
-                return _callbackV2.CallV2(interp, _argsV2).ToObject();
-            }
-
-            _args[0] = element;
-            _args[1] = (double)index;
-            return _callback.Call(interp, _args);
+            _argsV2[0] = RuntimeValue.FromBoxed(element);
+            _argsV2[1] = RuntimeValue.FromNumber(index);
+            return _callback.CallV2(interp, _argsV2).ToObject();
         }
 
         /// <summary>
@@ -1018,19 +998,12 @@ public static class ArrayBuiltIns
         /// </summary>
         public RuntimeValue InvokeRV(Interpreter interp, object? element, int index)
         {
-            if (_callbackV2 != null)
-            {
-                _argsV2[0] = RuntimeValue.FromBoxed(element);
-                _argsV2[1] = RuntimeValue.FromNumber(index);
-                return _callbackV2.CallV2(interp, _argsV2);
-            }
-
-            _args[0] = element;
-            _args[1] = (double)index;
-            return RuntimeValue.FromBoxed(_callback.Call(interp, _args));
+            _argsV2[0] = RuntimeValue.FromBoxed(element);
+            _argsV2[1] = RuntimeValue.FromNumber(index);
+            return _callback.CallV2(interp, _argsV2);
         }
 
-        public void Dispose() => ArgumentListPool.Return(_args);
+        public void Dispose() { }
 
         /// <summary>
         /// Re-binds the callback's `this` to <paramref name="thisValue"/> if the

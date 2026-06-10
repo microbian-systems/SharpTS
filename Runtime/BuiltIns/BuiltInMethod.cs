@@ -16,7 +16,7 @@ namespace SharpTS.Runtime.BuiltIns;
 /// </remarks>
 /// <seealso cref="ISharpTSCallable"/>
 /// <seealso cref="MathBuiltIns"/>
-public class BuiltInMethod : ISharpTSCallable, ISharpTSCallableV2
+public class BuiltInMethod : ISharpTSCallable
 {
     private readonly string _name;
     private readonly int _minArity;
@@ -75,9 +75,6 @@ public class BuiltInMethod : ISharpTSCallable, ISharpTSCallableV2
     /// meaning CallV2 can bypass the legacy wrapper for better performance.
     /// </summary>
     public bool HasV2Implementation => _implementationV2 != null;
-
-    /// <inheritdoc />
-    int ISharpTSCallableV2.Arity => _minArity;
 
     public BuiltInMethod(string name, int arity, Func<Interpreter, object?, List<object?>, object?> implementation)
         : this(name, arity, arity, implementation) { }

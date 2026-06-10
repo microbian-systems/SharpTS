@@ -241,7 +241,7 @@ public static class FunctionBuiltIns
 /// <summary>
 /// A function that has been bound to a specific 'this' value and/or has partial application.
 /// </summary>
-public class BoundFunction : ISharpTSCallable, ISharpTSCallableV2
+public class BoundFunction : ISharpTSCallable
 {
     private readonly ISharpTSCallable _target;
     private readonly object? _thisArg;
@@ -286,8 +286,6 @@ public class BoundFunction : ISharpTSCallable, ISharpTSCallableV2
         return Math.Max(0, baseArity - _boundArgs.Count);
     }
 
-    int ISharpTSCallableV2.Arity => Arity();
-
     public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         // Combine bound args + call args into a single array
@@ -302,17 +300,13 @@ public class BoundFunction : ISharpTSCallable, ISharpTSCallableV2
             if (_target is SharpTSFunction fn)
             {
                 var boundFn = CreateBoundSharpTSFunction(fn, _thisArg);
-                if (boundFn is ISharpTSCallableV2 v2)
-                    return v2.CallV2(interpreter, combined);
-                return RuntimeValue.FromBoxed(boundFn.Call(interpreter, combined.Select(rv => rv.ToObject()).ToList()));
+                return boundFn.CallV2(interpreter, combined);
             }
 
             if (_target is SharpTSArrowFunction arrow && arrow.HasOwnThis)
             {
                 var boundArrow = arrow.Bind(_thisArg);
-                if (boundArrow is ISharpTSCallableV2 v2)
-                    return v2.CallV2(interpreter, combined);
-                return RuntimeValue.FromBoxed(boundArrow.Call(interpreter, combined.Select(rv => rv.ToObject()).ToList()));
+                return boundArrow.CallV2(interpreter, combined);
             }
 
             // Mirror the legacy Call path for BuiltInMethod (issue #101): the
@@ -322,20 +316,11 @@ public class BoundFunction : ISharpTSCallable, ISharpTSCallableV2
             // implementation throws "called on non-function".
             if (_target is BuiltInMethod bim)
             {
-                return ((ISharpTSCallableV2)bim.Bind(_thisArg))
-                    .CallV2(interpreter, combined);
+                return bim.Bind(_thisArg).CallV2(interpreter, combined);
             }
         }
 
-        // Fast path: target supports V2
-        if (_target is ISharpTSCallableV2 targetV2)
-            return targetV2.CallV2(interpreter, combined);
-
-        // Fallback to legacy
-        var boxedArgs = new List<object?>(combined.Length);
-        foreach (var rv in combined)
-            boxedArgs.Add(rv.ToObject());
-        return RuntimeValue.FromBoxed(_target.Call(interpreter, boxedArgs));
+        return _target.CallV2(interpreter, combined);
     }
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
@@ -393,7 +378,7 @@ public class BoundFunction : ISharpTSCallable, ISharpTSCallableV2
 /// <summary>
 /// Internal wrapper to call a SharpTSFunction with an arbitrary 'this' value.
 /// </summary>
-internal class BoundSharpTSFunctionWrapper : ISharpTSCallable, ISharpTSCallableV2
+internal class BoundSharpTSFunctionWrapper : ISharpTSCallable
 {
     private readonly SharpTSFunction _fn;
     private readonly object _thisArg;
@@ -405,8 +390,6 @@ internal class BoundSharpTSFunctionWrapper : ISharpTSCallable, ISharpTSCallableV
     }
 
     public int Arity() => _fn.Arity();
-
-    int ISharpTSCallableV2.Arity => _fn.Arity();
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
@@ -431,12 +414,12 @@ internal class BoundSharpTSFunctionWrapper : ISharpTSCallable, ISharpTSCallableV
         if (_thisArg is SharpTSInstance instance)
         {
             var boundFn = _fn.Bind(instance);
-            return ((ISharpTSCallableV2)boundFn).CallV2(interpreter, arguments);
+            return boundFn.CallV2(interpreter, arguments);
         }
 
         var syntheticInstance = new SyntheticThisInstance(_thisArg);
         var boundFn2 = _fn.Bind(syntheticInstance);
-        var result = ((ISharpTSCallableV2)boundFn2).CallV2(interpreter, arguments);
+        var result = boundFn2.CallV2(interpreter, arguments);
         FlushSyntheticBack(syntheticInstance, _thisArg);
         return result;
     }
