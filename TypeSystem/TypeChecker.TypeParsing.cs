@@ -960,6 +960,7 @@ public partial class TypeChecker
 
         Dictionary<string, TypeInfo> fields = [];
         HashSet<string> optionalFields = [];
+        HashSet<string> methodMembers = [];
         TypeInfo? stringIndexType = null;
         TypeInfo? numberIndexType = null;
         TypeInfo? symbolIndexType = null;
@@ -1026,13 +1027,17 @@ public partial class TypeChecker
             string propName = m[..regularColonIdx].Trim();
             string propType = m[(regularColonIdx + 1)..].Trim();
 
-            // Check for optional marker (?) and track it
+            // Strip the optional marker (?) and the method marker (#m, emitted by the parser for
+            // method-syntax members) — order matches the emitted "name#m?:" form.
             bool isOptional = propName.EndsWith("?");
-            if (isOptional)
+            if (isOptional) propName = propName[..^1].Trim();
+            bool isMethod = propName.EndsWith("#m");
+            if (isMethod)
             {
-                propName = propName[..^1].Trim();
-                optionalFields.Add(propName);
+                propName = propName[..^2].Trim();
+                methodMembers.Add(propName);
             }
+            if (isOptional) optionalFields.Add(propName);
 
             fields[propName] = ToTypeInfo(propType);
         }
@@ -1059,7 +1064,8 @@ public partial class TypeChecker
             symbolIndexType,
             optionalFields.Count > 0 ? optionalFields.ToFrozenSet() : null,
             CallSignatures: recCallSigs,
-            ConstructorSignatures: recCtorSigs);
+            ConstructorSignatures: recCtorSigs,
+            MethodMembers: methodMembers.Count > 0 ? methodMembers.ToFrozenSet() : null);
     }
 
     /// <summary>

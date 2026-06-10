@@ -70,10 +70,40 @@ public partial class TypeChecker
     /// </summary>
     private readonly bool _strictNullChecks;
 
+    /// <summary>
+    /// When true (TypeScript's <c>strictFunctionTypes</c>), function-type parameters compare
+    /// contravariantly; members declared with METHOD syntax keep the legacy bivariant comparison
+    /// (tsc's exemption). Defaults to false — the product keeps bivariant relating; the TS
+    /// conformance runner sets it from each test's <c>@strict</c> directive.
+    /// </summary>
+    private readonly bool _strictFunctionTypes;
+
+    /// <summary>
+    /// Non-zero while comparing members declared with method syntax — within such a comparison,
+    /// function parameters relate bivariantly even under <see cref="_strictFunctionTypes"/>.
+    /// </summary>
+    private int _methodBivarianceDepth;
+
+    /// <summary>
+    /// Non-zero while measuring a generic interface's type-parameter variances. Within
+    /// measurement, the callback comparison rule is enabled (both params pure function types →
+    /// relate swapped with strict parameters), so a parameter used only in callback-parameter
+    /// positions measures covariant — tsc's Promise rule.
+    /// </summary>
+    private int _varianceMeasurementDepth;
+
+    /// <summary>
+    /// True for the immediate signature relation spawned by the callback rule: its parameters
+    /// relate contravariantly only (no bivariant leg, no callback re-fire). Captured-and-cleared
+    /// at RelateFunctionShapes entry so it never leaks into nested comparisons.
+    /// </summary>
+    private bool _inCallbackComparison;
+
     /// <summary>Creates a type checker. <paramref name="strictNullChecks"/> defaults to true.</summary>
-    public TypeChecker(bool strictNullChecks = true, int maxErrors = 10)
+    public TypeChecker(bool strictNullChecks = true, int maxErrors = 10, bool strictFunctionTypes = false)
     {
         _strictNullChecks = strictNullChecks;
+        _strictFunctionTypes = strictFunctionTypes;
         _diagnostics.MaxErrors = maxErrors;
     }
 
