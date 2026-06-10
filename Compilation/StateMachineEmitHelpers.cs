@@ -110,8 +110,28 @@ public class StateMachineEmitHelpers
     {
         if (_stackType != StackType.Double)
         {
-            _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
+            EmitToNumberCoercion();
             _stackType = StackType.Double;
+        }
+    }
+
+    /// <summary>
+    /// Emits boxed-object → double conversion. Prefers $Runtime.ConvertToNumber,
+    /// which implements ECMA-262 ToNumber (undefined→NaN, null→0, booleans,
+    /// hex/Infinity strings, ToPrimitive on objects) — Convert.ToDouble instead
+    /// throws InvalidCastException on $Undefined because it isn't IConvertible
+    /// (#190). Falls back to Convert.ToDouble for emit contexts where the
+    /// runtime helper isn't available.
+    /// </summary>
+    private void EmitToNumberCoercion()
+    {
+        if (_runtime != null)
+        {
+            _il.Emit(OpCodes.Call, _runtime.ConvertToNumber);
+        }
+        else
+        {
+            _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
         }
     }
 
@@ -450,7 +470,7 @@ public class StateMachineEmitHelpers
 
     public void EmitConvertToDouble()
     {
-        _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
+        EmitToNumberCoercion();
         _stackType = StackType.Double;
     }
 
@@ -643,7 +663,7 @@ public class StateMachineEmitHelpers
     {
         emitOperand();
         EnsureBoxed();
-        _il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", [_types.Object]));
+        EmitToNumberCoercion();
         _il.Emit(OpCodes.Neg);
         _il.Emit(OpCodes.Box, _types.Double);
         SetStackUnknown();

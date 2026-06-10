@@ -3026,6 +3026,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, stringLabel);
 
+        // .NET interop: boxed non-double numerics (float, int, long, decimal, …)
+        // arrive via @DotNetType calls. Convert them numerically rather than
+        // falling through to NaN (EnsureDouble routes through this method).
+        var notConvertibleLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Isinst, typeof(IConvertible));
+        il.Emit(OpCodes.Brfalse, notConvertibleLabel);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Convert, "ToDouble", _types.Object));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notConvertibleLabel);
+
         // everything else => NaN
         il.Emit(OpCodes.Br, nanLabel);
 

@@ -237,8 +237,23 @@ public partial class Interpreter
                 left as string ?? Stringify(left),
                 right as string ?? Stringify(right));
         }
-        throw new InterpreterException("Operands must be two numbers or two strings.");
+        // ECMA-262 §13.15.3: with an object operand, ToPrimitive (default hint)
+        // yields a string for arrays/plain objects, so `+` concatenates.
+        if (IsObjectLike(left) || IsObjectLike(right))
+        {
+            return string.Concat(Stringify(left), Stringify(right));
+        }
+        // Both primitives, neither a string: numeric addition with ToNumber
+        // coercion (undefined→NaN, null→0, booleans→0/1) per #190.
+        return CoerceToNumber(left) + CoerceToNumber(right);
     }
+
+    /// <summary>
+    /// True for guest object values — anything that is not a JS primitive
+    /// (number, string, boolean, null, undefined, bigint, symbol).
+    /// </summary>
+    private static bool IsObjectLike(object? value) =>
+        value is not (null or double or string or bool or SharpTSUndefined or SharpTSBigInt or SharpTSSymbol);
 
     /// <summary>
     /// Evaluates a unary operator expression.
@@ -310,6 +325,12 @@ public partial class Interpreter
     /// strings parsed (empty/whitespace→0, otherwise NaN on parse failure).
     /// Numbers pass through unchanged.
     /// </summary>
+    /// <summary>
+    /// Boxed-value overload of <see cref="CoerceToNumber(RuntimeValue)"/> for the
+    /// legacy object?-based slow paths.
+    /// </summary>
+    private static double CoerceToNumber(object? value) => CoerceToNumber(RuntimeValue.FromBoxed(value));
+
     private static double CoerceToNumber(RuntimeValue rv)
     {
         if (rv.IsNumber) return rv.AsNumber();
