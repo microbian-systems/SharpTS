@@ -2069,17 +2069,55 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, noTcCheckLabel);
 
         // TCP fallback: result = DnsSendViaTcp(query, server)
+        var rcodeCheckLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, serverLocal);
         il.Emit(OpCodes.Call, runtime.DnsSendViaTcp);
         il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Leave, returnLabel);
+        il.Emit(OpCodes.Br, rcodeCheckLabel);
 
         il.MarkLabel(noTcCheckLabel);
 
         // No truncation: result = response
         il.Emit(OpCodes.Ldloc, responseLocal);
         il.Emit(OpCodes.Stloc, resultLocal);
+
+        // SERVFAIL/REFUSED are usually transient resolver conditions — retry
+        // them like socket errors (mirrors DnsWireProtocol.SendReceive). On the
+        // last attempt the response is returned so parsing surfaces the error.
+        // if (attempt < 2 && result.Length >= 4 && ((result[3] & 0x0F) == 2 || (result[3] & 0x0F) == 5)) continue;
+        il.MarkLabel(rcodeCheckLabel);
+        var acceptResponseLabel = il.DefineLabel();
+        var retryRcodeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, attemptLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Bge, acceptResponseLabel);
+
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Blt, acceptResponseLabel);
+
+        var rcodeLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldc_I4, 0x0F);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Stloc, rcodeLocal);
+
+        il.Emit(OpCodes.Ldloc, rcodeLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Beq, retryRcodeLabel);
+        il.Emit(OpCodes.Ldloc, rcodeLocal);
+        il.Emit(OpCodes.Ldc_I4_5);
+        il.Emit(OpCodes.Bne_Un, acceptResponseLabel);
+
+        il.MarkLabel(retryRcodeLabel);
+        il.Emit(OpCodes.Leave, retryIncrement);
+
+        il.MarkLabel(acceptResponseLabel);
         il.Emit(OpCodes.Leave, returnLabel);
 
         // catch (SocketException) when (attempt < MaxRetries)
