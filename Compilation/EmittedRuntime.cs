@@ -2487,6 +2487,8 @@ public class EmittedRuntime
     public MethodBuilder DnsDoQuery { get; set; } = null!;
 
     // DNS wire protocol helpers (emitted into output assembly)
+    public MethodBuilder DnsGetTimeoutMs { get; set; } = null!;
+    public MethodBuilder DnsParseServerEndpoint { get; set; } = null!;
     public MethodBuilder DnsGetSystemDns { get; set; } = null!;
     public MethodBuilder DnsBuildQuery { get; set; } = null!;
     public MethodBuilder DnsSendReceive { get; set; } = null!;

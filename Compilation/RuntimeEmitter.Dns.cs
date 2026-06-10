@@ -20,6 +20,8 @@ public partial class RuntimeEmitter
         EmitDnsGetLookupService(typeBuilder, runtime);
 
         // DNS wire protocol helpers (emitted into output assembly, BCL-only)
+        EmitDnsGetTimeoutMsMethod(typeBuilder, runtime);
+        EmitDnsParseServerEndpointMethod(typeBuilder, runtime);
         EmitDnsReadUInt16(typeBuilder, runtime);
         EmitDnsReadUInt32(typeBuilder, runtime);
         EmitDnsReadCharString(typeBuilder, runtime);
@@ -1022,7 +1024,7 @@ public partial class RuntimeEmitter
     private void EmitDnsReadExact(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // Signature: void DnsReadExact(NetworkStream stream, byte[] buf, int offset, int count)
-        // Uses Task.Wait(5000) for reliable cross-platform timeout.
+        // Uses Task.Wait(DnsGetTimeoutMs()) for reliable cross-platform timeout.
         var method = typeBuilder.DefineMethod(
             "DnsReadExact",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -1057,9 +1059,9 @@ public partial class RuntimeEmitter
             [typeof(byte[]), _types.Int32, _types.Int32, typeof(CancellationToken)])!);
         il.Emit(OpCodes.Stloc, readTaskLocal);
 
-        // if (!readTask.Wait(5000)) throw SocketException(TimedOut)
+        // if (!readTask.Wait(DnsGetTimeoutMs())) throw SocketException(TimedOut)
         il.Emit(OpCodes.Ldloc, readTaskLocal);
-        il.Emit(OpCodes.Ldc_I4, 5000);
+        il.Emit(OpCodes.Call, runtime.DnsGetTimeoutMs);
         il.Emit(OpCodes.Callvirt, typeof(Task).GetMethod("Wait", [_types.Int32])!);
         var waitOkLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, waitOkLabel);
@@ -1469,7 +1471,97 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits DnsGetTimeoutMs: per-attempt DNS timeout in milliseconds.
+    /// SHARPTS_DNS_TIMEOUT_MS overrides the 5s default — mirrors
+    /// DnsWireProtocol.TimeoutMs so fake-server tests can exercise the timeout
+    /// path quickly in compiled mode too.
+    /// Signature: int DnsGetTimeoutMs()
+    /// </summary>
+    private void EmitDnsGetTimeoutMsMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsGetTimeoutMs",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Int32,
+            Type.EmptyTypes);
+        runtime.DnsGetTimeoutMs = method;
+
+        var il = method.GetILGenerator();
+
+        var envLocal = il.DeclareLocal(_types.String);
+        var valueLocal = il.DeclareLocal(_types.Int32);
+        var defaultLabel = il.DefineLabel();
+
+        // string env = Environment.GetEnvironmentVariable("SHARPTS_DNS_TIMEOUT_MS")
+        il.Emit(OpCodes.Ldstr, "SHARPTS_DNS_TIMEOUT_MS");
+        il.Emit(OpCodes.Call, typeof(Environment).GetMethod("GetEnvironmentVariable", [_types.String])!);
+        il.Emit(OpCodes.Stloc, envLocal);
+
+        // if (env == null || !int.TryParse(env, out value) || value <= 0) goto default
+        il.Emit(OpCodes.Ldloc, envLocal);
+        il.Emit(OpCodes.Brfalse, defaultLabel);
+
+        il.Emit(OpCodes.Ldloc, envLocal);
+        il.Emit(OpCodes.Ldloca, valueLocal);
+        il.Emit(OpCodes.Call, _types.Int32.GetMethod("TryParse", [_types.String, _types.Int32.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, defaultLabel);
+
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, defaultLabel);
+
+        // return value
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ret);
+
+        // return 5000
+        il.MarkLabel(defaultLabel);
+        il.Emit(OpCodes.Ldc_I4, 5000);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits DnsParseServerEndpoint: parses a DNS server address that may carry a
+    /// port ("8.8.8.8", "127.0.0.1:5353", "[::1]:5353"); a missing port defaults
+    /// to 53. Mirrors the port handling in DnsWireProtocol.SendReceive.
+    /// Signature: IPEndPoint DnsParseServerEndpoint(string server)
+    /// </summary>
+    private void EmitDnsParseServerEndpointMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DnsParseServerEndpoint",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(IPEndPoint),
+            [_types.String]);
+        runtime.DnsParseServerEndpoint = method;
+
+        var il = method.GetILGenerator();
+
+        var endpointLocal = il.DeclareLocal(typeof(IPEndPoint));
+        var doneLabel = il.DefineLabel();
+
+        // var endpoint = IPEndPoint.Parse(server)  — a bare address parses with Port == 0
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(IPEndPoint).GetMethod("Parse", [_types.String])!);
+        il.Emit(OpCodes.Stloc, endpointLocal);
+
+        // if (endpoint.Port == 0) endpoint.Port = 53
+        il.Emit(OpCodes.Ldloc, endpointLocal);
+        il.Emit(OpCodes.Callvirt, typeof(IPEndPoint).GetProperty("Port")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brtrue, doneLabel);
+
+        il.Emit(OpCodes.Ldloc, endpointLocal);
+        il.Emit(OpCodes.Ldc_I4, 53);
+        il.Emit(OpCodes.Callvirt, typeof(IPEndPoint).GetProperty("Port")!.GetSetMethod()!);
+
+        il.MarkLabel(doneLabel);
+        il.Emit(OpCodes.Ldloc, endpointLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits DnsGetSystemDns: returns the system's primary DNS server address as string.
+    /// SHARPTS_DNS_SERVER overrides discovery (mirrors DnsWireProtocol.GetSystemDnsServer).
     /// Signature: string DnsGetSystemDns()
     /// </summary>
     private void EmitDnsGetSystemDnsMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
@@ -1485,6 +1577,21 @@ public partial class RuntimeEmitter
 
         var resultLocal = il.DeclareLocal(_types.String); // 0
         var returnLabel = il.DefineLabel();
+
+        // string env = Environment.GetEnvironmentVariable("SHARPTS_DNS_SERVER");
+        // if (!string.IsNullOrEmpty(env)) return env;
+        var envLocal = il.DeclareLocal(_types.String);
+        var noOverrideLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldstr, "SHARPTS_DNS_SERVER");
+        il.Emit(OpCodes.Call, typeof(Environment).GetMethod("GetEnvironmentVariable", [_types.String])!);
+        il.Emit(OpCodes.Stloc, envLocal);
+        il.Emit(OpCodes.Ldloc, envLocal);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("IsNullOrEmpty", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, noOverrideLabel);
+        il.Emit(OpCodes.Ldloc, envLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(noOverrideLabel);
 
         il.BeginExceptionBlock();
 
@@ -1784,6 +1891,12 @@ public partial class RuntimeEmitter
         var resultLocal = il.DeclareLocal(typeof(byte[])); // 0
         var returnLabel = il.DefineLabel();
 
+        // var endpoint = DnsParseServerEndpoint(server) — handles "host" and "host:port"
+        var endpointLocal = il.DeclareLocal(typeof(IPEndPoint));
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.DnsParseServerEndpoint);
+        il.Emit(OpCodes.Stloc, endpointLocal);
+
         // using var tcp = new TcpClient()
         var tcpLocal = il.DeclareLocal(typeof(TcpClient)); // 1
         il.Emit(OpCodes.Newobj, typeof(TcpClient).GetConstructor(Type.EmptyTypes)!);
@@ -1791,18 +1904,21 @@ public partial class RuntimeEmitter
 
         il.BeginExceptionBlock();
 
-        // tcp.SendTimeout = 5000
+        // tcp.SendTimeout = DnsGetTimeoutMs()
         il.Emit(OpCodes.Ldloc, tcpLocal);
-        il.Emit(OpCodes.Ldc_I4, 5000);
+        il.Emit(OpCodes.Call, runtime.DnsGetTimeoutMs);
         il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetProperty("SendTimeout")!.GetSetMethod()!);
 
-        // tcp.ConnectAsync(server, 53).WaitAsync(TimeSpan.FromMilliseconds(5000)).GetAwaiter().GetResult()
+        // tcp.ConnectAsync(endpoint.Address, endpoint.Port).WaitAsync(TimeSpan.FromMilliseconds(DnsGetTimeoutMs())).GetAwaiter().GetResult()
         il.Emit(OpCodes.Ldloc, tcpLocal);
-        il.Emit(OpCodes.Ldarg_1); // server
-        il.Emit(OpCodes.Ldc_I4, 53);
-        il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetMethod("ConnectAsync", [_types.String, _types.Int32])!);
+        il.Emit(OpCodes.Ldloc, endpointLocal);
+        il.Emit(OpCodes.Callvirt, typeof(IPEndPoint).GetProperty("Address")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, endpointLocal);
+        il.Emit(OpCodes.Callvirt, typeof(IPEndPoint).GetProperty("Port")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetMethod("ConnectAsync", [typeof(IPAddress), _types.Int32])!);
         // Task.WaitAsync(TimeSpan) for reliable timeout
-        il.Emit(OpCodes.Ldc_R8, 5000.0);
+        il.Emit(OpCodes.Call, runtime.DnsGetTimeoutMs);
+        il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Call, typeof(TimeSpan).GetMethod("FromMilliseconds", [typeof(double)])!);
         il.Emit(OpCodes.Callvirt, typeof(Task).GetMethod("WaitAsync", [typeof(TimeSpan)])!);
         var connectAwaiterLocal = il.DeclareLocal(typeof(TaskAwaiter));
@@ -1945,12 +2061,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.DnsGetSystemDns);
         il.Emit(OpCodes.Stloc, serverLocal);
 
-        // var endpoint = new IPEndPoint(IPAddress.Parse(server), 53)
+        // var endpoint = DnsParseServerEndpoint(server) — handles "host" and "host:port"
         var endpointLocal = il.DeclareLocal(typeof(IPEndPoint)); // 1
         il.Emit(OpCodes.Ldloc, serverLocal);
-        il.Emit(OpCodes.Call, typeof(IPAddress).GetMethod("Parse", [_types.String])!);
-        il.Emit(OpCodes.Ldc_I4, 53);
-        il.Emit(OpCodes.Newobj, typeof(IPEndPoint).GetConstructor([typeof(IPAddress), _types.Int32])!);
+        il.Emit(OpCodes.Call, runtime.DnsParseServerEndpoint);
         il.Emit(OpCodes.Stloc, endpointLocal);
 
         // byte[] result = null
@@ -1979,10 +2093,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, typeof(UdpClient).GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, udpLocal);
 
-        // udp.Client.SendTimeout = 5000
+        // udp.Client.SendTimeout = DnsGetTimeoutMs()
         il.Emit(OpCodes.Ldloc, udpLocal);
         il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetProperty("Client")!.GetGetMethod()!);
-        il.Emit(OpCodes.Ldc_I4, 5000);
+        il.Emit(OpCodes.Call, runtime.DnsGetTimeoutMs);
         il.Emit(OpCodes.Callvirt, typeof(Socket).GetProperty("SendTimeout")!.GetSetMethod()!);
 
         // udp.Send(query, query.Length, endpoint)
@@ -2020,9 +2134,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, valueTaskType.GetMethod("AsTask")!);
         il.Emit(OpCodes.Stloc, taskLocal);
 
-        // if (!task.Wait(5000)) { udp.Close(); throw SocketException(TimedOut); }
+        // if (!task.Wait(DnsGetTimeoutMs())) { udp.Close(); throw SocketException(TimedOut); }
         il.Emit(OpCodes.Ldloc, taskLocal);
-        il.Emit(OpCodes.Ldc_I4, 5000);
+        il.Emit(OpCodes.Call, runtime.DnsGetTimeoutMs);
         il.Emit(OpCodes.Callvirt, typeof(Task).GetMethod("Wait", [_types.Int32])!);
         var waitOkLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, waitOkLabel);
@@ -2051,6 +2165,40 @@ public partial class RuntimeEmitter
         // udp.Dispose()
         il.Emit(OpCodes.Ldloc, udpLocal);
         il.Emit(OpCodes.Callvirt, typeof(UdpClient).GetMethod("Dispose", Type.EmptyTypes)!);
+
+        // Discard datagrams whose transaction ID doesn't echo the query's (stale
+        // or spoofed response) and retry; if no matching response ever arrives
+        // this falls out of the retry loop into the ETIMEOUT throw — mirrors
+        // DnsWireProtocol.SendReceive.
+        // if (response.Length < 2 || response[0] != query[0] || response[1] != query[1]) continue;
+        var idMismatchLabel = il.DefineLabel();
+        var idOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, responseLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Blt, idMismatchLabel);
+
+        il.Emit(OpCodes.Ldloc, responseLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Bne_Un, idMismatchLabel);
+
+        il.Emit(OpCodes.Ldloc, responseLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Beq, idOkLabel);
+
+        il.MarkLabel(idMismatchLabel);
+        il.Emit(OpCodes.Leave, retryIncrement);
+
+        il.MarkLabel(idOkLabel);
 
         // Check TC (truncation) bit — byte[2], bit 1
         // if (response.Length >= 3 && (response[2] & 0x02) != 0) -> TCP fallback
