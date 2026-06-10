@@ -129,7 +129,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
     /// outlive any suspension) and routes through <see cref="Call"/>, which wraps
     /// synchronous throws into a rejected Promise.
     /// </summary>
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>

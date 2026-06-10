@@ -26,7 +26,7 @@ public class SharpTSStringNamespace : ISharpTSCallable
         return arg.ToString() ?? "";
     }
 
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
@@ -110,7 +110,7 @@ internal sealed class StringPrototypeMethodWrapper : ISharpTSCallable
         return _inner.Bind(coerced).CallBoxed(interpreter, arguments);
     }
 
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
@@ -177,7 +177,7 @@ public class SharpTSNumberNamespace : ISharpTSCallable
         return double.NaN;
     }
 
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
@@ -258,7 +258,7 @@ internal sealed class NumberPrototypeMethodWrapper : ISharpTSCallable
         return _inner.Bind(d).CallBoxed(interpreter, arguments);
     }
 
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     public override string ToString() => $"function {_name}() {{ [native code] }}";
@@ -282,7 +282,7 @@ public class SharpTSBooleanNamespace : ISharpTSCallable
         return SharpTS.Compilation.RuntimeTypes.IsTruthy(arg);
     }
 
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
@@ -352,10 +352,7 @@ internal sealed class BooleanPrototypeMethodWrapper : ISharpTSCallable
     public BooleanPrototypeMethodWrapper Bind(object? receiver)
         => new(_name, _isToString, receiver);
 
-    public object? Call(Interpreter interpreter, List<object?> arguments)
-        => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
-
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         if (!_hasReceiver || _receiver is not bool b)
         {

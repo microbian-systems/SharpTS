@@ -64,9 +64,7 @@ Source → Lexer → Parser → TypeChecker → Interpreter (tree-walk)
 - Classes are compared **structurally** for assignment compatibility (matching `tsc`), **except** when the target class is branded by a private/protected member anywhere in its hierarchy — then it is nominal (source must be the same class or a subclass). Inheritance/subtyping is still nominal (name-based) for the hierarchy walk. See `TypeChecker.Compatibility.cs` (`Instance` vs `Instance`) and `HasNominalClassBrand`.
 - `TypeInfo` records represent types statically; runtime objects are independent
 
-### RuntimeValue Boxing Elimination (Active Optimization)
-
-The codebase is migrating from `object?` to `RuntimeValue` struct to eliminate boxing:
+### RuntimeValue (Boxing-Free Value Representation)
 
 **RuntimeValue** (`Runtime/RuntimeValue.cs`):
 - 24-byte discriminated union storing primitives inline
@@ -76,14 +74,15 @@ The codebase is migrating from `object?` to `RuntimeValue` struct to eliminate b
 - JavaScript semantics: `IsTruthy()`, `TypeofString()`
 
 **ISharpTSCallable** (`Runtime/Types/SharpTSFunction.cs`) is the single callable interface:
-- Boxed `Call(Interpreter, List<object?>)` (being retired) plus `CallV2(Interpreter, ReadOnlySpan<RuntimeValue>)`
-- `CallV2` has a default implementation that bridges to `Call` — unmigrated implementors work unchanged; migrated ones override it to run boxing-free
-- Call sites holding boxed args use `.CallBoxed(...)` from `Runtime/Types/CallableInterop.cs` (never invoke legacy `Call` directly in new code)
+- `int Arity()` + `RuntimeValue Call(Interpreter, ReadOnlySpan<RuntimeValue>)` — span-based, no boxing
+- Call sites holding boxed `List<object?>` args use `.CallBoxed(...)` from `Runtime/Types/CallableInterop.cs`
+- Some classes keep an additional boxed `Call(Interpreter, List<object?>)`/`CallBoxed` overload as their internal body where the work is inherently `object?`-based (interop, streams)
 - Spans can't cross `await`: async call sites evaluate all args first, then call synchronously; async/generator implementors copy span → list before starting the state machine
 
 **BuiltInMethod** (`Runtime/BuiltIns/BuiltInMethod.cs`):
-- `CreateV2()` factory for RuntimeValue-based methods; `HasV2Implementation` gates the interpreter fast path
-- Legacy delegate bodies (`Func<Interpreter, object?, List<object?>, object?>`) still work via an internal wrapper — converting them is incremental follow-up work
+- `CreateV2()` factory for RuntimeValue-based delegate bodies; `HasNativeImplementation` gates the interpreter fast path
+- Legacy delegate bodies (`Func<Interpreter, object?, List<object?>, object?>`) still work via an internal wrapper — converting the remaining ~367 registrations is incremental follow-up work
+- `CallBoxed(Interpreter?, List<object?>)` on `BuiltInMethod` and `VmScriptConstructor` is a **reflection contract**: compiled DLLs look it up by name (`GetMethod("CallBoxed")`) from emitted vm/eval bridge paths (`RuntimeEmitter.VmHelpers/Objects.Invocation/Objects.Properties`). Do not rename or change its signature without updating the emitter's `Ldstr "CallBoxed"` sites
 - Thread-local pooling in array built-ins to avoid allocations
 
 ### Visitor-Style Traversal Pattern

@@ -30,23 +30,10 @@ public class SharpTSGeneratorFunction : ISharpTSCallable
     public int Arity() => _arity;
 
     /// <summary>
-    /// Creates a new generator instance. Does NOT execute the function body.
-    /// </summary>
-    public object? Call(Interpreter interpreter, List<object?> arguments)
-    {
-        // Create environment and bind parameters (like a regular function)
-        RuntimeEnvironment environment = new(_closure);
-        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
-
-        // Return a generator that will execute the body lazily
-        return new SharpTSGenerator(_declaration, environment, interpreter);
-    }
-
-    /// <summary>
     /// RuntimeValue entry point. Parameter binding happens synchronously before this
     /// returns; only the bound environment outlives the call, so the span never escapes.
     /// </summary>
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         RuntimeEnvironment environment = new(_closure);
         ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
@@ -105,25 +92,9 @@ public class SharpTSArrowGeneratorFunction : ISharpTSCallable
     public int Arity() => _arity;
 
     /// <summary>
-    /// Creates a new generator instance. Does NOT execute the function body.
+    /// RuntimeValue entry point — see <see cref="SharpTSGeneratorFunction.Call"/>.
     /// </summary>
-    public object? Call(Interpreter interpreter, List<object?> arguments)
-    {
-        RuntimeEnvironment environment = new(_closure);
-        // Named generator function expression: bind self-reference alongside params.
-        if (_declaration.Name != null)
-        {
-            environment.Define(_declaration.Name.Lexeme, this);
-        }
-        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
-
-        return new SharpTSArrowGenerator(_declaration, environment, interpreter);
-    }
-
-    /// <summary>
-    /// RuntimeValue entry point — see <see cref="SharpTSGeneratorFunction.CallV2"/>.
-    /// </summary>
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         RuntimeEnvironment environment = new(_closure);
         if (_declaration.Name != null)

@@ -56,7 +56,7 @@ public class SharpTSPromisifiedFunction : ISharpTSCallable
         return new SharpTSPromise(tcs.Task);
     }
 
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     public override string ToString() => "<promisified fn>";
@@ -110,7 +110,7 @@ internal class SharpTSPromisifyCallback : ISharpTSCallable
         return null;
     }
 
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     public override string ToString() => "<promisify callback>";

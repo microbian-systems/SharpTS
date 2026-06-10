@@ -72,7 +72,7 @@ public class SharpTSFinalizationRegistry : ITypeCategorized
         {
             try
             {
-                _cleanupCallback.CallV2(interpreter!, [RuntimeValue.FromBoxed(heldValue)]);
+                _cleanupCallback.Call(interpreter!, [RuntimeValue.FromBoxed(heldValue)]);
             }
             catch
             {

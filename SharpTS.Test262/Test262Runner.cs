@@ -914,7 +914,7 @@ function $DONE(err) {
             return null;
         }
 
-        public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
             => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
         public override string ToString() => "function $DONE() { [native code] }";

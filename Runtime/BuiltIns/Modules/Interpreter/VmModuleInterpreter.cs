@@ -487,6 +487,14 @@ public sealed class VmScriptConstructor : ISharpTSCallable
         };
     }
 
-    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    /// <summary>
+    /// Reflection-stable boxed entry point — compiled DLLs invoke this by name
+    /// (<c>GetMethod("CallBoxed")</c>) with a null interpreter; see the
+    /// RuntimeEmitter vm-helper <c>Ldstr "CallBoxed"</c> sites.
+    /// </summary>
+    public object? CallBoxed(Interp? interpreter, List<object?> arguments)
+        => Call(interpreter!, arguments);
+
+    public RuntimeValue Call(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 }

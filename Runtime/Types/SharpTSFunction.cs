@@ -17,20 +17,12 @@ namespace SharpTS.Runtime.Types;
 public interface ISharpTSCallable
 {
     int Arity();
-    object? Call(Interpreter interpreter, List<object?> arguments);
 
     /// <summary>
-    /// Invokes the callable with RuntimeValue arguments, avoiding boxing for
-    /// implementations that override it. The default bridges to the boxed
-    /// <see cref="Call"/> so unmigrated implementors work unchanged.
+    /// Invokes the callable with RuntimeValue arguments. Call sites holding
+    /// boxed argument lists should use <see cref="CallableInterop.CallBoxed"/>.
     /// </summary>
-    RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
-    {
-        var boxed = new List<object?>(arguments.Length);
-        foreach (var arg in arguments)
-            boxed.Add(arg.ToObject());
-        return RuntimeValue.FromBoxed(Call(interpreter, boxed));
-    }
+    RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments);
 }
 
 /// <summary>
@@ -185,58 +177,6 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
 
     public int Arity() => _arity;
 
-    public object? Call(Interpreter interpreter, List<object?> arguments)
-    {
-        if (_declaration.Body == null)
-        {
-            throw new Exception($"Cannot invoke abstract method '{_declaration.Name.Lexeme}'.");
-        }
-
-        // Check for function-level "use strict" directive
-        bool functionStrict = CheckForUseStrict(_declaration.Body);
-        RuntimeEnvironment environment = functionStrict
-            ? new RuntimeEnvironment(_closure, strictMode: true)
-            : new RuntimeEnvironment(_closure);
-
-        // JS calling convention: if `this` isn't bound by a receiver
-        // (bare call `foo()`), it defaults to the global object in
-        // sloppy mode and to `undefined` in strict mode. A receiver set
-        // via BindThis is stored on the function itself (not an extra
-        // closure scope) so scope distances stay aligned with the resolver.
-        if (_hasBoundThis)
-        {
-            environment.Define("this", _boundThis);
-        }
-        else if (!_closure.TryGet("this", out _))
-        {
-            environment.Define("this",
-                functionStrict ? SharpTSUndefined.Instance : (object?)SharpTSGlobalThis.Instance);
-        }
-
-        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
-        // Bind the JS-spec `arguments` array-like to the current call's args.
-        // Arrow functions do NOT bind `arguments` — they inherit from the
-        // enclosing non-arrow function (handled by SharpTSArrowFunction).
-        environment.Define("arguments", new SharpTSArray(arguments));
-
-        var result = interpreter.ExecuteBlock(_declaration.Body, environment);
-        if (result.Type == ExecutionResult.ResultType.Return)
-        {
-            return result.Value.ToObject();
-        }
-        if (result.Type == ExecutionResult.ResultType.Throw)
-        {
-            // Preserve the original thrown value so the outer catch receives the actual
-            // Error/object. Wrapping in `new Exception(Stringify(...))` flattens it to a
-            // string, which breaks `e.message`/`e.name` at any .NET-interop boundary
-            // (delegate callbacks, reflected calls) where the error can't round-trip
-            // through ExecutionResult.
-            throw ThrowException.FromResult(result.Value.ToObject());
-        }
-
-        return null;
-    }
-
     /// <summary>
     /// Checks if the statements begin with a "use strict" directive.
     /// </summary>
@@ -301,7 +241,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
     /// <summary>
     /// V2 call path — avoids boxing at parameter and return boundaries.
     /// </summary>
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         if (_declaration.Body == null)
         {
@@ -498,93 +438,10 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
 
     public int Arity() => _arity;
 
-    public object? Call(Interpreter interpreter, List<object?> arguments)
-    {
-        // Check for function-level "use strict" directive in block body
-        bool functionStrict = _declaration.BlockBody != null && CheckForUseStrict(_declaration.BlockBody);
-        RuntimeEnvironment environment = functionStrict
-            ? new RuntimeEnvironment(_closure, strictMode: true)
-            : new RuntimeEnvironment(_closure);
-
-        // Named function expression: bind the self-reference in the same scope
-        // as parameters so recursion works (`function f(n) { return f(n-1); }`)
-        // while keeping outer-variable distances consistent with the resolver.
-        if (_declaration.Name != null)
-        {
-            environment.Define(_declaration.Name.Lexeme, this);
-        }
-
-        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
-
-        // Receiver bound via Bind() is stored on the function itself, not in an
-        // extra closure scope — see field comment on _boundThis.
-        if (_hasBoundThis)
-        {
-            environment.Define("this", _boundThis);
-        }
-        else if (HasOwnThis && !_closure.TryGet("this", out _))
-        {
-            // ECMA-262: a function expression invoked as `fn()` (bare call) has
-            // its own `this` — globalThis in sloppy mode, undefined in strict
-            // mode. Without this binding, the harness-loading IIFE
-            // `(function(){...})()` (which writes to `this.name = ...`) throws
-            // "Undefined variable 'this'" at the resolver level, taking out
-            // the entire test262 harness and cascading to ~830 tests showing
-            // as RuntimeError rather than their real outcome.
-            //
-            // True arrow functions (HasOwnThis=false) inherit `this` from the
-            // enclosing closure per spec, so this branch only fires for
-            // function expressions.
-            environment.Define("this",
-                functionStrict ? SharpTSUndefined.Instance : (object?)SharpTSGlobalThis.Instance);
-        }
-
-        // Function expressions (HasOwnThis) bind their own `arguments`; true arrows
-        // (HasOwnThis=false) inherit it from the enclosing scope per JS spec. Needed
-        // for lodash-style wrappers: `function outer() { return function() {
-        // return func.apply(this, arguments); }; }` — the returned function is a
-        // function expression, not an arrow, and must see its own `arguments`.
-        if (HasOwnThis)
-        {
-            environment.Define("arguments", new SharpTSArray(new List<object?>(arguments)));
-        }
-
-        if (_declaration.ExpressionBody != null)
-        {
-            // Expression body - evaluate and return directly
-            RuntimeEnvironment previous = interpreter.Environment;
-            try
-            {
-                interpreter.SetEnvironment(environment);
-                return interpreter.Evaluate(_declaration.ExpressionBody);
-            }
-            finally
-            {
-                interpreter.SetEnvironment(previous);
-            }
-        }
-        else if (_declaration.BlockBody != null)
-        {
-            // Block body - execute statements, catch return
-            var result = interpreter.ExecuteBlock(_declaration.BlockBody, environment);
-            if (result.Type == ExecutionResult.ResultType.Return)
-            {
-                return result.Value.ToObject();
-            }
-            if (result.Type == ExecutionResult.ResultType.Throw)
-            {
-                // See SharpTSFunction.Call — preserve original thrown value.
-                throw ThrowException.FromResult(result.Value.ToObject());
-            }
-        }
-
-        return null;
-    }
-
     /// <summary>
     /// V2 call path — avoids boxing at parameter and return boundaries.
     /// </summary>
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         bool functionStrict = _declaration.BlockBody != null && CheckForUseStrict(_declaration.BlockBody);
         RuntimeEnvironment environment = functionStrict

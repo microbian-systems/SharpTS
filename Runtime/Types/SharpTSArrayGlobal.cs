@@ -48,7 +48,7 @@ public sealed class SharpTSArrayGlobal : ISharpTSCallable
         return new SharpTSArray(new List<object?>(arguments));
     }
 
-    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     public object? GetMember(string name)
@@ -167,7 +167,7 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
         return _inner.Bind(_receiver).CallBoxed(interpreter, arguments);
     }
 
-    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
@@ -243,7 +243,7 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
     {
         var getter = obj.GetGetter(name);
         if (getter != null)
-            return getter.CallV2(interpreter, []).ToObject();
+            return getter.Call(interpreter, []).ToObject();
         return obj.GetProperty(name);
     }
 
@@ -325,7 +325,7 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
             return _inner.CallBoxed(interpreter, arguments);
         }
 
-        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        public RuntimeValue Call(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
             => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }
@@ -386,7 +386,7 @@ public sealed class SharpTSArrayUnboundMethod : ISharpTSCallable
         return _impl(target, rest);
     }
 
-    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>

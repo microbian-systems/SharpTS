@@ -990,7 +990,7 @@ public static class ArrayBuiltIns
         {
             _argsV2[0] = RuntimeValue.FromBoxed(element);
             _argsV2[1] = RuntimeValue.FromNumber(index);
-            return _callback.CallV2(interp, _argsV2).ToObject();
+            return _callback.Call(interp, _argsV2).ToObject();
         }
 
         /// <summary>
@@ -1000,7 +1000,7 @@ public static class ArrayBuiltIns
         {
             _argsV2[0] = RuntimeValue.FromBoxed(element);
             _argsV2[1] = RuntimeValue.FromNumber(index);
-            return _callback.CallV2(interp, _argsV2);
+            return _callback.Call(interp, _argsV2);
         }
 
         public void Dispose() { }

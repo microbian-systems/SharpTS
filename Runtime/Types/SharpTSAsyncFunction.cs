@@ -60,21 +60,10 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable
     public int Arity() => _arity;
 
     /// <summary>
-    /// Invokes the async function, returning a Promise immediately.
-    /// The actual execution happens asynchronously.
-    /// </summary>
-    public object? Call(Interpreter interpreter, List<object?> arguments)
-    {
-        // Start async execution and wrap in Promise
-        var task = CallAsync(interpreter, arguments);
-        return new SharpTSPromise(task);
-    }
-
-    /// <summary>
     /// RuntimeValue entry point. Copy-first: the span is materialized into a boxed
     /// list before the async state machine starts — arguments must outlive suspension.
     /// </summary>
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         var task = CallAsync(interpreter, CallableInterop.ToBoxedList(arguments));
         return RuntimeValue.FromObject(new SharpTSPromise(task));
@@ -189,19 +178,10 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable
     public int Arity() => _arity;
 
     /// <summary>
-    /// Invokes the async arrow function, returning a Promise immediately.
-    /// </summary>
-    public object? Call(Interpreter interpreter, List<object?> arguments)
-    {
-        var task = CallAsync(interpreter, arguments);
-        return new SharpTSPromise(task);
-    }
-
-    /// <summary>
     /// RuntimeValue entry point. Copy-first: the span is materialized into a boxed
     /// list before the async state machine starts — arguments must outlive suspension.
     /// </summary>
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         var task = CallAsync(interpreter, CallableInterop.ToBoxedList(arguments));
         return RuntimeValue.FromObject(new SharpTSPromise(task));

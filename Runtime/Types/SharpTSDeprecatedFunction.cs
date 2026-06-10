@@ -35,17 +35,14 @@ public class SharpTSDeprecatedFunction : ISharpTSCallable
 
     public int Arity() => _wrapped.Arity();
 
-    public object? Call(Interpreter interpreter, List<object?> arguments)
-        => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
-
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         if (!_warned)
         {
             _warned = true;
             interpreter.Error.WriteLine($"DeprecationWarning: {_message}");
         }
-        return _wrapped.CallV2(interpreter, arguments);
+        return _wrapped.Call(interpreter, arguments);
     }
 
     public override string ToString() => $"<deprecated fn>";

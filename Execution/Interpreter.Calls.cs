@@ -25,7 +25,7 @@ public partial class Interpreter
         IReadOnlyList<Expr> arguments)
     {
         // V2 fast path: use RuntimeValue span instead of List<object?>
-        if (method is BuiltInMethod bm && bm.HasV2Implementation)
+        if (method is BuiltInMethod bm && bm.HasNativeImplementation)
         {
             var argCount = arguments.Count;
             var rented = ArrayPool<RuntimeValue>.Shared.Rent(Math.Max(argCount, 1));
@@ -35,7 +35,7 @@ public partial class Interpreter
                 {
                     rented[i] = await ctx.EvaluateExprAsync(arguments[i]);
                 }
-                return bm.CallV2(this, rented.AsSpan(0, argCount)).ToObject();
+                return bm.Call(this, rented.AsSpan(0, argCount)).ToObject();
             }
             finally
             {
@@ -51,7 +51,7 @@ public partial class Interpreter
             {
                 pooledList.Add((await ctx.EvaluateExprAsync(arg)).ToObject());
             }
-            return method.CallV2(this, CallableInterop.ToRuntimeValues(pooledList)).ToObject();
+            return method.Call(this, CallableInterop.ToRuntimeValues(pooledList)).ToObject();
         }
         finally
         {
@@ -183,7 +183,7 @@ public partial class Interpreter
             // Per ECMA-262 §10.2.1: missing arguments become undefined; do not
             // reject calls for user-defined functions. Built-in methods enforce
             // their own min-arity in BuiltInMethod.Call.
-            return function.CallV2(this, CallableInterop.ToRuntimeValues(argumentsList)).ToObject();
+            return function.Call(this, CallableInterop.ToRuntimeValues(argumentsList)).ToObject();
         }
         finally
         {
@@ -227,7 +227,7 @@ public partial class Interpreter
     private RuntimeValue CallBuiltInSync(ISharpTSCallable method, IReadOnlyList<Expr> arguments)
     {
         // V2 fast path — no boxing at all
-        if (method is BuiltInMethod bm && bm.HasV2Implementation)
+        if (method is BuiltInMethod bm && bm.HasNativeImplementation)
         {
             var argCount = arguments.Count;
             var rented = ArrayPool<RuntimeValue>.Shared.Rent(Math.Max(argCount, 1));
@@ -237,7 +237,7 @@ public partial class Interpreter
                 {
                     rented[i] = EvaluateRV(arguments[i]);
                 }
-                return bm.CallV2(this, rented.AsSpan(0, argCount));
+                return bm.Call(this, rented.AsSpan(0, argCount));
             }
             finally
             {
@@ -253,7 +253,7 @@ public partial class Interpreter
             {
                 pooledList.Add(Evaluate(arg));
             }
-            return method.CallV2(this, CallableInterop.ToRuntimeValues(pooledList));
+            return method.Call(this, CallableInterop.ToRuntimeValues(pooledList));
         }
         finally
         {
@@ -358,7 +358,7 @@ public partial class Interpreter
             return RuntimeValue.Undefined;
         }
 
-        // V2 fast path: no spread args — zero boxing (CallV2 is on the interface;
+        // V2 fast path: no spread args — zero boxing (Call is on the interface;
         // unmigrated implementors run through the boxing DIM bridge)
         if (callee is ISharpTSCallable v2Callee && !HasSpreadArgs(call.Arguments))
         {
@@ -370,7 +370,7 @@ public partial class Interpreter
                 {
                     rented[i] = EvaluateRV(call.Arguments[i]);
                 }
-                return v2Callee.CallV2(this, rented.AsSpan(0, argCount));
+                return v2Callee.Call(this, rented.AsSpan(0, argCount));
             }
             finally
             {
@@ -411,7 +411,7 @@ public partial class Interpreter
 
             // Per ECMA-262 §10.2.1: missing arguments become undefined; do not
             // reject calls for user-defined functions.
-            return function.CallV2(this, CallableInterop.ToRuntimeValues(argumentsList));
+            return function.Call(this, CallableInterop.ToRuntimeValues(argumentsList));
         }
         finally
         {

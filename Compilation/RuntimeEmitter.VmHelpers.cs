@@ -239,10 +239,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1); // options
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObjectNullable, "Add", _types.Object));
 
-        // Call ctor.GetType().GetMethod("Call").Invoke(ctor, new object[] { null, argsList })
+        // Call ctor.GetType().GetMethod("CallBoxed").Invoke(ctor, new object[] { null, argsList })
+        // "CallBoxed" is the reflection-stable boxed entry point on VmScriptConstructor /
+        // BuiltInMethod — the span-based Call cannot be invoked via reflection.
         il.Emit(OpCodes.Ldloc, ctorLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Ldstr, "Call");
+        il.Emit(OpCodes.Ldstr, "CallBoxed");
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
         il.Emit(OpCodes.Ldloc, ctorLocal);
         il.Emit(OpCodes.Ldc_I4_2);
@@ -319,10 +321,11 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObjectNullable, "Add", _types.Object));
         }
 
-        // Call builtIn.GetType().GetMethod("Call").Invoke(builtIn, new object[] { null, argsList })
+        // Call builtIn.GetType().GetMethod("CallBoxed").Invoke(builtIn, new object[] { null, argsList })
+        // "CallBoxed" is the reflection-stable boxed entry point (see BuiltInMethod.CallBoxed).
         il.Emit(OpCodes.Ldloc, builtInLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Ldstr, "Call");
+        il.Emit(OpCodes.Ldstr, "CallBoxed");
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
         il.Emit(OpCodes.Ldloc, builtInLocal);
         il.Emit(OpCodes.Ldc_I4_2);

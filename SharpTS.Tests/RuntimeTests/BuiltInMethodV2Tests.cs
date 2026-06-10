@@ -39,7 +39,7 @@ public class BuiltInMethodV2Tests
 
     #endregion
 
-    #region CallV2 Tests
+    #region Call Tests
 
     [Fact]
     public void CallV2_WithV2Implementation_CallsDirectly()
@@ -53,7 +53,7 @@ public class BuiltInMethodV2Tests
             });
 
         ReadOnlySpan<RuntimeValue> args = [3.0, 4.0];
-        var result = method.CallV2(null!, args);
+        var result = method.Call(null!, args);
 
         Assert.Equal(1, callCount);
         Assert.Equal(7.0, result.AsNumber());
@@ -67,7 +67,7 @@ public class BuiltInMethodV2Tests
                 (double)args[0]! + (double)args[1]!);
 
         ReadOnlySpan<RuntimeValue> args = [5.0, 6.0];
-        var result = method.CallV2(null!, args);
+        var result = method.Call(null!, args);
 
         Assert.Equal(11.0, result.AsNumber());
     }
@@ -80,7 +80,7 @@ public class BuiltInMethodV2Tests
                 RuntimeValue.Null);
 
         RuntimeValue[] args = [1.0];
-        var ex = Assert.Throws<Exception>(() => method.CallV2(null!, args));
+        var ex = Assert.Throws<Exception>(() => method.Call(null!, args));
         Assert.Contains("expects 2-2 arguments", ex.Message);
     }
 
@@ -92,7 +92,7 @@ public class BuiltInMethodV2Tests
                 RuntimeValue.Null);
 
         RuntimeValue[] args = [1.0, 2.0, 3.0];
-        var ex = Assert.Throws<Exception>(() => method.CallV2(null!, args));
+        var ex = Assert.Throws<Exception>(() => method.Call(null!, args));
         Assert.Contains("expects 1-2 arguments", ex.Message);
     }
 
@@ -115,31 +115,31 @@ public class BuiltInMethodV2Tests
 
     #endregion
 
-    #region BindV2 Tests
+    #region Bind(RuntimeValue) Tests
 
     [Fact]
-    public void BindV2_CreatesBindingWithRuntimeValue()
+    public void BindRuntimeValue_CreatesBindingWithRuntimeValue()
     {
         var method = BuiltInMethod.CreateV2("getReceiver", 0,
             (Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args) =>
                 receiver);
 
-        var bound = method.BindV2(42.0);
-        var result = bound.CallV2(null!, ReadOnlySpan<RuntimeValue>.Empty);
+        var bound = method.Bind(42.0);
+        var result = bound.Call(null!, ReadOnlySpan<RuntimeValue>.Empty);
 
         Assert.Equal(42.0, result.AsNumber());
     }
 
     [Fact]
-    public void BindV2_WithObject_PreservesReference()
+    public void BindRuntimeValue_WithObject_PreservesReference()
     {
         var method = BuiltInMethod.CreateV2("getReceiver", 0,
             (Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args) =>
                 receiver);
 
         var testObj = new TestObject { Value = "test" };
-        var bound = method.BindV2(RuntimeValue.FromObject(testObj));
-        var result = bound.CallV2(null!, ReadOnlySpan<RuntimeValue>.Empty);
+        var bound = method.Bind(RuntimeValue.FromObject(testObj));
+        var result = bound.Call(null!, ReadOnlySpan<RuntimeValue>.Empty);
 
         Assert.True(result.TryAsObject<TestObject>(out var returned));
         Assert.Same(testObj, returned);
@@ -186,7 +186,7 @@ public class BuiltInMethodV2Tests
 
         // Call via V2
         ReadOnlySpan<RuntimeValue> v2Args = [5.0];
-        var v2Result = method.CallV2(null!, v2Args);
+        var v2Result = method.Call(null!, v2Args);
         Assert.Equal(10.0, v2Result.AsNumber());
 
         // Call via legacy
@@ -205,7 +205,7 @@ public class BuiltInMethodV2Tests
         var bound = method.Bind(10.0);
 
         ReadOnlySpan<RuntimeValue> args = [5.0];
-        var result = bound.CallV2(null!, args);
+        var result = bound.Call(null!, args);
 
         Assert.Equal(15.0, result.AsNumber());
     }
@@ -222,7 +222,7 @@ public class BuiltInMethodV2Tests
                 args[0].IsNull);
 
         ReadOnlySpan<RuntimeValue> args = [RuntimeValue.Null];
-        var result = method.CallV2(null!, args);
+        var result = method.Call(null!, args);
 
         Assert.True(result.AsBoolean());
     }
@@ -235,7 +235,7 @@ public class BuiltInMethodV2Tests
                 args[0].IsUndefined);
 
         ReadOnlySpan<RuntimeValue> args = [RuntimeValue.Undefined];
-        var result = method.CallV2(null!, args);
+        var result = method.Call(null!, args);
 
         Assert.True(result.AsBoolean());
     }
@@ -247,7 +247,7 @@ public class BuiltInMethodV2Tests
             (Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args) =>
                 42.0);
 
-        var result = method.CallV2(null!, ReadOnlySpan<RuntimeValue>.Empty);
+        var result = method.Call(null!, ReadOnlySpan<RuntimeValue>.Empty);
 
         Assert.Equal(42.0, result.AsNumber());
     }
@@ -260,7 +260,7 @@ public class BuiltInMethodV2Tests
                 args[0].AsString() + args[1].AsString());
 
         ReadOnlySpan<RuntimeValue> args = ["Hello, ", "World!"];
-        var result = method.CallV2(null!, args);
+        var result = method.Call(null!, args);
 
         Assert.Equal("Hello, World!", result.AsString());
     }
@@ -273,7 +273,7 @@ public class BuiltInMethodV2Tests
                 args[0].AsBoolean() && args[1].AsBoolean());
 
         ReadOnlySpan<RuntimeValue> args = [true, false];
-        var result = method.CallV2(null!, args);
+        var result = method.Call(null!, args);
 
         Assert.False(result.AsBoolean());
     }

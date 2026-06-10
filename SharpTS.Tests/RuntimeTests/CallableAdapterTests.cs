@@ -6,117 +6,80 @@ using Xunit;
 namespace SharpTS.Tests.RuntimeTests;
 
 /// <summary>
-/// Unit tests for the unified ISharpTSCallable interface: the CallV2 default-method
-/// bridge for boxed-only implementors, native CallV2 overrides, and the
+/// Unit tests for the unified ISharpTSCallable interface and the
 /// CallableInterop boxed-call helpers.
 /// </summary>
 public class CallableAdapterTests
 {
     #region Test Implementations
 
-    /// <summary>
-    /// A boxed-only callable that adds two numbers — exercises the CallV2 DIM bridge.
-    /// </summary>
-    private class LegacyAddCallable : ISharpTSCallable
+    private class AddCallable : ISharpTSCallable
     {
         public int Arity() => 2;
 
-        public object? Call(Interpreter interpreter, List<object?> arguments)
+        public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         {
-            var a = (double)arguments[0]!;
-            var b = (double)arguments[1]!;
-            return a + b;
+            return arguments[0].AsNumber() + arguments[1].AsNumber();
         }
     }
 
-    /// <summary>
-    /// A callable with a native CallV2 override alongside the boxed Call.
-    /// </summary>
-    private class DualCallable : ISharpTSCallable
+    private class EchoCallable : ISharpTSCallable
     {
         public int Arity() => 1;
-
-        public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
-        {
-            return arguments[0].AsNumber() * 2;
-        }
-
-        public object? Call(Interpreter interpreter, List<object?> arguments)
-        {
-            // Distinct result so tests can detect which path ran.
-            return (double)arguments[0]! * -1;
-        }
-    }
-
-    private class NullHandlingCallable : ISharpTSCallable
-    {
-        public int Arity() => 1;
-        public object? Call(Interpreter interpreter, List<object?> arguments) => arguments[0];
+        public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => arguments[0];
     }
 
     private class ZeroArityCallable : ISharpTSCallable
     {
         public int Arity() => 0;
-        public object? Call(Interpreter interpreter, List<object?> arguments) => 42.0;
+        public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments) => 42.0;
     }
 
     #endregion
 
-    #region CallV2 DIM Bridge Tests
+    #region Call Dispatch Tests
 
     [Fact]
-    public void CallV2_OnBoxedOnlyCallable_ConvertsArgumentsAndResult()
+    public void CallV2_ThroughInterface_DispatchesToImplementation()
     {
-        ISharpTSCallable legacy = new LegacyAddCallable();
+        ISharpTSCallable callable = new AddCallable();
 
         ReadOnlySpan<RuntimeValue> args = [3.0, 4.0];
-        var result = legacy.CallV2(null!, args);
+        var result = callable.Call(null!, args);
 
         Assert.Equal(ValueKind.Number, result.Kind);
         Assert.Equal(7.0, result.AsNumber());
     }
 
     [Fact]
-    public void CallV2_OnDualCallable_UsesNativeOverride()
+    public void CallV2_PreservesNull()
     {
-        ISharpTSCallable dual = new DualCallable();
-
-        ReadOnlySpan<RuntimeValue> args = [7.0];
-        var result = dual.CallV2(null!, args);
-
-        // Native CallV2 doubles; the boxed Call negates. Interface dispatch
-        // must pick the override, not the DIM bridge.
-        Assert.Equal(14.0, result.AsNumber());
-    }
-
-    [Fact]
-    public void CallV2_BridgePreservesNull()
-    {
-        ISharpTSCallable callable = new NullHandlingCallable();
+        ISharpTSCallable callable = new EchoCallable();
 
         ReadOnlySpan<RuntimeValue> args = [RuntimeValue.Null];
-        var result = callable.CallV2(null!, args);
+        var result = callable.Call(null!, args);
 
         Assert.Equal(ValueKind.Null, result.Kind);
     }
 
     [Fact]
-    public void CallV2_BridgePreservesUndefined()
+    public void CallV2_PreservesUndefined()
     {
-        ISharpTSCallable callable = new NullHandlingCallable();
+        ISharpTSCallable callable = new EchoCallable();
 
         ReadOnlySpan<RuntimeValue> args = [RuntimeValue.Undefined];
-        var result = callable.CallV2(null!, args);
+        var result = callable.Call(null!, args);
 
         Assert.True(result.IsUndefined);
     }
 
     [Fact]
-    public void CallV2_BridgeHandlesEmptyArguments()
+    public void CallV2_HandlesEmptyArguments()
     {
         ISharpTSCallable callable = new ZeroArityCallable();
 
-        var result = callable.CallV2(null!, ReadOnlySpan<RuntimeValue>.Empty);
+        var result = callable.Call(null!, ReadOnlySpan<RuntimeValue>.Empty);
 
         Assert.Equal(42.0, result.AsNumber());
     }
@@ -126,24 +89,24 @@ public class CallableAdapterTests
     #region CallableInterop Tests
 
     [Fact]
-    public void CallBoxed_OnDualCallable_RoutesThroughCallV2()
+    public void CallBoxed_ConvertsArgumentsAndResult()
     {
-        var dual = new DualCallable();
+        var callable = new AddCallable();
 
-        var result = dual.CallBoxed(null!, [7.0]);
+        var result = callable.CallBoxed(null!, [5.0, 3.0]);
 
-        // CallBoxed must dispatch via CallV2 (doubles), not legacy Call (negates).
-        Assert.Equal(14.0, (double)result!);
+        Assert.Equal(8.0, (double)result!);
     }
 
     [Fact]
-    public void CallBoxed_OnBoxedOnlyCallable_RoundTripsValues()
+    public void CallBoxed_RoundTripsBoxedValues()
     {
-        var legacy = new LegacyAddCallable();
+        var callable = new EchoCallable();
 
-        var result = legacy.CallBoxed(null!, [5.0, 3.0]);
+        var marker = new object();
+        var result = callable.CallBoxed(null!, [marker]);
 
-        Assert.Equal(8.0, (double)result!);
+        Assert.Same(marker, result);
     }
 
     [Fact]

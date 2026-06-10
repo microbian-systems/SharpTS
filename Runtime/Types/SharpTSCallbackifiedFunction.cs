@@ -49,19 +49,19 @@ public class SharpTSCallbackifiedFunction : ISharpTSCallable
             var result = _wrapped.CallBoxed(interpreter, originalArgs);
 
             // Call callback with (null, result)
-            callback.CallV2(interpreter, [RuntimeValue.Null, RuntimeValue.FromBoxed(result)]);
+            callback.Call(interpreter, [RuntimeValue.Null, RuntimeValue.FromBoxed(result)]);
         }
         catch (Exception ex)
         {
             // Call callback with (error, null)
             var error = new SharpTSError(ex.Message);
-            callback.CallV2(interpreter, [RuntimeValue.FromObject(error), RuntimeValue.Null]);
+            callback.Call(interpreter, [RuntimeValue.FromObject(error), RuntimeValue.Null]);
         }
 
         return null;
     }
 
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     public override string ToString() => $"<callbackified fn>";

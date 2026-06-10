@@ -621,14 +621,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.BoundTSFunctionType);
         il.Emit(OpCodes.Brtrue_S, returnCallableAsIsLabel);
 
-        // Check if result has a "Call" method — if so it's a callable (BuiltInMethod etc.)
-        // and should be wrapped in $MethodCallable for dispatch through InvokeMethodValue.
-        // Objects without "Call" (property values like SearchParams) are returned as-is.
+        // Check if result has a "CallBoxed" method — the reflection-stable boxed entry
+        // point on BuiltInMethod etc. If present it's a callable and should be wrapped
+        // in $MethodCallable for dispatch through InvokeMethodValue.
+        // Objects without "CallBoxed" (property values like SearchParams) are returned as-is.
         var returnAsIsLabel = il.DefineLabel();
         var callMethodLocal = il.DeclareLocal(_types.MethodInfo);
         il.Emit(OpCodes.Ldloc, getMemberResultLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "GetType"));
-        il.Emit(OpCodes.Ldstr, "Call");
+        il.Emit(OpCodes.Ldstr, "CallBoxed");
         il.Emit(OpCodes.Ldc_I4, (int)(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public));
         il.Emit(OpCodes.Call, runtime.SafeGetMethod);
         il.Emit(OpCodes.Stloc, callMethodLocal);
@@ -4777,7 +4778,7 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Phase 2: Emit Invoke method body for $MethodCallable and create the type.
-    /// Uses reflection to call "Invoke" (for TSFunction) or "Call" (for BuiltInMethod) on the wrapped object.
+    /// Uses reflection to call "Invoke" (for TSFunction) or "CallBoxed" (for BuiltInMethod) on the wrapped object.
     /// </summary>
     internal void EmitMethodCallableFinalize(EmittedRuntime runtime)
     {
@@ -4823,10 +4824,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
-        // Try "Call" method (BuiltInMethod.Call(Interpreter, List<object?>))
+        // Try "CallBoxed" method (BuiltInMethod.CallBoxed(Interpreter?, List<object?>) —
+        // the reflection-stable boxed entry point; the span-based Call can't be reflected).
         il.MarkLabel(noInvokeLabel);
         il.Emit(OpCodes.Ldloc, typeLocal);
-        il.Emit(OpCodes.Ldstr, "Call");
+        il.Emit(OpCodes.Ldstr, "CallBoxed");
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
         il.Emit(OpCodes.Stloc, methodLocal);
 
