@@ -92,6 +92,10 @@ public partial class ILEmitter
             return;
         }
 
+        // AbortSignal / Intl value-position namespace singletons (#224) —
+        // shared with the state-machine emitters via the base helper.
+        if (TryEmitNamespaceSingleton(name)) return;
+
         if (name == "process")
         {
             EmitNullConstant(); // process is handled specially in property access

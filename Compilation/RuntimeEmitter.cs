@@ -380,6 +380,15 @@ public partial class RuntimeEmitter
         // the $Runtime type itself all being defined.
         EmitNewOnFunction(_runtimeTypeBuilder!, runtime);
 
+        // Dynamic-callee `new x(...)` dispatch for state-machine emitters (#224).
+        // Must follow EmitNewOnFunction — it calls through runtime.NewOnFunction.
+        EmitConstructDynamicValue(_runtimeTypeBuilder!, runtime);
+
+        // AbortSignal / Intl value-position singletons (#224). Must follow
+        // EmitRuntimeClass — they wrap the AbortSignal*/CreateIntl* helpers
+        // emitted there.
+        EmitNamespaceSingletons(_runtimeTypeBuilder!, runtime);
+
         // Emit $BroadcastChannel — extends $EventEmitter, dispatches via $EventLoop,
         // and clones messages via $Runtime.StructuredClone (populated during EmitRuntimeClass
         // → EmitWorkerHelpers → EmitStructuredCloneHelper).

@@ -584,6 +584,7 @@ public class EmittedRuntime
     // Invocation methods
     public MethodBuilder InvokeValue { get; set; } = null!;
     public MethodBuilder InvokeMethodValue { get; set; } = null!;
+    public MethodBuilder ConstructDynamicValue { get; set; } = null!;
     public MethodBuilder GetSuperMethod { get; set; } = null!;
 
     // Dynamic JS iterator-protocol bridge (.next()/.return()) for any-typed
@@ -2098,6 +2099,13 @@ public class EmittedRuntime
     // $AsyncLocalStorage support
     public Type TSAsyncLocalStorageType { get; set; } = null!;
     public ConstructorBuilder TSAsyncLocalStorageCtor { get; set; } = null!;
+
+    // Value-position namespace singletons (#224). Null when the matching
+    // feature flag is off — EmitVariable guards on the populate method.
+    public FieldBuilder? AbortSignalNamespaceField { get; set; }
+    public MethodBuilder? AbortSignalNamespacePopulate { get; set; }
+    public FieldBuilder? IntlNamespaceField { get; set; }
+    public MethodBuilder? IntlNamespacePopulate { get; set; }
 
     // $AbortController / $AbortSignal support
     public MethodBuilder FireAbortEvent { get; set; } = null!;

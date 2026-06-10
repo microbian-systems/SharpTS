@@ -66,6 +66,20 @@ public partial class RuntimeEmitter
         il.MarkLabel(skipConstructorCheckLabel);
         il.MarkLabel(isConstructorOkLabel);
 
+        // `new <plain object>` — plain objects have no [[Construct]] (#224):
+        // throw TypeError instead of the legacy silent null. Namespace
+        // singletons (AbortSignal, Intl, Math) land here when constructed
+        // directly, matching WebIDL "Illegal constructor" behavior.
+        var notPlainObjectLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, notPlainObjectLabel);
+        il.Emit(OpCodes.Ldstr, "not a constructor");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notPlainObjectLabel);
+
         // newObj = new $Object(new Dictionary<string, object>())
         var dictCtor = _types.GetDefaultConstructor(_types.DictionaryStringObject);
         il.Emit(OpCodes.Newobj, dictCtor);

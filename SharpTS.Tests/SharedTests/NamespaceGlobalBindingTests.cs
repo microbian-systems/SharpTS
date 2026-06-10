@@ -4,15 +4,17 @@ using Xunit;
 namespace SharpTS.Tests.SharedTests;
 
 /// <summary>
-/// Tests for built-in namespaces/constructors bound as value-position globals
-/// (#208): AbortSignal, Intl, ReadableStream, WritableStream, TransformStream,
-/// MessageChannel. Interpreter-only — the compiled-mode globals are tracked
-/// separately.
+/// Tests for built-in namespaces/constructors bound as value-position globals:
+/// AbortSignal, Intl, ReadableStream, WritableStream, TransformStream,
+/// MessageChannel. Interpreter bindings landed with #208; compiled-mode
+/// equivalents with #224 (namespace singletons + ConstructDynamicValue +
+/// the GetProperty abort-signal dict branch). MessageChannel stays
+/// interpreter-only until #222 gives compiled mode real port objects.
 /// </summary>
 public class NamespaceGlobalBindingTests
 {
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AbortSignal_StaticAbort_Resolves(ExecutionMode mode)
     {
         var source = """
@@ -26,7 +28,7 @@ public class NamespaceGlobalBindingTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AbortSignal_DirectConstruction_Throws(ExecutionMode mode)
     {
         var source = """
@@ -42,7 +44,7 @@ public class NamespaceGlobalBindingTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Intl_ValuePosition_AndMemberConstruction(ExecutionMode mode)
     {
         var source = """
@@ -56,7 +58,7 @@ public class NamespaceGlobalBindingTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void WebStreamConstructors_ValuePosition_AndInstanceof(ExecutionMode mode)
     {
         var source = """

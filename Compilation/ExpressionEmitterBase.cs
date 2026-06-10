@@ -1348,44 +1348,42 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         }
         else
         {
-            // Fallback: try to load via resolver
-            var stackType = Resolver.TryLoadVariable(className);
-            if (stackType != null)
+            // Dynamic-callee fallback (#224): the callee is not a known class
+            // name, so evaluate it as a VALUE (aliased built-in constructor,
+            // namespace-singleton member like `I.NumberFormat`, arbitrary
+            // expression) and construct through ConstructDynamicValue, which
+            // dispatches Type → Activator, callable → InvokeValue, and throws
+            // TypeError for non-constructables. Replaces the old behavior of
+            // silently yielding null when the name didn't resolve.
+            EmitExpression(n.Callee);
+            EnsureBoxed();
+            var ctorTemp = IL.DeclareLocal(typeof(object));
+            IL.Emit(OpCodes.Stloc, ctorTemp);
+
+            List<LocalBuilder> argTemps = [];
+            foreach (var arg in n.Arguments)
             {
-                var typeTemp = IL.DeclareLocal(typeof(object));
-                IL.Emit(OpCodes.Stloc, typeTemp);
-
-                List<LocalBuilder> argTemps = [];
-                foreach (var arg in n.Arguments)
-                {
-                    EmitExpression(arg);
-                    EnsureBoxed();
-                    var temp = IL.DeclareLocal(typeof(object));
-                    IL.Emit(OpCodes.Stloc, temp);
-                    argTemps.Add(temp);
-                }
-
-                IL.Emit(OpCodes.Ldloc, typeTemp);
-                IL.Emit(OpCodes.Ldc_I4, n.Arguments.Count);
-                IL.Emit(OpCodes.Newarr, Ctx.Types.Object);
-
-                for (int i = 0; i < argTemps.Count; i++)
-                {
-                    IL.Emit(OpCodes.Dup);
-                    IL.Emit(OpCodes.Ldc_I4, i);
-                    IL.Emit(OpCodes.Ldloc, argTemps[i]);
-                    IL.Emit(OpCodes.Stelem_Ref);
-                }
-
-                var createInstanceMethod = Ctx.Types.GetMethod(Ctx.Types.Activator, "CreateInstance", Ctx.Types.Type, Ctx.Types.ObjectArray);
-                IL.Emit(OpCodes.Call, createInstanceMethod!);
-                SetStackUnknown();
+                EmitExpression(arg);
+                EnsureBoxed();
+                var temp = IL.DeclareLocal(typeof(object));
+                IL.Emit(OpCodes.Stloc, temp);
+                argTemps.Add(temp);
             }
-            else
+
+            IL.Emit(OpCodes.Ldloc, ctorTemp);
+            IL.Emit(OpCodes.Ldc_I4, n.Arguments.Count);
+            IL.Emit(OpCodes.Newarr, Ctx.Types.Object);
+
+            for (int i = 0; i < argTemps.Count; i++)
             {
-                IL.Emit(OpCodes.Ldnull);
-                SetStackType(StackType.Null);
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldc_I4, i);
+                IL.Emit(OpCodes.Ldloc, argTemps[i]);
+                IL.Emit(OpCodes.Stelem_Ref);
             }
+
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.ConstructDynamicValue);
+            SetStackUnknown();
         }
     }
 
@@ -1574,6 +1572,36 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         // shadowing wins, mirroring ILEmitter's resolution order.
         if (TryEmitErrorTypeToken(name)) return true;
         if (TryEmitBuiltInClassType(name)) return true;
+        if (TryEmitNamespaceSingleton(name)) return true;
+
+        return false;
+    }
+
+    /// <summary>
+    /// AbortSignal / Intl in value position (#224) — resolve to the lazily
+    /// populated namespace singleton dicts. Direct static forms
+    /// (`AbortSignal.abort(x)`, `new Intl.NumberFormat(...)`) are still
+    /// intercepted at compile time before the receiver is evaluated, so these
+    /// arms only serve aliasing/typeof/argument-passing uses. Shared by
+    /// ILEmitter.EmitVariable and the state-machine emitters' global path.
+    /// </summary>
+    protected bool TryEmitNamespaceSingleton(string name)
+    {
+        if (name == "AbortSignal" && Ctx.Runtime!.AbortSignalNamespacePopulate != null)
+        {
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.AbortSignalNamespacePopulate);
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.AbortSignalNamespaceField!);
+            SetStackUnknown();
+            return true;
+        }
+
+        if (name == "Intl" && Ctx.Runtime!.IntlNamespacePopulate != null)
+        {
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.IntlNamespacePopulate);
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.IntlNamespaceField!);
+            SetStackUnknown();
+            return true;
+        }
 
         return false;
     }
@@ -1631,6 +1659,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             // bare Symbol in its own pseudo-variable arm; this entry covers the
             // state-machine emitters that resolve through this base path.
             "Symbol" => Ctx.Runtime!.TSSymbolType,
+            // Pure-IL web-streams types (#224) — TypeBuilders are null when
+            // UsesWebStreams is off, which falls through to ThrowUndefinedVariable.
+            "ReadableStream" => Ctx.Runtime!.ReadableStreamType,
+            "WritableStream" => Ctx.Runtime!.WritableStreamType,
+            "TransformStream" => Ctx.Runtime!.TransformStreamType,
             _ => null
         };
         if (t == null) return false;
