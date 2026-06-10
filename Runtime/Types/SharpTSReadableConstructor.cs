@@ -43,7 +43,7 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
             if (options.GetProperty("encoding") is string encoding)
             {
                 var setEncoding = stream.GetMember("setEncoding") as Runtime.BuiltIns.BuiltInMethod;
-                setEncoding?.Bind(stream).Call(interpreter, [encoding]);
+                setEncoding?.Bind(stream).CallBoxed(interpreter, [encoding]);
             }
 
             // objectMode option
@@ -61,6 +61,9 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
 
         return stream;
     }
+
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
     /// Gets a property from the Readable constructor (static properties/methods).
@@ -97,7 +100,7 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
             foreach (var item in arr)
             {
                 var pushMethod = stream.GetMember("push") as BuiltInMethod;
-                pushMethod?.Bind(stream).Call(interpreter, [item]);
+                pushMethod?.Bind(stream).CallBoxed(interpreter, [item]);
             }
         }
         else if (iterable is List<object?> list)
@@ -105,13 +108,13 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
             foreach (var item in list)
             {
                 var pushMethod = stream.GetMember("push") as BuiltInMethod;
-                pushMethod?.Bind(stream).Call(interpreter, [item]);
+                pushMethod?.Bind(stream).CallBoxed(interpreter, [item]);
             }
         }
 
         // Push null to signal EOF
         var pushEnd = stream.GetMember("push") as BuiltInMethod;
-        pushEnd?.Bind(stream).Call(interpreter, [null]);
+        pushEnd?.Bind(stream).CallBoxed(interpreter, [null]);
 
         return stream;
     }

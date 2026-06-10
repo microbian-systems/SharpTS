@@ -62,7 +62,7 @@ public static class RuntimeCallableDispatcher
         switch (callable)
         {
             case ISharpTSCallable tsCallable:
-                return tsCallable.Call(interpreter!, args.ToList());
+                return tsCallable.CallBoxed(interpreter!, args.ToList());
 
             case SharpTS.Compilation.TSFunction tsFunc:
                 return tsFunc.Invoke(args);

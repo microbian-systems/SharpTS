@@ -314,7 +314,7 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         {
             // Interpreter path - use BuiltInMethod
             var emitMethod = GetMember("emit") as BuiltInMethod;
-            emitMethod?.Call(_parentInterpreter, [eventName, data]);
+            emitMethod?.CallBoxed(_parentInterpreter, [eventName, data]);
         }
         else
         {
@@ -575,7 +575,7 @@ internal class WorkerMessageHandler
 
                     // Emit on parentPort
                     var emitMethod = parentPort.GetMember("emit") as BuiltInMethod;
-                    emitMethod?.Call(_interpreter, ["message", eventData]);
+                    emitMethod?.CallBoxed(_interpreter, ["message", eventData]);
                 }
             }
             catch (Exception ex)
@@ -649,6 +649,9 @@ internal class WorkerConstructor : ISharpTSCallable
         var options = arguments.Count > 1 ? arguments[1] as SharpTSObject : null;
         return new SharpTSWorker(filename, options, interpreter);
     }
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 }
 
 /// <summary>
@@ -662,4 +665,7 @@ internal class MessageChannelConstructor : ISharpTSCallable
     {
         return new SharpTSMessageChannel();
     }
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 }

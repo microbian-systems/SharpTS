@@ -65,7 +65,7 @@ public class SharpTSReadlineInterface : SharpTSEventEmitter
 
         if (callback is ISharpTSCallable callable)
         {
-            callable.Call(interpreter, [answer]);
+            callable.CallBoxed(interpreter, [answer]);
         }
 
         return null;

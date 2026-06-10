@@ -29,6 +29,9 @@ public sealed class SharpTSFetchGlobal : ISharpTSCallable, ISharpTSAsyncCallable
     public object? Call(Interpreter interpreter, List<object?> arguments)
         => _inner.Call(interpreter, arguments);
 
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     public Task<object?> CallAsync(Interpreter interpreter, List<object?> arguments)
         => _inner.CallAsync(interpreter, arguments);
 

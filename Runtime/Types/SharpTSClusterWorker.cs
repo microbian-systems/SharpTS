@@ -191,7 +191,7 @@ public class SharpTSClusterWorker : SharpTSEventEmitter, IDisposable
                 interpreter?.ScheduleTimer(0, 0, () =>
                 {
                     var emitMethod = SharpTSProcess.Instance.GetMember("emit") as BuiltInMethod;
-                    emitMethod?.Call(workerInterp!, ["message", cloned]);
+                    emitMethod?.CallBoxed(workerInterp!, ["message", cloned]);
                 }, false);
             }
             catch (Exception ex)
@@ -335,7 +335,7 @@ public class SharpTSClusterWorker : SharpTSEventEmitter, IDisposable
             var emitMethod = GetMember("emit") as BuiltInMethod;
             var emitArgs = new List<object?> { eventName };
             emitArgs.AddRange(args);
-            emitMethod?.Call(_parentInterpreter, emitArgs);
+            emitMethod?.CallBoxed(_parentInterpreter, emitArgs);
         }
         else
         {

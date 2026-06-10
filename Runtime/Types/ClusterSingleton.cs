@@ -80,7 +80,7 @@ public class ClusterSingleton : SharpTSEventEmitter
         // If callback provided, invoke it after disconnect
         if (callback is ISharpTSCallable callable)
         {
-            callable.Call(null!, []);
+            callable.CallBoxed(null!, []);
         }
     }
 
@@ -139,7 +139,7 @@ public class ClusterSingleton : SharpTSEventEmitter
         {
             try
             {
-                emitMethod.Call(null!, args);
+                emitMethod.CallBoxed(null!, args);
             }
             catch
             {

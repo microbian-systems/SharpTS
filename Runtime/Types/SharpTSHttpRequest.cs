@@ -92,12 +92,12 @@ public class SharpTSHttpRequest : SharpTSReadable
             if (body.Length > 0)
             {
                 var pushMethod = base.GetMember("push") as BuiltInMethod;
-                pushMethod?.Bind(this).Call(interpreter, [new SharpTSBuffer(body)]);
+                pushMethod?.Bind(this).CallBoxed(interpreter, [new SharpTSBuffer(body)]);
             }
 
             // Signal EOF
             var pushNull = base.GetMember("push") as BuiltInMethod;
-            pushNull?.Bind(this).Call(interpreter, new List<object?> { null });
+            pushNull?.Bind(this).CallBoxed(interpreter, new List<object?> { null });
             _endEmitted = true;
         }
         catch (Exception ex)

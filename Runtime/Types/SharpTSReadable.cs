@@ -89,7 +89,7 @@ public class SharpTSReadable : SharpTSEventEmitter
     {
         // Call base on
         var baseOn = base.GetMember("on") as BuiltInMethod;
-        baseOn?.Bind(this).Call(interpreter, args);
+        baseOn?.Bind(this).CallBoxed(interpreter, args);
 
         var eventName = args.Count > 0 ? args[0]?.ToString() : null;
 
@@ -112,7 +112,7 @@ public class SharpTSReadable : SharpTSEventEmitter
     {
         // Call base once
         var baseOnce = base.GetMember("once") as BuiltInMethod;
-        baseOnce?.Bind(this).Call(interpreter, args);
+        baseOnce?.Bind(this).CallBoxed(interpreter, args);
 
         var eventName = args.Count > 0 ? args[0]?.ToString() : null;
 
@@ -446,19 +446,19 @@ public class SharpTSReadable : SharpTSEventEmitter
         else if (destObj is SharpTSPassThrough passThrough)
         {
             var writeMethod = passThrough.GetMember("write") as BuiltInMethod;
-            var result = writeMethod?.Bind(passThrough).Call(interpreter, [chunk, encoding]);
+            var result = writeMethod?.Bind(passThrough).CallBoxed(interpreter, [chunk, encoding]);
             return result is not false;
         }
         else if (destObj is SharpTSTransform transform)
         {
             var writeMethod = transform.GetMember("write") as BuiltInMethod;
-            var result = writeMethod?.Bind(transform).Call(interpreter, [chunk, encoding]);
+            var result = writeMethod?.Bind(transform).CallBoxed(interpreter, [chunk, encoding]);
             return result is not false;
         }
         else if (destObj is SharpTSDuplex duplex)
         {
             var writeMethod = duplex.GetMember("write") as BuiltInMethod;
-            var result = writeMethod?.Bind(duplex).Call(interpreter, [chunk, encoding]);
+            var result = writeMethod?.Bind(duplex).CallBoxed(interpreter, [chunk, encoding]);
             return result is not false;
         }
         return true;
@@ -476,17 +476,17 @@ public class SharpTSReadable : SharpTSEventEmitter
         else if (destObj is SharpTSPassThrough passThrough)
         {
             var endMethod = passThrough.GetMember("end") as BuiltInMethod;
-            endMethod?.Bind(passThrough).Call(interpreter, []);
+            endMethod?.Bind(passThrough).CallBoxed(interpreter, []);
         }
         else if (destObj is SharpTSTransform transform)
         {
             var endMethod = transform.GetMember("end") as BuiltInMethod;
-            endMethod?.Bind(transform).Call(interpreter, []);
+            endMethod?.Bind(transform).CallBoxed(interpreter, []);
         }
         else if (destObj is SharpTSDuplex duplex)
         {
             var endMethod = duplex.GetMember("end") as BuiltInMethod;
-            endMethod?.Bind(duplex).Call(interpreter, []);
+            endMethod?.Bind(duplex).CallBoxed(interpreter, []);
         }
     }
 
@@ -603,12 +603,12 @@ public class SharpTSReadable : SharpTSEventEmitter
         if (dest is SharpTSWritable writable)
         {
             var onceMethod = ((SharpTSEventEmitter)writable).GetMember("once") as BuiltInMethod;
-            onceMethod?.Bind(writable).Call(interpreter, ["drain", listener]);
+            onceMethod?.Bind(writable).CallBoxed(interpreter, ["drain", listener]);
         }
         else if (dest is SharpTSDuplex duplex)
         {
             var onceMethod = ((SharpTSEventEmitter)duplex).GetMember("once") as BuiltInMethod;
-            onceMethod?.Bind(duplex).Call(interpreter, ["drain", listener]);
+            onceMethod?.Bind(duplex).CallBoxed(interpreter, ["drain", listener]);
         }
     }
 
@@ -639,6 +639,9 @@ public class SharpTSReadable : SharpTSEventEmitter
             }
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 
     private void FlushPipes(Interp interpreter)
@@ -715,7 +718,7 @@ public class SharpTSReadable : SharpTSEventEmitter
         while (_readBuffer.Count > 0)
         {
             var chunk = _readBuffer.Dequeue();
-            fn.Call(interpreter, [chunk]);
+            fn.CallBoxed(interpreter, [chunk]);
         }
         return null;
     }
@@ -735,7 +738,7 @@ public class SharpTSReadable : SharpTSEventEmitter
 
         // Pipe self to the transform
         var pipeMethod = GetMember("pipe") as BuiltInMethod;
-        pipeMethod?.Bind(this).Call(interpreter, [transform]);
+        pipeMethod?.Bind(this).CallBoxed(interpreter, [transform]);
 
         return transform;
     }
@@ -754,7 +757,7 @@ public class SharpTSReadable : SharpTSEventEmitter
         transform.SetTransformCallback(new FilterTransformCallable(fn));
 
         var pipeMethod = GetMember("pipe") as BuiltInMethod;
-        pipeMethod?.Bind(this).Call(interpreter, [transform]);
+        pipeMethod?.Bind(this).CallBoxed(interpreter, [transform]);
 
         return transform;
     }
@@ -771,10 +774,13 @@ public class SharpTSReadable : SharpTSEventEmitter
         {
             var chunk = arguments.Count > 0 ? arguments[0] : null;
             var callback = arguments.Count > 2 ? arguments[2] as ISharpTSCallable : null;
-            var result = _fn.Call(interpreter, [chunk]);
-            callback?.Call(interpreter, [null, result]);
+            var result = _fn.CallBoxed(interpreter, [chunk]);
+            callback?.CallBoxed(interpreter, [null, result]);
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 
     /// <summary>
@@ -789,13 +795,16 @@ public class SharpTSReadable : SharpTSEventEmitter
         {
             var chunk = arguments.Count > 0 ? arguments[0] : null;
             var callback = arguments.Count > 2 ? arguments[2] as ISharpTSCallable : null;
-            var result = _fn.Call(interpreter, [chunk]);
+            var result = _fn.CallBoxed(interpreter, [chunk]);
             if (result is true || (result is double d && d != 0))
-                callback?.Call(interpreter, [null, chunk]);
+                callback?.CallBoxed(interpreter, [null, chunk]);
             else
-                callback?.Call(interpreter, [null]);
+                callback?.CallBoxed(interpreter, [null]);
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 
     /// <summary>

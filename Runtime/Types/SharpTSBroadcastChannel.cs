@@ -253,7 +253,7 @@ public class SharpTSBroadcastChannel : SharpTSEventEmitter, IDisposable
             // Also invoke the property-style onmessage handler if set (WHATWG spec).
             if (_onMessageHandler is ISharpTSCallable callable)
             {
-                try { callable.Call(_ownerInterpreter, [eventData]); }
+                try { callable.CallBoxed(_ownerInterpreter, [eventData]); }
                 catch { /* listeners may not throw out of delivery */ }
             }
         }
@@ -370,4 +370,7 @@ internal class BroadcastChannelConstructor : ISharpTSCallable
         };
         return channel;
     }
+
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 }

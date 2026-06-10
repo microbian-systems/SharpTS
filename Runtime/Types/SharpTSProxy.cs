@@ -90,7 +90,7 @@ public class SharpTSProxy : ISharpTSCallable
     private object? InvokeTrap(object trap, Interpreter? interp, List<object?> args)
     {
         if (trap is ISharpTSCallable callable)
-            return callable.Call(interp!, args);
+            return callable.CallBoxed(interp!, args);
 
         // Func<object?[], object?> delegate
         if (trap is Func<object?[], object?> func)
@@ -241,7 +241,7 @@ public class SharpTSProxy : ISharpTSCallable
         if (trap == null)
         {
             if (_target is ISharpTSCallable callable)
-                return callable.Call(interp!, args);
+                return callable.CallBoxed(interp!, args);
 
             // Compiled mode: target is a TSFunction, not ISharpTSCallable
             if (interp == null)
@@ -265,9 +265,9 @@ public class SharpTSProxy : ISharpTSCallable
         if (trap == null)
         {
             if (_target is SharpTSClass klass)
-                return klass.Call(interp!, args);
+                return klass.CallBoxed(interp!, args);
             if (_target is ISharpTSCallable callable)
-                return callable.Call(interp!, args);
+                return callable.CallBoxed(interp!, args);
             throw new Exception("Runtime Error: Proxy target is not constructable.");
         }
 
@@ -377,6 +377,9 @@ public class SharpTSProxy : ISharpTSCallable
     {
         return TrapApply(null, arguments, interpreter);
     }
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     #endregion
 

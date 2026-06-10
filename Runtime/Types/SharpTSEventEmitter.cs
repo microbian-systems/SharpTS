@@ -186,7 +186,7 @@ public class SharpTSEventEmitter : ITypeCategorized
         {
             var fullArgs = new List<object?> { eventName };
             fullArgs.AddRange(args);
-            emit.Bind(this).Call(interpreter, fullArgs);
+            emit.Bind(this).CallBoxed(interpreter, fullArgs);
         }
     }
 
@@ -197,7 +197,7 @@ public class SharpTSEventEmitter : ITypeCategorized
     {
         if (listener is ISharpTSCallable callable)
         {
-            callable.Call(interpreter!, eventArgs);
+            callable.CallBoxed(interpreter!, eventArgs);
         }
         else
         {

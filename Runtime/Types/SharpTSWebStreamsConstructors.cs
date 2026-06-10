@@ -22,6 +22,9 @@ public sealed class SharpTSReadableStreamConstructor : ISharpTSCallable
         return new SharpTSReadableStream(interpreter, src, strat);
     }
 
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     public object? GetProperty(string name)
     {
         // ReadableStream.from(iterable) — build a stream from an iterable.
@@ -64,12 +67,12 @@ public sealed class SharpTSReadableStreamConstructor : ISharpTSCallable
                 {
                     var chunk = pulled.Dequeue();
                     var enq = ctrl.GetMember("enqueue") as BuiltInMethod;
-                    enq?.Call(null!, [chunk]);
+                    enq?.CallBoxed(null!, [chunk]);
                 }
                 else
                 {
                     var close = ctrl.GetMember("close") as BuiltInMethod;
-                    close?.Call(null!, []);
+                    close?.CallBoxed(null!, []);
                 }
                 return SharpTSUndefined.Instance;
             }),
@@ -94,6 +97,9 @@ public sealed class SharpTSWritableStreamConstructor : ISharpTSCallable
         return new SharpTSWritableStream(interpreter, sink, strat);
     }
 
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     public override string ToString() => "[Function: WritableStream]";
 }
 
@@ -111,6 +117,9 @@ public sealed class SharpTSTransformStreamConstructor : ISharpTSCallable
         var rs = arguments.Count > 2 ? arguments[2] : null;
         return new SharpTSTransformStream(interpreter, transformer, ws, rs);
     }
+
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     public override string ToString() => "[Function: TransformStream]";
 }
@@ -133,6 +142,9 @@ public sealed class SharpTSByteLengthQueuingStrategyConstructor : ISharpTSCallab
         return new SharpTSByteLengthQueuingStrategy(hwm);
     }
 
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     public override string ToString() => "[Function: ByteLengthQueuingStrategy]";
 }
 
@@ -153,6 +165,9 @@ public sealed class SharpTSCountQueuingStrategyConstructor : ISharpTSCallable
         }
         return new SharpTSCountQueuingStrategy(hwm);
     }
+
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     public override string ToString() => "[Function: CountQueuingStrategy]";
 }

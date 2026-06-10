@@ -90,7 +90,7 @@ public static class StreamModuleInterpreter
         {
             if (called) return;
             called = true;
-            cbRef.Call(interp, [error]);
+            cbRef.CallBoxed(interp, [error]);
         }
 
         // Create listener callables
@@ -160,7 +160,7 @@ public static class StreamModuleInterpreter
 
             // Call pipe on source
             var pipeMethod = GetStreamMethod(source, "pipe");
-            pipeMethod?.Call(interpreter, [dest]);
+            pipeMethod?.CallBoxed(interpreter, [dest]);
         }
 
         // Attach error listeners on all streams for auto-destroy
@@ -181,10 +181,10 @@ public static class StreamModuleInterpreter
                     foreach (var stream in streams)
                     {
                         var destroyMethod = GetStreamMethod(stream, "destroy");
-                        destroyMethod?.Call(interp, []);
+                        destroyMethod?.CallBoxed(interp, []);
                     }
 
-                    finalCallback?.Call(interp, [error]);
+                    finalCallback?.CallBoxed(interp, [error]);
                 }), once: true);
             }
         }
@@ -198,7 +198,7 @@ public static class StreamModuleInterpreter
             lastEmitter.AddListenerDirect(eventName, new FinishedListener((interp, _) =>
             {
                 if (!errorCalled)
-                    finalCallback?.Call(interp, [null]);
+                    finalCallback?.CallBoxed(interp, [null]);
             }), once: true);
         }
 
@@ -244,5 +244,8 @@ public static class StreamModuleInterpreter
             _action(interpreter, arguments);
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }

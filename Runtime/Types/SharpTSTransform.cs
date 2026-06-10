@@ -80,7 +80,7 @@ public class SharpTSTransform : SharpTSDuplex
         {
             try
             {
-                _transformCallback.Call(interpreter, [chunk, encoding, doneCallback]);
+                _transformCallback.CallBoxed(interpreter, [chunk, encoding, doneCallback]);
             }
             catch (Exception ex)
             {
@@ -92,7 +92,7 @@ public class SharpTSTransform : SharpTSDuplex
         {
             // Default transform: pass through
             PushToReadableSide(interpreter, chunk);
-            doneCallback.Call(interpreter, []);
+            doneCallback.CallBoxed(interpreter, []);
         }
 
         return true;
@@ -143,7 +143,7 @@ public class SharpTSTransform : SharpTSDuplex
             var flushDoneCallback = new TransformDoneCallback(callback, interpreter, this);
             try
             {
-                _flushCallback.Call(interpreter, [flushDoneCallback]);
+                _flushCallback.CallBoxed(interpreter, [flushDoneCallback]);
             }
             catch (Exception ex)
             {
@@ -152,7 +152,7 @@ public class SharpTSTransform : SharpTSDuplex
         }
         else
         {
-            callback?.Call(interpreter, []);
+            callback?.CallBoxed(interpreter, []);
         }
 
         // End the readable side
@@ -172,7 +172,7 @@ public class SharpTSTransform : SharpTSDuplex
 
         // Pass through by default
         PushToReadableSide(interpreter, chunk);
-        callback?.Call(interpreter, []);
+        callback?.CallBoxed(interpreter, []);
 
         return null;
     }
@@ -181,7 +181,7 @@ public class SharpTSTransform : SharpTSDuplex
     {
         // Default _flush implementation (for subclasses to override)
         var callback = args.Count > 0 ? args[0] as ISharpTSCallable : null;
-        callback?.Call(interpreter, []);
+        callback?.CallBoxed(interpreter, []);
         return null;
     }
 
@@ -189,7 +189,7 @@ public class SharpTSTransform : SharpTSDuplex
     {
         // Use the base push method to add to the readable buffer
         var push = base.GetMember("push") as BuiltInMethod;
-        push?.Bind(this).Call(interpreter, [chunk]);
+        push?.Bind(this).CallBoxed(interpreter, [chunk]);
     }
 
     public override string ToString() => "Transform {}";
@@ -213,6 +213,9 @@ public class SharpTSTransform : SharpTSDuplex
             _stream.PushToReadableSide(_interpreter, chunk);
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 
     private class TransformDoneCallback : ISharpTSCallable
@@ -241,8 +244,11 @@ public class SharpTSTransform : SharpTSDuplex
                 _stream.PushToReadableSide(_interpreter, data);
             }
 
-            _callback?.Call(_interpreter, []);
+            _callback?.CallBoxed(_interpreter, []);
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }

@@ -35,12 +35,15 @@ public sealed class SharpTSPassThroughConstructor : ISharpTSCallable
             if (options.GetProperty("encoding") is string encoding)
             {
                 var setEncoding = stream.GetMember("setEncoding") as Runtime.BuiltIns.BuiltInMethod;
-                setEncoding?.Bind(stream).Call(interpreter, [encoding]);
+                setEncoding?.Bind(stream).CallV2(interpreter, [RuntimeValue.FromString(encoding)]);
             }
         }
 
         return stream;
     }
+
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
     /// Gets a property from the PassThrough constructor (static properties/methods).

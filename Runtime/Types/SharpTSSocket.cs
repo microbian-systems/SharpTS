@@ -324,7 +324,7 @@ public class SharpTSSocket : SharpTSEventEmitter
                     _bytesWritten += data.Length;
                     if (callback != null)
                     {
-                        interpreter.ScheduleTimer(0, 0, () => callback.Call(interpreter, []), false);
+                        interpreter.ScheduleTimer(0, 0, () => callback.CallBoxed(interpreter, []), false);
                     }
                 }
                 catch (Exception ex)
@@ -342,7 +342,7 @@ public class SharpTSSocket : SharpTSEventEmitter
         {
             _stream.Write(data, 0, data.Length);
             _bytesWritten += data.Length;
-            callback?.Call(interpreter, []);
+            callback?.CallBoxed(interpreter, []);
             return true;
         }
         catch (Exception ex)
@@ -397,7 +397,7 @@ public class SharpTSSocket : SharpTSEventEmitter
         {
             if (arg is ISharpTSCallable cb) { callback = cb; break; }
         }
-        callback?.Call(interpreter, []);
+        callback?.CallBoxed(interpreter, []);
 
         return this;
     }
@@ -668,5 +668,8 @@ public class SharpTSSocket : SharpTSEventEmitter
             }
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }

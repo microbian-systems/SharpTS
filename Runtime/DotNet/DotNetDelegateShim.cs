@@ -104,7 +104,7 @@ internal static class DotNetDelegateShim
             argsList.Add(WrapIncoming(rawArgs[i]));
         }
 
-        var result = callable.Call(interpreter, argsList);
+        var result = callable.CallBoxed(interpreter, argsList);
 
         if (returnType == typeof(void)) return null;
         return DotNetMarshaller.Convert(result, returnType, interpreter);

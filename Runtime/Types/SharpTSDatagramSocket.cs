@@ -211,7 +211,7 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
                 {
                     interpreter.ScheduleTimer(0, 0, () =>
                     {
-                        sendCallback.Call(interpreter, [null]);
+                        sendCallback.CallBoxed(interpreter, [null]);
                     }, isInterval: false);
                 }
             }
@@ -221,7 +221,7 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
                 {
                     interpreter.ScheduleTimer(0, 0, () =>
                     {
-                        sendCallback.Call(interpreter, [new SharpTSError(ex.Message)]);
+                        sendCallback.CallBoxed(interpreter, [new SharpTSError(ex.Message)]);
                     }, isInterval: false);
                 }
                 else
@@ -265,7 +265,7 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
             {
                 closeInterpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(closeInterpreter, []);
+                    callback.CallBoxed(closeInterpreter, []);
                 }, isInterval: false);
             }
 
@@ -539,6 +539,6 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
     private void Once(string eventName, ISharpTSCallable callback)
     {
         var onceMethod = base.GetMember("once") as BuiltInMethod;
-        onceMethod?.Bind(this).Call(null!, new List<object?> { eventName, callback });
+        onceMethod?.Bind(this).CallBoxed(null!, new List<object?> { eventName, callback });
     }
 }

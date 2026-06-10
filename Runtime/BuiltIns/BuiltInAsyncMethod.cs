@@ -125,6 +125,14 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
     }
 
     /// <summary>
+    /// RuntimeValue call - materializes the arguments into a boxed list (they must
+    /// outlive any suspension) and routes through <see cref="Call"/>, which wraps
+    /// synchronous throws into a rejected Promise.
+    /// </summary>
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
+    /// <summary>
     /// Async call - awaits the implementation directly.
     /// </summary>
     public async Task<object?> CallAsync(Interpreter interpreter, List<object?> arguments)

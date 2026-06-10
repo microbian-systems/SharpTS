@@ -117,7 +117,7 @@ public static class BuiltInConstructorFactory
         // Check TypedArray constructors
         if (BuiltInNames.IsTypedArrayName(name))
         {
-            return WorkerBuiltIns.GetTypedArrayConstructor(name).Call(interpreter!, args.ToList());
+            return WorkerBuiltIns.GetTypedArrayConstructor(name).CallBoxed(interpreter!, args.ToList());
         }
 
         // Note: Error constructors are handled by SharpTSErrorClass (registered as globals)
@@ -125,17 +125,17 @@ public static class BuiltInConstructorFactory
         // Check MessageChannel and SharedArrayBuffer (need interpreter)
         if (name == BuiltInNames.MessageChannel)
         {
-            return WorkerBuiltIns.MessageChannelConstructor.Call(interpreter!, args.ToList());
+            return WorkerBuiltIns.MessageChannelConstructor.CallBoxed(interpreter!, args.ToList());
         }
 
         if (name == BuiltInNames.SharedArrayBuffer)
         {
-            return WorkerBuiltIns.SharedArrayBufferConstructor.Call(interpreter!, args.ToList());
+            return WorkerBuiltIns.SharedArrayBufferConstructor.CallBoxed(interpreter!, args.ToList());
         }
 
         if (name == BuiltInNames.ArrayBuffer)
         {
-            return WorkerBuiltIns.ArrayBufferConstructor.Call(interpreter!, args.ToList());
+            return WorkerBuiltIns.ArrayBufferConstructor.CallBoxed(interpreter!, args.ToList());
         }
 
         if (name == BuiltInNames.BroadcastChannel)

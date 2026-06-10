@@ -1903,7 +1903,7 @@ public static class ObjectBuiltIns
             var element = iterable[i];
             callbackArgs[0] = element;
             callbackArgs[1] = (double)i;
-            var key = callback.Call(interp, callbackArgs);
+            var key = callback.CallBoxed(interp, callbackArgs);
             var keyStr = key?.ToString() ?? "undefined";
 
             if (!groups.TryGetValue(keyStr, out var existing))

@@ -125,6 +125,9 @@ internal class SharedArrayBufferConstructorImpl : ISharpTSCallable
         return new SharpTSSharedArrayBuffer((int)length);
     }
 
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     public object? GetProperty(string name)
     {
         return name switch
@@ -149,6 +152,9 @@ internal class ArrayBufferConstructorImpl : ISharpTSCallable
 
         return new SharpTSArrayBuffer((int)length);
     }
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     public object? GetProperty(string name)
     {
@@ -237,6 +243,9 @@ internal class TypedArrayConstructorImpl<T> : ISharpTSCallable where T : SharpTS
         throw new Exception("Invalid arguments for TypedArray constructor");
     }
 
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     public object? GetProperty(string name)
     {
         return name switch
@@ -294,6 +303,9 @@ internal class DataViewConstructorImpl : ISharpTSCallable
 
         throw new Exception("TypeError: First argument to DataView constructor must be an ArrayBuffer or SharedArrayBuffer");
     }
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     public object? GetProperty(string name)
     {

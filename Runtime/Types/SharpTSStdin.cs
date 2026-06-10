@@ -48,7 +48,7 @@ public class SharpTSStdin : SharpTSReadable
 
         // Delegate to base Readable's on (which handles flowing mode)
         var baseOn = base.GetMember("on") as BuiltInMethod;
-        baseOn?.Bind(this).Call(interpreter, args);
+        baseOn?.Bind(this).CallBoxed(interpreter, args);
 
         if (eventName == "data" || eventName == "readable")
         {
@@ -63,7 +63,7 @@ public class SharpTSStdin : SharpTSReadable
         var eventName = args.Count > 0 ? args[0]?.ToString() : null;
 
         var baseOnce = base.GetMember("once") as BuiltInMethod;
-        baseOnce?.Bind(this).Call(interpreter, args);
+        baseOnce?.Bind(this).CallBoxed(interpreter, args);
 
         if (eventName == "data" || eventName == "readable")
         {
@@ -76,7 +76,7 @@ public class SharpTSStdin : SharpTSReadable
     private object? ResumeWithReader(Interp interpreter, object? receiver, List<object?> args)
     {
         var baseResume = base.GetMember("resume") as BuiltInMethod;
-        baseResume?.Bind(this).Call(interpreter, args);
+        baseResume?.Bind(this).CallBoxed(interpreter, args);
         StartReaderThread(interpreter);
         return this;
     }
@@ -126,7 +126,7 @@ public class SharpTSStdin : SharpTSReadable
     internal void PushFromExternal(Interp interpreter, object? chunk)
     {
         var pushMethod = base.GetMember("push") as BuiltInMethod;
-        pushMethod?.Bind(this).Call(interpreter, [chunk]);
+        pushMethod?.Bind(this).CallBoxed(interpreter, [chunk]);
     }
 
     /// <summary>

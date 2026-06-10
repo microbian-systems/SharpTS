@@ -355,14 +355,14 @@ public static class ReflectBuiltIns
                 if (target is SharpTSFunction fn)
                 {
                     var bound = new BoundFunction(fn, thisArg, []);
-                    return bound.Call(interpreter, callArgs);
+                    return bound.CallBoxed(interpreter, callArgs);
                 }
                 if (target is SharpTSArrowFunction arrow && arrow.HasOwnThis)
                 {
                     var bound = arrow.Bind(thisArg!);
-                    return bound.Call(interpreter, callArgs);
+                    return bound.CallBoxed(interpreter, callArgs);
                 }
-                return target.Call(interpreter, callArgs);
+                return target.CallBoxed(interpreter, callArgs);
             }),
 
             "construct" => new BuiltInMethod("construct", 2, 3, (interpreter, _, args) =>
@@ -409,11 +409,11 @@ public static class ReflectBuiltIns
 
                 if (target is SharpTSClass cls)
                 {
-                    return cls.Call(interpreter, callArgs);
+                    return cls.CallBoxed(interpreter, callArgs);
                 }
                 if (target is ISharpTSCallable callable)
                 {
-                    return callable.Call(interpreter, callArgs);
+                    return callable.CallBoxed(interpreter, callArgs);
                 }
                 throw new ThrowException(new SharpTSTypeError(
                     "Reflect.construct target is not a constructor"));
@@ -484,5 +484,8 @@ public static class ReflectBuiltIns
             // Return undefined (decorators that don't modify return void/undefined)
             return null;
         }
+
+        public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }

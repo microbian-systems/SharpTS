@@ -176,7 +176,7 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
         interpreter.Ref();
 
         if (callback != null)
-            callback.Call(interpreter, []);
+            callback.CallBoxed(interpreter, []);
         EmitEvent(interpreter, "listening", []);
 
         StartAccepting(interpreter);
@@ -228,7 +228,7 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
                                 {
                                     try
                                     {
-                                        var result = sniCb.Call(interp, [hostName]);
+                                        var result = sniCb.CallBoxed(interp, [hostName]);
                                         if (result is SharpTSObject ctx)
                                         {
                                             var ctxCert = ctx.GetProperty("cert") as string;
@@ -252,7 +252,7 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
                                 var tlsSocket = new SharpTSTlsSocket(tcpClient, sslStream);
                                 _connections.Add(tlsSocket);
 
-                                _connectionListener?.Call(interpreter, [tlsSocket]);
+                                _connectionListener?.CallBoxed(interpreter, [tlsSocket]);
                                 EmitEvent(interpreter, "secureConnection", [tlsSocket]);
 
                                 tlsSocket.StartReading(interpreter);
@@ -289,7 +289,7 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
         _interpreter?.Unref();
 
         ISharpTSCallable? callback = args.Count > 0 ? args[0] as ISharpTSCallable : null;
-        callback?.Call(interpreter, []);
+        callback?.CallBoxed(interpreter, []);
 
         EmitEvent(interpreter, "close", []);
 
@@ -313,7 +313,7 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
     {
         if (args.Count > 0 && args[0] is ISharpTSCallable callback)
         {
-            callback.Call(interpreter, [null, (double)_connections.Count]);
+            callback.CallBoxed(interpreter, [null, (double)_connections.Count]);
         }
         return this;
     }

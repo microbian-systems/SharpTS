@@ -18,10 +18,13 @@ public class PromiseResolveCallback : ISharpTSCallable
     public int Arity() => 0; // 0 minimum - resolve can be called with 0 or 1 argument
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
+        => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
-        var value = arguments.Count > 0 ? arguments[0] : null;
+        var value = arguments.Length > 0 ? arguments[0].ToObject() : null;
         _resolve(value);
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 }
 
@@ -41,9 +44,12 @@ public class PromiseRejectCallback : ISharpTSCallable
     public int Arity() => 0; // 0 minimum - reject can be called with 0 or 1 argument
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
+        => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
-        var reason = arguments.Count > 0 ? arguments[0] : null;
+        var reason = arguments.Length > 0 ? arguments[0].ToObject() : null;
         _reject(reason);
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 }

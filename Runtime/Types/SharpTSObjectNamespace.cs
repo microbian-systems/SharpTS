@@ -34,5 +34,8 @@ public class SharpTSObjectNamespace : ISharpTSCallable
         return value;
     }
 
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     public override string ToString() => "function Object() { [native code] }";
 }

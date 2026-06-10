@@ -73,6 +73,9 @@ public sealed class DotNetClass : ISharpTSCallable, ITypeCategorized
         });
     }
 
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     /// <summary>
     /// Evaluates <c>ClassName.member</c> for static access.
     /// </summary>

@@ -237,11 +237,14 @@ internal sealed class ErrorToStringCallable : ISharpTSCallable, IInstanceBindabl
     }
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
+        => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         var instance = _boundInstance
             ?? interpreter.GetCurrentThis() as SharpTSInstance;
-        if (instance == null) return "Error";
-        return SharpTSErrorClass.ErrorToString(instance);
+        if (instance == null) return RuntimeValue.FromString("Error");
+        return RuntimeValue.FromString(SharpTSErrorClass.ErrorToString(instance));
     }
 }
 

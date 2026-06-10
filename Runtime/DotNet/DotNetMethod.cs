@@ -53,6 +53,9 @@ internal sealed class DotNetMethod : ISharpTSCallable
         });
     }
 
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     /// <summary>
     /// Marshals TS arguments into a .NET argument array matching the resolved parameter list,
     /// honoring params-array semantics and default values. The interpreter reference is

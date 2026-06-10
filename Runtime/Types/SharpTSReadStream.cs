@@ -85,12 +85,12 @@ public class SharpTSReadStream : SharpTSReadable
 
                 // Use base Push via the BuiltInMethod mechanism
                 var pushMethod = GetMember("push") as BuiltInMethod;
-                pushMethod?.Bind(this).Call(interpreter, [chunk]);
+                pushMethod?.Bind(this).CallBoxed(interpreter, [chunk]);
             }
 
             // Signal EOF
             var pushEof = GetMember("push") as BuiltInMethod;
-            pushEof?.Bind(this).Call(interpreter, new List<object?> { null });
+            pushEof?.Bind(this).CallBoxed(interpreter, new List<object?> { null });
 
             CloseFileStream(interpreter);
         }

@@ -65,7 +65,7 @@ public static class NetModuleInterpreter
 
         // Delegate to socket.connect()
         var connectMethod = socket.GetMember("connect") as BuiltInMethod;
-        connectMethod?.Bind(socket).Call(interpreter, args);
+        connectMethod?.Bind(socket).CallBoxed(interpreter, args);
 
         return socket;
     }

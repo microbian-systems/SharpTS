@@ -116,7 +116,7 @@ public class SharpTSStatWatcher : SharpTSEventEmitter, IDisposable
         if (_interpreter == null || _closed) return;
 
         var emitMethod = base.GetMember("emit") as BuiltInMethod;
-        emitMethod?.Call(_interpreter, ["change", current, previous]);
+        emitMethod?.CallBoxed(_interpreter, ["change", current, previous]);
     }
 
     /// <summary>

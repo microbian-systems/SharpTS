@@ -67,7 +67,7 @@ public static class MapBuiltIns
         {
             callbackArgs[0] = kvp.Value;
             callbackArgs[1] = kvp.Key;
-            callback.Call(interp, callbackArgs);
+            callback.CallBoxed(interp, callbackArgs);
         }
         return null;
     }
@@ -87,7 +87,7 @@ public static class MapBuiltIns
             var element = iterable[i];
             callbackArgs[0] = element;
             callbackArgs[1] = (double)i;
-            var key = callback.Call(interp, callbackArgs);
+            var key = callback.CallBoxed(interp, callbackArgs);
 
             var existing = result.Get(key);
             if (existing == null)

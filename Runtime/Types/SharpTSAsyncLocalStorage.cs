@@ -132,7 +132,7 @@ public class SharpTSAsyncLocalStorage
     private static object? InvokeCallback(Interp? interpreter, object? callback, List<object?> args)
     {
         if (callback is ISharpTSCallable callable)
-            return callable.Call(interpreter!, args);
+            return callable.CallBoxed(interpreter!, args);
 
         // Compiled mode: use reflection to find Invoke(object[]) on emitted types
         var invokeMethod = callback?.GetType().GetMethod("Invoke", [typeof(object?[])]);

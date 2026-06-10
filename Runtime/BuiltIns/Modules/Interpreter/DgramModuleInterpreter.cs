@@ -36,7 +36,7 @@ public static class DgramModuleInterpreter
         if (args.Count > 1 && args[1] is ISharpTSCallable callback)
         {
             var onMethod = socket.GetMember("on") as BuiltInMethod;
-            onMethod?.Bind(socket).Call(interpreter, new List<object?> { "message", callback });
+            onMethod?.Bind(socket).CallBoxed(interpreter, new List<object?> { "message", callback });
         }
 
         return socket;
@@ -53,5 +53,8 @@ public static class DgramModuleInterpreter
         {
             return CreateSocket(interpreter, null, args);
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }
