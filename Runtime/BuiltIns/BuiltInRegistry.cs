@@ -998,6 +998,12 @@ public sealed class BuiltInRegistry
             ((SharpTSQueuingStrategy)instance).GetMember(name));
         registry.RegisterInstanceType(typeof(SharpTSCountQueuingStrategy), (instance, name) =>
             ((SharpTSQueuingStrategy)instance).GetMember(name));
+
+        // The constructor wrapper itself carries static members
+        // (ReadableStream.from) — without this registration, property access
+        // on the imported constructor never reaches GetProperty (#210).
+        registry.RegisterInstanceType(typeof(SharpTSReadableStreamConstructor), (instance, name) =>
+            ((SharpTSReadableStreamConstructor)instance).GetProperty(name));
     }
 
     private static void RegisterWorkerTypes(BuiltInRegistry registry)

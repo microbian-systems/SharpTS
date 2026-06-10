@@ -46,6 +46,34 @@ public class StreamsWebBasicTests
         Assert.Equal("hello false\nworld false\nundefined true\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void ReadableStream_From_ImportedConstructor(ExecutionMode mode)
+    {
+        // #210: static-property dispatch on the imported constructor wrapper
+        // (ReadableStream.from) must route through its GetProperty.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { ReadableStream as RS } from "stream/web";
+                const rs = (RS as any).from(["x", "y"]);
+                const reader = rs.getReader();
+                async function run() {
+                    const r1 = await reader.read();
+                    console.log(r1.value, r1.done);
+                    const r2 = await reader.read();
+                    console.log(r2.value, r2.done);
+                    const r3 = await reader.read();
+                    console.log(r3.value, r3.done);
+                }
+                run();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("x false\ny false\nundefined true\n", output);
+    }
+
     #endregion
 
     #region Read result JS semantics (regression: MakeReadResult must behave like a real object)
