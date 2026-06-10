@@ -66,19 +66,23 @@ public class DnsWireProtocolRetryTests
         public string Address { get; }
         public int QueryCount => Volatile.Read(ref _queryCount);
 
-        private void ServeLoop()
+        // Async receive only: on macOS, Dispose does not unblock a thread in a
+        // synchronous Receive (see the SendReceive timeout comment in
+        // DnsWireProtocol.cs) — a sync loop here deadlocks the testhost there.
+        // Closing the socket does complete a pending async receive on all OSes.
+        private async Task ServeLoop()
         {
             try
             {
                 while (true)
                 {
-                    IPEndPoint? remote = null;
-                    var request = _udp.Receive(ref remote!);
+                    var query = await _udp.ReceiveAsync().ConfigureAwait(false);
                     var count = Interlocked.Increment(ref _queryCount);
                     var response = count <= _errorCount
-                        ? BuildErrorResponse(request, _errorRcode)
-                        : BuildTxtResponse(request);
-                    _udp.Send(response, response.Length, remote);
+                        ? BuildErrorResponse(query.Buffer, _errorRcode)
+                        : BuildTxtResponse(query.Buffer);
+                    await _udp.SendAsync(response, response.Length, query.RemoteEndPoint)
+                        .ConfigureAwait(false);
                 }
             }
             catch (ObjectDisposedException) { }
