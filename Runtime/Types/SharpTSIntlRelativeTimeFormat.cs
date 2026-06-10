@@ -310,21 +310,21 @@ public class SharpTSIntlRelativeTimeFormat
     {
         return name switch
         {
-            "format" => new BuiltInMethod("format", 2, (_, _, args) =>
+            "format" => BuiltInMethod.CreateV2("format", 2, (_, _, args) =>
             {
-                double num = ToDouble(args.Count > 0 ? args[0] : null);
-                string unit = (args.Count > 1 ? args[1] : null)?.ToString() ?? "second";
-                return FormatRelativeTime(num, unit);
+                double num = ToDouble(args.Length > 0 ? args[0].ToObject() : null);
+                string unit = (args.Length > 1 ? args[1].ToObject() : null)?.ToString() ?? "second";
+                return RuntimeValue.FromBoxed(FormatRelativeTime(num, unit));
             }),
-            "formatToParts" => new BuiltInMethod("formatToParts", 2, (_, _, args) =>
+            "formatToParts" => BuiltInMethod.CreateV2("formatToParts", 2, (_, _, args) =>
             {
-                double num = ToDouble(args.Count > 0 ? args[0] : null);
-                string unit = (args.Count > 1 ? args[1] : null)?.ToString() ?? "second";
-                return GetFormattedParts(num, unit);
+                double num = ToDouble(args.Length > 0 ? args[0].ToObject() : null);
+                string unit = (args.Length > 1 ? args[1].ToObject() : null)?.ToString() ?? "second";
+                return RuntimeValue.FromBoxed(GetFormattedParts(num, unit));
             }),
-            "resolvedOptions" => new BuiltInMethod("resolvedOptions", 0, (_, _, _) =>
+            "resolvedOptions" => BuiltInMethod.CreateV2("resolvedOptions", 0, (_, _, _) =>
             {
-                return new SharpTSObject(GetResolvedOptions());
+                return RuntimeValue.FromObject(new SharpTSObject(GetResolvedOptions()));
             }),
             _ => null
         };

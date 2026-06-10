@@ -96,14 +96,14 @@ public class SharpTSIntlSegmenter
     {
         return name switch
         {
-            "segment" => new BuiltInMethod("segment", 1, (_, _, args) =>
+            "segment" => BuiltInMethod.CreateV2("segment", 1, (_, _, args) =>
             {
-                string input = (args.Count > 0 ? args[0] : null)?.ToString() ?? "";
-                return SegmentText(input);
+                string input = (args.Length > 0 ? args[0].ToObject() : null)?.ToString() ?? "";
+                return RuntimeValue.FromBoxed(SegmentText(input));
             }),
-            "resolvedOptions" => new BuiltInMethod("resolvedOptions", 0, (_, _, _) =>
+            "resolvedOptions" => BuiltInMethod.CreateV2("resolvedOptions", 0, (_, _, _) =>
             {
-                return new SharpTSObject(GetResolvedOptions());
+                return RuntimeValue.FromObject(new SharpTSObject(GetResolvedOptions()));
             }),
             _ => null
         };
