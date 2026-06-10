@@ -101,7 +101,7 @@ public static class VarHoister
                     {
                         return new Stmt.Expression(new Expr.Literal(null));
                     }
-                    return new Stmt.Expression(new Expr.Assign(v.Name, v.Initializer));
+                    return new Stmt.Expression(new Expr.Assign(v.Name, v.Initializer, IsVarRedeclaration: true));
                 }
 
                 if (seen.Add(v.Name.Lexeme))
@@ -115,7 +115,7 @@ public static class VarHoister
                     return new Stmt.Expression(new Expr.Literal(null));
                 }
                 // `var x = expr` → `x = expr;`
-                return new Stmt.Expression(new Expr.Assign(v.Name, v.Initializer));
+                return new Stmt.Expression(new Expr.Assign(v.Name, v.Initializer, IsVarRedeclaration: true));
             }
 
             case Stmt.Sequence seq:

@@ -626,6 +626,11 @@ public partial class TypeChecker
             return true;
         }
 
+        // Date / RegExp identity (these only became reachable as TYPE-position types once the
+        // global names stopped resolving to `any`).
+        if (expected is TypeInfo.Date && actual is TypeInfo.Date) return true;
+        if (expected is TypeInfo.RegExp && actual is TypeInfo.RegExp) return true;
+
         // Promise type compatibility - Promise<A> is compatible with Promise<B> if A is compatible with B
         if (expected is TypeInfo.Promise expPromise && actual is TypeInfo.Promise actPromise)
         {

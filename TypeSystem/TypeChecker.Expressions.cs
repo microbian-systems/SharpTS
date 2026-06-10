@@ -1225,6 +1225,15 @@ public partial class TypeChecker
 
         if (!IsCompatible(declaredType, valueType))
         {
+            // An assignment synthesized from a duplicate `var` declaration (VarHoister) that
+            // fails against the established type is tsc's TS2403: subsequent variable
+            // declarations must have the same type.
+            if (assign.IsVarRedeclaration)
+            {
+                throw new TypeCheckException(
+                    $" Subsequent variable declarations must have the same type. Variable '{assign.Name.Lexeme}' must be of type '{declaredType}', but here has type '{valueType}'.",
+                    tsCode: "TS2403");
+            }
             throw new TypeCheckException($" Cannot assign type '{valueType}' to variable '{assign.Name.Lexeme}' of type '{declaredType}'.", tsCode: AssignmentDiagnosticCode(declaredType, valueType));
         }
 

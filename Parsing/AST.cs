@@ -107,7 +107,10 @@ public abstract record Expr
     public record Unary(Token Operator, Expr Right) : Expr;
     public record Delete(Token Keyword, Expr Operand) : Expr;
     public record Variable(Token Name) : Expr;
-    public record Assign(Token Name, Expr Value) : Expr;
+    /// <param name="IsVarRedeclaration">True when this assignment was synthesized by
+    /// <see cref="VarHoister"/> from a duplicate <c>var</c> declaration — an incompatible value
+    /// then reports TS2403 (subsequent declarations must have the same type), not TS2322.</param>
+    public record Assign(Token Name, Expr Value, bool IsVarRedeclaration = false) : Expr;
     public record Call(Expr Callee, Token Paren, List<string>? TypeArgs, List<Expr> Arguments, bool Optional = false) : Expr;
     public record Get(Expr Object, Token Name, bool Optional = false) : Expr;
     public record Set(Expr Object, Token Name, Expr Value) : Expr;

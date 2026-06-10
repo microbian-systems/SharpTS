@@ -316,6 +316,18 @@ public partial class TypeChecker
         if (typeName == "never") return new TypeInfo.Never();
         if (typeName == "object") return new TypeInfo.Object();
         if (typeName == "Buffer") return new TypeInfo.Buffer();
+        // Hot lib globals in TYPE position. Without these they fell through the user-type lookup
+        // to `any`, making every Object/Date/wrapper-typed position vacuously compatible (same
+        // failure mode as the `Function` mapping above). `Object` ≈ `{}` — everything non-nullish
+        // is assignable to it, and it is assignable to nothing specific; the String/Number/Boolean
+        // wrappers approximate their primitives (assignability matches in the directions the
+        // corpus exercises); Date/RegExp map to their dedicated TypeInfos.
+        if (typeName == "Object") return new TypeInfo.Record(FrozenDictionary<string, TypeInfo>.Empty);
+        if (typeName == "Date") return new TypeInfo.Date();
+        if (typeName == "RegExp") return new TypeInfo.RegExp();
+        if (typeName == "String") return new TypeInfo.String();
+        if (typeName == "Number") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        if (typeName == "Boolean") return new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
 
         // A mapped-type parameter in scope (e.g. P in `{ [P in K]: DeepReadonly<T[P]> }`)
         // parses to a TypeParameter so the body builds deferred forms (IndexedAccess,
