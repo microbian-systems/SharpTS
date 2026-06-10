@@ -18,6 +18,19 @@ public interface ISharpTSCallable
 {
     int Arity();
     object? Call(Interpreter interpreter, List<object?> arguments);
+
+    /// <summary>
+    /// Invokes the callable with RuntimeValue arguments, avoiding boxing for
+    /// implementations that override it. The default bridges to the boxed
+    /// <see cref="Call"/> so unmigrated implementors work unchanged.
+    /// </summary>
+    RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    {
+        var boxed = new List<object?>(arguments.Length);
+        foreach (var arg in arguments)
+            boxed.Add(arg.ToObject());
+        return RuntimeValue.FromBoxed(Call(interpreter, boxed));
+    }
 }
 
 /// <summary>
@@ -31,7 +44,7 @@ public interface ISharpTSCallable
 /// </remarks>
 /// <seealso cref="SharpTSArrowFunction"/>
 /// <seealso cref="RuntimeEnvironment"/>
-public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCategorized
+public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
 {
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Function;
@@ -171,7 +184,6 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
     }
 
     public int Arity() => _arity;
-    int ISharpTSCallableV2.Arity => _arity;
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
@@ -350,7 +362,7 @@ public class SharpTSFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCatego
 /// For function expressions and object method shorthand (<c>HasOwnThis=true</c>), <c>this</c> is bound at call time.
 /// </remarks>
 /// <seealso cref="SharpTSFunction"/>
-public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeCategorized
+public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
 {
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Function;
@@ -485,7 +497,6 @@ public class SharpTSArrowFunction : ISharpTSCallable, ISharpTSCallableV2, ITypeC
     }
 
     public int Arity() => _arity;
-    int ISharpTSCallableV2.Arity => _arity;
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {

@@ -75,14 +75,15 @@ The codebase is migrating from `object?` to `RuntimeValue` struct to eliminate b
 - Accessors: `AsNumber()`, `AsString()`, `AsBoolean()`, `AsObject<T>()`
 - JavaScript semantics: `IsTruthy()`, `TypeofString()`
 
-**ISharpTSCallableV2** (`Runtime/Types/ISharpTSCallableV2.cs`):
-- New callable interface using `RuntimeValue` instead of `object?`
-- `CallableV2Adapter` wraps legacy → V2, `CallableLegacyAdapter` wraps V2 → legacy
-- Extension methods: `.AsV2()`, `.AsLegacy()`, `.CallWithRuntimeValues()`
+**ISharpTSCallable** (`Runtime/Types/SharpTSFunction.cs`) is the single callable interface:
+- Boxed `Call(Interpreter, List<object?>)` (being retired) plus `CallV2(Interpreter, ReadOnlySpan<RuntimeValue>)`
+- `CallV2` has a default implementation that bridges to `Call` — unmigrated implementors work unchanged; migrated ones override it to run boxing-free
+- Call sites holding boxed args use `.CallBoxed(...)` from `Runtime/Types/CallableInterop.cs` (never invoke legacy `Call` directly in new code)
+- Spans can't cross `await`: async call sites evaluate all args first, then call synchronously; async/generator implementors copy span → list before starting the state machine
 
 **BuiltInMethod** (`Runtime/BuiltIns/BuiltInMethod.cs`):
-- Implements both `ISharpTSCallable` and `ISharpTSCallableV2`
-- `CreateV2()` factory for RuntimeValue-based methods
+- `CreateV2()` factory for RuntimeValue-based methods; `HasV2Implementation` gates the interpreter fast path
+- Legacy delegate bodies (`Func<Interpreter, object?, List<object?>, object?>`) still work via an internal wrapper — converting them is incremental follow-up work
 - Thread-local pooling in array built-ins to avoid allocations
 
 ### Visitor-Style Traversal Pattern
