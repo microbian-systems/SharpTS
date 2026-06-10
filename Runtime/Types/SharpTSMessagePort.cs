@@ -181,25 +181,25 @@ public class SharpTSMessagePort : SharpTSEventEmitter
     {
         return name switch
         {
-            "postMessage" => new BuiltInMethod("postMessage", 1, 2, (interp, recv, args) =>
+            "postMessage" => BuiltInMethod.CreateV2("postMessage", 1, 2, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("postMessage requires at least one argument");
-                var transfer = args.Count > 1 ? args[1] as SharpTSArray : null;
-                PostMessage(args[0], transfer);
-                return null;
+                var transfer = args.Length > 1 ? args[1].ToObject() as SharpTSArray : null;
+                PostMessage(args[0].ToObject(), transfer);
+                return RuntimeValue.Null;
             }),
 
-            "start" => new BuiltInMethod("start", 0, (interp, recv, args) =>
+            "start" => BuiltInMethod.CreateV2("start", 0, (_, _, _) =>
             {
                 Start();
-                return null;
+                return RuntimeValue.Null;
             }),
 
-            "close" => new BuiltInMethod("close", 0, (interp, recv, args) =>
+            "close" => BuiltInMethod.CreateV2("close", 0, (_, _, _) =>
             {
                 Close();
-                return null;
+                return RuntimeValue.Null;
             }),
 
             // Inherit EventEmitter methods
