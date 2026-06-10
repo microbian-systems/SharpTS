@@ -729,22 +729,21 @@ public partial class TypeChecker
 
         if (expected is TypeInfo.Interface itf)
         {
-            // Callable interface: the source must satisfy the call signatures.
+            // Callable interface: every target call signature must be satisfied by the source.
             if (itf.IsCallable)
             {
-                if (actual is TypeInfo.Function func)
-                    return FunctionMatchesCallSignatures(func, itf.CallSignatures!);
+                if (NormalizeSignature(actual) is { } funcSource)
+                    return CallSignaturesSatisfiedBy(itf.CallSignatures!, [funcSource]);
 
                 if (GetCallSignatures(actual) is { } actualCallSigs)
                 {
-                    foreach (var es in itf.CallSignatures!)
-                        if (!actualCallSigs.Any(@as => IsCompatible(CallSignatureToFunction(es), CallSignatureToFunction(@as))))
-                            return false;
+                    if (!CallSignaturesSatisfiedBy(itf.CallSignatures!, actualCallSigs.Select(NormalizeCallSignature).ToList()))
+                        return false;
                     // Non-signature members (if any) still checked by the structural path below.
                     if (itf.Members.Count == 0) return true;
                 }
-                // Other actuals (e.g. generic functions) may still be callable via downstream
-                // paths — fall through rather than rejecting here.
+                // Other actuals may still be callable via downstream paths — fall through rather
+                // than rejecting here.
             }
 
             // Constructable interface: the source must satisfy the construct signatures.
@@ -835,18 +834,17 @@ public partial class TypeChecker
         {
             if (exSigRec.IsCallable)
             {
-                if (actual is TypeInfo.Function callableFunc)
+                if (NormalizeSignature(actual) is { } funcSource)
                 {
-                    if (!FunctionMatchesCallSignatures(callableFunc, exSigRec.CallSignatures!)) return false;
+                    if (!CallSignaturesSatisfiedBy(exSigRec.CallSignatures!, [funcSource])) return false;
                 }
                 else if (GetCallSignatures(actual) is { } actualSigs)
                 {
                     // Callable interface/object source: each expected signature must be matched.
-                    foreach (var es in exSigRec.CallSignatures!)
-                        if (!actualSigs.Any(@as => IsCompatible(CallSignatureToFunction(es), CallSignatureToFunction(@as))))
-                            return false;
+                    if (!CallSignaturesSatisfiedBy(exSigRec.CallSignatures!, actualSigs.Select(NormalizeCallSignature).ToList()))
+                        return false;
                 }
-                // Other actuals (e.g. generic functions) may still be callable via downstream paths.
+                // Other actuals may still be callable via downstream paths.
             }
 
             if (exSigRec.IsConstructable)
@@ -938,10 +936,10 @@ public partial class TypeChecker
 
         // Function type compatibility
         // A callable interface or object type (`{ (x): T }`) is assignable to a function-typed
-        // target when one of its call signatures satisfies that function type.
-        if (expected is TypeInfo.Function expectedFunc && GetCallSignatures(actual) is { } sourceCallSigs)
+        // target (plain or generic) when one of its call signatures satisfies that function type.
+        if (NormalizeSignature(expected) is { } expectedFnSig && GetCallSignatures(actual) is { } sourceCallSigs)
         {
-            return CallableAssignableToFunction(sourceCallSigs, expectedFunc);
+            return CallableAssignableToFunction(sourceCallSigs, expectedFnSig);
         }
 
         // Function / generic-function relation, unified. Normalize each side to a signature shape

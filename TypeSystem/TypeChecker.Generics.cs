@@ -86,7 +86,18 @@ public partial class TypeChecker
         TypeInfo result;
 
         // Handle built-in generic types
-        if (baseName == "Promise")
+        if (baseName is "Array" or "ReadonlyArray")
+        {
+            // Array<T> is the generic spelling of T[] — without this it would fall through the
+            // user-generics lookup to `any`, making every Array<T>-typed position vacuously
+            // compatible. ReadonlyArray<T> is modeled as T[] (readonlyness isn't tracked yet).
+            if (typeArgs.Count != 1)
+            {
+                throw new TypeCheckException($" {baseName} requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
+            }
+            result = new TypeInfo.Array(typeArgs[0]);
+        }
+        else if (baseName == "Promise")
         {
             if (typeArgs.Count != 1)
             {

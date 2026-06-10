@@ -131,8 +131,27 @@ public abstract record TypeInfo
         public int MinArity => RequiredParams < 0 ? ParamTypes.Count : RequiredParams;
         public override string ToString() =>
             ThisType != null
-                ? $"(this: {ThisType}, {string.Join(", ", ParamTypes)}) => {ReturnType}"
-                : $"({string.Join(", ", ParamTypes)}) => {ReturnType}";
+                ? $"(this: {ThisType}, {RenderParams(ParamTypes, MinArity, HasRestParam)}) => {ReturnType}"
+                : $"({RenderParams(ParamTypes, MinArity, HasRestParam)}) => {ReturnType}";
+    }
+
+    /// <summary>
+    /// Renders a parameter list with optionality (<c>?</c>) and rest (<c>...</c>) markers. The
+    /// markers must appear in ToString output: signatures differing only in optionality or restness
+    /// differ in assignability, and <see cref="TypeInfoEqualityComparer"/> (the compatibility-cache
+    /// key) compares types by their rendering — omitting them collides distinct signatures into one
+    /// cache entry.
+    /// </summary>
+    private protected static string RenderParams(List<TypeInfo> paramTypes, int minArity, bool hasRestParam)
+    {
+        var parts = new List<string>(paramTypes.Count);
+        for (int i = 0; i < paramTypes.Count; i++)
+        {
+            bool isRest = hasRestParam && i == paramTypes.Count - 1;
+            bool isOptional = !isRest && i >= minArity;
+            parts.Add(isRest ? $"...{paramTypes[i]}" : isOptional ? $"{paramTypes[i]}?" : paramTypes[i].ToString());
+        }
+        return string.Join(", ", parts);
     }
 
     /// <summary>
@@ -342,7 +361,7 @@ public abstract record TypeInfo
         public override string ToString()
         {
             var genericPart = IsGeneric ? $"<{string.Join(", ", TypeParams!)}>" : "";
-            return $"{genericPart}({string.Join(", ", ParamTypes)}): {ReturnType}";
+            return $"{genericPart}({RenderParams(ParamTypes, MinArity, HasRestParam)}): {ReturnType}";
         }
     }
 
@@ -364,7 +383,7 @@ public abstract record TypeInfo
         public override string ToString()
         {
             var genericPart = IsGeneric ? $"<{string.Join(", ", TypeParams!)}>" : "";
-            return $"new {genericPart}({string.Join(", ", ParamTypes)}): {ReturnType}";
+            return $"new {genericPart}({RenderParams(ParamTypes, MinArity, HasRestParam)}): {ReturnType}";
         }
     }
 
@@ -1169,8 +1188,8 @@ public abstract record TypeInfo
         public int MinArity => RequiredParams < 0 ? ParamTypes.Count : RequiredParams;
         public override string ToString() =>
             ThisType != null
-                ? $"<{string.Join(", ", TypeParams)}>(this: {ThisType}, {string.Join(", ", ParamTypes)}) => {ReturnType}"
-                : $"<{string.Join(", ", TypeParams)}>({string.Join(", ", ParamTypes)}) => {ReturnType}";
+                ? $"<{string.Join(", ", TypeParams)}>(this: {ThisType}, {RenderParams(ParamTypes, MinArity, HasRestParam)}) => {ReturnType}"
+                : $"<{string.Join(", ", TypeParams)}>({RenderParams(ParamTypes, MinArity, HasRestParam)}) => {ReturnType}";
     }
 
     // Generic class (not yet instantiated)
