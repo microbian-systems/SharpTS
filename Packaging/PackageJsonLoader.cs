@@ -20,6 +20,12 @@ public static class PackageJsonLoader
     /// <param name="startDirectory">Directory to start searching from.</param>
     /// <param name="stopDirectory">Optional directory to stop searching at (exclusive). If specified, the search will not look in this directory or its parents.</param>
     /// <returns>Loaded PackageJson or null if not found.</returns>
+    /// <remarks>
+    /// The upward walk also stops (exclusive) at the system temp root and the
+    /// user profile root: a package.json sitting in those directories is ambient
+    /// noise from unrelated tooling, not the manifest of the project being
+    /// packed. Each ceiling is still searched when it IS the start directory.
+    /// </remarks>
     public static PackageJson? FindAndLoad(string startDirectory, string? stopDirectory = null)
     {
         var dir = new DirectoryInfo(startDirectory);
@@ -27,6 +33,16 @@ public static class PackageJsonLoader
             ? new DirectoryInfo(stopDirectory).FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
             : null;
 
+        var ceilings = new[]
+            {
+                Path.GetTempPath(),
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
+            }
+            .Where(p => !string.IsNullOrEmpty(p))
+            .Select(p => Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            .ToArray();
+
+        bool isStartDirectory = true;
         while (dir != null)
         {
             // Stop if we've reached the stop directory
@@ -37,11 +53,20 @@ public static class PackageJsonLoader
                 return null;
             }
 
+            // Stop when the walk ASCENDS into a ceiling directory; only search
+            // a ceiling when the caller started there.
+            if (!isStartDirectory &&
+                ceilings.Any(c => string.Equals(currentPath, c, StringComparison.OrdinalIgnoreCase)))
+            {
+                return null;
+            }
+
             var packageJsonPath = Path.Combine(dir.FullName, "package.json");
             if (File.Exists(packageJsonPath))
             {
                 return Load(packageJsonPath);
             }
+            isStartDirectory = false;
             dir = dir.Parent;
         }
 

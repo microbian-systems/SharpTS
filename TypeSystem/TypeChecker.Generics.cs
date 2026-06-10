@@ -86,7 +86,18 @@ public partial class TypeChecker
         TypeInfo result;
 
         // Handle built-in generic types
-        if (baseName == "Promise")
+        if (baseName is "Array" or "ReadonlyArray")
+        {
+            // Array<T> is the generic spelling of T[] — without this it would fall through the
+            // user-generics lookup to `any`, making every Array<T>-typed position vacuously
+            // compatible. ReadonlyArray<T> is modeled as T[] (readonlyness isn't tracked yet).
+            if (typeArgs.Count != 1)
+            {
+                throw new TypeCheckException($" {baseName} requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
+            }
+            result = new TypeInfo.Array(typeArgs[0]);
+        }
+        else if (baseName == "Promise")
         {
             if (typeArgs.Count != 1)
             {
@@ -236,12 +247,41 @@ public partial class TypeChecker
                     throw new TypeCheckException($" Type alias '{baseName}' requires {typeParamNames.Count} type argument(s), got {typeArgs.Count}.", tsCode: "TS2314");
                 }
 
+                // A type argument that mentions a still-open type variable (a mapped-type
+                // parameter mid-parse) cannot be instantiated yet — eager expansion would
+                // substitute an open term and derive a fresh instantiation key every round
+                // (Part[P], Part[P][P], … — the #185 regress), never converging. Defer:
+                // ExpandMappedType substitutes the concrete key into the arguments and
+                // ExpandRecursiveTypeAlias finishes the instantiation on demand.
+                if (typeArgs.Any(ContainsOpenTypeVariable))
+                {
+                    TypeInfo deferredAlias = new TypeInfo.RecursiveTypeAlias(baseName, typeArgs);
+                    while (suffix.StartsWith("[]"))
+                    {
+                        deferredAlias = new TypeInfo.Array(deferredAlias);
+                        suffix = suffix[2..];
+                    }
+                    return deferredAlias;
+                }
+
                 // Lazily compute string representations for type alias expansion
                 typeArgStrings ??= typeArgs.Select(TypeInfoToString).ToList();
 
                 // Create a unique key for this instantiation to detect recursive references
                 string aliasKey = $"{baseName}<{string.Join(",", typeArgStrings)}>";
                 _typeAliasExpansionStack ??= new HashSet<string>(StringComparer.Ordinal);
+
+                // tsc bounds instantiation with a hard depth limit (checker.ts instantiationDepth →
+                // TS2589). Without one, alias expansions whose instantiation key never repeats —
+                // e.g. DeepReadonly<T> over a self-referential interface, where the still-unbound
+                // mapped param accumulates: Part[P], Part[P][P], … — recurse until stack overflow
+                // instead of hitting the same-key guard below. See #185.
+                if (_typeAliasExpansionStack.Count >= MaxTypeAliasExpansionDepth)
+                {
+                    throw new TypeCheckException(
+                        " Type instantiation is excessively deep and possibly infinite.",
+                        tsCode: "TS2589");
+                }
 
                 // Recursive reference detected - return deferred placeholder
                 if (_typeAliasExpansionStack.Contains(aliasKey))
@@ -269,6 +309,20 @@ public partial class TypeChecker
 
                     // Parse the expanded definition
                     result = ToTypeInfo(expanded);
+
+                    // An instantiation whose arguments are fully concrete can apply its result
+                    // now — downstream consumers (property access in particular) operate on
+                    // the resolved type, not on a raw ConditionalType/MappedType node (#185).
+                    // EvaluateConditionalType itself defers when the check type is still a
+                    // naked type parameter, so generic-context instantiations stay deferred.
+                    if (result is TypeInfo.ConditionalType condResult && !ContainsOpenTypeVariable(condResult))
+                    {
+                        result = EvaluateConditionalType(condResult);
+                    }
+                    if (result is TypeInfo.MappedType mappedResult && !ContainsOpenTypeVariable(mappedResult))
+                    {
+                        result = ExpandMappedType(mappedResult);
+                    }
 
                     // Flatten any spread elements that contain concrete tuples
                     result = FlattenTupleSpreads(result);
@@ -304,6 +358,40 @@ public partial class TypeChecker
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// True when the type mentions a type variable that is currently open — a mapped-type
+    /// parameter whose owning body is mid-parse (see <c>_openTypeVariablesInScope</c>).
+    /// Such a type is not yet instantiable; generic alias references over it are deferred (#185).
+    /// </summary>
+    private static bool ContainsOpenTypeVariable(TypeInfo type)
+    {
+        if (_openTypeVariablesInScope is not { Count: > 0 }) return false;
+        return Walk(type);
+
+        static bool Walk(TypeInfo t) => t switch
+        {
+            TypeInfo.TypeParameter tp => _openTypeVariablesInScope!.Contains(tp.Name),
+            TypeInfo.Array a => Walk(a.ElementType),
+            TypeInfo.Union u => u.Types.Any(Walk),
+            TypeInfo.Intersection i => i.Types.Any(Walk),
+            TypeInfo.IndexedAccess ia => Walk(ia.ObjectType) || Walk(ia.IndexType),
+            TypeInfo.KeyOf k => Walk(k.SourceType),
+            TypeInfo.RecursiveTypeAlias rta => rta.TypeArguments?.Any(Walk) ?? false,
+            TypeInfo.ConditionalType c => Walk(c.CheckType) || Walk(c.ExtendsType) || Walk(c.TrueType) || Walk(c.FalseType),
+            TypeInfo.Promise p => Walk(p.ValueType),
+            TypeInfo.Tuple tup => tup.Elements.Any(e => Walk(e.Type)) || (tup.RestElementType is { } rest && Walk(rest)),
+            TypeInfo.Record r => r.Fields.Values.Any(Walk)
+                || (r.StringIndexType is { } sit && Walk(sit))
+                || (r.NumberIndexType is { } nit && Walk(nit))
+                || (r.SymbolIndexType is { } yit && Walk(yit)),
+            TypeInfo.Function f => f.ParamTypes.Any(Walk) || Walk(f.ReturnType),
+            TypeInfo.MappedType m => Walk(m.Constraint) || Walk(m.ValueType) || (m.AsClause is { } asc && Walk(asc)),
+            TypeInfo.IntrinsicStringType ist => Walk(ist.Inner),
+            TypeInfo.TemplateLiteralType tlt => tlt.InterpolatedTypes.Any(Walk),
+            _ => false
+        };
     }
 
     /// <summary>

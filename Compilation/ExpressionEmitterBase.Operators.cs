@@ -164,10 +164,12 @@ public abstract partial class ExpressionEmitterBase
             string name = v.Name.Lexeme;
             double delta = pi.Operator.Type == TokenType.PLUS_PLUS ? 1.0 : -1.0;
 
-            // Load current value, convert to double, add delta, box
+            // Load current value, convert to double, add delta, box.
+            // ConvertToNumber implements ECMA-262 ToNumber (undefined→NaN);
+            // Convert.ToDouble throws InvalidCastException on $Undefined (#190).
             EmitVariable(v);
             EnsureBoxed();
-            IL.Emit(OpCodes.Call, Types.ConvertToDoubleFromObject);
+            IL.Emit(OpCodes.Call, Ctx.Runtime?.ConvertToNumber ?? Types.ConvertToDoubleFromObject);
             IL.Emit(OpCodes.Ldc_R8, delta);
             IL.Emit(OpCodes.Add);
             IL.Emit(OpCodes.Box, typeof(double));
@@ -194,8 +196,8 @@ public abstract partial class ExpressionEmitterBase
             EnsureBoxed();
             IL.Emit(OpCodes.Dup);  // Dup original for expression result
 
-            // Convert to double, add delta, box
-            IL.Emit(OpCodes.Call, Types.ConvertToDoubleFromObject);
+            // Convert to double, add delta, box (ToNumber semantics — see EmitPrefixIncrement)
+            IL.Emit(OpCodes.Call, Ctx.Runtime?.ConvertToNumber ?? Types.ConvertToDoubleFromObject);
             IL.Emit(OpCodes.Ldc_R8, delta);
             IL.Emit(OpCodes.Add);
             IL.Emit(OpCodes.Box, typeof(double));

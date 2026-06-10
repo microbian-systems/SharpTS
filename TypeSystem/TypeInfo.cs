@@ -131,8 +131,27 @@ public abstract record TypeInfo
         public int MinArity => RequiredParams < 0 ? ParamTypes.Count : RequiredParams;
         public override string ToString() =>
             ThisType != null
-                ? $"(this: {ThisType}, {string.Join(", ", ParamTypes)}) => {ReturnType}"
-                : $"({string.Join(", ", ParamTypes)}) => {ReturnType}";
+                ? $"(this: {ThisType}, {RenderParams(ParamTypes, MinArity, HasRestParam)}) => {ReturnType}"
+                : $"({RenderParams(ParamTypes, MinArity, HasRestParam)}) => {ReturnType}";
+    }
+
+    /// <summary>
+    /// Renders a parameter list with optionality (<c>?</c>) and rest (<c>...</c>) markers. The
+    /// markers must appear in ToString output: signatures differing only in optionality or restness
+    /// differ in assignability, and <see cref="TypeInfoEqualityComparer"/> (the compatibility-cache
+    /// key) compares types by their rendering — omitting them collides distinct signatures into one
+    /// cache entry.
+    /// </summary>
+    private protected static string RenderParams(List<TypeInfo> paramTypes, int minArity, bool hasRestParam)
+    {
+        var parts = new List<string>(paramTypes.Count);
+        for (int i = 0; i < paramTypes.Count; i++)
+        {
+            bool isRest = hasRestParam && i == paramTypes.Count - 1;
+            bool isOptional = !isRest && i >= minArity;
+            parts.Add(isRest ? $"...{paramTypes[i]}" : isOptional ? $"{paramTypes[i]}?" : paramTypes[i].ToString());
+        }
+        return string.Join(", ", parts);
     }
 
     /// <summary>
@@ -342,7 +361,7 @@ public abstract record TypeInfo
         public override string ToString()
         {
             var genericPart = IsGeneric ? $"<{string.Join(", ", TypeParams!)}>" : "";
-            return $"{genericPart}({string.Join(", ", ParamTypes)}): {ReturnType}";
+            return $"{genericPart}({RenderParams(ParamTypes, MinArity, HasRestParam)}): {ReturnType}";
         }
     }
 
@@ -364,7 +383,7 @@ public abstract record TypeInfo
         public override string ToString()
         {
             var genericPart = IsGeneric ? $"<{string.Join(", ", TypeParams!)}>" : "";
-            return $"new {genericPart}({string.Join(", ", ParamTypes)}): {ReturnType}";
+            return $"new {genericPart}({RenderParams(ParamTypes, MinArity, HasRestParam)}): {ReturnType}";
         }
     }
 
@@ -378,9 +397,21 @@ public abstract record TypeInfo
         FrozenSet<TypeInfo.Interface>? Extends = null,
         List<CallSignature>? CallSignatures = null,
         List<ConstructorSignature>? ConstructorSignatures = null,
-        FrozenSet<string>? ReadonlyMembers = null
+        FrozenSet<string>? ReadonlyMembers = null,
+        FrozenSet<string>? MethodMembers = null
     ) : TypeInfo
     {
+        /// <summary>True when the member (own or inherited) was declared with method syntax —
+        /// method members keep bivariant parameter relating under strictFunctionTypes.</summary>
+        public bool IsMethodMember(string name)
+        {
+            if (MethodMembers?.Contains(name) == true) return true;
+            if (Extends != null)
+                foreach (var baseItf in Extends)
+                    if (baseItf.IsMethodMember(name)) return true;
+            return false;
+        }
+
         public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;
         public bool HasCallSignature => CallSignatures is { Count: > 0 };
         public bool HasConstructorSignature => ConstructorSignatures is { Count: > 0 };
@@ -686,9 +717,13 @@ public abstract record TypeInfo
         bool IsReadonly = false,
         FrozenSet<string>? GetterOnlyFields = null,
         List<CallSignature>? CallSignatures = null,
-        List<ConstructorSignature>? ConstructorSignatures = null
+        List<ConstructorSignature>? ConstructorSignatures = null,
+        FrozenSet<string>? MethodMembers = null
     ) : TypeInfo
     {
+        /// <summary>True when the field was declared with method syntax (`m(x): T`), which keeps
+        /// bivariant parameter relating under strictFunctionTypes (tsc's method exemption).</summary>
+        public bool IsMethodMember(string name) => MethodMembers?.Contains(name) ?? false;
         public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;
 
         /// <summary>True when this object type has at least one call signature (`{ (x): T }`).</summary>
@@ -716,7 +751,11 @@ public abstract record TypeInfo
         public override string ToString()
         {
             var prefix = IsReadonly ? "readonly " : "";
-            var parts = Fields.Select(f => $"{f.Key}{(IsFieldOptional(f.Key) ? "?" : "")}: {f.Value}").ToList();
+            // Method-ness must be rendered: under strictFunctionTypes a method member and a
+            // property member of the same function type differ in assignability, and ToString is
+            // the compatibility-cache key.
+            var parts = Fields.Select(f =>
+                $"{f.Key}{(IsMethodMember(f.Key) ? "#m" : "")}{(IsFieldOptional(f.Key) ? "?" : "")}: {f.Value}").ToList();
             if (CallSignatures != null) parts.InsertRange(0, CallSignatures.Select(s => s.ToString()));
             if (ConstructorSignatures != null) parts.InsertRange(0, ConstructorSignatures.Select(s => s.ToString()));
             // Index signatures must be rendered so distinct index types don't collapse to the same
@@ -1169,8 +1208,8 @@ public abstract record TypeInfo
         public int MinArity => RequiredParams < 0 ? ParamTypes.Count : RequiredParams;
         public override string ToString() =>
             ThisType != null
-                ? $"<{string.Join(", ", TypeParams)}>(this: {ThisType}, {string.Join(", ", ParamTypes)}) => {ReturnType}"
-                : $"<{string.Join(", ", TypeParams)}>({string.Join(", ", ParamTypes)}) => {ReturnType}";
+                ? $"<{string.Join(", ", TypeParams)}>(this: {ThisType}, {RenderParams(ParamTypes, MinArity, HasRestParam)}) => {ReturnType}"
+                : $"<{string.Join(", ", TypeParams)}>({RenderParams(ParamTypes, MinArity, HasRestParam)}) => {ReturnType}";
     }
 
     // Generic class (not yet instantiated)
@@ -1227,7 +1266,8 @@ public abstract record TypeInfo
         FrozenSet<TypeInfo.Interface>? Extends = null,
         List<CallSignature>? CallSignatures = null,
         List<ConstructorSignature>? ConstructorSignatures = null,
-        FrozenSet<string>? ReadonlyMembers = null
+        FrozenSet<string>? ReadonlyMembers = null,
+        FrozenSet<string>? MethodMembers = null
     ) : TypeInfo
     {
         public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;

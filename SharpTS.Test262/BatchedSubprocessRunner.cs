@@ -151,17 +151,18 @@ public sealed class BatchedSubprocessRunner
             int id = slotIndex;
             slotTasks[slotIndex] = Task.Run(() =>
             {
+                int spawnIndex = 0;
                 while (true)
                 {
                     if (!workQueue.TryPeek(out _)) return; // queue empty → slot done
-                    var worker = new PersistentWorker(BuildWorkerArgs(), workQueue, OnResult, IdleResultBudget, id);
+                    var worker = new PersistentWorker(BuildWorkerArgs(), workQueue, OnResult, IdleResultBudget, id, spawnIndex++);
                     slotDisposables.Add(worker);
                     worker.Start();
                     worker.WaitForCompletion();
                     // Worker exited (memory ceiling, watchdog, crash, or queue
                     // drained). Loop checks queue and respawns if more work
-                    // remains. The new worker reuses the same slot id for
-                    // trace-file naming continuity.
+                    // remains. The new worker reuses the same slot id; the spawn
+                    // index keeps trace files unique across respawns.
                 }
             });
         }
@@ -304,15 +305,18 @@ public sealed class BatchedSubprocessRunner
         private bool _doneSeen;
 
         public PersistentWorker(string[] args, ConcurrentQueue<string> queue,
-            Action<string, string> onResult, TimeSpan idleBudget, int id)
+            Action<string, string> onResult, TimeSpan idleBudget, int id, int spawnIndex = 0)
         {
             _queue = queue;
             _onResult = onResult;
             _idleBudget = idleBudget;
             _id = id;
+            // Trace file is unique per spawn, not per slot: the previous worker's
+            // parent-side StreamWriter stays open until RunAll's finally block, so a
+            // respawn reopening worker_{id}.log would hit a sharing violation.
             _trace = new WorkerTrace(TraceDir is null
                 ? null
-                : Path.Combine(TraceDir, $"worker_{id:D2}.log"));
+                : Path.Combine(TraceDir, $"worker_{id:D2}_{spawnIndex}.log"));
 
             var psi = new ProcessStartInfo("dotnet")
             {
@@ -326,7 +330,7 @@ public sealed class BatchedSubprocessRunner
             // subprocess can also log into our trace dir.
             if (TraceDir is not null)
                 psi.Environment["SHARPTS_TEST262_WORKER_TRACE"] =
-                    Path.Combine(TraceDir, $"worker_{id:D2}_subprocess.log");
+                    Path.Combine(TraceDir, $"worker_{id:D2}_{spawnIndex}_subprocess.log");
             _proc = Process.Start(psi)
                 ?? throw new InvalidOperationException("failed to start Test262 worker");
             _trace.Log("spawned PID={0}", _proc.Id);

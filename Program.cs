@@ -696,15 +696,9 @@ static void GenerateRuntimeConfig(string outputPath)
 
 static void VerifyCompiledAssembly(string outputPath, string? sdkPath)
 {
-    // Find SDK path for IL verification
-    var verifierSdkPath = sdkPath ?? SdkResolver.FindReferenceAssembliesPath();
-    if (verifierSdkPath == null)
-    {
-        Console.WriteLine("Warning: Cannot verify IL - SDK reference assemblies not found.");
-        return;
-    }
-
-    using var verifier = new ILVerifier(verifierSdkPath);
+    // The verifier resolves against the shared-framework runtime directory;
+    // an explicit --sdk-path is only an additional probe location.
+    using var verifier = new ILVerifier(sdkPath);
     using var stream = File.OpenRead(outputPath);
     verifier.VerifyAndReport(stream);
 }

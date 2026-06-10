@@ -711,7 +711,8 @@ public partial class Parser
                 bool isOptional = Match(TokenType.QUESTION);
 
                 string propertyType;
-                if (Check(TokenType.LEFT_PAREN))
+                bool isMethodMember = Check(TokenType.LEFT_PAREN);
+                if (isMethodMember)
                 {
                     // Method signature: methodName(params): returnType
                     propertyType = ParseMethodSignature();
@@ -723,8 +724,10 @@ public partial class Parser
                     propertyType = ParseUnionType();
                 }
 
-                // Build member string
-                string member = isOptional ? $"{propertyName.Lexeme}?: {propertyType}" : $"{propertyName.Lexeme}: {propertyType}";
+                // Build member string. Method members carry a '#m' marker (stripped by
+                // ParseInlineObjectTypeInfo) so method-ness survives the string round-trip —
+                // under strictFunctionTypes methods keep bivariant parameter relating.
+                string member = $"{propertyName.Lexeme}{(isMethodMember ? "#m" : "")}{(isOptional ? "?" : "")}: {propertyType}";
                 members.Add(member);
             }
 

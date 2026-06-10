@@ -138,7 +138,10 @@ public sealed class TypeScriptConformanceRunner
             bool strictNullChecks = metadata.StrictNullChecks ?? metadata.Strict;
             // Raise the error cap well above the product default (10) so we collect every diagnostic
             // a test expects — *.errors.txt baselines can list many errors in one file.
-            var checker = new TypeChecker(strictNullChecks: strictNullChecks, maxErrors: 1000);
+            var checker = new TypeChecker(
+                strictNullChecks: strictNullChecks,
+                maxErrors: 1000,
+                strictFunctionTypes: metadata.Strict);
             checkResult = checker.CheckWithRecovery(parseResult.Statements);
         }
         catch (Exception ex)

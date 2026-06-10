@@ -220,6 +220,13 @@ public partial class TypeChecker
             constraint = EvaluateKeyOf(sourceType);
         }
 
+        // Key-filtering aliases (NonFunctionPropertyNames<T> = { ... }[keyof T]) leave an
+        // indexed access as the constraint — resolve it to its union of keys (#185).
+        if (constraint is TypeInfo.IndexedAccess constraintIa)
+        {
+            constraint = ResolveIndexedAccess(constraintIa, outerSubstitutions);
+        }
+
         // Extract individual keys
         List<TypeInfo> keys = constraint switch
         {
@@ -341,6 +348,10 @@ public partial class TypeChecker
             TypeInfo.IndexedAccess ia => ResolveIndexedAccess(ia, subs),
             TypeInfo.Array arr => new TypeInfo.Array(ResolveIndexedAccessTypes(arr.ElementType, subs)),
             TypeInfo.Union union => new TypeInfo.Union(union.Types.Select(t => ResolveIndexedAccessTypes(t, subs)).ToList()),
+            // A deferred generic alias reference (#185) carries its arguments unresolved —
+            // resolve T[K] inside them so the eventual expansion sees concrete arguments.
+            TypeInfo.RecursiveTypeAlias rta when rta.TypeArguments is { Count: > 0 } =>
+                new TypeInfo.RecursiveTypeAlias(rta.AliasName, rta.TypeArguments.Select(t => ResolveIndexedAccessTypes(t, subs)).ToList()),
             TypeInfo.Function func => new TypeInfo.Function(
                 func.ParamTypes.Select(p => ResolveIndexedAccessTypes(p, subs)).ToList(),
                 ResolveIndexedAccessTypes(func.ReturnType, subs),
@@ -362,6 +373,17 @@ public partial class TypeChecker
         if (objectType is TypeInfo.TypeParameter tp && subs.TryGetValue(tp.Name, out var subObj))
         {
             objectType = subObj;
+        }
+
+        // keyof in index position resolves to the union of keys, and a concrete mapped
+        // object expands so per-key property lookup sees real fields (#185).
+        if (indexType is TypeInfo.KeyOf kof)
+        {
+            indexType = EvaluateKeyOf(Substitute(kof.SourceType, subs));
+        }
+        if (objectType is TypeInfo.MappedType objMapped && !ContainsOpenTypeVariable(objMapped))
+        {
+            objectType = ExpandMappedType(objMapped, subs);
         }
 
         // Get the property type for the given key

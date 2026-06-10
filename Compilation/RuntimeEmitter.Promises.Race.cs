@@ -171,16 +171,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, listType);
         il.Emit(OpCodes.Stloc, listLocal);
 
-        // Check for empty list - return null immediately
+        // ECMA-262 §27.2.4.5: race over an empty iterable returns a promise that
+        // NEVER settles — there are no competitors. Route a never-completing task
+        // through the winning-task await machinery instead of settling with null.
         var notEmptyLabel = il.DefineLabel();
+        var awaitWinningTaskLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, listLocal);
         il.Emit(OpCodes.Callvirt, listType.GetProperty("Count")!.GetGetMethod()!);
         il.Emit(OpCodes.Brtrue, notEmptyLabel);
 
-        // Empty list - return null
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Leave, setResultLabel);
+        // winningTask = new TaskCompletionSource<object?>().Task (never completes)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Newobj, typeof(TaskCompletionSource<object?>).GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Callvirt, typeof(TaskCompletionSource<object?>).GetProperty("Task")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stfld, sm.WinningTaskField);
+        il.Emit(OpCodes.Br, awaitWinningTaskLabel);
 
         il.MarkLabel(notEmptyLabel);
 
@@ -303,7 +308,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, whenAnyAwaiterType.GetMethod("GetResult")!);
         il.Emit(OpCodes.Stfld, sm.WinningTaskField);
 
-        // Get awaiter for winning task
+        // Get awaiter for winning task (empty-iterable path jumps here with a
+        // never-completing winningTask already stored)
+        il.MarkLabel(awaitWinningTaskLabel);
         var resultAwaiterLocal = il.DeclareLocal(resultAwaiterType);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.WinningTaskField);

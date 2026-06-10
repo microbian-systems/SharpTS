@@ -123,7 +123,16 @@ public abstract record Expr
     /// Callee can be a Variable (class name), Get (namespace path), or any expression.
     /// </summary>
     public record New(Expr Callee, List<string>? TypeArgs, List<Expr> Arguments) : Expr;
-    public record ArrayLiteral(List<Expr> Elements) : Expr;
+    /// <summary>
+    /// Array literal. Elided positions ([1, , 3]) carry an undefined literal in
+    /// Elements (so the type checker and destructuring see a uniform shape) plus
+    /// their index in HoleIndices so evaluation/emission can produce a true
+    /// ECMA-262 hole instead of an undefined element.
+    /// </summary>
+    public record ArrayLiteral(List<Expr> Elements, IReadOnlySet<int>? HoleIndices = null) : Expr
+    {
+        public bool IsHole(int index) => HoleIndices?.Contains(index) == true;
+    }
     public record ObjectLiteral(List<Property> Properties) : Expr
     {
         /// <summary>
@@ -396,7 +405,10 @@ public abstract record Stmt
         List<CallSignature>? CallSignatures = null,
         List<ConstructorSignature>? ConstructorSignatures = null
     ) : Stmt;
-    public record InterfaceMember(Token Name, string Type, bool IsOptional = false, bool IsReadonly = false);
+    /// <param name="IsMethod">Declared with method syntax (<c>m(x): T</c>) rather than as a
+    /// function-typed property — method members keep bivariant parameter relating under
+    /// strictFunctionTypes.</param>
+    public record InterfaceMember(Token Name, string Type, bool IsOptional = false, bool IsReadonly = false, bool IsMethod = false);
     /// <summary>
     /// Index signature in interfaces: [key: string]: valueType, [key: number]: valueType, [key: symbol]: valueType
     /// </summary>

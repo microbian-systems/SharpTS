@@ -142,25 +142,28 @@ public partial class RuntimeEmitter
 
         // Labels
         var state0Label = il.DefineLabel();  // Resume after promise await
-        var state1Label = il.DefineLabel();  // Resume after flatten await
+        var state1Label = il.DefineLabel();  // Resume after flatten await (inside handler try)
         var continue0Label = il.DefineLabel();
         var continue1Label = il.DefineLabel();
         var checkFlattenLabel = il.DefineLabel();
         var setResultLabel = il.DefineLabel();
         var returnLabel = il.DefineLabel();
-        var catchLabel = il.DefineLabel();
+        var handlerTryStartLabel = il.DefineLabel();  // First instruction of the onFulfilled guard try
 
         // Begin outer try block
         il.BeginExceptionBlock();
 
-        // State dispatch
+        // State dispatch. State 1 resumes inside the nested onFulfilled guard
+        // try — IL only permits entering a protected region at its first
+        // instruction, so branch there and let the nested dispatch take over
+        // (same shape Roslyn emits for await-inside-try).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.StateField);
         il.Emit(OpCodes.Brfalse, state0Label);  // state == 0
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.StateField);
         il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Beq, state1Label);  // state == 1
+        il.Emit(OpCodes.Beq, handlerTryStartLabel);  // state == 1
 
         // ========== STATE -1: Initial - await input promise ==========
 
@@ -239,6 +242,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, noCallbackLabel);
         il.MarkLabel(onFulfilledCallableLabel);
 
+        // ========== onFulfilled guard try ==========
+        // ECMA-262 §27.2.5.4: "input promise rejected" and "onFulfilled threw"
+        // are distinct — a throwing onFulfilled (or a rejecting thenable it
+        // returned) rejects the OUTPUT promise and must NOT dispatch to this
+        // same then's onRejected (which only handles rejection of the input
+        // promise). Guard the invocation + flatten await with a nested try
+        // whose catch rejects the builder task directly (#195).
+        var fulfillExceptionLocal = il.DeclareLocal(typeof(Exception));
+        il.BeginExceptionBlock();
+        il.MarkLabel(handlerTryStartLabel);
+
+        // Nested dispatch: state 1 (flatten await resume) re-enters here.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.StateField);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Beq, state1Label);
+
         // Invoke callback: result = InvokeCallback(onFulfilled, value)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.OnFulfilledField);
@@ -295,13 +315,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldflda, sm.FlattenAwaiterField);
         il.Emit(OpCodes.Call, awaiterType.GetMethod("GetResult")!);
         il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, setResultLabel);
+        il.Emit(OpCodes.Leave, setResultLabel);
 
         // ========== checkFlattenLabel: callback returned non-Task ==========
         il.MarkLabel(checkFlattenLabel);
         il.Emit(OpCodes.Ldloc, callbackResultLocal);
         il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, setResultLabel);
+        il.Emit(OpCodes.Leave, setResultLabel);
+
+        // onFulfilled threw (or its returned thenable rejected) — reject the
+        // output promise; deliberately bypasses the outer catch's onRejected
+        // dispatch.
+        il.BeginCatchBlock(typeof(Exception));
+        il.Emit(OpCodes.Stloc, fulfillExceptionLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, -2);
+        il.Emit(OpCodes.Stfld, sm.StateField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldflda, sm.BuilderField);
+        il.Emit(OpCodes.Ldloc, fulfillExceptionLocal);
+        il.Emit(OpCodes.Call, sm.BuilderType.GetMethod("SetException")!);
+        il.Emit(OpCodes.Leave, returnLabel);
+        il.EndExceptionBlock();
 
         // ========== noCallbackLabel: no callback, use original value ==========
         il.MarkLabel(noCallbackLabel);
@@ -356,18 +391,48 @@ public partial class RuntimeEmitter
         // AggregateError, primitive payloads via $PromiseRejectedException, etc.)
         // is preserved instead of falling back to Exception.Message (a string).
         // Required for spec patterns like `err instanceof TypeError`.
+        //
+        // The invocation runs inside this catch handler, so it MUST be guarded
+        // by its own nested try/catch: an exception thrown inside a catch
+        // handler is not covered by that handler's try, escapes MoveNext, and
+        // — because MoveNext runs as an awaiter continuation on the thread
+        // pool — gets rethrown via Task.ThrowAsync, killing the process. A
+        // throwing onRejected must instead reject the output promise
+        // (ECMA-262 §27.2.5.4).
+        var handlerExceptionLocal = il.DeclareLocal(typeof(Exception));
+        var handlerInvokeDoneLabel = il.DefineLabel();
+        var handlerOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stloc, handlerExceptionLocal);
+        il.BeginExceptionBlock();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.OnRejectedField);
         il.Emit(OpCodes.Ldloc, exceptionLocal);
         il.Emit(OpCodes.Call, runtime.WrapException);
         il.Emit(OpCodes.Call, runtime.InvokeCallback);
         il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Leave, handlerInvokeDoneLabel);
+        il.BeginCatchBlock(typeof(Exception));
+        il.Emit(OpCodes.Stloc, handlerExceptionLocal);
+        il.EndExceptionBlock();
+        il.MarkLabel(handlerInvokeDoneLabel);
 
-        // Set state to -2 (completed)
+        // Set state to -2 (completed) on both outcomes
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4, -2);
         il.Emit(OpCodes.Stfld, sm.StateField);
 
+        il.Emit(OpCodes.Ldloc, handlerExceptionLocal);
+        il.Emit(OpCodes.Brfalse, handlerOkLabel);
+
+        // onRejected threw — builder.SetException(handlerException)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldflda, sm.BuilderField);
+        il.Emit(OpCodes.Ldloc, handlerExceptionLocal);
+        il.Emit(OpCodes.Call, sm.BuilderType.GetMethod("SetException")!);
+        il.Emit(OpCodes.Leave, returnLabel);
+
+        il.MarkLabel(handlerOkLabel);
         // builder.SetResult(result)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldflda, sm.BuilderField);

@@ -163,6 +163,34 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo ExpandRecordType(TypeInfo keyType, TypeInfo valueType)
     {
+        // Record over an enum requires one property per enum member, keyed by the member's
+        // value ("0" for E.A = 0, the literal string for string enums), so assigning {} to
+        // Record<E, V> is a missing-property error like tsc's. Index signatures are added
+        // alongside because enum member access types as plain number/string here (we don't
+        // model enum-member literal types), and `x[E.A]` must still read/write as V.
+        if (keyType is TypeInfo.Enum enumKey)
+        {
+            Dictionary<string, TypeInfo> enumFields = [];
+            bool hasNumericMember = false, hasStringMember = false;
+            foreach (var memberValue in enumKey.Members.Values)
+            {
+                if (memberValue is double d)
+                {
+                    enumFields[Compilation.RuntimeTypes.FormatNumber(d)] = valueType;
+                    hasNumericMember = true;
+                }
+                else
+                {
+                    enumFields[memberValue.ToString()!] = valueType;
+                    hasStringMember = true;
+                }
+            }
+            return new TypeInfo.Record(
+                enumFields.ToFrozenDictionary(),
+                StringIndexType: hasStringMember ? valueType : null,
+                NumberIndexType: hasNumericMember ? valueType : null);
+        }
+
         // Handle union of string literals: Record<"a" | "b", number> -> { a: number; b: number }
         if (keyType is TypeInfo.Union union)
         {

@@ -183,11 +183,21 @@ public partial class TypeChecker
             }
         }
 
+        // Generic function type: "<T>(x: T) => T[]". Must be checked BEFORE the generic-reference
+        // branch below — it also starts with '<' and contains '<'/'>' but is a function type, not a
+        // type reference like Box<number>.
+        if (typeName.StartsWith("<") && TryParseGenericFunctionTypeInfo(typeName, out var genericFunc))
+        {
+            return genericFunc;
+        }
+
         // Handle generic type syntax: Box<number>, Map<string, number>
-        // Must NOT match inline object types that contain generic types like { x: Box<T> }
-        // or tuple types that contain generics like [Box<T>, string]
+        // Must NOT match inline object types that contain generic types like { x: Box<T> },
+        // tuple types like [Box<T>, string], or function/parenthesized types like
+        // (y: Array<Base>) => void — a generic reference always starts with its type name, so a
+        // leading '(' means the '<' belongs to something nested and the later branches own it.
         if (typeName.Contains('<') && typeName.Contains('>') &&
-            !typeName.StartsWith("{ ") && !typeName.StartsWith("["))
+            !typeName.StartsWith("{ ") && !typeName.StartsWith("[") && !typeName.StartsWith("("))
         {
             return ParseGenericTypeReference(typeName);
         }
@@ -294,6 +304,11 @@ public partial class TypeChecker
                 "'unique symbol' type is only valid on const declarations initialized with Symbol().", tsCode: "TS1331");
         }
         if (typeName == "bigint") return new TypeInfo.BigInt();
+        // The global Function type: any callable, i.e. (...args: any[]) => any. Parsing it to
+        // Any made `T[K] extends Function` filters (FunctionPropertyNames et al.) match every
+        // property — `X extends any` is always true — emptying the mapped result (#185).
+        if (typeName == "Function") return new TypeInfo.Function(
+            [new TypeInfo.Array(new TypeInfo.Any())], new TypeInfo.Any(), RequiredParams: 0, HasRestParam: true);
         if (typeName == "void") return new TypeInfo.Void();
         if (typeName == "null") return new TypeInfo.Null();
         if (typeName == "undefined") return new TypeInfo.Undefined();
@@ -301,6 +316,15 @@ public partial class TypeChecker
         if (typeName == "never") return new TypeInfo.Never();
         if (typeName == "object") return new TypeInfo.Object();
         if (typeName == "Buffer") return new TypeInfo.Buffer();
+
+        // A mapped-type parameter in scope (e.g. P in `{ [P in K]: DeepReadonly<T[P]> }`)
+        // parses to a TypeParameter so the body builds deferred forms (IndexedAccess,
+        // deferred alias references) that ExpandMappedType substitutes per key — instead
+        // of dissolving to Any or eagerly instantiating with an open argument (#185).
+        if (_openTypeVariablesInScope is { Count: > 0 } && _openTypeVariablesInScope.Contains(typeName))
+        {
+            return new TypeInfo.TypeParameter(typeName);
+        }
 
         TypeInfo? type = _environment.Get(typeName);
         if (type is TypeInfo.MutableClass mutableClass)
@@ -627,6 +651,105 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Parses a generic function type annotation — <c>&lt;T, U extends Base&gt;(x: T) =&gt; U</c> — into a
+    /// <see cref="TypeInfo.GenericFunction"/>. The leading <c>&lt;…&gt;</c> type-parameter list is split,
+    /// each parameter registered in a fresh type-parameter scope (two passes so a later constraint can
+    /// reference an earlier parameter), and the function body parsed within that scope so its <c>T</c>s
+    /// resolve to type parameters rather than collapsing to <c>any</c>. Returns false when the string
+    /// isn't actually a generic function type (e.g. a generic type reference), so the caller falls
+    /// through to its other branches.
+    /// </summary>
+    private bool TryParseGenericFunctionTypeInfo(string typeName, out TypeInfo result)
+    {
+        result = new TypeInfo.Any();
+
+        // Find the '>' that closes the leading '<' (balanced over nesting, e.g. <T extends Array<U>>).
+        int depth = 0, close = -1;
+        for (int i = 0; i < typeName.Length; i++)
+        {
+            char c = typeName[i];
+            if (c == '<') depth++;
+            else if (c == '>' && --depth == 0) { close = i; break; }
+        }
+        if (close < 0) return false;
+
+        // What follows the type-parameter list must itself be a function type: "(...) => ...".
+        string remainder = typeName[(close + 1)..].Trim();
+        if (!remainder.StartsWith("(") || FindOutermostArrow(remainder) < 0)
+            return false;
+
+        var entries = SplitFunctionParams(typeName[1..close].AsSpan());
+        var typeParamEnv = new TypeEnvironment(_environment);
+
+        // First pass: define every type-parameter name (unconstrained) so constraints/defaults in
+        // the second pass can reference parameters declared later in the list.
+        foreach (var entry in entries)
+        {
+            string name = ParseTypeParamEntry(entry).Name;
+            if (name.Length > 0)
+                typeParamEnv.DefineTypeParameter(name, new TypeInfo.TypeParameter(name));
+        }
+
+        var typeParams = new List<TypeInfo.TypeParameter>();
+        TypeInfo.Function func;
+        using (new EnvironmentScope(this, typeParamEnv))
+        {
+            // Second pass: resolve constraints/defaults now that all names are in scope.
+            foreach (var entry in entries)
+            {
+                var (name, constraintStr, defaultStr) = ParseTypeParamEntry(entry);
+                if (name.Length == 0) continue;
+                TypeInfo? constraint = constraintStr is not null ? ToTypeInfo(constraintStr) : null;
+                TypeInfo? defaultType = defaultStr is not null ? ToTypeInfo(defaultStr) : null;
+                var tp = new TypeInfo.TypeParameter(name, constraint, defaultType);
+                typeParams.Add(tp);
+                typeParamEnv.DefineTypeParameter(name, tp);
+            }
+
+            // Parse the function shape with the type parameters in scope.
+            if (ParseFunctionTypeInfo(remainder) is not TypeInfo.Function parsed)
+                return false;
+            func = parsed;
+        }
+
+        if (typeParams.Count == 0) return false;
+
+        result = new TypeInfo.GenericFunction(
+            typeParams, func.ParamTypes, func.ReturnType, func.RequiredParams, func.HasRestParam,
+            func.ThisType, func.ParamNames);
+        return true;
+    }
+
+    /// <summary>
+    /// Splits one type-parameter list entry into its name and optional constraint/default strings:
+    /// <c>T</c>, <c>T extends Base</c>, <c>T = Default</c>, or <c>T extends Base = Default</c>. The
+    /// <c>extends</c>/<c>=</c> are located at the top level so nested generics don't confuse the split.
+    /// </summary>
+    private static (string Name, string? Constraint, string? Default) ParseTypeParamEntry(string entry)
+    {
+        string s = entry.Trim();
+        if (s.StartsWith("const ")) s = s["const ".Length..].TrimStart(); // const type parameter modifier
+
+        string? defaultStr = null;
+        int eq = FindTopLevelChar(s, '=');
+        if (eq >= 0)
+        {
+            defaultStr = s[(eq + 1)..].Trim();
+            s = s[..eq].Trim();
+        }
+
+        string? constraintStr = null;
+        int ext = FindTopLevelKeyword(s, " extends ");
+        if (ext >= 0)
+        {
+            constraintStr = s[(ext + " extends ".Length)..].Trim();
+            s = s[..ext].Trim();
+        }
+
+        return (s, constraintStr, defaultStr);
+    }
+
+    /// <summary>
     /// Finds the outermost => in a function type string, respecting nested brackets.
     /// Returns -1 if no top-level arrow is found.
     /// </summary>
@@ -837,6 +960,7 @@ public partial class TypeChecker
 
         Dictionary<string, TypeInfo> fields = [];
         HashSet<string> optionalFields = [];
+        HashSet<string> methodMembers = [];
         TypeInfo? stringIndexType = null;
         TypeInfo? numberIndexType = null;
         TypeInfo? symbolIndexType = null;
@@ -903,13 +1027,17 @@ public partial class TypeChecker
             string propName = m[..regularColonIdx].Trim();
             string propType = m[(regularColonIdx + 1)..].Trim();
 
-            // Check for optional marker (?) and track it
+            // Strip the optional marker (?) and the method marker (#m, emitted by the parser for
+            // method-syntax members) — order matches the emitted "name#m?:" form.
             bool isOptional = propName.EndsWith("?");
-            if (isOptional)
+            if (isOptional) propName = propName[..^1].Trim();
+            bool isMethod = propName.EndsWith("#m");
+            if (isMethod)
             {
-                propName = propName[..^1].Trim();
-                optionalFields.Add(propName);
+                propName = propName[..^2].Trim();
+                methodMembers.Add(propName);
             }
+            if (isOptional) optionalFields.Add(propName);
 
             fields[propName] = ToTypeInfo(propType);
         }
@@ -936,7 +1064,8 @@ public partial class TypeChecker
             symbolIndexType,
             optionalFields.Count > 0 ? optionalFields.ToFrozenSet() : null,
             CallSignatures: recCallSigs,
-            ConstructorSignatures: recCtorSigs);
+            ConstructorSignatures: recCtorSigs,
+            MethodMembers: methodMembers.Count > 0 ? methodMembers.ToFrozenSet() : null);
     }
 
     /// <summary>
@@ -1053,7 +1182,10 @@ public partial class TypeChecker
         {
             char c = inner[i];
             if (c == '(' || c == '[' || c == '<' || c == '{') depth++;
-            else if (c == ')' || c == ']' || c == '>' || c == '}') depth--;
+            // The '>' of an arrow '=>' is not a bracket — without this guard an arrow-typed
+            // member drives the depth negative and every following ';' is missed, fusing all
+            // remaining members (e.g. two call signatures) into one unparseable string.
+            else if (c == ')' || c == ']' || c == '}' || (c == '>' && (i == 0 || inner[i - 1] != '='))) depth--;
             else if (c == ';' && depth == 0)
             {
                 ReadOnlySpan<char> segment = inner[start..i];
@@ -1217,15 +1349,14 @@ public partial class TypeChecker
         string paramName = bracketContent[..inIndex].Trim();
         string afterIn = bracketContent[(inIndex + 4)..].Trim();
 
-        // Check for 'as' clause
-        TypeInfo? asClause = null;
+        // Check for 'as' clause (parsed later, with the mapped parameter in scope)
         string constraintStr;
+        string? asTypeStr = null;
         int asIndex = FindTopLevelAs(afterIn);
         if (asIndex >= 0)
         {
             constraintStr = afterIn[..asIndex].Trim();
-            string asTypeStr = afterIn[(asIndex + 3)..].Trim();
-            asClause = ToTypeInfo(asTypeStr);
+            asTypeStr = afterIn[(asIndex + 3)..].Trim();
         }
         else
         {
@@ -1256,7 +1387,23 @@ public partial class TypeChecker
             throw new TypeCheckException("Expected ':' after mapped type parameter.");
 
         string valueTypeStr = afterBracket[1..].Trim();
-        TypeInfo valueType = ToTypeInfo(valueTypeStr);
+
+        // The mapped parameter is a bound type variable inside the as-clause and the value
+        // type (`[P in K as Uppercase<P>]: DeepReadonly<T[P]>`). Register it so those bodies
+        // parse to deferred forms that ExpandMappedType substitutes per key (#185).
+        TypeInfo? asClause = null;
+        TypeInfo valueType;
+        _openTypeVariablesInScope ??= new HashSet<string>(StringComparer.Ordinal);
+        bool openVarAdded = _openTypeVariablesInScope.Add(paramName);
+        try
+        {
+            if (asTypeStr is not null) asClause = ToTypeInfo(asTypeStr);
+            valueType = ToTypeInfo(valueTypeStr);
+        }
+        finally
+        {
+            if (openVarAdded) _openTypeVariablesInScope.Remove(paramName);
+        }
 
         return new TypeInfo.MappedType(paramName, constraint, valueType, modifiers, asClause);
     }

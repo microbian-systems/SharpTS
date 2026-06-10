@@ -99,6 +99,9 @@ public partial class RuntimeEmitter
         // Run()
         EmitEventLoopRun(typeBuilder, runtime);
 
+        // WaitForTask(Task)
+        EmitEventLoopWaitForTask(typeBuilder, runtime);
+
         typeBuilder.CreateType();
     }
 
@@ -349,5 +352,126 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(exitLoop);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits <c>bool WaitForTask(Task task)</c> — the entry point's wait for a
+    /// top-level promise/task value. Blocks while the task is pending AND the
+    /// event loop has work that could still settle it (a scheduled timer, an
+    /// active handle, or a queued callback), firing due timers and checking
+    /// cancellation each iteration. Returns <c>true</c> when the task completed
+    /// (caller observes the result / rethrows faults) or <c>false</c> when the
+    /// process stayed quiescent for a full grace window — the task can never
+    /// settle, so the caller skips it. Matches Node, where a forever-pending
+    /// promise does not block process exit. Without this escape, Test262-style
+    /// never-settling top-level promises (`new Promise(() => {})`) hang the
+    /// program until an external watchdog kills it.
+    /// </summary>
+    private void EmitEventLoopWaitForTask(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "WaitForTask",
+            MethodAttributes.Public,
+            _types.Boolean,
+            [typeof(Task)]
+        );
+        runtime.EventLoopWaitForTask = method;
+
+        // Continuous quiescent wall-clock time before concluding the task can
+        // never settle. Time-based, not iteration-based: a loaded thread pool
+        // can delay a mid-flight continuation tens of ms with nothing visible
+        // to the busy check, and Sleep(1) granularity differs by platform
+        // (~15ms Windows, ~1ms Linux), so an iteration count was flaky on CI.
+        const long QuiescentMsBeforeGiveUp = 250;
+
+        var il = method.GetILGenerator();
+        // Tick (Environment.TickCount64) when the loop last became quiescent;
+        // -1 while busy.
+        var quiescentStartLocal = il.DeclareLocal(typeof(long));
+        var waitMsLocal = il.DeclareLocal(_types.Int32);
+
+        var loopTop = il.DefineLabel();
+        var notDone = il.DefineLabel();
+        var skipTimers = il.DefineLabel();
+        var busyLabel = il.DefineLabel();
+        var sleepLabel = il.DefineLabel();
+
+        var tickCount64Getter = typeof(Environment).GetProperty("TickCount64")!.GetGetMethod()!;
+
+        // quiescentStart = -1
+        il.Emit(OpCodes.Ldc_I8, -1L);
+        il.Emit(OpCodes.Stloc, quiescentStartLocal);
+
+        il.MarkLabel(loopTop);
+
+        // if (task.IsCompleted) return true
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, typeof(Task).GetProperty("IsCompleted")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, notDone);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notDone);
+
+        // Cooperative cancellation (issue #74) — without this, a pending task
+        // makes the wait unkillable and the Test262 runner's cancel flag is
+        // ignored until process teardown.
+        if (runtime.CheckCancellationMethod != null)
+            il.Emit(OpCodes.Call, runtime.CheckCancellationMethod);
+
+        // waitMs = -1; if (_timerProcessor != null) waitMs = _timerProcessor.Invoke();
+        // Invoke fires due timers (their callbacks may settle the task) and
+        // returns ms until the next timer, or -1 when none are scheduled.
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Stloc, waitMsLocal);
+        il.Emit(OpCodes.Ldsfld, _eventLoopTimerProcessorField);
+        il.Emit(OpCodes.Brfalse, skipTimers);
+        il.Emit(OpCodes.Ldsfld, _eventLoopTimerProcessorField);
+        il.Emit(OpCodes.Callvirt, typeof(Func<int>).GetMethod("Invoke")!);
+        il.Emit(OpCodes.Stloc, waitMsLocal);
+        il.MarkLabel(skipTimers);
+
+        // busy = waitMs >= 0 || _activeHandles > 0 || !_queue.IsEmpty
+        il.Emit(OpCodes.Ldloc, waitMsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bge, busyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _eventLoopActiveHandlesField);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bgt, busyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _eventLoopQueueField);
+        il.Emit(OpCodes.Callvirt, typeof(ConcurrentQueue<Action>).GetProperty("IsEmpty")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, busyLabel);
+
+        // idle:
+        //   if (quiescentStart < 0) quiescentStart = TickCount64;
+        //   else if (TickCount64 - quiescentStart >= grace) return false
+        var startStreak = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, quiescentStartLocal);
+        il.Emit(OpCodes.Ldc_I8, 0L);
+        il.Emit(OpCodes.Blt, startStreak);
+        il.Emit(OpCodes.Call, tickCount64Getter);
+        il.Emit(OpCodes.Ldloc, quiescentStartLocal);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Ldc_I8, QuiescentMsBeforeGiveUp);
+        il.Emit(OpCodes.Blt, sleepLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(startStreak);
+        il.Emit(OpCodes.Call, tickCount64Getter);
+        il.Emit(OpCodes.Stloc, quiescentStartLocal);
+        il.Emit(OpCodes.Br, sleepLabel);
+
+        // busy: reset the idle streak
+        il.MarkLabel(busyLabel);
+        il.Emit(OpCodes.Ldc_I8, -1L);
+        il.Emit(OpCodes.Stloc, quiescentStartLocal);
+
+        il.MarkLabel(sleepLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Call, typeof(Thread).GetMethod("Sleep", [_types.Int32])!);
+        il.Emit(OpCodes.Br, loopTop);
     }
 }

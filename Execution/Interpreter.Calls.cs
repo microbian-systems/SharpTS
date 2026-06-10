@@ -501,18 +501,18 @@ public partial class Interpreter
 
         return desc switch
         {
-            OperatorDescriptor.Plus when left is string || right is string =>
-                RuntimeValue.FromString(string.Concat(
-                    left as string ?? Stringify(left),
-                    right as string ?? Stringify(right))),
-            OperatorDescriptor.Plus => RuntimeValue.FromNumber((double)left! + (double)right!),
-            OperatorDescriptor.Arithmetic => RuntimeValue.FromNumber(EvaluateArithmetic(op.Type, (double)left!, (double)right!)),
-            OperatorDescriptor.Power => RuntimeValue.FromNumber(Math.Pow((double)left!, (double)right!)),
+            // EvaluatePlus handles string concat, object ToPrimitive concat, and
+            // numeric addition with ToNumber coercion (undefined→NaN, null→0,
+            // booleans→0/1) — a raw (double) cast crashed with
+            // InvalidCastException on any-typed undefined operands (#190).
+            OperatorDescriptor.Plus => RuntimeValue.FromBoxed(EvaluatePlus(left, right)),
+            OperatorDescriptor.Arithmetic => RuntimeValue.FromNumber(EvaluateArithmetic(op.Type, CoerceToNumber(left), CoerceToNumber(right))),
+            OperatorDescriptor.Power => RuntimeValue.FromNumber(Math.Pow(CoerceToNumber(left), CoerceToNumber(right))),
             // JS AbstractRelationalComparison: string vs string → lexicographic.
             OperatorDescriptor.Comparison =>
                 left is string ls && right is string rs
                     ? RuntimeValue.FromBoolean(EvaluateStringComparison(op.Type, ls, rs))
-                    : RuntimeValue.FromBoolean(EvaluateComparison(op.Type, (double)left!, (double)right!)),
+                    : RuntimeValue.FromBoolean(EvaluateComparison(op.Type, CoerceToNumber(left), CoerceToNumber(right))),
             OperatorDescriptor.Equality eq => RuntimeValue.FromBoolean(EvaluateEquality(left, right, eq.IsStrict, eq.IsNegated)),
             OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift =>
                 RuntimeValue.FromNumber(EvaluateBitwise(op.Type, ToInt32(left), ToInt32(right))),
@@ -543,14 +543,15 @@ public partial class Interpreter
         return desc switch
         {
             OperatorDescriptor.Plus => EvaluatePlus(left, right),
-            OperatorDescriptor.Arithmetic => EvaluateArithmetic(op.Type, (double)left!, (double)right!),
-            OperatorDescriptor.Power => Math.Pow((double)left!, (double)right!),
+            // ECMA-262 ToNumber coercion: undefined→NaN, null→0, booleans→0/1 (#190).
+            OperatorDescriptor.Arithmetic => EvaluateArithmetic(op.Type, CoerceToNumber(left), CoerceToNumber(right)),
+            OperatorDescriptor.Power => Math.Pow(CoerceToNumber(left), CoerceToNumber(right)),
             // JS AbstractRelationalComparison: if both are strings, compare
             // lexicographically; otherwise coerce to number.
             OperatorDescriptor.Comparison =>
                 left is string ls && right is string rs
                     ? EvaluateStringComparison(op.Type, ls, rs)
-                    : EvaluateComparison(op.Type, (double)left!, (double)right!),
+                    : EvaluateComparison(op.Type, CoerceToNumber(left), CoerceToNumber(right)),
             OperatorDescriptor.Equality eq => EvaluateEquality(left, right, eq.IsStrict, eq.IsNegated),
             OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift =>
                 EvaluateBitwise(op.Type, ToInt32(left), ToInt32(right)),
@@ -678,13 +679,13 @@ public partial class Interpreter
     /// Converts a boxed double to a 32-bit signed integer per ECMA-262 ToInt32.
     /// </summary>
     /// <seealso href="https://tc39.es/ecma262/#sec-toint32">ECMAScript ToInt32</seealso>
-    private static int ToInt32(object? value) => JsToInt32((double)value!);
+    private static int ToInt32(object? value) => JsToInt32(CoerceToNumber(value));
 
     /// <summary>
     /// Converts a boxed double to a 32-bit unsigned integer per ECMA-262 ToUint32.
     /// </summary>
     /// <seealso href="https://tc39.es/ecma262/#sec-touint32">ECMAScript ToUint32</seealso>
-    private static uint ToUint32(object? value) => JsToUint32((double)value!);
+    private static uint ToUint32(object? value) => JsToUint32(CoerceToNumber(value));
 
     // ECMA-262 ToInt32 / ToUint32 on a double. Unlike C#'s saturating (int) cast,
     // non-finite → 0 and out-of-range doubles wrap modulo 2^32. Mirrors JsToInt32 in

@@ -1102,11 +1102,7 @@ public static class TestHarness
     /// <returns>List of verification error messages (empty if valid)</returns>
     public static List<string> VerifyIL(string dllPath)
     {
-        var sdkPath = SdkResolver.FindReferenceAssembliesPath();
-        if (sdkPath == null)
-            throw new InvalidOperationException("Could not find .NET SDK reference assemblies for IL verification");
-
-        using var verifier = new ILVerifier(sdkPath);
+        using var verifier = new ILVerifier();
         using var stream = File.OpenRead(dllPath);
         return verifier.Verify(stream);
     }

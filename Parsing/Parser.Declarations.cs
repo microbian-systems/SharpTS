@@ -333,7 +333,8 @@ public partial class Parser
 
                 bool computedOptional = Match(TokenType.QUESTION);
                 string computedType;
-                if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS))
+                bool computedIsMethod = Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS);
+                if (computedIsMethod)
                 {
                     computedType = ParseMethodSignature();
                 }
@@ -343,7 +344,7 @@ public partial class Parser
                     computedType = ParseTypeAnnotation();
                 }
                 ConsumeInterfaceMemberSeparator();
-                members.Add(new Stmt.InterfaceMember(computedTok, computedType, computedOptional, computedReadonly));
+                members.Add(new Stmt.InterfaceMember(computedTok, computedType, computedOptional, computedReadonly, computedIsMethod));
                 continue;
             }
 
@@ -355,7 +356,8 @@ public partial class Parser
             bool isOptional = Match(TokenType.QUESTION);
 
             string type;
-            if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS))
+            bool isMethod = Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS);
+            if (isMethod)
             {
                 // Method signature: methodName(params): returnType or methodName<T>(params): returnType
                 type = ParseMethodSignature();
@@ -368,7 +370,7 @@ public partial class Parser
             }
 
             ConsumeInterfaceMemberSeparator();
-            members.Add(new Stmt.InterfaceMember(memberName, type, isOptional, isReadonly));
+            members.Add(new Stmt.InterfaceMember(memberName, type, isOptional, isReadonly, isMethod));
         }
 
         Consume(TokenType.RIGHT_BRACE, "Expect '}' after interface body.");

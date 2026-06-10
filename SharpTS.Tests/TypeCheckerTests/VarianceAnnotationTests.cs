@@ -278,9 +278,12 @@ public class VarianceAnnotationTests
     #region Invariance Tests (no modifier)
 
     [Fact]
-    public void Invariant_RequiresExactMatch_SubtypeFails()
+    public void Unannotated_MeasuredVariance_SubtypeAllowed()
     {
-        // Without variance modifier, Box<Dog> should NOT be assignable to Box<Animal>
+        // Without a variance modifier, instantiations of the same generic relate by MEASURED
+        // variance (tsc): `value: T` is covariant and the `assign` METHOD's parameter measures
+        // bivariantly (tsc's method exemption), so Box<T> measures covariant and Box<Dog> IS
+        // assignable to Box<Animal> — TypeScript's well-known method-bivariance unsoundness.
         var source = """
             interface Animal { name: string; }
             interface Dog extends Animal { bark(): void; }
@@ -295,13 +298,11 @@ public class VarianceAnnotationTests
                 assign(v: Dog): void { this.value = v; }
             }
 
-            // Invariance prevents this assignment
             let dogBox: Box<Dog> = new DogBox();
             let animalBox: Box<Animal> = dogBox;
             """;
 
-        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
-        Assert.Contains("not assignable", ex.Message);
+        TestHarness.RunInterpreted(source); // must not throw — matches tsc
     }
 
     [Fact]
