@@ -56,10 +56,10 @@ public class SharpTSTlsSocket : SharpTSSocket
             "servername" => (object?)_servername ?? SharpTSUndefined.Instance,
 
             // TLS-specific methods
-            "getCipher" => new BuiltInMethod("getCipher", 0, GetCipher),
-            "getPeerCertificate" => new BuiltInMethod("getPeerCertificate", 0, 1, GetPeerCertificate),
-            "getProtocol" => new BuiltInMethod("getProtocol", 0, GetProtocol),
-            "renegotiate" => new BuiltInMethod("renegotiate", 0, 2, Renegotiate),
+            "getCipher" => BuiltInMethod.CreateV2("getCipher", 0, GetCipher),
+            "getPeerCertificate" => BuiltInMethod.CreateV2("getPeerCertificate", 0, 1, GetPeerCertificate),
+            "getProtocol" => BuiltInMethod.CreateV2("getProtocol", 0, GetProtocol),
+            "renegotiate" => BuiltInMethod.CreateV2("renegotiate", 0, 2, Renegotiate),
 
             // Fall through to base Socket members
             _ => base.GetMember(name)
@@ -153,44 +153,44 @@ public class SharpTSTlsSocket : SharpTSSocket
         });
     }
 
-    private object? GetCipher(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetCipher(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_sslStream == null)
-            return null;
+            return RuntimeValue.Null;
 
-        return new SharpTSObject(new Dictionary<string, object?>
+        return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
         {
             ["name"] = _sslStream.NegotiatedCipherSuite.ToString(),
             ["standardName"] = _sslStream.NegotiatedCipherSuite.ToString(),
             ["version"] = GetProtocolString(_sslStream.SslProtocol)
-        });
+        }));
     }
 
-    private object? GetPeerCertificate(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetPeerCertificate(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_peerCertificate == null)
-            return new SharpTSObject(new Dictionary<string, object?>());
+            return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>()));
 
-        return new SharpTSObject(new Dictionary<string, object?>
+        return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
         {
             ["subject"] = _peerCertificate.Subject,
             ["issuer"] = _peerCertificate.Issuer,
             ["valid_from"] = _peerCertificate.NotBefore.ToString("R"),
             ["valid_to"] = _peerCertificate.NotAfter.ToString("R"),
             ["serialNumber"] = _peerCertificate.SerialNumber
-        });
+        }));
     }
 
-    private object? GetProtocol(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetProtocol(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_sslStream == null) return null;
-        return GetProtocolString(_sslStream.SslProtocol);
+        if (_sslStream == null) return RuntimeValue.Null;
+        return RuntimeValue.FromBoxed(GetProtocolString(_sslStream.SslProtocol));
     }
 
-    private object? Renegotiate(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Renegotiate(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // Node.js renegotiate() - not widely used, return this for chaining
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     private static string? GetProtocolString(SslProtocols protocol)

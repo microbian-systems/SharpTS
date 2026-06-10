@@ -87,12 +87,12 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
         return name switch
         {
             "listening" => Listening,
-            "listen" => new BuiltInMethod("listen", 0, 4, Listen),
-            "close" => new BuiltInMethod("close", 0, 1, Close),
-            "address" => new BuiltInMethod("address", 0, GetAddress),
-            "getConnections" => new BuiltInMethod("getConnections", 1, GetConnections),
-            "ref" => new BuiltInMethod("ref", 0, Ref),
-            "unref" => new BuiltInMethod("unref", 0, Unref),
+            "listen" => BuiltInMethod.CreateV2("listen", 0, 4, Listen),
+            "close" => BuiltInMethod.CreateV2("close", 0, 1, Close),
+            "address" => BuiltInMethod.CreateV2("address", 0, GetAddress),
+            "getConnections" => BuiltInMethod.CreateV2("getConnections", 1, GetConnections),
+            "ref" => BuiltInMethod.CreateV2("ref", 0, Ref),
+            "unref" => BuiltInMethod.CreateV2("unref", 0, Unref),
             "maxConnections" => (double)_maxConnections,
             _ => base.GetMember(name)
         };
@@ -107,7 +107,7 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
             _maxConnections = (int)d;
     }
 
-    private object? Listen(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Listen(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_isListening)
             throw new Exception("Runtime Error: Server is already listening");
@@ -119,34 +119,34 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
 
         ISharpTSCallable? callback = null;
 
-        if (args.Count > 0 && args[0] is SharpTSObject options)
+        if (args.Length > 0 && args[0].ToObject() is SharpTSObject options)
         {
             if (options.GetProperty("port") is double p) _port = (int)p;
             if (options.GetProperty("host") is string h) _host = h;
-            if (args.Count > 1 && args[1] is ISharpTSCallable cb) callback = cb;
+            if (args.Length > 1 && args[1].ToObject() is ISharpTSCallable cb) callback = cb;
         }
         else
         {
             int argIdx = 0;
-            if (argIdx < args.Count && args[argIdx] is double portNum)
+            if (argIdx < args.Length && args[argIdx].IsNumber)
             {
-                _port = (int)portNum;
+                _port = (int)args[argIdx].AsNumberUnsafe();
                 argIdx++;
             }
-            if (argIdx < args.Count && args[argIdx] is string host)
+            if (argIdx < args.Length && args[argIdx].IsString)
             {
-                _host = host;
+                _host = args[argIdx].AsStringUnsafe();
                 argIdx++;
             }
-            if (argIdx < args.Count && args[argIdx] is double)
+            if (argIdx < args.Length && args[argIdx].IsNumber)
                 argIdx++;
-            if (argIdx < args.Count && args[argIdx] is ISharpTSCallable cb)
+            if (argIdx < args.Length && args[argIdx].ToObject() is ISharpTSCallable cb)
                 callback = cb;
             if (callback == null)
             {
-                for (int i = 0; i < args.Count; i++)
+                for (int i = 0; i < args.Length; i++)
                 {
-                    if (args[i] is ISharpTSCallable c) { callback = c; break; }
+                    if (args[i].ToObject() is ISharpTSCallable c) { callback = c; break; }
                 }
             }
         }
@@ -164,7 +164,7 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
         catch (Exception ex)
         {
             EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
-            return this;
+            return RuntimeValue.FromObject(this);
         }
 
         if (_port == 0)
@@ -181,7 +181,7 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
 
         StartAccepting(interpreter);
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     private void StartAccepting(Interp interpreter)
@@ -276,10 +276,10 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
         }, token);
     }
 
-    private object? Close(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Close(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (!_isListening)
-            return this;
+            return RuntimeValue.FromObject(this);
 
         _cts?.Cancel();
 
@@ -288,46 +288,46 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
         _isListening = false;
         _interpreter?.Unref();
 
-        ISharpTSCallable? callback = args.Count > 0 ? args[0] as ISharpTSCallable : null;
+        ISharpTSCallable? callback = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
         callback?.Call(interpreter, []);
 
         EmitEvent(interpreter, "close", []);
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? GetAddress(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetAddress(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (!_isListening || _listener == null) return null;
+        if (!_isListening || _listener == null) return RuntimeValue.Null;
 
         var ep = (IPEndPoint)_listener.LocalEndpoint;
-        return new SharpTSObject(new Dictionary<string, object?>
+        return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
         {
             ["address"] = ep.Address.ToString(),
             ["family"] = ep.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? "IPv6" : "IPv4",
             ["port"] = (double)ep.Port
-        });
+        }));
     }
 
-    private object? GetConnections(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetConnections(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count > 0 && args[0] is ISharpTSCallable callback)
+        if (args.Length > 0 && args[0].ToObject() is ISharpTSCallable callback)
         {
             callback.Call(interpreter, [null, (double)_connections.Count]);
         }
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Ref(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Ref(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter?.Ref();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Unref(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Unref(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter?.Unref();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     public void Dispose()
