@@ -50,7 +50,7 @@ public sealed class SharpTSCountQueuingStrategy : SharpTSQueuingStrategy
 
     public override double Size(object? chunk) => 1.0;
 
-    public override object SizeCallable { get; } = new BuiltInMethod("size", 1, (_, _, _) => (object)1.0);
+    public override object SizeCallable { get; } = BuiltInMethod.CreateV2("size", 1, static (_, _, _) => RuntimeValue.One);
 }
 
 /// <summary>
@@ -63,10 +63,10 @@ public sealed class SharpTSByteLengthQueuingStrategy : SharpTSQueuingStrategy
 
     public override double Size(object? chunk) => MeasureBytes(chunk);
 
-    public override object SizeCallable { get; } = new BuiltInMethod("size", 1, (_, _, args) =>
+    public override object SizeCallable { get; } = BuiltInMethod.CreateV2("size", 1, static (_, _, args) =>
     {
-        var chunk = args.Count > 0 ? args[0] : null;
-        return (object)MeasureBytes(chunk);
+        var chunk = args.Length > 0 ? args[0].ToObject() : null;
+        return RuntimeValue.FromNumber(MeasureBytes(chunk));
     });
 
     private static double MeasureBytes(object? chunk)

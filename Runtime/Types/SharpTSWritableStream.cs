@@ -367,20 +367,20 @@ public class SharpTSWritableStream : ITypeCategorized
         return name switch
         {
             "locked" => (object)Locked,
-            "getWriter" => new BuiltInMethod("getWriter", 0, (_, _, _) =>
+            "getWriter" => BuiltInMethod.CreateV2("getWriter", 0, (_, _, _) =>
             {
                 if (Writer != null) throw new Exception("TypeError: WritableStream is already locked to a writer");
                 Writer = new SharpTSWritableStreamDefaultWriter(this);
-                return Writer;
+                return RuntimeValue.FromObject(Writer);
             }),
-            "abort" => new BuiltInMethod("abort", 1, (_, _, args) =>
+            "abort" => BuiltInMethod.CreateV2("abort", 1, (_, _, args) =>
             {
-                var reason = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
-                return AbortInternal(reason);
+                var reason = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
+                return RuntimeValue.FromBoxed(AbortInternal(reason));
             }),
-            "close" => new BuiltInMethod("close", 0, (_, _, _) =>
+            "close" => BuiltInMethod.CreateV2("close", 0, (_, _, _) =>
             {
-                return CloseAsyncInternal();
+                return RuntimeValue.FromBoxed(CloseAsyncInternal());
             }),
             _ => null,
         };
@@ -406,10 +406,10 @@ public class SharpTSWritableStreamDefaultController : ITypeCategorized
         return name switch
         {
             "signal" => _signal,
-            "error" => new BuiltInMethod("error", 1, (_, _, args) =>
+            "error" => BuiltInMethod.CreateV2("error", 1, (_, _, args) =>
             {
-                _stream.ErrorInternal(args.Count > 0 ? args[0] : SharpTSUndefined.Instance);
-                return SharpTSUndefined.Instance;
+                _stream.ErrorInternal(args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance);
+                return RuntimeValue.Undefined;
             }),
             _ => null,
         };
@@ -469,33 +469,33 @@ public class SharpTSWritableStreamDefaultWriter : ITypeCategorized
             "desiredSize" => (object)_stream.DesiredSize,
             "closed" => _closedTcs.Task,
             "ready" => _readyTcs.Task,
-            "write" => new BuiltInMethod("write", 1, (_, _, args) =>
+            "write" => BuiltInMethod.CreateV2("write", 1, (_, _, args) =>
             {
-                var chunk = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
+                var chunk = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
                 var task = _stream.EnqueueWrite(chunk);
                 // After enqueuing, reset ready if queue is now saturated.
                 if (_stream.DesiredSize <= 0 && _readyTcs.Task.IsCompleted)
                 {
                     _readyTcs = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
                 }
-                return task;
+                return RuntimeValue.FromBoxed(task);
             }),
-            "close" => new BuiltInMethod("close", 0, (_, _, _) =>
+            "close" => BuiltInMethod.CreateV2("close", 0, (_, _, _) =>
             {
-                return _stream.CloseAsyncInternal();
+                return RuntimeValue.FromBoxed(_stream.CloseAsyncInternal());
             }),
-            "abort" => new BuiltInMethod("abort", 1, (_, _, args) =>
+            "abort" => BuiltInMethod.CreateV2("abort", 1, (_, _, args) =>
             {
-                var reason = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
-                return _stream.AbortInternal(reason);
+                var reason = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
+                return RuntimeValue.FromBoxed(_stream.AbortInternal(reason));
             }),
-            "releaseLock" => new BuiltInMethod("releaseLock", 0, (_, _, _) =>
+            "releaseLock" => BuiltInMethod.CreateV2("releaseLock", 0, (_, _, _) =>
             {
                 if (_stream.Writer == this)
                 {
                     _stream.Writer = null;
                 }
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
             _ => null,
         };

@@ -27,10 +27,10 @@ public sealed class SharpTSReadableStreamConstructor : ISharpTSCallable
         // ReadableStream.from(iterable) — build a stream from an iterable.
         if (name == "from")
         {
-            return new BuiltInMethod("from", 1, (interp, _, args) =>
+            return BuiltInMethod.CreateV2("from", 1, static (interp, _, args) =>
             {
-                var iterable = args.Count > 0 ? args[0] : null;
-                return BuildFromIterable(interp, iterable);
+                var iterable = args.Length > 0 ? args[0].ToObject() : null;
+                return RuntimeValue.FromObject(BuildFromIterable(interp, iterable));
             });
         }
         return null;
@@ -55,23 +55,23 @@ public sealed class SharpTSReadableStreamConstructor : ISharpTSCallable
 
         var src = new SharpTSObject(new Dictionary<string, object?>
         {
-            ["pull"] = new BuiltInMethod("pull", 1, (_, _, args) =>
+            ["pull"] = BuiltInMethod.CreateV2("pull", 1, (_, _, args) =>
             {
-                var controller = args.Count > 0 ? args[0] : null;
+                var controller = args.Length > 0 ? args[0].ToObject() : null;
                 if (controller is not SharpTSReadableStreamDefaultController ctrl)
-                    return SharpTSUndefined.Instance;
+                    return RuntimeValue.Undefined;
                 if (pulled.Count > 0)
                 {
                     var chunk = pulled.Dequeue();
                     var enq = ctrl.GetMember("enqueue") as BuiltInMethod;
-                    enq?.Call(null!, [chunk]);
+                    enq?.CallV2(null!, [RuntimeValue.FromBoxed(chunk)]);
                 }
                 else
                 {
                     var close = ctrl.GetMember("close") as BuiltInMethod;
-                    close?.Call(null!, []);
+                    close?.CallV2(null!, []);
                 }
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
         });
         return new SharpTSReadableStream(interpreter, src, null);

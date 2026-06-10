@@ -44,20 +44,20 @@ public class SharpTSTransformStream : ITypeCategorized
         // Build a writable sink that runs the user's transform callback.
         var sinkFields = new Dictionary<string, object?>
         {
-            ["write"] = new BuiltInMethod("write", 2, (i, _, args) =>
+            ["write"] = BuiltInMethod.CreateV2("write", 2, (i, _, args) =>
             {
-                var chunk = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
-                return RunTransformAsync(i, chunk);
+                var chunk = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
+                return RuntimeValue.FromBoxed(RunTransformAsync(i, chunk));
             }),
-            ["close"] = new BuiltInMethod("close", 0, (i, _, _) =>
+            ["close"] = BuiltInMethod.CreateV2("close", 0, (i, _, _) =>
             {
-                return RunFlushAsync(i);
+                return RuntimeValue.FromBoxed(RunFlushAsync(i));
             }),
-            ["abort"] = new BuiltInMethod("abort", 1, (_, _, args) =>
+            ["abort"] = BuiltInMethod.CreateV2("abort", 1, (_, _, args) =>
             {
-                var reason = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
+                var reason = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
                 Readable.ErrorInternal(reason);
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
         };
         var sink = new SharpTSObject(sinkFields);
@@ -179,23 +179,23 @@ public class SharpTSTransformStreamDefaultController : ITypeCategorized
         return name switch
         {
             "desiredSize" => _readable.DesiredSize is { } d ? (object)d : null,
-            "enqueue" => new BuiltInMethod("enqueue", 1, (_, _, args) =>
+            "enqueue" => BuiltInMethod.CreateV2("enqueue", 1, (_, _, args) =>
             {
-                _readable.EnqueueInternal(args.Count > 0 ? args[0] : SharpTSUndefined.Instance);
-                return SharpTSUndefined.Instance;
+                _readable.EnqueueInternal(args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance);
+                return RuntimeValue.Undefined;
             }),
-            "terminate" => new BuiltInMethod("terminate", 0, (_, _, _) =>
+            "terminate" => BuiltInMethod.CreateV2("terminate", 0, (_, _, _) =>
             {
                 // Per WHATWG spec: terminate() closes the readable side
                 // (not errors it). Subsequent reader.read() returns
                 // { value: undefined, done: true } as with a normal close.
                 _readable.CloseInternal();
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
-            "error" => new BuiltInMethod("error", 1, (_, _, args) =>
+            "error" => BuiltInMethod.CreateV2("error", 1, (_, _, args) =>
             {
-                _readable.ErrorInternal(args.Count > 0 ? args[0] : SharpTSUndefined.Instance);
-                return SharpTSUndefined.Instance;
+                _readable.ErrorInternal(args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance);
+                return RuntimeValue.Undefined;
             }),
             _ => null,
         };
