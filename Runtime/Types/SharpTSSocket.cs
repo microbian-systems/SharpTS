@@ -62,20 +62,20 @@ public class SharpTSSocket : SharpTSEventEmitter
         return name switch
         {
             // Methods
-            "connect" => new BuiltInMethod("connect", 1, 3, Connect),
-            "write" => new BuiltInMethod("write", 1, 3, Write),
-            "end" => new BuiltInMethod("end", 0, 3, End),
-            "destroy" => new BuiltInMethod("destroy", 0, 1, Destroy),
-            "setEncoding" => new BuiltInMethod("setEncoding", 1, SetEncoding),
-            "setTimeout" => new BuiltInMethod("setTimeout", 1, 2, SetTimeout),
-            "setNoDelay" => new BuiltInMethod("setNoDelay", 0, 1, SetNoDelay),
-            "setKeepAlive" => new BuiltInMethod("setKeepAlive", 0, 2, SetKeepAlive),
-            "address" => new BuiltInMethod("address", 0, Address),
-            "ref" => new BuiltInMethod("ref", 0, Ref),
-            "unref" => new BuiltInMethod("unref", 0, Unref),
-            "pause" => new BuiltInMethod("pause", 0, Pause),
-            "resume" => new BuiltInMethod("resume", 0, Resume),
-            "pipe" => new BuiltInMethod("pipe", 1, 2, Pipe),
+            "connect" => BuiltInMethod.CreateV2("connect", 1, 3, Connect),
+            "write" => BuiltInMethod.CreateV2("write", 1, 3, Write),
+            "end" => BuiltInMethod.CreateV2("end", 0, 3, End),
+            "destroy" => BuiltInMethod.CreateV2("destroy", 0, 1, Destroy),
+            "setEncoding" => BuiltInMethod.CreateV2("setEncoding", 1, SetEncoding),
+            "setTimeout" => BuiltInMethod.CreateV2("setTimeout", 1, 2, SetTimeout),
+            "setNoDelay" => BuiltInMethod.CreateV2("setNoDelay", 0, 1, SetNoDelay),
+            "setKeepAlive" => BuiltInMethod.CreateV2("setKeepAlive", 0, 2, SetKeepAlive),
+            "address" => BuiltInMethod.CreateV2("address", 0, Address),
+            "ref" => BuiltInMethod.CreateV2("ref", 0, Ref),
+            "unref" => BuiltInMethod.CreateV2("unref", 0, Unref),
+            "pause" => BuiltInMethod.CreateV2("pause", 0, Pause),
+            "resume" => BuiltInMethod.CreateV2("resume", 0, Resume),
+            "pipe" => BuiltInMethod.CreateV2("pipe", 1, 2, Pipe),
 
             // Properties
             "remoteAddress" => _isIpc ? (object?)null : (_client?.Client?.RemoteEndPoint is IPEndPoint rep ? rep.Address.ToString() : null),
@@ -106,45 +106,46 @@ public class SharpTSSocket : SharpTSEventEmitter
     /// <summary>
     /// Connects to a remote host or IPC pipe.
     /// </summary>
-    private object? Connect(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Connect(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter = interpreter;
 
         // Detect IPC path: string first arg or options.path
         string? ipcPath = null;
         ISharpTSCallable? callback = null;
+        var arg0 = args[0].ToObject();
 
-        if (args[0] is string pathArg)
+        if (arg0 is string pathArg)
         {
             ipcPath = pathArg;
-            callback = args.Count > 1 ? WrapCallbackArg(args[1]) : null;
+            callback = args.Length > 1 ? WrapCallbackArg(args[1].ToObject()) : null;
         }
-        else if (args[0] is SharpTSObject options && options.GetProperty("path") is string optPath)
+        else if (arg0 is SharpTSObject options && options.GetProperty("path") is string optPath)
         {
             ipcPath = optPath;
-            callback = args.Count > 1 ? WrapCallbackArg(args[1]) : null;
+            callback = args.Length > 1 ? WrapCallbackArg(args[1].ToObject()) : null;
         }
 
         if (ipcPath != null)
         {
-            return ConnectIpc(interpreter, ipcPath, callback);
+            return RuntimeValue.FromBoxed(ConnectIpc(interpreter, ipcPath, callback));
         }
 
         int port;
         string host = "localhost";
 
-        if (args[0] is SharpTSObject opts)
+        if (arg0 is SharpTSObject opts)
         {
             port = (int)(double)(opts.GetProperty("port") ?? throw new Exception("Runtime Error: port is required"));
             if (opts.GetProperty("host") is string h) host = h;
-            callback = args.Count > 1 ? WrapCallbackArg(args[1]) : null;
+            callback = args.Length > 1 ? WrapCallbackArg(args[1].ToObject()) : null;
         }
-        else if (args[0] is double portNum)
+        else if (arg0 is double portNum)
         {
             port = (int)portNum;
-            if (args.Count > 1 && args[1] is string h) host = h;
-            if (args.Count > 1) callback = WrapCallbackArg(args[1]);
-            if (args.Count > 2) callback = WrapCallbackArg(args[2]) ?? callback;
+            if (args.Length > 1 && args[1].ToObject() is string h) host = h;
+            if (args.Length > 1) callback = WrapCallbackArg(args[1].ToObject());
+            if (args.Length > 2) callback = WrapCallbackArg(args[2].ToObject()) ?? callback;
         }
         else
         {
@@ -186,7 +187,7 @@ public class SharpTSSocket : SharpTSEventEmitter
             }
         });
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
@@ -290,24 +291,24 @@ public class SharpTSSocket : SharpTSEventEmitter
     /// <summary>
     /// Writes data to the socket.
     /// </summary>
-    private object? Write(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Write(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_destroyed || _stream == null)
         {
             EmitEvent(interpreter, "error", [new SharpTSError("This socket has been ended by the other party")]);
-            return false;
+            return RuntimeValue.False;
         }
 
-        var chunk = args[0];
+        var chunk = args[0].ToObject();
         string? encoding = null;
         ISharpTSCallable? callback = null;
 
-        if (args.Count > 1)
+        if (args.Length > 1)
         {
-            if (args[1] is string enc) encoding = enc;
-            else if (args[1] is ISharpTSCallable cb) callback = cb;
+            if (args[1].IsString) encoding = args[1].AsStringUnsafe();
+            else if (args[1].ToObject() is ISharpTSCallable cb) callback = cb;
         }
-        if (args.Count > 2 && args[2] is ISharpTSCallable cb2) callback = cb2;
+        if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb2) callback = cb2;
 
         byte[] data = ChunkToBytes(chunk, encoding ?? _encoding);
         _interpreter = interpreter;
@@ -335,7 +336,7 @@ public class SharpTSSocket : SharpTSEventEmitter
                     }, false);
                 }
             });
-            return true;
+            return RuntimeValue.True;
         }
 
         try
@@ -343,24 +344,24 @@ public class SharpTSSocket : SharpTSEventEmitter
             _stream.Write(data, 0, data.Length);
             _bytesWritten += data.Length;
             callback?.Call(interpreter, []);
-            return true;
+            return RuntimeValue.True;
         }
         catch (Exception ex)
         {
             EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
-            return false;
+            return RuntimeValue.False;
         }
     }
 
     /// <summary>
     /// Ends the writable side of the socket.
     /// </summary>
-    private object? End(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue End(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_ended) return this;
+        if (_ended) return RuntimeValue.FromObject(this);
 
         // Write final chunk if provided
-        if (args.Count > 0 && args[0] != null && args[0] is not ISharpTSCallable)
+        if (args.Length > 0 && args[0].ToObject() is { } first && first is not ISharpTSCallable)
         {
             Write(interpreter, receiver, args);
         }
@@ -395,19 +396,19 @@ public class SharpTSSocket : SharpTSEventEmitter
         ISharpTSCallable? callback = null;
         foreach (var arg in args)
         {
-            if (arg is ISharpTSCallable cb) { callback = cb; break; }
+            if (arg.ToObject() is ISharpTSCallable cb) { callback = cb; break; }
         }
         callback?.Call(interpreter, []);
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Destroys the socket.
     /// </summary>
-    private object? Destroy(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Destroy(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_destroyed) return this;
+        if (_destroyed) return RuntimeValue.FromObject(this);
 
         _destroyed = true;
         _readCts?.Cancel();
@@ -422,101 +423,103 @@ public class SharpTSSocket : SharpTSEventEmitter
             // Ignore close errors
         }
 
-        if (args.Count > 0 && args[0] != null)
+        bool hadError = args.Length > 0 && args[0].ToObject() is not null;
+        if (hadError)
         {
-            EmitEvent(interpreter, "error", [args[0]]);
+            EmitEvent(interpreter, "error", [args[0].ToObject()]);
         }
 
-        EmitEvent(interpreter, "close", [args.Count > 0 && args[0] != null]);
+        EmitEvent(interpreter, "close", [hadError]);
         // Only unref if reading was started (StartReading does Ref)
         if (_readingStarted)
         {
             _readingStarted = false;
             _interpreter?.Unref();
         }
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? SetEncoding(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetEncoding(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count > 0 && args[0] is string enc)
-            _encoding = enc.ToLowerInvariant();
-        return this;
+        if (args.Length > 0 && args[0].IsString)
+            _encoding = args[0].AsStringUnsafe().ToLowerInvariant();
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? SetTimeout(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetTimeout(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var timeout = args.Count > 0 && args[0] is double t ? (int)t : 0;
+        var timeout = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
         if (_client?.Client != null)
         {
             _client.Client.ReceiveTimeout = timeout;
             _client.Client.SendTimeout = timeout;
         }
-        if (args.Count > 1 && args[1] is ISharpTSCallable cb)
+        if (args.Length > 1 && args[1].ToObject() is ISharpTSCallable cb)
         {
             AddListenerDirect("timeout", cb);
         }
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? SetNoDelay(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetNoDelay(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_isIpc) return this; // No-op for IPC sockets
-        var noDelay = args.Count == 0 || (args[0] is bool b && b) || (args[0] is not bool);
+        if (_isIpc) return RuntimeValue.FromObject(this); // No-op for IPC sockets
+        var noDelay = args.Length == 0 || !args[0].IsBoolean || args[0].AsBooleanUnsafe();
         _client?.Client?.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.NoDelay, noDelay);
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? SetKeepAlive(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetKeepAlive(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_isIpc) return this; // No-op for IPC sockets
-        var enable = args.Count > 0 && args[0] is bool b && b;
+        if (_isIpc) return RuntimeValue.FromObject(this); // No-op for IPC sockets
+        var enable = args.Length > 0 && args[0].IsBoolean && args[0].AsBooleanUnsafe();
         _client?.Client?.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, enable);
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Address(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Address(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_client?.Client?.LocalEndPoint is not IPEndPoint ep) return new SharpTSObject(new Dictionary<string, object?>());
-        return new SharpTSObject(new Dictionary<string, object?>
+        if (_client?.Client?.LocalEndPoint is not IPEndPoint ep)
+            return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>()));
+        return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
         {
             ["port"] = (double)ep.Port,
             ["family"] = ep.AddressFamily == AddressFamily.InterNetworkV6 ? "IPv6" : "IPv4",
             ["address"] = ep.Address.ToString()
-        });
+        }));
     }
 
-    private object? Ref(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Ref(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter?.Ref();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Unref(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Unref(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter?.Unref();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Pause(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Pause(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _readCts?.Cancel();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Resume(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Resume(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         StartReading(interpreter);
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Pipe(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Pipe(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // Minimal pipe: forward data events to writable
-        if (args.Count < 1) throw new Exception("pipe() requires a destination");
-        var dest = args[0];
+        if (args.Length < 1) throw new Exception("pipe() requires a destination");
+        var dest = args[0].ToObject();
         AddListenerDirect("data", new PipeDataListener(dest, interpreter));
-        return dest;
+        return RuntimeValue.FromBoxed(dest);
     }
 
     /// <summary>
@@ -664,7 +667,10 @@ public class SharpTSSocket : SharpTSEventEmitter
             }
             else if (_dest is SharpTSSocket socket)
             {
-                socket.Write(_interpreter, socket, arguments);
+                var rvArgs = new RuntimeValue[arguments.Count];
+                for (int i = 0; i < arguments.Count; i++)
+                    rvArgs[i] = RuntimeValue.FromBoxed(arguments[i]);
+                socket.Write(_interpreter, RuntimeValue.FromObject(socket), rvArgs);
             }
             return null;
         }
