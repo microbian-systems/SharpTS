@@ -171,6 +171,15 @@ public partial class RuntimeEmitter
         EmitObjectMethodLookup("isFrozen",                runtime.ObjectIsFrozen, 1);
         EmitObjectMethodLookup("isSealed",                runtime.ObjectIsSealed, 1);
 
+        // Symbol.* (#234) — bare `Symbol` resolves to the $TSSymbol Type token.
+        // Well-known symbols (iterator, species, …) are public static FIELDS
+        // carrying their JS names, so GetProperty's static-field probe resolves
+        // them before this table is consulted. Only the static methods need
+        // entries: their .NET names are For/KeyFor, which the case-sensitive
+        // static-method probe misses.
+        EmitLookup(runtime.TSSymbolType, "for", runtime.SymbolFor, 1);
+        EmitLookup(runtime.TSSymbolType, "keyFor", runtime.SymbolKeyFor, 1);
+
         // Math.* deliberately not handled here — bare `Math` emits the null
         // pseudo-variable (not a Type token), so its value-form access goes
         // through MathStaticEmitter.TryEmitStaticPropertyGet at compile time.

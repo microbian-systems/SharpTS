@@ -472,4 +472,90 @@ public class SymbolTests
     }
 
     #endregion
+
+    #region Symbol as First-Class Global (#234)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_TypeofGlobal_IsFunction(ExecutionMode mode)
+    {
+        var source = """
+            console.log(typeof Symbol);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_TypeofCallResult_IsSymbol(ExecutionMode mode)
+    {
+        var source = """
+            console.log(typeof Symbol("x"));
+            console.log(typeof Symbol());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("symbol\nsymbol\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_Aliased_CallCreatesSymbol(ExecutionMode mode)
+    {
+        var source = """
+            const f: any = Symbol;
+            const s = f("aliased");
+            console.log(typeof s);
+            console.log(s.description);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("symbol\naliased\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_Aliased_WellKnownIdentity(ExecutionMode mode)
+    {
+        var source = """
+            const f: any = Symbol;
+            console.log(f.species === Symbol.species);
+            console.log(f.iterator === Symbol.iterator);
+            console.log(typeof f.asyncIterator);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\nsymbol\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_Aliased_ForAndKeyFor(ExecutionMode mode)
+    {
+        var source = """
+            const f: any = Symbol;
+            const shared = f.for("registry-key");
+            console.log(shared === Symbol.for("registry-key"));
+            console.log(f.keyFor(shared));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nregistry-key\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_CastExpression_MemberAccess(ExecutionMode mode)
+    {
+        var source = """
+            console.log((Symbol as any).species === Symbol.species);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
 }

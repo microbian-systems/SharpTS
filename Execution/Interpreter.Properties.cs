@@ -1026,7 +1026,14 @@ public partial class Interpreter
             // process-wide static FrozenDictionary).
             if (memberName == "prototype" && ctor.Name == BuiltInNames.RegExp)
                 return GetRegExpPrototype();
-            return ctor.GetMember(memberName) ?? SharpTSUndefined.Instance;
+            var ctorMember = ctor.GetMember(memberName);
+            // Materialize constant-wrapping members (e.g. Symbol.species via an
+            // alias: `const S = Symbol; S.species`) the same way the syntactic
+            // path in EvaluateGet does — otherwise the alias path returns the
+            // BuiltInMethod wrapper and identity with the direct form breaks.
+            if (ctorMember is BuiltInMethod { IsConstant: true } ctorConstant)
+                return ctorConstant.Call(this, []);
+            return ctorMember ?? SharpTSUndefined.Instance;
         }
 
         // Handle plain Dictionary<string, object?> objects (e.g., segment items from Intl.Segments)

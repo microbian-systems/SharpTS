@@ -192,6 +192,18 @@ public partial class Interpreter : IDisposable
         // MessageChannel as a value (construction already worked by name).
         globals[BuiltInNames.MessageChannel] = WorkerBuiltIns.MessageChannelConstructor;
 
+        // Symbol as a value-position global (#234): `typeof Symbol`,
+        // `const f = Symbol`, and `(Symbol as any).species` need a real
+        // binding. Its namespace is registered as non-singleton (member
+        // access routes through SymbolBuiltIns via GetMember), so the
+        // singleton loop above didn't bind it. The factory implements the
+        // call form Symbol(description); JS has no `new Symbol()`.
+        globals[BuiltInNames.Symbol] = new SharpTSBuiltInConstructor(
+            BuiltInNames.Symbol,
+            args => new SharpTSSymbol(args.Count > 0 && args[0] is not SharpTSUndefined
+                ? args[0]?.ToString()
+                : null));
+
         // Promise needs a bare-reference global so `x instanceof Promise`,
         // `typeof Promise === 'function'`, and stdlib modules that carry
         // Promise as a value can type-check/run. Its namespace is registered

@@ -115,7 +115,17 @@ public partial class ILEmitter
 
         if (name == "Symbol")
         {
-            EmitNullConstant(); // Symbol is handled specially in property access via SymbolStaticEmitter
+            // Bare `Symbol` resolves to the $TSSymbol Type token (#234) — the
+            // same value-form pattern as Array/Number/String. typeof → "function",
+            // aliased member access hits GetProperty's Type branch (well-known
+            // symbols are public static fields with their JS names; for/keyFor
+            // route through LookupBuiltInStaticMember), and the call form
+            // dispatches via InvokeValue's Type-callee branch. Direct
+            // `Symbol.iterator` / `Symbol(...)` sites still compile through
+            // SymbolStaticEmitter / BuiltInConstructorHandler first.
+            IL.Emit(OpCodes.Ldtoken, _ctx.Runtime!.TSSymbolType);
+            IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Type, "GetTypeFromHandle", _ctx.Types.RuntimeTypeHandle));
+            SetStackUnknown();
             return;
         }
 

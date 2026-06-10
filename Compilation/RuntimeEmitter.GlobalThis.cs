@@ -204,15 +204,20 @@ public partial class RuntimeEmitter
         EmitTypeBranch("Number", _types.Double);
         EmitTypeBranch("String", _types.String);
         EmitTypeBranch("Boolean", _types.Boolean);
+        // Symbol (#234) — the $TSSymbol Type token, so `typeof Symbol` is
+        // "function", `globalThis.Symbol === Symbol` holds, and aliased
+        // member access resolves the well-known-symbol static fields via
+        // GetProperty's Type branch.
+        EmitTypeBranch("Symbol", runtime.TSSymbolType);
 
         // Remaining named namespaces (Math, JSON, console, Error, Reflect,
-        // process, Symbol) are represented as singletons in the runtime rather
+        // process) are represented as singletons in the runtime rather
         // than .NET Type instances. Keep the null-marker behavior for those —
         // compile-time static dispatch already routes through their dedicated
         // namespace emitters.
         string[] singletonNamespaces =
         [
-            "Math", "JSON", "console", "Error", "Reflect", "process", "Symbol"
+            "Math", "JSON", "console", "Error", "Reflect", "process"
         ];
         foreach (var ns in singletonNamespaces)
         {
