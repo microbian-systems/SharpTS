@@ -210,9 +210,13 @@ public class SharpTSSocket : SharpTSEventEmitter
                 if (OperatingSystem.IsWindows())
                 {
                     var pipeName = ConvertToWindowsPipeName(path);
+                    // Node raises ENOENT immediately for a missing pipe. NamedPipeClientStream's
+                    // timed Connect cannot distinguish "missing" from "busy" — it retries
+                    // CreateFile until the timeout expires — so pre-check existence and keep
+                    // the 5s budget only for the exists-but-busy case it is actually for.
+                    if (!WindowsPipeExists(pipeName))
+                        throw new FileNotFoundException($"no such named pipe '{path}'");
                     var pipeClient = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
-                    // Use timeout to avoid blocking forever if no server is listening.
-                    // Node.js throws ENOENT for missing pipes; 5s matches typical socket timeouts.
                     await pipeClient.ConnectAsync(5000);
                     _stream = pipeClient;
                 }
@@ -272,6 +276,30 @@ public class SharpTSSocket : SharpTSEventEmitter
             : $"{code}: {ex.Message}, {syscall}";
 
         return new SharpTSError(msg) { Code = code, Syscall = syscall };
+    }
+
+    /// <summary>
+    /// Checks whether a Windows named pipe currently exists. Enumerating the pipe
+    /// directory is the safe probe — CreateFile-based checks (File.Exists) can
+    /// consume a pipe instance or interfere with WaitNamedPipe semantics.
+    /// Returns true on enumeration failure so the connect timeout still governs.
+    /// </summary>
+    internal static bool WindowsPipeExists(string pipeName)
+    {
+        try
+        {
+            var fullPath = @"\\.\pipe\" + pipeName;
+            foreach (var entry in Directory.EnumerateFiles(@"\\.\pipe\"))
+            {
+                if (string.Equals(entry, fullPath, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     /// <summary>

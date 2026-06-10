@@ -569,8 +569,9 @@ public partial class RuntimeEmitter
             [_types.Object]
         );
 
-        // Also emit the static ConvertToWindowsPipeName helper
+        // Also emit the static ConvertToWindowsPipeName / WindowsPipeExists helpers
         var convertMethod = EmitConvertToWindowsPipeName(typeBuilder);
+        var pipeExistsMethod = EmitWindowsPipeExists(typeBuilder);
 
         var wil = worker.GetILGenerator();
 
@@ -625,6 +626,26 @@ public partial class RuntimeEmitter
             wil.Emit(OpCodes.Ldfld, _netSocketConnectHostField);
             wil.Emit(OpCodes.Call, convertMethod);
             wil.Emit(OpCodes.Stloc, pipeNameLocal);
+
+            // if (!WindowsPipeExists(pipeName))
+            //     throw new FileNotFoundException("no such named pipe '" + _connectHost + "'");
+            // Node raises ENOENT immediately for a missing pipe; the timed Connect below
+            // cannot distinguish "missing" from "busy" (it retries CreateFile until the
+            // timeout expires), so pre-check existence and keep the 5s budget for the
+            // exists-but-busy case only. FileNotFoundException maps to ENOENT in
+            // GetSocketErrorCode.
+            var pipeExists = wil.DefineLabel();
+            wil.Emit(OpCodes.Ldloc, pipeNameLocal);
+            wil.Emit(OpCodes.Call, pipeExistsMethod);
+            wil.Emit(OpCodes.Brtrue, pipeExists);
+            wil.Emit(OpCodes.Ldstr, "no such named pipe '");
+            wil.Emit(OpCodes.Ldarg_0);
+            wil.Emit(OpCodes.Ldfld, _netSocketConnectHostField);
+            wil.Emit(OpCodes.Ldstr, "'");
+            wil.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.String, _types.String])!);
+            wil.Emit(OpCodes.Newobj, typeof(System.IO.FileNotFoundException).GetConstructor([_types.String])!);
+            wil.Emit(OpCodes.Throw);
+            wil.MarkLabel(pipeExists);
 
             // var pipeClient = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous)
             var pipeLocal = wil.DeclareLocal(typeof(NamedPipeClientStream));
@@ -730,6 +751,58 @@ public partial class RuntimeEmitter
         // return Path.GetFileName(path)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, typeof(System.IO.Path).GetMethod("GetFileName", [_types.String])!);
+        il.Emit(OpCodes.Ret);
+
+        return method;
+    }
+
+    /// <summary>
+    /// Emits: public static bool WindowsPipeExists(string pipeName)
+    /// Mirrors SharpTSSocket.WindowsPipeExists: enumerate \\.\pipe\ and compare full
+    /// entry paths case-insensitively (enumeration is the safe probe; CreateFile-based
+    /// checks can consume a pipe instance). Returns true on enumeration failure so the
+    /// connect timeout still governs.
+    /// </summary>
+    private MethodBuilder EmitWindowsPipeExists(TypeBuilder typeBuilder)
+    {
+        var method = typeBuilder.DefineMethod(
+            "WindowsPipeExists",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Boolean,
+            [_types.String]
+        );
+
+        var il = method.GetILGenerator();
+        var resultLocal = il.DeclareLocal(_types.Boolean);
+        var end = il.DefineLabel();
+
+        il.BeginExceptionBlock();
+
+        // result = Directory.GetFiles(@"\\.\pipe\")
+        //     .Contains(@"\\.\pipe\" + pipeName, StringComparer.OrdinalIgnoreCase)
+        il.Emit(OpCodes.Ldstr, @"\\.\pipe\");
+        il.Emit(OpCodes.Call, typeof(System.IO.Directory).GetMethod("GetFiles", [_types.String])!);
+        il.Emit(OpCodes.Ldstr, @"\\.\pipe\");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [_types.String, _types.String])!);
+        il.Emit(OpCodes.Call, typeof(StringComparer).GetProperty("OrdinalIgnoreCase")!.GetGetMethod()!);
+        var containsWithComparer = typeof(System.Linq.Enumerable).GetMethods()
+            .Single(m => m.Name == "Contains" && m.GetParameters().Length == 3)
+            .MakeGenericMethod(_types.String);
+        il.Emit(OpCodes.Call, containsWithComparer);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Leave, end);
+
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Leave, end);
+
+        il.EndExceptionBlock();
+
+        il.MarkLabel(end);
+        il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 
         return method;
