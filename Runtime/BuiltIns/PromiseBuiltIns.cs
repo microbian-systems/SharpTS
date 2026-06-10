@@ -253,12 +253,14 @@ public static class PromiseBuiltIns
             throw new Exception("Runtime Error: Promise.race requires an array argument.");
         }
 
-        // Empty array never settles - return a promise that never resolves
+        // Empty array never settles — there are no competitors to race.
+        // BuiltInAsyncMethod wraps this method's Task in the promise it hands
+        // to the guest, so returning a SharpTSPromise here would settle that
+        // outer promise immediately WITH a promise object (#196). Await a task
+        // that never completes instead so the outer promise stays pending.
         if (array.Length == 0)
         {
-            // Create a TaskCompletionSource that never completes
-            var neverCompletingTcs = new TaskCompletionSource<object?>();
-            return new SharpTSPromise(neverCompletingTcs.Task);
+            return await new TaskCompletionSource<object?>().Task;
         }
 
         var tasks = new List<Task<object?>>();
