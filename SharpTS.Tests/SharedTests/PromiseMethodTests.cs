@@ -711,20 +711,25 @@ public class PromiseMethodTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Any_EmptyArray_ThrowsAggregateError(ExecutionMode mode)
     {
+        // ECMA-262 §27.2.4.3: empty iterable rejects with an AggregateError
+        // whose errors is []. Compiled mode used to reject with a raw BCL
+        // Exception whose name read "Exception" (#220).
         var source = """
             async function main(): Promise<void> {
                 try {
                     await Promise.any([]);
                     console.log("should not reach");
-                } catch (e) {
+                } catch (e: any) {
                     console.log("caught");
+                    console.log(e.name);
+                    console.log(Array.isArray(e.errors) ? e.errors.length : "no errors");
                 }
             }
             main();
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("caught\n", output);
+        Assert.Equal("caught\nAggregateError\n0\n", output);
     }
 
     #endregion

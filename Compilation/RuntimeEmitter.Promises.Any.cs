@@ -362,14 +362,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Stloc, countLocal);
 
-        // Check for empty list - throw AggregateException
+        // ECMA-262 §27.2.4.3: empty iterable → reject with an AggregateError
+        // whose errors is []. Same guest-error construction as the
+        // all-rejected path; the outer catch turns the throw into a rejection.
         var notEmptyLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, countLocal);
         il.Emit(OpCodes.Brtrue, notEmptyLabel);
 
-        // Empty list - throw exception
-        il.Emit(OpCodes.Ldstr, "AggregateError: All promises were rejected");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, [_types.String]));
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.EmptyTypes));  // errors = []
+        il.Emit(OpCodes.Ldnull);  // message (use default)
+        il.Emit(OpCodes.Newobj, runtime.TSAggregateErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(notEmptyLabel);
