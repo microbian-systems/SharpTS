@@ -112,7 +112,7 @@ public partial class RuntimeEmitter
     /// Handles a single element with try/catch, returns {status, value/reason} dictionary.
     /// Uses a single try/catch and converts all exceptions to "rejected" dictionaries.
     /// </summary>
-    private void EmitProcessElementSettledMoveNext(ProcessElementSettledStateMachine sm)
+    private void EmitProcessElementSettledMoveNext(ProcessElementSettledStateMachine sm, EmittedRuntime runtime)
     {
         var il = sm.MoveNextMethod.GetILGenerator();
         var dictType = typeof(Dictionary<string, object?>);
@@ -228,7 +228,9 @@ public partial class RuntimeEmitter
         il.BeginCatchBlock(typeof(Exception));
         il.Emit(OpCodes.Stloc, exceptionLocal);
 
-        // Create Dictionary { ["status"] = "rejected", ["reason"] = ex.Message }
+        // Create Dictionary { ["status"] = "rejected", ["reason"] = WrapException(ex) }
+        // — the guest rejection value (thrown error object / rejection reason),
+        // not the host exception's Message string (#232).
         il.Emit(OpCodes.Newobj, dictType.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, dictLocal);
 
@@ -240,7 +242,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ldstr, "reason");
         il.Emit(OpCodes.Ldloc, exceptionLocal);
-        il.Emit(OpCodes.Callvirt, typeof(Exception).GetProperty("Message")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.WrapException);
         il.Emit(OpCodes.Callvirt, dictType.GetMethod("set_Item")!);
 
         il.Emit(OpCodes.Ldloc, dictLocal);

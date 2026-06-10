@@ -1566,7 +1566,78 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             return true;
         }
 
+        // Built-in constructor identifiers used as values (#232): without these
+        // arms, state-machine bodies (async/generator MoveNext emitters, which
+        // don't run ILEmitter's EmitVariable) emit null for `Error`, `Date`,
+        // `Map`, … — so `e instanceof Error` inside an async function was
+        // always false. Positioned after the user-variable checks so local
+        // shadowing wins, mirroring ILEmitter's resolution order.
+        if (TryEmitErrorTypeToken(name)) return true;
+        if (TryEmitBuiltInClassType(name)) return true;
+
         return false;
+    }
+
+    /// <summary>
+    /// Resolves a built-in Error constructor name (Error, TypeError, …,
+    /// AggregateError) by emitting the matching emitted-runtime Type token.
+    /// The InstanceOf runtime helper uses Type.IsAssignableFrom against it.
+    /// </summary>
+    protected bool TryEmitErrorTypeToken(string name)
+    {
+        if (!Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(name)) return false;
+        var errorType = name switch
+        {
+            "Error" => Ctx.Runtime!.TSErrorType,
+            "TypeError" => Ctx.Runtime!.TSTypeErrorType,
+            "RangeError" => Ctx.Runtime!.TSRangeErrorType,
+            "ReferenceError" => Ctx.Runtime!.TSReferenceErrorType,
+            "SyntaxError" => Ctx.Runtime!.TSSyntaxErrorType,
+            "URIError" => Ctx.Runtime!.TSURIErrorType,
+            "EvalError" => Ctx.Runtime!.TSEvalErrorType,
+            "AggregateError" => Ctx.Runtime!.TSAggregateErrorType,
+            _ => Ctx.Runtime!.TSErrorType
+        };
+        IL.Emit(OpCodes.Ldtoken, errorType);
+        IL.Emit(OpCodes.Call, Types.GetMethod(Types.Type, "GetTypeFromHandle", Types.RuntimeTypeHandle));
+        SetStackUnknown();
+        return true;
+    }
+
+    /// <summary>
+    /// Resolves a bare reference to a built-in global class name (Date, Map,
+    /// Set, etc.) by emitting the matching .NET Type token. The InstanceOf
+    /// runtime helper then uses Type.IsAssignableFrom to check membership
+    /// against `new X()` instances, so `instanceof Date` works whether the
+    /// user is in script code or inside an embedded stdlib module.
+    /// </summary>
+    protected bool TryEmitBuiltInClassType(string name)
+    {
+        Type? t = name switch
+        {
+            "Date" => Ctx.Runtime!.TSDateType,
+            "RegExp" => Ctx.Runtime!.TSRegExpType,
+            "TextEncoder" => Ctx.Runtime!.TSTextEncoderType,
+            "TextDecoder" => Ctx.Runtime!.TSTextDecoderType,
+            "Buffer" => Ctx.Runtime!.TSBufferType,
+            "Array" => Types.IListOfObject, // covers both List<object> and $Array
+            "Map" => Types.DictionaryObjectObject,
+            "Set" => Types.HashSetOfObject,
+            "WeakMap" => Types.ConditionalWeakTableObjectObject,
+            "WeakSet" => Types.ConditionalWeakTableObjectObject,
+            "Promise" => Types.TaskOfObject,
+            "Function" => Ctx.Runtime!.TSFunctionType,
+            // Symbol (#234): the value-form $TSSymbol token. ILEmitter handles
+            // bare Symbol in its own pseudo-variable arm; this entry covers the
+            // state-machine emitters that resolve through this base path.
+            "Symbol" => Ctx.Runtime!.TSSymbolType,
+            _ => null
+        };
+        if (t == null) return false;
+        IL.Emit(OpCodes.Ldtoken, t);
+        IL.Emit(OpCodes.Call, Types.GetMethod(Types.Type, "GetTypeFromHandle", Types.RuntimeTypeHandle));
+        SetStackUnknown();
+        return true;
     }
 
     /// <summary>

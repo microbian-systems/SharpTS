@@ -281,25 +281,8 @@ public partial class ILEmitter
         }
 
         // Check if it's a built-in Error constructor — push the emitted Type object
-        if (Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(name))
-        {
-            var errorType = name switch
-            {
-                "Error" => _ctx.Runtime!.TSErrorType,
-                "TypeError" => _ctx.Runtime!.TSTypeErrorType,
-                "RangeError" => _ctx.Runtime!.TSRangeErrorType,
-                "ReferenceError" => _ctx.Runtime!.TSReferenceErrorType,
-                "SyntaxError" => _ctx.Runtime!.TSSyntaxErrorType,
-                "URIError" => _ctx.Runtime!.TSURIErrorType,
-                "EvalError" => _ctx.Runtime!.TSEvalErrorType,
-                "AggregateError" => _ctx.Runtime!.TSAggregateErrorType,
-                _ => _ctx.Runtime!.TSErrorType
-            };
-            IL.Emit(OpCodes.Ldtoken, errorType);
-            IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Type, "GetTypeFromHandle", _ctx.Types.RuntimeTypeHandle));
-            SetStackUnknown();
+        if (TryEmitErrorTypeToken(name))
             return;
-        }
 
         // Built-in classes referenced as values (e.g. `instanceof Date`,
         // `x === Map`, passing Date as an arg). Emit the .NET Type object for
@@ -333,37 +316,9 @@ public partial class ILEmitter
         EmitNullConstant();
     }
 
-    /// <summary>
-    /// Resolves a bare reference to a built-in global class name (Date, Map,
-    /// Set, etc.) by emitting the matching .NET Type token. The InstanceOf
-    /// runtime helper then uses Type.IsAssignableFrom to check membership
-    /// against `new X()` instances, so `instanceof Date` works whether the
-    /// user is in script code or inside an embedded stdlib module.
-    /// </summary>
-    private bool TryEmitBuiltInClassType(string name)
-    {
-        Type? t = name switch
-        {
-            "Date" => _ctx.Runtime!.TSDateType,
-            "RegExp" => _ctx.Runtime!.TSRegExpType,
-            "TextEncoder" => _ctx.Runtime!.TSTextEncoderType,
-            "TextDecoder" => _ctx.Runtime!.TSTextDecoderType,
-            "Buffer" => _ctx.Runtime!.TSBufferType,
-            "Array" => _ctx.Types.IListOfObject, // covers both List<object> and $Array
-            "Map" => _ctx.Types.DictionaryObjectObject,
-            "Set" => _ctx.Types.HashSetOfObject,
-            "WeakMap" => _ctx.Types.ConditionalWeakTableObjectObject,
-            "WeakSet" => _ctx.Types.ConditionalWeakTableObjectObject,
-            "Promise" => _ctx.Types.TaskOfObject,
-            "Function" => _ctx.Runtime!.TSFunctionType,
-            _ => null
-        };
-        if (t == null) return false;
-        IL.Emit(OpCodes.Ldtoken, t);
-        IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.Type, "GetTypeFromHandle", _ctx.Types.RuntimeTypeHandle));
-        SetStackUnknown();
-        return true;
-    }
+    // TryEmitBuiltInClassType and TryEmitErrorTypeToken are inherited from
+    // ExpressionEmitterBase so state-machine emitters resolve built-in
+    // constructor identifiers identically (#232).
 
     // IsKnownVariable is inherited from ExpressionEmitterBase
 
