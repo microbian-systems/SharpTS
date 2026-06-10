@@ -354,10 +354,10 @@ public class SharpTSKeyObject : ISharpTSPropertyAccessor
                 ? (double?)_symmetricKey!.Length
                 : null,
 
-            "export" => new BuiltInMethod("export", 0, 1, (interp, recv, args) =>
+            "export" => BuiltInMethod.CreateV2("export", 0, 1, (_, _, args) =>
             {
                 // For interpreter, pass the options object directly to Export
-                return Export(args.Count > 0 ? args[0] : null);
+                return RuntimeValue.FromBoxed(Export(args.Length > 0 ? args[0].ToObject() : null));
             }),
 
             _ => null

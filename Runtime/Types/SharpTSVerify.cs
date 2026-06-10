@@ -154,28 +154,28 @@ public class SharpTSVerify
     {
         return name switch
         {
-            "update" => new BuiltInMethod("update", 1, (interp, recv, args) =>
+            "update" => BuiltInMethod.CreateV2("update", 1, (_, _, args) =>
             {
-                if (args.Count > 0)
+                if (args.Length > 0)
                 {
-                    if (args[0] is string data)
-                        return Update(data);
-                    if (args[0] is SharpTSBuffer buf)
-                        return Update(buf.Data);
+                    if (args[0].IsString)
+                        return RuntimeValue.FromBoxed(Update(args[0].AsStringUnsafe()));
+                    if (args[0].ToObject() is SharpTSBuffer buf)
+                        return RuntimeValue.FromBoxed(Update(buf.Data));
                 }
-                return this;
+                return RuntimeValue.FromObject(this);
             }),
-            "verify" => new BuiltInMethod("verify", 2, 3, (interp, recv, args) =>
+            "verify" => BuiltInMethod.CreateV2("verify", 2, 3, (_, _, args) =>
             {
-                if (args.Count < 2)
+                if (args.Length < 2)
                     throw new ArgumentException("verify() requires public key and signature arguments");
 
-                var signatureEncoding = args.Count > 2 ? args[2]?.ToString() : null;
+                var signatureEncoding = args.Length > 2 ? args[2].ToObject()?.ToString() : null;
 
-                if (args[0] is string keyPem)
-                    return Verify(keyPem, args[1]!, signatureEncoding);
-                if (args[0] is SharpTSObject keyObj)
-                    return Verify(keyObj, args[1]!, signatureEncoding);
+                if (args[0].IsString)
+                    return RuntimeValue.FromBoxed(Verify(args[0].AsStringUnsafe(), args[1].ToObject()!, signatureEncoding));
+                if (args[0].ToObject() is SharpTSObject keyObj)
+                    return RuntimeValue.FromBoxed(Verify(keyObj, args[1].ToObject()!, signatureEncoding));
 
                 throw new ArgumentException("verify() key must be a string or object");
             }),

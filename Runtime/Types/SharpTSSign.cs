@@ -149,28 +149,28 @@ public class SharpTSSign
     {
         return name switch
         {
-            "update" => new BuiltInMethod("update", 1, (interp, recv, args) =>
+            "update" => BuiltInMethod.CreateV2("update", 1, (_, _, args) =>
             {
-                if (args.Count > 0)
+                if (args.Length > 0)
                 {
-                    if (args[0] is string data)
-                        return Update(data);
-                    if (args[0] is SharpTSBuffer buf)
-                        return Update(buf.Data);
+                    if (args[0].IsString)
+                        return RuntimeValue.FromBoxed(Update(args[0].AsStringUnsafe()));
+                    if (args[0].ToObject() is SharpTSBuffer buf)
+                        return RuntimeValue.FromBoxed(Update(buf.Data));
                 }
-                return this;
+                return RuntimeValue.FromObject(this);
             }),
-            "sign" => new BuiltInMethod("sign", 1, 2, (interp, recv, args) =>
+            "sign" => BuiltInMethod.CreateV2("sign", 1, 2, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new ArgumentException("sign() requires a private key argument");
 
-                var encoding = args.Count > 1 ? args[1]?.ToString() : null;
+                var encoding = args.Length > 1 ? args[1].ToObject()?.ToString() : null;
 
-                if (args[0] is string keyPem)
-                    return Sign(keyPem, encoding);
-                if (args[0] is SharpTSObject keyObj)
-                    return Sign(keyObj, encoding);
+                if (args[0].IsString)
+                    return RuntimeValue.FromBoxed(Sign(args[0].AsStringUnsafe(), encoding));
+                if (args[0].ToObject() is SharpTSObject keyObj)
+                    return RuntimeValue.FromBoxed(Sign(keyObj, encoding));
 
                 throw new ArgumentException("sign() key must be a string or object");
             }),
