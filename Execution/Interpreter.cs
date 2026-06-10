@@ -734,14 +734,30 @@ public partial class Interpreter : IDisposable
     /// This provides Node.js-compatible single-threaded semantics where all user callbacks
     /// execute on the main thread, while I/O operations run on the ThreadPool.
     /// </remarks>
+    /// <summary>
+    /// Installs the interpreter's SynchronizationContext on the current thread so
+    /// async/await continuations post back to the event loop queue instead of
+    /// resuming on thread-pool threads. Continuations that escape to the thread
+    /// pool race the main thread over the ambient environment, which surfaces as
+    /// spurious "Undefined variable" errors in then-callbacks. Must be installed
+    /// before the FIRST top-level statement runs — promise chains started at module
+    /// top level capture whatever context is current at their first await.
+    /// Returns the previous context; callers restore it when execution finishes.
+    /// </summary>
+    private SynchronizationContext? InstallEventLoopSyncContext()
+    {
+        _eventLoopSyncContext ??= new InterpreterSynchronizationContext(EnqueueCallback);
+        var previous = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(_eventLoopSyncContext);
+        return previous;
+    }
+
     public void RunEventLoop()
     {
-        // Set up SynchronizationContext so async/await continuations come back to this thread.
-        // InterpretModules also sets this up earlier so module-init awaits have the correct
-        // context; this assignment is idempotent for the nested case.
-        _eventLoopSyncContext ??= new InterpreterSynchronizationContext(EnqueueCallback);
-        var previousSyncContext = SynchronizationContext.Current;
-        SynchronizationContext.SetSynchronizationContext(_eventLoopSyncContext);
+        // Set up SynchronizationContext so async/await continuations come back to this
+        // thread. Interpret/InterpretModules also set this up earlier so top-level
+        // awaits have the correct context; this assignment is idempotent for that case.
+        var previousSyncContext = InstallEventLoopSyncContext();
 
         try
         {
@@ -1023,6 +1039,7 @@ public partial class Interpreter : IDisposable
         _typeMap = typeMap;
         LastUncaughtError = null;
         ProcessBuiltIns.ResetScriptStartTime();
+        var previousSyncContext = InstallEventLoopSyncContext();
         try
         {
             // Check for "use strict" directive at file level
@@ -1086,6 +1103,10 @@ public partial class Interpreter : IDisposable
         {
             Out.WriteLine($"Runtime Error: {error.Message}");
             throw;
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousSyncContext);
         }
     }
 
@@ -1189,6 +1210,7 @@ public partial class Interpreter : IDisposable
             EntryModulePath = modules[^1].Path;
         }
 
+        var previousSyncContext = InstallEventLoopSyncContext();
         try
         {
             // Create a shared script environment for script files (they share global scope)
@@ -1243,6 +1265,10 @@ public partial class Interpreter : IDisposable
         {
             Out.WriteLine($"Runtime Error: {error.Message}");
             throw;
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousSyncContext);
         }
     }
 

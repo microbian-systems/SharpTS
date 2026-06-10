@@ -801,4 +801,40 @@ public class AsyncAwaitTests
     }
 
     #endregion
+
+    #region Top-level then-continuations stay on the event loop (#238)
+
+    /// <summary>
+    /// #238: a then-chain started at module top level must have its continuation
+    /// run on the interpreter's event loop. Before the fix, the continuation
+    /// captured a null SynchronizationContext (it was installed only in
+    /// RunEventLoop, after top-level statements), resumed on a thread-pool
+    /// thread, and raced the main thread's ambient environment — surfacing as
+    /// "Undefined variable 'v'" for the callback's own parameter, or as
+    /// silently missing output.
+    /// </summary>
+    /// <remarks>
+    /// Interpreter-only: in compiled mode a top-level <c>p.then(...)</c>
+    /// expression statement blocks on the promise at the entry point, so a
+    /// resolve that happens in a later statement would deadlock — a separate
+    /// known compiled-mode behavior, not what this test pins.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void TopLevelThen_ResolvedLater_RunsCallbackWithItsParameter(ExecutionMode mode)
+    {
+        var source = """
+            let resolveFn: any;
+            const p = new Promise((resolve) => { resolveFn = resolve; });
+            p.then((v: any) => console.log("then:", v.tag));
+            resolveFn({ tag: "ok" });
+            console.log("end");
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Contains("then: ok", output);
+        Assert.Contains("end", output);
+    }
+
+    #endregion
 }
