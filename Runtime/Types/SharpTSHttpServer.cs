@@ -344,16 +344,18 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
 
         if (_listener == null) return null;
 
-        var prefix = _listener.Prefixes.FirstOrDefault();
-        if (prefix == null) return null;
-
-        // Parse the prefix to extract port
-        var uri = new Uri(prefix);
+        // Report the tracked port directly. Parsing the listener prefix with
+        // new Uri(...) throws "Invalid URI: The hostname could not be parsed"
+        // for the wildcard form "http://+:port/" — which is exactly what
+        // Listen registers on Linux/macOS (the wildcard only fails on Windows
+        // without admin rights, where the 127.0.0.1 fallback kicks in).
+        // _port is authoritative: listen(0) replaces it with the probed
+        // ephemeral port before HttpListener starts (#214).
         return new SharpTSObject(new Dictionary<string, object?>
         {
             ["address"] = "0.0.0.0",
             ["family"] = "IPv4",
-            ["port"] = (double)uri.Port
+            ["port"] = (double)_port
         });
     }
 
