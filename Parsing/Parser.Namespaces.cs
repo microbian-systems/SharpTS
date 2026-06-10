@@ -130,9 +130,15 @@ public partial class Parser
             bool isGenerator = Match(TokenType.STAR);
             return WrapIfExported(FunctionDeclaration("function", isAsync: false, isGenerator: isGenerator), isExported);
         }
-        if (Match(TokenType.LET) || Match(TokenType.VAR))
+        if (Match(TokenType.LET))
         {
             return WrapIfExported(VarDeclaration(), isExported);
+        }
+        if (Match(TokenType.VAR))
+        {
+            // `var` must carry IsVar so it participates in var hoisting (self-referential
+            // annotations/initializers like `var a: { foo: typeof a }` need the name pre-defined).
+            return WrapIfExported(VarDeclaration(isConst: false, isVar: true), isExported);
         }
 
         // Namespace bodies may also contain ordinary statements (e.g. `s = t;` expression

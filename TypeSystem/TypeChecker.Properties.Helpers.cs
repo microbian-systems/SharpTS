@@ -141,15 +141,13 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo CheckGetOnEnum(TypeInfo.Enum enumType, Token memberName)
     {
-        if (enumType.Members.TryGetValue(memberName.Lexeme, out var memberValue))
+        if (enumType.Members.ContainsKey(memberName.Lexeme))
         {
-            return memberValue switch
-            {
-                double => new TypeInfo.Primitive(TokenType.TYPE_NUMBER),
-                string => new TypeInfo.String(),
-                // SharpTS-only: internal invariant
-                _ => throw new TypeCheckException($" Unexpected enum member type for '{memberName.Lexeme}'.")
-            };
+            // An enum member access is typed as the ENUM (tsc types `E.A` as the literal type
+            // `E.A`, assignable to `E` but not to other enums or from arbitrary numbers) — not as
+            // the member's underlying primitive. The enum-as-actual compatibility rules still let
+            // it flow into number/string positions.
+            return enumType;
         }
         throw new TypeCheckException($" '{memberName.Lexeme}' does not exist on enum '{enumType.Name}'.", tsCode: "TS2339");
     }

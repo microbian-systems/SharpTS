@@ -912,8 +912,10 @@ public partial class TypeChecker
             matchingSignatures = subtypeMatches;
         }
 
-        // If multiple signatures match, select the most specific one
-        TypeInfo.Function bestMatch = SelectMostSpecificOverload(matchingSignatures, argTypes);
+        // tsc takes the FIRST matching overload in declaration order (that's why overloads are
+        // conventionally ordered most-specific first) — `foo16(e)` against `(x: Object)` then
+        // `(x: E)` resolves to Object, not the more specific E.
+        TypeInfo.Function bestMatch = matchingSignatures[0];
 
         return bestMatch.ReturnType;
     }
@@ -1003,8 +1005,10 @@ public partial class TypeChecker
             matchingSignatures = subtypeMatches;
         }
 
-        // If multiple signatures match, select the most specific one
-        TypeInfo.Function bestMatch = SelectMostSpecificOverload(matchingSignatures, argTypes);
+        // tsc takes the FIRST matching overload in declaration order (that's why overloads are
+        // conventionally ordered most-specific first) — `foo16(e)` against `(x: Object)` then
+        // `(x: E)` resolves to Object, not the more specific E.
+        TypeInfo.Function bestMatch = matchingSignatures[0];
 
         return bestMatch.ReturnType;
     }
