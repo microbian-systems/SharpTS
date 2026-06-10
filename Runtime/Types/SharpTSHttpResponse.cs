@@ -81,51 +81,51 @@ public class SharpTSHttpResponse : SharpTSWritable
             "socket" => (object?)null,
 
             // HTTP-specific methods
-            "writeHead" => new BuiltInMethod("writeHead", 1, 3, (interp, receiver, args) =>
+            "writeHead" => BuiltInMethod.CreateV2("writeHead", 1, 3, (interp, receiver, args) =>
             {
-                if (receiver is SharpTSHttpResponse res) return res.WriteHead(interp, args);
+                if (receiver.ToObject() is SharpTSHttpResponse res) return res.WriteHead(interp, args);
                 return receiver;
             }).Bind(this),
-            "write" => new BuiltInMethod("write", 1, 3, (interp, receiver, args) =>
+            "write" => BuiltInMethod.CreateV2("write", 1, 3, (interp, receiver, args) =>
             {
-                if (receiver is SharpTSHttpResponse res) return res.WriteData(interp, args);
-                return true;
+                if (receiver.ToObject() is SharpTSHttpResponse res) return res.WriteData(interp, args);
+                return RuntimeValue.True;
             }).Bind(this),
-            "end" => new BuiltInMethod("end", 0, 3, (interp, receiver, args) =>
+            "end" => BuiltInMethod.CreateV2("end", 0, 3, (interp, receiver, args) =>
             {
-                if (receiver is SharpTSHttpResponse res) return res.EndResponse(interp, args);
+                if (receiver.ToObject() is SharpTSHttpResponse res) return res.EndResponse(interp, args);
                 return receiver;
             }).Bind(this),
-            "setHeader" => new BuiltInMethod("setHeader", 2, (interp, receiver, args) =>
+            "setHeader" => BuiltInMethod.CreateV2("setHeader", 2, (_, receiver, args) =>
             {
-                if (receiver is SharpTSHttpResponse res) return res.SetHeader(args);
+                if (receiver.ToObject() is SharpTSHttpResponse res) return res.SetHeader(args);
                 return receiver;
             }).Bind(this),
-            "getHeader" => new BuiltInMethod("getHeader", 1, (interp, receiver, args) =>
+            "getHeader" => BuiltInMethod.CreateV2("getHeader", 1, (_, receiver, args) =>
             {
-                if (receiver is SharpTSHttpResponse res) return res.GetHeader(args);
-                return SharpTSUndefined.Instance;
+                if (receiver.ToObject() is SharpTSHttpResponse res) return res.GetHeader(args);
+                return RuntimeValue.Undefined;
             }).Bind(this),
-            "removeHeader" => new BuiltInMethod("removeHeader", 1, (interp, receiver, args) =>
+            "removeHeader" => BuiltInMethod.CreateV2("removeHeader", 1, (_, receiver, args) =>
             {
-                if (receiver is SharpTSHttpResponse res) return res.RemoveHeader(args);
+                if (receiver.ToObject() is SharpTSHttpResponse res) return res.RemoveHeader(args);
                 return receiver;
             }).Bind(this),
-            "getHeaderNames" => new BuiltInMethod("getHeaderNames", 0, (interp, receiver, args) =>
+            "getHeaderNames" => BuiltInMethod.CreateV2("getHeaderNames", 0, (_, _, _) =>
             {
-                return new SharpTSArray(_pendingHeaders.Keys.Select(k => (object?)k.ToLowerInvariant()).ToList());
+                return RuntimeValue.FromObject(new SharpTSArray(_pendingHeaders.Keys.Select(k => (object?)k.ToLowerInvariant()).ToList()));
             }).Bind(this),
-            "hasHeader" => new BuiltInMethod("hasHeader", 1, (interp, receiver, args) =>
+            "hasHeader" => BuiltInMethod.CreateV2("hasHeader", 1, (_, _, args) =>
             {
-                var headerName = args.Count > 0 ? args[0]?.ToString() : null;
-                return headerName != null && _pendingHeaders.ContainsKey(headerName);
+                var headerName = args.Length > 0 ? args[0].ToObject()?.ToString() : null;
+                return RuntimeValue.FromBoolean(headerName != null && _pendingHeaders.ContainsKey(headerName));
             }).Bind(this),
-            "flushHeaders" => new BuiltInMethod("flushHeaders", 0, (interp, receiver, args) =>
+            "flushHeaders" => BuiltInMethod.CreateV2("flushHeaders", 0, (_, _, _) =>
             {
                 FlushHeaders();
-                return null;
+                return RuntimeValue.Null;
             }).Bind(this),
-            "writeContinue" => new BuiltInMethod("writeContinue", 0, (interp, receiver, args) => null).Bind(this),
+            "writeContinue" => BuiltInMethod.CreateV2("writeContinue", 0, (_, _, _) => RuntimeValue.Null).Bind(this),
 
             // Inherit Writable stream methods (on, once, cork, uncork, etc.)
             _ => base.GetMember(name)
@@ -156,26 +156,26 @@ public class SharpTSHttpResponse : SharpTSWritable
     /// <summary>
     /// Writes the status code and headers.
     /// </summary>
-    private object? WriteHead(Interpreter interpreter, List<object?> args)
+    private RuntimeValue WriteHead(Interpreter interpreter, ReadOnlySpan<RuntimeValue> args)
     {
         if (_headersSent)
             throw new Exception("Runtime Error: Cannot call writeHead after headers have been sent");
 
-        if (args.Count == 0 || args[0] is not double statusCode)
+        if (args.Length == 0 || !args[0].IsNumber)
             throw new Exception("Runtime Error: writeHead requires a status code");
 
-        _response.StatusCode = (int)statusCode;
+        _response.StatusCode = (int)args[0].AsNumberUnsafe();
 
         // Optional status message (string as second arg)
         int headersArgIdx = 1;
-        if (args.Count > 1 && args[1] is string statusMsg)
+        if (args.Length > 1 && args[1].IsString)
         {
-            _response.StatusDescription = statusMsg;
+            _response.StatusDescription = args[1].AsStringUnsafe();
             headersArgIdx = 2;
         }
 
         // Optional headers
-        if (args.Count > headersArgIdx && args[headersArgIdx] is SharpTSObject headers)
+        if (args.Length > headersArgIdx && args[headersArgIdx].ToObject() is SharpTSObject headers)
         {
             foreach (var kv in headers.Fields)
             {
@@ -183,23 +183,23 @@ public class SharpTSHttpResponse : SharpTSWritable
             }
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Writes data to the response body.
     /// </summary>
-    private object? WriteData(Interpreter interpreter, List<object?> args)
+    private RuntimeValue WriteData(Interpreter interpreter, ReadOnlySpan<RuntimeValue> args)
     {
         if (_finished)
             throw new Exception("Runtime Error: Cannot write after response has ended");
 
-        if (args.Count == 0) return true;
+        if (args.Length == 0) return RuntimeValue.True;
 
         byte[] data;
-        var encoding = args.Count > 1 && args[1] is string enc ? enc : "utf8";
+        var encoding = args.Length > 1 && args[1].IsString ? args[1].AsStringUnsafe() : "utf8";
 
-        switch (args[0])
+        switch (args[0].ToObject())
         {
             case string str:
                 data = GetEncoding(encoding).GetBytes(str);
@@ -208,7 +208,7 @@ public class SharpTSHttpResponse : SharpTSWritable
                 data = buffer.Data;
                 break;
             default:
-                data = Encoding.UTF8.GetBytes(args[0]?.ToString() ?? "");
+                data = Encoding.UTF8.GetBytes(args[0].ToObject()?.ToString() ?? "");
                 break;
         }
 
@@ -216,22 +216,22 @@ public class SharpTSHttpResponse : SharpTSWritable
 
         // Call write callback if provided
         ISharpTSCallable? callback = null;
-        if (args.Count > 1 && args[1] is ISharpTSCallable cb1) callback = cb1;
-        if (args.Count > 2 && args[2] is ISharpTSCallable cb2) callback = cb2;
+        if (args.Length > 1 && args[1].ToObject() is ISharpTSCallable cb1) callback = cb1;
+        if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb2) callback = cb2;
         callback?.Call(interpreter, []);
 
-        return true;
+        return RuntimeValue.True;
     }
 
     /// <summary>
     /// Ends the response, optionally writing final data.
     /// </summary>
-    private object? EndResponse(Interpreter interpreter, List<object?> args)
+    private RuntimeValue EndResponse(Interpreter interpreter, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_finished) return this;
+        if (_finished) return RuntimeValue.FromObject(this);
 
         // Write any final data
-        if (args.Count > 0 && args[0] != null && args[0] is not ISharpTSCallable)
+        if (args.Length > 0 && args[0].ToObject() is { } first && first is not ISharpTSCallable)
         {
             WriteData(interpreter, args);
         }
@@ -261,7 +261,7 @@ public class SharpTSHttpResponse : SharpTSWritable
         ISharpTSCallable? callback = null;
         foreach (var arg in args)
         {
-            if (arg is ISharpTSCallable cb) { callback = cb; break; }
+            if (arg.ToObject() is ISharpTSCallable cb) { callback = cb; break; }
         }
         callback?.Call(interpreter, []);
 
@@ -270,62 +270,62 @@ public class SharpTSHttpResponse : SharpTSWritable
         // Emit 'close' event
         EmitEvent(interpreter, "close", []);
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Sets a single header value.
     /// </summary>
-    private object? SetHeader(List<object?> args)
+    private RuntimeValue SetHeader(ReadOnlySpan<RuntimeValue> args)
     {
         if (_headersSent)
             throw new Exception("Runtime Error: Cannot set header after headers have been sent");
 
-        if (args.Count < 2)
+        if (args.Length < 2)
             throw new Exception("Runtime Error: setHeader requires name and value");
 
-        var name = args[0]?.ToString() ?? throw new Exception("Runtime Error: header name must be a string");
-        var value = args[1]?.ToString() ?? "";
+        var name = args[0].ToObject()?.ToString() ?? throw new Exception("Runtime Error: header name must be a string");
+        var value = args[1].ToObject()?.ToString() ?? "";
 
         _pendingHeaders[name] = value;
         SetResponseHeader(name, value);
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Gets a header value.
     /// </summary>
-    private object? GetHeader(List<object?> args)
+    private RuntimeValue GetHeader(ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0) return SharpTSUndefined.Instance;
+        if (args.Length == 0) return RuntimeValue.Undefined;
 
-        var name = args[0]?.ToString();
-        if (name == null) return SharpTSUndefined.Instance;
+        var name = args[0].ToObject()?.ToString();
+        if (name == null) return RuntimeValue.Undefined;
 
         if (_pendingHeaders.TryGetValue(name, out var val))
-            return val;
+            return RuntimeValue.FromString(val);
 
         var headerValue = _response.Headers[name];
-        return string.IsNullOrEmpty(headerValue) ? SharpTSUndefined.Instance : (object)headerValue;
+        return string.IsNullOrEmpty(headerValue) ? RuntimeValue.Undefined : RuntimeValue.FromString(headerValue);
     }
 
     /// <summary>
     /// Removes a header.
     /// </summary>
-    private object? RemoveHeader(List<object?> args)
+    private RuntimeValue RemoveHeader(ReadOnlySpan<RuntimeValue> args)
     {
         if (_headersSent)
             throw new Exception("Runtime Error: Cannot remove header after headers have been sent");
 
-        if (args.Count == 0) return this;
+        if (args.Length == 0) return RuntimeValue.FromObject(this);
 
-        var name = args[0]?.ToString();
+        var name = args[0].ToObject()?.ToString();
         if (name != null)
         {
             _pendingHeaders.Remove(name);
             _response.Headers.Remove(name);
         }
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
