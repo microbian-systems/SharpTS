@@ -41,6 +41,17 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable
     }
 
     /// <summary>
+    /// RuntimeValue entry point. Binding is synchronous — the generator body runs
+    /// later from the bound environment, so the span never escapes this frame.
+    /// </summary>
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    {
+        RuntimeEnvironment environment = new(_closure);
+        ParameterBinder.BindRV(_declaration.Parameters ?? [], arguments, environment, interpreter);
+        return RuntimeValue.FromObject(new SharpTSAsyncGenerator(_declaration, environment, interpreter));
+    }
+
+    /// <summary>
     /// Creates a bound version with 'this' set for method calls.
     /// </summary>
     public SharpTSAsyncGeneratorFunction Bind(SharpTSInstance instance)

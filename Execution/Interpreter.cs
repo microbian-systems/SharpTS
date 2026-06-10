@@ -470,7 +470,7 @@ public partial class Interpreter : IDisposable
                 {
                     try
                     {
-                        callback.Call(this, []);
+                        callback.CallV2(this, []);
                     }
                     catch (Exception ex)
                     {
@@ -1249,8 +1249,8 @@ public partial class Interpreter : IDisposable
         var argv = ProcessBuiltIns.GetArgv();
         // Pass argv only if main expects it
         object? result = mainFunc.Parameters.Count == 0
-            ? mainFn.Call(this, [])
-            : mainFn.Call(this, [argv]);
+            ? mainFn.CallV2(this, []).ToObject()
+            : mainFn.CallV2(this, [RuntimeValue.FromBoxed(argv)]).ToObject();
 
         // If result is a Promise, await it
         if (result is SharpTSPromise promise)

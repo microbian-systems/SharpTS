@@ -26,13 +26,17 @@ public sealed class SharpTSGlobalFunction : ISharpTSCallable, ITypeCategorized
     public int Arity() => 0;
 
     public object? Call(Interp interpreter, List<object?> arguments)
+        => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
+
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         // Build ephemeral literal Expr args wrapping the already-evaluated
-        // argument values, then invoke the registered handler.
-        var argExprs = new List<Expr>(arguments.Count);
+        // argument values, then invoke the registered handler. The handler
+        // protocol takes Exprs, so values are boxed into literals either way.
+        var argExprs = new List<Expr>(arguments.Length);
         foreach (var a in arguments)
         {
-            argExprs.Add(new Expr.Literal(a));
+            argExprs.Add(new Expr.Literal(a.ToObject()));
         }
 
         if (GlobalFunctionRegistry.Instance.TryGetHandlerV2(Name, out var handlerV2) && handlerV2 != null)
@@ -41,7 +45,7 @@ public sealed class SharpTSGlobalFunction : ISharpTSCallable, ITypeCategorized
                 expr => ValueTask.FromResult(interpreter.EvaluateRV(expr)),
                 argExprs,
                 interpreter);
-            return task.GetAwaiter().GetResult().ToObject();
+            return task.GetAwaiter().GetResult();
         }
 
         if (GlobalFunctionRegistry.Instance.TryGetHandler(Name, out var handler) && handler != null)
@@ -50,7 +54,7 @@ public sealed class SharpTSGlobalFunction : ISharpTSCallable, ITypeCategorized
                 expr => ValueTask.FromResult(interpreter.Evaluate(expr)),
                 argExprs,
                 interpreter);
-            return task.GetAwaiter().GetResult();
+            return RuntimeValue.FromBoxed(task.GetAwaiter().GetResult());
         }
 
         throw new Exception($"Runtime Error: Global function '{Name}' is not registered.");

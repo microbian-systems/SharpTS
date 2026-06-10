@@ -288,7 +288,7 @@ public partial class Interpreter
         foreach (var expr in tagged.Expressions)
             args.Add(Evaluate(expr));
 
-        return RuntimeValue.FromBoxed(callable.Call(this, args));
+        return callable.CallV2(this, CallableInterop.ToRuntimeValues(args));
     }
 
     /// <summary>
@@ -334,6 +334,7 @@ public partial class Interpreter
     {
         public int Arity() => 0;
         public object? Call(Interpreter interpreter, List<object?> arguments) => null;
+        public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments) => RuntimeValue.Null;
     }
 
     /// <summary>
@@ -774,7 +775,7 @@ public partial class Interpreter
             if (index is SharpTSSymbol fnSym)
             {
                 if (fn.TryGetSymbolAccessor(fnSym, out var symGetter, out _) && symGetter != null)
-                    return RuntimeValue.FromBoxed(symGetter.Call(this, []));
+                    return symGetter.CallV2(this, []);
                 if (fn.TryGetSymbolProperty(fnSym, out var symVal))
                     return RuntimeValue.FromBoxed(symVal ?? SharpTSUndefined.Instance);
             }
@@ -789,7 +790,7 @@ public partial class Interpreter
             if (index is SharpTSSymbol arrSym)
             {
                 if (afn.TryGetSymbolAccessor(arrSym, out var arrGetter, out _) && arrGetter != null)
-                    return RuntimeValue.FromBoxed(arrGetter.Call(this, []));
+                    return arrGetter.CallV2(this, []);
                 if (afn.TryGetSymbolProperty(arrSym, out var arrSymVal))
                     return RuntimeValue.FromBoxed(arrSymVal ?? SharpTSUndefined.Instance);
             }

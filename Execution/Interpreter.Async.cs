@@ -153,7 +153,7 @@ public partial class Interpreter
 
                 // Call the async iterator function
                 if (asyncIteratorFn is ISharpTSCallable callable)
-                    return callable.Call(this, []);
+                    return callable.CallV2(this, []).ToObject();
             }
         }
         else if (iterable is SharpTSInstance inst)
@@ -162,7 +162,7 @@ public partial class Interpreter
             if (asyncIteratorFn != null)
             {
                 if (asyncIteratorFn is ISharpTSCallable callable)
-                    return callable.Call(this, []);
+                    return callable.CallV2(this, []).ToObject();
             }
         }
         return null;
@@ -235,7 +235,7 @@ public partial class Interpreter
                 if (method is SharpTSArrowFunction arrowFunc)
                     method = arrowFunc.Bind(obj);
                 if (method is ISharpTSCallable callable)
-                    return callable.Call(this, args);
+                    return callable.CallV2(this, CallableInterop.ToRuntimeValues(args)).ToObject();
             }
         }
         else if (target is SharpTSInstance inst)
@@ -245,7 +245,7 @@ public partial class Interpreter
             if (method != null)
             {
                 var bound = SharpTSClass.BindMethod(method, inst);
-                return bound.Call(this, args);
+                return bound.CallV2(this, CallableInterop.ToRuntimeValues(args)).ToObject();
             }
         }
         else if (target is SharpTSGenerator gen)
@@ -570,7 +570,7 @@ public partial class Interpreter
                 if (member is BuiltInMethod bm && bm.MinArity == 0 && bm.MaxArity == 0)
                 {
                     // It's a constant property, invoke it to get the value
-                    return RuntimeValue.FromBoxed(bm.Call(this, []));
+                    return bm.CallV2(this, []);
                 }
                 return RuntimeValue.FromObject(member);
             }
@@ -757,7 +757,7 @@ public partial class Interpreter
         foreach (var expr in tagged.Expressions)
             args.Add((await EvaluateAsync(expr)).ToObject());
 
-        return RuntimeValue.FromBoxed(callable.Call(this, args));
+        return callable.CallV2(this, CallableInterop.ToRuntimeValues(args));
     }
 
     // Helper methods for index operations

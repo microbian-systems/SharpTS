@@ -43,6 +43,17 @@ public class SharpTSGeneratorFunction : ISharpTSCallable
     }
 
     /// <summary>
+    /// RuntimeValue entry point. Parameter binding happens synchronously before this
+    /// returns; only the bound environment outlives the call, so the span never escapes.
+    /// </summary>
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    {
+        RuntimeEnvironment environment = new(_closure);
+        ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
+        return RuntimeValue.FromObject(new SharpTSGenerator(_declaration, environment, interpreter));
+    }
+
+    /// <summary>
     /// Creates a bound version with 'this' set for method calls.
     /// </summary>
     public SharpTSGeneratorFunction Bind(SharpTSInstance instance)
@@ -107,6 +118,20 @@ public class SharpTSArrowGeneratorFunction : ISharpTSCallable
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         return new SharpTSArrowGenerator(_declaration, environment, interpreter);
+    }
+
+    /// <summary>
+    /// RuntimeValue entry point — see <see cref="SharpTSGeneratorFunction.CallV2"/>.
+    /// </summary>
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    {
+        RuntimeEnvironment environment = new(_closure);
+        if (_declaration.Name != null)
+        {
+            environment.Define(_declaration.Name.Lexeme, this);
+        }
+        ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
+        return RuntimeValue.FromObject(new SharpTSArrowGenerator(_declaration, environment, interpreter));
     }
 
     /// <summary>

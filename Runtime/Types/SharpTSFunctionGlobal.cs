@@ -71,6 +71,12 @@ public sealed class SharpTSFunctionProtoToString : ISharpTSCallable
         return target?.ToString() ?? "function () { [native code] }";
     }
 
+    public RuntimeValue CallV2(Execution.Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    {
+        var target = _boundThis ?? (arguments.Length > 0 ? arguments[0].ToObject() : null);
+        return RuntimeValue.FromString(target?.ToString() ?? "function () { [native code] }");
+    }
+
     public SharpTSFunctionProtoToString BindTo(object? thisArg) => new(thisArg);
 
     public override string ToString() => "function toString() { [native code] }";
