@@ -675,8 +675,15 @@ public partial class Interpreter
     private async ValueTask<object?> EvaluateArrayCore(IEvaluationContext ctx, Expr.ArrayLiteral array)
     {
         var evaluated = new List<(bool isSpread, object? value)>();
-        foreach (var e in array.Elements)
+        for (int i = 0; i < array.Elements.Count; i++)
         {
+            // Elided positions ([1, , 3]) become true holes, not undefined elements.
+            if (array.IsHole(i))
+            {
+                evaluated.Add((false, ArrayHole.Instance));
+                continue;
+            }
+            var e = array.Elements[i];
             var isSpread = e is Expr.Spread;
             var value = (await ctx.EvaluateExprAsync(isSpread ? ((Expr.Spread)e).Expression : e)).ToObject();
             evaluated.Add((isSpread, value));
@@ -696,8 +703,15 @@ public partial class Interpreter
     private RuntimeValue EvaluateArray(Expr.ArrayLiteral array)
     {
         var evaluated = new List<(bool isSpread, object? value)>();
-        foreach (var e in array.Elements)
+        for (int i = 0; i < array.Elements.Count; i++)
         {
+            // Elided positions ([1, , 3]) become true holes, not undefined elements.
+            if (array.IsHole(i))
+            {
+                evaluated.Add((false, ArrayHole.Instance));
+                continue;
+            }
+            var e = array.Elements[i];
             var isSpread = e is Expr.Spread;
             var value = Evaluate(isSpread ? ((Expr.Spread)e).Expression : e);
             evaluated.Add((isSpread, value));

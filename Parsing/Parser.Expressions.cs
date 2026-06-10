@@ -750,14 +750,17 @@ public partial class Parser
         if (Match(TokenType.LEFT_BRACKET))
         {
             List<Expr> elements = [];
+            HashSet<int>? holeIndices = null;
             // Array literal supports holes (elisions): [,,1] or [,-0].
             // Leading/interior commas without a preceding element produce
-            // `undefined` holes; a trailing comma does not.
+            // holes (undefined literal + index in HoleIndices); a trailing
+            // comma does not.
             while (!Check(TokenType.RIGHT_BRACKET))
             {
                 if (Match(TokenType.COMMA))
                 {
-                    // Elided slot before anything — push undefined.
+                    // Elided slot before anything — record a hole.
+                    (holeIndices ??= []).Add(elements.Count);
                     elements.Add(new Expr.Literal(SharpTS.Runtime.Types.SharpTSUndefined.Instance));
                     continue;
                 }
@@ -775,7 +778,7 @@ public partial class Parser
                 if (!Match(TokenType.COMMA)) break;
             }
             Consume(TokenType.RIGHT_BRACKET, "Expect ']' after array elements.");
-            return new Expr.ArrayLiteral(elements);
+            return new Expr.ArrayLiteral(elements, holeIndices);
         }
 
         if (Match(TokenType.LEFT_BRACE))

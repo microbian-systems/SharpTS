@@ -123,7 +123,16 @@ public abstract record Expr
     /// Callee can be a Variable (class name), Get (namespace path), or any expression.
     /// </summary>
     public record New(Expr Callee, List<string>? TypeArgs, List<Expr> Arguments) : Expr;
-    public record ArrayLiteral(List<Expr> Elements) : Expr;
+    /// <summary>
+    /// Array literal. Elided positions ([1, , 3]) carry an undefined literal in
+    /// Elements (so the type checker and destructuring see a uniform shape) plus
+    /// their index in HoleIndices so evaluation/emission can produce a true
+    /// ECMA-262 hole instead of an undefined element.
+    /// </summary>
+    public record ArrayLiteral(List<Expr> Elements, IReadOnlySet<int>? HoleIndices = null) : Expr
+    {
+        public bool IsHole(int index) => HoleIndices?.Contains(index) == true;
+    }
     public record ObjectLiteral(List<Property> Properties) : Expr
     {
         /// <summary>
