@@ -1292,16 +1292,17 @@ public static class BuiltInModuleTypes
 
         return new Dictionary<string, TypeInfo>
         {
-            // dns.lookup(hostname, [options]) -> { address, family }
+            // dns.lookup(hostname[, options][, callback]) -> { address, family }
+            // (sync direct-return form when no callback; Node form invokes the callback)
             ["lookup"] = new TypeInfo.Function(
-                [stringType, anyType],
+                [stringType, anyType, anyType],
                 lookupResultType,
                 RequiredParams: 1
             ),
 
-            // dns.lookupService(address, port) -> { hostname, service }
+            // dns.lookupService(address, port[, callback]) -> { hostname, service }
             ["lookupService"] = new TypeInfo.Function(
-                [stringType, numberType],
+                [stringType, numberType, anyType],
                 lookupServiceResultType,
                 RequiredParams: 2
             ),
