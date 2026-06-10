@@ -27,8 +27,23 @@ public static class DnsWireProtocol
 
     private static readonly Random _rng = new();
     private const int DnsPort = 53;
-    private const int TimeoutMs = 5000;
+    private const int DefaultTimeoutMs = 5000;
     private const int MaxRetries = 2;
+
+    /// <summary>
+    /// Per-attempt timeout. SHARPTS_DNS_TIMEOUT_MS overrides the 5s default so
+    /// fake-server tests can exercise the timeout path without waiting
+    /// (1 + MaxRetries) × 5s. The emitted IL wire protocol honors the same
+    /// variable (RuntimeEmitter.Dns.cs, DnsGetTimeoutMs).
+    /// </summary>
+    private static int TimeoutMs
+    {
+        get
+        {
+            var env = Environment.GetEnvironmentVariable("SHARPTS_DNS_TIMEOUT_MS");
+            return env != null && int.TryParse(env, out var ms) && ms > 0 ? ms : DefaultTimeoutMs;
+        }
+    }
 
     /// <summary>
     /// Resolves DNS records of the given type for the hostname.
@@ -175,6 +190,13 @@ public static class DnsWireProtocol
 
                 var response = receiveTask.Result.Buffer;
 
+                // Discard datagrams whose transaction ID doesn't echo the query's
+                // (stale or spoofed response) and retry; if no matching response
+                // ever arrives this falls through to the ETIMEOUT below, like a
+                // resolver that never answered.
+                if (response.Length < 2 || response[0] != query[0] || response[1] != query[1])
+                    continue;
+
                 // Check TC (truncation) bit — byte 2, bit 1
                 if (response.Length >= 3 && (response[2] & 0x02) != 0)
                 {
@@ -270,6 +292,13 @@ public static class DnsWireProtocol
     /// </summary>
     public static string GetSystemDnsServer()
     {
+        // SHARPTS_DNS_SERVER overrides discovery ("host" or "host:port") — lets
+        // tests point the resolver at a loopback fake server. The emitted IL
+        // honors the same variable (RuntimeEmitter.Dns.cs, DnsGetSystemDns).
+        var overrideServer = Environment.GetEnvironmentVariable("SHARPTS_DNS_SERVER");
+        if (!string.IsNullOrEmpty(overrideServer))
+            return overrideServer;
+
         try
         {
             foreach (var ni in NetworkInterface.GetAllNetworkInterfaces())
