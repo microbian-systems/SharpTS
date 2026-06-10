@@ -167,6 +167,31 @@ public partial class Interpreter : IDisposable
                 globals[name] = new SharpTSGlobalFunction(name);
         }
 
+        // Bind value-position globals for built-ins that were previously only
+        // reachable through special-cased `new` expressions or member access
+        // (#208): bare `AbortSignal`/`Intl`/`ReadableStream`/... otherwise
+        // throw "Undefined variable".
+        //
+        // AbortSignal and Intl are namespace-style globals: member access on
+        // SharpTSBuiltInConstructor routes through the namespace registry
+        // (AbortSignal.abort/timeout/any, Intl.NumberFormat/...), while
+        // direct construction throws per spec (AbortSignal has no public
+        // constructor; Intl is not a constructor).
+        globals["AbortSignal"] = new SharpTSBuiltInConstructor("AbortSignal",
+            _ => throw new Exception("Runtime Error: TypeError: AbortSignal cannot be constructed directly. Use AbortSignal.abort(), AbortSignal.timeout(), or AbortController."));
+        globals["Intl"] = new SharpTSBuiltInConstructor("Intl",
+            _ => throw new Exception("Runtime Error: TypeError: Intl is not a constructor."));
+
+        // Web-streams constructors: the same singletons stream/web exports,
+        // so `new ReadableStream(...)`, `ReadableStream.from(...)`, and
+        // value-position references all share one identity.
+        globals[BuiltInNames.ReadableStream] = Runtime.Types.SharpTSReadableStreamConstructor.Instance;
+        globals[BuiltInNames.WritableStream] = Runtime.Types.SharpTSWritableStreamConstructor.Instance;
+        globals[BuiltInNames.TransformStream] = Runtime.Types.SharpTSTransformStreamConstructor.Instance;
+
+        // MessageChannel as a value (construction already worked by name).
+        globals[BuiltInNames.MessageChannel] = WorkerBuiltIns.MessageChannelConstructor;
+
         // Promise needs a bare-reference global so `x instanceof Promise`,
         // `typeof Promise === 'function'`, and stdlib modules that carry
         // Promise as a value can type-check/run. Its namespace is registered

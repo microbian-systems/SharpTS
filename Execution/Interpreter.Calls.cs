@@ -773,6 +773,16 @@ public partial class Interpreter
         if (right is SharpTSBufferConstructor)
             return left is SharpTSBuffer;
 
+        // Web-streams constructor wrapper singletons (the same values
+        // stream/web exports and the ReadableStream/WritableStream/
+        // TransformStream globals bind — #208).
+        if (right is SharpTSReadableStreamConstructor)
+            return left is SharpTSReadableStream;
+        if (right is SharpTSWritableStreamConstructor)
+            return left is SharpTSWritableStream;
+        if (right is SharpTSTransformStreamConstructor)
+            return left is SharpTSTransformStream;
+
         // Array is registered as a namespace singleton (SharpTSArrayGlobal), not
         // as a SharpTSBuiltInConstructor — so `arr instanceof Array` lands here.
         // Real arrays AND the Array.prototype dict itself satisfy the check
