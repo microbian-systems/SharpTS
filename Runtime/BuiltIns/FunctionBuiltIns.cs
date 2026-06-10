@@ -286,7 +286,7 @@ public class BoundFunction : ISharpTSCallable
         return Math.Max(0, baseArity - _boundArgs.Count);
     }
 
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         // Combine bound args + call args into a single array
         var combined = new RuntimeValue[_boundArgs.Count + arguments.Length];
@@ -300,13 +300,13 @@ public class BoundFunction : ISharpTSCallable
             if (_target is SharpTSFunction fn)
             {
                 var boundFn = CreateBoundSharpTSFunction(fn, _thisArg);
-                return boundFn.CallV2(interpreter, combined);
+                return boundFn.Call(interpreter, combined);
             }
 
             if (_target is SharpTSArrowFunction arrow && arrow.HasOwnThis)
             {
                 var boundArrow = arrow.Bind(_thisArg);
-                return boundArrow.CallV2(interpreter, combined);
+                return boundArrow.Call(interpreter, combined);
             }
 
             // Mirror the legacy Call path for BuiltInMethod (issue #101): the
@@ -316,51 +316,11 @@ public class BoundFunction : ISharpTSCallable
             // implementation throws "called on non-function".
             if (_target is BuiltInMethod bim)
             {
-                return bim.Bind(_thisArg).CallV2(interpreter, combined);
+                return bim.Bind(_thisArg).Call(interpreter, combined);
             }
         }
 
-        return _target.CallV2(interpreter, combined);
-    }
-
-    public object? Call(Interpreter interpreter, List<object?> arguments)
-    {
-        // Combine bound args with call args
-        var combinedArgs = new List<object?>(_boundArgs);
-        combinedArgs.AddRange(arguments);
-
-        // Handle binding 'this' for the target function
-        if (!_ignoreThisArg && _thisArg != null)
-        {
-            if (_target is SharpTSFunction fn)
-            {
-                // For regular functions, we need to invoke with proper 'this' binding
-                // Since SharpTSFunction.Bind requires SharpTSInstance, we need a workaround
-                // We'll create a special environment handling in the BoundFunction call
-                var boundFn = CreateBoundSharpTSFunction(fn, _thisArg);
-                return boundFn.CallBoxed(interpreter, combinedArgs);
-            }
-
-            if (_target is SharpTSArrowFunction arrow && arrow.HasOwnThis)
-            {
-                var boundArrow = arrow.Bind(_thisArg);
-                return boundArrow.CallBoxed(interpreter, combinedArgs);
-            }
-
-            // Built-in methods read their receiver from the bound `_receiver`
-            // slot, not from a synthetic `this` environment. For
-            // `Function.prototype.call.bind(hasOwn)` to work, the BuiltInMethod
-            // path must rebind via `.Bind(thisArg)` before invoking — without
-            // this, the inner method sees a null receiver and the implementation
-            // throws.
-            if (_target is BuiltInMethod bim)
-            {
-                return bim.Bind(_thisArg).CallBoxed(interpreter, combinedArgs);
-            }
-        }
-
-        // For arrow functions or when no 'this' binding needed
-        return _target.CallBoxed(interpreter, combinedArgs);
+        return _target.Call(interpreter, combined);
     }
 
     /// <summary>
@@ -391,35 +351,17 @@ internal class BoundSharpTSFunctionWrapper : ISharpTSCallable
 
     public int Arity() => _fn.Arity();
 
-    public object? Call(Interpreter interpreter, List<object?> arguments)
-    {
-        // Create a wrapper instance if needed
-        if (_thisArg is SharpTSInstance instance)
-        {
-            var boundFn = _fn.Bind(instance);
-            return boundFn.CallBoxed(interpreter, arguments);
-        }
-
-        // For non-instance 'this' values, we need to set up the environment manually
-        // Create a synthetic instance that wraps the actual object
-        var syntheticInstance = new SyntheticThisInstance(_thisArg);
-        var boundFn2 = _fn.Bind(syntheticInstance);
-        var result = boundFn2.CallBoxed(interpreter, arguments);
-        FlushSyntheticBack(syntheticInstance, _thisArg);
-        return result;
-    }
-
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         if (_thisArg is SharpTSInstance instance)
         {
             var boundFn = _fn.Bind(instance);
-            return boundFn.CallV2(interpreter, arguments);
+            return boundFn.Call(interpreter, arguments);
         }
 
         var syntheticInstance = new SyntheticThisInstance(_thisArg);
         var boundFn2 = _fn.Bind(syntheticInstance);
-        var result = boundFn2.CallV2(interpreter, arguments);
+        var result = boundFn2.Call(interpreter, arguments);
         FlushSyntheticBack(syntheticInstance, _thisArg);
         return result;
     }

@@ -183,7 +183,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
         return resolution.Type switch
         {
             ResolutionType.AutoAccessor => _klass.GetAutoAccessorValue(this, propName),
-            ResolutionType.Getter => ((SharpTSFunction)resolution.Function!).Bind(this).CallV2(_interpreter!, []).ToObject(),
+            ResolutionType.Getter => ((SharpTSFunction)resolution.Function!).Bind(this).Call(_interpreter!, []).ToObject(),
             ResolutionType.Field => _fields[propName],
             ResolutionType.Method => GetOrCreateBoundMethod(propName, resolution.Function!),
             ResolutionType.ClassSelf => _klass,
@@ -250,7 +250,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
         if (cachedSetter != null && _interpreter != null)
         {
-            cachedSetter.Bind(this).CallV2(_interpreter, [RuntimeValue.FromBoxed(value)]);
+            cachedSetter.Bind(this).Call(_interpreter, [RuntimeValue.FromBoxed(value)]);
             return;
         }
 
@@ -310,7 +310,7 @@ public class SharpTSInstance(SharpTSClass klass) : ISharpTSPropertyAccessor, ITy
 
         if (cachedSetter != null && _interpreter != null)
         {
-            cachedSetter.Bind(this).CallV2(_interpreter, [RuntimeValue.FromBoxed(value)]);
+            cachedSetter.Bind(this).Call(_interpreter, [RuntimeValue.FromBoxed(value)]);
             return;
         }
 

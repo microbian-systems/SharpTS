@@ -9,18 +9,18 @@ namespace SharpTS.Runtime.Types;
 /// <remarks>
 /// Call sites that still hold boxed <c>List&lt;object?&gt;</c> arguments (typically built from
 /// object?-based storage) should use <see cref="CallBoxed"/> rather than invoking the legacy
-/// <c>Call</c> method directly; it routes through <see cref="ISharpTSCallable.CallV2"/> so
+/// <c>Call</c> method directly; it routes through <see cref="ISharpTSCallable.Call"/> so
 /// migrated implementors run boxing-free.
 /// </remarks>
 public static class CallableInterop
 {
     /// <summary>
     /// Invokes a callable with boxed arguments by converting them to RuntimeValues and
-    /// dispatching through <see cref="ISharpTSCallable.CallV2"/>.
+    /// dispatching through <see cref="ISharpTSCallable.Call"/>.
     /// </summary>
     public static object? CallBoxed(this ISharpTSCallable callable, Interpreter interpreter, List<object?> arguments)
     {
-        return callable.CallV2(interpreter, ToRuntimeValues(arguments)).ToObject();
+        return callable.Call(interpreter, ToRuntimeValues(arguments)).ToObject();
     }
 
     /// <summary>Converts a boxed argument list to a RuntimeValue array.</summary>

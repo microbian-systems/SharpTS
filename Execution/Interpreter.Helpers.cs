@@ -413,7 +413,7 @@ public partial class Interpreter
         // Call the executor synchronously with resolve and reject callbacks
         try
         {
-            callable.CallV2(this, [RuntimeValue.FromBoxed(resolveCallback), RuntimeValue.FromBoxed(rejectCallback)]);
+            callable.Call(this, [RuntimeValue.FromBoxed(resolveCallback), RuntimeValue.FromBoxed(rejectCallback)]);
         }
         catch (Exception ex)
         {

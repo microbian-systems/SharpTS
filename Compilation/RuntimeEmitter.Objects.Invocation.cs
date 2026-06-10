@@ -740,13 +740,14 @@ public partial class RuntimeEmitter
         il.MarkLabel(notProxyLabel2);
 
         // Fallback: reflection-based dispatch for SharpTS runtime callables (e.g., BuiltInMethod from vm.compileFunction).
-        // Check if function has a "Call" method matching (Interpreter, List<object?>) signature.
+        // Check if function has a "CallBoxed" method — the reflection-stable boxed entry
+        // point (Interpreter?, List<object?>) on BuiltInMethod / VmScriptConstructor.
         var noCallMethodLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, noCallMethodLabel);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Ldstr, "Call");
+        il.Emit(OpCodes.Ldstr, "CallBoxed");
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
         var callMiLocal = il.DeclareLocal(typeof(MethodInfo));
         il.Emit(OpCodes.Stloc, callMiLocal);

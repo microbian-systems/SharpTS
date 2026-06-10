@@ -158,14 +158,14 @@ public class SharpTSAbortSignal : ITypeCategorized
         // ISharpTSCallable from interpreter — needs interpreter
         if (listener is ISharpTSCallable callable)
         {
-            callable.CallV2(interpreter!, []);
+            callable.Call(interpreter!, []);
             return;
         }
 
         // BuiltInMethod
         if (listener is BuiltInMethod builtIn)
         {
-            builtIn.CallV2(interpreter!, []);
+            builtIn.Call(interpreter!, ReadOnlySpan<RuntimeValue>.Empty);
             return;
         }
 

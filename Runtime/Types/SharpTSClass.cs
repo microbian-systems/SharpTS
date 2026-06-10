@@ -81,10 +81,7 @@ public class SharpTSClass(
         return Superclass?.Arity() ?? 0;
     }
 
-    public virtual object? Call(Interpreter interpreter, List<object?> arguments)
-        => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
-
-    public virtual RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public virtual RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         SharpTSInstance instance = new(this);
 
@@ -101,12 +98,12 @@ public class SharpTSClass(
         ISharpTSCallable? constructor = FindMethod("constructor");
         if (constructor != null)
         {
-            BindMethod(constructor, instance).CallV2(interpreter, arguments);
+            BindMethod(constructor, instance).Call(interpreter, arguments);
         }
         else if (Superclass != null)
         {
             // If no constructor, call super constructor
-            Superclass.CallV2(interpreter, arguments);
+            Superclass.Call(interpreter, arguments);
         }
 
         return RuntimeValue.FromObject(instance);
@@ -535,7 +532,7 @@ public class SharpTSClass(
     #region RuntimeValue Overloads
 
     public RuntimeValue CallRV(Interpreter interpreter, List<object?> arguments)
-        => RuntimeValue.FromBoxed(Call(interpreter, arguments));
+        => RuntimeValue.FromBoxed(this.CallBoxed(interpreter, arguments));
 
     public RuntimeValue GetStaticPrivateFieldRV(string name)
         => RuntimeValue.FromBoxed(GetStaticPrivateField(name));

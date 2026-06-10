@@ -158,10 +158,10 @@ public class SharpTSErrorClass : SharpTSClass
     }
 
     /// <summary>
-    /// Overrides <see cref="SharpTSClass.CallV2"/> to initialise error fields after instance
+    /// Overrides <see cref="SharpTSClass.Call"/> to initialise error fields after instance
     /// creation. The base <c>Call</c> delegates here, so this is the single construct body.
     /// </summary>
-    public override RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public override RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         SharpTSInstance instance = new(this);
 
@@ -175,7 +175,7 @@ public class SharpTSErrorClass : SharpTSClass
         if (hasUserConstructor && constructor != null)
         {
             // User-defined constructor — super() in body will call ErrorConstructorCallable
-            BindMethod(constructor, instance).CallV2(interpreter, arguments);
+            BindMethod(constructor, instance).Call(interpreter, arguments);
         }
         else
         {
@@ -211,7 +211,7 @@ public class SharpTSErrorClass : SharpTSClass
             return null;
         }
 
-        public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         {
             var instance = _boundInstance
                 ?? interpreter.GetCurrentThis() as SharpTSInstance;
@@ -236,10 +236,7 @@ internal sealed class ErrorToStringCallable : ISharpTSCallable, IInstanceBindabl
         return new ErrorToStringCallable { _boundInstance = instance };
     }
 
-    public object? Call(Interpreter interpreter, List<object?> arguments)
-        => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
-
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         var instance = _boundInstance
             ?? interpreter.GetCurrentThis() as SharpTSInstance;

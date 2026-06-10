@@ -67,7 +67,7 @@ public class SharpTSStderr : SharpTSWritable
             return null;
         }
 
-        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        public RuntimeValue Call(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
             => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }

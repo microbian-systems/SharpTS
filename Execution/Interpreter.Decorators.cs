@@ -99,13 +99,13 @@ public partial class Interpreter
             if (_decoratorMode == DecoratorMode.Legacy)
             {
                 // Legacy: decorator(constructor)
-                result = decoratorFn.CallV2(this, [RuntimeValue.FromBoxed(klass)]).ToObject();
+                result = decoratorFn.Call(this, [RuntimeValue.FromBoxed(klass)]).ToObject();
             }
             else
             {
                 // Stage 3: decorator(value, context)
                 var context = SharpTSDecoratorContext.ForClass(klass.Name);
-                result = decoratorFn.CallV2(this, [RuntimeValue.FromBoxed(klass), RuntimeValue.FromBoxed(context.ToRuntimeObject())]).ToObject();
+                result = decoratorFn.Call(this, [RuntimeValue.FromBoxed(klass), RuntimeValue.FromBoxed(context.ToRuntimeObject())]).ToObject();
             }
 
             // If decorator returns a class, use it as replacement
@@ -140,7 +140,7 @@ public partial class Interpreter
                 // Legacy: decorator(target, propertyKey, descriptor)
                 var target = method.IsStatic ? (object)klass : klass; // prototype would be instance, but we use class
                 var descriptor = SharpTSPropertyDescriptor.ForMethod(func);
-                result = decoratorFn.CallV2(this, [RuntimeValue.FromBoxed(target), RuntimeValue.FromString(method.Name.Lexeme), RuntimeValue.FromBoxed(descriptor.ToObject())]).ToObject();
+                result = decoratorFn.Call(this, [RuntimeValue.FromBoxed(target), RuntimeValue.FromString(method.Name.Lexeme), RuntimeValue.FromBoxed(descriptor.ToObject())]).ToObject();
 
                 if (result is SharpTSObject resultObj)
                 {
@@ -155,7 +155,7 @@ public partial class Interpreter
             {
                 // Stage 3: decorator(value, context)
                 var context = SharpTSDecoratorContext.ForMethod(method.Name.Lexeme, method.IsStatic);
-                result = decoratorFn.CallV2(this, [RuntimeValue.FromBoxed(func), RuntimeValue.FromBoxed(context.ToRuntimeObject())]).ToObject();
+                result = decoratorFn.Call(this, [RuntimeValue.FromBoxed(func), RuntimeValue.FromBoxed(context.ToRuntimeObject())]).ToObject();
 
                 if (result is ISharpTSCallable replacement)
                 {
@@ -192,7 +192,7 @@ public partial class Interpreter
                     ? SharpTSPropertyDescriptor.ForGetter(func)
                     : SharpTSPropertyDescriptor.ForSetter(func);
 
-                result = decoratorFn.CallV2(this, [RuntimeValue.FromBoxed(klass), RuntimeValue.FromString(accessor.Name.Lexeme), RuntimeValue.FromBoxed(descriptor.ToObject())]).ToObject();
+                result = decoratorFn.Call(this, [RuntimeValue.FromBoxed(klass), RuntimeValue.FromString(accessor.Name.Lexeme), RuntimeValue.FromBoxed(descriptor.ToObject())]).ToObject();
 
                 if (result is SharpTSObject resultObj)
                 {
@@ -211,7 +211,7 @@ public partial class Interpreter
                     ? SharpTSDecoratorContext.ForGetter(accessor.Name.Lexeme, isStatic)
                     : SharpTSDecoratorContext.ForSetter(accessor.Name.Lexeme, isStatic);
 
-                result = decoratorFn.CallV2(this, [RuntimeValue.FromBoxed(func), RuntimeValue.FromBoxed(context.ToRuntimeObject())]).ToObject();
+                result = decoratorFn.Call(this, [RuntimeValue.FromBoxed(func), RuntimeValue.FromBoxed(context.ToRuntimeObject())]).ToObject();
 
                 if (result is SharpTSFunction replacement)
                 {
@@ -242,13 +242,13 @@ public partial class Interpreter
             {
                 // Legacy: decorator(target, propertyKey)
                 var target = field.IsStatic ? (object)klass : klass;
-                decoratorFn.CallV2(this, [RuntimeValue.FromBoxed(target), RuntimeValue.FromString(field.Name.Lexeme)]);
+                decoratorFn.Call(this, [RuntimeValue.FromBoxed(target), RuntimeValue.FromString(field.Name.Lexeme)]);
             }
             else
             {
                 // Stage 3: decorator(undefined, context)
                 var context = SharpTSDecoratorContext.ForField(field.Name.Lexeme, field.IsStatic);
-                decoratorFn.CallV2(this, [RuntimeValue.Null, RuntimeValue.FromBoxed(context.ToRuntimeObject())]);
+                decoratorFn.Call(this, [RuntimeValue.Null, RuntimeValue.FromBoxed(context.ToRuntimeObject())]);
             }
         }
     }
@@ -275,7 +275,7 @@ public partial class Interpreter
                     // Legacy: decorator(target, methodName, parameterIndex)
                     var target = method.IsStatic ? (object)klass : klass;
                     string? propertyKey = method.Name.Lexeme == "constructor" ? null : method.Name.Lexeme;
-                    decoratorFn.CallV2(this, [RuntimeValue.FromBoxed(target), RuntimeValue.FromBoxed(propertyKey), RuntimeValue.FromNumber(paramIndex)]);
+                    decoratorFn.Call(this, [RuntimeValue.FromBoxed(target), RuntimeValue.FromBoxed(propertyKey), RuntimeValue.FromNumber(paramIndex)]);
                 }
             }
         }

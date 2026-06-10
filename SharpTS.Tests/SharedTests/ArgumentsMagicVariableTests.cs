@@ -10,7 +10,7 @@ namespace SharpTS.Tests.SharedTests;
 /// </summary>
 /// <remarks>
 /// Fix: interpreter binds <c>arguments</c> in <c>SharpTSFunction.Call</c> /
-/// <c>CallV2</c>; compiled mode emits a prologue (<c>ILCompiler.Functions
+/// <c>Call</c>; compiled mode emits a prologue (<c>ILCompiler.Functions
 /// .EmitArgumentsLocalPrologue</c>) that builds a <c>List&lt;object&gt;</c>
 /// from the declared parameters — spreading rest-param collections so each
 /// caller value occupies its own index. Arrow functions deliberately do NOT

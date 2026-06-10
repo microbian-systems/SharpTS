@@ -1,0 +1,52 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  SharpTS -> C:\Users\NicholasNassiri\source\repos\nickna\SharpTS\bin\Release\net10.0\SharpTS.dll
+  SharpTS.Test262 -> C:\Users\NicholasNassiri\source\repos\nickna\SharpTS\SharpTS.Test262\bin\Release\net10.0\SharpTS.Test262.dll
+Test run for C:\Users\NicholasNassiri\source\repos\nickna\SharpTS\SharpTS.Test262\bin\Release\net10.0\SharpTS.Test262.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+C:\Users\NicholasNassiri\source\repos\nickna\SharpTS\SharpTS.Test262\bin\Release\net10.0\SharpTS.Test262.dll
+[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v3.0.0+e341b939fe (64-bit .NET 10.0.8)
+[xUnit.net 00:00:00.04]   Discovering: SharpTS.Test262
+[xUnit.net 00:00:00.07]   Discovered:  SharpTS.Test262
+[xUnit.net 00:00:00.08]   Starting:    SharpTS.Test262
+[xUnit.net 00:00:16.06]   Finished:    SharpTS.Test262
+  Passed SharpTS.Test262.SmokeTest.Diagnostic_CompiledPhaseBreakdown [15 s]
+  Standard Output Messages:
+ profiling 200 tests from Math/
+ --- collectible ALC (current) ---
+ wall: 10.79 s   tests: 200   wall/test: 53.96 ms
+   (total measured phase ticks: 10734.4 ms)
+   LexParse             167.2 ms total       0.84 ms/test      1.6%
+   TypeCheck              0.4 ms total       0.00 ms/test      0.0%
+   DeadCode               4.1 ms total       0.02 ms/test      0.0%
+   ILCompile           1649.0 ms total       8.24 ms/test     15.4%
+   SaveBytes            671.9 ms total       3.36 ms/test      6.3%
+   AlcLoad              187.8 ms total       0.94 ms/test      1.7%
+     AlcCtor             15.0 ms total       0.07 ms/test      0.1%
+     AlcLoadStream      132.2 ms total       0.66 ms/test      1.2%
+     AlcReflect          40.6 ms total       0.20 ms/test      0.4%
+   Invoke              7985.6 ms total      39.93 ms/test     74.4%
+   Unload                 0.8 ms total       0.00 ms/test      0.0%
+   PeriodicGc            67.5 ms total       0.34 ms/test      0.6%
+ --- non-collectible Assembly.Load (diagnostic) ---
+ wall: 4.49 s   tests: 200   wall/test: 22.44 ms
+   (total measured phase ticks: 4443.5 ms)
+   LexParse              69.5 ms total       0.35 ms/test      1.6%
+   TypeCheck              0.1 ms total       0.00 ms/test      0.0%
+   DeadCode               2.1 ms total       0.01 ms/test      0.0%
+   ILCompile           1105.1 ms total       5.53 ms/test     24.9%
+   SaveBytes            355.1 ms total       1.78 ms/test      8.0%
+   AlcLoad               56.5 ms total       0.28 ms/test      1.3%
+     AlcCtor              0.0 ms total       0.00 ms/test      0.0%
+     AlcLoadStream       33.4 ms total       0.17 ms/test      0.8%
+     AlcReflect          23.1 ms total       0.12 ms/test      0.5%
+   Invoke              2818.1 ms total      14.09 ms/test     63.4%
+   Unload                 0.0 ms total       0.00 ms/test      0.0%
+   PeriodicGc            37.1 ms total       0.19 ms/test      0.8%
+
+
+
+Test Run Successful.
+Total tests: 1
+     Passed: 1
+ Total time: 16.4542 Seconds

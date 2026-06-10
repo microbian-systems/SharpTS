@@ -23,9 +23,12 @@ public class BuiltInMethod : ISharpTSCallable
     private readonly int _maxArity;
     private readonly Func<Interpreter, object?, List<object?>, object?> _implementation;
     private readonly Func<Interpreter, RuntimeValue, ReadOnlySpan<RuntimeValue>, RuntimeValue>? _implementationV2;
-    private object? _receiver;
-    private RuntimeValue _receiverV2;
-    private readonly bool _hasV2Receiver;
+    // Receiver is stored in both representations, computed once at bind time:
+    // the boxed form feeds legacy delegate bodies, the RuntimeValue form feeds
+    // V2 bodies without a per-call FromBoxed. Unbound = (null, RuntimeValue.Null).
+    private readonly object? _receiverBoxed;
+    private readonly RuntimeValue _receiver = RuntimeValue.Null;
+    private readonly bool _isBound;
     // Spec-defined Function.prototype.length value visible to user code as
     // `f.length`. Distinct from MinArity / MaxArity (used internally for arg
     // padding/trimming): per ECMA-262, variadic methods like Array.prototype.push
@@ -58,7 +61,7 @@ public class BuiltInMethod : ISharpTSCallable
     /// Returns true if this method has a receiver bound via Bind().
     /// Used by fast-path dispatch to avoid redundant double-binding.
     /// </summary>
-    public bool IsBound => _receiver != null || _hasV2Receiver;
+    public bool IsBound => _isBound;
 
     /// <summary>
     /// True when this method wraps a constant value (e.g. Number.MAX_VALUE, Math.PI)
@@ -72,9 +75,9 @@ public class BuiltInMethod : ISharpTSCallable
 
     /// <summary>
     /// Returns true if this method has a native V2 (RuntimeValue) implementation,
-    /// meaning CallV2 can bypass the legacy wrapper for better performance.
+    /// meaning Call can bypass the legacy wrapper for better performance.
     /// </summary>
-    public bool HasV2Implementation => _implementationV2 != null;
+    public bool HasNativeImplementation => _implementationV2 != null;
 
     public BuiltInMethod(string name, int arity, Func<Interpreter, object?, List<object?>, object?> implementation)
         : this(name, arity, arity, implementation) { }
@@ -170,7 +173,9 @@ public class BuiltInMethod : ISharpTSCallable
             _implementation = implementation ?? throw new ArgumentNullException(nameof(implementation));
             _implementationV2 = implementationV2;
         }
-        _receiver = receiver;
+        _receiverBoxed = receiver;
+        _receiver = RuntimeValue.FromBoxed(receiver);
+        _isBound = receiver != null;
         // Bound instances don't have their own cache
     }
 
@@ -185,9 +190,9 @@ public class BuiltInMethod : ISharpTSCallable
         _maxArity = maxArity;
         _implementation = implementation;
         _implementationV2 = implementationV2;
-        _receiverV2 = receiverV2;
-        _hasV2Receiver = true;
-        _receiver = receiverV2.ToObject();
+        _receiver = receiverV2;
+        _receiverBoxed = receiverV2.ToObject();
+        _isBound = true;
     }
 
     public int Arity() => _minArity;
@@ -214,7 +219,7 @@ public class BuiltInMethod : ISharpTSCallable
     /// <summary>
     /// Binds the method to a receiver using RuntimeValue.
     /// </summary>
-    public BuiltInMethod BindV2(RuntimeValue receiver)
+    public BuiltInMethod Bind(RuntimeValue receiver)
     {
         var bound = new BuiltInMethod(_name, _minArity, _maxArity, _implementation, _implementationV2, receiver);
         bound._specLength = _specLength;
@@ -262,13 +267,23 @@ public class BuiltInMethod : ISharpTSCallable
         {
             throw new Exception($"Runtime Error: '{_name}' expects {_minArity}-{_maxArity} arguments but got {arguments.Count}.");
         }
-        return _implementation(interpreter, _receiver, arguments);
+        return _implementation(interpreter, _receiverBoxed, arguments);
     }
+
+    /// <summary>
+    /// Reflection-stable boxed entry point. Compiled DLLs invoke this by name
+    /// (<c>GetMethod("CallBoxed")</c>) from the vm/eval bridge paths emitted in
+    /// RuntimeEmitter — a null interpreter is part of that contract. Do not
+    /// rename or change the signature without updating the emitter's
+    /// <c>Ldstr "CallBoxed"</c> sites.
+    /// </summary>
+    public object? CallBoxed(Interpreter? interpreter, List<object?> arguments)
+        => Call(interpreter!, arguments);
 
     /// <summary>
     /// Calls the method with RuntimeValue arguments.
     /// </summary>
-    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         if (arguments.Length < _minArity || arguments.Length > _maxArity)
         {
@@ -278,19 +293,11 @@ public class BuiltInMethod : ISharpTSCallable
         // Fast path: if we have a V2 implementation, use it directly
         if (_implementationV2 != null)
         {
-            return _hasV2Receiver
-                ? _implementationV2(interpreter, _receiverV2, arguments)
-                : _implementationV2(interpreter, RuntimeValue.FromBoxed(_receiver), arguments);
+            return _implementationV2(interpreter, _receiver, arguments);
         }
 
         // Slow path: convert to legacy call
-        var boxedArgs = new List<object?>(arguments.Length);
-        foreach (var arg in arguments)
-        {
-            boxedArgs.Add(arg.ToObject());
-        }
-
-        var result = _implementation(interpreter, _receiver, boxedArgs);
+        var result = _implementation(interpreter, _receiverBoxed, CallableInterop.ToBoxedList(arguments));
         return RuntimeValue.FromBoxed(result);
     }
 

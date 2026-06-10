@@ -17,10 +17,7 @@ public sealed class SharpTSAsyncLocalStorageConstructor : ISharpTSCallable
 
     public int Arity() => 0;
 
-    public object? Call(Interp interpreter, List<object?> arguments)
-        => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
-
-    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+    public RuntimeValue Call(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         return RuntimeValue.FromObject(new SharpTSAsyncLocalStorage());
     }

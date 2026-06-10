@@ -64,7 +64,7 @@ public class SharpTSDecoratorContext
         {
             // Create a bound version of the initializer with 'this' set to instance
             var bound = init is SharpTSFunction fn ? fn.Bind(instance) : init;
-            bound.CallV2(interpreter, []);
+            bound.Call(interpreter, []);
         }
     }
 
@@ -195,10 +195,7 @@ public class SharpTSDecoratorContext
     {
         public int Arity() => 1;
 
-        public object? Call(Interpreter interpreter, List<object?> arguments)
-            => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
-
-        public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        public RuntimeValue Call(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         {
             if (arguments.Length > 0 && arguments[0].ToObject() is ISharpTSCallable fn)
             {
