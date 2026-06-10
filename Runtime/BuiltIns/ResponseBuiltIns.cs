@@ -16,10 +16,10 @@ public static class ResponseBuiltIns
     {
         return name switch
         {
-            "json" => new BuiltInMethod("json", 1, 2, (_, _, args) =>
+            "json" => BuiltInMethod.CreateV2("json", 1, 2, static (_, _, args) =>
             {
-                var data = args.Count > 0 ? args[0] : null;
-                var init = args.Count > 1 ? args[1] as SharpTSObject : null;
+                var data = args.Length > 0 ? args[0].ToObject() : null;
+                var init = args.Length > 1 ? args[1].ToObject() as SharpTSObject : null;
 
                 var json = SerializeToJson(data);
                 var bodyBytes = Encoding.UTF8.GetBytes(json);
@@ -51,23 +51,23 @@ public static class ResponseBuiltIns
                     }
                 }
 
-                return new SharpTSResponse(status, statusText, headers, bodyBytes, "default");
+                return RuntimeValue.FromObject(new SharpTSResponse(status, statusText, headers, bodyBytes, "default"));
             }),
 
-            "redirect" => new BuiltInMethod("redirect", 1, 2, (_, _, args) =>
+            "redirect" => BuiltInMethod.CreateV2("redirect", 1, 2, static (_, _, args) =>
             {
-                var url = args.Count > 0 ? args[0]?.ToString() ?? "" : "";
-                var status = args.Count > 1 && args[1] is double s ? s : 302.0;
+                var url = args.Length > 0 ? args[0].ToObject()?.ToString() ?? "" : "";
+                var status = args.Length > 1 && args[1].IsNumber ? args[1].AsNumberUnsafe() : 302.0;
 
                 var headers = new SharpTSHeaders();
                 headers.Set("location", url);
 
-                return new SharpTSResponse(status, "", headers, [], "default");
+                return RuntimeValue.FromObject(new SharpTSResponse(status, "", headers, [], "default"));
             }),
 
-            "error" => new BuiltInMethod("error", 0, (_, _, _) =>
+            "error" => BuiltInMethod.CreateV2("error", 0, static (_, _, _) =>
             {
-                return new SharpTSResponse(0, "", new SharpTSHeaders(), [], "error");
+                return RuntimeValue.FromObject(new SharpTSResponse(0, "", new SharpTSHeaders(), [], "error"));
             }),
 
             _ => null

@@ -66,8 +66,8 @@ public static class ErrorBuiltIns
             // populated when SharpTSErrorClass instances are created at
             // interpreter startup.
             "constructor" => Types.SharpTSErrorClass.GetBuiltInClass(receiver.Name),
-            "toString" => new BuiltInMethod("toString", 0, (_, recv, _) =>
-                ((SharpTSError)recv!).ToString()),
+            "toString" => BuiltInMethod.CreateV2("toString", 0, static (_, recv, _) =>
+                RuntimeValue.FromString(((SharpTSError)recv.ToObject()!).ToString())),
 
             // For AggregateError, also expose the errors property
             "errors" when receiver is SharpTSAggregateError aggregateError =>

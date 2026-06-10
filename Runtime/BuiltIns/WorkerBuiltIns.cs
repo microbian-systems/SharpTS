@@ -154,9 +154,9 @@ internal class ArrayBufferConstructorImpl : ISharpTSCallable
     {
         return name switch
         {
-            "isView" => new BuiltInMethod("isView", 1, (_, _, args) =>
+            "isView" => BuiltInMethod.CreateV2("isView", 1, static (_, _, args) =>
             {
-                return SharpTSArrayBuffer.IsView(args.Count > 0 ? args[0] : null);
+                return RuntimeValue.FromBoolean(SharpTSArrayBuffer.IsView(args.Length > 0 ? args[0].ToObject() : null));
             }),
             "prototype" => null,
             _ => null

@@ -12,11 +12,11 @@ public static class AbortControllerBuiltIns
         return name switch
         {
             "signal" => receiver.Signal,
-            "abort" => new BuiltInMethod("abort", 0, 1, (interp, _, args) =>
+            "abort" => BuiltInMethod.CreateV2("abort", 0, 1, (interp, _, args) =>
             {
-                var reason = args.Count > 0 ? args[0] : null;
+                var reason = args.Length > 0 ? args[0].ToObject() : null;
                 receiver.Abort(reason, interp);
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
             _ => null
         };

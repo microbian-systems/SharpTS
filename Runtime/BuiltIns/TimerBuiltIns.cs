@@ -131,24 +131,24 @@ public static class TimerBuiltIns
     {
         return name switch
         {
-            "ref" => new BuiltInMethod("ref", 0, 0, (_, receiver, _) =>
+            "ref" => BuiltInMethod.CreateV2("ref", 0, 0, static (_, receiver, _) =>
             {
-                if (receiver is SharpTSTimeout t)
-                    return t.Ref();
+                if (receiver.ToObject() is SharpTSTimeout t)
+                    return RuntimeValue.FromObject(t.Ref());
                 return receiver;
             }),
-            "unref" => new BuiltInMethod("unref", 0, 0, (_, receiver, _) =>
+            "unref" => BuiltInMethod.CreateV2("unref", 0, 0, static (_, receiver, _) =>
             {
-                if (receiver is SharpTSTimeout t)
-                    return t.Unref();
+                if (receiver.ToObject() is SharpTSTimeout t)
+                    return RuntimeValue.FromObject(t.Unref());
                 return receiver;
             }),
             "hasRef" => timeout.HasRef,
-            "toString" => new BuiltInMethod("toString", 0, 0, (_, receiver, _) =>
+            "toString" => BuiltInMethod.CreateV2("toString", 0, 0, static (_, receiver, _) =>
             {
-                if (receiver is SharpTSTimeout t)
-                    return t.ToString();
-                return receiver?.ToString() ?? "null";
+                if (receiver.ToObject() is SharpTSTimeout t)
+                    return RuntimeValue.FromString(t.ToString());
+                return RuntimeValue.FromString(receiver.ToObject()?.ToString() ?? "null");
             }),
             _ => null
         };

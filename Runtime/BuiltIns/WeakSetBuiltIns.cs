@@ -11,28 +11,28 @@ public static class WeakSetBuiltIns
     {
         return name switch
         {
-            "add" => new BuiltInMethod("add", 1, (_, recv, args) =>
+            "add" => BuiltInMethod.CreateV2("add", 1, static (_, recv, args) =>
             {
-                var weakSet = (SharpTSWeakSet)recv!;
-                var value = args[0]
+                var weakSet = (SharpTSWeakSet)recv.ToObject()!;
+                var value = args[0].ToObject()
                     ?? throw new Exception("Runtime Error: WeakSet value cannot be null or undefined.");
-                return weakSet.Add(value);
+                return RuntimeValue.FromObject(weakSet.Add(value));
             }),
 
-            "has" => new BuiltInMethod("has", 1, (_, recv, args) =>
+            "has" => BuiltInMethod.CreateV2("has", 1, static (_, recv, args) =>
             {
-                var weakSet = (SharpTSWeakSet)recv!;
-                var value = args[0]
+                var weakSet = (SharpTSWeakSet)recv.ToObject()!;
+                var value = args[0].ToObject()
                     ?? throw new Exception("Runtime Error: WeakSet value cannot be null or undefined.");
-                return weakSet.Has(value);
+                return RuntimeValue.FromBoolean(weakSet.Has(value));
             }),
 
-            "delete" => new BuiltInMethod("delete", 1, (_, recv, args) =>
+            "delete" => BuiltInMethod.CreateV2("delete", 1, static (_, recv, args) =>
             {
-                var weakSet = (SharpTSWeakSet)recv!;
-                var value = args[0]
+                var weakSet = (SharpTSWeakSet)recv.ToObject()!;
+                var value = args[0].ToObject()
                     ?? throw new Exception("Runtime Error: WeakSet value cannot be null or undefined.");
-                return weakSet.Delete(value);
+                return RuntimeValue.FromBoolean(weakSet.Delete(value));
             }),
 
             // Explicitly reject unsupported properties/methods

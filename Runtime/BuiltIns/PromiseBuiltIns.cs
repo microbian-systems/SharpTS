@@ -56,8 +56,8 @@ public static class PromiseBuiltIns
             "any" => new BuiltInAsyncMethod("any", 1, 1, (interp, _, args) =>
                 AnyImpl(args, interp)),
 
-            "withResolvers" => new BuiltInMethod("withResolvers", 0, (_, _, _) =>
-                WithResolversImpl()),
+            "withResolvers" => BuiltInMethod.CreateV2("withResolvers", 0, static (_, _, _) =>
+                RuntimeValue.FromBoxed(WithResolversImpl())),
 
             _ => null
         };
@@ -501,18 +501,18 @@ public static class PromiseBuiltIns
     {
         var tcs = new TaskCompletionSource<object?>();
 
-        var resolveMethod = new BuiltInMethod("resolve", 1, (_, _, args) =>
+        var resolveMethod = BuiltInMethod.CreateV2("resolve", 1, (_, _, args) =>
         {
-            var value = args.Count > 0 ? args[0] : null;
+            var value = args.Length > 0 ? args[0].ToObject() : null;
             tcs.TrySetResult(value);
-            return null;
+            return RuntimeValue.Null;
         });
 
-        var rejectMethod = new BuiltInMethod("reject", 1, (_, _, args) =>
+        var rejectMethod = BuiltInMethod.CreateV2("reject", 1, (_, _, args) =>
         {
-            var reason = args.Count > 0 ? args[0] : null;
+            var reason = args.Length > 0 ? args[0].ToObject() : null;
             tcs.TrySetException(new SharpTSPromiseRejectedException(reason));
-            return null;
+            return RuntimeValue.Null;
         });
 
         var promise = new SharpTSPromise(tcs.Task);

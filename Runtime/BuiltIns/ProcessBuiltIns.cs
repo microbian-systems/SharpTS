@@ -77,32 +77,32 @@ public static class ProcessBuiltIns
             "nextTick" => _nextTick,
 
             // Cluster worker IPC methods
-            "send" when ClusterContext.IsWorker => new BuiltInMethod("send", 1, (interp, recv, args) =>
+            "send" when ClusterContext.IsWorker => BuiltInMethod.CreateV2("send", 1, static (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("process.send() requires at least one argument");
-                ClusterContext.CurrentWorker?.PostMessageToPrimary(args[0]);
-                return true;
+                ClusterContext.CurrentWorker?.PostMessageToPrimary(args[0].ToObject());
+                return RuntimeValue.True;
             }),
-            "disconnect" when ClusterContext.IsWorker => new BuiltInMethod("disconnect", 0, (interp, recv, args) =>
+            "disconnect" when ClusterContext.IsWorker => BuiltInMethod.CreateV2("disconnect", 0, static (_, _, _) =>
             {
                 // Signal disconnect to primary
                 try { ClusterContext.PrimaryToWorkerQueue?.CompleteAdding(); } catch { }
-                return null;
+                return RuntimeValue.Null;
             }),
             "connected" when ClusterContext.IsWorker => !ClusterContext.CancellationToken.IsCancellationRequested,
 
             // Fork IPC methods (child side of child_process.fork())
-            "send" when ForkIpcClient.IsForkedChild => new BuiltInMethod("send", 1, (interp, recv, args) =>
+            "send" when ForkIpcClient.IsForkedChild => BuiltInMethod.CreateV2("send", 1, static (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("process.send() requires at least one argument");
-                return ForkIpcClient.Instance!.Send(args[0]);
+                return RuntimeValue.FromBoxed(ForkIpcClient.Instance!.Send(args[0].ToObject()));
             }),
-            "disconnect" when ForkIpcClient.IsForkedChild => new BuiltInMethod("disconnect", 0, (interp, recv, args) =>
+            "disconnect" when ForkIpcClient.IsForkedChild => BuiltInMethod.CreateV2("disconnect", 0, static (_, _, _) =>
             {
                 ForkIpcClient.Instance?.Disconnect();
-                return null;
+                return RuntimeValue.Null;
             }),
             "connected" when ForkIpcClient.IsForkedChild => ForkIpcClient.Instance?.Connected ?? false,
 

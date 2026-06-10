@@ -582,22 +582,22 @@ public sealed class BuiltInRegistry
             SingletonFactory: null,
             GetMethod: name => name switch
             {
-                "revocable" => new BuiltInMethod("revocable", 2, (interp, _, args) =>
+                "revocable" => BuiltInMethod.CreateV2("revocable", 2, static (_, _, args) =>
                 {
-                    if (args.Count < 2)
+                    if (args.Length < 2)
                         throw new Exception("Runtime Error: Proxy.revocable requires exactly 2 arguments (target, handler).");
-                    var proxy = new SharpTSProxy(args[0]!, args[1]!);
-                    var revoke = new BuiltInMethod("revoke", 0, (_, _, _) =>
+                    var proxy = new SharpTSProxy(args[0].ToObject()!, args[1].ToObject()!);
+                    var revoke = BuiltInMethod.CreateV2("revoke", 0, (_, _, _) =>
                     {
                         proxy.Revoke();
-                        return SharpTSUndefined.Instance;
+                        return RuntimeValue.Undefined;
                     });
                     var result = new SharpTSObject(new Dictionary<string, object?>
                     {
                         ["proxy"] = proxy,
                         ["revoke"] = revoke
                     });
-                    return result;
+                    return RuntimeValue.FromObject(result);
                 }),
                 _ => null
             }
@@ -1017,8 +1017,8 @@ public sealed class BuiltInRegistry
             SingletonFactory: null,
             GetMethod: name => name switch
             {
-                "isView" => new BuiltInMethod("isView", 1, (_, _, args) =>
-                    SharpTSArrayBuffer.IsView(args.Count > 0 ? args[0] : null)),
+                "isView" => BuiltInMethod.CreateV2("isView", 1, static (_, _, args) =>
+                    RuntimeValue.FromBoolean(SharpTSArrayBuffer.IsView(args.Length > 0 ? args[0].ToObject() : null))),
                 _ => null
             }
         ));
@@ -1050,11 +1050,11 @@ public sealed class BuiltInRegistry
             return name switch
             {
                 "byteLength" => (double)sab.ByteLength,
-                "slice" => new BuiltInMethod("slice", 1, 2, (interp, recv, args) =>
+                "slice" => BuiltInMethod.CreateV2("slice", 1, 2, (_, _, args) =>
                 {
-                    int begin = args.Count > 0 && args[0] is double b ? (int)b : 0;
-                    int? end = args.Count > 1 && args[1] is double e ? (int)e : null;
-                    return sab.Slice(begin, end);
+                    int begin = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+                    int? end = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : null;
+                    return RuntimeValue.FromObject(sab.Slice(begin, end));
                 }),
                 _ => null
             };
@@ -1067,11 +1067,11 @@ public sealed class BuiltInRegistry
             return name switch
             {
                 "byteLength" => (double)ab.ByteLength,
-                "slice" => new BuiltInMethod("slice", 1, 2, (interp, recv, args) =>
+                "slice" => BuiltInMethod.CreateV2("slice", 1, 2, (_, _, args) =>
                 {
-                    int begin = args.Count > 0 && args[0] is double b ? (int)b : 0;
-                    int? end = args.Count > 1 && args[1] is double e ? (int)e : null;
-                    return ab.Slice(begin, end);
+                    int begin = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+                    int? end = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : null;
+                    return RuntimeValue.FromObject(ab.Slice(begin, end));
                 }),
                 _ => null
             };
@@ -1110,115 +1110,119 @@ public sealed class BuiltInRegistry
                 "buffer" => dv.Buffer,
                 "byteOffset" => (double)dv.ByteOffset,
                 "byteLength" => (double)dv.ByteLength,
-                "getInt8" => new BuiltInMethod("getInt8", 1, (_, _, args) =>
-                    dv.GetInt8(args.Count > 0 && args[0] is double d ? (int)d : 0)),
-                "getUint8" => new BuiltInMethod("getUint8", 1, (_, _, args) =>
-                    dv.GetUint8(args.Count > 0 && args[0] is double d ? (int)d : 0)),
-                "getInt16" => new BuiltInMethod("getInt16", 1, 2, (_, _, args) =>
-                    dv.GetInt16(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 && args[1] is bool le ? le : false)),
-                "getUint16" => new BuiltInMethod("getUint16", 1, 2, (_, _, args) =>
-                    dv.GetUint16(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 && args[1] is bool le ? le : false)),
-                "getInt32" => new BuiltInMethod("getInt32", 1, 2, (_, _, args) =>
-                    dv.GetInt32(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 && args[1] is bool le ? le : false)),
-                "getUint32" => new BuiltInMethod("getUint32", 1, 2, (_, _, args) =>
-                    dv.GetUint32(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 && args[1] is bool le ? le : false)),
-                "getFloat32" => new BuiltInMethod("getFloat32", 1, 2, (_, _, args) =>
-                    dv.GetFloat32(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 && args[1] is bool le ? le : false)),
-                "getFloat64" => new BuiltInMethod("getFloat64", 1, 2, (_, _, args) =>
-                    dv.GetFloat64(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 && args[1] is bool le ? le : false)),
-                "getBigInt64" => new BuiltInMethod("getBigInt64", 1, 2, (_, _, args) =>
-                    dv.GetBigInt64(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 && args[1] is bool le ? le : false)),
-                "getBigUint64" => new BuiltInMethod("getBigUint64", 1, 2, (_, _, args) =>
-                    dv.GetBigUint64(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 && args[1] is bool le ? le : false)),
-                "setInt8" => new BuiltInMethod("setInt8", 2, (_, _, args) =>
+                "getInt8" => BuiltInMethod.CreateV2("getInt8", 1, (_, _, args) =>
+                    RuntimeValue.FromNumber(dv.GetInt8(args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0))),
+                "getUint8" => BuiltInMethod.CreateV2("getUint8", 1, (_, _, args) =>
+                    RuntimeValue.FromNumber(dv.GetUint8(args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0))),
+                "getInt16" => BuiltInMethod.CreateV2("getInt16", 1, 2, (_, _, args) =>
+                    RuntimeValue.FromNumber(dv.GetInt16(
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 && args[1].IsBoolean && args[1].AsBooleanUnsafe()))),
+                "getUint16" => BuiltInMethod.CreateV2("getUint16", 1, 2, (_, _, args) =>
+                    RuntimeValue.FromNumber(dv.GetUint16(
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 && args[1].IsBoolean && args[1].AsBooleanUnsafe()))),
+                "getInt32" => BuiltInMethod.CreateV2("getInt32", 1, 2, (_, _, args) =>
+                    RuntimeValue.FromNumber(dv.GetInt32(
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 && args[1].IsBoolean && args[1].AsBooleanUnsafe()))),
+                "getUint32" => BuiltInMethod.CreateV2("getUint32", 1, 2, (_, _, args) =>
+                    RuntimeValue.FromNumber(dv.GetUint32(
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 && args[1].IsBoolean && args[1].AsBooleanUnsafe()))),
+                "getFloat32" => BuiltInMethod.CreateV2("getFloat32", 1, 2, (_, _, args) =>
+                    RuntimeValue.FromNumber(dv.GetFloat32(
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 && args[1].IsBoolean && args[1].AsBooleanUnsafe()))),
+                "getFloat64" => BuiltInMethod.CreateV2("getFloat64", 1, 2, (_, _, args) =>
+                    RuntimeValue.FromNumber(dv.GetFloat64(
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 && args[1].IsBoolean && args[1].AsBooleanUnsafe()))),
+                "getBigInt64" => BuiltInMethod.CreateV2("getBigInt64", 1, 2, (_, _, args) =>
+                    RuntimeValue.FromBigInt(dv.GetBigInt64(
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 && args[1].IsBoolean && args[1].AsBooleanUnsafe()))),
+                "getBigUint64" => BuiltInMethod.CreateV2("getBigUint64", 1, 2, (_, _, args) =>
+                    RuntimeValue.FromBigInt(dv.GetBigUint64(
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 && args[1].IsBoolean && args[1].AsBooleanUnsafe()))),
+                "setInt8" => BuiltInMethod.CreateV2("setInt8", 2, (_, _, args) =>
                 {
-                    dv.SetInt8(args.Count > 0 && args[0] is double d ? (int)d : 0, args.Count > 1 ? args[1] : null);
-                    return SharpTSUndefined.Instance;
+                    dv.SetInt8(
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 ? args[1].ToObject() : null);
+                    return RuntimeValue.Undefined;
                 }),
-                "setUint8" => new BuiltInMethod("setUint8", 2, (_, _, args) =>
+                "setUint8" => BuiltInMethod.CreateV2("setUint8", 2, (_, _, args) =>
                 {
-                    dv.SetUint8(args.Count > 0 && args[0] is double d ? (int)d : 0, args.Count > 1 ? args[1] : null);
-                    return SharpTSUndefined.Instance;
+                    dv.SetUint8(
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 ? args[1].ToObject() : null);
+                    return RuntimeValue.Undefined;
                 }),
-                "setInt16" => new BuiltInMethod("setInt16", 2, 3, (_, _, args) =>
+                "setInt16" => BuiltInMethod.CreateV2("setInt16", 2, 3, (_, _, args) =>
                 {
                     dv.SetInt16(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 ? args[1] : null,
-                        args.Count > 2 && args[2] is bool le ? le : false);
-                    return SharpTSUndefined.Instance;
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 ? args[1].ToObject() : null,
+                        args.Length > 2 && args[2].IsBoolean && args[2].AsBooleanUnsafe());
+                    return RuntimeValue.Undefined;
                 }),
-                "setUint16" => new BuiltInMethod("setUint16", 2, 3, (_, _, args) =>
+                "setUint16" => BuiltInMethod.CreateV2("setUint16", 2, 3, (_, _, args) =>
                 {
                     dv.SetUint16(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 ? args[1] : null,
-                        args.Count > 2 && args[2] is bool le ? le : false);
-                    return SharpTSUndefined.Instance;
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 ? args[1].ToObject() : null,
+                        args.Length > 2 && args[2].IsBoolean && args[2].AsBooleanUnsafe());
+                    return RuntimeValue.Undefined;
                 }),
-                "setInt32" => new BuiltInMethod("setInt32", 2, 3, (_, _, args) =>
+                "setInt32" => BuiltInMethod.CreateV2("setInt32", 2, 3, (_, _, args) =>
                 {
                     dv.SetInt32(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 ? args[1] : null,
-                        args.Count > 2 && args[2] is bool le ? le : false);
-                    return SharpTSUndefined.Instance;
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 ? args[1].ToObject() : null,
+                        args.Length > 2 && args[2].IsBoolean && args[2].AsBooleanUnsafe());
+                    return RuntimeValue.Undefined;
                 }),
-                "setUint32" => new BuiltInMethod("setUint32", 2, 3, (_, _, args) =>
+                "setUint32" => BuiltInMethod.CreateV2("setUint32", 2, 3, (_, _, args) =>
                 {
                     dv.SetUint32(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 ? args[1] : null,
-                        args.Count > 2 && args[2] is bool le ? le : false);
-                    return SharpTSUndefined.Instance;
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 ? args[1].ToObject() : null,
+                        args.Length > 2 && args[2].IsBoolean && args[2].AsBooleanUnsafe());
+                    return RuntimeValue.Undefined;
                 }),
-                "setFloat32" => new BuiltInMethod("setFloat32", 2, 3, (_, _, args) =>
+                "setFloat32" => BuiltInMethod.CreateV2("setFloat32", 2, 3, (_, _, args) =>
                 {
                     dv.SetFloat32(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 ? args[1] : null,
-                        args.Count > 2 && args[2] is bool le ? le : false);
-                    return SharpTSUndefined.Instance;
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 ? args[1].ToObject() : null,
+                        args.Length > 2 && args[2].IsBoolean && args[2].AsBooleanUnsafe());
+                    return RuntimeValue.Undefined;
                 }),
-                "setFloat64" => new BuiltInMethod("setFloat64", 2, 3, (_, _, args) =>
+                "setFloat64" => BuiltInMethod.CreateV2("setFloat64", 2, 3, (_, _, args) =>
                 {
                     dv.SetFloat64(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 ? args[1] : null,
-                        args.Count > 2 && args[2] is bool le ? le : false);
-                    return SharpTSUndefined.Instance;
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 ? args[1].ToObject() : null,
+                        args.Length > 2 && args[2].IsBoolean && args[2].AsBooleanUnsafe());
+                    return RuntimeValue.Undefined;
                 }),
-                "setBigInt64" => new BuiltInMethod("setBigInt64", 2, 3, (_, _, args) =>
+                "setBigInt64" => BuiltInMethod.CreateV2("setBigInt64", 2, 3, (_, _, args) =>
                 {
                     dv.SetBigInt64(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 ? args[1] : null,
-                        args.Count > 2 && args[2] is bool le ? le : false);
-                    return SharpTSUndefined.Instance;
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 ? args[1].ToObject() : null,
+                        args.Length > 2 && args[2].IsBoolean && args[2].AsBooleanUnsafe());
+                    return RuntimeValue.Undefined;
                 }),
-                "setBigUint64" => new BuiltInMethod("setBigUint64", 2, 3, (_, _, args) =>
+                "setBigUint64" => BuiltInMethod.CreateV2("setBigUint64", 2, 3, (_, _, args) =>
                 {
                     dv.SetBigUint64(
-                        args.Count > 0 && args[0] is double d ? (int)d : 0,
-                        args.Count > 1 ? args[1] : null,
-                        args.Count > 2 && args[2] is bool le ? le : false);
-                    return SharpTSUndefined.Instance;
+                        args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0,
+                        args.Length > 1 ? args[1].ToObject() : null,
+                        args.Length > 2 && args[2].IsBoolean && args[2].AsBooleanUnsafe());
+                    return RuntimeValue.Undefined;
                 }),
                 _ => null
             };
@@ -1291,53 +1295,53 @@ public sealed class BuiltInRegistry
             SingletonFactory: null,
             GetMethod: name => name switch
             {
-                "NumberFormat" => new BuiltInMethod("NumberFormat", 0, 2, (_, _, args) =>
+                "NumberFormat" => BuiltInMethod.CreateV2("NumberFormat", 0, 2, static (_, _, args) =>
                 {
-                    var locale = args.Count > 0 ? args[0] : null;
-                    var options = args.Count > 1 ? args[1] : null;
-                    return new SharpTSIntlNumberFormat(locale, options);
+                    var locale = args.Length > 0 ? args[0].ToObject() : null;
+                    var options = args.Length > 1 ? args[1].ToObject() : null;
+                    return RuntimeValue.FromObject(new SharpTSIntlNumberFormat(locale, options));
                 }),
-                "DateTimeFormat" => new BuiltInMethod("DateTimeFormat", 0, 2, (_, _, args) =>
+                "DateTimeFormat" => BuiltInMethod.CreateV2("DateTimeFormat", 0, 2, static (_, _, args) =>
                 {
-                    var locale = args.Count > 0 ? args[0] : null;
-                    var options = args.Count > 1 ? args[1] : null;
-                    return new SharpTSIntlDateTimeFormat(locale, options);
+                    var locale = args.Length > 0 ? args[0].ToObject() : null;
+                    var options = args.Length > 1 ? args[1].ToObject() : null;
+                    return RuntimeValue.FromObject(new SharpTSIntlDateTimeFormat(locale, options));
                 }),
-                "Collator" => new BuiltInMethod("Collator", 0, 2, (_, _, args) =>
+                "Collator" => BuiltInMethod.CreateV2("Collator", 0, 2, static (_, _, args) =>
                 {
-                    var locale = args.Count > 0 ? args[0] : null;
-                    var options = args.Count > 1 ? args[1] : null;
-                    return new SharpTSIntlCollator(locale, options);
+                    var locale = args.Length > 0 ? args[0].ToObject() : null;
+                    var options = args.Length > 1 ? args[1].ToObject() : null;
+                    return RuntimeValue.FromObject(new SharpTSIntlCollator(locale, options));
                 }),
-                "PluralRules" => new BuiltInMethod("PluralRules", 0, 2, (_, _, args) =>
+                "PluralRules" => BuiltInMethod.CreateV2("PluralRules", 0, 2, static (_, _, args) =>
                 {
-                    var locale = args.Count > 0 ? args[0] : null;
-                    var options = args.Count > 1 ? args[1] : null;
-                    return new SharpTSIntlPluralRules(locale, options);
+                    var locale = args.Length > 0 ? args[0].ToObject() : null;
+                    var options = args.Length > 1 ? args[1].ToObject() : null;
+                    return RuntimeValue.FromObject(new SharpTSIntlPluralRules(locale, options));
                 }),
-                "RelativeTimeFormat" => new BuiltInMethod("RelativeTimeFormat", 0, 2, (_, _, args) =>
+                "RelativeTimeFormat" => BuiltInMethod.CreateV2("RelativeTimeFormat", 0, 2, static (_, _, args) =>
                 {
-                    var locale = args.Count > 0 ? args[0] : null;
-                    var options = args.Count > 1 ? args[1] : null;
-                    return new SharpTSIntlRelativeTimeFormat(locale, options);
+                    var locale = args.Length > 0 ? args[0].ToObject() : null;
+                    var options = args.Length > 1 ? args[1].ToObject() : null;
+                    return RuntimeValue.FromObject(new SharpTSIntlRelativeTimeFormat(locale, options));
                 }),
-                "ListFormat" => new BuiltInMethod("ListFormat", 0, 2, (_, _, args) =>
+                "ListFormat" => BuiltInMethod.CreateV2("ListFormat", 0, 2, static (_, _, args) =>
                 {
-                    var locale = args.Count > 0 ? args[0] : null;
-                    var options = args.Count > 1 ? args[1] : null;
-                    return new SharpTSIntlListFormat(locale, options);
+                    var locale = args.Length > 0 ? args[0].ToObject() : null;
+                    var options = args.Length > 1 ? args[1].ToObject() : null;
+                    return RuntimeValue.FromObject(new SharpTSIntlListFormat(locale, options));
                 }),
-                "Segmenter" => new BuiltInMethod("Segmenter", 0, 2, (_, _, args) =>
+                "Segmenter" => BuiltInMethod.CreateV2("Segmenter", 0, 2, static (_, _, args) =>
                 {
-                    var locale = args.Count > 0 ? args[0] : null;
-                    var options = args.Count > 1 ? args[1] : null;
-                    return new SharpTSIntlSegmenter(locale, options);
+                    var locale = args.Length > 0 ? args[0].ToObject() : null;
+                    var options = args.Length > 1 ? args[1].ToObject() : null;
+                    return RuntimeValue.FromObject(new SharpTSIntlSegmenter(locale, options));
                 }),
-                "DisplayNames" => new BuiltInMethod("DisplayNames", 0, 2, (_, _, args) =>
+                "DisplayNames" => BuiltInMethod.CreateV2("DisplayNames", 0, 2, static (_, _, args) =>
                 {
-                    var locale = args.Count > 0 ? args[0] : null;
-                    var options = args.Count > 1 ? args[1] : null;
-                    return new SharpTSIntlDisplayNames(locale, options);
+                    var locale = args.Length > 0 ? args[0].ToObject() : null;
+                    var options = args.Length > 1 ? args[1].ToObject() : null;
+                    return RuntimeValue.FromObject(new SharpTSIntlDisplayNames(locale, options));
                 }),
                 _ => null
             }

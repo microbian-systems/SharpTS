@@ -46,22 +46,22 @@ public static class SymbolBuiltIns
             "split" => BuiltInMethod.CreateConstant("split", SharpTSSymbol.Split),
 
             // Symbol.for() - returns a shared symbol from the global symbol registry
-            "for" => new BuiltInMethod("for", 1, (_, _, args) =>
+            "for" => BuiltInMethod.CreateV2("for", 1, static (_, _, args) =>
             {
-                var key = args.Count > 0 ? args[0]?.ToString() ?? "undefined" : "undefined";
-                return SharpTSSymbol.For(key);
+                var key = args.Length > 0 ? args[0].ToObject()?.ToString() ?? "undefined" : "undefined";
+                return RuntimeValue.FromSymbol(SharpTSSymbol.For(key));
             }),
 
             // Symbol.keyFor() - returns the key for a symbol in the global registry, or undefined
-            "keyFor" => new BuiltInMethod("keyFor", 1, (_, _, args) =>
+            "keyFor" => BuiltInMethod.CreateV2("keyFor", 1, static (_, _, args) =>
             {
-                if (args.Count > 0 && args[0] is SharpTSSymbol sym)
+                if (args.Length > 0 && args[0].IsSymbol)
                 {
-                    var key = SharpTSSymbol.KeyFor(sym);
+                    var key = SharpTSSymbol.KeyFor(args[0].AsSymbol());
                     // Return undefined if symbol is not in global registry (matches JS behavior)
-                    return key ?? (object?)SharpTSUndefined.Instance;
+                    return key is null ? RuntimeValue.Undefined : RuntimeValue.FromString(key);
                 }
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
 
             _ => null

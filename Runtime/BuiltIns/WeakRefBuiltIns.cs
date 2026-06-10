@@ -11,10 +11,10 @@ public static class WeakRefBuiltIns
     {
         return name switch
         {
-            "deref" => new BuiltInMethod("deref", 0, (_, recv, _) =>
+            "deref" => BuiltInMethod.CreateV2("deref", 0, static (_, recv, _) =>
             {
-                var weakRef = (SharpTSWeakRef)recv!;
-                return weakRef.Deref();
+                var weakRef = (SharpTSWeakRef)recv.ToObject()!;
+                return RuntimeValue.FromBoxed(weakRef.Deref());
             }),
 
             _ => null
