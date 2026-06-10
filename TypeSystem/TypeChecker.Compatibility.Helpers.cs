@@ -143,12 +143,36 @@ public partial class TypeChecker
     /// </summary>
     private string AssignmentDiagnosticCode(TypeInfo target, TypeInfo source)
     {
-        if (source is not (TypeInfo.Record or TypeInfo.Interface or TypeInfo.Class or TypeInfo.Instance))
+        // Union sides report the generic assignability code (tsc nests the per-constituent
+        // detail under the "Type 'D | E' is not assignable…" headline).
+        if (target is TypeInfo.Union || source is TypeInfo.Union)
             return "TS2322";
+
+        // tsc promotes the missing-property elaboration to a top-level TS2741 only the FIRST time
+        // a given type pair fails — its relation cache makes repeated failures of the same pair
+        // report the plain headline (TS2322). unionTypesAssignability pins this: `d = e` is
+        // TS2741 at its first occurrence and TS2322 when repeated later in the file.
+        if (MissingRequiredMember(target, source))
+        {
+            _ts2741Reported ??= new(CompatibilityCacheKeyComparer.Instance);
+            if (_ts2741Reported.Add((target, source)))
+                return "TS2741";
+        }
+        return "TS2322";
+    }
+
+    /// <summary>Type pairs whose missing-property failure has already been reported as TS2741.</summary>
+    private HashSet<(TypeInfo Expected, TypeInfo Actual)>? _ts2741Reported;
+
+    /// <summary>True when the object-like source lacks a member the target requires.</summary>
+    private bool MissingRequiredMember(TypeInfo target, TypeInfo source)
+    {
+        if (source is not (TypeInfo.Record or TypeInfo.Interface or TypeInfo.Class or TypeInfo.Instance))
+            return false;
         foreach (var name in RequiredMemberNames(target))
             if (GetMemberType(source, name) is null)
-                return "TS2741";
-        return "TS2322";
+                return true;
+        return false;
     }
 
     /// <summary>Type-parameter substitution map for a generic-class instantiation.</summary>
@@ -221,8 +245,45 @@ public partial class TypeChecker
         if (expNum is not null)
         {
             if (NumberIndexOf(actual) is { } actNum && !IsCompatible(expNum, actNum)) return false;
+            // Numeric-named members must satisfy the number index signature. Unlike the
+            // string-index case above, an OPTIONAL member's implicit `undefined` is NOT exempt
+            // (tsc's optional-property exemption applies to string index signatures only), so
+            // under strictNullChecks `{ 1?: string }` fails `[key: number]: string`.
+            foreach (var (name, memberType, isOptional) in NamedMembersWithOptionality(actual))
+            {
+                if (!double.TryParse(name, out _)) continue;
+                var effective = isOptional && _strictNullChecks
+                    ? CreateUnion(memberType, new TypeInfo.Undefined())
+                    : memberType;
+                if (!IsCompatible(expNum, effective)) return false;
+            }
         }
         return true;
+    }
+
+    /// <summary>Named members of an object-like type with their declared optionality.</summary>
+    private IEnumerable<(string Name, TypeInfo Type, bool IsOptional)> NamedMembersWithOptionality(TypeInfo t)
+    {
+        switch (t)
+        {
+            case TypeInfo.Record r:
+                foreach (var (name, type) in r.Fields)
+                    yield return (name, type, r.IsFieldOptional(name));
+                break;
+            case TypeInfo.Interface i:
+                var optional = i.GetAllOptionalMembers().ToHashSet();
+                foreach (var (name, type) in i.GetAllMembers())
+                    yield return (name, type, optional.Contains(name));
+                break;
+            case TypeInfo.Instance inst:
+                foreach (var entry in NamedMembersWithOptionality(inst.ResolvedClassType))
+                    yield return entry;
+                break;
+            case TypeInfo.Class c:
+                foreach (var (name, type) in CollectPublicInstanceMembers(c))
+                    yield return (name, type, false);
+                break;
+        }
     }
 
     /// <summary>
