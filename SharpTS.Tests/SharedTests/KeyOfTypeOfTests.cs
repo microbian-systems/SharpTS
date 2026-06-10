@@ -474,4 +474,61 @@ public class KeyOfTypeOfTests
     }
 
     #endregion
+
+    #region typeof in Composite Types (regression: parse hang)
+
+    // Regression for an infinite loop in the type checker: `typeof` was resolved BEFORE union/
+    // intersection were split in ToTypeInfoCore, so a typeof operand inside a composite (e.g.
+    // `typeof a & typeof b`) handed the whole "a & typeof b" string to the custom typeof-path
+    // parser, which spun forever on the first '&'/'|'. These exercise both composites end to end.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypeOf_IntersectionOfTwoTypeOf(ExecutionMode mode)
+    {
+        var source = """
+            let a = { x: 1 };
+            let b = { y: 2 };
+            type AB = typeof a & typeof b;
+            let ab: AB = { x: 1, y: 2 };
+            console.log(ab.x);
+            console.log(ab.y);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypeOf_UnionWithNull(ExecutionMode mode)
+    {
+        // Resolving `typeof a | null` to a real union (rather than hanging) means null is a genuine
+        // arm — so the object arm must be narrowed before member access.
+        var source = """
+            let a = { x: 1 };
+            type MaybeA = typeof a | null;
+            let v: MaybeA = a;
+            if (v !== null) {
+                console.log(v.x);
+            }
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypeOf_IntersectionEnforcesBothMembers(ExecutionMode mode)
+    {
+        // The intersection must require members from BOTH operands — a value missing `y` is invalid.
+        var source = """
+            let a = { x: 1 };
+            let b = { y: 2 };
+            type AB = typeof a & typeof b;
+            let ab: AB = { x: 1 };
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.Run(source, mode));
+    }
+
+    #endregion
 }
