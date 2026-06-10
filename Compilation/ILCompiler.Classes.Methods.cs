@@ -733,6 +733,7 @@ public partial class ILCompiler
             DisplayClassFields = _closures.DisplayClassFields,
             DisplayClassConstructors = _closures.DisplayClassConstructors,
             CurrentClassBuilder = typeBuilder,
+            EmittingTypeBuilder = typeBuilder,
             FunctionRestParams = _functions.RestParams,
             FunctionsCapturingArguments = _functions.CapturingArguments,
             EnumMembers = _enums.Members,
@@ -948,6 +949,7 @@ public partial class ILCompiler
             // ES2022 Private Class Elements support
             CurrentClassName = typeBuilder.Name,
             CurrentClassBuilder = typeBuilder,
+            EmittingTypeBuilder = typeBuilder,
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Module-level variable access. For class method bodies we augment

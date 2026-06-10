@@ -1131,11 +1131,17 @@ public partial class ILEmitter
         if (!_ctx.Classes.TryGetValue(className, out var classType))
             return false;
 
+        // Generic classes need instantiated tokens (Stack<!T>), only expressible inside
+        // the class's own bodies; otherwise fall back to runtime dispatch (#178)
+        if (!EmitterTypeHelpers.TryResolveInstanceDispatch(
+                classType, getterBuilder, _ctx.EmittingTypeBuilder, out var castType, out var getterTarget))
+            return false;
+
         // Emit: ((ClassName)receiver).get_PropertyName()
         EmitExpression(receiver);
         EmitBoxIfNeeded(receiver);
-        IL.Emit(OpCodes.Castclass, classType);
-        IL.Emit(OpCodes.Callvirt, getterBuilder);
+        IL.Emit(OpCodes.Castclass, castType);
+        IL.Emit(OpCodes.Callvirt, getterTarget);
 
         // Check the actual return type of the getter method
         // Field properties have typed getters, but explicit accessors return object
@@ -1208,6 +1214,12 @@ public partial class ILEmitter
         if (!_ctx.Classes.TryGetValue(className, out var classType))
             return false;
 
+        // Generic classes need instantiated tokens (Stack<!T>), only expressible inside
+        // the class's own bodies; otherwise fall back to runtime dispatch (#178)
+        if (!EmitterTypeHelpers.TryResolveInstanceDispatch(
+                classType, setterBuilder, _ctx.EmittingTypeBuilder, out var castType, out var setterTarget))
+            return false;
+
         // Get the actual parameter type of the setter method
         // Field properties have typed setters, but explicit accessors take object
         var setterParams = setterBuilder.GetParameters();
@@ -1244,7 +1256,7 @@ public partial class ILEmitter
 
         // Load receiver and cast to class type
         IL.Emit(OpCodes.Ldloc, receiverTemp);
-        IL.Emit(OpCodes.Castclass, classType);
+        IL.Emit(OpCodes.Castclass, castType);
 
         // Emit value and convert to setter parameter type
         EmitExpression(value);
@@ -1261,7 +1273,7 @@ public partial class ILEmitter
             var resultTemp = IL.DeclareLocal(_ctx.Types.Object);
             IL.Emit(OpCodes.Stloc, resultTemp);
             IL.Emit(OpCodes.Unbox_Any, setterParamType);
-            IL.Emit(OpCodes.Callvirt, setterBuilder);
+            IL.Emit(OpCodes.Callvirt, setterTarget);
             // Pop setter return value if not void (explicit accessors return object)
             if (!setterReturnsVoid)
             {
@@ -1280,7 +1292,7 @@ public partial class ILEmitter
             {
                 IL.Emit(OpCodes.Castclass, setterParamType);
             }
-            IL.Emit(OpCodes.Callvirt, setterBuilder);
+            IL.Emit(OpCodes.Callvirt, setterTarget);
             // Pop setter return value if not void (explicit accessors return object)
             if (!setterReturnsVoid)
             {

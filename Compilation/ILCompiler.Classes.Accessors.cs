@@ -113,6 +113,7 @@ public partial class ILCompiler
             IsInstanceMethod = !accessor.IsStatic,
             CurrentClassName = className,
             CurrentClassBuilder = typeBuilder,
+            EmittingTypeBuilder = typeBuilder,
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
             ConstArrowBindings = _closures.ConstArrowBindings,
