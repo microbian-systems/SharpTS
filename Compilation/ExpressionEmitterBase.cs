@@ -1038,8 +1038,16 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             {
                 IL.Emit(OpCodes.Dup);
                 IL.Emit(OpCodes.Ldc_I4, i);
-                EmitExpression(a.Elements[i]);
-                EnsureBoxed();
+                if (a.IsHole(i))
+                {
+                    // Elided position → true ECMA-262 hole, not an undefined element.
+                    IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.ArrayHoleInstance);
+                }
+                else
+                {
+                    EmitExpression(a.Elements[i]);
+                    EnsureBoxed();
+                }
                 IL.Emit(OpCodes.Stelem_Ref);
             }
 
@@ -1066,8 +1074,15 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     IL.Emit(OpCodes.Newarr, typeof(object));
                     IL.Emit(OpCodes.Dup);
                     IL.Emit(OpCodes.Ldc_I4_0);
-                    EmitExpression(a.Elements[i]);
-                    EnsureBoxed();
+                    if (a.IsHole(i))
+                    {
+                        IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.ArrayHoleInstance);
+                    }
+                    else
+                    {
+                        EmitExpression(a.Elements[i]);
+                        EnsureBoxed();
+                    }
                     IL.Emit(OpCodes.Stelem_Ref);
                     IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateArray);
                 }

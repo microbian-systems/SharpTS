@@ -34,8 +34,16 @@ public partial class ILEmitter
             {
                 IL.Emit(OpCodes.Dup);
                 IL.Emit(OpCodes.Ldc_I4, i);
-                EmitExpression(a.Elements[i]);
-                EmitBoxIfNeeded(a.Elements[i]);
+                if (a.IsHole(i))
+                {
+                    // Elided position → true ECMA-262 hole, not an undefined element.
+                    IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.ArrayHoleInstance);
+                }
+                else
+                {
+                    EmitExpression(a.Elements[i]);
+                    EmitBoxIfNeeded(a.Elements[i]);
+                }
                 IL.Emit(OpCodes.Stelem_Ref);
             }
 
@@ -66,8 +74,15 @@ public partial class ILEmitter
                     IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
                     IL.Emit(OpCodes.Dup);
                     IL.Emit(OpCodes.Ldc_I4, 0);
-                    EmitExpression(a.Elements[i]);
-                    EmitBoxIfNeeded(a.Elements[i]);
+                    if (a.IsHole(i))
+                    {
+                        IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.ArrayHoleInstance);
+                    }
+                    else
+                    {
+                        EmitExpression(a.Elements[i]);
+                        EmitBoxIfNeeded(a.Elements[i]);
+                    }
                     IL.Emit(OpCodes.Stelem_Ref);
                     IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateArray);
                 }

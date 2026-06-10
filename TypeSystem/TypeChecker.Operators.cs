@@ -552,6 +552,10 @@ public partial class TypeChecker
             return new TypeInfo.Undefined();
         if (unary.Operator.Type == TokenType.MINUS)
         {
+            // tsc types -x as number when x is any; IsBigInt(any) is true via
+            // IsTypeOfKind, which would mis-type -x as bigint and make any
+            // enclosing binary expression take the bigint emit path (#190).
+            if (right is TypeInfo.Any) return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
             if (IsBigInt(right)) return new TypeInfo.BigInt();
             if (IsNumber(right)) return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
             throw new TypeCheckException("Unary '-' expects a number or bigint.", tsCode: "TS2362");
@@ -560,6 +564,8 @@ public partial class TypeChecker
              return new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
         if (unary.Operator.Type == TokenType.TILDE)
         {
+            // Same any→number rule as unary minus above.
+            if (right is TypeInfo.Any) return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
             if (IsBigInt(right)) return new TypeInfo.BigInt();
             if (IsNumber(right)) return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
             throw new TypeCheckException("Bitwise NOT requires a numeric operand.", tsCode: "TS2362");
