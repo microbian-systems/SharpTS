@@ -92,6 +92,24 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
                 SetStackUnknown();
                 return true;
+            case "sticky":
+            case "unicode":
+            case "dotAll":
+            case "hasIndices":
+            case "unicodeSets":
+                EmitExpression(g.Object);
+                EmitBoxIfNeeded(g.Object);
+                IL.Emit(OpCodes.Call, propName switch
+                {
+                    "sticky" => _ctx.Runtime!.RegExpGetSticky,
+                    "unicode" => _ctx.Runtime!.RegExpGetUnicode,
+                    "dotAll" => _ctx.Runtime!.RegExpGetDotAll,
+                    "hasIndices" => _ctx.Runtime!.RegExpGetHasIndices,
+                    _ => _ctx.Runtime!.RegExpGetUnicodeSets,
+                });
+                IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
+                SetStackUnknown();
+                return true;
             case "lastIndex":
                 EmitExpression(g.Object);
                 EmitBoxIfNeeded(g.Object);

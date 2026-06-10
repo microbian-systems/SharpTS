@@ -390,6 +390,11 @@ public static class BuiltInTypes
             "global" => BooleanType,
             "ignoreCase" => BooleanType,
             "multiline" => BooleanType,
+            "dotAll" => BooleanType,
+            "sticky" => BooleanType,
+            "unicode" => BooleanType,
+            "unicodeSets" => BooleanType,
+            "hasIndices" => BooleanType,
             "lastIndex" => NumberType,
 
             // Methods. ECMA-262 §22.2.6.{2,8,16} — test/exec coerce the

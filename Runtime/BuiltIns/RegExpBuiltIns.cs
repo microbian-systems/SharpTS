@@ -218,6 +218,11 @@ public static class RegExpBuiltIns
             "global" => receiver.Global,
             "ignoreCase" => receiver.IgnoreCase,
             "multiline" => receiver.Multiline,
+            "dotAll" => receiver.Flags.Contains('s'),
+            "sticky" => receiver.Sticky,
+            "unicode" => receiver.Unicode,
+            "unicodeSets" => receiver.Flags.Contains('v'),
+            "hasIndices" => receiver.Flags.Contains('d'),
             "lastIndex" => (double)receiver.LastIndex,
 
             // ========== Methods ==========
@@ -374,6 +379,8 @@ public static class RegExpBuiltIns
         DefineAccessor("dotAll", _protoDotAllGetter);
         DefineAccessor("sticky", _protoStickyGetter);
         DefineAccessor("unicode", _protoUnicodeGetter);
+        DefineAccessor("unicodeSets", _protoUnicodeSetsGetter);
+        DefineAccessor("hasIndices", _protoHasIndicesGetter);
         return proto;
     }
 
@@ -443,6 +450,8 @@ public static class RegExpBuiltIns
     private static readonly BuiltInMethod _protoDotAllGetter = MakeProtoFlagGetter("dotAll", 's');
     private static readonly BuiltInMethod _protoStickyGetter = MakeProtoFlagGetter("sticky", 'y');
     private static readonly BuiltInMethod _protoUnicodeGetter = MakeProtoFlagGetter("unicode", 'u');
+    private static readonly BuiltInMethod _protoUnicodeSetsGetter = MakeProtoFlagGetter("unicodeSets", 'v');
+    private static readonly BuiltInMethod _protoHasIndicesGetter = MakeProtoFlagGetter("hasIndices", 'd');
 
     /// <summary>
     /// §22.2.5.12 <c>get RegExp.prototype.source</c>: a real RegExp returns its
