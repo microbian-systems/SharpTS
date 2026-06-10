@@ -28,6 +28,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The runner's hostname is an mDNS-only `.local` name that nothing on the
+      # network answers for, so the Dns.GetHostEntry call inside the managed
+      # HttpListener's Prefixes.Add (Kerberos SPN setup) burns mDNSResponder's
+      # full 5s timeout for every guest program that calls http server.listen().
+      # Resolving it from /etc/hosts short-circuits that — saves ~2min of test time.
+      - name: Register hostname in /etc/hosts (macOS mDNS workaround)
+        if: runner.os == 'macOS'
+        run: echo "127.0.0.1 $(hostname)" | sudo tee -a /etc/hosts
+
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
