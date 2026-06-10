@@ -133,13 +133,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, propNameLocal);
 
-        // ECMA-262 10.4.2.4 ArraySetLength: validate that ToUint32(newLen) ===
-        // ToNumber(newLen) — i.e. an integer in [0, 2^32). Without this,
-        // \`Object.defineProperty([], 'length', {value: -1})\` silently stores
-        // -1 in the underlying dict instead of throwing RangeError.
+        // ECMA-262 10.4.2.4 ArraySetLength steps 3-4: newLen =
+        // ToUint32(Desc.[[Value]]), numberLen = ToNumber(Desc.[[Value]]) —
+        // exactly two coercions, in that order (test262 define-own-prop-
+        // length-coercion-order.js counts the valueOf calls). If
+        // SameValueZero(newLen, numberLen) is false → RangeError, which
+        // rejects NaN, ±Infinity, negatives, non-integers, and >= 2^32.
+        // The coerced newLen then REPLACES the descriptor's value (stashed
+        // into the synth dict after the overlay pass below) so the raw
+        // object never reaches the PDS — re-coercing a stored object value
+        // on a later redefine is what produced the unbounded
+        // ObjectDefineProperty ⇄ ToNumber recursion of issue #180.
         // Only fires for List<object> receivers (compiled-mode arrays) with
         // propName == "length" and a value-typed descriptor.
         var skipArrayLenCheck = il.DefineLabel();
+        var lenWasCoercedLocal = il.DeclareLocal(_types.Boolean);
+        var coercedLenLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brfalse, skipArrayLenCheck);
@@ -157,30 +166,61 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, lenValLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue", _types.String, _types.Object.MakeByRefType()));
         il.Emit(OpCodes.Brfalse, skipArrayLenCheck);
-        // Coerce value via ToNumber — captures NaN, Infinity, non-numeric.
+        // First coercion (ToUint32's inner ToNumber) — valueOf call #1.
         var lenNumLocal = il.DeclareLocal(_types.Double);
+        var newLenLocal = il.DeclareLocal(_types.Double);
+        var numberLenLocal = il.DeclareLocal(_types.Double);
         il.Emit(OpCodes.Ldloc, lenValLocal);
         il.Emit(OpCodes.Call, runtime.ToNumber);
         il.Emit(OpCodes.Stloc, lenNumLocal);
-        // RangeError if NaN, Infinity, negative, non-integer, or >= 2^32.
+        // newLen = ToUint32(lenNum): NaN/±Inf → 0; else truncate, fmod 2^32,
+        // normalize into [0, 2^32).
+        var uintZeroLabel = il.DefineLabel();
+        var uintDoneLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, lenNumLocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsNaN", _types.Double));
-        var rangeErrLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, rangeErrLabel);
+        il.Emit(OpCodes.Brtrue, uintZeroLabel);
         il.Emit(OpCodes.Ldloc, lenNumLocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsInfinity", _types.Double));
-        il.Emit(OpCodes.Brtrue, rangeErrLabel);
+        il.Emit(OpCodes.Brtrue, uintZeroLabel);
         il.Emit(OpCodes.Ldloc, lenNumLocal);
-        il.Emit(OpCodes.Ldc_R8, 0.0);
-        il.Emit(OpCodes.Blt, rangeErrLabel);
-        il.Emit(OpCodes.Ldloc, lenNumLocal);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Truncate", _types.Double));
         il.Emit(OpCodes.Ldc_R8, 4294967296.0);
-        il.Emit(OpCodes.Bge, rangeErrLabel);
-        // Non-integer: floor(x) != x.
-        il.Emit(OpCodes.Ldloc, lenNumLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Floor", _types.Double));
-        il.Emit(OpCodes.Ldloc, lenNumLocal);
+        il.Emit(OpCodes.Rem);
+        il.Emit(OpCodes.Stloc, newLenLocal);
+        il.Emit(OpCodes.Ldloc, newLenLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Bge, uintDoneLabel);
+        il.Emit(OpCodes.Ldloc, newLenLocal);
+        il.Emit(OpCodes.Ldc_R8, 4294967296.0);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, newLenLocal);
+        il.Emit(OpCodes.Br, uintDoneLabel);
+        il.MarkLabel(uintZeroLabel);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Stloc, newLenLocal);
+        il.MarkLabel(uintDoneLabel);
+        // Normalize -0 → +0 (x + 0.0 is identity for everything else).
+        il.Emit(OpCodes.Ldloc, newLenLocal);
+        il.Emit(OpCodes.Ldc_R8, 0.0);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, newLenLocal);
+        // Second coercion — valueOf call #2.
+        il.Emit(OpCodes.Ldloc, lenValLocal);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Stloc, numberLenLocal);
+        // SameValueZero(newLen, numberLen) — Bne_Un branches on unordered,
+        // so a NaN numberLen lands at rangeErr; ±0 compare equal.
+        var rangeErrLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, newLenLocal);
+        il.Emit(OpCodes.Ldloc, numberLenLocal);
         il.Emit(OpCodes.Bne_Un, rangeErrLabel);
+        // Stash box(newLen) for the synth-dict override below.
+        il.Emit(OpCodes.Ldloc, newLenLocal);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Stloc, coercedLenLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, lenWasCoercedLocal);
         il.Emit(OpCodes.Br, skipArrayLenCheck);
         il.MarkLabel(rangeErrLabel);
         il.Emit(OpCodes.Ldstr, "Invalid array length");
@@ -362,6 +402,20 @@ public partial class RuntimeEmitter
         EmitOverlay("configurable");
 
         il.MarkLabel(skipOverlayLabel);
+
+        // ECMA-262 10.4.2.4 ArraySetLength step 5: newLenDesc.[[Value]] =
+        // newLen. When the array-length coercion above ran, override the
+        // synth dict's "value" with the coerced uint32 so the descriptor
+        // (and the PDS entry it becomes) holds a plain number — never the
+        // raw object whose valueOf re-fires on later redefines (issue #180).
+        var skipLenValueOverride = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, lenWasCoercedLocal);
+        il.Emit(OpCodes.Brfalse, skipLenValueOverride);
+        il.Emit(OpCodes.Ldloc, synthDictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldloc, coercedLenLocal);
+        il.Emit(OpCodes.Callvirt, synthDictSetItem);
+        il.MarkLabel(skipLenValueOverride);
 
         il.Emit(OpCodes.Ldloc, synthDictLocal);
         il.Emit(OpCodes.Stloc, dictLocal);
@@ -995,6 +1049,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, propNameLocal);
         il.Emit(OpCodes.Ldstr, "length");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notListForLengthLabel);
+        // Gate on the INPUT descriptor having an own "value" — not on the
+        // post-merge descriptor slot. ECMA-262 §10.4.2.4 step 2: a define
+        // with no [[Value]] (e.g. {writable:false}) is OrdinaryDefineOwnProperty
+        // only and must never re-coerce or re-apply a previously stored
+        // length value (issue #180 recursion; stale-length truncation).
+        var lenApplyValLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldloca, lenApplyValLocal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
         il.Emit(OpCodes.Brfalse, notListForLengthLabel);
         il.Emit(OpCodes.Ldloc, wasGenericLocal);
         il.Emit(OpCodes.Brtrue, notListForLengthLabel);
