@@ -427,12 +427,10 @@ public partial class Interpreter : IDisposable
             _virtualTimerQueue.Enqueue(timer, fireTime);
             _hasScheduledTimers = true;
         }
-        // Wake the event loop if the timer fires soon (within 10ms)
-        // This ensures immediate timers (setTimeout(fn, 0)) are processed promptly
-        if (delayMs <= 10)
-        {
-            WakeEventLoop();
-        }
+        // Always wake the event loop: it may be blocked in a wait whose timeout was
+        // computed before this timer existed (up to 60s when the queue was empty), so a
+        // cross-thread schedule with any delay must force a timeout recomputation.
+        WakeEventLoop();
         return timer;
     }
 
