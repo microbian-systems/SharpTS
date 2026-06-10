@@ -412,9 +412,42 @@ public partial class TypeChecker
             {
                 CheckStmt(stmt.ThenBranch);
                 if (stmt.ElseBranch != null) CheckStmt(stmt.ElseBranch);
+
+                // `if (A || B) return;` — when the then-branch always
+                // terminates and there is no else, the code after the if sees
+                // the negation of EVERY disjunct (De Morgan): apply each
+                // disjunct's excluded type. Handles the early-return guard
+                // idiom `if (x == null || x.length === 0) return;` (#216) —
+                // compound analysis only decomposes &&, and the legacy guard
+                // can't see through ||.
+                if (stmt.ElseBranch == null
+                    && AlwaysTerminates(stmt.ThenBranch)
+                    && stmt.Condition is Expr.Logical { } topOr
+                    && topOr.Operator.Type == TokenType.OR_OR)
+                {
+                    ApplyDisjunctExclusions(topOr);
+                }
             }
         }
         return VoidResult.Instance;
+    }
+
+    /// <summary>
+    /// Applies each disjunct's excluded type to the current environment.
+    /// Used after a terminating then-branch with no else, where the negation
+    /// of every disjunct is known to hold. Variable paths only — property
+    /// path exclusions would need a narrowing-context push scoped to the
+    /// rest of the enclosing block, which the context stack doesn't model.
+    /// </summary>
+    private void ApplyDisjunctExclusions(Expr.Logical orExpr)
+    {
+        foreach (var (path, _, excludedType) in CollectDisjunctGuards(orExpr))
+        {
+            if (path is Narrowing.NarrowingPath.Variable varPath)
+            {
+                _environment.Define(varPath.Name, excludedType);
+            }
+        }
     }
 
     /// <summary>

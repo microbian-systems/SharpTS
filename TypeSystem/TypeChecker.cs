@@ -1043,6 +1043,11 @@ public partial class TypeChecker
         foreach (var module in modules)
         {
             _currentModule = module;
+            // Attribute diagnostics to the module being checked — without
+            // this, errors raised inside module sources (including built-in
+            // module declarations like events.ts) render as bare
+            // "at line N" with no file context (#216).
+            _filePath = module.Path;
             if (module.IsScript)
             {
                 // Scripts use shared environment and don't export
@@ -1063,6 +1068,7 @@ public partial class TypeChecker
             }
 
             _currentModule = module;
+            _filePath = module.Path; // diagnostic attribution — see first pass (#216)
 
             if (module.IsScript)
             {
@@ -1146,6 +1152,7 @@ public partial class TypeChecker
         }
 
         _currentModule = null;
+        _filePath = null;
         return _typeMap;
     }
 
