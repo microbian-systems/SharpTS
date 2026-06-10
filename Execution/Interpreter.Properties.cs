@@ -844,10 +844,7 @@ public partial class Interpreter
         if (getter != null)
         {
             var boundGetter = BindAccessorToObject(getter, simpleObj);
-            // V2 fast path for getter invocation
-            if (boundGetter is ISharpTSCallableV2 v2Getter)
-                return v2Getter.CallV2(this, ReadOnlySpan<RuntimeValue>.Empty);
-            return RuntimeValue.FromBoxed(boundGetter.Call(this, []));
+            return boundGetter.CallV2(this, ReadOnlySpan<RuntimeValue>.Empty);
         }
 
         if (simpleObj.HasProperty(memberName))
@@ -873,9 +870,7 @@ public partial class Interpreter
                 if (protoGetter != null)
                 {
                     var boundProtoGetter = BindAccessorToObject(protoGetter, simpleObj);
-                    if (boundProtoGetter is ISharpTSCallableV2 v2Proto)
-                        return v2Proto.CallV2(this, ReadOnlySpan<RuntimeValue>.Empty);
-                    return RuntimeValue.FromBoxed(boundProtoGetter.Call(this, []));
+                    return boundProtoGetter.CallV2(this, ReadOnlySpan<RuntimeValue>.Empty);
                 }
                 if (proto.HasProperty(memberName))
                 {

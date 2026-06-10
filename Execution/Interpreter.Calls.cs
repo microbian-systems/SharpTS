@@ -25,7 +25,7 @@ public partial class Interpreter
         IReadOnlyList<Expr> arguments)
     {
         // V2 fast path: use RuntimeValue span instead of List<object?>
-        if (method is ISharpTSCallableV2 v2 && method is BuiltInMethod bm && bm.HasV2Implementation)
+        if (method is BuiltInMethod bm && bm.HasV2Implementation)
         {
             var argCount = arguments.Count;
             var rented = ArrayPool<RuntimeValue>.Shared.Rent(Math.Max(argCount, 1));
@@ -35,7 +35,7 @@ public partial class Interpreter
                 {
                     rented[i] = await ctx.EvaluateExprAsync(arguments[i]);
                 }
-                return v2.CallV2(this, rented.AsSpan(0, argCount)).ToObject();
+                return bm.CallV2(this, rented.AsSpan(0, argCount)).ToObject();
             }
             finally
             {
@@ -227,7 +227,7 @@ public partial class Interpreter
     private RuntimeValue CallBuiltInSync(ISharpTSCallable method, IReadOnlyList<Expr> arguments)
     {
         // V2 fast path — no boxing at all
-        if (method is ISharpTSCallableV2 v2 && method is BuiltInMethod bm && bm.HasV2Implementation)
+        if (method is BuiltInMethod bm && bm.HasV2Implementation)
         {
             var argCount = arguments.Count;
             var rented = ArrayPool<RuntimeValue>.Shared.Rent(Math.Max(argCount, 1));
@@ -237,7 +237,7 @@ public partial class Interpreter
                 {
                     rented[i] = EvaluateRV(arguments[i]);
                 }
-                return v2.CallV2(this, rented.AsSpan(0, argCount));
+                return bm.CallV2(this, rented.AsSpan(0, argCount));
             }
             finally
             {
@@ -358,8 +358,9 @@ public partial class Interpreter
             return RuntimeValue.Undefined;
         }
 
-        // V2 fast path: no spread args and callee supports V2 — zero boxing
-        if (callee is ISharpTSCallableV2 v2Callee && !HasSpreadArgs(call.Arguments))
+        // V2 fast path: no spread args — zero boxing (CallV2 is on the interface;
+        // unmigrated implementors run through the boxing DIM bridge)
+        if (callee is ISharpTSCallable v2Callee && !HasSpreadArgs(call.Arguments))
         {
             int argCount = call.Arguments.Count;
             var rented = ArrayPool<RuntimeValue>.Shared.Rent(Math.Max(argCount, 1));
@@ -377,7 +378,8 @@ public partial class Interpreter
             }
         }
 
-        // Legacy path: spread args or non-V2 callables
+        // Boxed path: spread args (element lists come from object? iterables) or
+        // non-callable callee (TypeError reporting below)
         var argumentsList = ArgumentListPool.Rent();
         try
         {
