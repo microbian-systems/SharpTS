@@ -53,6 +53,11 @@ public partial class TypeChecker
 
         using (new EnvironmentScope(this, namespaceEnv))
         {
+            // Hoist var declarations (as `any`) before anything resolves, mirroring the top-level
+            // pass: a member's own annotation/initializer may reference itself or a later var
+            // (`var a: { foo: typeof a }`, `var a2 = { foo: a2 }`).
+            HoistVarDeclarations(ns.Members);
+
             // First pass: collect all type declarations (classes, interfaces, enums, nested namespaces)
             foreach (var member in ns.Members)
             {

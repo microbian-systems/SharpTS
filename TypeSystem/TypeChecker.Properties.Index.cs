@@ -17,6 +17,16 @@ public partial class TypeChecker
         TypeInfo objType = CheckExpr(getIndex.Object);
         TypeInfo indexType = CheckExpr(getIndex.Index);
 
+        // An enum-typed index (`x[E.A]` — enum member accesses type as the enum) participates
+        // as its underlying key kind: numeric enums hit number index signatures, string enums
+        // hit string ones.
+        if (indexType is TypeInfo.Enum indexEnum)
+        {
+            indexType = indexEnum.Kind == EnumKind.String
+                ? new TypeInfo.String()
+                : new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        }
+
         // Allow indexing on 'any' type (returns 'any')
         if (objType is TypeInfo.Any)
         {
@@ -291,6 +301,14 @@ public partial class TypeChecker
         TypeInfo objType = CheckExpr(setIndex.Object);
         TypeInfo indexType = CheckExpr(setIndex.Index);
         TypeInfo valueType = CheckExpr(setIndex.Value);
+
+        // Same enum-index widening as CheckGetIndex: `x[E.A] = v` uses the enum's key kind.
+        if (indexType is TypeInfo.Enum indexEnum)
+        {
+            indexType = indexEnum.Kind == EnumKind.String
+                ? new TypeInfo.String()
+                : new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+        }
 
         // Invalidate any narrowings affected by this index assignment
         var basePath = Narrowing.NarrowingPathExtractor.TryExtract(setIndex.Object);

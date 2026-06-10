@@ -543,15 +543,18 @@ public partial class TypeChecker
             return false; // Unresolved infer parameters are not compatible with anything
         }
 
-        // Enum compatibility: primitive values are assignable to their enum type
-        // (e.g., Direction.Up which is typed as 'number' can be assigned to Direction)
+        // Enum compatibility. Same enum (or its members, which now type as the enum) is
+        // assignable; a plain widened `number` still flows into a numeric enum
+        // (numberAssignableToEnum pins this) — but a numeric LITERAL does not, even when it
+        // matches a member value (enumAssignability: `e = 1` errors; literals are not Primitive
+        // here so they fall through to false).
         if (expected is TypeInfo.Enum expectedEnum)
         {
             // Same enum type is compatible
             if (actual is TypeInfo.Enum actualEnum && expectedEnum.Name == actualEnum.Name)
                 return true;
 
-            // Numeric enum accepts number
+            // Numeric enum accepts (widened) number
             if (expectedEnum.Kind == EnumKind.Numeric &&
                 actual is TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER })
                 return true;

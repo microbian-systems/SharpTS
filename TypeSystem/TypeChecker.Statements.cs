@@ -129,6 +129,12 @@ public partial class TypeChecker
 
     internal VoidResult VisitVar(Stmt.Var stmt)
     {
+        // Captured before any provisional Define overwrites it — used for the TS2403
+        // redeclaration check once this declaration's type settles. Locally only: a same-named
+        // var in an OUTER scope is shadowing, not redeclaration.
+        TypeInfo? preExistingType = stmt.IsVar && _environment.IsDefinedLocally(stmt.Name.Lexeme)
+            ? _environment.Get(stmt.Name.Lexeme) : null;
+
         TypeInfo? declaredType = null;
         if (stmt.TypeAnnotation != null)
         {
@@ -138,6 +144,7 @@ public partial class TypeChecker
         if (stmt.HasDefiniteAssignmentAssertion)
         {
             _environment.Define(stmt.Name.Lexeme, declaredType!);
+            CheckVarRedeclaration(stmt, preExistingType, declaredType!);
             // Record the declared type for assignment checking
             RecordDeclaredType(stmt.Name.Lexeme, declaredType!);
             // Register as local variable for escape analysis
@@ -215,6 +222,7 @@ public partial class TypeChecker
 
                 declaredType ??= initializerType;
             }
+            CheckVarRedeclaration(stmt, preExistingType, declaredType!);
             // Record the declared type for assignment checking
             RecordDeclaredType(stmt.Name.Lexeme, declaredType!);
             return VoidResult.Instance;
@@ -222,9 +230,28 @@ public partial class TypeChecker
 
         declaredType ??= new TypeInfo.Any();
         _environment.Define(stmt.Name.Lexeme, declaredType);
+        CheckVarRedeclaration(stmt, preExistingType, declaredType);
         // Record the declared type for assignment checking
         RecordDeclaredType(stmt.Name.Lexeme, declaredType);
         return VoidResult.Instance;
+    }
+
+    /// <summary>
+    /// TS2403: subsequent `var` declarations of the same name in the same scope must keep the
+    /// same type (`var r4 = fooA(...)` then `var r4 = fooB(...)` with a different result type).
+    /// Identical re-declarations are legal JS/TS and pass silently.
+    /// </summary>
+    private void CheckVarRedeclaration(Stmt.Var stmt, TypeInfo? previous, TypeInfo newType)
+    {
+        // `Any` covers both the var-hoisting placeholder (first declaration) and explicit
+        // any-typed vars — neither participates in the redeclaration check.
+        if (!stmt.IsVar || previous is null or TypeInfo.Any) return;
+        if (!TypeInfoEqualityComparer.Instance.Equals(previous, newType))
+        {
+            throw new TypeCheckException(
+                $" Subsequent variable declarations must have the same type. Variable '{stmt.Name.Lexeme}' must be of type '{previous}', but here has type '{newType}'.",
+                line: stmt.Name.Line, tsCode: "TS2403");
+        }
     }
 
     internal VoidResult VisitConst(Stmt.Const stmt)
