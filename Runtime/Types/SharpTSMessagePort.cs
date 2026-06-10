@@ -207,11 +207,11 @@ public class SharpTSMessagePort : SharpTSEventEmitter
             // MessageChannel-created ports also have no owner interpreter until
             // someone interacts with them, so capture it here — without it,
             // queued messages are never delivered.
-            "on" or "addListener" or "once" => new BuiltInMethod(name, 2, (interp, recv, args) =>
+            "on" or "addListener" or "once" => BuiltInMethod.CreateV2(name, 2, (interp, _, args) =>
             {
-                var eventName = args[0]?.ToString()
+                var eventName = args[0].ToObject()?.ToString()
                     ?? throw new Exception("Event name must be a string");
-                var listener = args[1]
+                var listener = args[1].ToObject()
                     ?? throw new Exception("Listener must be a function");
                 AddListenerDirect(eventName, listener, once: name == "once");
                 if (eventName == "message")
@@ -219,7 +219,7 @@ public class SharpTSMessagePort : SharpTSEventEmitter
                     OwnerInterpreter ??= interp;
                     Start();
                 }
-                return this;
+                return RuntimeValue.FromObject(this);
             }),
 
             // Inherit EventEmitter methods

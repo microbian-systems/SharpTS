@@ -83,8 +83,10 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
             }).Bind(this),
             // Node API: server.address() is a method returning
             // { address, family, port } (or null before listen).
-            "address" => new BuiltInMethod("address", 0, (interp, receiver, args) =>
-                receiver is SharpTSHttpServer server ? server.GetAddress() : null).Bind(this),
+            "address" => BuiltInMethod.CreateV2("address", 0, (_, receiver, _) =>
+                RuntimeValue.FromBoxed(receiver.ToObject() is SharpTSHttpServer server
+                    ? server.GetAddress()
+                    : null)).Bind(this),
             // Inherit EventEmitter methods for on, once, off, emit, removeAllListeners, etc.
             _ => base.GetMember(name)
         };
