@@ -9,11 +9,13 @@ namespace SharpTS.Compilation;
 /// </summary>
 public class ILVerifier : IResolver, IDisposable
 {
-    private readonly string _sdkPath;
+    private readonly string? _sdkPath;
     private readonly Dictionary<string, PEReader> _assemblyCache = new();
     private bool _disposed;
 
-    public ILVerifier(string sdkPath)
+    /// <param name="sdkPath">Optional extra probe directory (e.g. an explicit --sdk-path).
+    /// Probed after the shared-framework runtime directory.</param>
+    public ILVerifier(string? sdkPath = null)
     {
         _sdkPath = sdkPath;
     }
@@ -121,49 +123,50 @@ public class ILVerifier : IResolver, IDisposable
         if (_assemblyCache.TryGetValue(name, out var cached))
             return cached;
 
-        // Try to find in SDK reference assemblies
-        var dllPath = Path.Combine(_sdkPath, $"{name}.dll");
-        if (File.Exists(dllPath))
-        {
-            FileStream? stream = null;
-            try
-            {
-                stream = File.OpenRead(dllPath);
-                var reader = new PEReader(stream);
-                _assemblyCache[name] = reader;
-                return reader;
-            }
-            catch
-            {
-                stream?.Dispose();
-                throw;
-            }
-        }
-
-        // Try runtime assemblies as fallback
+        // Resolve from the shared-framework runtime directory first. Emitted assemblies
+        // reference System.Private.CoreLib (not the ref-assembly contract surface), and
+        // the runtime directory contains both CoreLib and the type-forwarding facades,
+        // so every reference resolves in one consistent universe. Mixing ref assemblies
+        // with CoreLib from the runtime dir makes core type identities diverge and
+        // ILVerify flags nearly every stack interaction (issue #189).
         var runtimePath = Path.GetDirectoryName(typeof(object).Assembly.Location);
         if (runtimePath != null)
         {
-            var runtimeDll = Path.Combine(runtimePath, $"{name}.dll");
-            if (File.Exists(runtimeDll))
-            {
-                FileStream? stream = null;
-                try
-                {
-                    stream = File.OpenRead(runtimeDll);
-                    var reader = new PEReader(stream);
-                    _assemblyCache[name] = reader;
-                    return reader;
-                }
-                catch
-                {
-                    stream?.Dispose();
-                    throw;
-                }
-            }
+            var reader = TryLoad(name, runtimePath);
+            if (reader != null)
+                return reader;
+        }
+
+        // Fall back to the explicit SDK path, if one was given
+        if (_sdkPath != null)
+        {
+            var reader = TryLoad(name, _sdkPath);
+            if (reader != null)
+                return reader;
         }
 
         return null;
+    }
+
+    private PEReader? TryLoad(string assemblyName, string directory)
+    {
+        var dllPath = Path.Combine(directory, $"{assemblyName}.dll");
+        if (!File.Exists(dllPath))
+            return null;
+
+        FileStream? stream = null;
+        try
+        {
+            stream = File.OpenRead(dllPath);
+            var reader = new PEReader(stream);
+            _assemblyCache[assemblyName] = reader;
+            return reader;
+        }
+        catch
+        {
+            stream?.Dispose();
+            throw;
+        }
     }
 
     public PEReader? ResolveModule(AssemblyNameInfo referencingAssembly, string fileName)

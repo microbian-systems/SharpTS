@@ -10,37 +10,6 @@ namespace SharpTS.Tests.CompilerTests;
 /// </summary>
 public class ILVerificationTests
 {
-    // Known IL errors in runtime types that need future investigation.
-    // These are false positives caused by host-runtime method tokens that don't match
-    // the reference assemblies used by ILVerify. All work correctly at runtime.
-    private static readonly HashSet<string> KnownRuntimeErrors = new()
-    {
-        // URL helper methods use Uri.TryCreate with byref parameters
-        "$Runtime.UrlParse",
-        "$Runtime.UrlResolve",
-        // CookieJar helpers use System.Net.CookieContainer methods that resolve against
-        // the host runtime — same Uri/CookieContainer reference-assembly mismatch as
-        // the URL helpers above. All three work correctly at runtime.
-        "$Runtime.CookieJarGetCookies",
-        "$Runtime.CookieJarSetCookie",
-        "$Runtime.CookieJarClear",
-        // Headers, URL, URLSearchParams use List<string>/Dictionary methods resolved
-        // against host runtime rather than reference assemblies
-        "$Headers.",
-        "$URL.",
-        "$URLSearchParams.",
-        // Web Streams emitted types use Task/TaskCompletionSource/Queue methods resolved
-        // against host runtime rather than reference assemblies
-        "$ReadableStream",
-        "$WritableStream",
-        "$TransformStream",
-    };
-
-    private static List<string> FilterKnownErrors(List<string> errors)
-    {
-        return errors.Where(e => !KnownRuntimeErrors.Any(known => e.Contains(known))).ToList();
-    }
-
     [Fact]
     public void BasicArithmetic_PassesILVerification()
     {
@@ -50,9 +19,8 @@ public class ILVerificationTests
             """;
 
         var (errors, output) = TestHarness.CompileVerifyAndRun(source);
-        var unexpectedErrors = FilterKnownErrors(errors);
 
-        Assert.Empty(unexpectedErrors);
+        Assert.Empty(errors);
         Assert.Equal("15\n", output);
     }
 
@@ -71,8 +39,7 @@ public class ILVerificationTests
 
         var (errors, output) = TestHarness.CompileVerifyAndRun(source);
 
-        var unexpectedErrors = FilterKnownErrors(errors);
-        Assert.Empty(unexpectedErrors);
+        Assert.Empty(errors);
         Assert.Equal("7\n", output);
     }
 
@@ -94,8 +61,7 @@ public class ILVerificationTests
 
         var (errors, output) = TestHarness.CompileVerifyAndRun(source);
 
-        var unexpectedErrors = FilterKnownErrors(errors);
-        Assert.Empty(unexpectedErrors);
+        Assert.Empty(errors);
         Assert.Equal("42\n", output);
     }
 
@@ -118,9 +84,8 @@ public class ILVerificationTests
 
         // For now, just verify IL without running (runtime has issues with rewritten assemblies)
         var errors = TestHarness.CompileAndVerifyOnly(source);
-        var unexpectedErrors = FilterKnownErrors(errors);
 
-        Assert.Empty(unexpectedErrors);
+        Assert.Empty(errors);
     }
 
     [Fact]
@@ -145,8 +110,7 @@ public class ILVerificationTests
 
         var (errors, output) = TestHarness.CompileVerifyAndRun(source);
 
-        var unexpectedErrors = FilterKnownErrors(errors);
-        Assert.Empty(unexpectedErrors);
+        Assert.Empty(errors);
         Assert.Equal("Woof!\n", output);
     }
 
@@ -167,9 +131,53 @@ public class ILVerificationTests
 
         var (errors, output) = TestHarness.CompileVerifyAndRun(source);
 
-        var unexpectedErrors = FilterKnownErrors(errors);
-        Assert.Empty(unexpectedErrors);
+        Assert.Empty(errors);
         Assert.Equal("1\n2\n3\n", output);
+    }
+
+    // Regression test for issue #189: CLI `--compile … --verify` output is NOT
+    // rewritten to reference-assembly facades (it binds to System.Private.CoreLib),
+    // and verifying it against the ref-assembly universe produced thousands of
+    // false StackUnexpected/ThrowOrCatchOnlyExceptionType errors.
+    [Fact]
+    public void CoreLibBoundOutput_PassesILVerification()
+    {
+        var source = """
+            let arr = [1, 2, 3];
+            let doubled = arr.map(x => x * 2);
+            console.log(doubled);
+            """;
+
+        var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_test_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var dllPath = Path.Combine(tempDir, "test.dll");
+
+            var lexer = new SharpTS.Parsing.Lexer(source);
+            var tokens = lexer.ScanTokens();
+            var parser = new SharpTS.Parsing.Parser(tokens);
+            var statements = parser.ParseOrThrow();
+
+            var checker = new SharpTS.TypeSystem.TypeChecker();
+            var typeMap = checker.Check(statements);
+
+            var deadCodeAnalyzer = new SharpTS.Compilation.DeadCodeAnalyzer(typeMap);
+            var deadCodeInfo = deadCodeAnalyzer.Analyze(statements);
+
+            // useReferenceAssemblies: false — same shape as plain CLI --compile output
+            var compiler = new SharpTS.Compilation.ILCompiler("test", preserveConstEnums: false, useReferenceAssemblies: false, sdkPath: null);
+            compiler.Compile(statements, typeMap, deadCodeInfo);
+            compiler.Save(dllPath);
+
+            var errors = TestHarness.VerifyIL(dllPath);
+
+            Assert.Empty(errors);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { /* ignore cleanup errors */ }
+        }
     }
 
     [Fact]
@@ -191,8 +199,7 @@ public class ILVerificationTests
 
         var (errors, output) = TestHarness.CompileVerifyAndRun(source);
 
-        var unexpectedErrors = FilterKnownErrors(errors);
-        Assert.Empty(unexpectedErrors);
+        Assert.Empty(errors);
         Assert.Equal("finally\ncaught\n", output);
     }
 }
