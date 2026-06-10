@@ -396,7 +396,10 @@ public abstract record Stmt
         List<CallSignature>? CallSignatures = null,
         List<ConstructorSignature>? ConstructorSignatures = null
     ) : Stmt;
-    public record InterfaceMember(Token Name, string Type, bool IsOptional = false, bool IsReadonly = false);
+    /// <param name="IsMethod">Declared with method syntax (<c>m(x): T</c>) rather than as a
+    /// function-typed property — method members keep bivariant parameter relating under
+    /// strictFunctionTypes.</param>
+    public record InterfaceMember(Token Name, string Type, bool IsOptional = false, bool IsReadonly = false, bool IsMethod = false);
     /// <summary>
     /// Index signature in interfaces: [key: string]: valueType, [key: number]: valueType, [key: symbol]: valueType
     /// </summary>

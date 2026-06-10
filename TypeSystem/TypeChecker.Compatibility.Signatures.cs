@@ -271,8 +271,11 @@ public partial class TypeChecker
         for (int i = 0; i < count; i++)
             map[sig.TypeParams[i].Name] = new TypeInfo.TypeParameter($"{prefix}{i}");
 
+        // count+2 passes: `count` to link sibling chains (mirrors BuildGenericTypeParameters) plus
+        // two extra levels so SELF-referential constraints (T extends I2<T>) carry enough nested
+        // constraint depth for the apparent-type walks the relating performs.
         List<TypeInfo.TypeParameter> renamed = [];
-        for (int pass = 0; pass < Math.Max(1, count); pass++)
+        for (int pass = 0; pass < count + 2; pass++)
         {
             renamed = [];
             for (int i = 0; i < count; i++)
@@ -328,32 +331,74 @@ public partial class TypeChecker
         // only applies when the target has no rest parameter.
         if (!f1.HasRestParam && f2.MinArity > f1.ParamTypes.Count) return false;
 
-        // Compare parameter positions, expanding a rest parameter to its element type so it
-        // covers the other side's fixed parameters (e.g. `(...a: number[])` matches `(a, b)`).
-        int f1Fixed = f1.HasRestParam ? f1.ParamTypes.Count - 1 : f1.ParamTypes.Count;
-        int f2Fixed = f2.HasRestParam ? f2.ParamTypes.Count - 1 : f2.ParamTypes.Count;
-        int positions = Math.Max(f1Fixed, f2Fixed);
-        for (int i = 0; i < positions; i++)
+        // Both context flags apply to THIS shape relation only (tsc computes them per
+        // compareSignaturesRelated invocation): capture and clear so nested comparisons —
+        // parameter and return types — relate under their own rules.
+        bool inCallback = _inCallbackComparison;
+        _inCallbackComparison = false;
+        bool isMethodTarget = _methodBivarianceDepth > 0;
+        int savedMethodDepth = _methodBivarianceDepth;
+        _methodBivarianceDepth = 0;
+        try
         {
-            var fp1 = EffectiveParamType(f1, i);
-            var fp2 = EffectiveParamType(f2, i);
-            // A position absent on one side (and not covered by a rest param) is unconstrained.
-            if (fp1 is null || fp2 is null) continue;
-            // Parameters compare bivariantly — either direction suffices — matching tsc's default
-            // function-parameter relation (strictFunctionTypes is a later, opt-in tightening).
-            if (!IsCompatible(fp1, fp2) && !IsCompatible(fp2, fp1)) return false;
+            // Compare parameter positions, expanding a rest parameter to its element type so it
+            // covers the other side's fixed parameters (e.g. `(...a: number[])` matches `(a, b)`).
+            // Parameter relation: bivariant by default (tsc pre-strictFunctionTypes), strict
+            // contravariance under strictFunctionTypes — except for method-member targets (tsc's
+            // method exemption) — and contravariance-only inside a callback comparison.
+            bool bivariantParams = !inCallback && (!_strictFunctionTypes || isMethodTarget);
+
+            int f1Fixed = f1.HasRestParam ? f1.ParamTypes.Count - 1 : f1.ParamTypes.Count;
+            int f2Fixed = f2.HasRestParam ? f2.ParamTypes.Count - 1 : f2.ParamTypes.Count;
+            int positions = Math.Max(f1Fixed, f2Fixed);
+            for (int i = 0; i < positions; i++)
+            {
+                var fp1 = EffectiveParamType(f1, i);
+                var fp2 = EffectiveParamType(f2, i);
+                // A position absent on one side (and not covered by a rest param) is unconstrained.
+                if (fp1 is null || fp2 is null) continue;
+
+                // Callback rule (scoped to variance measurement): when both parameters are pure
+                // function types, relate them SWAPPED (target's callback as the source) with
+                // strict parameters inside — callbacks are output positions, so a type parameter
+                // used only in callback-parameter positions measures covariant (tsc's Promise
+                // rule, checker.ts compareSignaturesRelated).
+                if (_varianceMeasurementDepth > 0 && !inCallback &&
+                    fp1 is TypeInfo.Function targetCb && fp2 is TypeInfo.Function sourceCb)
+                {
+                    bool related;
+                    _inCallbackComparison = true;
+                    try { related = RelateFunctionShapes(sourceCb, targetCb); }
+                    finally { _inCallbackComparison = false; }
+                    if (!related) return false;
+                    continue;
+                }
+
+                // Contravariance: the target's parameter must be acceptable to the source.
+                if (!IsCompatible(fp2, fp1) && (!bivariantParams || !IsCompatible(fp1, fp2))) return false;
+            }
+            // When both have rest parameters, their element types must also be compatible.
+            if (f1.HasRestParam && f2.HasRestParam)
+            {
+                var e1 = EffectiveParamType(f1, f1.ParamTypes.Count);
+                var e2 = EffectiveParamType(f2, f2.ParamTypes.Count);
+                if (e1 is not null && e2 is not null &&
+                    !IsCompatible(e2, e1) && (!bivariantParams || !IsCompatible(e1, e2))) return false;
+            }
+            // Return type: if expected return type is void, any return type is acceptable
+            // This is standard TypeScript behavior - void context ignores the return value
+            if (f1.ReturnType is TypeInfo.Void) return true;
+            // Inside a (bivariant) callback comparison, return types relate bivariantly — tsc:
+            // "otherwise the containing type wouldn't be co-variant. For example,
+            // interface Foo<T> { add(cb: () => T): void } wouldn't be co-variant for T".
+            if (inCallback && IsCompatible(f2.ReturnType, f1.ReturnType)) return true;
+            // Otherwise, actual must be compatible with expected
+            return IsCompatible(f1.ReturnType, f2.ReturnType);
         }
-        // When both have rest parameters, their element types must also be compatible.
-        if (f1.HasRestParam && f2.HasRestParam)
+        finally
         {
-            var e1 = EffectiveParamType(f1, f1.ParamTypes.Count);
-            var e2 = EffectiveParamType(f2, f2.ParamTypes.Count);
-            if (e1 is not null && e2 is not null && !IsCompatible(e1, e2) && !IsCompatible(e2, e1)) return false;
+            _methodBivarianceDepth = savedMethodDepth;
+            _inCallbackComparison = inCallback;
         }
-        // Return type: if expected return type is void, any return type is acceptable
-        // This is standard TypeScript behavior - void context ignores the return value
-        if (f1.ReturnType is TypeInfo.Void) return true;
-        // Otherwise, actual must be compatible with expected
-        return IsCompatible(f1.ReturnType, f2.ReturnType);
     }
 }

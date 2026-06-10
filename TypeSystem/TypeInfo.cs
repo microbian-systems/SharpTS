@@ -397,9 +397,21 @@ public abstract record TypeInfo
         FrozenSet<TypeInfo.Interface>? Extends = null,
         List<CallSignature>? CallSignatures = null,
         List<ConstructorSignature>? ConstructorSignatures = null,
-        FrozenSet<string>? ReadonlyMembers = null
+        FrozenSet<string>? ReadonlyMembers = null,
+        FrozenSet<string>? MethodMembers = null
     ) : TypeInfo
     {
+        /// <summary>True when the member (own or inherited) was declared with method syntax —
+        /// method members keep bivariant parameter relating under strictFunctionTypes.</summary>
+        public bool IsMethodMember(string name)
+        {
+            if (MethodMembers?.Contains(name) == true) return true;
+            if (Extends != null)
+                foreach (var baseItf in Extends)
+                    if (baseItf.IsMethodMember(name)) return true;
+            return false;
+        }
+
         public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;
         public bool HasCallSignature => CallSignatures is { Count: > 0 };
         public bool HasConstructorSignature => ConstructorSignatures is { Count: > 0 };
@@ -705,9 +717,13 @@ public abstract record TypeInfo
         bool IsReadonly = false,
         FrozenSet<string>? GetterOnlyFields = null,
         List<CallSignature>? CallSignatures = null,
-        List<ConstructorSignature>? ConstructorSignatures = null
+        List<ConstructorSignature>? ConstructorSignatures = null,
+        FrozenSet<string>? MethodMembers = null
     ) : TypeInfo
     {
+        /// <summary>True when the field was declared with method syntax (`m(x): T`), which keeps
+        /// bivariant parameter relating under strictFunctionTypes (tsc's method exemption).</summary>
+        public bool IsMethodMember(string name) => MethodMembers?.Contains(name) ?? false;
         public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;
 
         /// <summary>True when this object type has at least one call signature (`{ (x): T }`).</summary>
@@ -735,7 +751,11 @@ public abstract record TypeInfo
         public override string ToString()
         {
             var prefix = IsReadonly ? "readonly " : "";
-            var parts = Fields.Select(f => $"{f.Key}{(IsFieldOptional(f.Key) ? "?" : "")}: {f.Value}").ToList();
+            // Method-ness must be rendered: under strictFunctionTypes a method member and a
+            // property member of the same function type differ in assignability, and ToString is
+            // the compatibility-cache key.
+            var parts = Fields.Select(f =>
+                $"{f.Key}{(IsMethodMember(f.Key) ? "#m" : "")}{(IsFieldOptional(f.Key) ? "?" : "")}: {f.Value}").ToList();
             if (CallSignatures != null) parts.InsertRange(0, CallSignatures.Select(s => s.ToString()));
             if (ConstructorSignatures != null) parts.InsertRange(0, ConstructorSignatures.Select(s => s.ToString()));
             // Index signatures must be rendered so distinct index types don't collapse to the same
@@ -1246,7 +1266,8 @@ public abstract record TypeInfo
         FrozenSet<TypeInfo.Interface>? Extends = null,
         List<CallSignature>? CallSignatures = null,
         List<ConstructorSignature>? ConstructorSignatures = null,
-        FrozenSet<string>? ReadonlyMembers = null
+        FrozenSet<string>? ReadonlyMembers = null,
+        FrozenSet<string>? MethodMembers = null
     ) : TypeInfo
     {
         public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;

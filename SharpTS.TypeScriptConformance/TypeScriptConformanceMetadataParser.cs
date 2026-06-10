@@ -66,9 +66,19 @@ public static class TypeScriptConformanceMetadataParser
 
         if (filenameLineIndices.Count == 0)
         {
-            // Single-file test. Body = entire source.
+            // Single-file test. Body = the source with directive lines removed and leading blank
+            // lines dropped — matching tsc's TestCaseParser, whose *.errors.txt line numbers are
+            // in this stripped coordinate space. Keeping the directives (they parse as comments)
+            // shifts every diagnostic line on directive-headed tests.
             var basename = Path.GetFileName(testPath);
-            files.Add(new TypeScriptConformanceFile(basename, source));
+            var bodyLines = new List<string>(lines.Length);
+            foreach (var line in lines)
+            {
+                if (DirectiveRegex.IsMatch(line)) continue;
+                if (bodyLines.Count == 0 && line.Trim().Length == 0) continue;
+                bodyLines.Add(line);
+            }
+            files.Add(new TypeScriptConformanceFile(basename, string.Join('\n', bodyLines)));
         }
         else
         {

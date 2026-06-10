@@ -99,18 +99,25 @@ public partial class TypeChecker
     /// </summary>
     private bool IsCompatible(TypeInfo expected, TypeInfo actual)
     {
+        // Under strictFunctionTypes the verdict for a function-typed pair depends on whether the
+        // comparison happens inside a method member (bivariant) or not (strict) — the same pair
+        // can legitimately differ between the two contexts, so bivariant-context results must not
+        // be cached or served from cache. Variance measurement likewise compares with the callback
+        // rule enabled, which ordinary comparisons don't.
+        bool uncacheable = (_strictFunctionTypes && _methodBivarianceDepth > 0) || _varianceMeasurementDepth > 0;
+
         // Level 1: Fast identity-based cache (reference equality)
         _identityCompatibilityCache ??= new(IdentityCacheKeyComparer.Instance);
         var identityKey = new IdentityCompatibilityCacheKey(expected, actual);
 
-        if (_identityCompatibilityCache.TryGetValue(identityKey, out var identityCached))
+        if (!uncacheable && _identityCompatibilityCache.TryGetValue(identityKey, out var identityCached))
             return identityCached;
 
         // Level 2: Structural equality cache (for different instances with same structure)
         _compatibilityCache ??= new(CompatibilityCacheKeyComparer.Instance);
         var structuralKey = (expected, actual);
 
-        if (_compatibilityCache.TryGetValue(structuralKey, out var structuralCached))
+        if (!uncacheable && _compatibilityCache.TryGetValue(structuralKey, out var structuralCached))
         {
             // Store in identity cache for future fast lookups
             _identityCompatibilityCache[identityKey] = structuralCached;
@@ -141,9 +148,12 @@ public partial class TypeChecker
             // Cache miss - compute result
             var result = IsCompatibleCore(expected, actual);
 
-            // Store in both caches
-            _compatibilityCache[structuralKey] = result;
-            _identityCompatibilityCache[identityKey] = result;
+            // Store in both caches (bivariant-context results are context-dependent — skip)
+            if (!uncacheable)
+            {
+                _compatibilityCache[structuralKey] = result;
+                _identityCompatibilityCache[identityKey] = result;
+            }
 
             return result;
         }
@@ -779,7 +789,8 @@ public partial class TypeChecker
                         if (!allExpectedOptional.Contains(member.Key))
                             return false;
                     }
-                    else if (!IsCompatible(member.Value, actualMemberType))
+                    else if (!IsMemberCompatible(member.Value, actualMemberType,
+                                 itf.IsMethodMember(member.Key) || actualItf.IsMethodMember(member.Key)))
                     {
                         return false;
                     }
@@ -805,9 +816,18 @@ public partial class TypeChecker
                 // Same generic interface - check type arguments with variance
                 if (expectedInterfaceIG.TypeArguments.Count != actualInterfaceIG.TypeArguments.Count)
                     return false;
-                if (!AreTypeArgumentsCompatible(gi.TypeParams, expectedInterfaceIG.TypeArguments, actualInterfaceIG.TypeArguments))
+                if (AreTypeArgumentsCompatible(gi.TypeParams, expectedInterfaceIG.TypeArguments, actualInterfaceIG.TypeArguments))
+                    return true;
+                // Unannotated type parameters compare invariantly above, but tsc relates two
+                // instantiations of the same generic by MEASURED variance (computed from member
+                // positions) — e.g. P<Derived> is assignable to P<Base> when T only occupies
+                // covariant positions. Explicit variance annotations are authoritative (tsc uses
+                // them as declared), so the measured fallback only applies when every parameter
+                // is unannotated.
+                if (gi.TypeParams.Any(tp => tp.Variance != TypeParameterVariance.Invariant))
                     return false;
-                return true;
+                return SameGenericInstantiationsStructurallyCompatible(
+                    gi, expectedInterfaceIG, actualInterfaceIG);
             }
 
             // Build substitution map for structural comparison
@@ -882,7 +902,8 @@ public partial class TypeChecker
                     if (!expRecord.IsFieldOptional(name))
                         return false;
                 }
-                else if (!IsCompatible(expectedFieldType, actualFieldType))
+                else if (!IsMemberCompatible(expectedFieldType, actualFieldType,
+                             expRecord.IsMethodMember(name) || actRecord.IsMethodMember(name)))
                 {
                     return false;
                 }

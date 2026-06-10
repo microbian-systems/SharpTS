@@ -2,6 +2,8 @@ using SharpTS.Parsing;
 using SharpTS.Runtime.BuiltIns;
 using SharpTS.TypeSystem.Exceptions;
 
+using System.Collections.Frozen;
+
 namespace SharpTS.TypeSystem;
 
 /// <summary>
@@ -289,6 +291,133 @@ public partial class TypeChecker
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Relates two instantiations of the SAME generic interface by MEASURED variance: each type
+    /// parameter's variance is computed once from the member positions it occupies (tsc's
+    /// getVariances model, via marker-type instantiations), then the type-argument pairs are
+    /// compared under those variances. This is the fallback when the (invariant-by-default)
+    /// declared-variance comparison rejects.
+    /// </summary>
+    private bool SameGenericInstantiationsStructurallyCompatible(
+        TypeInfo.GenericInterface gi,
+        TypeInfo.InstantiatedGeneric expectedIG,
+        TypeInfo.InstantiatedGeneric actualIG)
+    {
+        var measured = GetMeasuredVariances(gi);
+        for (int i = 0; i < expectedIG.TypeArguments.Count; i++)
+        {
+            var expectedArg = expectedIG.TypeArguments[i];
+            var actualArg = actualIG.TypeArguments[i];
+            bool compatible = (i < measured.Length ? measured[i] : TypeParameterVariance.Invariant) switch
+            {
+                TypeParameterVariance.Out => IsCompatible(expectedArg, actualArg),
+                TypeParameterVariance.In => IsCompatible(actualArg, expectedArg),
+                TypeParameterVariance.InOut => true,
+                _ => IsCompatible(expectedArg, actualArg) && IsCompatible(actualArg, expectedArg),
+            };
+            if (!compatible) return false;
+        }
+        return true;
+    }
+
+    /// <summary>Marker types for variance measurement: Sub is structurally assignable to Super
+    /// but not conversely (extra member).</summary>
+    private static readonly TypeInfo.Record VarianceMarkerSuper = new(
+        new Dictionary<string, TypeInfo> { ["'variance"] = new TypeInfo.Primitive(Parsing.TokenType.TYPE_STRING) }
+            .ToFrozenDictionary());
+    private static readonly TypeInfo.Record VarianceMarkerSub = new(
+        new Dictionary<string, TypeInfo>
+        {
+            ["'variance"] = new TypeInfo.Primitive(Parsing.TokenType.TYPE_STRING),
+            ["'sub"] = new TypeInfo.Primitive(Parsing.TokenType.TYPE_STRING),
+        }.ToFrozenDictionary());
+
+    private Dictionary<TypeInfo.GenericInterface, TypeParameterVariance[]>? _measuredVariances;
+    private HashSet<TypeInfo.GenericInterface>? _varianceMeasurementInProgress;
+
+    /// <summary>
+    /// Measures each type parameter's variance from the member positions it occupies: substitute
+    /// a sub/super marker pair into the parameter (others fixed to any), relate the substituted
+    /// member sets in both directions, and classify. Measurement happens with the CALLBACK
+    /// comparison rule enabled (see <see cref="_varianceMeasurementDepth"/>) so a parameter used
+    /// only in callback-parameter positions measures covariant — tsc's Promise/P&lt;T&gt; rule —
+    /// while a parameter used directly as a method parameter measures bivariant. Recursive
+    /// references measure as bivariant (skipped) rather than recursing forever.
+    /// </summary>
+    private TypeParameterVariance[] GetMeasuredVariances(TypeInfo.GenericInterface gi)
+    {
+        // Record equality on GenericInterface compares List/FrozenDictionary fields by reference,
+        // so the default comparer behaves as identity for distinct declarations — sufficient here.
+        _measuredVariances ??= [];
+        if (_measuredVariances.TryGetValue(gi, out var cached)) return cached;
+
+        _varianceMeasurementInProgress ??= [];
+        var result = new TypeParameterVariance[gi.TypeParams.Count];
+        if (!_varianceMeasurementInProgress.Add(gi))
+        {
+            // Already measuring this interface (self-referential member) — treat as bivariant for
+            // the nested occurrence; the outer measurement decides.
+            for (int i = 0; i < result.Length; i++) result[i] = TypeParameterVariance.InOut;
+            return result;
+        }
+        _varianceMeasurementDepth++;
+        try
+        {
+            for (int i = 0; i < gi.TypeParams.Count; i++)
+            {
+                Dictionary<string, TypeInfo> superSubs = [];
+                Dictionary<string, TypeInfo> subSubs = [];
+                for (int j = 0; j < gi.TypeParams.Count; j++)
+                {
+                    superSubs[gi.TypeParams[j].Name] = j == i ? VarianceMarkerSuper : new TypeInfo.Any();
+                    subSubs[gi.TypeParams[j].Name] = j == i ? VarianceMarkerSub : new TypeInfo.Any();
+                }
+                // Covariant: I<Sub> assignable to I<Super>; contravariant: the reverse.
+                bool covariant = SubstitutedMembersRelated(gi, expectedSubs: superSubs, actualSubs: subSubs);
+                bool contravariant = SubstitutedMembersRelated(gi, expectedSubs: subSubs, actualSubs: superSubs);
+                result[i] = covariant && contravariant ? TypeParameterVariance.InOut
+                    : covariant ? TypeParameterVariance.Out
+                    : contravariant ? TypeParameterVariance.In
+                    : TypeParameterVariance.Invariant;
+            }
+        }
+        finally
+        {
+            _varianceMeasurementDepth--;
+            _varianceMeasurementInProgress.Remove(gi);
+        }
+        _measuredVariances[gi] = result;
+        return result;
+    }
+
+    /// <summary>Substitutes both maps into every member and relates the results member-wise.</summary>
+    private bool SubstitutedMembersRelated(
+        TypeInfo.GenericInterface gi,
+        Dictionary<string, TypeInfo> expectedSubs,
+        Dictionary<string, TypeInfo> actualSubs)
+    {
+        foreach (var (name, memberType) in gi.Members)
+        {
+            var expectedMember = Substitute(memberType, expectedSubs);
+            var actualMember = Substitute(memberType, actualSubs);
+            bool isMethod = gi.MethodMembers?.Contains(name) == true;
+            if (!IsMemberCompatible(expectedMember, actualMember, isMethod)) return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Relates one member pair, applying method bivariance: members declared with method syntax
+    /// compare their parameters bivariantly even under strictFunctionTypes (tsc's exemption).
+    /// </summary>
+    private bool IsMemberCompatible(TypeInfo expectedMember, TypeInfo actualMember, bool isMethod)
+    {
+        if (!isMethod) return IsCompatible(expectedMember, actualMember);
+        _methodBivarianceDepth++;
+        try { return IsCompatible(expectedMember, actualMember); }
+        finally { _methodBivarianceDepth--; }
     }
 
     /// <summary>
