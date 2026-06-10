@@ -81,7 +81,10 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
                     return server.Close(args);
                 return receiver;
             }).Bind(this),
-            "address" => GetAddress(),
+            // Node API: server.address() is a method returning
+            // { address, family, port } (or null before listen).
+            "address" => new BuiltInMethod("address", 0, (interp, receiver, args) =>
+                receiver is SharpTSHttpServer server ? server.GetAddress() : null).Bind(this),
             // Inherit EventEmitter methods for on, once, off, emit, removeAllListeners, etc.
             _ => base.GetMember(name)
         };
@@ -120,6 +123,15 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         if (ClusterContext.IsWorker)
             return RuntimeValue.FromBoxed(ListenAsClusterWorker(interpreter, callback));
 
+        // Node semantics: listen(0) binds an OS-assigned ephemeral port.
+        // HttpListener has no dynamic-port support ("The parameter is
+        // incorrect"), so probe a free port by binding a temporary
+        // TcpListener and handing its assigned port to HttpListener. There
+        // is a small race window between release and re-bind, which is
+        // standard practice for this workaround (#214).
+        if (_port == 0)
+            _port = ProbeFreePort();
+
         _listener = new HttpListener();
         _listener.Prefixes.Add($"http://+:{_port}/");
 
@@ -154,6 +166,24 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         EmitEvent("listening", new List<object?>());
 
         return RuntimeValue.FromObject(this);
+    }
+
+    /// <summary>
+    /// Finds a free TCP port by binding a temporary listener on the loopback
+    /// interface with port 0 and reading back the OS-assigned port.
+    /// </summary>
+    private static int ProbeFreePort()
+    {
+        var probe = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        probe.Start();
+        try
+        {
+            return ((System.Net.IPEndPoint)probe.LocalEndpoint).Port;
+        }
+        finally
+        {
+            probe.Stop();
+        }
     }
 
     /// <summary>

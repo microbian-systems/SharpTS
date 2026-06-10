@@ -102,6 +102,30 @@ public class HttpModuleTests : IDisposable
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void HttpListenZero_BindsEphemeralPort(ExecutionMode mode)
+    {
+        // #214: HttpListener has no dynamic-port support, so listen(0) probes
+        // a free port. server.address() must report the assigned port.
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = """
+                import * as http from 'http';
+                const server: any = http.createServer((req: any, res: any) => {
+                    res.end('OK');
+                });
+                server.listen(0, () => {
+                    const addr = server.address();
+                    console.log(typeof addr.port === 'number' && addr.port > 0);
+                    server.close();
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void HttpStatusCodes(ExecutionMode mode)
     {
         // Test STATUS_CODES constant
