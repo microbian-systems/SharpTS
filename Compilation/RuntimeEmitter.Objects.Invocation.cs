@@ -1,3 +1,4 @@
+using System;
 using System.Reflection;
 using System.Reflection.Emit;
 
@@ -5,6 +6,29 @@ namespace SharpTS.Compilation;
 
 public partial class RuntimeEmitter
 {
+    /// <summary>
+    /// Emits a guest-recursion guard at the top of a dynamic-invocation
+    /// helper: (1) CheckCancellation, so deep non-loop recursion — which
+    /// never crosses a loop backedge — remains cooperatively cancellable;
+    /// (2) RuntimeHelpers.TryEnsureSufficientExecutionStack, converting an
+    /// imminent (uncatchable, process-killing) CLR StackOverflowException
+    /// into a catchable guest RangeError. Issue #180.
+    /// </summary>
+    private void EmitStackGuard(ILGenerator il, EmittedRuntime runtime)
+    {
+        if (runtime.CheckCancellationMethod != null)
+            il.Emit(OpCodes.Call, runtime.CheckCancellationMethod);
+        var stackOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Call, typeof(System.Runtime.CompilerServices.RuntimeHelpers)
+            .GetMethod("TryEnsureSufficientExecutionStack", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Brtrue, stackOkLabel);
+        il.Emit(OpCodes.Ldstr, "Maximum call stack size exceeded");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(stackOkLabel);
+    }
+
     private void EmitGetArrayMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // GetArrayMethod(object arr, string methodName) -> TSFunction or null
@@ -82,6 +106,7 @@ public partial class RuntimeEmitter
         runtime.InvokeValue = method;
 
         var il = method.GetILGenerator();
+        EmitStackGuard(il, runtime);
         var nullLabel = il.DefineLabel();
         var tsFunctionLabel = il.DefineLabel();
         var boundTsFunctionLabel = il.DefineLabel();
@@ -452,6 +477,7 @@ public partial class RuntimeEmitter
         runtime.InvokeMethodValue = method;
 
         var il = method.GetILGenerator();
+        EmitStackGuard(il, runtime);
         // Check if value is $TSFunction and call InvokeWithThis
         // arg0 = receiver, arg1 = function, arg2 = args
         var notTSFunctionLabel = il.DefineLabel();
