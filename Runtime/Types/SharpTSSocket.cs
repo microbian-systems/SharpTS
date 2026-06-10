@@ -20,6 +20,7 @@ public class SharpTSSocket : SharpTSEventEmitter
     private bool _connecting;
     protected internal bool _destroyed;
     private bool _ended;
+    private bool _closeEmitted;
     private int _bytesRead;
     private int _bytesWritten;
     private CancellationTokenSource? _readCts;
@@ -457,7 +458,7 @@ public class SharpTSSocket : SharpTSEventEmitter
             EmitEvent(interpreter, "error", [args[0].ToObject()]);
         }
 
-        EmitEvent(interpreter, "close", [hadError]);
+        EmitClose(interpreter, hadError);
         // Only unref if reading was started (StartReading does Ref)
         if (_readingStarted)
         {
@@ -465,6 +466,18 @@ public class SharpTSSocket : SharpTSEventEmitter
             _interpreter?.Unref();
         }
         return RuntimeValue.FromObject(this);
+    }
+
+    /// <summary>
+    /// Emits 'close' at most once per socket lifetime (Node semantics): the
+    /// read-loop EOF/error paths and Destroy can otherwise both fire it when a
+    /// handler destroys the socket in response to the remote end closing.
+    /// </summary>
+    private void EmitClose(Interp interpreter, bool hadError)
+    {
+        if (_closeEmitted) return;
+        _closeEmitted = true;
+        EmitEvent(interpreter, "close", [hadError]);
     }
 
     private RuntimeValue SetEncoding(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
@@ -596,7 +609,7 @@ public class SharpTSSocket : SharpTSEventEmitter
                             if (!_destroyed)
                             {
                                 EmitEvent(interpreter, "end", []);
-                                EmitEvent(interpreter, "close", [false]);
+                                EmitClose(interpreter, false);
                             }
                             if (_readingStarted)
                             {
@@ -627,7 +640,7 @@ public class SharpTSSocket : SharpTSEventEmitter
                     interpreter.ScheduleTimer(0, 0, () =>
                     {
                         EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
-                        EmitEvent(interpreter, "close", [true]);
+                        EmitClose(interpreter, true);
                         if (_readingStarted)
                         {
                             _readingStarted = false;

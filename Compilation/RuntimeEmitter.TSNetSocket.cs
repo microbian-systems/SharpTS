@@ -26,6 +26,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _netSocketStreamField = null!;
     private FieldBuilder _netSocketConnectingField = null!;
     private FieldBuilder _netSocketDestroyedField = null!;
+    private FieldBuilder _netSocketCloseEmittedField = null!;
     private FieldBuilder _netSocketEndedField = null!;
     private FieldBuilder _netSocketBytesReadField = null!;
     private FieldBuilder _netSocketBytesWrittenField = null!;
@@ -78,6 +79,7 @@ public partial class RuntimeEmitter
         _netSocketStreamField = typeBuilder.DefineField("_stream", typeof(System.IO.Stream), FieldAttributes.Assembly);
         _netSocketConnectingField = typeBuilder.DefineField("_connecting", _types.Boolean, FieldAttributes.Assembly);
         _netSocketDestroyedField = typeBuilder.DefineField("_destroyed", _types.Boolean, FieldAttributes.Assembly);
+        _netSocketCloseEmittedField = typeBuilder.DefineField("_closeEmitted", _types.Boolean, FieldAttributes.Assembly);
         _netSocketEndedField = typeBuilder.DefineField("_ended", _types.Boolean, FieldAttributes.Private);
         _netSocketBytesReadField = typeBuilder.DefineField("_bytesRead", _types.Int32, FieldAttributes.Private);
         _netSocketBytesWrittenField = typeBuilder.DefineField("_bytesWritten", _types.Int32, FieldAttributes.Assembly);
@@ -1164,7 +1166,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Pop);
         il.EndExceptionBlock();
 
-        // Emit 'close' event: this.Emit("close", [error != null])
+        // Emit 'close' at most once per socket lifetime (Node semantics): the
+        // read-loop end closure may already have fired it before destroy().
+        // if (!_closeEmitted) { _closeEmitted = true; this.Emit("close", [error != null]) }
+        var closeAlreadyEmitted = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _netSocketCloseEmittedField);
+        il.Emit(OpCodes.Brtrue, closeAlreadyEmitted);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _netSocketCloseEmittedField);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "close");
         il.Emit(OpCodes.Ldc_I4_1);
@@ -1180,6 +1191,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
         il.Emit(OpCodes.Pop);
+        il.MarkLabel(closeAlreadyEmitted);
 
         // Unref event loop if reading was started
         var noUnref = il.DefineLabel();
