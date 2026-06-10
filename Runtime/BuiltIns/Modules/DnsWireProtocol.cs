@@ -179,7 +179,16 @@ public static class DnsWireProtocol
                 if (response.Length >= 3 && (response[2] & 0x02) != 0)
                 {
                     // Retry with TCP
-                    return SendViaTcp(query, endpoint);
+                    response = SendViaTcp(query, endpoint);
+                }
+
+                // SERVFAIL/REFUSED are usually transient resolver conditions —
+                // retry them like socket errors. On the last attempt the response
+                // is returned so ParseResponse surfaces ESERVFAIL/EREFUSED.
+                if (attempt < MaxRetries && response.Length >= 4
+                    && (response[3] & 0x0F) is 2 or 5)
+                {
+                    continue;
                 }
 
                 return response;
