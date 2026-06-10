@@ -154,13 +154,6 @@ public partial class TypeChecker
             return new TypeInfo.KeyOf(innerType);
         }
 
-        // Handle typeof type operator: "typeof variableName"
-        if (typeName.StartsWith("typeof "))
-        {
-            string path = typeName[7..].Trim();
-            return EvaluateTypeOf(path);
-        }
-
         // Handle infer keyword for conditional types: "infer U"
         if (typeName.StartsWith("infer "))
         {
@@ -209,6 +202,18 @@ public partial class TypeChecker
                 var types = parts.Select(ToTypeInfo).ToList();
                 return SimplifyIntersection(types);
             }
+        }
+
+        // Handle typeof type operator: "typeof variableName".
+        // MUST come AFTER the union/intersection/conditional splits above: `typeof` binds tighter
+        // than `&`/`|`, so `typeof A & typeof B` is `(typeof A) & (typeof B)` and the composite must
+        // be split first. Unlike `keyof` (which recurses through ToTypeInfo and so splits naturally),
+        // `typeof` resolves via the custom ParseTypeOfPath — handed an un-split composite it would
+        // spin forever on the first `&`/`|`. Splitting first hands EvaluateTypeOf a clean entity path.
+        if (typeName.StartsWith("typeof "))
+        {
+            string path = typeName[7..].Trim();
+            return EvaluateTypeOf(path);
         }
 
         // Handle inline object types: "{ x: number; y?: string }"
@@ -1589,6 +1594,13 @@ public partial class TypeChecker
 
         while (i < path.Length)
         {
+            // Defense-in-depth: a typeof path should only ever contain identifiers, '.', and '[...]'.
+            // If a character matches none of the branches below (e.g. a stray '&'/'|' from an un-split
+            // composite type), `i` would not advance and the loop would spin forever — a hard checker
+            // hang. Record the start and break if an iteration consumes nothing, so malformed input
+            // degrades to a partial parse instead of locking up.
+            int iterStart = i;
+
             // Skip leading whitespace
             while (i < path.Length && char.IsWhiteSpace(path[i])) i++;
             if (i >= path.Length) break;
@@ -1645,6 +1657,9 @@ public partial class TypeChecker
                 while (i < path.Length && char.IsWhiteSpace(path[i])) i++;
                 if (i < path.Length && path[i] == ']') i++; // skip ]
             }
+
+            // No branch advanced past this iteration's start — stop rather than spin.
+            if (i == iterStart) break;
         }
 
         return result;
