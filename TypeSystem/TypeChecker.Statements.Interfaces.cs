@@ -337,11 +337,14 @@ public partial class TypeChecker
         if (interfaceStmt.CallSignatures != null && interfaceStmt.CallSignatures.Count > 0)
         {
             callSignatures = [];
-            using (new EnvironmentScope(this, interfaceTypeEnv))
+            foreach (var sig in interfaceStmt.CallSignatures)
             {
-                foreach (var sig in interfaceStmt.CallSignatures)
+                // The signature's own type parameters must be in scope while its parameter and
+                // return types resolve — otherwise `<T>(x: T): T[]` silently collapses T to any
+                // and the signature relates vacuously.
+                var sigEnv = ScopedSignatureTypeParamEnv(interfaceTypeEnv, sig.TypeParams, out var sigTypeParams);
+                using (new EnvironmentScope(this, sigEnv))
                 {
-                    var sigTypeParams = ParseSignatureTypeParams(sig.TypeParams);
                     var paramTypes = sig.Parameters.Select(p => p.Type != null ? ToTypeInfo(p.Type) : new TypeInfo.Any()).ToList();
                     var returnType = ToTypeInfo(sig.ReturnType);
                     int requiredParams = sig.Parameters.TakeWhile(p => !p.IsOptional && p.DefaultValue == null).Count();
@@ -357,11 +360,12 @@ public partial class TypeChecker
         if (interfaceStmt.ConstructorSignatures != null && interfaceStmt.ConstructorSignatures.Count > 0)
         {
             constructorSignatures = [];
-            using (new EnvironmentScope(this, interfaceTypeEnv))
+            foreach (var sig in interfaceStmt.ConstructorSignatures)
             {
-                foreach (var sig in interfaceStmt.ConstructorSignatures)
+                // Same scoping rule as call signatures above.
+                var sigEnv = ScopedSignatureTypeParamEnv(interfaceTypeEnv, sig.TypeParams, out var sigTypeParams);
+                using (new EnvironmentScope(this, sigEnv))
                 {
-                    var sigTypeParams = ParseSignatureTypeParams(sig.TypeParams);
                     var paramTypes = sig.Parameters.Select(p => p.Type != null ? ToTypeInfo(p.Type) : new TypeInfo.Any()).ToList();
                     var returnType = ToTypeInfo(sig.ReturnType);
                     int requiredParams = sig.Parameters.TakeWhile(p => !p.IsOptional && p.DefaultValue == null).Count();
@@ -424,5 +428,31 @@ public partial class TypeChecker
             result.Add(new TypeInfo.TypeParameter(tp.Name.Lexeme, constraint, defaultType, tp.IsConst, tp.Variance));
         }
         return result;
+    }
+
+    /// <summary>
+    /// Builds a child type environment with a signature's own type parameters defined in it, so
+    /// the signature's parameter/return types resolve them as <see cref="TypeInfo.TypeParameter"/>
+    /// instead of collapsing to <c>any</c>. Two passes: names are defined unconstrained first so a
+    /// constraint can reference a sibling parameter, then redefined with constraints resolved.
+    /// </summary>
+    private TypeEnvironment ScopedSignatureTypeParamEnv(
+        TypeEnvironment parent, List<TypeParam>? typeParams, out List<TypeInfo.TypeParameter>? sigTypeParams)
+    {
+        var env = new TypeEnvironment(parent);
+        if (typeParams is { Count: > 0 })
+        {
+            foreach (var tp in typeParams)
+                env.DefineTypeParameter(tp.Name.Lexeme, new TypeInfo.TypeParameter(tp.Name.Lexeme));
+            using (new EnvironmentScope(this, env))
+                sigTypeParams = ParseSignatureTypeParams(typeParams);
+            foreach (var tp in sigTypeParams!)
+                env.DefineTypeParameter(tp.Name, tp);
+        }
+        else
+        {
+            sigTypeParams = null;
+        }
+        return env;
     }
 }

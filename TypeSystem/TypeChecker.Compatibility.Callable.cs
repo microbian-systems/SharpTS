@@ -6,32 +6,38 @@ namespace SharpTS.TypeSystem;
 public partial class TypeChecker
 {
     /// <summary>
-    /// Checks if a function type matches any of the call signatures in an interface.
-    /// Used for assigning functions to callable interface types.
+    /// Checks that every call signature required by the target is satisfied by one of the source's
+    /// signatures — the general overload-aware rule (a single-signature source must therefore match
+    /// every target overload).
     /// </summary>
-    private bool FunctionMatchesCallSignatures(TypeInfo.Function func, List<TypeInfo.CallSignature> callSignatures)
+    private bool CallSignaturesSatisfiedBy(
+        List<TypeInfo.CallSignature> targetSignatures,
+        IReadOnlyList<NormalizedSignature> sourceSignatures)
     {
-        return callSignatures.Any(sig => FunctionMatchesCallSignature(func, sig));
-    }
-
-    /// <summary>
-    /// Checks if a function type matches a single call signature. A call signature <c>(p): r</c>
-    /// is itself a function type, so assignability is just function-to-function assignability —
-    /// route through the shared logic so void-return covariance and parameter-arity rules stay
-    /// consistent in one place.
-    /// </summary>
-    private bool FunctionMatchesCallSignature(TypeInfo.Function func, TypeInfo.CallSignature sig)
-    {
-        // Generic call signatures are complex to match structurally - defer to the actual call.
-        if (sig.IsGeneric)
-            return false;
-
-        return IsCompatible(CallSignatureToFunction(sig), func);
+        // Full contextual instantiation only relates single signature to single signature; with
+        // overloads on either side, each pairing relates with erased type parameters (tsc rule).
+        bool erase = targetSignatures.Count != 1 || sourceSignatures.Count != 1;
+        foreach (var ts in targetSignatures)
+        {
+            var targetSig = NormalizeCallSignature(ts);
+            if (erase) targetSig = EraseSignature(targetSig);
+            if (!sourceSignatures.Any(ss => SignatureRelatedTo(erase ? EraseSignature(ss) : ss, targetSig)))
+                return false;
+        }
+        return true;
     }
 
     /// <summary>Views a call signature as the function type it denotes.</summary>
     private static TypeInfo.Function CallSignatureToFunction(TypeInfo.CallSignature sig) =>
         new(sig.ParamTypes, sig.ReturnType, sig.RequiredParams, sig.HasRestParam, ThisType: null, sig.ParamNames);
+
+    /// <summary>Views a call signature as a normalized signature, type parameters included.</summary>
+    private static NormalizedSignature NormalizeCallSignature(TypeInfo.CallSignature sig) =>
+        new(sig.TypeParams, CallSignatureToFunction(sig));
+
+    /// <summary>Views a construct signature as a normalized signature, type parameters included.</summary>
+    private static NormalizedSignature NormalizeConstructorSignature(TypeInfo.ConstructorSignature sig) =>
+        new(sig.TypeParams, ConstructorSignatureToFunction(sig));
 
     /// <summary>
     /// Call signatures carried by a callable type (interface or inline object type), or null if the
@@ -46,15 +52,18 @@ public partial class TypeChecker
     };
 
     /// <summary>
-    /// Checks that every call signature of a callable source type is assignable to the target
-    /// function type — i.e. the callable can stand in for the function.
+    /// Checks that some call signature of a callable source type is assignable to the target
+    /// function type (plain or generic) — i.e. the callable can stand in for the function.
     /// </summary>
-    private bool CallableAssignableToFunction(List<TypeInfo.CallSignature> sourceSignatures, TypeInfo.Function target)
+    private bool CallableAssignableToFunction(List<TypeInfo.CallSignature> sourceSignatures, NormalizedSignature target)
     {
+        bool erase = sourceSignatures.Count != 1;
+        var targetSig = erase ? EraseSignature(target) : target;
         foreach (var sig in sourceSignatures)
         {
-            if (sig.IsGeneric) continue; // best-effort: skip generic signatures
-            if (IsCompatible(target, CallSignatureToFunction(sig)))
+            var ss = NormalizeCallSignature(sig);
+            if (erase) ss = EraseSignature(ss);
+            if (SignatureRelatedTo(ss, targetSig))
                 return true;
         }
         return false;
@@ -84,11 +93,15 @@ public partial class TypeChecker
         List<TypeInfo.ConstructorSignature> targetSignatures,
         List<TypeInfo.ConstructorSignature> sourceSignatures)
     {
+        // Same single-vs-single rule as call signatures: overloads on either side relate erased.
+        bool erase = targetSignatures.Count != 1 || sourceSignatures.Count != 1;
         foreach (var ts in targetSignatures)
         {
-            if (ts.IsGeneric) continue; // best-effort: skip generic signatures
-            var targetFunc = ConstructorSignatureToFunction(ts);
-            if (!sourceSignatures.Any(ss => !ss.IsGeneric && IsCompatible(targetFunc, ConstructorSignatureToFunction(ss))))
+            var targetSig = NormalizeConstructorSignature(ts);
+            if (erase) targetSig = EraseSignature(targetSig);
+            if (!sourceSignatures.Any(ss => SignatureRelatedTo(
+                    erase ? EraseSignature(NormalizeConstructorSignature(ss)) : NormalizeConstructorSignature(ss),
+                    targetSig)))
                 return false;
         }
         return true;

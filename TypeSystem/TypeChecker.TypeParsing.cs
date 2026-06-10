@@ -192,10 +192,12 @@ public partial class TypeChecker
         }
 
         // Handle generic type syntax: Box<number>, Map<string, number>
-        // Must NOT match inline object types that contain generic types like { x: Box<T> }
-        // or tuple types that contain generics like [Box<T>, string]
+        // Must NOT match inline object types that contain generic types like { x: Box<T> },
+        // tuple types like [Box<T>, string], or function/parenthesized types like
+        // (y: Array<Base>) => void — a generic reference always starts with its type name, so a
+        // leading '(' means the '<' belongs to something nested and the later branches own it.
         if (typeName.Contains('<') && typeName.Contains('>') &&
-            !typeName.StartsWith("{ ") && !typeName.StartsWith("["))
+            !typeName.StartsWith("{ ") && !typeName.StartsWith("[") && !typeName.StartsWith("("))
         {
             return ParseGenericTypeReference(typeName);
         }
@@ -1174,7 +1176,10 @@ public partial class TypeChecker
         {
             char c = inner[i];
             if (c == '(' || c == '[' || c == '<' || c == '{') depth++;
-            else if (c == ')' || c == ']' || c == '>' || c == '}') depth--;
+            // The '>' of an arrow '=>' is not a bracket — without this guard an arrow-typed
+            // member drives the depth negative and every following ';' is missed, fusing all
+            // remaining members (e.g. two call signatures) into one unparseable string.
+            else if (c == ')' || c == ']' || c == '}' || (c == '>' && (i == 0 || inner[i - 1] != '='))) depth--;
             else if (c == ';' && depth == 0)
             {
                 ReadOnlySpan<char> segment = inner[start..i];
