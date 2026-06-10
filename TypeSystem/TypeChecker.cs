@@ -587,13 +587,23 @@ public partial class TypeChecker
         int requiredParams = 0;
         bool seenDefault = false;
 
+        // A default value may reference any PRECEDING parameter (`(x: T, y: U = x)`), so defaults
+        // are checked in a scope where the earlier parameters are progressively defined. Each
+        // parameter is defined AFTER its own default is checked, so self-reference still resolves
+        // to an outer binding or errors.
+        var paramScope = new TypeEnvironment(_environment);
+
         foreach (var param in parameters)
         {
             TypeInfo paramType = param.Type != null ? ToTypeInfo(param.Type) : new TypeInfo.Any();
             paramTypes.Add(paramType);
             paramNames.Add(param.Name.Lexeme);
 
-            if (param.IsRest) continue;
+            if (param.IsRest)
+            {
+                paramScope.Define(param.Name.Lexeme, paramType);
+                continue;
+            }
 
             bool isOptional = param.DefaultValue != null || param.IsOptional;
 
@@ -602,7 +612,11 @@ public partial class TypeChecker
                 seenDefault = true;
                 if (validateDefaults)
                 {
-                    TypeInfo defaultType = CheckExpr(param.DefaultValue);
+                    TypeInfo defaultType;
+                    using (new EnvironmentScope(this, paramScope))
+                    {
+                        defaultType = CheckExpr(param.DefaultValue);
+                    }
                     if (!IsCompatible(paramType, defaultType))
                     {
                         throw new TypeMismatchException($"Default value type is not assignable to parameter type in {contextName}", paramType, defaultType, tsCode: "TS2322");
@@ -621,6 +635,8 @@ public partial class TypeChecker
                 }
                 requiredParams++;
             }
+
+            paramScope.Define(param.Name.Lexeme, paramType);
         }
 
         bool hasRest = parameters.Any(p => p.IsRest);
@@ -730,6 +746,7 @@ public partial class TypeChecker
         _compatibilityCache = null;
         _expandedTypeAliasCache = null;
         _compatibilityInProgress = null;
+        _ts2741Reported = null;
         _compatibilityCheckDepth = 0;
         _narrowingContextStack.Clear();
 
@@ -769,6 +786,7 @@ public partial class TypeChecker
         _compatibilityCache = null;
         _expandedTypeAliasCache = null;
         _compatibilityInProgress = null;
+        _ts2741Reported = null;
         _compatibilityCheckDepth = 0;
         _narrowingContextStack.Clear();
 
