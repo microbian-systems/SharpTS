@@ -69,8 +69,8 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
     {
         return name switch
         {
-            "from" => new BuiltInMethod("from", 1, 2, ReadableFrom),
-            "isReadable" => new BuiltInMethod("isReadable", 1, IsReadable),
+            "from" => BuiltInMethod.CreateV2("from", 1, 2, ReadableFrom),
+            "isReadable" => BuiltInMethod.CreateV2("isReadable", 1, IsReadable),
             _ => null
         };
     }
@@ -78,14 +78,14 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
     /// <summary>
     /// Readable.from(iterable, options?) — creates a Readable from an iterable in object mode.
     /// </summary>
-    private static object? ReadableFrom(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ReadableFrom(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var iterable = args.Count > 0 ? args[0] : null;
+        var iterable = args.Length > 0 ? args[0].ToObject() : null;
         var stream = new SharpTSReadable();
         stream.ObjectMode = true;
 
         // Extract options
-        if (args.Count > 1 && args[1] is SharpTSObject options)
+        if (args.Length > 1 && args[1].ToObject() is SharpTSObject options)
         {
             if (options.GetProperty("objectMode") is false)
                 stream.ObjectMode = false;
@@ -97,7 +97,7 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
             foreach (var item in arr)
             {
                 var pushMethod = stream.GetMember("push") as BuiltInMethod;
-                pushMethod?.Bind(stream).Call(interpreter, [item]);
+                pushMethod?.Bind(stream).CallV2(interpreter, [RuntimeValue.FromBoxed(item)]);
             }
         }
         else if (iterable is List<object?> list)
@@ -105,24 +105,24 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
             foreach (var item in list)
             {
                 var pushMethod = stream.GetMember("push") as BuiltInMethod;
-                pushMethod?.Bind(stream).Call(interpreter, [item]);
+                pushMethod?.Bind(stream).CallV2(interpreter, [RuntimeValue.FromBoxed(item)]);
             }
         }
 
         // Push null to signal EOF
         var pushEnd = stream.GetMember("push") as BuiltInMethod;
-        pushEnd?.Bind(stream).Call(interpreter, [null]);
+        pushEnd?.Bind(stream).CallV2(interpreter, [RuntimeValue.Null]);
 
-        return stream;
+        return RuntimeValue.FromObject(stream);
     }
 
     /// <summary>
     /// Readable.isReadable(stream) — checks if stream is a readable stream.
     /// </summary>
-    private static object? IsReadable(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue IsReadable(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var obj = args.Count > 0 ? args[0] : null;
-        return obj is SharpTSReadable;
+        var obj = args.Length > 0 ? args[0].ToObject() : null;
+        return RuntimeValue.FromBoolean(obj is SharpTSReadable);
     }
 
     /// <summary>

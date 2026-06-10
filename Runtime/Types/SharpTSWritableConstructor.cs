@@ -79,15 +79,15 @@ public sealed class SharpTSWritableConstructor : ISharpTSCallable
     {
         return name switch
         {
-            "isWritable" => new BuiltInMethod("isWritable", 1, IsWritable),
+            "isWritable" => BuiltInMethod.CreateV2("isWritable", 1, IsWritable),
             _ => null
         };
     }
 
-    private static object? IsWritable(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue IsWritable(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var obj = args.Count > 0 ? args[0] : null;
-        return obj is SharpTSWritable or SharpTSDuplex;
+        var obj = args.Length > 0 ? args[0].ToObject() : null;
+        return RuntimeValue.FromBoolean(obj is SharpTSWritable or SharpTSDuplex);
     }
 
     /// <summary>

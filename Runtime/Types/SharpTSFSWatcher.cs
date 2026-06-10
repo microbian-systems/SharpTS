@@ -137,29 +137,29 @@ public class SharpTSFSWatcher : SharpTSEventEmitter, IDisposable
     {
         return name switch
         {
-            "close" => new BuiltInMethod("close", 0, 0, Close),
-            "ref" => new BuiltInMethod("ref", 0, 0, Ref),
-            "unref" => new BuiltInMethod("unref", 0, 0, Unref),
+            "close" => BuiltInMethod.CreateV2("close", 0, 0, Close),
+            "ref" => BuiltInMethod.CreateV2("ref", 0, 0, Ref),
+            "unref" => BuiltInMethod.CreateV2("unref", 0, 0, Unref),
             _ => base.GetMember(name)
         };
     }
 
-    private object? Close(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Close(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         CloseInternal();
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? Ref(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Ref(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter?.Ref();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Unref(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Unref(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter?.Unref();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     private void CloseInternal()

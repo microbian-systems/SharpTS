@@ -98,10 +98,10 @@ public class SharpTSRequest : ITypeCategorized
             "json" => new BuiltInAsyncMethod("json", 0, JsonImpl).Bind(this),
             "text" => new BuiltInAsyncMethod("text", 0, TextImpl).Bind(this),
             "arrayBuffer" => new BuiltInAsyncMethod("arrayBuffer", 0, ArrayBufferImpl).Bind(this),
-            "clone" => new BuiltInMethod("clone", 0, (_, receiver, _) =>
+            "clone" => BuiltInMethod.CreateV2("clone", 0, static (_, receiver, _) =>
             {
-                if (receiver is SharpTSRequest req)
-                    return req.Clone();
+                if (receiver.ToObject() is SharpTSRequest req)
+                    return RuntimeValue.FromObject(req.Clone());
                 throw new Exception("Runtime Error: clone requires a Request object");
             }).Bind(this),
             _ => SharpTSUndefined.Instance

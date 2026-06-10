@@ -28,11 +28,11 @@ public class SharpTSAsyncLocalStorage
     {
         return name switch
         {
-            "run" => new BuiltInMethod("run", 2, int.MaxValue, Run),
-            "getStore" => new BuiltInMethod("getStore", 0, GetStore),
-            "enterWith" => new BuiltInMethod("enterWith", 1, EnterWith),
-            "exit" => new BuiltInMethod("exit", 1, int.MaxValue, Exit),
-            "disable" => new BuiltInMethod("disable", 0, Disable),
+            "run" => BuiltInMethod.CreateV2("run", 2, int.MaxValue, Run),
+            "getStore" => BuiltInMethod.CreateV2("getStore", 0, GetStore),
+            "enterWith" => BuiltInMethod.CreateV2("enterWith", 1, EnterWith),
+            "exit" => BuiltInMethod.CreateV2("exit", 1, int.MaxValue, Exit),
+            "disable" => BuiltInMethod.CreateV2("disable", 0, Disable),
             _ => null
         };
     }
@@ -42,22 +42,24 @@ public class SharpTSAsyncLocalStorage
     /// inside the callback and any async operations it spawns. The previous store
     /// is restored after the callback completes.
     /// </summary>
-    private object? Run(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Run(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 2)
+        if (args.Length < 2)
             throw new Exception("run() requires store and callback arguments");
 
-        var store = args[0];
-        var callback = args[1];
+        var store = args[0].ToObject();
+        var callback = args[1].ToObject();
 
         // Collect extra args for the callback
-        var callbackArgs = args.Count > 2 ? args.GetRange(2, args.Count - 2) : [];
+        var callbackArgs = new List<object?>(Math.Max(0, args.Length - 2));
+        for (int i = 2; i < args.Length; i++)
+            callbackArgs.Add(args[i].ToObject());
 
         var oldValue = _store.Value;
         _store.Value = store;
         try
         {
-            return InvokeCallback(interpreter, callback, callbackArgs);
+            return RuntimeValue.FromBoxed(InvokeCallback(interpreter, callback, callbackArgs));
         }
         finally
         {
@@ -69,43 +71,45 @@ public class SharpTSAsyncLocalStorage
     /// Returns the current store value, or null (undefined) if not inside a run() call
     /// or if the storage has been disabled.
     /// </summary>
-    private object? GetStore(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetStore(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (!_enabled) return null;
+        if (!_enabled) return RuntimeValue.Null;
         var val = _store.Value;
-        return ReferenceEquals(val, NotSet) ? null : val;
+        return ReferenceEquals(val, NotSet) ? RuntimeValue.Null : RuntimeValue.FromBoxed(val);
     }
 
     /// <summary>
     /// Sets the store for the current async context without running a callback.
     /// The store will be visible in subsequent code in this async flow.
     /// </summary>
-    private object? EnterWith(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue EnterWith(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 1)
+        if (args.Length < 1)
             throw new Exception("enterWith() requires a store argument");
 
-        _store.Value = args[0];
-        return null;
+        _store.Value = args[0].ToObject();
+        return RuntimeValue.Null;
     }
 
     /// <summary>
     /// Runs a callback with the store cleared (set to null/undefined).
     /// The previous store is restored after the callback completes.
     /// </summary>
-    private object? Exit(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Exit(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 1)
+        if (args.Length < 1)
             throw new Exception("exit() requires a callback argument");
 
-        var callback = args[0];
-        var callbackArgs = args.Count > 1 ? args.GetRange(1, args.Count - 1) : [];
+        var callback = args[0].ToObject();
+        var callbackArgs = new List<object?>(Math.Max(0, args.Length - 1));
+        for (int i = 1; i < args.Length; i++)
+            callbackArgs.Add(args[i].ToObject());
 
         var oldValue = _store.Value;
         _store.Value = NotSet;
         try
         {
-            return InvokeCallback(interpreter, callback, callbackArgs);
+            return RuntimeValue.FromBoxed(InvokeCallback(interpreter, callback, callbackArgs));
         }
         finally
         {
@@ -117,11 +121,11 @@ public class SharpTSAsyncLocalStorage
     /// Disables the AsyncLocalStorage instance. After calling disable(),
     /// getStore() will always return undefined.
     /// </summary>
-    private object? Disable(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Disable(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _enabled = false;
         _store.Value = null;
-        return null;
+        return RuntimeValue.Null;
     }
 
     /// <summary>

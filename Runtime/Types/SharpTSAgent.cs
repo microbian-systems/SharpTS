@@ -94,9 +94,9 @@ public class SharpTSAgent : SharpTSEventEmitter
             "requests" => new SharpTSObject(new Dictionary<string, object?>()),
 
             // Methods
-            "destroy" => new BuiltInMethod("destroy", 0, Destroy),
-            "getName" => new BuiltInMethod("getName", 0, 1, GetName),
-            "createConnection" => new BuiltInMethod("createConnection", 1, 2, CreateConnection),
+            "destroy" => BuiltInMethod.CreateV2("destroy", 0, Destroy),
+            "getName" => BuiltInMethod.CreateV2("getName", 0, 1, GetName),
+            "createConnection" => BuiltInMethod.CreateV2("createConnection", 1, 2, CreateConnection),
 
             // EventEmitter methods
             _ => base.GetMember(name)
@@ -136,32 +136,32 @@ public class SharpTSAgent : SharpTSEventEmitter
         }
     }
 
-    private object? Destroy(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Destroy(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _destroyed = true;
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? GetName(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetName(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // Returns a unique name for a set of request options, used as the pool key.
         // Format: "host:port:localAddress:family"
-        if (args.Count == 0 || args[0] is not SharpTSObject options)
-            return "localhost:80::";
+        if (args.Length == 0 || args[0].ToObject() is not SharpTSObject options)
+            return RuntimeValue.FromString("localhost:80::");
 
         var host = options.Fields.TryGetValue("host", out var h) && h is string hs ? hs : "localhost";
         var port = options.Fields.TryGetValue("port", out var p) && p is double pd ? ((int)pd).ToString() : "80";
         var localAddress = options.Fields.TryGetValue("localAddress", out var la) && la is string las ? las : "";
         var family = options.Fields.TryGetValue("family", out var f) && f is double fd ? ((int)fd).ToString() : "";
 
-        return $"{host}:{port}:{localAddress}:{family}";
+        return RuntimeValue.FromString($"{host}:{port}:{localAddress}:{family}");
     }
 
-    private object? CreateConnection(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue CreateConnection(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // In Node.js, this creates a raw socket connection.
         // We return null since our HTTP client uses .NET's built-in connection management.
-        return null;
+        return RuntimeValue.Null;
     }
 
     public override string ToString() => "Agent { }";

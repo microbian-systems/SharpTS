@@ -123,22 +123,22 @@ public class SharpTSCookieJar : ISharpTSPropertyAccessor
     {
         return name switch
         {
-            "getCookies" => new BuiltInMethod("getCookies", 1, (_, _, args) =>
+            "getCookies" => BuiltInMethod.CreateV2("getCookies", 1, (_, _, args) =>
             {
-                var url = args.Count > 0 ? args[0]?.ToString() ?? "" : "";
-                return (object?)GetCookieHeader(url);
+                var url = args.Length > 0 ? args[0].ToObject()?.ToString() ?? "" : "";
+                return RuntimeValue.FromBoxed(GetCookieHeader(url));
             }),
-            "setCookie" => new BuiltInMethod("setCookie", 2, (_, _, args) =>
+            "setCookie" => BuiltInMethod.CreateV2("setCookie", 2, (_, _, args) =>
             {
-                var cookie = args.Count > 0 ? args[0]?.ToString() ?? "" : "";
-                var url = args.Count > 1 ? args[1]?.ToString() ?? "" : "";
+                var cookie = args.Length > 0 ? args[0].ToObject()?.ToString() ?? "" : "";
+                var url = args.Length > 1 ? args[1].ToObject()?.ToString() ?? "" : "";
                 SetCookie(cookie, url);
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
-            "clear" => new BuiltInMethod("clear", 0, (_, _, _) =>
+            "clear" => BuiltInMethod.CreateV2("clear", 0, (_, _, _) =>
             {
                 Clear();
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
             _ => null
         };

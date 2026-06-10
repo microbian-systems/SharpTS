@@ -103,10 +103,10 @@ public class SharpTSStatWatcher : SharpTSEventEmitter, IDisposable
             ["size"] = (double)size,
             ["mtimeMs"] = mtimeMs,
             ["mtime"] = modified == DateTime.MinValue ? null : modified.ToString("o"),
-            ["isFile"] = new BuiltInMethod("isFile", 0, 0,
-                (_, _, _) => size > 0 || modified != DateTime.MinValue),
-            ["isDirectory"] = new BuiltInMethod("isDirectory", 0, 0,
-                (_, _, _) => false)
+            ["isFile"] = BuiltInMethod.CreateV2("isFile", 0, 0,
+                (_, _, _) => RuntimeValue.FromBoolean(size > 0 || modified != DateTime.MinValue)),
+            ["isDirectory"] = BuiltInMethod.CreateV2("isDirectory", 0, 0,
+                (_, _, _) => RuntimeValue.False)
         };
         return new SharpTSObject(fields);
     }
@@ -126,29 +126,29 @@ public class SharpTSStatWatcher : SharpTSEventEmitter, IDisposable
     {
         return name switch
         {
-            "close" => new BuiltInMethod("close", 0, 0, CloseMethod),
-            "ref" => new BuiltInMethod("ref", 0, 0, RefMethod),
-            "unref" => new BuiltInMethod("unref", 0, 0, UnrefMethod),
+            "close" => BuiltInMethod.CreateV2("close", 0, 0, CloseMethod),
+            "ref" => BuiltInMethod.CreateV2("ref", 0, 0, RefMethod),
+            "unref" => BuiltInMethod.CreateV2("unref", 0, 0, UnrefMethod),
             _ => base.GetMember(name)
         };
     }
 
-    private object? CloseMethod(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue CloseMethod(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         CloseInternal();
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? RefMethod(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue RefMethod(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter?.Ref();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? UnrefMethod(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue UnrefMethod(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter?.Unref();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     internal void CloseInternal()

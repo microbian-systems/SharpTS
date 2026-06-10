@@ -245,24 +245,24 @@ public class SharpTSAbortSignal : ITypeCategorized
             "aborted" => Aborted,
             "reason" => Reason ?? SharpTSUndefined.Instance,
             "onabort" => _onabort ?? SharpTSUndefined.Instance,
-            "throwIfAborted" => new BuiltInMethod("throwIfAborted", 0, (_, _, _) =>
+            "throwIfAborted" => BuiltInMethod.CreateV2("throwIfAborted", 0, (_, _, _) =>
             {
                 ThrowIfAborted();
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
-            "addEventListener" => new BuiltInMethod("addEventListener", 2, (_, _, args) =>
+            "addEventListener" => BuiltInMethod.CreateV2("addEventListener", 2, (_, _, args) =>
             {
-                var type = args[0]?.ToString() ?? "abort";
-                var listener = args[1] ?? throw new Exception("Runtime Error: addEventListener requires a listener function");
+                var type = args[0].ToObject()?.ToString() ?? "abort";
+                var listener = args[1].ToObject() ?? throw new Exception("Runtime Error: addEventListener requires a listener function");
                 AddEventListener(type, listener);
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
-            "removeEventListener" => new BuiltInMethod("removeEventListener", 2, (_, _, args) =>
+            "removeEventListener" => BuiltInMethod.CreateV2("removeEventListener", 2, (_, _, args) =>
             {
-                var type = args[0]?.ToString() ?? "abort";
-                var listener = args[1] ?? throw new Exception("Runtime Error: removeEventListener requires a listener function");
+                var type = args[0].ToObject()?.ToString() ?? "abort";
+                var listener = args[1].ToObject() ?? throw new Exception("Runtime Error: removeEventListener requires a listener function");
                 RemoveEventListener(type, listener);
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
             _ => null
         };

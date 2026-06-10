@@ -77,10 +77,10 @@ public class SharpTSFetchResponse : ITypeCategorized
             "json" => new BuiltInAsyncMethod("json", 0, JsonImpl).Bind(this),
             "text" => new BuiltInAsyncMethod("text", 0, TextImpl).Bind(this),
             "arrayBuffer" => new BuiltInAsyncMethod("arrayBuffer", 0, ArrayBufferImpl).Bind(this),
-            "clone" => new BuiltInMethod("clone", 0, (_, receiver, _) =>
+            "clone" => BuiltInMethod.CreateV2("clone", 0, static (_, receiver, _) =>
             {
-                if (receiver is SharpTSFetchResponse resp)
-                    return resp.Clone();
+                if (receiver.ToObject() is SharpTSFetchResponse resp)
+                    return RuntimeValue.FromObject(resp.Clone());
                 throw new Exception("Runtime Error: clone requires a Response object");
             }).Bind(this),
             "body" => GetBodyReadable(),
