@@ -271,52 +271,52 @@ public class SharpTSBroadcastChannel : SharpTSEventEmitter, IDisposable
             "onmessage" => _onMessageHandler,
             "onmessageerror" => _onMessageErrorHandler,
 
-            "postMessage" => new BuiltInMethod("postMessage", 1, (interp, recv, args) =>
+            "postMessage" => BuiltInMethod.CreateV2("postMessage", 1, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("postMessage requires a message argument");
-                PostMessage(args[0]);
-                return null;
+                PostMessage(args[0].ToObject());
+                return RuntimeValue.Null;
             }),
 
-            "close" => new BuiltInMethod("close", 0, (interp, recv, args) =>
+            "close" => BuiltInMethod.CreateV2("close", 0, (_, _, _) =>
             {
                 Close();
-                return null;
+                return RuntimeValue.Null;
             }),
 
-            "ref" => new BuiltInMethod("ref", 0, (interp, recv, args) =>
+            "ref" => BuiltInMethod.CreateV2("ref", 0, (_, _, _) =>
             {
                 Ref();
-                return this;
+                return RuntimeValue.FromObject(this);
             }),
 
-            "unref" => new BuiltInMethod("unref", 0, (interp, recv, args) =>
+            "unref" => BuiltInMethod.CreateV2("unref", 0, (_, _, _) =>
             {
                 Unref();
-                return this;
+                return RuntimeValue.FromObject(this);
             }),
 
             // Map addEventListener / removeEventListener / dispatchEvent onto
             // EventEmitter's on / off / emit so the WHATWG and Node-style APIs both work.
-            "addEventListener" => new BuiltInMethod("addEventListener", 2, (interp, recv, args) =>
+            "addEventListener" => BuiltInMethod.CreateV2("addEventListener", 2, (_, _, args) =>
             {
-                if (args.Count < 2)
+                if (args.Length < 2)
                     throw new Exception("addEventListener requires event name and listener arguments");
-                var eventName = args[0]?.ToString() ?? throw new Exception("Event name must be a string");
-                var listener = args[1] ?? throw new Exception("Listener must be a function");
+                var eventName = args[0].ToObject()?.ToString() ?? throw new Exception("Event name must be a string");
+                var listener = args[1].ToObject() ?? throw new Exception("Listener must be a function");
                 AddListenerDirect(eventName, listener, once: false);
-                return null;
+                return RuntimeValue.Null;
             }),
 
-            "removeEventListener" => new BuiltInMethod("removeEventListener", 2, (interp, recv, args) =>
+            "removeEventListener" => BuiltInMethod.CreateV2("removeEventListener", 2, (_, _, args) =>
             {
-                if (args.Count < 2)
+                if (args.Length < 2)
                     throw new Exception("removeEventListener requires event name and listener arguments");
-                var eventName = args[0]?.ToString() ?? throw new Exception("Event name must be a string");
-                var listener = args[1] ?? throw new Exception("Listener must be a function");
+                var eventName = args[0].ToObject()?.ToString() ?? throw new Exception("Event name must be a string");
+                var listener = args[1].ToObject() ?? throw new Exception("Listener must be a function");
                 RemoveListenerDirect(eventName, listener);
-                return null;
+                return RuntimeValue.Null;
             }),
 
             // Inherit on/once/off/emit/etc from EventEmitter

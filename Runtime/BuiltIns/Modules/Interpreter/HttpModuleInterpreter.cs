@@ -23,13 +23,13 @@ public static class HttpModuleInterpreter
     {
         return new Dictionary<string, object?>
         {
-            ["createServer"] = new BuiltInMethod("createServer", 0, 1, CreateServer),
+            ["createServer"] = BuiltInMethod.CreateV2("createServer", 0, 1, CreateServer),
             ["request"] = new BuiltInAsyncMethod("request", 1, 2, Request),
             ["get"] = new BuiltInAsyncMethod("get", 1, 2, Get),
             ["METHODS"] = GetMethods(),
             ["STATUS_CODES"] = GetStatusCodes(),
             ["globalAgent"] = SharpTSAgent.GlobalAgent,
-            ["Agent"] = new BuiltInMethod("Agent", 0, 1, ConstructAgent)
+            ["Agent"] = BuiltInMethod.CreateV2("Agent", 0, 1, ConstructAgent)
         };
     }
 
@@ -40,19 +40,19 @@ public static class HttpModuleInterpreter
     /// <param name="receiver">Not used.</param>
     /// <param name="args">Optional request handler callback.</param>
     /// <returns>A SharpTSHttpServer instance.</returns>
-    private static object? CreateServer(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CreateServer(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // The first argument is the request handler: (req, res) => void
         ISharpTSCallable? requestHandler = null;
 
-        if (args.Count > 0)
+        if (args.Length > 0)
         {
             // Could be options object or callback
-            if (args[0] is ISharpTSCallable callback)
+            if (args[0].ToObject() is ISharpTSCallable callback)
             {
                 requestHandler = callback;
             }
-            else if (args[0] is SharpTSObject && args.Count > 1 && args[1] is ISharpTSCallable cb)
+            else if (args[0].ToObject() is SharpTSObject && args.Length > 1 && args[1].ToObject() is ISharpTSCallable cb)
             {
                 // First arg is options, second is callback
                 requestHandler = cb;
@@ -62,7 +62,7 @@ public static class HttpModuleInterpreter
         // If no handler provided, create a no-op handler
         requestHandler ??= new NoOpHandler();
 
-        return new SharpTSHttpServer(requestHandler);
+        return RuntimeValue.FromObject(new SharpTSHttpServer(requestHandler));
     }
 
     /// <summary>
@@ -224,10 +224,10 @@ public static class HttpModuleInterpreter
     /// <summary>
     /// Constructs a new http.Agent from options.
     /// </summary>
-    private static object? ConstructAgent(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ConstructAgent(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var options = args.Count > 0 ? args[0] as SharpTSObject : null;
-        return SharpTSAgent.FromOptions(options);
+        var options = args.Length > 0 ? args[0].ToObject() as SharpTSObject : null;
+        return RuntimeValue.FromObject(SharpTSAgent.FromOptions(options));
     }
 
     /// <summary>

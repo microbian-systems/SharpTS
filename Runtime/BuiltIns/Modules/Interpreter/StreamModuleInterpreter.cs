@@ -30,9 +30,9 @@ public static class StreamModuleInterpreter
             ["Duplex"] = SharpTSDuplexConstructor.Instance,
             ["Transform"] = SharpTSTransformConstructor.Instance,
             ["PassThrough"] = SharpTSPassThroughConstructor.Instance,
-            ["finished"] = new BuiltInMethod("finished", 1, 3, Finished),
-            ["pipeline"] = new BuiltInMethod("pipeline", 2, int.MaxValue, Pipeline),
-            ["addAbortSignal"] = new BuiltInMethod("addAbortSignal", 2, AddAbortSignal),
+            ["finished"] = BuiltInMethod.CreateV2("finished", 1, 3, Finished),
+            ["pipeline"] = BuiltInMethod.CreateV2("pipeline", 2, int.MaxValue, Pipeline),
+            ["addAbortSignal"] = BuiltInMethod.CreateV2("addAbortSignal", 2, AddAbortSignal),
             ["promises"] = StreamPromisesModuleInterpreter.CreatePromisesNamespace()
         };
     }
@@ -42,31 +42,36 @@ public static class StreamModuleInterpreter
     /// Returns a cleanup function that removes listeners.
     /// </summary>
     internal static object? FinishedInternal(Interp interpreter, object? receiver, List<object?> args)
-        => Finished(interpreter, receiver, args);
-
-    private static object? Finished(Interp interpreter, object? receiver, List<object?> args)
     {
-        if (args.Count < 1)
+        var rvArgs = new RuntimeValue[args.Count];
+        for (int i = 0; i < args.Count; i++)
+            rvArgs[i] = RuntimeValue.FromBoxed(args[i]);
+        return Finished(interpreter, RuntimeValue.FromBoxed(receiver), rvArgs).ToObject();
+    }
+
+    private static RuntimeValue Finished(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length < 1)
             throw new Exception("finished() requires at least a stream argument");
 
-        var stream = args[0] as SharpTSEventEmitter
+        var stream = args[0].ToObject() as SharpTSEventEmitter
             ?? throw new Exception("finished() first argument must be a stream");
 
         // Parse options and callback
         SharpTSObject? options = null;
         ISharpTSCallable? callback = null;
 
-        if (args.Count == 2)
+        if (args.Length == 2)
         {
-            if (args[1] is ISharpTSCallable cb)
+            if (args[1].ToObject() is ISharpTSCallable cb)
                 callback = cb;
-            else if (args[1] is SharpTSObject opts)
+            else if (args[1].ToObject() is SharpTSObject opts)
                 options = opts;
         }
-        else if (args.Count >= 3)
+        else if (args.Length >= 3)
         {
-            options = args[1] as SharpTSObject;
-            callback = args[2] as ISharpTSCallable;
+            options = args[1].ToObject() as SharpTSObject;
+            callback = args[2].ToObject() as ISharpTSCallable;
         }
 
         if (callback == null)
@@ -114,14 +119,14 @@ public static class StreamModuleInterpreter
         stream.AddListenerDirect("close", closeListener, once: true);
 
         // Return cleanup function
-        return new BuiltInMethod("cleanup", 0, (Interp interp, object? recv, List<object?> a) =>
+        return RuntimeValue.FromObject(BuiltInMethod.CreateV2("cleanup", 0, (Interp interp, RuntimeValue recv, ReadOnlySpan<RuntimeValue> a) =>
         {
             stream.RemoveListenerDirect("error", errorListener);
             stream.RemoveListenerDirect("end", endListener);
             stream.RemoveListenerDirect("finish", finishListener);
             stream.RemoveListenerDirect("close", closeListener);
-            return null;
-        });
+            return RuntimeValue.Null;
+        }));
     }
 
     /// <summary>
@@ -129,16 +134,23 @@ public static class StreamModuleInterpreter
     /// Returns the destination stream.
     /// </summary>
     internal static object? PipelineInternal(Interp interpreter, object? receiver, List<object?> args)
-        => Pipeline(interpreter, receiver, args);
-
-    private static object? Pipeline(Interp interpreter, object? receiver, List<object?> args)
     {
-        if (args.Count < 2)
+        var rvArgs = new RuntimeValue[args.Count];
+        for (int i = 0; i < args.Count; i++)
+            rvArgs[i] = RuntimeValue.FromBoxed(args[i]);
+        return Pipeline(interpreter, RuntimeValue.FromBoxed(receiver), rvArgs).ToObject();
+    }
+
+    private static RuntimeValue Pipeline(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length < 2)
             throw new Exception("pipeline() requires at least a source and destination");
 
         // Detect callback: if last arg is callable, it's the callback
         ISharpTSCallable? callback = null;
-        var streams = new List<object?>(args);
+        var streams = new List<object?>(args.Length);
+        for (int i = 0; i < args.Length; i++)
+            streams.Add(args[i].ToObject());
 
         if (streams.Count > 0 && streams[^1] is ISharpTSCallable cb)
         {
@@ -202,17 +214,17 @@ public static class StreamModuleInterpreter
             }), once: true);
         }
 
-        return lastStream;
+        return RuntimeValue.FromBoxed(lastStream);
     }
 
     /// <summary>
     /// stream.addAbortSignal(signal, stream) — destroys stream when signal is aborted.
     /// </summary>
-    private static object? AddAbortSignal(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue AddAbortSignal(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // Basic implementation: just return the stream
         // AbortSignal integration requires async runtime support
-        if (args.Count < 2)
+        if (args.Length < 2)
             throw new Exception("addAbortSignal() requires signal and stream arguments");
 
         return args[1]; // Return the stream

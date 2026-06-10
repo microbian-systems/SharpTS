@@ -49,27 +49,27 @@ public class SharpTSEventEmitter : ITypeCategorized
         return name switch
         {
             // Core event methods
-            "on" => new BuiltInMethod("on", 2, On),
-            "addListener" => new BuiltInMethod("addListener", 2, On), // Alias for on
-            "once" => new BuiltInMethod("once", 2, Once),
-            "off" => new BuiltInMethod("off", 2, Off),
-            "removeListener" => new BuiltInMethod("removeListener", 2, Off), // Alias for off
-            "emit" => new BuiltInMethod("emit", 1, int.MaxValue, Emit),
-            "removeAllListeners" => new BuiltInMethod("removeAllListeners", 0, 1, RemoveAllListeners),
+            "on" => BuiltInMethod.CreateV2("on", 2, On),
+            "addListener" => BuiltInMethod.CreateV2("addListener", 2, On), // Alias for on
+            "once" => BuiltInMethod.CreateV2("once", 2, Once),
+            "off" => BuiltInMethod.CreateV2("off", 2, Off),
+            "removeListener" => BuiltInMethod.CreateV2("removeListener", 2, Off), // Alias for off
+            "emit" => BuiltInMethod.CreateV2("emit", 1, int.MaxValue, Emit),
+            "removeAllListeners" => BuiltInMethod.CreateV2("removeAllListeners", 0, 1, RemoveAllListeners),
 
             // Listener inspection
-            "listeners" => new BuiltInMethod("listeners", 1, Listeners),
-            "rawListeners" => new BuiltInMethod("rawListeners", 1, RawListeners),
-            "listenerCount" => new BuiltInMethod("listenerCount", 1, ListenerCount),
-            "eventNames" => new BuiltInMethod("eventNames", 0, EventNames),
+            "listeners" => BuiltInMethod.CreateV2("listeners", 1, Listeners),
+            "rawListeners" => BuiltInMethod.CreateV2("rawListeners", 1, RawListeners),
+            "listenerCount" => BuiltInMethod.CreateV2("listenerCount", 1, ListenerCount),
+            "eventNames" => BuiltInMethod.CreateV2("eventNames", 0, EventNames),
 
             // Prepend methods
-            "prependListener" => new BuiltInMethod("prependListener", 2, PrependListener),
-            "prependOnceListener" => new BuiltInMethod("prependOnceListener", 2, PrependOnceListener),
+            "prependListener" => BuiltInMethod.CreateV2("prependListener", 2, PrependListener),
+            "prependOnceListener" => BuiltInMethod.CreateV2("prependOnceListener", 2, PrependOnceListener),
 
             // Max listeners
-            "setMaxListeners" => new BuiltInMethod("setMaxListeners", 1, SetMaxListeners),
-            "getMaxListeners" => new BuiltInMethod("getMaxListeners", 0, GetMaxListeners),
+            "setMaxListeners" => BuiltInMethod.CreateV2("setMaxListeners", 1, SetMaxListeners),
+            "getMaxListeners" => BuiltInMethod.CreateV2("getMaxListeners", 0, GetMaxListeners),
 
             _ => null
         };
@@ -78,43 +78,43 @@ public class SharpTSEventEmitter : ITypeCategorized
     /// <summary>
     /// Adds a listener for the specified event.
     /// </summary>
-    private object? On(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue On(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 2)
+        if (args.Length < 2)
             throw new Exception("on() requires event name and listener arguments");
 
-        var eventName = args[0]?.ToString() ?? throw new Exception("Event name must be a string");
-        var listener = args[1] ?? throw new Exception("Listener must be a function");
+        var eventName = args[0].ToObject()?.ToString() ?? throw new Exception("Event name must be a string");
+        var listener = args[1].ToObject() ?? throw new Exception("Listener must be a function");
 
         AddListenerInternal(eventName, listener, once: false, prepend: false);
-        return this; // Method chaining
+        return RuntimeValue.FromObject(this); // Method chaining
     }
 
     /// <summary>
     /// Adds a one-time listener for the specified event.
     /// </summary>
-    private object? Once(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Once(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 2)
+        if (args.Length < 2)
             throw new Exception("once() requires event name and listener arguments");
 
-        var eventName = args[0]?.ToString() ?? throw new Exception("Event name must be a string");
-        var listener = args[1] ?? throw new Exception("Listener must be a function");
+        var eventName = args[0].ToObject()?.ToString() ?? throw new Exception("Event name must be a string");
+        var listener = args[1].ToObject() ?? throw new Exception("Listener must be a function");
 
         AddListenerInternal(eventName, listener, once: true, prepend: false);
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Removes a listener for the specified event.
     /// </summary>
-    private object? Off(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Off(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 2)
+        if (args.Length < 2)
             throw new Exception("off() requires event name and listener arguments");
 
-        var eventName = args[0]?.ToString() ?? throw new Exception("Event name must be a string");
-        var listener = args[1] ?? throw new Exception("Listener must be a function");
+        var eventName = args[0].ToObject()?.ToString() ?? throw new Exception("Event name must be a string");
+        var listener = args[1].ToObject() ?? throw new Exception("Listener must be a function");
 
         if (_events.TryGetValue(eventName, out var listeners))
         {
@@ -131,25 +131,27 @@ public class SharpTSEventEmitter : ITypeCategorized
             }
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Emits an event, calling all registered listeners with the provided arguments.
     /// </summary>
-    private object? Emit(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Emit(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 1)
+        if (args.Length < 1)
             throw new Exception("emit() requires at least an event name argument");
 
-        var eventName = args[0]?.ToString() ?? throw new Exception("Event name must be a string");
+        var eventName = args[0].ToObject()?.ToString() ?? throw new Exception("Event name must be a string");
 
         if (!_events.TryGetValue(eventName, out var listeners) || listeners.Count == 0)
-            return false;
+            return RuntimeValue.False;
 
         // Snapshot the listeners to handle modifications during emit
         var snapshot = new List<ListenerWrapper>(listeners);
-        var eventArgs = args.Count > 1 ? args.Skip(1).ToList() : [];
+        var eventArgs = new List<object?>(Math.Max(0, args.Length - 1));
+        for (int i = 1; i < args.Length; i++)
+            eventArgs.Add(args[i].ToObject());
 
         foreach (var wrapper in snapshot)
         {
@@ -172,7 +174,7 @@ public class SharpTSEventEmitter : ITypeCategorized
             InvokeListener(wrapper.Listener, interpreter, eventArgs);
         }
 
-        return true;
+        return RuntimeValue.True;
     }
 
     /// <summary>
@@ -209,19 +211,19 @@ public class SharpTSEventEmitter : ITypeCategorized
     /// <summary>
     /// Removes all listeners for the specified event, or all events if no event name is provided.
     /// </summary>
-    private object? RemoveAllListeners(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue RemoveAllListeners(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] == null)
+        if (args.Length == 0 || args[0].IsNull)
         {
             _events.Clear();
         }
         else
         {
-            var eventName = args[0]?.ToString() ?? throw new Exception("Event name must be a string");
+            var eventName = args[0].ToObject()?.ToString() ?? throw new Exception("Event name must be a string");
             _events.Remove(eventName);
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
@@ -232,26 +234,26 @@ public class SharpTSEventEmitter : ITypeCategorized
     /// <summary>
     /// Returns an array of listener functions for the specified event.
     /// </summary>
-    private object? Listeners(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Listeners(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 1)
+        if (args.Length < 1)
             throw new Exception("listeners() requires an event name argument");
 
-        var eventName = args[0]?.ToString() ?? throw new Exception("Event name must be a string");
+        var eventName = args[0].ToObject()?.ToString() ?? throw new Exception("Event name must be a string");
 
         if (!_events.TryGetValue(eventName, out var listeners))
-            return new SharpTSArray([]);
+            return RuntimeValue.FromObject(new SharpTSArray([]));
 
         // Return just the listener functions, not the wrappers
         var listenerFunctions = listeners.Select(w => w.Listener).Cast<object?>().ToList();
-        return new SharpTSArray(listenerFunctions);
+        return RuntimeValue.FromObject(new SharpTSArray(listenerFunctions));
     }
 
     /// <summary>
     /// Returns an array of raw listener wrappers for the specified event.
     /// In Node.js this includes wrapper objects for once listeners; we return the same as listeners.
     /// </summary>
-    private object? RawListeners(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue RawListeners(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // For simplicity, return same as listeners - real Node.js wraps once listeners
         return Listeners(interpreter, receiver, args);
@@ -260,82 +262,82 @@ public class SharpTSEventEmitter : ITypeCategorized
     /// <summary>
     /// Returns the number of listeners for the specified event.
     /// </summary>
-    private object? ListenerCount(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue ListenerCount(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 1)
+        if (args.Length < 1)
             throw new Exception("listenerCount() requires an event name argument");
 
-        var eventName = args[0]?.ToString() ?? throw new Exception("Event name must be a string");
+        var eventName = args[0].ToObject()?.ToString() ?? throw new Exception("Event name must be a string");
 
         if (!_events.TryGetValue(eventName, out var listeners))
-            return 0.0;
+            return RuntimeValue.Zero;
 
-        return (double)listeners.Count;
+        return RuntimeValue.FromNumber(listeners.Count);
     }
 
     /// <summary>
     /// Returns an array of event names that have registered listeners.
     /// </summary>
-    private object? EventNames(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue EventNames(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var names = _events.Keys
             .Where(k => _events[k].Count > 0)
             .Cast<object?>()
             .ToList();
-        return new SharpTSArray(names);
+        return RuntimeValue.FromObject(new SharpTSArray(names));
     }
 
     /// <summary>
     /// Adds a listener to the beginning of the listeners array.
     /// </summary>
-    private object? PrependListener(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue PrependListener(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 2)
+        if (args.Length < 2)
             throw new Exception("prependListener() requires event name and listener arguments");
 
-        var eventName = args[0]?.ToString() ?? throw new Exception("Event name must be a string");
-        var listener = args[1] ?? throw new Exception("Listener must be a function");
+        var eventName = args[0].ToObject()?.ToString() ?? throw new Exception("Event name must be a string");
+        var listener = args[1].ToObject() ?? throw new Exception("Listener must be a function");
 
         AddListenerInternal(eventName, listener, once: false, prepend: true);
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Adds a one-time listener to the beginning of the listeners array.
     /// </summary>
-    private object? PrependOnceListener(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue PrependOnceListener(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 2)
+        if (args.Length < 2)
             throw new Exception("prependOnceListener() requires event name and listener arguments");
 
-        var eventName = args[0]?.ToString() ?? throw new Exception("Event name must be a string");
-        var listener = args[1] ?? throw new Exception("Listener must be a function");
+        var eventName = args[0].ToObject()?.ToString() ?? throw new Exception("Event name must be a string");
+        var listener = args[1].ToObject() ?? throw new Exception("Listener must be a function");
 
         AddListenerInternal(eventName, listener, once: true, prepend: true);
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Sets the maximum number of listeners for this emitter.
     /// </summary>
-    private object? SetMaxListeners(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetMaxListeners(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 1)
+        if (args.Length < 1)
             throw new Exception("setMaxListeners() requires a number argument");
 
-        if (args[0] is not double n)
+        if (!args[0].IsNumber)
             throw new Exception("setMaxListeners() argument must be a number");
 
-        _maxListeners = (int)n;
-        return this;
+        _maxListeners = (int)args[0].AsNumberUnsafe();
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Returns the current maximum listener count for this emitter.
     /// </summary>
-    private object? GetMaxListeners(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetMaxListeners(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        return (double)EffectiveMaxListeners;
+        return RuntimeValue.FromNumber(EffectiveMaxListeners);
     }
 
     /// <summary>

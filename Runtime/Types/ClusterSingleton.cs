@@ -170,10 +170,10 @@ public class ClusterSingleton : SharpTSEventEmitter
             "isWorker" => ClusterContext.IsWorker,
             "isMaster" => ClusterContext.IsPrimary,
 
-            "fork" => new BuiltInMethod("fork", 0, 1, (interp, recv, args) =>
+            "fork" => BuiltInMethod.CreateV2("fork", 0, 1, (interp, _, args) =>
             {
                 Dictionary<string, object?>? env = null;
-                if (args.Count > 0 && args[0] is SharpTSObject envObj)
+                if (args.Length > 0 && args[0].ToObject() is SharpTSObject envObj)
                 {
                     env = new Dictionary<string, object?>();
                     foreach (var key in envObj.PropertyNames)
@@ -181,25 +181,25 @@ public class ClusterSingleton : SharpTSEventEmitter
                         env[key] = envObj.GetProperty(key);
                     }
                 }
-                return Fork(env, interp);
+                return RuntimeValue.FromBoxed(Fork(env, interp));
             }),
 
-            "disconnect" => new BuiltInMethod("disconnect", 0, 1, (interp, recv, args) =>
+            "disconnect" => BuiltInMethod.CreateV2("disconnect", 0, 1, (_, _, args) =>
             {
-                DisconnectAll(args.Count > 0 ? args[0] : null);
-                return null;
+                DisconnectAll(args.Length > 0 ? args[0].ToObject() : null);
+                return RuntimeValue.Null;
             }),
 
-            "setupPrimary" => new BuiltInMethod("setupPrimary", 0, 1, (interp, recv, args) =>
+            "setupPrimary" => BuiltInMethod.CreateV2("setupPrimary", 0, 1, (_, _, args) =>
             {
-                SetupPrimary(args.Count > 0 ? args[0] as SharpTSObject : null);
-                return null;
+                SetupPrimary(args.Length > 0 ? args[0].ToObject() as SharpTSObject : null);
+                return RuntimeValue.Null;
             }),
 
-            "setupMaster" => new BuiltInMethod("setupMaster", 0, 1, (interp, recv, args) =>
+            "setupMaster" => BuiltInMethod.CreateV2("setupMaster", 0, 1, (_, _, args) =>
             {
-                SetupPrimary(args.Count > 0 ? args[0] as SharpTSObject : null);
-                return null;
+                SetupPrimary(args.Length > 0 ? args[0].ToObject() as SharpTSObject : null);
+                return RuntimeValue.Null;
             }),
 
             "workers" => GetWorkersObject(),

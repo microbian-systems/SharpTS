@@ -15,16 +15,16 @@ public static class JSONBuiltIns
     {
         return name switch
         {
-            "parse" => new BuiltInMethod("parse", 1, 2, ParseJson),
-            "stringify" => new BuiltInMethod("stringify", 1, 3, StringifyJson),
+            "parse" => BuiltInMethod.CreateV2("parse", 1, 2, ParseJson),
+            "stringify" => BuiltInMethod.CreateV2("stringify", 1, 3, StringifyJson),
             _ => null
         };
     }
 
-    private static object? ParseJson(Interpreter interp, object? _, List<object?> args)
+    private static RuntimeValue ParseJson(Interpreter interp, RuntimeValue _, ReadOnlySpan<RuntimeValue> args)
     {
-        var text = args[0]?.ToString() ?? "null";
-        var reviver = args.Count > 1 ? args[1] as ISharpTSCallable : null;
+        var text = args[0].ToObject()?.ToString() ?? "null";
+        var reviver = args.Length > 1 ? args[1].ToObject() as ISharpTSCallable : null;
 
         object? parsed;
         try
@@ -44,10 +44,10 @@ public static class JSONBuiltIns
             // root through `this` and any in-place mutations the reviver makes
             // on `this` are visible to the surrounding walk.
             var root = new SharpTSObject(new Dictionary<string, object?> { [""] = parsed });
-            return InternalizeJSONProperty(interp, root, "", reviver);
+            return RuntimeValue.FromBoxed(InternalizeJSONProperty(interp, root, "", reviver));
         }
 
-        return parsed;
+        return RuntimeValue.FromBoxed(parsed);
     }
 
     private static object? ConvertJsonElement(JsonElement element)
@@ -200,11 +200,11 @@ public static class JSONBuiltIns
         return reviver.Call(interp, [key, val]);
     }
 
-    private static object? StringifyJson(Interpreter interp, object? _, List<object?> args)
+    private static RuntimeValue StringifyJson(Interpreter interp, RuntimeValue _, ReadOnlySpan<RuntimeValue> args)
     {
-        var value = args[0];
-        var replacer = args.Count > 1 ? args[1] : null;
-        var space = args.Count > 2 ? args[2] : null;
+        var value = args[0].ToObject();
+        var replacer = args.Length > 1 ? args[1].ToObject() : null;
+        var space = args.Length > 2 ? args[2].ToObject() : null;
 
         // Handle space parameter: number = spaces, string = literal indent string
         string indentStr = "";
@@ -237,10 +237,10 @@ public static class JSONBuiltIns
         var seen = new HashSet<object>(System.Collections.Generic.ReferenceEqualityComparer.Instance);
         if (StringifyValue(interp, value, "", replacerFunc, allowedKeys, indentStr, 0, sb, seen))
         {
-            return sb.ToString();
+            return RuntimeValue.FromString(sb.ToString());
         }
 
-        return null;
+        return RuntimeValue.Null;
     }
 
     private static bool StringifyValue(Interpreter interp, object? value, object? key,

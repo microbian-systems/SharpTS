@@ -19,11 +19,11 @@ public static class VmModuleInterpreter
     {
         return new Dictionary<string, object?>
         {
-            ["runInNewContext"] = new BuiltInMethod("runInNewContext", 1, 3, RunInNewContext),
-            ["runInThisContext"] = new BuiltInMethod("runInThisContext", 1, 2, RunInThisContext),
-            ["createContext"] = new BuiltInMethod("createContext", 0, 1, CreateContext),
-            ["isContext"] = new BuiltInMethod("isContext", 1, 1, IsContext),
-            ["compileFunction"] = new BuiltInMethod("compileFunction", 1, 3, CompileFunction),
+            ["runInNewContext"] = BuiltInMethod.CreateV2("runInNewContext", 1, 3, RunInNewContext),
+            ["runInThisContext"] = BuiltInMethod.CreateV2("runInThisContext", 1, 2, RunInThisContext),
+            ["createContext"] = BuiltInMethod.CreateV2("createContext", 0, 1, CreateContext),
+            ["isContext"] = BuiltInMethod.CreateV2("isContext", 1, 1, IsContext),
+            ["compileFunction"] = BuiltInMethod.CreateV2("compileFunction", 1, 3, CompileFunction),
             ["Script"] = new VmScriptConstructor()
         };
     }
@@ -32,44 +32,44 @@ public static class VmModuleInterpreter
     /// vm.runInNewContext(code, contextObject?, options?) — executes code in a fresh, isolated context.
     /// Context properties become variables; mutations are written back.
     /// </summary>
-    private static object? RunInNewContext(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue RunInNewContext(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string code)
+        if (args.Length == 0 || args[0].ToObject() is not string code)
             throw new Exception("vm.runInNewContext requires a code string");
 
-        var contextObject = args.Count > 1 ? args[1] : null;
-        var timeout = GetTimeoutOption(args.Count > 2 ? args[2] : null);
-        return ExecuteInNewContext(code, contextObject, interpreter, timeout);
+        var contextObject = args.Length > 1 ? args[1].ToObject() : null;
+        var timeout = GetTimeoutOption(args.Length > 2 ? args[2].ToObject() : null);
+        return RuntimeValue.FromBoxed(ExecuteInNewContext(code, contextObject, interpreter, timeout));
     }
 
     /// <summary>
     /// vm.runInThisContext(code, options?) — executes code in the caller's scope.
     /// </summary>
-    private static object? RunInThisContext(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue RunInThisContext(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string code)
+        if (args.Length == 0 || args[0].ToObject() is not string code)
             throw new Exception("vm.runInThisContext requires a code string");
 
-        var timeout = GetTimeoutOption(args.Count > 1 ? args[1] : null);
-        return ExecuteInCurrentContext(code, interpreter, timeout);
+        var timeout = GetTimeoutOption(args.Length > 1 ? args[1].ToObject() : null);
+        return RuntimeValue.FromBoxed(ExecuteInCurrentContext(code, interpreter, timeout));
     }
 
     /// <summary>
     /// vm.createContext(contextObject?) — tags an object as a vm context.
     /// </summary>
-    private static object? CreateContext(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CreateContext(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var contextObject = args.Count > 0 ? args[0] : null;
-        return VmContext.Create(contextObject);
+        var contextObject = args.Length > 0 ? args[0].ToObject() : null;
+        return RuntimeValue.FromObject(VmContext.Create(contextObject));
     }
 
     /// <summary>
     /// vm.isContext(obj) — returns whether an object has been contextified.
     /// </summary>
-    private static object? IsContext(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue IsContext(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var obj = args.Count > 0 ? args[0] : null;
-        return VmContext.IsContext(obj);
+        var obj = args.Length > 0 ? args[0].ToObject() : null;
+        return RuntimeValue.FromBoolean(VmContext.IsContext(obj));
     }
 
     /// <summary>
@@ -227,19 +227,19 @@ public static class VmModuleInterpreter
     /// vm.compileFunction(code, params?, options?) — compiles a function body with named parameters.
     /// Returns a callable function. Equivalent to new Function(params, code) with vm context control.
     /// </summary>
-    private static object? CompileFunction(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CompileFunction(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string code)
+        if (args.Length == 0 || args[0].ToObject() is not string code)
             throw new Exception("vm.compileFunction requires a code string");
 
         // Extract params array (string[])
         var paramNames = new List<string>();
-        if (args.Count > 1 && args[1] != null)
+        if (args.Length > 1 && !args[1].IsNull)
         {
             IEnumerable<object?> items;
-            if (args[1] is List<object?> paramList)
+            if (args[1].ToObject() is List<object?> paramList)
                 items = paramList;
-            else if (args[1] is SharpTSArray paramArray)
+            else if (args[1].ToObject() is SharpTSArray paramArray)
                 items = paramArray;
             else
                 items = [];
@@ -264,9 +264,9 @@ public static class VmModuleInterpreter
         object? parsingContext = null;
         List<object?>? contextExtensions = null;
 
-        if (args.Count > 2 && args[2] != null)
+        if (args.Length > 2 && !args[2].IsNull)
         {
-            var options = VmContext.ExtractProperties(args[2]);
+            var options = VmContext.ExtractProperties(args[2].ToObject());
             if (options.TryGetValue("parsingContext", out var ctx))
             {
                 if (ctx != null && !VmContext.IsContext(ctx))
@@ -292,13 +292,16 @@ public static class VmModuleInterpreter
         var funcDeclStatements = ParseCode(wrappedCode);
 
         // Return a callable that executes the function body in a fresh interpreter
-        var compiledFn = new BuiltInMethod("compiledFunction", 0, paramNames.Count,
+        var compiledFn = BuiltInMethod.CreateV2("compiledFunction", 0, paramNames.Count,
             (interp, recv, callArgs) =>
             {
-                return ExecuteCompiledFunction(funcDeclStatements, paramNames, callArgs, parsingContext, contextExtensions, interp);
+                var boxedCallArgs = new List<object?>(callArgs.Length);
+                for (int i = 0; i < callArgs.Length; i++)
+                    boxedCallArgs.Add(callArgs[i].ToObject());
+                return RuntimeValue.FromBoxed(ExecuteCompiledFunction(funcDeclStatements, paramNames, boxedCallArgs, parsingContext, contextExtensions, interp));
             });
 
-        return compiledFn;
+        return RuntimeValue.FromObject(compiledFn);
     }
 
     /// <summary>
@@ -450,30 +453,30 @@ public sealed class VmScriptConstructor : ISharpTSCallable
         // Create Script as a dictionary — works in both interpreter (via SharpTSObject wrapper)
         // and compiled mode (dictionary is native object representation).
         // Methods use BuiltInMethod (ISharpTSCallable for interpreter, has "Call" method for compiled mode).
-        var runInNewCtx = new BuiltInMethod("runInNewContext", 0, 2,
+        var runInNewCtx = BuiltInMethod.CreateV2("runInNewContext", 0, 2,
             (interp, recv, methodArgs) =>
             {
-                var contextObject = methodArgs.Count > 0 ? methodArgs[0] : null;
-                var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Count > 1 ? methodArgs[1] : null);
-                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, contextObject, interp, timeout);
+                var contextObject = methodArgs.Length > 0 ? methodArgs[0].ToObject() : null;
+                var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Length > 1 ? methodArgs[1].ToObject() : null);
+                return RuntimeValue.FromBoxed(VmModuleInterpreter.ExecuteParsedInNewContext(statements, contextObject, interp, timeout));
             });
 
-        var runInThisCtx = new BuiltInMethod("runInThisContext", 0, 1,
+        var runInThisCtx = BuiltInMethod.CreateV2("runInThisContext", 0, 1,
             (interp, recv, methodArgs) =>
             {
-                var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Count > 0 ? methodArgs[0] : null);
+                var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Length > 0 ? methodArgs[0].ToObject() : null);
                 if (interp != null)
-                    return VmModuleInterpreter.ExecuteParsedInCurrentContext(statements, interp, timeout);
+                    return RuntimeValue.FromBoxed(VmModuleInterpreter.ExecuteParsedInCurrentContext(statements, interp, timeout));
                 // Compiled mode: no interpreter available, fall back to new context
-                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, null, interp, timeout);
+                return RuntimeValue.FromBoxed(VmModuleInterpreter.ExecuteParsedInNewContext(statements, null, interp, timeout));
             });
 
-        var runInCtx = new BuiltInMethod("runInContext", 1, 2,
+        var runInCtx = BuiltInMethod.CreateV2("runInContext", 1, 2,
             (interp, recv, methodArgs) =>
             {
-                var context = methodArgs.Count > 0 ? methodArgs[0] : null;
-                var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Count > 1 ? methodArgs[1] : null);
-                return VmModuleInterpreter.ExecuteParsedInNewContext(statements, context, interp, timeout);
+                var context = methodArgs.Length > 0 ? methodArgs[0].ToObject() : null;
+                var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Length > 1 ? methodArgs[1].ToObject() : null);
+                return RuntimeValue.FromBoxed(VmModuleInterpreter.ExecuteParsedInNewContext(statements, context, interp, timeout));
             });
 
         // Return as Dictionary<string, object?> — works in both modes:

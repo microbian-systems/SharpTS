@@ -18,29 +18,29 @@ public static class GeneratorBuiltIns
     {
         return name switch
         {
-            "next" => new BuiltInMethod("next", 0, 0, (_, receiver, _) =>
+            "next" => BuiltInMethod.CreateV2("next", 0, 0, static (_, receiver, _) =>
             {
-                if (receiver is SharpTSGenerator gen)
+                if (receiver.ToObject() is SharpTSGenerator gen)
                 {
-                    return gen.Next();
+                    return RuntimeValue.FromObject(gen.Next());
                 }
                 throw new Exception("Runtime Error: next() called on non-generator.");
             }),
-            "return" => new BuiltInMethod("return", 0, 1, (_, receiver, args) =>
+            "return" => BuiltInMethod.CreateV2("return", 0, 1, static (_, receiver, args) =>
             {
-                if (receiver is SharpTSGenerator gen)
+                if (receiver.ToObject() is SharpTSGenerator gen)
                 {
-                    object? value = args.Count > 0 ? args[0] : null;
-                    return gen.Return(value);
+                    object? value = args.Length > 0 ? args[0].ToObject() : null;
+                    return RuntimeValue.FromObject(gen.Return(value));
                 }
                 throw new Exception("Runtime Error: return() called on non-generator.");
             }),
-            "throw" => new BuiltInMethod("throw", 0, 1, (_, receiver, args) =>
+            "throw" => BuiltInMethod.CreateV2("throw", 0, 1, static (_, receiver, args) =>
             {
-                if (receiver is SharpTSGenerator gen)
+                if (receiver.ToObject() is SharpTSGenerator gen)
                 {
-                    object? error = args.Count > 0 ? args[0] : null;
-                    return gen.Throw(error);
+                    object? error = args.Length > 0 ? args[0].ToObject() : null;
+                    return RuntimeValue.FromObject(gen.Throw(error));
                 }
                 throw new Exception("Runtime Error: throw() called on non-generator.");
             }),
@@ -77,13 +77,13 @@ public static class GeneratorBuiltIns
             _ => name is "take" or "drop" ? 1 : 1
         };
 
-        return new BuiltInMethod(name, minArity, maxArity, (interp, receiver, args) =>
+        return BuiltInMethod.CreateV2(name, minArity, maxArity, (interp, receiver, args) =>
         {
             // Wrap the generator as an iterator, then delegate to IteratorBuiltIns
-            var iter = WrapAsIterator((SharpTSGenerator)receiver!);
+            var iter = WrapAsIterator((SharpTSGenerator)receiver.ToObject()!);
             var method = IteratorBuiltIns.GetMember(iter, name);
             if (method is BuiltInMethod bm)
-                return bm.Call(interp, args);
+                return bm.CallV2(interp, args);
             throw new Exception($"Runtime Error: Iterator method '{name}' not found.");
         });
     }

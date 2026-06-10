@@ -22,25 +22,25 @@ public static class AbortSignalBuiltIns
     {
         return name switch
         {
-            "abort" => new BuiltInMethod("abort", 0, 1, (_, _, args) =>
+            "abort" => BuiltInMethod.CreateV2("abort", 0, 1, static (_, _, args) =>
             {
-                var reason = args.Count > 0 ? args[0] : null;
-                return SharpTSAbortSignal.Abort(reason);
+                var reason = args.Length > 0 ? args[0].ToObject() : null;
+                return RuntimeValue.FromObject(SharpTSAbortSignal.Abort(reason));
             }),
-            "timeout" => new BuiltInMethod("timeout", 1, (_, _, args) =>
+            "timeout" => BuiltInMethod.CreateV2("timeout", 1, static (_, _, args) =>
             {
-                var ms = args[0] is double d ? d : throw new Exception("Runtime Error: AbortSignal.timeout requires a number argument");
-                return SharpTSAbortSignal.Timeout(ms);
+                var ms = args[0].IsNumber ? args[0].AsNumberUnsafe() : throw new Exception("Runtime Error: AbortSignal.timeout requires a number argument");
+                return RuntimeValue.FromObject(SharpTSAbortSignal.Timeout(ms));
             }),
-            "any" => new BuiltInMethod("any", 1, (_, _, args) =>
+            "any" => BuiltInMethod.CreateV2("any", 1, static (_, _, args) =>
             {
-                if (args[0] is not SharpTSArray signalArray)
+                if (args[0].ToObject() is not SharpTSArray signalArray)
                     throw new Exception("Runtime Error: AbortSignal.any requires an array of AbortSignal instances");
 
                 var signals = signalArray
                     .Where(e => e is SharpTSAbortSignal)
                     .Cast<SharpTSAbortSignal>();
-                return SharpTSAbortSignal.Any(signals);
+                return RuntimeValue.FromObject(SharpTSAbortSignal.Any(signals));
             }),
             _ => null
         };

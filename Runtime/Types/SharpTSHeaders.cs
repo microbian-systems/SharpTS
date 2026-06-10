@@ -202,69 +202,69 @@ public class SharpTSHeaders : ITypeCategorized
     {
         return name switch
         {
-            "get" => new BuiltInMethod("get", 1, (_, _, args) =>
+            "get" => BuiltInMethod.CreateV2("get", 1, (_, _, args) =>
             {
-                var headerName = args[0]?.ToString() ?? "";
-                return (object?)Get(headerName);
+                var headerName = args[0].ToObject()?.ToString() ?? "";
+                return RuntimeValue.FromBoxed(Get(headerName));
             }),
-            "set" => new BuiltInMethod("set", 2, (_, _, args) =>
+            "set" => BuiltInMethod.CreateV2("set", 2, (_, _, args) =>
             {
-                var headerName = args[0]?.ToString() ?? "";
-                var headerValue = args.Count > 1 ? args[1]?.ToString() ?? "" : "";
+                var headerName = args[0].ToObject()?.ToString() ?? "";
+                var headerValue = args.Length > 1 ? args[1].ToObject()?.ToString() ?? "" : "";
                 Set(headerName, headerValue);
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
-            "has" => new BuiltInMethod("has", 1, (_, _, args) =>
+            "has" => BuiltInMethod.CreateV2("has", 1, (_, _, args) =>
             {
-                var headerName = args[0]?.ToString() ?? "";
-                return (object)Has(headerName);
+                var headerName = args[0].ToObject()?.ToString() ?? "";
+                return RuntimeValue.FromBoolean(Has(headerName));
             }),
-            "delete" => new BuiltInMethod("delete", 1, (_, _, args) =>
+            "delete" => BuiltInMethod.CreateV2("delete", 1, (_, _, args) =>
             {
-                var headerName = args[0]?.ToString() ?? "";
-                return (object)Delete(headerName);
+                var headerName = args[0].ToObject()?.ToString() ?? "";
+                return RuntimeValue.FromBoolean(Delete(headerName));
             }),
-            "append" => new BuiltInMethod("append", 2, (_, _, args) =>
+            "append" => BuiltInMethod.CreateV2("append", 2, (_, _, args) =>
             {
-                var headerName = args[0]?.ToString() ?? "";
-                var headerValue = args.Count > 1 ? args[1]?.ToString() ?? "" : "";
+                var headerName = args[0].ToObject()?.ToString() ?? "";
+                var headerValue = args.Length > 1 ? args[1].ToObject()?.ToString() ?? "" : "";
                 Append(headerName, headerValue);
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
-            "getSetCookie" => new BuiltInMethod("getSetCookie", 0, (_, _, _) =>
+            "getSetCookie" => BuiltInMethod.CreateV2("getSetCookie", 0, (_, _, _) =>
             {
                 var cookies = GetSetCookie();
-                return new SharpTSArray(cookies.Select(c => (object?)c).ToList());
+                return RuntimeValue.FromObject(new SharpTSArray(cookies.Select(c => (object?)c).ToList()));
             }),
-            "forEach" => new BuiltInMethod("forEach", 1, (interp, _, args) =>
+            "forEach" => BuiltInMethod.CreateV2("forEach", 1, (interp, _, args) =>
             {
-                var callback = args[0];
+                var callback = args[0].ToObject();
                 foreach (var entry in GetEntries())
                 {
                     CallCallback(interp, callback, entry.Value, entry.Key);
                 }
-                return SharpTSUndefined.Instance;
+                return RuntimeValue.Undefined;
             }),
-            "entries" => new BuiltInMethod("entries", 0, (_, _, _) =>
+            "entries" => BuiltInMethod.CreateV2("entries", 0, (_, _, _) =>
             {
                 var entries = GetEntries()
                     .Select(e => (object?)new SharpTSArray([e.Key, e.Value]))
                     .ToList();
-                return new SharpTSIterator(entries);
+                return RuntimeValue.FromObject(new SharpTSIterator(entries));
             }),
-            "keys" => new BuiltInMethod("keys", 0, (_, _, _) =>
+            "keys" => BuiltInMethod.CreateV2("keys", 0, (_, _, _) =>
             {
                 var keys = GetEntries()
                     .Select(e => (object?)e.Key)
                     .ToList();
-                return new SharpTSIterator(keys);
+                return RuntimeValue.FromObject(new SharpTSIterator(keys));
             }),
-            "values" => new BuiltInMethod("values", 0, (_, _, _) =>
+            "values" => BuiltInMethod.CreateV2("values", 0, (_, _, _) =>
             {
                 var values = GetEntries()
                     .Select(e => (object?)e.Value)
                     .ToList();
-                return new SharpTSIterator(values);
+                return RuntimeValue.FromObject(new SharpTSIterator(values));
             }),
             _ => null
         };

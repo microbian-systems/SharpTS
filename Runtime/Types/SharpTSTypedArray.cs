@@ -334,93 +334,93 @@ public abstract class SharpTSTypedArray : ITypeCategorized
             "BYTES_PER_ELEMENT" => (double)BytesPerElement,
             "buffer" => _sharedBuffer ?? _arrayBuffer ?? (object?)new SharpTSBuffer(_buffer),
 
-            "set" => new BuiltInMethod("set", 1, 2, (interp, recv, args) =>
+            "set" => BuiltInMethod.CreateV2("set", 1, 2, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("TypedArray.set requires a source argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                Set(args[0]!, offset);
-                return null;
+                int offset = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+                Set(args[0].ToObject()!, offset);
+                return RuntimeValue.Null;
             }),
 
-            "slice" => new BuiltInMethod("slice", 0, 2, (interp, recv, args) =>
+            "slice" => BuiltInMethod.CreateV2("slice", 0, 2, (_, _, args) =>
             {
-                int begin = args.Count > 0 && args[0] is double b ? (int)b : 0;
-                int? end = args.Count > 1 && args[1] is double e ? (int)e : null;
-                return Slice(begin, end);
+                int begin = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+                int? end = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : null;
+                return RuntimeValue.FromObject(Slice(begin, end));
             }),
 
-            "subarray" => new BuiltInMethod("subarray", 0, 2, (interp, recv, args) =>
+            "subarray" => BuiltInMethod.CreateV2("subarray", 0, 2, (_, _, args) =>
             {
-                int begin = args.Count > 0 && args[0] is double b ? (int)b : 0;
-                int? end = args.Count > 1 && args[1] is double e ? (int)e : null;
-                return Subarray(begin, end);
+                int begin = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+                int? end = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : null;
+                return RuntimeValue.FromObject(Subarray(begin, end));
             }),
 
-            "fill" => new BuiltInMethod("fill", 1, 3, (interp, recv, args) =>
+            "fill" => BuiltInMethod.CreateV2("fill", 1, 3, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("TypedArray.fill requires a value argument");
-                int start = args.Count > 1 && args[1] is double s ? (int)s : 0;
-                int? end = args.Count > 2 && args[2] is double e ? (int)e : null;
-                return Fill(args[0], start, end);
+                int start = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+                int? end = args.Length > 2 && args[2].IsNumber ? (int)args[2].AsNumberUnsafe() : null;
+                return RuntimeValue.FromObject(Fill(args[0].ToObject(), start, end));
             }),
 
-            "copyWithin" => new BuiltInMethod("copyWithin", 2, 3, (interp, recv, args) =>
+            "copyWithin" => BuiltInMethod.CreateV2("copyWithin", 2, 3, (_, _, args) =>
             {
-                if (args.Count < 2)
+                if (args.Length < 2)
                     throw new Exception("TypedArray.copyWithin requires target and start arguments");
-                int target = args[0] is double t ? (int)t : 0;
-                int start = args[1] is double s ? (int)s : 0;
-                int? end = args.Count > 2 && args[2] is double e ? (int)e : null;
-                return CopyWithin(target, start, end);
+                int target = args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+                int start = args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+                int? end = args.Length > 2 && args[2].IsNumber ? (int)args[2].AsNumberUnsafe() : null;
+                return RuntimeValue.FromObject(CopyWithin(target, start, end));
             }),
 
-            "reverse" => new BuiltInMethod("reverse", 0, (interp, recv, args) => Reverse()),
+            "reverse" => BuiltInMethod.CreateV2("reverse", 0, (_, _, _) => RuntimeValue.FromObject(Reverse())),
 
-            "indexOf" => new BuiltInMethod("indexOf", 1, 2, (interp, recv, args) =>
+            "indexOf" => BuiltInMethod.CreateV2("indexOf", 1, 2, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("TypedArray.indexOf requires a search element");
-                int fromIndex = args.Count > 1 && args[1] is double f ? (int)f : 0;
-                return IndexOf(args[0], fromIndex);
+                int fromIndex = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+                return RuntimeValue.FromNumber(IndexOf(args[0].ToObject(), fromIndex));
             }),
 
-            "lastIndexOf" => new BuiltInMethod("lastIndexOf", 1, 2, (interp, recv, args) =>
+            "lastIndexOf" => BuiltInMethod.CreateV2("lastIndexOf", 1, 2, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("TypedArray.lastIndexOf requires a search element");
-                int? fromIndex = args.Count > 1 && args[1] is double f ? (int)f : null;
-                return LastIndexOf(args[0], fromIndex);
+                int? fromIndex = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : null;
+                return RuntimeValue.FromNumber(LastIndexOf(args[0].ToObject(), fromIndex));
             }),
 
-            "includes" => new BuiltInMethod("includes", 1, 2, (interp, recv, args) =>
+            "includes" => BuiltInMethod.CreateV2("includes", 1, 2, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("TypedArray.includes requires a search element");
-                int fromIndex = args.Count > 1 && args[1] is double f ? (int)f : 0;
-                return Includes(args[0], fromIndex);
+                int fromIndex = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+                return RuntimeValue.FromBoolean(Includes(args[0].ToObject(), fromIndex));
             }),
 
-            "join" => new BuiltInMethod("join", 0, 1, (interp, recv, args) =>
+            "join" => BuiltInMethod.CreateV2("join", 0, 1, (_, _, args) =>
             {
-                string separator = args.Count > 0 ? args[0]?.ToString() ?? "," : ",";
+                string separator = args.Length > 0 ? args[0].ToObject()?.ToString() ?? "," : ",";
                 var parts = new string[_length];
                 for (int i = 0; i < _length; i++)
                 {
                     parts[i] = this[i]?.ToString() ?? "";
                 }
-                return string.Join(separator, parts);
+                return RuntimeValue.FromString(string.Join(separator, parts));
             }),
 
-            "toString" => new BuiltInMethod("toString", 0, (interp, recv, args) =>
+            "toString" => BuiltInMethod.CreateV2("toString", 0, (_, _, _) =>
             {
                 var parts = new string[_length];
                 for (int i = 0; i < _length; i++)
                 {
                     parts[i] = this[i]?.ToString() ?? "";
                 }
-                return string.Join(",", parts);
+                return RuntimeValue.FromString(string.Join(",", parts));
             }),
 
             _ => null

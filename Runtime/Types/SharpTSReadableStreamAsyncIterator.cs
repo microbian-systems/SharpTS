@@ -42,17 +42,17 @@ public class SharpTSReadableStreamAsyncIterator : SharpTSObject
 
         // Self-iterable.
         SetBySymbol(SharpTSSymbol.AsyncIterator,
-            new BuiltInMethod("[Symbol.asyncIterator]", 0, (_, _, _) => this));
+            BuiltInMethod.CreateV2("[Symbol.asyncIterator]", 0, (_, _, _) => RuntimeValue.FromObject(this)));
 
-        SetProperty("next", new BuiltInMethod("next", 0, (interp, _, _) =>
+        SetProperty("next", BuiltInMethod.CreateV2("next", 0, (interp, _, _) =>
         {
             if (_done)
             {
-                return Task.FromResult<object?>(new Dictionary<string, object?>
+                return RuntimeValue.FromObject(Task.FromResult<object?>(new Dictionary<string, object?>
                 {
                     ["value"] = SharpTSUndefined.Instance,
                     ["done"] = (object)true,
-                });
+                }));
             }
             var readTask = _stream.ReadInternal();
             // Wrap in a continuation that flips _done when the result is done:true.
@@ -66,22 +66,22 @@ public class SharpTSReadableStreamAsyncIterator : SharpTSObject
                 }
                 return result;
             }
-            return AwaitAndObserve();
+            return RuntimeValue.FromObject(AwaitAndObserve());
         }));
 
-        SetProperty("return", new BuiltInMethod("return", 0, 1, (_, _, args) =>
+        SetProperty("return", BuiltInMethod.CreateV2("return", 0, 1, (_, _, args) =>
         {
             _done = true;
             if (_stream.Reader == _reader)
             {
                 _stream.Reader = null;
             }
-            var returnValue = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
-            return Task.FromResult<object?>(new Dictionary<string, object?>
+            var returnValue = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
+            return RuntimeValue.FromObject(Task.FromResult<object?>(new Dictionary<string, object?>
             {
                 ["value"] = returnValue,
                 ["done"] = (object)true,
-            });
+            }));
         }));
     }
 }

@@ -292,19 +292,19 @@ public class SharpTSIntlListFormat
     {
         return name switch
         {
-            "format" => new BuiltInMethod("format", 1, (_, _, args) =>
+            "format" => BuiltInMethod.CreateV2("format", 1, (_, _, args) =>
             {
-                var items = ToStringList(args.Count > 0 ? args[0] : null);
-                return FormatList(items);
+                var items = ToStringList(args.Length > 0 ? args[0].ToObject() : null);
+                return RuntimeValue.FromBoxed(FormatList(items));
             }),
-            "formatToParts" => new BuiltInMethod("formatToParts", 1, (_, _, args) =>
+            "formatToParts" => BuiltInMethod.CreateV2("formatToParts", 1, (_, _, args) =>
             {
-                var items = ToStringList(args.Count > 0 ? args[0] : null);
-                return GetFormattedParts(items);
+                var items = ToStringList(args.Length > 0 ? args[0].ToObject() : null);
+                return RuntimeValue.FromBoxed(GetFormattedParts(items));
             }),
-            "resolvedOptions" => new BuiltInMethod("resolvedOptions", 0, (_, _, _) =>
+            "resolvedOptions" => BuiltInMethod.CreateV2("resolvedOptions", 0, (_, _, _) =>
             {
-                return new SharpTSObject(GetResolvedOptions());
+                return RuntimeValue.FromObject(new SharpTSObject(GetResolvedOptions()));
             }),
             _ => null
         };

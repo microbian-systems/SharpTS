@@ -51,24 +51,24 @@ public class SharpTSReadable : SharpTSEventEmitter
         return name switch
         {
             // Readable-specific methods
-            "read" => new BuiltInMethod("read", 0, 1, Read),
-            "push" => new BuiltInMethod("push", 1, Push),
-            "pipe" => new BuiltInMethod("pipe", 1, 2, Pipe),
-            "unpipe" => new BuiltInMethod("unpipe", 0, 1, Unpipe),
-            "setEncoding" => new BuiltInMethod("setEncoding", 1, SetEncoding),
-            "destroy" => new BuiltInMethod("destroy", 0, 1, Destroy),
-            "unshift" => new BuiltInMethod("unshift", 1, Unshift),
-            "pause" => new BuiltInMethod("pause", 0, Pause),
-            "resume" => new BuiltInMethod("resume", 0, Resume),
-            "isPaused" => new BuiltInMethod("isPaused", 0, IsPaused),
-            "toArray" => new BuiltInMethod("toArray", 0, ToArray),
-            "forEach" => new BuiltInMethod("forEach", 1, ForEach),
-            "map" => new BuiltInMethod("map", 1, Map),
-            "filter" => new BuiltInMethod("filter", 1, Filter),
+            "read" => BuiltInMethod.CreateV2("read", 0, 1, Read),
+            "push" => BuiltInMethod.CreateV2("push", 1, Push),
+            "pipe" => BuiltInMethod.CreateV2("pipe", 1, 2, Pipe),
+            "unpipe" => BuiltInMethod.CreateV2("unpipe", 0, 1, Unpipe),
+            "setEncoding" => BuiltInMethod.CreateV2("setEncoding", 1, SetEncoding),
+            "destroy" => BuiltInMethod.CreateV2("destroy", 0, 1, Destroy),
+            "unshift" => BuiltInMethod.CreateV2("unshift", 1, Unshift),
+            "pause" => BuiltInMethod.CreateV2("pause", 0, Pause),
+            "resume" => BuiltInMethod.CreateV2("resume", 0, Resume),
+            "isPaused" => BuiltInMethod.CreateV2("isPaused", 0, IsPaused),
+            "toArray" => BuiltInMethod.CreateV2("toArray", 0, ToArray),
+            "forEach" => BuiltInMethod.CreateV2("forEach", 1, ForEach),
+            "map" => BuiltInMethod.CreateV2("map", 1, Map),
+            "filter" => BuiltInMethod.CreateV2("filter", 1, Filter),
 
             // Wrap event methods to drain buffer after 'data' listener is added
-            "on" or "addListener" => new BuiltInMethod(name, 2, WrapOnForFlowing),
-            "once" => new BuiltInMethod("once", 2, WrapOnceForFlowing),
+            "on" or "addListener" => BuiltInMethod.CreateV2(name, 2, WrapOnForFlowing),
+            "once" => BuiltInMethod.CreateV2("once", 2, WrapOnceForFlowing),
 
             // Properties
             "readable" => _readable && !_ended && !_destroyed,
@@ -85,13 +85,13 @@ public class SharpTSReadable : SharpTSEventEmitter
         };
     }
 
-    private object? WrapOnForFlowing(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue WrapOnForFlowing(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // Call base on
         var baseOn = base.GetMember("on") as BuiltInMethod;
-        baseOn?.Bind(this).Call(interpreter, args);
+        baseOn?.Bind(this).CallV2(interpreter, args);
 
-        var eventName = args.Count > 0 ? args[0]?.ToString() : null;
+        var eventName = args.Length > 0 ? args[0].ToObject()?.ToString() : null;
 
         // If a 'data' listener was added, drain the buffer
         if (eventName == "data" && _flowing == true && _readBuffer.Count > 0)
@@ -105,16 +105,16 @@ public class SharpTSReadable : SharpTSEventEmitter
             EmitEvent(interpreter, "end", []);
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? WrapOnceForFlowing(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue WrapOnceForFlowing(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // Call base once
         var baseOnce = base.GetMember("once") as BuiltInMethod;
-        baseOnce?.Bind(this).Call(interpreter, args);
+        baseOnce?.Bind(this).CallV2(interpreter, args);
 
-        var eventName = args.Count > 0 ? args[0]?.ToString() : null;
+        var eventName = args.Length > 0 ? args[0].ToObject()?.ToString() : null;
 
         // If a 'data' listener was added, drain the buffer
         if (eventName == "data" && _flowing == true && _readBuffer.Count > 0)
@@ -128,29 +128,29 @@ public class SharpTSReadable : SharpTSEventEmitter
             EmitEvent(interpreter, "end", []);
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Reads data from the stream.
     /// </summary>
-    private object? Read(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Read(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_destroyed || _readBuffer.Count == 0)
         {
-            return null;
+            return RuntimeValue.Null;
         }
 
         // In object mode, always return one object at a time (size parameter is ignored)
         if (_objectMode)
         {
-            return _readBuffer.Dequeue();
+            return RuntimeValue.FromBoxed(_readBuffer.Dequeue());
         }
 
         int? size = null;
-        if (args.Count > 0 && args[0] is double d)
+        if (args.Length > 0 && args[0].IsNumber)
         {
-            size = (int)d;
+            size = (int)args[0].AsNumberUnsafe();
         }
 
         if (size == null || size <= 0)
@@ -158,7 +158,7 @@ public class SharpTSReadable : SharpTSEventEmitter
             // Read all available data
             if (_readBuffer.Count == 0)
             {
-                return null;
+                return RuntimeValue.Null;
             }
 
             var chunks = new List<object?>();
@@ -168,12 +168,12 @@ public class SharpTSReadable : SharpTSEventEmitter
             }
 
             // Concatenate all chunks
-            return ConcatenateChunks(chunks);
+            return RuntimeValue.FromBoxed(ConcatenateChunks(chunks));
         }
         else
         {
             // Read specified amount
-            return ReadSize(size.Value);
+            return RuntimeValue.FromBoxed(ReadSize(size.Value));
         }
     }
 
@@ -303,14 +303,14 @@ public class SharpTSReadable : SharpTSEventEmitter
     /// <summary>
     /// Pushes data into the stream buffer.
     /// </summary>
-    private object? Push(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Push(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_destroyed)
         {
-            return false;
+            return RuntimeValue.False;
         }
 
-        var chunk = args.Count > 0 ? args[0] : null;
+        var chunk = args.Length > 0 ? args[0].ToObject() : null;
 
         if (chunk == null)
         {
@@ -326,7 +326,7 @@ public class SharpTSReadable : SharpTSEventEmitter
                 EmitEndEvent(interpreter);
             }
             FlushPipes(interpreter);
-            return false;
+            return RuntimeValue.False;
         }
 
         if (_flowing == true)
@@ -344,23 +344,23 @@ public class SharpTSReadable : SharpTSEventEmitter
         }
 
         // Return false when buffer exceeds highWaterMark (backpressure signal)
-        return GetBufferSize() < _highWaterMark;
+        return RuntimeValue.FromBoolean(GetBufferSize() < _highWaterMark);
     }
 
     /// <summary>
     /// Pushes data back to the front of the buffer.
     /// </summary>
-    private object? Unshift(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Unshift(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_destroyed || _ended)
         {
-            return null;
+            return RuntimeValue.Null;
         }
 
-        var chunk = args.Count > 0 ? args[0] : null;
+        var chunk = args.Length > 0 ? args[0].ToObject() : null;
         if (chunk == null)
         {
-            return null;
+            return RuntimeValue.Null;
         }
 
         var temp = _readBuffer.ToList();
@@ -371,20 +371,20 @@ public class SharpTSReadable : SharpTSEventEmitter
             _readBuffer.Enqueue(item);
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Pipes this readable to a writable destination.
     /// </summary>
-    private object? Pipe(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Pipe(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count < 1)
+        if (args.Length < 1)
         {
             throw new Exception("pipe() destination must be a Writable stream");
         }
 
-        var destObj = args[0];
+        var destObj = args[0].ToObject();
 
         // Accept SharpTSWritable or any Duplex-derived type (which has Writable capabilities)
         if (destObj is not SharpTSWritable && destObj is not SharpTSDuplex)
@@ -400,7 +400,7 @@ public class SharpTSReadable : SharpTSEventEmitter
 
         // Check options for end: false
         bool shouldEnd = true;
-        if (args.Count > 1 && args[1] is SharpTSObject options)
+        if (args.Length > 1 && args[1].ToObject() is SharpTSObject options)
         {
             var endOption = options.GetProperty("end");
             if (endOption is bool endBool && !endBool)
@@ -418,7 +418,7 @@ public class SharpTSReadable : SharpTSEventEmitter
             {
                 // Destination backpressure — stop draining, stay paused
                 RegisterDrainListener(interpreter, destObj);
-                return destObj;
+                return RuntimeValue.FromObject(destObj);
             }
         }
 
@@ -431,7 +431,7 @@ public class SharpTSReadable : SharpTSEventEmitter
             EndDestination(interpreter, destObj);
         }
 
-        return destObj;
+        return RuntimeValue.FromObject(destObj);
     }
 
     /// <summary>
@@ -493,40 +493,40 @@ public class SharpTSReadable : SharpTSEventEmitter
     /// <summary>
     /// Unpipes from a destination or all destinations.
     /// </summary>
-    private object? Unpipe(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Unpipe(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count > 0 && args[0] != null)
+        if (args.Length > 0 && args[0].ToObject() is { } dest)
         {
-            _pipeDestinations.Remove(args[0]!);
+            _pipeDestinations.Remove(dest);
         }
         else
         {
             _pipeDestinations.Clear();
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Sets the encoding for string output.
     /// </summary>
-    private object? SetEncoding(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetEncoding(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count > 0 && args[0] is string enc)
+        if (args.Length > 0 && args[0].IsString)
         {
-            _encoding = enc.ToLowerInvariant();
+            _encoding = args[0].AsStringUnsafe().ToLowerInvariant();
         }
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Destroys the stream.
     /// </summary>
-    private object? Destroy(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Destroy(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_destroyed)
         {
-            return this;
+            return RuntimeValue.FromObject(this);
         }
 
         _destroyed = true;
@@ -534,24 +534,24 @@ public class SharpTSReadable : SharpTSEventEmitter
         _readBuffer.Clear();
         _pipeDestinations.Clear();
 
-        if (args.Count > 0 && args[0] != null)
+        if (args.Length > 0 && args[0].ToObject() is { } error)
         {
             // Emit error event
-            EmitEvent(interpreter, "error", [args[0]]);
+            EmitEvent(interpreter, "error", [error]);
         }
 
         EmitEvent(interpreter, "close", []);
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Pause(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Pause(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _flowing = false;
         EmitEvent(interpreter, "pause", []);
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Resume(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Resume(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _flowing = true;
         EmitEvent(interpreter, "resume", []);
@@ -569,12 +569,12 @@ public class SharpTSReadable : SharpTSEventEmitter
             EmitEvent(interpreter, "end", []);
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? IsPaused(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue IsPaused(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        return _flowing == false;
+        return RuntimeValue.FromBoolean(_flowing == false);
     }
 
     private void EmitEndEvent(Interp interpreter)
@@ -693,22 +693,22 @@ public class SharpTSReadable : SharpTSEventEmitter
     /// <summary>
     /// Collects all chunks from the stream into an array.
     /// </summary>
-    private object? ToArray(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue ToArray(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var elements = new SharpTS.Runtime.Deque<object?>();
         while (_readBuffer.Count > 0)
         {
             elements.AddLast(_readBuffer.Dequeue());
         }
-        return new SharpTSArray(elements);
+        return RuntimeValue.FromObject(new SharpTSArray(elements));
     }
 
     /// <summary>
     /// Calls fn for each chunk in the stream.
     /// </summary>
-    private object? ForEach(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue ForEach(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var fn = args.Count > 0 ? args[0] as ISharpTSCallable : null;
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
         if (fn == null)
             throw new Exception("forEach() requires a function argument");
 
@@ -717,15 +717,15 @@ public class SharpTSReadable : SharpTSEventEmitter
             var chunk = _readBuffer.Dequeue();
             fn.Call(interpreter, [chunk]);
         }
-        return null;
+        return RuntimeValue.Null;
     }
 
     /// <summary>
     /// Creates a Transform that applies fn to each chunk.
     /// </summary>
-    private object? Map(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Map(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var fn = args.Count > 0 ? args[0] as ISharpTSCallable : null;
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
         if (fn == null)
             throw new Exception("map() requires a function argument");
 
@@ -737,15 +737,15 @@ public class SharpTSReadable : SharpTSEventEmitter
         var pipeMethod = GetMember("pipe") as BuiltInMethod;
         pipeMethod?.Bind(this).Call(interpreter, [transform]);
 
-        return transform;
+        return RuntimeValue.FromObject(transform);
     }
 
     /// <summary>
     /// Creates a Transform that filters chunks by predicate.
     /// </summary>
-    private object? Filter(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Filter(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var fn = args.Count > 0 ? args[0] as ISharpTSCallable : null;
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
         if (fn == null)
             throw new Exception("filter() requires a function argument");
 
@@ -756,7 +756,7 @@ public class SharpTSReadable : SharpTSEventEmitter
         var pipeMethod = GetMember("pipe") as BuiltInMethod;
         pipeMethod?.Bind(this).Call(interpreter, [transform]);
 
-        return transform;
+        return RuntimeValue.FromObject(transform);
     }
 
     /// <summary>

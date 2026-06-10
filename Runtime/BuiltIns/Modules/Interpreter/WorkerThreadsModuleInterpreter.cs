@@ -43,11 +43,11 @@ public static class WorkerThreadsModuleInterpreter
             ["BroadcastChannel"] = new BroadcastChannelConstructor(),
 
             // Synchronous message receive
-            ["receiveMessageOnPort"] = new BuiltInMethod("receiveMessageOnPort", 1, (interp, recv, args) =>
+            ["receiveMessageOnPort"] = BuiltInMethod.CreateV2("receiveMessageOnPort", 1, (interp, recv, args) =>
             {
-                if (args.Count == 0 || args[0] is not SharpTSMessagePort port)
+                if (args.Length == 0 || args[0].ToObject() is not SharpTSMessagePort port)
                     throw new Exception("receiveMessageOnPort requires a MessagePort argument");
-                return port.ReceiveMessageSync();
+                return RuntimeValue.FromBoxed(port.ReceiveMessageSync());
             }),
 
             // SHARE_ENV constant (placeholder - we don't support env sharing)
@@ -57,34 +57,35 @@ public static class WorkerThreadsModuleInterpreter
             ["resourceLimits"] = new SharpTSObject(new Dictionary<string, object?>()),
 
             // markAsUntransferable (no-op in our implementation)
-            ["markAsUntransferable"] = new BuiltInMethod("markAsUntransferable", 1, (interp, recv, args) =>
+            ["markAsUntransferable"] = BuiltInMethod.CreateV2("markAsUntransferable", 1, (interp, recv, args) =>
             {
                 // No-op - we don't track transferability at runtime
-                return null;
+                return RuntimeValue.Null;
             }),
 
             // moveMessagePortToContext (not fully implemented - requires VM)
-            ["moveMessagePortToContext"] = new BuiltInMethod("moveMessagePortToContext", 2, (interp, recv, args) =>
+            ["moveMessagePortToContext"] = BuiltInMethod.CreateV2("moveMessagePortToContext", 2, (interp, recv, args) =>
             {
                 throw new Exception("moveMessagePortToContext is not supported in SharpTS");
             }),
 
             // getEnvironmentData / setEnvironmentData (environment data sharing)
-            ["getEnvironmentData"] = new BuiltInMethod("getEnvironmentData", 1, (interp, recv, args) =>
+            ["getEnvironmentData"] = BuiltInMethod.CreateV2("getEnvironmentData", 1, (interp, recv, args) =>
             {
                 // Simple implementation - return from process.env
-                if (args.Count > 0 && args[0] is string key)
+                if (args.Length > 0 && args[0].IsString)
                 {
-                    return Environment.GetEnvironmentVariable(key);
+                    return RuntimeValue.FromBoxed(Environment.GetEnvironmentVariable(args[0].AsStringUnsafe()));
                 }
-                return null;
+                return RuntimeValue.Null;
             }),
 
-            ["setEnvironmentData"] = new BuiltInMethod("setEnvironmentData", 2, (interp, recv, args) =>
+            ["setEnvironmentData"] = BuiltInMethod.CreateV2("setEnvironmentData", 2, (interp, recv, args) =>
             {
-                if (args.Count >= 2 && args[0] is string key)
+                if (args.Length >= 2 && args[0].IsString)
                 {
-                    string? value = args[1]?.ToString();
+                    var key = args[0].AsStringUnsafe();
+                    string? value = args[1].ToObject()?.ToString();
                     if (value != null)
                     {
                         Environment.SetEnvironmentVariable(key, value);
@@ -94,7 +95,7 @@ public static class WorkerThreadsModuleInterpreter
                         Environment.SetEnvironmentVariable(key, null);
                     }
                 }
-                return null;
+                return RuntimeValue.Null;
             }),
         };
     }

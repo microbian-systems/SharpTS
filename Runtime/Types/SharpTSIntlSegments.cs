@@ -151,10 +151,10 @@ public class SharpTSIntlSegments : IEnumerable<object?>
     {
         return name switch
         {
-            "containing" => new BuiltInMethod("containing", 1, (_, _, args) =>
+            "containing" => BuiltInMethod.CreateV2("containing", 1, (_, _, args) =>
             {
-                int idx = args.Count > 0 && args[0] is double d ? (int)d : 0;
-                return FindContaining(idx);
+                int idx = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+                return RuntimeValue.FromBoxed(FindContaining(idx));
             }),
             _ => null
         };

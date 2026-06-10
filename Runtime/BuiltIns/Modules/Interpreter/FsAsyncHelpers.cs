@@ -120,13 +120,13 @@ public static class FsAsyncHelpers
     {
         return new SharpTSObject(new Dictionary<string, object?>
         {
-            ["isDirectory"] = new BuiltInMethod("isDirectory", 0, 0, (_, _, _) => isDirectory),
-            ["isFile"] = new BuiltInMethod("isFile", 0, 0, (_, _, _) => isFile),
-            ["isSymbolicLink"] = new BuiltInMethod("isSymbolicLink", 0, 0, (_, _, _) => isSymbolicLink),
-            ["isBlockDevice"] = new BuiltInMethod("isBlockDevice", 0, 0, (_, _, _) => false),
-            ["isCharacterDevice"] = new BuiltInMethod("isCharacterDevice", 0, 0, (_, _, _) => false),
-            ["isFIFO"] = new BuiltInMethod("isFIFO", 0, 0, (_, _, _) => false),
-            ["isSocket"] = new BuiltInMethod("isSocket", 0, 0, (_, _, _) => false),
+            ["isDirectory"] = BuiltInMethod.CreateV2("isDirectory", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isDirectory)),
+            ["isFile"] = BuiltInMethod.CreateV2("isFile", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isFile)),
+            ["isSymbolicLink"] = BuiltInMethod.CreateV2("isSymbolicLink", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isSymbolicLink)),
+            ["isBlockDevice"] = BuiltInMethod.CreateV2("isBlockDevice", 0, 0, (_, _, _) => RuntimeValue.False),
+            ["isCharacterDevice"] = BuiltInMethod.CreateV2("isCharacterDevice", 0, 0, (_, _, _) => RuntimeValue.False),
+            ["isFIFO"] = BuiltInMethod.CreateV2("isFIFO", 0, 0, (_, _, _) => RuntimeValue.False),
+            ["isSocket"] = BuiltInMethod.CreateV2("isSocket", 0, 0, (_, _, _) => RuntimeValue.False),
             ["size"] = (double)size,
             ["atime"] = CreateDateObject(atime),
             ["mtime"] = CreateDateObject(mtime),
@@ -147,8 +147,8 @@ public static class FsAsyncHelpers
         var timestamp = (double)new DateTimeOffset(dt).ToUnixTimeMilliseconds();
         return new SharpTSObject(new Dictionary<string, object?>
         {
-            ["getTime"] = new BuiltInMethod("getTime", 0, 0, (_, _, _) => timestamp),
-            ["toISOString"] = new BuiltInMethod("toISOString", 0, 0, (_, _, _) => dt.ToUniversalTime().ToString("o"))
+            ["getTime"] = BuiltInMethod.CreateV2("getTime", 0, 0, (_, _, _) => RuntimeValue.FromNumber(timestamp)),
+            ["toISOString"] = BuiltInMethod.CreateV2("toISOString", 0, 0, (_, _, _) => RuntimeValue.FromString(dt.ToUniversalTime().ToString("o")))
         });
     }
 
@@ -276,13 +276,13 @@ public static class FsAsyncHelpers
         return new SharpTSObject(new Dictionary<string, object?>
         {
             ["name"] = name,
-            ["isFile"] = new BuiltInMethod("isFile", 0, 0, (_, _, _) => isFile && !isDir),
-            ["isDirectory"] = new BuiltInMethod("isDirectory", 0, 0, (_, _, _) => isDir),
-            ["isSymbolicLink"] = new BuiltInMethod("isSymbolicLink", 0, 0, (_, _, _) => isSymlink),
-            ["isBlockDevice"] = new BuiltInMethod("isBlockDevice", 0, 0, (_, _, _) => false),
-            ["isCharacterDevice"] = new BuiltInMethod("isCharacterDevice", 0, 0, (_, _, _) => false),
-            ["isFIFO"] = new BuiltInMethod("isFIFO", 0, 0, (_, _, _) => false),
-            ["isSocket"] = new BuiltInMethod("isSocket", 0, 0, (_, _, _) => false)
+            ["isFile"] = BuiltInMethod.CreateV2("isFile", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isFile && !isDir)),
+            ["isDirectory"] = BuiltInMethod.CreateV2("isDirectory", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isDir)),
+            ["isSymbolicLink"] = BuiltInMethod.CreateV2("isSymbolicLink", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isSymlink)),
+            ["isBlockDevice"] = BuiltInMethod.CreateV2("isBlockDevice", 0, 0, (_, _, _) => RuntimeValue.False),
+            ["isCharacterDevice"] = BuiltInMethod.CreateV2("isCharacterDevice", 0, 0, (_, _, _) => RuntimeValue.False),
+            ["isFIFO"] = BuiltInMethod.CreateV2("isFIFO", 0, 0, (_, _, _) => RuntimeValue.False),
+            ["isSocket"] = BuiltInMethod.CreateV2("isSocket", 0, 0, (_, _, _) => RuntimeValue.False)
         });
     }
 

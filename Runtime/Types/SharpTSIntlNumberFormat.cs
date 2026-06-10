@@ -365,14 +365,14 @@ public class SharpTSIntlNumberFormat
     {
         return name switch
         {
-            "format" => new BuiltInMethod("format", 1, (_, _, args) =>
+            "format" => BuiltInMethod.CreateV2("format", 1, (_, _, args) =>
             {
-                double num = ToDouble(args.Count > 0 ? args[0] : null);
-                return FormatNumber(num);
+                double num = ToDouble(args.Length > 0 ? args[0].ToObject() : null);
+                return RuntimeValue.FromBoxed(FormatNumber(num));
             }),
-            "resolvedOptions" => new BuiltInMethod("resolvedOptions", 0, (_, _, _) =>
+            "resolvedOptions" => BuiltInMethod.CreateV2("resolvedOptions", 0, (_, _, _) =>
             {
-                return new SharpTSObject(GetResolvedOptions());
+                return RuntimeValue.FromObject(new SharpTSObject(GetResolvedOptions()));
             }),
             _ => null
         };

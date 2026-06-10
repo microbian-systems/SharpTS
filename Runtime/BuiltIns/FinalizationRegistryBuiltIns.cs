@@ -11,21 +11,21 @@ public static class FinalizationRegistryBuiltIns
     {
         return name switch
         {
-            "register" => new BuiltInMethod("register", 1, 3, (interpreter, recv, args) =>
+            "register" => BuiltInMethod.CreateV2("register", 1, 3, static (_, recv, args) =>
             {
-                var registry = (SharpTSFinalizationRegistry)recv!;
-                var target = args.Count > 0 ? args[0] : null;
-                var heldValue = args.Count > 1 ? args[1] : null;
-                var token = args.Count > 2 ? args[2] : null;
+                var registry = (SharpTSFinalizationRegistry)recv.ToObject()!;
+                var target = args.Length > 0 ? args[0].ToObject() : null;
+                var heldValue = args.Length > 1 ? args[1].ToObject() : null;
+                var token = args.Length > 2 ? args[2].ToObject() : null;
                 registry.Register(target!, heldValue, token);
-                return null;
+                return RuntimeValue.Null;
             }),
 
-            "unregister" => new BuiltInMethod("unregister", 1, (interpreter, recv, args) =>
+            "unregister" => BuiltInMethod.CreateV2("unregister", 1, static (_, recv, args) =>
             {
-                var registry = (SharpTSFinalizationRegistry)recv!;
-                var token = args.Count > 0 ? args[0] : null;
-                return registry.Unregister(token);
+                var registry = (SharpTSFinalizationRegistry)recv.ToObject()!;
+                var token = args.Length > 0 ? args[0].ToObject() : null;
+                return RuntimeValue.FromBoolean(registry.Unregister(token));
             }),
 
             _ => null

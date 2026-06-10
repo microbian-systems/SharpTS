@@ -34,39 +34,39 @@ public class SharpTSTransform : SharpTSDuplex
         return name switch
         {
             // Override write to use transform
-            "write" => new BuiltInMethod("write", 1, 3, TransformWrite),
+            "write" => BuiltInMethod.CreateV2("write", 1, 3, TransformWrite),
 
             // Override end to call flush
-            "end" => new BuiltInMethod("end", 0, 3, TransformEnd),
+            "end" => BuiltInMethod.CreateV2("end", 0, 3, TransformEnd),
 
             // _transform method for subclasses
-            "_transform" => new BuiltInMethod("_transform", 3, InternalTransform),
+            "_transform" => BuiltInMethod.CreateV2("_transform", 3, InternalTransform),
 
             // _flush method for subclasses
-            "_flush" => new BuiltInMethod("_flush", 1, InternalFlush),
+            "_flush" => BuiltInMethod.CreateV2("_flush", 1, InternalFlush),
 
             // Inherit Duplex methods and properties
             _ => base.GetMember(name)
         };
     }
 
-    private object? TransformWrite(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue TransformWrite(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var chunk = args.Count > 0 ? args[0] : null;
+        var chunk = args.Length > 0 ? args[0].ToObject() : null;
         string encoding = "utf8";
         ISharpTSCallable? callback = null;
 
-        if (args.Count > 1)
+        if (args.Length > 1)
         {
-            if (args[1] is string enc)
+            if (args[1].IsString)
             {
-                encoding = enc;
-                if (args.Count > 2 && args[2] is ISharpTSCallable cb)
+                encoding = args[1].AsStringUnsafe();
+                if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb)
                 {
                     callback = cb;
                 }
             }
-            else if (args[1] is ISharpTSCallable cb)
+            else if (args[1].ToObject() is ISharpTSCallable cb)
             {
                 callback = cb;
             }
@@ -85,7 +85,7 @@ public class SharpTSTransform : SharpTSDuplex
             catch (Exception ex)
             {
                 EmitEvent(interpreter, "error", [ex.Message]);
-                return false;
+                return RuntimeValue.False;
             }
         }
         else
@@ -95,35 +95,35 @@ public class SharpTSTransform : SharpTSDuplex
             doneCallback.Call(interpreter, []);
         }
 
-        return true;
+        return RuntimeValue.True;
     }
 
-    private object? TransformEnd(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue TransformEnd(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         object? chunk = null;
         string? encoding = null;
         ISharpTSCallable? callback = null;
 
-        if (args.Count > 0)
+        if (args.Length > 0)
         {
-            if (args[0] is ISharpTSCallable cb0)
+            if (args[0].ToObject() is ISharpTSCallable cb0)
             {
                 callback = cb0;
             }
             else
             {
-                chunk = args[0];
-                if (args.Count > 1)
+                chunk = args[0].ToObject();
+                if (args.Length > 1)
                 {
-                    if (args[1] is string enc)
+                    if (args[1].IsString)
                     {
-                        encoding = enc;
-                        if (args.Count > 2 && args[2] is ISharpTSCallable cb)
+                        encoding = args[1].AsStringUnsafe();
+                        if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb)
                         {
                             callback = cb;
                         }
                     }
-                    else if (args[1] is ISharpTSCallable cb)
+                    else if (args[1].ToObject() is ISharpTSCallable cb)
                     {
                         callback = cb;
                     }
@@ -134,7 +134,8 @@ public class SharpTSTransform : SharpTSDuplex
         // Write final chunk if provided
         if (chunk != null)
         {
-            TransformWrite(interpreter, receiver, [chunk, encoding]);
+            TransformWrite(interpreter, receiver,
+                [RuntimeValue.FromBoxed(chunk), RuntimeValue.FromBoxed(encoding)]);
         }
 
         // Call flush
@@ -161,28 +162,28 @@ public class SharpTSTransform : SharpTSDuplex
         // Emit finish
         EmitEvent(interpreter, "finish", []);
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? InternalTransform(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue InternalTransform(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // Default _transform implementation (for subclasses to override)
-        var chunk = args.Count > 0 ? args[0] : null;
-        var callback = args.Count > 2 ? args[2] as ISharpTSCallable : null;
+        var chunk = args.Length > 0 ? args[0].ToObject() : null;
+        var callback = args.Length > 2 ? args[2].ToObject() as ISharpTSCallable : null;
 
         // Pass through by default
         PushToReadableSide(interpreter, chunk);
         callback?.Call(interpreter, []);
 
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? InternalFlush(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue InternalFlush(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // Default _flush implementation (for subclasses to override)
-        var callback = args.Count > 0 ? args[0] as ISharpTSCallable : null;
+        var callback = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
         callback?.Call(interpreter, []);
-        return null;
+        return RuntimeValue.Null;
     }
 
     internal void PushToReadableSide(Interp interpreter, object? chunk)

@@ -39,8 +39,8 @@ public class SharpTSStderr : SharpTSWritable
             // like `debug` read it to test `tty.isatty(process.stderr.fd)`.
             "fd" => 2.0,
             // process.stderr never ends or destroys — no-op to protect singleton state
-            "end" => new BuiltInMethod("end", 0, 3, (_, _, _) => this),
-            "destroy" => new BuiltInMethod("destroy", 0, 1, (_, _, _) => this),
+            "end" => BuiltInMethod.CreateV2("end", 0, 3, (_, _, _) => RuntimeValue.FromObject(this)),
+            "destroy" => BuiltInMethod.CreateV2("destroy", 0, 1, (_, _, _) => RuntimeValue.FromObject(this)),
             _ => base.GetMember(name)
         };
     }

@@ -139,46 +139,46 @@ public class SharpTSECDH
     {
         return name switch
         {
-            "generateKeys" => new BuiltInMethod("generateKeys", 0, 2, (interp, recv, args) =>
+            "generateKeys" => BuiltInMethod.CreateV2("generateKeys", 0, 2, (_, _, args) =>
             {
-                var encoding = args.Count > 0 ? args[0]?.ToString() : null;
-                var format = args.Count > 1 ? args[1]?.ToString() : null;
-                return GenerateKeys(encoding, format);
+                var encoding = args.Length > 0 ? args[0].ToObject()?.ToString() : null;
+                var format = args.Length > 1 ? args[1].ToObject()?.ToString() : null;
+                return RuntimeValue.FromBoxed(GenerateKeys(encoding, format));
             }),
-            "computeSecret" => new BuiltInMethod("computeSecret", 1, 3, (interp, recv, args) =>
+            "computeSecret" => BuiltInMethod.CreateV2("computeSecret", 1, 3, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new ArgumentException("computeSecret requires a public key argument");
-                var inputEncoding = args.Count > 1 ? args[1]?.ToString() : null;
-                var outputEncoding = args.Count > 2 ? args[2]?.ToString() : null;
-                return ComputeSecret(args[0]!, inputEncoding, outputEncoding);
+                var inputEncoding = args.Length > 1 ? args[1].ToObject()?.ToString() : null;
+                var outputEncoding = args.Length > 2 ? args[2].ToObject()?.ToString() : null;
+                return RuntimeValue.FromBoxed(ComputeSecret(args[0].ToObject()!, inputEncoding, outputEncoding));
             }),
-            "getPublicKey" => new BuiltInMethod("getPublicKey", 0, 2, (interp, recv, args) =>
+            "getPublicKey" => BuiltInMethod.CreateV2("getPublicKey", 0, 2, (_, _, args) =>
             {
-                var encoding = args.Count > 0 ? args[0]?.ToString() : null;
-                var format = args.Count > 1 ? args[1]?.ToString() : null;
-                return GetPublicKey(encoding, format);
+                var encoding = args.Length > 0 ? args[0].ToObject()?.ToString() : null;
+                var format = args.Length > 1 ? args[1].ToObject()?.ToString() : null;
+                return RuntimeValue.FromBoxed(GetPublicKey(encoding, format));
             }),
-            "getPrivateKey" => new BuiltInMethod("getPrivateKey", 0, 1, (interp, recv, args) =>
+            "getPrivateKey" => BuiltInMethod.CreateV2("getPrivateKey", 0, 1, (_, _, args) =>
             {
-                var encoding = args.Count > 0 ? args[0]?.ToString() : null;
-                return GetPrivateKey(encoding);
+                var encoding = args.Length > 0 ? args[0].ToObject()?.ToString() : null;
+                return RuntimeValue.FromBoxed(GetPrivateKey(encoding));
             }),
-            "setPublicKey" => new BuiltInMethod("setPublicKey", 1, 2, (interp, recv, args) =>
+            "setPublicKey" => BuiltInMethod.CreateV2("setPublicKey", 1, 2, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new ArgumentException("setPublicKey requires a key argument");
-                var encoding = args.Count > 1 ? args[1]?.ToString() : null;
-                SetPublicKey(args[0]!, encoding);
-                return null;
+                var encoding = args.Length > 1 ? args[1].ToObject()?.ToString() : null;
+                SetPublicKey(args[0].ToObject()!, encoding);
+                return RuntimeValue.Null;
             }),
-            "setPrivateKey" => new BuiltInMethod("setPrivateKey", 1, 2, (interp, recv, args) =>
+            "setPrivateKey" => BuiltInMethod.CreateV2("setPrivateKey", 1, 2, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new ArgumentException("setPrivateKey requires a key argument");
-                var encoding = args.Count > 1 ? args[1]?.ToString() : null;
-                SetPrivateKey(args[0]!, encoding);
-                return null;
+                var encoding = args.Length > 1 ? args[1].ToObject()?.ToString() : null;
+                SetPrivateKey(args[0].ToObject()!, encoding);
+                return RuntimeValue.Null;
             }),
             _ => null
         };

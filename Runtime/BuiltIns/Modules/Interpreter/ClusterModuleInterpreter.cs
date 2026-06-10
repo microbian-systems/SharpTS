@@ -34,10 +34,10 @@ public static class ClusterModuleInterpreter
             ["settings"] = singleton.GetSettings(),
 
             // Methods
-            ["fork"] = new BuiltInMethod("fork", 0, 1, Fork),
-            ["disconnect"] = new BuiltInMethod("disconnect", 0, 1, Disconnect),
-            ["setupPrimary"] = new BuiltInMethod("setupPrimary", 0, 1, SetupPrimary),
-            ["setupMaster"] = new BuiltInMethod("setupMaster", 0, 1, SetupPrimary),
+            ["fork"] = BuiltInMethod.CreateV2("fork", 0, 1, Fork),
+            ["disconnect"] = BuiltInMethod.CreateV2("disconnect", 0, 1, Disconnect),
+            ["setupPrimary"] = BuiltInMethod.CreateV2("setupPrimary", 0, 1, SetupPrimary),
+            ["setupMaster"] = BuiltInMethod.CreateV2("setupMaster", 0, 1, SetupPrimary),
 
             // EventEmitter methods — delegate to singleton
             ["on"] = singleton.GetMember("on")!,
@@ -56,7 +56,7 @@ public static class ClusterModuleInterpreter
     /// <summary>
     /// cluster.fork(env?) — spawns a new worker that re-executes the entry script.
     /// </summary>
-    private static object? Fork(Execution.Interpreter interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Fork(Execution.Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // Capture entry script from interpreter
         var entryPath = interpreter.EntryModulePath;
@@ -66,7 +66,7 @@ public static class ClusterModuleInterpreter
         ClusterSingleton.Instance.SetEntryScript(entryPath);
 
         Dictionary<string, object?>? env = null;
-        if (args.Count > 0 && args[0] is SharpTSObject envObj)
+        if (args.Length > 0 && args[0].ToObject() is SharpTSObject envObj)
         {
             env = new Dictionary<string, object?>();
             foreach (var key in envObj.PropertyNames)
@@ -75,24 +75,24 @@ public static class ClusterModuleInterpreter
             }
         }
 
-        return ClusterSingleton.Instance.Fork(env, interpreter);
+        return RuntimeValue.FromBoxed(ClusterSingleton.Instance.Fork(env, interpreter));
     }
 
     /// <summary>
     /// cluster.disconnect(callback?) — disconnects all workers.
     /// </summary>
-    private static object? Disconnect(Execution.Interpreter interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Disconnect(Execution.Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        ClusterSingleton.Instance.DisconnectAll(args.Count > 0 ? args[0] : null);
-        return null;
+        ClusterSingleton.Instance.DisconnectAll(args.Length > 0 ? args[0].ToObject() : null);
+        return RuntimeValue.Null;
     }
 
     /// <summary>
     /// cluster.setupPrimary(settings?) — stores settings object.
     /// </summary>
-    private static object? SetupPrimary(Execution.Interpreter interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue SetupPrimary(Execution.Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        ClusterSingleton.Instance.SetupPrimary(args.Count > 0 ? args[0] as SharpTSObject : null);
-        return null;
+        ClusterSingleton.Instance.SetupPrimary(args.Length > 0 ? args[0].ToObject() as SharpTSObject : null);
+        return RuntimeValue.Null;
     }
 }

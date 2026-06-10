@@ -284,34 +284,36 @@ public class SharpTSCipher : IDisposable
     {
         return name switch
         {
-            "update" => new BuiltInMethod("update", 1, 3, (interp, recv, args) =>
+            "update" => BuiltInMethod.CreateV2("update", 1, 3, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new ArgumentException("cipher.update requires data argument");
 
-                var inputEncoding = args.Count > 1 ? args[1]?.ToString() : null;
-                var outputEncoding = args.Count > 2 ? args[2]?.ToString() : null;
-                return Update(args[0]!, inputEncoding, outputEncoding);
+                var inputEncoding = args.Length > 1 ? args[1].ToObject()?.ToString() : null;
+                var outputEncoding = args.Length > 2 ? args[2].ToObject()?.ToString() : null;
+                return RuntimeValue.FromBoxed(Update(args[0].ToObject()!, inputEncoding, outputEncoding));
             }),
-            "final" => new BuiltInMethod("final", 0, 1, (interp, recv, args) =>
+            "final" => BuiltInMethod.CreateV2("final", 0, 1, (_, _, args) =>
             {
-                var outputEncoding = args.Count > 0 ? args[0]?.ToString() : null;
-                return Final(outputEncoding);
+                var outputEncoding = args.Length > 0 ? args[0].ToObject()?.ToString() : null;
+                return RuntimeValue.FromBoxed(Final(outputEncoding));
             }),
-            "setAutoPadding" => new BuiltInMethod("setAutoPadding", 0, 1, (interp, recv, args) =>
+            "setAutoPadding" => BuiltInMethod.CreateV2("setAutoPadding", 0, 1, (_, _, args) =>
             {
-                var autoPadding = args.Count == 0 || (args[0] is bool b ? b : args[0] is double d ? d != 0 : true);
-                return SetAutoPadding(autoPadding);
+                var autoPadding = args.Length == 0
+                    || (args[0].IsBoolean ? args[0].AsBooleanUnsafe()
+                        : !args[0].IsNumber || args[0].AsNumberUnsafe() != 0);
+                return RuntimeValue.FromObject(SetAutoPadding(autoPadding));
             }),
-            "getAuthTag" => new BuiltInMethod("getAuthTag", 0, (interp, recv, args) =>
+            "getAuthTag" => BuiltInMethod.CreateV2("getAuthTag", 0, (_, _, _) =>
             {
-                return GetAuthTag();
+                return RuntimeValue.FromObject(GetAuthTag());
             }),
-            "setAAD" => new BuiltInMethod("setAAD", 1, (interp, recv, args) =>
+            "setAAD" => BuiltInMethod.CreateV2("setAAD", 1, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new ArgumentException("cipher.setAAD requires buffer argument");
-                return SetAAD(args[0]!);
+                return RuntimeValue.FromObject(SetAAD(args[0].ToObject()!));
             }),
             _ => null
         };

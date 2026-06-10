@@ -12,8 +12,8 @@ namespace SharpTS.Runtime.BuiltIns;
 /// private static readonly BuiltInTypeMemberLookup&lt;SharpTSMap&gt; _lookup =
 ///     BuiltInTypeBuilder&lt;SharpTSMap&gt;.ForInstanceType()
 ///         .Property("size", map => (double)map.Size)
-///         .Method("get", 1, Get)
-///         .Method("set", 2, Set)
+///         .MethodV2("get", 1, Get)
+///         .MethodV2("set", 2, Set)
 ///         .Build();
 /// </code>
 /// </example>
@@ -48,42 +48,6 @@ public sealed class BuiltInTypeBuilder<TReceiver>
     public BuiltInTypeBuilder<TReceiver> Property(string name, Func<TReceiver, object?> getter)
     {
         _properties[name] = getter;
-        return this;
-    }
-
-    /// <summary>
-    /// Registers a method with fixed arity.
-    /// </summary>
-    /// <param name="name">The method name (e.g., "get", "set")</param>
-    /// <param name="arity">The number of required arguments</param>
-    /// <param name="implementation">The typed implementation delegate</param>
-    public BuiltInTypeBuilder<TReceiver> Method(
-        string name,
-        int arity,
-        Func<Interpreter, TReceiver, List<object?>, object?> implementation)
-    {
-        return Method(name, arity, arity, implementation);
-    }
-
-    /// <summary>
-    /// Registers a method with variable arity (min to max arguments).
-    /// </summary>
-    /// <param name="name">The method name</param>
-    /// <param name="minArity">Minimum number of arguments</param>
-    /// <param name="maxArity">Maximum number of arguments (use int.MaxValue for variadic)</param>
-    /// <param name="implementation">The typed implementation delegate</param>
-    public BuiltInTypeBuilder<TReceiver> Method(
-        string name,
-        int minArity,
-        int maxArity,
-        Func<Interpreter, TReceiver, List<object?>, object?> implementation)
-    {
-        // Wrap the typed implementation in the untyped BuiltInMethod signature
-        _methods[name] = new BuiltInMethod(
-            name,
-            minArity,
-            maxArity,
-            (interp, recv, args) => implementation(interp, (TReceiver)recv!, args));
         return this;
     }
 
@@ -183,34 +147,6 @@ public sealed class BuiltInStaticBuilder
         // materialize on read) vs. return the method reference (real zero-arity methods like
         // Date.now must be aliasable: `const n = Date.now; n()`).
         _methods[name] = BuiltInMethod.CreateConstant(name, value);
-        return this;
-    }
-
-    /// <summary>
-    /// Registers a static method with fixed arity.
-    /// </summary>
-    public BuiltInStaticBuilder Method(
-        string name,
-        int arity,
-        Func<Interpreter, List<object?>, object?> implementation)
-    {
-        return Method(name, arity, arity, implementation);
-    }
-
-    /// <summary>
-    /// Registers a static method with variable arity.
-    /// </summary>
-    public BuiltInStaticBuilder Method(
-        string name,
-        int minArity,
-        int maxArity,
-        Func<Interpreter, List<object?>, object?> implementation)
-    {
-        _methods[name] = new BuiltInMethod(
-            name,
-            minArity,
-            maxArity,
-            (interp, _, args) => implementation(interp, args));
         return this;
     }
 

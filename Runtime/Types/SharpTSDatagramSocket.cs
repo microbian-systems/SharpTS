@@ -32,24 +32,24 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
     {
         return name switch
         {
-            "bind" => new BuiltInMethod("bind", 0, 3, Bind),
-            "send" => new BuiltInMethod("send", 1, 6, Send),
-            "close" => new BuiltInMethod("close", 0, 1, Close),
-            "address" => new BuiltInMethod("address", 0, Address),
-            "setBroadcast" => new BuiltInMethod("setBroadcast", 1, SetBroadcast),
-            "setTTL" => new BuiltInMethod("setTTL", 1, SetTTL),
-            "setMulticastTTL" => new BuiltInMethod("setMulticastTTL", 1, SetMulticastTTL),
-            "addMembership" => new BuiltInMethod("addMembership", 1, 2, AddMembership),
-            "dropMembership" => new BuiltInMethod("dropMembership", 1, 2, DropMembership),
-            "ref" => new BuiltInMethod("ref", 0, Ref),
-            "unref" => new BuiltInMethod("unref", 0, Unref),
-            "connect" => new BuiltInMethod("connect", 1, 3, Connect),
-            "disconnect" => new BuiltInMethod("disconnect", 0, Disconnect),
-            "remoteAddress" => new BuiltInMethod("remoteAddress", 0, RemoteAddress),
-            "getRecvBufferSize" => new BuiltInMethod("getRecvBufferSize", 0, GetRecvBufferSize),
-            "setRecvBufferSize" => new BuiltInMethod("setRecvBufferSize", 1, SetRecvBufferSize),
-            "getSendBufferSize" => new BuiltInMethod("getSendBufferSize", 0, GetSendBufferSize),
-            "setSendBufferSize" => new BuiltInMethod("setSendBufferSize", 1, SetSendBufferSize),
+            "bind" => BuiltInMethod.CreateV2("bind", 0, 3, Bind),
+            "send" => BuiltInMethod.CreateV2("send", 1, 6, Send),
+            "close" => BuiltInMethod.CreateV2("close", 0, 1, Close),
+            "address" => BuiltInMethod.CreateV2("address", 0, Address),
+            "setBroadcast" => BuiltInMethod.CreateV2("setBroadcast", 1, SetBroadcast),
+            "setTTL" => BuiltInMethod.CreateV2("setTTL", 1, SetTTL),
+            "setMulticastTTL" => BuiltInMethod.CreateV2("setMulticastTTL", 1, SetMulticastTTL),
+            "addMembership" => BuiltInMethod.CreateV2("addMembership", 1, 2, AddMembership),
+            "dropMembership" => BuiltInMethod.CreateV2("dropMembership", 1, 2, DropMembership),
+            "ref" => BuiltInMethod.CreateV2("ref", 0, Ref),
+            "unref" => BuiltInMethod.CreateV2("unref", 0, Unref),
+            "connect" => BuiltInMethod.CreateV2("connect", 1, 3, Connect),
+            "disconnect" => BuiltInMethod.CreateV2("disconnect", 0, Disconnect),
+            "remoteAddress" => BuiltInMethod.CreateV2("remoteAddress", 0, RemoteAddress),
+            "getRecvBufferSize" => BuiltInMethod.CreateV2("getRecvBufferSize", 0, GetRecvBufferSize),
+            "setRecvBufferSize" => BuiltInMethod.CreateV2("setRecvBufferSize", 1, SetRecvBufferSize),
+            "getSendBufferSize" => BuiltInMethod.CreateV2("getSendBufferSize", 0, GetSendBufferSize),
+            "setSendBufferSize" => BuiltInMethod.CreateV2("setSendBufferSize", 1, SetSendBufferSize),
 
             // EventEmitter methods
             _ => base.GetMember(name)
@@ -61,30 +61,31 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
     /// Signature: bind(port?, address?, callback?)
     ///            bind(options?, callback?)
     /// </summary>
-    private object? Bind(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Bind(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter = interpreter;
         int port = 0;
         string address = _family == AddressFamily.InterNetworkV6 ? "::" : "0.0.0.0";
         ISharpTSCallable? callback = null;
 
-        if (args.Count > 0)
+        if (args.Length > 0)
         {
-            if (args[0] is double p) port = (int)p;
-            else if (args[0] is SharpTSObject options)
+            var arg0 = args[0].ToObject();
+            if (arg0 is double p) port = (int)p;
+            else if (arg0 is SharpTSObject options)
             {
                 if (options.GetProperty("port") is double op) port = (int)op;
                 if (options.GetProperty("address") is string oa) address = oa;
-                if (args.Count > 1 && args[1] is ISharpTSCallable cb) callback = cb;
+                if (args.Length > 1 && args[1].ToObject() is ISharpTSCallable cb) callback = cb;
             }
-            else if (args[0] is ISharpTSCallable cb0)
+            else if (arg0 is ISharpTSCallable cb0)
             {
                 callback = cb0;
             }
         }
-        if (args.Count > 1 && args[1] is string addr) address = addr;
-        if (args.Count > 1 && args[1] is ISharpTSCallable cb1 && callback == null) callback = cb1;
-        if (args.Count > 2 && args[2] is ISharpTSCallable cb2) callback = cb2;
+        if (args.Length > 1 && args[1].IsString) address = args[1].AsStringUnsafe();
+        if (args.Length > 1 && args[1].ToObject() is ISharpTSCallable cb1 && callback == null) callback = cb1;
+        if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb2) callback = cb2;
 
         if (callback != null)
         {
@@ -117,7 +118,7 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
             }, isInterval: false);
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
@@ -125,7 +126,7 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
     /// Signature: send(msg, port, address?, callback?)
     ///            send(msg, offset, length, port, address?, callback?)
     /// </summary>
-    private object? Send(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Send(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter = interpreter;
 
@@ -141,50 +142,50 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
         ISharpTSCallable? callback = null;
 
         // Get message data
-        if (args[0] is SharpTSBuffer buf)
+        if (args[0].ToObject() is SharpTSBuffer buf)
         {
             data = buf.Data;
         }
-        else if (args[0] is string str)
+        else if (args[0].IsString)
         {
-            data = System.Text.Encoding.UTF8.GetBytes(str);
+            data = System.Text.Encoding.UTF8.GetBytes(args[0].AsStringUnsafe());
         }
         else
         {
-            data = System.Text.Encoding.UTF8.GetBytes(args[0]?.ToString() ?? "");
+            data = System.Text.Encoding.UTF8.GetBytes(args[0].ToObject()?.ToString() ?? "");
         }
 
         // Parse remaining args - detect if offset/length form or direct port form
         bool useConnected = false;
-        if (args.Count >= 4 && args[1] is double rawOffset && args[2] is double rawLength && args[3] is double rawPort)
+        if (args.Length >= 4 && args[1].IsNumber && args[2].IsNumber && args[3].IsNumber)
         {
             // send(msg, offset, length, port, address?, callback?)
-            int offset = (int)rawOffset;
-            int length = (int)rawLength;
+            int offset = (int)args[1].AsNumberUnsafe();
+            int length = (int)args[2].AsNumberUnsafe();
             if (offset != 0 || length != data.Length)
             {
                 var slice = new byte[length];
                 Array.Copy(data, offset, slice, 0, length);
                 data = slice;
             }
-            port = (int)rawPort;
-            if (args.Count > 4 && args[4] is string a) address = a;
-            if (args.Count > 4 && args[4] is ISharpTSCallable c4) callback = c4;
-            if (args.Count > 5 && args[5] is ISharpTSCallable c5) callback = c5;
+            port = (int)args[3].AsNumberUnsafe();
+            if (args.Length > 4 && args[4].IsString) address = args[4].AsStringUnsafe();
+            if (args.Length > 4 && args[4].ToObject() is ISharpTSCallable c4) callback = c4;
+            if (args.Length > 5 && args[5].ToObject() is ISharpTSCallable c5) callback = c5;
         }
-        else if (_connected && (args.Count < 2 || args[1] is not double))
+        else if (_connected && (args.Length < 2 || !args[1].IsNumber))
         {
             // Connected mode: send(msg, callback?)
             useConnected = true;
-            if (args.Count > 1 && args[1] is ISharpTSCallable c1) callback = c1;
+            if (args.Length > 1 && args[1].ToObject() is ISharpTSCallable c1) callback = c1;
         }
         else
         {
             // send(msg, port, address?, callback?)
-            port = args.Count > 1 && args[1] is double p ? (int)p : 0;
-            if (args.Count > 2 && args[2] is string a) address = a;
-            if (args.Count > 2 && args[2] is ISharpTSCallable c2) callback = c2;
-            if (args.Count > 3 && args[3] is ISharpTSCallable c3) callback = c3;
+            port = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+            if (args.Length > 2 && args[2].IsString) address = args[2].AsStringUnsafe();
+            if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable c2) callback = c2;
+            if (args.Length > 3 && args[3].ToObject() is ISharpTSCallable c3) callback = c3;
         }
 
         var sendData = data;
@@ -234,18 +235,18 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
             }
         });
 
-        return null;
+        return RuntimeValue.Null;
     }
 
     /// <summary>
     /// Closes the socket.
     /// </summary>
-    private object? Close(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Close(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         ISharpTSCallable? callback = null;
-        if (args.Count > 0 && args[0] is ISharpTSCallable cb) callback = cb;
+        if (args.Length > 0 && args[0].ToObject() is ISharpTSCallable cb) callback = cb;
 
-        if (_closed) return null;
+        if (_closed) return RuntimeValue.Null;
         _closed = true;
 
         _receiveCts?.Cancel();
@@ -275,58 +276,60 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
             }, isInterval: false);
         }
 
-        return null;
+        return RuntimeValue.Null;
     }
 
     /// <summary>
     /// Returns the address information for the socket.
     /// </summary>
-    private object? Address(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Address(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_client?.Client?.LocalEndPoint is IPEndPoint ep)
         {
-            return new SharpTSObject(new Dictionary<string, object?>
+            return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
             {
                 ["address"] = ep.Address.ToString(),
                 ["family"] = ep.AddressFamily == AddressFamily.InterNetworkV6 ? "IPv6" : "IPv4",
                 ["port"] = (double)ep.Port
-            });
+            }));
         }
-        return new SharpTSObject(new Dictionary<string, object?>());
+        return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>()));
     }
 
-    private object? SetBroadcast(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetBroadcast(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_client != null && args.Count > 0)
+        if (_client != null && args.Length > 0)
         {
-            _client.EnableBroadcast = args[0] is true || (args[0] is double d && d != 0);
+            _client.EnableBroadcast = (args[0].IsBoolean && args[0].AsBooleanUnsafe())
+                || (args[0].IsNumber && args[0].AsNumberUnsafe() != 0);
         }
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? SetTTL(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetTTL(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_client != null && args.Count > 0 && args[0] is double ttl)
+        if (_client != null && args.Length > 0 && args[0].IsNumber)
         {
-            _client.Ttl = (short)ttl;
+            _client.Ttl = (short)args[0].AsNumberUnsafe();
         }
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? SetMulticastTTL(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetMulticastTTL(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_client != null && args.Count > 0 && args[0] is double ttl)
+        if (_client != null && args.Length > 0 && args[0].IsNumber)
         {
-            _client.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, (int)ttl);
+            _client.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, (int)args[0].AsNumberUnsafe());
         }
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? AddMembership(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue AddMembership(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_client != null && args.Count > 0 && args[0] is string multicastAddress)
+        if (_client != null && args.Length > 0 && args[0].IsString)
         {
-            string? localAddress = args.Count > 1 ? args[1] as string : null;
+            var multicastAddress = args[0].AsStringUnsafe();
+            string? localAddress = args.Length > 1 ? args[1].ToObject() as string : null;
             if (localAddress != null)
             {
                 _client.JoinMulticastGroup(IPAddress.Parse(multicastAddress), IPAddress.Parse(localAddress));
@@ -336,44 +339,44 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
                 _client.JoinMulticastGroup(IPAddress.Parse(multicastAddress));
             }
         }
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? DropMembership(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue DropMembership(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_client != null && args.Count > 0 && args[0] is string multicastAddress)
+        if (_client != null && args.Length > 0 && args[0].IsString)
         {
-            _client.DropMulticastGroup(IPAddress.Parse(multicastAddress));
+            _client.DropMulticastGroup(IPAddress.Parse(args[0].AsStringUnsafe()));
         }
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? Ref(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Ref(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         interpreter.Ref();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Unref(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Unref(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         interpreter.Unref();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Connects the socket to a remote address. After connect, send() can be called without port/address.
     /// Signature: connect(port, address?, callback?)
     /// </summary>
-    private object? Connect(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Connect(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter = interpreter;
-        int port = args.Count > 0 && args[0] is double p ? (int)p : 0;
+        int port = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
         string address = _family == AddressFamily.InterNetworkV6 ? "::1" : "127.0.0.1";
         ISharpTSCallable? callback = null;
 
-        if (args.Count > 1 && args[1] is string a) address = a;
-        if (args.Count > 1 && args[1] is ISharpTSCallable cb1) callback = cb1;
-        if (args.Count > 2 && args[2] is ISharpTSCallable cb2) callback = cb2;
+        if (args.Length > 1 && args[1].IsString) address = args[1].AsStringUnsafe();
+        if (args.Length > 1 && args[1].ToObject() is ISharpTSCallable cb1) callback = cb1;
+        if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb2) callback = cb2;
 
         if (callback != null)
         {
@@ -403,13 +406,13 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
             }, isInterval: false);
         }
 
-        return null;
+        return RuntimeValue.Null;
     }
 
     /// <summary>
     /// Disconnects the socket from a remote address.
     /// </summary>
-    private object? Disconnect(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Disconnect(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (!_connected)
         {
@@ -429,57 +432,57 @@ public class SharpTSDatagramSocket : SharpTSEventEmitter
         _connected = false;
         _connectedRemote = null;
 
-        return null;
+        return RuntimeValue.Null;
     }
 
     /// <summary>
     /// Returns the remote address info for a connected socket.
     /// </summary>
-    private object? RemoteAddress(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue RemoteAddress(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (!_connected || _connectedRemote == null)
         {
             throw new Exception("Runtime Error: Not connected");
         }
 
-        return new SharpTSObject(new Dictionary<string, object?>
+        return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
         {
             ["address"] = _connectedRemote.Address.ToString(),
             ["family"] = _connectedRemote.AddressFamily == AddressFamily.InterNetworkV6 ? "IPv6" : "IPv4",
             ["port"] = (double)_connectedRemote.Port
-        });
+        }));
     }
 
-    private object? GetRecvBufferSize(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetRecvBufferSize(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_client == null)
             throw new Exception("Runtime Error: Socket is not bound");
-        return (double)_client.Client.ReceiveBufferSize;
+        return RuntimeValue.FromNumber(_client.Client.ReceiveBufferSize);
     }
 
-    private object? SetRecvBufferSize(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetRecvBufferSize(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_client == null)
             throw new Exception("Runtime Error: Socket is not bound");
-        if (args.Count > 0 && args[0] is double size)
-            _client.Client.ReceiveBufferSize = (int)size;
-        return null;
+        if (args.Length > 0 && args[0].IsNumber)
+            _client.Client.ReceiveBufferSize = (int)args[0].AsNumberUnsafe();
+        return RuntimeValue.Null;
     }
 
-    private object? GetSendBufferSize(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetSendBufferSize(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_client == null)
             throw new Exception("Runtime Error: Socket is not bound");
-        return (double)_client.Client.SendBufferSize;
+        return RuntimeValue.FromNumber(_client.Client.SendBufferSize);
     }
 
-    private object? SetSendBufferSize(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetSendBufferSize(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_client == null)
             throw new Exception("Runtime Error: Socket is not bound");
-        if (args.Count > 0 && args[0] is double size)
-            _client.Client.SendBufferSize = (int)size;
-        return null;
+        if (args.Length > 0 && args[0].IsNumber)
+            _client.Client.SendBufferSize = (int)args[0].AsNumberUnsafe();
+        return RuntimeValue.Null;
     }
 
     /// <summary>

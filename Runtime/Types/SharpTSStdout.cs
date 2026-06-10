@@ -42,8 +42,8 @@ public class SharpTSStdout : SharpTSWritable
             // Node exposes stdout's file descriptor as `fd === 1`.
             "fd" => 1.0,
             // process.stdout never ends or destroys — no-op to protect singleton state
-            "end" => new BuiltInMethod("end", 0, 3, (_, _, _) => this),
-            "destroy" => new BuiltInMethod("destroy", 0, 1, (_, _, _) => this),
+            "end" => BuiltInMethod.CreateV2("end", 0, 3, (_, _, _) => RuntimeValue.FromObject(this)),
+            "destroy" => BuiltInMethod.CreateV2("destroy", 0, 1, (_, _, _) => RuntimeValue.FromObject(this)),
             _ => base.GetMember(name)
         };
     }

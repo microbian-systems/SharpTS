@@ -203,13 +203,13 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         env.Define("parentPort", parentPort);
 
         // postMessage - convenience function (same as parentPort.postMessage)
-        env.Define("postMessage", new BuiltInMethod("postMessage", 1, 2, (interp, recv, args) =>
+        env.Define("postMessage", BuiltInMethod.CreateV2("postMessage", 1, 2, (_, _, args) =>
         {
-            if (args.Count == 0)
+            if (args.Length == 0)
                 throw new Exception("postMessage requires at least one argument");
-            var transfer = args.Count > 1 ? args[1] as SharpTSArray : null;
-            PostMessageToParent(args[0], transfer);
-            return null;
+            var transfer = args.Length > 1 ? args[1].ToObject() as SharpTSArray : null;
+            PostMessageToParent(args[0].ToObject(), transfer);
+            return RuntimeValue.Null;
         }));
     }
 
@@ -427,23 +427,23 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         {
             "threadId" => ThreadId,
 
-            "postMessage" => new BuiltInMethod("postMessage", 1, 2, (interp, recv, args) =>
+            "postMessage" => BuiltInMethod.CreateV2("postMessage", 1, 2, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("postMessage requires at least one argument");
-                var transfer = args.Count > 1 ? args[1] as SharpTSArray : null;
-                PostMessage(args[0], transfer);
-                return null;
+                var transfer = args.Length > 1 ? args[1].ToObject() as SharpTSArray : null;
+                PostMessage(args[0].ToObject(), transfer);
+                return RuntimeValue.Null;
             }),
 
-            "terminate" => new BuiltInMethod("terminate", 0, (interp, recv, args) => Terminate()),
+            "terminate" => BuiltInMethod.CreateV2("terminate", 0, (_, _, _) => RuntimeValue.FromObject(Terminate())),
 
-            "ref" => new BuiltInMethod("ref", 0, (interp, recv, args) => Ref()),
+            "ref" => BuiltInMethod.CreateV2("ref", 0, (_, _, _) => RuntimeValue.FromObject(Ref())),
 
-            "unref" => new BuiltInMethod("unref", 0, (interp, recv, args) =>
+            "unref" => BuiltInMethod.CreateV2("unref", 0, (_, _, _) =>
             {
                 Unref();
-                return this;
+                return RuntimeValue.FromObject(this);
             }),
 
             // Inherit EventEmitter methods for on/once/emit
@@ -508,13 +508,13 @@ internal class WorkerParentPort : SharpTSEventEmitter
     {
         return name switch
         {
-            "postMessage" => new BuiltInMethod("postMessage", 1, 2, (interp, recv, args) =>
+            "postMessage" => BuiltInMethod.CreateV2("postMessage", 1, 2, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("postMessage requires at least one argument");
-                var transfer = args.Count > 1 ? args[1] as SharpTSArray : null;
-                PostMessage(args[0], transfer);
-                return null;
+                var transfer = args.Length > 1 ? args[1].ToObject() as SharpTSArray : null;
+                PostMessage(args[0].ToObject(), transfer);
+                return RuntimeValue.Null;
             }),
 
             // Inherit EventEmitter methods
@@ -624,11 +624,11 @@ public static class WorkerThreads
             ["parentPort"] = null, // Set in worker context
             ["MessageChannel"] = new MessageChannelConstructor(),
             ["MessagePort"] = null, // Can't construct directly
-            ["receiveMessageOnPort"] = new BuiltInMethod("receiveMessageOnPort", 1, (interp, recv, args) =>
+            ["receiveMessageOnPort"] = BuiltInMethod.CreateV2("receiveMessageOnPort", 1, static (_, _, args) =>
             {
-                if (args.Count == 0 || args[0] is not SharpTSMessagePort port)
+                if (args.Length == 0 || args[0].ToObject() is not SharpTSMessagePort port)
                     throw new Exception("receiveMessageOnPort requires a MessagePort argument");
-                return ReceiveMessageOnPort(port);
+                return RuntimeValue.FromBoxed(ReceiveMessageOnPort(port));
             }),
         });
     }

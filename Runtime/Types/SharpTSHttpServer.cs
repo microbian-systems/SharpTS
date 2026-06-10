@@ -69,15 +69,15 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         return name switch
         {
             "listening" => Listening,
-            "listen" => new BuiltInMethod("listen", 1, 3, (interp, receiver, args) =>
+            "listen" => BuiltInMethod.CreateV2("listen", 1, 3, (interp, receiver, args) =>
             {
-                if (receiver is SharpTSHttpServer server)
+                if (receiver.ToObject() is SharpTSHttpServer server)
                     return server.Listen(interp, args);
                 return receiver;
             }).Bind(this),
-            "close" => new BuiltInMethod("close", 0, 1, (interp, receiver, args) =>
+            "close" => BuiltInMethod.CreateV2("close", 0, 1, (_, receiver, args) =>
             {
-                if (receiver is SharpTSHttpServer server)
+                if (receiver.ToObject() is SharpTSHttpServer server)
                     return server.Close(args);
                 return receiver;
             }).Bind(this),
@@ -90,25 +90,25 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
     /// <summary>
     /// Starts listening on the specified port.
     /// </summary>
-    private object? Listen(Interpreter interpreter, List<object?> args)
+    private RuntimeValue Listen(Interpreter interpreter, ReadOnlySpan<RuntimeValue> args)
     {
         if (_isListening)
             throw new Exception("Runtime Error: Server is already listening");
 
-        if (args.Count == 0 || args[0] is not double portNum)
+        if (args.Length == 0 || !args[0].IsNumber)
             throw new Exception("Runtime Error: listen requires a port number");
 
-        _port = (int)portNum;
+        _port = (int)args[0].AsNumberUnsafe();
         ISharpTSCallable? callback = null;
 
         // Second argument can be hostname (ignored for now) or callback
-        if (args.Count > 1)
+        if (args.Length > 1)
         {
-            if (args[1] is ISharpTSCallable cb)
+            if (args[1].ToObject() is ISharpTSCallable cb)
             {
                 callback = cb;
             }
-            else if (args.Count > 2 && args[2] is ISharpTSCallable cb2)
+            else if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb2)
             {
                 callback = cb2;
             }
@@ -118,7 +118,7 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
 
         // Cluster worker mode: register with shared listener
         if (ClusterContext.IsWorker)
-            return ListenAsClusterWorker(interpreter, callback);
+            return RuntimeValue.FromBoxed(ListenAsClusterWorker(interpreter, callback));
 
         _listener = new HttpListener();
         _listener.Prefixes.Add($"http://+:{_port}/");
@@ -153,7 +153,7 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         // Emit 'listening' event
         EmitEvent("listening", new List<object?>());
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
@@ -201,19 +201,19 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
     /// thread AFTER the last request finishes — never synchronously from inside a
     /// request handler.
     /// </remarks>
-    private object? Close(List<object?> args)
+    private RuntimeValue Close(ReadOnlySpan<RuntimeValue> args)
     {
         if (!_isListening)
-            return this;
+            return RuntimeValue.FromObject(this);
 
         ISharpTSCallable? userCloseCallback = null;
-        if (args.Count > 0 && args[0] is ISharpTSCallable cb)
+        if (args.Length > 0 && args[0].ToObject() is ISharpTSCallable cb)
             userCloseCallback = cb;
 
         bool finishNow;
         lock (_stateLock)
         {
-            if (_closeRequested) return this; // idempotent
+            if (_closeRequested) return RuntimeValue.FromObject(this); // idempotent
             _closeRequested = true;
             _pendingCloseCallback = userCloseCallback;
             // If no requests are in flight RIGHT NOW, we own the teardown.
@@ -236,7 +236,7 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
             FinishClose();
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>

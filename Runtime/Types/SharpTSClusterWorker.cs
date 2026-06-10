@@ -353,30 +353,30 @@ public class SharpTSClusterWorker : SharpTSEventEmitter, IDisposable
             "id" => Id,
             "exitedAfterDisconnect" => _exitedAfterDisconnect,
 
-            "send" => new BuiltInMethod("send", 1, (interp, recv, args) =>
+            "send" => BuiltInMethod.CreateV2("send", 1, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("worker.send() requires at least one argument");
-                Send(args[0]);
-                return true;
+                Send(args[0].ToObject());
+                return RuntimeValue.True;
             }),
 
-            "disconnect" => new BuiltInMethod("disconnect", 0, (interp, recv, args) =>
+            "disconnect" => BuiltInMethod.CreateV2("disconnect", 0, (_, _, _) =>
             {
                 Disconnect();
-                return null;
+                return RuntimeValue.Null;
             }),
 
-            "kill" => new BuiltInMethod("kill", 0, 1, (interp, recv, args) =>
+            "kill" => BuiltInMethod.CreateV2("kill", 0, 1, (_, _, args) =>
             {
-                var signal = args.Count > 0 ? args[0]?.ToString() : null;
+                var signal = args.Length > 0 ? args[0].ToObject()?.ToString() : null;
                 Kill(signal);
-                return null;
+                return RuntimeValue.Null;
             }),
 
-            "isDead" => new BuiltInMethod("isDead", 0, (interp, recv, args) => IsDead()),
+            "isDead" => BuiltInMethod.CreateV2("isDead", 0, (_, _, _) => RuntimeValue.FromBoxed(IsDead())),
 
-            "isConnected" => new BuiltInMethod("isConnected", 0, (interp, recv, args) => IsConnectedCheck()),
+            "isConnected" => BuiltInMethod.CreateV2("isConnected", 0, (_, _, _) => RuntimeValue.FromBoxed(IsConnectedCheck())),
 
             // Inherit EventEmitter methods
             _ => base.GetMember(name)

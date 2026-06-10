@@ -873,39 +873,39 @@ public class SharpTSIntlDateTimeFormat
     {
         return name switch
         {
-            "format" => new BuiltInMethod("format", 1, (_, _, args) =>
+            "format" => BuiltInMethod.CreateV2("format", 1, (_, _, args) =>
             {
-                DateTime dt = ToDateTime(args.Count > 0 ? args[0] : null);
-                return FormatDate(dt);
+                DateTime dt = ToDateTime(args.Length > 0 ? args[0].ToObject() : null);
+                return RuntimeValue.FromBoxed(FormatDate(dt));
             }),
-            "resolvedOptions" => new BuiltInMethod("resolvedOptions", 0, (_, _, _) =>
+            "resolvedOptions" => BuiltInMethod.CreateV2("resolvedOptions", 0, (_, _, _) =>
             {
-                return new SharpTSObject(GetResolvedOptions());
+                return RuntimeValue.FromObject(new SharpTSObject(GetResolvedOptions()));
             }),
-            "formatToParts" => new BuiltInMethod("formatToParts", 1, (_, _, args) =>
+            "formatToParts" => BuiltInMethod.CreateV2("formatToParts", 1, (_, _, args) =>
             {
-                DateTime dt = ToDateTime(args.Count > 0 ? args[0] : null);
+                DateTime dt = ToDateTime(args.Length > 0 ? args[0].ToObject() : null);
                 var parts = FormatDateToParts(dt);
                 var items = new List<object?>();
                 foreach (var p in parts)
                     items.Add(new SharpTSObject(p));
-                return new SharpTSArray(items);
+                return RuntimeValue.FromObject(new SharpTSArray(items));
             }),
-            "formatRange" => new BuiltInMethod("formatRange", 2, (_, _, args) =>
+            "formatRange" => BuiltInMethod.CreateV2("formatRange", 2, (_, _, args) =>
             {
-                DateTime startDt = ToDateTime(args.Count > 0 ? args[0] : null);
-                DateTime endDt = ToDateTime(args.Count > 1 ? args[1] : null);
-                return FormatDateRange(startDt, endDt);
+                DateTime startDt = ToDateTime(args.Length > 0 ? args[0].ToObject() : null);
+                DateTime endDt = ToDateTime(args.Length > 1 ? args[1].ToObject() : null);
+                return RuntimeValue.FromBoxed(FormatDateRange(startDt, endDt));
             }),
-            "formatRangeToParts" => new BuiltInMethod("formatRangeToParts", 2, (_, _, args) =>
+            "formatRangeToParts" => BuiltInMethod.CreateV2("formatRangeToParts", 2, (_, _, args) =>
             {
-                DateTime startDt = ToDateTime(args.Count > 0 ? args[0] : null);
-                DateTime endDt = ToDateTime(args.Count > 1 ? args[1] : null);
+                DateTime startDt = ToDateTime(args.Length > 0 ? args[0].ToObject() : null);
+                DateTime endDt = ToDateTime(args.Length > 1 ? args[1].ToObject() : null);
                 var parts = FormatDateRangeToParts(startDt, endDt);
                 var items = new List<object?>();
                 foreach (var p in parts)
                     items.Add(new SharpTSObject(p));
-                return new SharpTSArray(items);
+                return RuntimeValue.FromObject(new SharpTSArray(items));
             }),
             _ => null
         };

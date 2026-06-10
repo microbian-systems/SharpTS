@@ -39,26 +39,26 @@ public class SharpTSReadlineInterface : SharpTSEventEmitter
     {
         return name switch
         {
-            "question" => new BuiltInMethod("question", 2, Question),
-            "close" => new BuiltInMethod("close", 0, CloseInterface),
-            "prompt" => new BuiltInMethod("prompt", 0, 1, PromptMethod),
-            "pause" => new BuiltInMethod("pause", 0, Pause),
-            "resume" => new BuiltInMethod("resume", 0, Resume),
-            "write" => new BuiltInMethod("write", 1, WriteMethod),
-            "setPrompt" => new BuiltInMethod("setPrompt", 1, SetPrompt),
-            "getPrompt" => new BuiltInMethod("getPrompt", 0, GetPrompt),
+            "question" => BuiltInMethod.CreateV2("question", 2, Question),
+            "close" => BuiltInMethod.CreateV2("close", 0, CloseInterface),
+            "prompt" => BuiltInMethod.CreateV2("prompt", 0, 1, PromptMethod),
+            "pause" => BuiltInMethod.CreateV2("pause", 0, Pause),
+            "resume" => BuiltInMethod.CreateV2("resume", 0, Resume),
+            "write" => BuiltInMethod.CreateV2("write", 1, WriteMethod),
+            "setPrompt" => BuiltInMethod.CreateV2("setPrompt", 1, SetPrompt),
+            "getPrompt" => BuiltInMethod.CreateV2("getPrompt", 0, GetPrompt),
             // EventEmitter methods
             _ => base.GetMember(name)
         };
     }
 
-    private object? Question(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Question(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_closed || args.Count < 2)
-            return null;
+        if (_closed || args.Length < 2)
+            return RuntimeValue.Null;
 
-        var query = args[0]?.ToString() ?? "";
-        var callback = args[1];
+        var query = args[0].ToObject()?.ToString() ?? "";
+        var callback = args[1].ToObject();
 
         _output?.Write(query);
         var answer = _input?.ReadLine() ?? "";
@@ -68,68 +68,68 @@ public class SharpTSReadlineInterface : SharpTSEventEmitter
             callable.Call(interpreter, [answer]);
         }
 
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? CloseInterface(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue CloseInterface(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_closed) return this;
+        if (_closed) return RuntimeValue.FromObject(this);
         _closed = true;
 
         EmitEvent(interpreter, "close", []);
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? PromptMethod(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue PromptMethod(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (!_closed)
         {
             _output?.Write(_prompt);
         }
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? Pause(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Pause(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (!_paused)
         {
             _paused = true;
             EmitEvent(interpreter, "pause", []);
         }
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Resume(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Resume(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_paused)
         {
             _paused = false;
             EmitEvent(interpreter, "resume", []);
         }
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? WriteMethod(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue WriteMethod(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (!_closed && args.Count > 0)
+        if (!_closed && args.Length > 0)
         {
-            _output?.Write(args[0]?.ToString() ?? "");
+            _output?.Write(args[0].ToObject()?.ToString() ?? "");
         }
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? SetPrompt(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetPrompt(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count > 0)
+        if (args.Length > 0)
         {
-            _prompt = args[0]?.ToString() ?? "";
+            _prompt = args[0].ToObject()?.ToString() ?? "";
         }
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? GetPrompt(Interpreter interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetPrompt(Interpreter interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        return _prompt;
+        return RuntimeValue.FromString(_prompt);
     }
 
     public override string ToString() => "Interface {}";

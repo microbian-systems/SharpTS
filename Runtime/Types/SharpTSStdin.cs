@@ -32,53 +32,53 @@ public class SharpTSStdin : SharpTSReadable
         {
             "isTTY" => IsTTY,
             // Override 'resume' to start the background reader
-            "resume" => new BuiltInMethod("resume", 0, ResumeWithReader),
+            "resume" => BuiltInMethod.CreateV2("resume", 0, ResumeWithReader),
             // Override 'on'/'addListener' to start the reader when 'data' listener is added
-            "on" or "addListener" => new BuiltInMethod(name, 2, OnWithReader),
-            "once" => new BuiltInMethod("once", 2, OnceWithReader),
+            "on" or "addListener" => BuiltInMethod.CreateV2(name, 2, OnWithReader),
+            "once" => BuiltInMethod.CreateV2("once", 2, OnceWithReader),
             // process.stdin never destroys — no-op to protect singleton state
-            "destroy" => new BuiltInMethod("destroy", 0, 1, (_, _, _) => this),
+            "destroy" => BuiltInMethod.CreateV2("destroy", 0, 1, (_, _, _) => RuntimeValue.FromObject(this)),
             _ => base.GetMember(name)
         };
     }
 
-    private object? OnWithReader(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue OnWithReader(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var eventName = args.Count > 0 ? args[0]?.ToString() : null;
+        var eventName = args.Length > 0 ? args[0].ToObject()?.ToString() : null;
 
         // Delegate to base Readable's on (which handles flowing mode)
         var baseOn = base.GetMember("on") as BuiltInMethod;
-        baseOn?.Bind(this).Call(interpreter, args);
+        baseOn?.Bind(this).CallV2(interpreter, args);
 
         if (eventName == "data" || eventName == "readable")
         {
             StartReaderThread(interpreter);
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? OnceWithReader(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue OnceWithReader(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var eventName = args.Count > 0 ? args[0]?.ToString() : null;
+        var eventName = args.Length > 0 ? args[0].ToObject()?.ToString() : null;
 
         var baseOnce = base.GetMember("once") as BuiltInMethod;
-        baseOnce?.Bind(this).Call(interpreter, args);
+        baseOnce?.Bind(this).CallV2(interpreter, args);
 
         if (eventName == "data" || eventName == "readable")
         {
             StartReaderThread(interpreter);
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? ResumeWithReader(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue ResumeWithReader(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var baseResume = base.GetMember("resume") as BuiltInMethod;
-        baseResume?.Bind(this).Call(interpreter, args);
+        baseResume?.Bind(this).CallV2(interpreter, args);
         StartReaderThread(interpreter);
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>

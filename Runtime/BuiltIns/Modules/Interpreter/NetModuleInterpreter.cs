@@ -22,98 +22,102 @@ public static class NetModuleInterpreter
     {
         return new Dictionary<string, object?>
         {
-            ["createServer"] = new BuiltInMethod("createServer", 0, 2, CreateServer),
-            ["createConnection"] = new BuiltInMethod("createConnection", 1, 2, CreateConnection),
-            ["connect"] = new BuiltInMethod("connect", 1, 2, CreateConnection),
-            ["isIP"] = new BuiltInMethod("isIP", 1, IsIP),
-            ["isIPv4"] = new BuiltInMethod("isIPv4", 1, IsIPv4),
-            ["isIPv6"] = new BuiltInMethod("isIPv6", 1, IsIPv6),
-            ["Server"] = new BuiltInMethod("Server", 0, 2, CreateServer),
-            ["Socket"] = new BuiltInMethod("Socket", 0, 1, CreateSocket)
+            ["createServer"] = BuiltInMethod.CreateV2("createServer", 0, 2, CreateServer),
+            ["createConnection"] = BuiltInMethod.CreateV2("createConnection", 1, 2, CreateConnection),
+            ["connect"] = BuiltInMethod.CreateV2("connect", 1, 2, CreateConnection),
+            ["isIP"] = BuiltInMethod.CreateV2("isIP", 1, IsIP),
+            ["isIPv4"] = BuiltInMethod.CreateV2("isIPv4", 1, IsIPv4),
+            ["isIPv6"] = BuiltInMethod.CreateV2("isIPv6", 1, IsIPv6),
+            ["Server"] = BuiltInMethod.CreateV2("Server", 0, 2, CreateServer),
+            ["Socket"] = BuiltInMethod.CreateV2("Socket", 0, 1, CreateSocket)
         };
     }
 
     /// <summary>
     /// Creates a new TCP server.
     /// </summary>
-    private static object? CreateServer(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CreateServer(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         ISharpTSCallable? connectionListener = null;
 
-        if (args.Count > 0)
+        if (args.Length > 0)
         {
-            if (args[0] is ISharpTSCallable cb)
+            if (args[0].ToObject() is ISharpTSCallable cb)
             {
                 connectionListener = cb;
             }
-            else if (args[0] is SharpTSObject && args.Count > 1 && args[1] is ISharpTSCallable cb2)
+            else if (args[0].ToObject() is SharpTSObject && args.Length > 1 && args[1].ToObject() is ISharpTSCallable cb2)
             {
                 // First arg is options, second is callback
                 connectionListener = cb2;
             }
         }
 
-        return new SharpTSNetServer(connectionListener);
+        return RuntimeValue.FromObject(new SharpTSNetServer(connectionListener));
     }
 
     /// <summary>
     /// Creates a new TCP connection (client socket).
     /// </summary>
-    private static object? CreateConnection(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CreateConnection(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var socket = new SharpTSSocket();
 
         // Delegate to socket.connect()
         var connectMethod = socket.GetMember("connect") as BuiltInMethod;
-        connectMethod?.Bind(socket).Call(interpreter, args);
+        var connectArgs = new List<object?>(args.Length);
+        for (int i = 0; i < args.Length; i++)
+            connectArgs.Add(args[i].ToObject());
+        connectMethod?.Bind(socket).Call(interpreter, connectArgs);
 
-        return socket;
+        return RuntimeValue.FromObject(socket);
     }
 
     /// <summary>
     /// Creates a new unconnected Socket.
     /// </summary>
-    private static object? CreateSocket(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CreateSocket(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        return new SharpTSSocket();
+        return RuntimeValue.FromObject(new SharpTSSocket());
     }
 
     /// <summary>
     /// Tests if input is an IP address. Returns 4 for IPv4, 6 for IPv6, 0 for invalid.
     /// </summary>
-    private static object? IsIP(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue IsIP(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string input)
-            return 0.0;
+        if (args.Length == 0 || !args[0].IsString)
+            return RuntimeValue.FromNumber(0.0);
 
-        if (System.Net.IPAddress.TryParse(input, out var addr))
+        if (System.Net.IPAddress.TryParse(args[0].AsStringUnsafe(), out var addr))
         {
-            return addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? 6.0 : 4.0;
+            return RuntimeValue.FromNumber(
+                addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? 6.0 : 4.0);
         }
-        return 0.0;
+        return RuntimeValue.FromNumber(0.0);
     }
 
     /// <summary>
     /// Tests if input is an IPv4 address.
     /// </summary>
-    private static object? IsIPv4(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue IsIPv4(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string input)
-            return false;
+        if (args.Length == 0 || !args[0].IsString)
+            return RuntimeValue.False;
 
-        return System.Net.IPAddress.TryParse(input, out var addr)
-            && addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork;
+        return RuntimeValue.FromBoolean(System.Net.IPAddress.TryParse(args[0].AsStringUnsafe(), out var addr)
+            && addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork);
     }
 
     /// <summary>
     /// Tests if input is an IPv6 address.
     /// </summary>
-    private static object? IsIPv6(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue IsIPv6(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string input)
-            return false;
+        if (args.Length == 0 || !args[0].IsString)
+            return RuntimeValue.False;
 
-        return System.Net.IPAddress.TryParse(input, out var addr)
-            && addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6;
+        return RuntimeValue.FromBoolean(System.Net.IPAddress.TryParse(args[0].AsStringUnsafe(), out var addr)
+            && addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6);
     }
 }

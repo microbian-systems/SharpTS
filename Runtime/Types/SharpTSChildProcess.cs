@@ -84,23 +84,23 @@ public class SharpTSChildProcess : SharpTSEventEmitter
             "signalCode" => _signalCode ?? (object)null!,
 
             // Methods
-            "kill" => new BuiltInMethod("kill", 0, 1, Kill),
-            "send" => new BuiltInMethod("send", 1, 4, Send),
-            "disconnect" => new BuiltInMethod("disconnect", 0, Disconnect),
-            "ref" => new BuiltInMethod("ref", 0, Ref),
-            "unref" => new BuiltInMethod("unref", 0, Unref),
+            "kill" => BuiltInMethod.CreateV2("kill", 0, 1, Kill),
+            "send" => BuiltInMethod.CreateV2("send", 1, 4, Send),
+            "disconnect" => BuiltInMethod.CreateV2("disconnect", 0, Disconnect),
+            "ref" => BuiltInMethod.CreateV2("ref", 0, Ref),
+            "unref" => BuiltInMethod.CreateV2("unref", 0, Unref),
 
             // Inherit from EventEmitter
             _ => base.GetMember(name)
         };
     }
 
-    private object? Kill(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Kill(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (_killed) return false;
+        if (_killed) return RuntimeValue.False;
 
         _killed = true;
-        var signal = args.Count > 0 && args[0] is string s ? s : "SIGTERM";
+        var signal = args.Length > 0 && args[0].IsString ? args[0].AsStringUnsafe() : "SIGTERM";
         _signalCode = signal;
 
         try
@@ -108,38 +108,38 @@ public class SharpTSChildProcess : SharpTSEventEmitter
             if (_process != null && !_process.HasExited)
             {
                 _process.Kill(entireProcessTree: true);
-                return true;
+                return RuntimeValue.True;
             }
         }
         catch
         {
             // Process may have already exited
         }
-        return true;
+        return RuntimeValue.True;
     }
 
-    private object? Send(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Send(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (!_connected || _ipcWriter == null)
             throw new Exception("channel closed");
 
-        var message = args.Count > 0 ? args[0] : null;
+        var message = args.Length > 0 ? args[0].ToObject() : null;
         try
         {
             var json = IpcSerializer.Serialize(message);
             _ipcWriter.WriteLine(json);
             _ipcWriter.Flush();
-            return true;
+            return RuntimeValue.True;
         }
         catch
         {
-            return false;
+            return RuntimeValue.False;
         }
     }
 
-    private object? Disconnect(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Disconnect(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (!_connected) return null;
+        if (!_connected) return RuntimeValue.Null;
         _connected = false;
 
         try
@@ -151,11 +151,11 @@ public class SharpTSChildProcess : SharpTSEventEmitter
         catch { }
 
         EmitDirect("disconnect");
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? Ref(Interp interpreter, object? receiver, List<object?> args) => this;
-    private object? Unref(Interp interpreter, object? receiver, List<object?> args) => this;
+    private RuntimeValue Ref(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args) => RuntimeValue.FromObject(this);
+    private RuntimeValue Unref(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args) => RuntimeValue.FromObject(this);
 
     public override string ToString() => "ChildProcess {}";
 }

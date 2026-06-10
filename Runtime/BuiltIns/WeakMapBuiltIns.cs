@@ -11,36 +11,36 @@ public static class WeakMapBuiltIns
     {
         return name switch
         {
-            "get" => new BuiltInMethod("get", 1, (_, recv, args) =>
+            "get" => BuiltInMethod.CreateV2("get", 1, static (_, recv, args) =>
             {
-                var weakMap = (SharpTSWeakMap)recv!;
-                var key = args[0]
+                var weakMap = (SharpTSWeakMap)recv.ToObject()!;
+                var key = args[0].ToObject()
                     ?? throw new Exception("Runtime Error: WeakMap key cannot be null or undefined.");
-                return weakMap.Get(key);
+                return RuntimeValue.FromBoxed(weakMap.Get(key));
             }),
 
-            "set" => new BuiltInMethod("set", 2, (_, recv, args) =>
+            "set" => BuiltInMethod.CreateV2("set", 2, static (_, recv, args) =>
             {
-                var weakMap = (SharpTSWeakMap)recv!;
-                var key = args[0]
+                var weakMap = (SharpTSWeakMap)recv.ToObject()!;
+                var key = args[0].ToObject()
                     ?? throw new Exception("Runtime Error: WeakMap key cannot be null or undefined.");
-                return weakMap.Set(key, args[1]);
+                return RuntimeValue.FromObject(weakMap.Set(key, args[1].ToObject()));
             }),
 
-            "has" => new BuiltInMethod("has", 1, (_, recv, args) =>
+            "has" => BuiltInMethod.CreateV2("has", 1, static (_, recv, args) =>
             {
-                var weakMap = (SharpTSWeakMap)recv!;
-                var key = args[0]
+                var weakMap = (SharpTSWeakMap)recv.ToObject()!;
+                var key = args[0].ToObject()
                     ?? throw new Exception("Runtime Error: WeakMap key cannot be null or undefined.");
-                return weakMap.Has(key);
+                return RuntimeValue.FromBoolean(weakMap.Has(key));
             }),
 
-            "delete" => new BuiltInMethod("delete", 1, (_, recv, args) =>
+            "delete" => BuiltInMethod.CreateV2("delete", 1, static (_, recv, args) =>
             {
-                var weakMap = (SharpTSWeakMap)recv!;
-                var key = args[0]
+                var weakMap = (SharpTSWeakMap)recv.ToObject()!;
+                var key = args[0].ToObject()
                     ?? throw new Exception("Runtime Error: WeakMap key cannot be null or undefined.");
-                return weakMap.Delete(key);
+                return RuntimeValue.FromBoolean(weakMap.Delete(key));
             }),
 
             // Explicitly reject unsupported properties/methods

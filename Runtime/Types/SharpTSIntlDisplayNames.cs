@@ -290,14 +290,14 @@ public class SharpTSIntlDisplayNames
     {
         return name switch
         {
-            "of" => new BuiltInMethod("of", 1, (_, _, args) =>
+            "of" => BuiltInMethod.CreateV2("of", 1, (_, _, args) =>
             {
-                string code = (args.Count > 0 ? args[0] : null)?.ToString() ?? "";
-                return LookupDisplayName(code);
+                string code = (args.Length > 0 ? args[0].ToObject() : null)?.ToString() ?? "";
+                return RuntimeValue.FromBoxed(LookupDisplayName(code));
             }),
-            "resolvedOptions" => new BuiltInMethod("resolvedOptions", 0, (_, _, _) =>
+            "resolvedOptions" => BuiltInMethod.CreateV2("resolvedOptions", 0, (_, _, _) =>
             {
-                return new SharpTSObject(GetResolvedOptions());
+                return RuntimeValue.FromObject(new SharpTSObject(GetResolvedOptions()));
             }),
             _ => null
         };

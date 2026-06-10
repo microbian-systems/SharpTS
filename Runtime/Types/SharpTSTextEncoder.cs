@@ -70,19 +70,19 @@ public class SharpTSTextEncoder : ISharpTSPropertyAccessor
         return name switch
         {
             "encoding" => Encoding,
-            "encode" => new BuiltInMethod("encode", 0, 1, (interp, recv, args) =>
+            "encode" => BuiltInMethod.CreateV2("encode", 0, 1, (_, _, args) =>
             {
-                var input = args.Count > 0 ? args[0]?.ToString() ?? "" : "";
-                return Encode(input);
+                var input = args.Length > 0 ? args[0].ToObject()?.ToString() ?? "" : "";
+                return RuntimeValue.FromBoxed(Encode(input));
             }),
-            "encodeInto" => new BuiltInMethod("encodeInto", 2, (interp, recv, args) =>
+            "encodeInto" => BuiltInMethod.CreateV2("encodeInto", 2, (_, _, args) =>
             {
-                if (args.Count < 2)
+                if (args.Length < 2)
                     throw new Exception("TextEncoder.encodeInto requires 2 arguments");
-                var source = args[0]?.ToString() ?? "";
-                if (args[1] is not SharpTSBuffer dest)
+                var source = args[0].ToObject()?.ToString() ?? "";
+                if (args[1].ToObject() is not SharpTSBuffer dest)
                     throw new Exception("TextEncoder.encodeInto: second argument must be a Uint8Array");
-                return EncodeInto(source, dest);
+                return RuntimeValue.FromBoxed(EncodeInto(source, dest));
             }),
             _ => null
         };

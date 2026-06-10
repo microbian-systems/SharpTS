@@ -170,15 +170,15 @@ public class SharpTSIntlCollator
     {
         return name switch
         {
-            "compare" => new BuiltInMethod("compare", 2, (_, _, args) =>
+            "compare" => BuiltInMethod.CreateV2("compare", 2, (_, _, args) =>
             {
-                string x = (args.Count > 0 ? args[0] : null)?.ToString() ?? "";
-                string y = (args.Count > 1 ? args[1] : null)?.ToString() ?? "";
-                return CompareStrings(x, y);
+                string x = (args.Length > 0 ? args[0].ToObject() : null)?.ToString() ?? "";
+                string y = (args.Length > 1 ? args[1].ToObject() : null)?.ToString() ?? "";
+                return RuntimeValue.FromBoxed(CompareStrings(x, y));
             }),
-            "resolvedOptions" => new BuiltInMethod("resolvedOptions", 0, (_, _, _) =>
+            "resolvedOptions" => BuiltInMethod.CreateV2("resolvedOptions", 0, (_, _, _) =>
             {
-                return new SharpTSObject(GetResolvedOptions());
+                return RuntimeValue.FromObject(new SharpTSObject(GetResolvedOptions()));
             }),
             _ => null
         };

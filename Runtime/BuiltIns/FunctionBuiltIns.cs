@@ -9,9 +9,9 @@ namespace SharpTS.Runtime.BuiltIns;
 public static class FunctionBuiltIns
 {
     // Spec lengths per ECMA-262 §20.2.3: bind=1, call=1, apply=2.
-    private static readonly BuiltInMethod _bind = new BuiltInMethod("bind", 0, int.MaxValue, Bind).WithSpecLength(1);
-    private static readonly BuiltInMethod _call = new BuiltInMethod("call", 0, int.MaxValue, Call).WithSpecLength(1);
-    private static readonly BuiltInMethod _apply = new BuiltInMethod("apply", 0, 2, Apply).WithSpecLength(2);
+    private static readonly BuiltInMethod _bind = BuiltInMethod.CreateV2("bind", 0, int.MaxValue, Bind).WithSpecLength(1);
+    private static readonly BuiltInMethod _call = BuiltInMethod.CreateV2("call", 0, int.MaxValue, Call).WithSpecLength(1);
+    private static readonly BuiltInMethod _apply = BuiltInMethod.CreateV2("apply", 0, 2, Apply).WithSpecLength(2);
 
     /// <summary>
     /// Returns the unbound singleton callable for a Function.prototype method
@@ -75,50 +75,54 @@ public static class FunctionBuiltIns
     /// Function.prototype.bind(thisArg, ...args)
     /// Returns a new function with 'this' bound and optional partial application.
     /// </summary>
-    private static object? Bind(Interpreter interp, object? receiver, List<object?> args)
+    private static RuntimeValue Bind(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var callable = receiver as ISharpTSCallable
+        var callable = receiver.ToObject() as ISharpTSCallable
             ?? throw new Exception("Runtime Error: bind called on non-function.");
 
-        var thisArg = args.Count > 0 ? args[0] : null;
-        var boundArgs = args.Count > 1 ? args.Skip(1).ToList() : new List<object?>();
+        var thisArg = args.Length > 0 ? args[0].ToObject() : null;
+        var boundArgs = new List<object?>(Math.Max(0, args.Length - 1));
+        for (int i = 1; i < args.Length; i++)
+            boundArgs.Add(args[i].ToObject());
 
         // Arrow functions ignore thisArg (they capture 'this' from lexical scope)
         if (callable is SharpTSArrowFunction arrow && !arrow.HasOwnThis)
         {
             // Still create a bound function for partial application, but 'this' won't change
-            return new BoundFunction(callable, null, boundArgs, ignoreThisArg: true);
+            return RuntimeValue.FromObject(new BoundFunction(callable, null, boundArgs, ignoreThisArg: true));
         }
 
-        return new BoundFunction(callable, thisArg, boundArgs);
+        return RuntimeValue.FromObject(new BoundFunction(callable, thisArg, boundArgs));
     }
 
     /// <summary>
     /// Function.prototype.call(thisArg, ...args)
     /// Calls the function with the specified 'this' value and individual arguments.
     /// </summary>
-    private static object? Call(Interpreter interp, object? receiver, List<object?> args)
+    private static RuntimeValue Call(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var callable = receiver as ISharpTSCallable
+        var callable = receiver.ToObject() as ISharpTSCallable
             ?? throw new Exception("Runtime Error: call invoked on non-function.");
 
-        var thisArg = args.Count > 0 ? args[0] : null;
-        var callArgs = args.Count > 1 ? args.Skip(1).ToList() : new List<object?>();
+        var thisArg = args.Length > 0 ? args[0].ToObject() : null;
+        var callArgs = new List<object?>(Math.Max(0, args.Length - 1));
+        for (int i = 1; i < args.Length; i++)
+            callArgs.Add(args[i].ToObject());
 
-        return InvokeWithThis(interp, callable, thisArg, callArgs);
+        return RuntimeValue.FromBoxed(InvokeWithThis(interp, callable, thisArg, callArgs));
     }
 
     /// <summary>
     /// Function.prototype.apply(thisArg, argsArray)
     /// Calls the function with the specified 'this' value and arguments as an array.
     /// </summary>
-    private static object? Apply(Interpreter interp, object? receiver, List<object?> args)
+    private static RuntimeValue Apply(Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var callable = receiver as ISharpTSCallable
+        var callable = receiver.ToObject() as ISharpTSCallable
             ?? throw new Exception("Runtime Error: apply invoked on non-function.");
 
-        var thisArg = args.Count > 0 ? args[0] : null;
-        var argsArray = args.Count > 1 ? args[1] : null;
+        var thisArg = args.Length > 0 ? args[0].ToObject() : null;
+        var argsArray = args.Length > 1 ? args[1].ToObject() : null;
 
         List<object?> callArgs;
         if (argsArray == null)
@@ -138,7 +142,7 @@ public static class FunctionBuiltIns
             throw new Exception("Runtime Error: apply second argument must be an array or null.");
         }
 
-        return InvokeWithThis(interp, callable, thisArg, callArgs);
+        return RuntimeValue.FromBoxed(InvokeWithThis(interp, callable, thisArg, callArgs));
     }
 
     /// <summary>

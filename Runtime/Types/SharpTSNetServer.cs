@@ -63,12 +63,12 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
         return name switch
         {
             "listening" => Listening,
-            "listen" => new BuiltInMethod("listen", 0, 4, Listen),
-            "close" => new BuiltInMethod("close", 0, 1, Close),
-            "address" => new BuiltInMethod("address", 0, GetAddress),
-            "getConnections" => new BuiltInMethod("getConnections", 1, GetConnections),
-            "ref" => new BuiltInMethod("ref", 0, Ref),
-            "unref" => new BuiltInMethod("unref", 0, Unref),
+            "listen" => BuiltInMethod.CreateV2("listen", 0, 4, Listen),
+            "close" => BuiltInMethod.CreateV2("close", 0, 1, Close),
+            "address" => BuiltInMethod.CreateV2("address", 0, GetAddress),
+            "getConnections" => BuiltInMethod.CreateV2("getConnections", 1, GetConnections),
+            "ref" => BuiltInMethod.CreateV2("ref", 0, Ref),
+            "unref" => BuiltInMethod.CreateV2("unref", 0, Unref),
             "maxConnections" => (double)_maxConnections,
             _ => base.GetMember(name)
         };
@@ -86,7 +86,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
     /// <summary>
     /// Starts listening on the specified port or IPC path.
     /// </summary>
-    private object? Listen(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Listen(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_isListening)
             throw new Exception("Runtime Error: Server is already listening");
@@ -98,47 +98,47 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
         ISharpTSCallable? callback = null;
 
         // Detect IPC path: string first arg or options.path
-        if (args.Count > 0 && args[0] is string ipcPath)
+        if (args.Length > 0 && args[0].IsString)
         {
-            callback = args.Count > 1 ? WrapCallbackArg(args[1]) : null;
-            return ListenIpc(interpreter, ipcPath, callback);
+            callback = args.Length > 1 ? WrapCallbackArg(args[1].ToObject()) : null;
+            return RuntimeValue.FromBoxed(ListenIpc(interpreter, args[0].AsStringUnsafe(), callback));
         }
 
-        if (args.Count > 0 && args[0] is SharpTSObject options)
+        if (args.Length > 0 && args[0].ToObject() is SharpTSObject options)
         {
             if (options.GetProperty("path") is string optPath)
             {
-                callback = args.Count > 1 ? WrapCallbackArg(args[1]) : null;
-                return ListenIpc(interpreter, optPath, callback);
+                callback = args.Length > 1 ? WrapCallbackArg(args[1].ToObject()) : null;
+                return RuntimeValue.FromBoxed(ListenIpc(interpreter, optPath, callback));
             }
             if (options.GetProperty("port") is double p) _port = (int)p;
             if (options.GetProperty("host") is string h) _host = h;
-            callback = args.Count > 1 ? WrapCallbackArg(args[1]) : null;
+            callback = args.Length > 1 ? WrapCallbackArg(args[1].ToObject()) : null;
         }
         else
         {
             int argIdx = 0;
-            if (argIdx < args.Count && args[argIdx] is double portNum)
+            if (argIdx < args.Length && args[argIdx].IsNumber)
             {
-                _port = (int)portNum;
+                _port = (int)args[argIdx].AsNumberUnsafe();
                 argIdx++;
             }
-            if (argIdx < args.Count && args[argIdx] is string host)
+            if (argIdx < args.Length && args[argIdx].IsString)
             {
-                _host = host;
+                _host = args[argIdx].AsStringUnsafe();
                 argIdx++;
             }
             // Skip backlog (number)
-            if (argIdx < args.Count && args[argIdx] is double)
+            if (argIdx < args.Length && args[argIdx].IsNumber)
                 argIdx++;
-            if (argIdx < args.Count)
-                callback = WrapCallbackArg(args[argIdx]);
+            if (argIdx < args.Length)
+                callback = WrapCallbackArg(args[argIdx].ToObject());
             // Also check: listen(port, callback) where callback is arg[1]
             if (callback == null)
             {
-                for (int i = 0; i < args.Count; i++)
+                for (int i = 0; i < args.Length; i++)
                 {
-                    var wrapped = WrapCallbackArg(args[i]);
+                    var wrapped = WrapCallbackArg(args[i].ToObject());
                     if (wrapped != null) { callback = wrapped; break; }
                 }
             }
@@ -146,7 +146,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
 
         // Cluster worker mode: register with shared listener instead of binding directly
         if (ClusterContext.IsWorker)
-            return ListenAsClusterWorker(interpreter, callback);
+            return RuntimeValue.FromBoxed(ListenAsClusterWorker(interpreter, callback));
 
         var ipAddress = _host == "0.0.0.0" || _host == "::"
             ? IPAddress.Any
@@ -161,7 +161,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
         catch (Exception ex)
         {
             EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
-            return this;
+            return RuntimeValue.FromObject(this);
         }
 
         // If port was 0, get the assigned port
@@ -182,7 +182,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
         // Start accepting connections
         StartAccepting(interpreter);
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
@@ -440,10 +440,10 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
     /// <summary>
     /// Closes the server.
     /// </summary>
-    private object? Close(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Close(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (!_isListening)
-            return this;
+            return RuntimeValue.FromObject(this);
 
         _cts?.Cancel();
 
@@ -469,70 +469,70 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
         _isListening = false;
         _interpreter?.Unref();
 
-        ISharpTSCallable? callback = args.Count > 0 ? WrapCallbackArg(args[0]) : null;
+        ISharpTSCallable? callback = args.Length > 0 ? WrapCallbackArg(args[0].ToObject()) : null;
         callback?.Call(interpreter, []);
 
         EmitEvent(interpreter, "close", []);
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
     /// Gets the server address information.
     /// </summary>
-    private object? GetAddress(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetAddress(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (!_isListening) return null;
+        if (!_isListening) return RuntimeValue.Null;
 
         if (_isIpc)
         {
             // Node.js returns the pipe path as a string for IPC servers
-            return _pipePath;
+            return RuntimeValue.FromBoxed(_pipePath);
         }
 
         if (_isClusterWorker)
         {
-            return new SharpTSObject(new Dictionary<string, object?>
+            return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
             {
                 ["address"] = _host,
                 ["family"] = "IPv4",
                 ["port"] = (double)_port
-            });
+            }));
         }
 
-        if (_listener == null) return null;
+        if (_listener == null) return RuntimeValue.Null;
 
         var ep = (IPEndPoint)_listener.LocalEndpoint;
-        return new SharpTSObject(new Dictionary<string, object?>
+        return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
         {
             ["address"] = ep.Address.ToString(),
             ["family"] = ep.AddressFamily == AddressFamily.InterNetworkV6 ? "IPv6" : "IPv4",
             ["port"] = (double)ep.Port
-        });
+        }));
     }
 
     /// <summary>
     /// Gets the number of concurrent connections.
     /// </summary>
-    private object? GetConnections(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue GetConnections(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count > 0 && args[0] is ISharpTSCallable callback)
+        if (args.Length > 0 && args[0].ToObject() is ISharpTSCallable callback)
         {
             callback.Call(interpreter, [null, (double)_connections.Count]);
         }
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Ref(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Ref(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter?.Ref();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Unref(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Unref(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _interpreter?.Unref();
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>

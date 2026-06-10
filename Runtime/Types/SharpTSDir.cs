@@ -105,8 +105,8 @@ public sealed class SharpTSDir : ISharpTSPropertyAccessor
         return name switch
         {
             "path" => _path,
-            "readSync" => new BuiltInMethod("readSync", 0, 0, (_, _, _) => ReadSync()),
-            "closeSync" => new BuiltInMethod("closeSync", 0, 0, (_, _, _) => { CloseSync(); return null; }),
+            "readSync" => BuiltInMethod.CreateV2("readSync", 0, 0, (_, _, _) => RuntimeValue.FromBoxed(ReadSync())),
+            "closeSync" => BuiltInMethod.CreateV2("closeSync", 0, 0, (_, _, _) => { CloseSync(); return RuntimeValue.Null; }),
             _ => null
         };
     }

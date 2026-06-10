@@ -83,7 +83,7 @@ The codebase is migrating from `object?` to `RuntimeValue` struct to eliminate b
 
 **BuiltInMethod** (`Runtime/BuiltIns/BuiltInMethod.cs`):
 - `CreateV2()` factory for RuntimeValue-based methods; `HasV2Implementation` gates the interpreter fast path
-- Legacy delegate bodies (`Func<Interpreter, object?, List<object?>, object?>`) still work via an internal wrapper — converting them is incremental follow-up work
+- All production built-in bodies are converted to `CreateV2`/`MethodV2` form. The legacy delegate type (`Func<Interpreter, object?, List<object?>, object?>`) and the boxed `Call(Interpreter, List<object?>)` survive ONLY as plumbing: compiled standalone DLLs reflectively invoke `Call` (see `RuntimeEmitter.VmHelpers.cs`), and `CreateConstant`/the V2→legacy wrapper route through it. Do not register new built-ins with the legacy constructor.
 - Thread-local pooling in array built-ins to avoid allocations
 
 ### Visitor-Style Traversal Pattern

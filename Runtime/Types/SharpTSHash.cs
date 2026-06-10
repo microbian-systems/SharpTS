@@ -81,16 +81,16 @@ public class SharpTSHash
     {
         return name switch
         {
-            "update" => new BuiltInMethod("update", 1, (interp, recv, args) =>
+            "update" => BuiltInMethod.CreateV2("update", 1, (_, _, args) =>
             {
-                if (args.Count > 0 && args[0] is string data)
-                    return Update(data);
-                return this;
+                if (args.Length > 0 && args[0].IsString)
+                    return RuntimeValue.FromBoxed(Update(args[0].AsStringUnsafe()));
+                return RuntimeValue.FromObject(this);
             }),
-            "digest" => new BuiltInMethod("digest", 0, 1, (interp, recv, args) =>
+            "digest" => BuiltInMethod.CreateV2("digest", 0, 1, (_, _, args) =>
             {
-                var encoding = args.Count > 0 ? args[0]?.ToString() : null;
-                return Digest(encoding);
+                var encoding = args.Length > 0 ? args[0].ToObject()?.ToString() : null;
+                return RuntimeValue.FromBoxed(Digest(encoding));
             }),
             _ => null
         };

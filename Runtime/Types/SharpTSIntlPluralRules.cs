@@ -310,14 +310,14 @@ public class SharpTSIntlPluralRules
     {
         return name switch
         {
-            "select" => new BuiltInMethod("select", 1, (_, _, args) =>
+            "select" => BuiltInMethod.CreateV2("select", 1, (_, _, args) =>
             {
-                double num = ToDouble(args.Count > 0 ? args[0] : null);
-                return SelectCategory(num);
+                double num = ToDouble(args.Length > 0 ? args[0].ToObject() : null);
+                return RuntimeValue.FromBoxed(SelectCategory(num));
             }),
-            "resolvedOptions" => new BuiltInMethod("resolvedOptions", 0, (_, _, _) =>
+            "resolvedOptions" => BuiltInMethod.CreateV2("resolvedOptions", 0, (_, _, _) =>
             {
-                return new SharpTSObject(GetResolvedOptions());
+                return RuntimeValue.FromObject(new SharpTSObject(GetResolvedOptions()));
             }),
             _ => null
         };

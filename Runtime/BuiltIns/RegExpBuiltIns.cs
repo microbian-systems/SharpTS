@@ -27,14 +27,13 @@ public static class RegExpBuiltIns
     // argument reaches the body and throws the spec TypeError (rather than the
     // runtime arity check rejecting it). Visible `length` is 1 (WithSpecLength).
     private static readonly BuiltInMethod _escape =
-        new BuiltInMethod("escape", 0, int.MaxValue, (_, _, args) =>
+        BuiltInMethod.CreateV2("escape", 0, int.MaxValue, static (_, _, args) =>
         {
-            var arg = args.Count > 0 ? args[0] : (object?)SharpTSUndefined.Instance;
             // Step 1: If S is not a String, throw a TypeError exception.
-            if (arg is not string s)
+            if (args.Length == 0 || args[0].Kind != ValueKind.String)
                 throw new ThrowException(new SharpTSTypeError(
                     "RegExp.escape called with a non-string argument"));
-            return EscapeString(s);
+            return RuntimeValue.FromString(EscapeString(args[0].AsStringUnsafe()));
         }).WithSpecLength(1);
 
     /// <summary>
@@ -222,22 +221,22 @@ public static class RegExpBuiltIns
             "lastIndex" => (double)receiver.LastIndex,
 
             // ========== Methods ==========
-            "test" => new BuiltInMethod("test", 1, (_, recv, args) =>
+            "test" => BuiltInMethod.CreateV2("test", 1, static (_, recv, args) =>
             {
-                var regex = (SharpTSRegExp)recv!;
-                var str = args[0]?.ToString() ?? "";
-                return regex.Test(str);
+                var regex = (SharpTSRegExp)recv.ToObject()!;
+                var str = args[0].ToObject()?.ToString() ?? "";
+                return RuntimeValue.FromBoolean(regex.Test(str));
             }),
 
-            "exec" => new BuiltInMethod("exec", 1, (_, recv, args) =>
+            "exec" => BuiltInMethod.CreateV2("exec", 1, static (_, recv, args) =>
             {
-                var regex = (SharpTSRegExp)recv!;
-                var str = args[0]?.ToString() ?? "";
-                return regex.Exec(str);
+                var regex = (SharpTSRegExp)recv.ToObject()!;
+                var str = args[0].ToObject()?.ToString() ?? "";
+                return RuntimeValue.FromObject(regex.Exec(str));
             }),
 
-            "toString" => new BuiltInMethod("toString", 0, (_, recv, _) =>
-                ((SharpTSRegExp)recv!).ToString()),
+            "toString" => BuiltInMethod.CreateV2("toString", 0, static (_, recv, _) =>
+                RuntimeValue.FromString(((SharpTSRegExp)recv.ToObject()!).ToString())),
 
             _ => null
         };
@@ -304,19 +303,19 @@ public static class RegExpBuiltIns
     // arity check only governs argument-count rejection, not the visible
     // .length value used by isConstructor / verifyProperty introspection.
     private static readonly BuiltInMethod _symbolMatch =
-        new BuiltInMethod("[Symbol.match]", 0, int.MaxValue, SymbolMatchImpl).WithSpecLength(1);
+        BuiltInMethod.CreateV2("[Symbol.match]", 0, int.MaxValue, SymbolMatchImpl).WithSpecLength(1);
 
     private static readonly BuiltInMethod _symbolMatchAll =
-        new BuiltInMethod("[Symbol.matchAll]", 0, int.MaxValue, SymbolMatchAllImpl).WithSpecLength(1);
+        BuiltInMethod.CreateV2("[Symbol.matchAll]", 0, int.MaxValue, SymbolMatchAllImpl).WithSpecLength(1);
 
     private static readonly BuiltInMethod _symbolReplace =
-        new BuiltInMethod("[Symbol.replace]", 0, int.MaxValue, SymbolReplaceImpl).WithSpecLength(2);
+        BuiltInMethod.CreateV2("[Symbol.replace]", 0, int.MaxValue, SymbolReplaceImpl).WithSpecLength(2);
 
     private static readonly BuiltInMethod _symbolSearch =
-        new BuiltInMethod("[Symbol.search]", 0, int.MaxValue, SymbolSearchImpl).WithSpecLength(1);
+        BuiltInMethod.CreateV2("[Symbol.search]", 0, int.MaxValue, SymbolSearchImpl).WithSpecLength(1);
 
     private static readonly BuiltInMethod _symbolSplit =
-        new BuiltInMethod("[Symbol.split]", 0, int.MaxValue, SymbolSplitImpl).WithSpecLength(2);
+        BuiltInMethod.CreateV2("[Symbol.split]", 0, int.MaxValue, SymbolSplitImpl).WithSpecLength(2);
 
     /// <summary>
     /// Builds a fresh per-realm RegExp.prototype object. Each Interpreter
@@ -379,30 +378,32 @@ public static class RegExpBuiltIns
     }
 
     private static readonly BuiltInMethod _protoExec =
-        new BuiltInMethod("exec", 1, (_, recv, args) =>
+        BuiltInMethod.CreateV2("exec", 1, static (_, recv, args) =>
         {
-            if (recv is not SharpTSRegExp regex)
+            if (recv.ToObject() is not SharpTSRegExp regex)
                 throw new ThrowException(new SharpTSTypeError(
                     "RegExp.prototype.exec called on non-RegExp"));
-            return regex.Exec(args.Count > 0 ? args[0]?.ToString() ?? "undefined" : "undefined");
+            return RuntimeValue.FromObject(
+                regex.Exec(args.Length > 0 ? args[0].ToObject()?.ToString() ?? "undefined" : "undefined"));
         }).WithSpecLength(1);
 
     private static readonly BuiltInMethod _protoTest =
-        new BuiltInMethod("test", 1, (_, recv, args) =>
+        BuiltInMethod.CreateV2("test", 1, static (_, recv, args) =>
         {
-            if (recv is not SharpTSRegExp regex)
+            if (recv.ToObject() is not SharpTSRegExp regex)
                 throw new ThrowException(new SharpTSTypeError(
                     "RegExp.prototype.test called on non-RegExp"));
-            return regex.Test(args.Count > 0 ? args[0]?.ToString() ?? "undefined" : "undefined");
+            return RuntimeValue.FromBoolean(
+                regex.Test(args.Length > 0 ? args[0].ToObject()?.ToString() ?? "undefined" : "undefined"));
         }).WithSpecLength(1);
 
     private static readonly BuiltInMethod _protoToString =
-        new BuiltInMethod("toString", 0, (_, recv, _) =>
+        BuiltInMethod.CreateV2("toString", 0, static (_, recv, _) =>
         {
-            if (recv is not SharpTSRegExp regex)
+            if (recv.ToObject() is not SharpTSRegExp regex)
                 throw new ThrowException(new SharpTSTypeError(
                     "RegExp.prototype.toString called on non-RegExp"));
-            return regex.ToString();
+            return RuntimeValue.FromString(regex.ToString());
         }).WithSpecLength(0);
 
     // ECMA-262 §22.2.5.3 `get RegExp.prototype.flags` — a GENERIC accessor: it
@@ -411,10 +412,11 @@ public static class RegExpBuiltIns
     // on the prototype so `Object.getOwnPropertyDescriptor(RegExp.prototype,
     // "flags").get.call(plainObj)` works (the flags/coercion-* tests).
     private static readonly BuiltInMethod _protoFlagsGetter =
-        new BuiltInMethod("get flags", 0, (interp, recv, _) =>
+        BuiltInMethod.CreateV2("get flags", 0, static (interp, recvV, _) =>
         {
+            var recv = recvV.ToObject();
             RequireObject(recv, ".flags");
-            return BuildFlagsString(interp!, recv);
+            return RuntimeValue.FromString(BuildFlagsString(interp, recv));
         }).WithSpecLength(0);
 
     /// <summary>
@@ -425,11 +427,12 @@ public static class RegExpBuiltIns
     /// <c>this</c>.
     /// </summary>
     private static BuiltInMethod MakeProtoFlagGetter(string accessor, char flagChar) =>
-        new BuiltInMethod("get " + accessor, 0, (interp, recv, _) =>
+        BuiltInMethod.CreateV2("get " + accessor, 0, (interp, recvV, _) =>
         {
-            if (recv is SharpTSRegExp rx) return rx.Flags.Contains(flagChar);
+            var recv = recvV.ToObject();
+            if (recv is SharpTSRegExp rx) return RuntimeValue.FromBoolean(rx.Flags.Contains(flagChar));
             RequireObject(recv, "." + accessor);
-            if (ReferenceEquals(recv, interp!.GetRegExpPrototype())) return SharpTSUndefined.Instance;
+            if (ReferenceEquals(recv, interp.GetRegExpPrototype())) return RuntimeValue.Undefined;
             throw new ThrowException(new SharpTSTypeError(
                 $"RegExp.prototype.{accessor} getter called on non-RegExp"));
         }).WithSpecLength(0);
@@ -446,11 +449,12 @@ public static class RegExpBuiltIns
     /// source; %RegExp.prototype% returns "(?:)"; otherwise TypeError.
     /// </summary>
     private static readonly BuiltInMethod _protoSourceGetter =
-        new BuiltInMethod("get source", 0, (interp, recv, _) =>
+        BuiltInMethod.CreateV2("get source", 0, static (interp, recvV, _) =>
         {
-            if (recv is SharpTSRegExp rx) return rx.Source;
+            var recv = recvV.ToObject();
+            if (recv is SharpTSRegExp rx) return RuntimeValue.FromString(rx.Source);
             RequireObject(recv, ".source");
-            if (ReferenceEquals(recv, interp!.GetRegExpPrototype())) return "(?:)";
+            if (ReferenceEquals(recv, interp.GetRegExpPrototype())) return RuntimeValue.FromString("(?:)");
             throw new ThrowException(new SharpTSTypeError(
                 "RegExp.prototype.source getter called on non-RegExp"));
         }).WithSpecLength(0);
@@ -686,19 +690,20 @@ public static class RegExpBuiltIns
     /// <summary>
     /// ECMA-262 §22.2.5.7 RegExp.prototype [@@match].
     /// </summary>
-    private static object? SymbolMatchImpl(Interpreter interp, object? recv, List<object?> args)
+    private static RuntimeValue SymbolMatchImpl(Interpreter interp, RuntimeValue recvV, ReadOnlySpan<RuntimeValue> args)
     {
+        var recv = recvV.ToObject();
         RequireObject(recv, "[Symbol.match]");
 
         // 3. Let S be ? ToString(string).
-        var s = ToStr(interp, args.Count > 0 ? args[0] : null);
+        var s = ToStr(interp, args.Length > 0 ? args[0].ToObject() : null);
 
         // 4. Let flags be ? ToString(? Get(rx, "flags")).
         var flags = ToStr(interp, interp.GetProperty(recv, "flags"));
 
         // 5. If flags does not contain "g", return ? RegExpExec(rx, S).
         if (!flags.Contains('g'))
-            return RegExpExec(interp, recv, s);
+            return RuntimeValue.FromBoxed(RegExpExec(interp, recv, s));
 
         // 6.a fullUnicode = flags contains "u"
         bool fullUnicode = flags.Contains('u');
@@ -713,8 +718,8 @@ public static class RegExpBuiltIns
             var result = RegExpExec(interp, recv, s);
             if (result is null)
             {
-                if (results.Count == 0) return null;
-                return new SharpTSArray(results);
+                if (results.Count == 0) return RuntimeValue.Null;
+                return RuntimeValue.FromObject(new SharpTSArray(results));
             }
 
             // matchStr = ToString(Get(result, "0"))
@@ -734,10 +739,11 @@ public static class RegExpBuiltIns
     /// <summary>
     /// ECMA-262 §22.2.5.11 RegExp.prototype [@@search].
     /// </summary>
-    private static object? SymbolSearchImpl(Interpreter interp, object? recv, List<object?> args)
+    private static RuntimeValue SymbolSearchImpl(Interpreter interp, RuntimeValue recvV, ReadOnlySpan<RuntimeValue> args)
     {
+        var recv = recvV.ToObject();
         RequireObject(recv, "[Symbol.search]");
-        var s = ToStr(interp, args.Count > 0 ? args[0] : null);
+        var s = ToStr(interp, args.Length > 0 ? args[0].ToObject() : null);
 
         // Save lastIndex, set to 0, run RegExpExec, restore lastIndex.
         var previousLastIndex = interp.GetProperty(recv, "lastIndex");
@@ -750,9 +756,9 @@ public static class RegExpBuiltIns
         if (!SameValue(currentLastIndex, previousLastIndex))
             interp.SetProperty(recv, "lastIndex", previousLastIndex);
 
-        if (result is null) return -1.0;
+        if (result is null) return RuntimeValue.FromNumber(-1.0);
         var index = interp.GetProperty(result, "index");
-        return index ?? 0.0;
+        return RuntimeValue.FromBoxed(index ?? 0.0);
     }
 
     /// <summary>
@@ -761,11 +767,12 @@ public static class RegExpBuiltIns
     /// Reads flags via Get; routes through RegExpExec so user-installed
     /// `exec` overrides participate.
     /// </summary>
-    private static object? SymbolReplaceImpl(Interpreter interp, object? recv, List<object?> args)
+    private static RuntimeValue SymbolReplaceImpl(Interpreter interp, RuntimeValue recvV, ReadOnlySpan<RuntimeValue> args)
     {
+        var recv = recvV.ToObject();
         RequireObject(recv, "[Symbol.replace]");
-        var s = ToStr(interp, args.Count > 0 ? args[0] : null);
-        var replaceValue = args.Count > 1 ? args[1] : null;
+        var s = ToStr(interp, args.Length > 0 ? args[0].ToObject() : null);
+        var replaceValue = args.Length > 1 ? args[1].ToObject() : null;
 
         // Read flags via Get so user getters fire.
         var flags = ToStr(interp, interp.GetProperty(recv, "flags"));
@@ -794,7 +801,7 @@ public static class RegExpBuiltIns
             }
         }
 
-        if (matches.Count == 0) return s;
+        if (matches.Count == 0) return RuntimeValue.FromString(s);
 
         // Build the result string with replacements.
         bool isCallable = replaceValue is ISharpTSCallable;
@@ -839,7 +846,7 @@ public static class RegExpBuiltIns
         }
         if (nextSourcePosition < s.Length)
             sb.Append(s, nextSourcePosition, s.Length - nextSourcePosition);
-        return sb.ToString();
+        return RuntimeValue.FromString(sb.ToString());
     }
 
     /// <summary>
@@ -848,11 +855,12 @@ public static class RegExpBuiltIns
     /// matches via that splitter (so user-installed Symbol.species or
     /// constructor.exec participates).
     /// </summary>
-    private static object? SymbolSplitImpl(Interpreter interp, object? recv, List<object?> args)
+    private static RuntimeValue SymbolSplitImpl(Interpreter interp, RuntimeValue recvV, ReadOnlySpan<RuntimeValue> args)
     {
+        var recv = recvV.ToObject();
         RequireObject(recv, "[Symbol.split]");
-        var s = ToStr(interp, args.Count > 0 ? args[0] : null);
-        var limitArg = args.Count > 1 ? args[1] : null;
+        var s = ToStr(interp, args.Length > 0 ? args[0].ToObject() : null);
+        var limitArg = args.Length > 1 ? args[1].ToObject() : null;
 
         // §22.2.5.13 step 4: C = SpeciesConstructor(rx, %RegExp%).
         var speciesCtor = SpeciesConstructor(interp, recv);
@@ -893,7 +901,7 @@ public static class RegExpBuiltIns
             double d => double.IsNaN(d) ? 0 : (long)((uint)d),
             _ => 0,
         };
-        if (limit == 0) return new SharpTSArray(new List<object?>());
+        if (limit == 0) return RuntimeValue.FromObject(new SharpTSArray(new List<object?>()));
 
         var arr = new List<object?>();
         if (s.Length == 0)
@@ -902,7 +910,7 @@ public static class RegExpBuiltIns
             interp.SetProperty(splitter, "lastIndex", 0.0);
             var result = RegExpExec(interp, splitter, s);
             if (result is null) arr.Add("");
-            return new SharpTSArray(arr);
+            return RuntimeValue.FromObject(new SharpTSArray(arr));
         }
 
         int p = 0;     // position in S where the next non-matched segment starts
@@ -933,7 +941,7 @@ public static class RegExpBuiltIns
 
             // Add matched segment to output.
             arr.Add(s.Substring(p, q - p));
-            if (arr.Count >= limit) return new SharpTSArray(arr);
+            if (arr.Count >= limit) return RuntimeValue.FromObject(new SharpTSArray(arr));
 
             // Add capture groups.
             if (z is SharpTSArray zArr)
@@ -941,7 +949,7 @@ public static class RegExpBuiltIns
                 for (int i = 1; i < zArr.Length; i++)
                 {
                     arr.Add(zArr[i]);
-                    if (arr.Count >= limit) return new SharpTSArray(arr);
+                    if (arr.Count >= limit) return RuntimeValue.FromObject(new SharpTSArray(arr));
                 }
             }
 
@@ -950,7 +958,7 @@ public static class RegExpBuiltIns
         }
 
         arr.Add(s.Substring(p));
-        return new SharpTSArray(arr);
+        return RuntimeValue.FromObject(new SharpTSArray(arr));
     }
 
     /// <summary>
@@ -1031,10 +1039,11 @@ public static class RegExpBuiltIns
     /// (callers' tests cover that separately); reads flags via Get for
     /// user-getter propagation.
     /// </summary>
-    private static object? SymbolMatchAllImpl(Interpreter interp, object? recv, List<object?> args)
+    private static RuntimeValue SymbolMatchAllImpl(Interpreter interp, RuntimeValue recvV, ReadOnlySpan<RuntimeValue> args)
     {
+        var recv = recvV.ToObject();
         RequireObject(recv, "[Symbol.matchAll]");
-        var s = ToStr(interp, args.Count > 0 ? args[0] : null);
+        var s = ToStr(interp, args.Length > 0 ? args[0].ToObject() : null);
 
         var flags = ToStr(interp, interp.GetProperty(recv, "flags"));
         bool fullUnicode = flags.Contains('u');
@@ -1092,7 +1101,7 @@ public static class RegExpBuiltIns
                 interp.SetProperty(recv, "lastIndex", (double)matchEnd);
             }
         }
-        return new SharpTSArray(results);
+        return RuntimeValue.FromObject(new SharpTSArray(results));
     }
 
     /// <summary>
