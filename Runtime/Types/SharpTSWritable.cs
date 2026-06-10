@@ -66,12 +66,12 @@ public class SharpTSWritable : SharpTSEventEmitter
         return name switch
         {
             // Writable-specific methods
-            "write" => new BuiltInMethod("write", 1, 3, Write),
-            "end" => new BuiltInMethod("end", 0, 3, End),
-            "cork" => new BuiltInMethod("cork", 0, Cork),
-            "uncork" => new BuiltInMethod("uncork", 0, Uncork),
-            "destroy" => new BuiltInMethod("destroy", 0, 1, Destroy),
-            "setDefaultEncoding" => new BuiltInMethod("setDefaultEncoding", 1, SetDefaultEncoding),
+            "write" => BuiltInMethod.CreateV2("write", 1, 3, Write),
+            "end" => BuiltInMethod.CreateV2("end", 0, 3, End),
+            "cork" => BuiltInMethod.CreateV2("cork", 0, Cork),
+            "uncork" => BuiltInMethod.CreateV2("uncork", 0, Uncork),
+            "destroy" => BuiltInMethod.CreateV2("destroy", 0, 1, Destroy),
+            "setDefaultEncoding" => BuiltInMethod.CreateV2("setDefaultEncoding", 1, SetDefaultEncoding),
 
             // Properties
             "writable" => _writable && !_ended && !_destroyed,
@@ -91,30 +91,30 @@ public class SharpTSWritable : SharpTSEventEmitter
     /// <summary>
     /// Writes data to the stream.
     /// </summary>
-    private object? Write(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Write(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_destroyed || _ended)
         {
             EmitError(interpreter, "write after end");
-            return false;
+            return RuntimeValue.False;
         }
 
-        var chunk = args.Count > 0 ? args[0] : null;
+        var chunk = args.Length > 0 ? args[0].ToObject() : null;
         string? encoding = null;
         ISharpTSCallable? callback = null;
 
         // Parse arguments: (chunk, encoding?, callback?)
-        if (args.Count > 1)
+        if (args.Length > 1)
         {
-            if (args[1] is string enc)
+            if (args[1].IsString)
             {
-                encoding = enc;
-                if (args.Count > 2 && args[2] is ISharpTSCallable cb)
+                encoding = args[1].AsStringUnsafe();
+                if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb)
                 {
                     callback = cb;
                 }
             }
-            else if (args[1] is ISharpTSCallable cb)
+            else if (args[1].ToObject() is ISharpTSCallable cb)
             {
                 callback = cb;
             }
@@ -123,10 +123,10 @@ public class SharpTSWritable : SharpTSEventEmitter
         if (_corked)
         {
             _corkBuffer.Add(new WriteChunk(chunk, encoding, callback));
-            return false;
+            return RuntimeValue.False;
         }
 
-        return DoWrite(interpreter, chunk, encoding, callback);
+        return RuntimeValue.FromBoxed(DoWrite(interpreter, chunk, encoding, callback));
     }
 
     private record WriteChunk(object? Chunk, string? Encoding, ISharpTSCallable? Callback);
@@ -210,11 +210,11 @@ public class SharpTSWritable : SharpTSEventEmitter
     /// <summary>
     /// Ends the stream, optionally writing final data.
     /// </summary>
-    private object? End(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue End(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_ended)
         {
-            return this;
+            return RuntimeValue.FromObject(this);
         }
 
         object? chunk = null;
@@ -222,26 +222,26 @@ public class SharpTSWritable : SharpTSEventEmitter
         ISharpTSCallable? callback = null;
 
         // Parse arguments: (chunk?, encoding?, callback?)
-        if (args.Count > 0)
+        if (args.Length > 0)
         {
-            if (args[0] is ISharpTSCallable cb0)
+            if (args[0].ToObject() is ISharpTSCallable cb0)
             {
                 callback = cb0;
             }
             else
             {
-                chunk = args[0];
-                if (args.Count > 1)
+                chunk = args[0].ToObject();
+                if (args.Length > 1)
                 {
-                    if (args[1] is string enc)
+                    if (args[1].IsString)
                     {
-                        encoding = enc;
-                        if (args.Count > 2 && args[2] is ISharpTSCallable cb)
+                        encoding = args[1].AsStringUnsafe();
+                        if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb)
                         {
                             callback = cb;
                         }
                     }
-                    else if (args[1] is ISharpTSCallable cb)
+                    else if (args[1].ToObject() is ISharpTSCallable cb)
                     {
                         callback = cb;
                     }
@@ -261,7 +261,7 @@ public class SharpTSWritable : SharpTSEventEmitter
         // Flush cork buffer
         if (_corked)
         {
-            Uncork(interpreter, null, []);
+            Uncork(interpreter, RuntimeValue.Null, []);
         }
 
         // Call final callback
@@ -282,7 +282,7 @@ public class SharpTSWritable : SharpTSEventEmitter
         callback?.Call(interpreter, []);
         EmitFinish(interpreter);
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     /// <summary>
@@ -290,26 +290,29 @@ public class SharpTSWritable : SharpTSEventEmitter
     /// </summary>
     internal void EndInternal(Interp interpreter, object? chunk, string? encoding)
     {
-        End(interpreter, this, chunk != null ? [chunk, encoding] : []);
+        End(interpreter, RuntimeValue.FromObject(this),
+            chunk != null
+                ? [RuntimeValue.FromBoxed(chunk), RuntimeValue.FromBoxed(encoding)]
+                : []);
     }
 
     /// <summary>
     /// Corks the stream, buffering all writes.
     /// </summary>
-    private object? Cork(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Cork(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _corked = true;
-        return null;
+        return RuntimeValue.Null;
     }
 
     /// <summary>
     /// Uncorks the stream, flushing the buffer.
     /// </summary>
-    private object? Uncork(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Uncork(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (!_corked)
         {
-            return null;
+            return RuntimeValue.Null;
         }
 
         _corked = false;
@@ -321,17 +324,17 @@ public class SharpTSWritable : SharpTSEventEmitter
         }
         _corkBuffer.Clear();
 
-        return null;
+        return RuntimeValue.Null;
     }
 
     /// <summary>
     /// Destroys the stream.
     /// </summary>
-    private object? Destroy(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Destroy(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_destroyed)
         {
-            return this;
+            return RuntimeValue.FromObject(this);
         }
 
         _destroyed = true;
@@ -342,7 +345,7 @@ public class SharpTSWritable : SharpTSEventEmitter
         {
             try
             {
-                var err = args.Count > 0 ? args[0] : null;
+                var err = args.Length > 0 ? args[0].ToObject() : null;
                 _destroyCallback.Call(interpreter, [err, new DestroyCallbackWrapper(interpreter, this)]);
             }
             catch (Exception ex)
@@ -352,20 +355,20 @@ public class SharpTSWritable : SharpTSEventEmitter
         }
         else
         {
-            if (args.Count > 0 && args[0] != null)
+            if (args.Length > 0 && args[0].ToObject() is { } error)
             {
-                EmitError(interpreter, args[0]);
+                EmitError(interpreter, error);
             }
             EmitClose(interpreter);
         }
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? SetDefaultEncoding(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue SetDefaultEncoding(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // Just accept it for compatibility
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     private void EmitError(Interp interpreter, object? error)
@@ -379,7 +382,7 @@ public class SharpTSWritable : SharpTSEventEmitter
         EmitEvent(interpreter, "finish", []);
         if (_autoDestroy)
         {
-            Destroy(interpreter, this, []);
+            Destroy(interpreter, RuntimeValue.FromObject(this), []);
         }
     }
 

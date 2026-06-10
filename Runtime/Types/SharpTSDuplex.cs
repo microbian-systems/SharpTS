@@ -62,10 +62,10 @@ public class SharpTSDuplex : SharpTSReadable
         return name switch
         {
             // Writable-side methods
-            "write" => new BuiltInMethod("write", 1, 3, Write),
-            "end" => new BuiltInMethod("end", 0, 3, End),
-            "cork" => new BuiltInMethod("cork", 0, Cork),
-            "uncork" => new BuiltInMethod("uncork", 0, Uncork),
+            "write" => BuiltInMethod.CreateV2("write", 1, 3, Write),
+            "end" => BuiltInMethod.CreateV2("end", 0, 3, End),
+            "cork" => BuiltInMethod.CreateV2("cork", 0, Cork),
+            "uncork" => BuiltInMethod.CreateV2("uncork", 0, Uncork),
 
             // Writable-side properties
             "writable" => _writable && !_writableEnded && !_writableDestroyed,
@@ -77,36 +77,36 @@ public class SharpTSDuplex : SharpTSReadable
             "writableObjectMode" => _writableObjectMode,
 
             // Override destroy to handle both sides
-            "destroy" => new BuiltInMethod("destroy", 0, 1, DestroyDuplex),
+            "destroy" => BuiltInMethod.CreateV2("destroy", 0, 1, DestroyDuplex),
 
             // Inherit Readable methods and properties
             _ => base.GetMember(name)
         };
     }
 
-    private object? Write(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Write(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_writableDestroyed || _writableEnded)
         {
             EmitEvent(interpreter, "error", ["write after end"]);
-            return false;
+            return RuntimeValue.False;
         }
 
-        var chunk = args.Count > 0 ? args[0] : null;
+        var chunk = args.Length > 0 ? args[0].ToObject() : null;
         string? encoding = null;
         ISharpTSCallable? callback = null;
 
-        if (args.Count > 1)
+        if (args.Length > 1)
         {
-            if (args[1] is string enc)
+            if (args[1].IsString)
             {
-                encoding = enc;
-                if (args.Count > 2 && args[2] is ISharpTSCallable cb)
+                encoding = args[1].AsStringUnsafe();
+                if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb)
                 {
                     callback = cb;
                 }
             }
-            else if (args[1] is ISharpTSCallable cb)
+            else if (args[1].ToObject() is ISharpTSCallable cb)
             {
                 callback = cb;
             }
@@ -115,10 +115,10 @@ public class SharpTSDuplex : SharpTSReadable
         if (_corked)
         {
             _corkBuffer.Add(new WriteChunk(chunk, encoding, callback));
-            return false;
+            return RuntimeValue.False;
         }
 
-        return DoWrite(interpreter, chunk, encoding, callback);
+        return RuntimeValue.FromBoxed(DoWrite(interpreter, chunk, encoding, callback));
     }
 
     private record WriteChunk(object? Chunk, string? Encoding, ISharpTSCallable? Callback);
@@ -171,37 +171,37 @@ public class SharpTSDuplex : SharpTSReadable
         }
     }
 
-    private object? End(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue End(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (_writableEnded)
         {
-            return this;
+            return RuntimeValue.FromObject(this);
         }
 
         object? chunk = null;
         string? encoding = null;
         ISharpTSCallable? callback = null;
 
-        if (args.Count > 0)
+        if (args.Length > 0)
         {
-            if (args[0] is ISharpTSCallable cb0)
+            if (args[0].ToObject() is ISharpTSCallable cb0)
             {
                 callback = cb0;
             }
             else
             {
-                chunk = args[0];
-                if (args.Count > 1)
+                chunk = args[0].ToObject();
+                if (args.Length > 1)
                 {
-                    if (args[1] is string enc)
+                    if (args[1].IsString)
                     {
-                        encoding = enc;
-                        if (args.Count > 2 && args[2] is ISharpTSCallable cb)
+                        encoding = args[1].AsStringUnsafe();
+                        if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb)
                         {
                             callback = cb;
                         }
                     }
-                    else if (args[1] is ISharpTSCallable cb)
+                    else if (args[1].ToObject() is ISharpTSCallable cb)
                     {
                         callback = cb;
                     }
@@ -219,7 +219,7 @@ public class SharpTSDuplex : SharpTSReadable
 
         if (_corked)
         {
-            Uncork(interpreter, null, []);
+            Uncork(interpreter, RuntimeValue.Null, []);
         }
 
         if (_finalCallback != null)
@@ -239,20 +239,20 @@ public class SharpTSDuplex : SharpTSReadable
         callback?.Call(interpreter, []);
         EmitEvent(interpreter, "finish", []);
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
-    private object? Cork(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Cork(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _corked = true;
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? Uncork(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue Uncork(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (!_corked)
         {
-            return null;
+            return RuntimeValue.Null;
         }
 
         _corked = false;
@@ -263,10 +263,10 @@ public class SharpTSDuplex : SharpTSReadable
         }
         _corkBuffer.Clear();
 
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private object? DestroyDuplex(Interp interpreter, object? receiver, List<object?> args)
+    private RuntimeValue DestroyDuplex(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _writableDestroyed = true;
         _writable = false;
@@ -274,9 +274,9 @@ public class SharpTSDuplex : SharpTSReadable
 
         // Destroy the readable side too via the base Destroy method
         var baseDestroy = base.GetMember("destroy") as BuiltInMethod;
-        baseDestroy?.Bind(this).Call(interpreter, args);
+        baseDestroy?.Bind(this).CallV2(interpreter, args);
 
-        return this;
+        return RuntimeValue.FromObject(this);
     }
 
     public override string ToString() => "Duplex {}";
