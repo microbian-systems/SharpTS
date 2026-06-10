@@ -1541,8 +1541,9 @@ public static class BuiltInModuleTypes
         return new Dictionary<string, TypeInfo>
         {
             ["createServer"] = new TypeInfo.Function([anyType, anyType], serverType, RequiredParams: 0),
-            ["createConnection"] = new TypeInfo.Function([anyType, anyType], socketType, RequiredParams: 1),
-            ["connect"] = new TypeInfo.Function([anyType, anyType], socketType, RequiredParams: 1),
+            // connect(options|port|path[, host][, connectListener]) — three positional args
+            ["createConnection"] = new TypeInfo.Function([anyType, anyType, anyType], socketType, RequiredParams: 1),
+            ["connect"] = new TypeInfo.Function([anyType, anyType, anyType], socketType, RequiredParams: 1),
             ["isIP"] = new TypeInfo.Function([stringType], numberType),
             ["isIPv4"] = new TypeInfo.Function([stringType], booleanType),
             ["isIPv6"] = new TypeInfo.Function([stringType], booleanType),

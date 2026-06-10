@@ -76,29 +76,22 @@ public sealed class NetModuleEmitter : IBuiltInModuleEmitter
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Emit options/port argument
-        if (arguments.Count > 0)
+        // Node signature: connect(options|port|path[, host][, connectListener]).
+        // Emit up to three positional args; missing ones are null.
+        for (int i = 0; i < 3; i++)
         {
-            emitter.EmitExpression(arguments[0]);
-            emitter.EmitBoxIfNeeded(arguments[0]);
-        }
-        else
-        {
-            il.Emit(OpCodes.Ldnull);
-        }
-
-        // Emit callback argument (optional)
-        if (arguments.Count > 1)
-        {
-            emitter.EmitExpression(arguments[1]);
-            emitter.EmitBoxIfNeeded(arguments[1]);
-        }
-        else
-        {
-            il.Emit(OpCodes.Ldnull);
+            if (arguments.Count > i)
+            {
+                emitter.EmitExpression(arguments[i]);
+                emitter.EmitBoxIfNeeded(arguments[i]);
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldnull);
+            }
         }
 
-        // Call $Runtime.NetCreateConnection(options, callback)
+        // Call $Runtime.NetCreateConnection(options, hostOrCallback, callback)
         il.Emit(OpCodes.Call, ctx.Runtime!.NetCreateConnection);
         emitter.SetStackUnknown();
         return true;

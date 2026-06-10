@@ -47,8 +47,10 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits: public static object NetCreateConnection(object? options, object? callback)
+    /// Emits: public static object NetCreateConnection(object? options, object? hostOrCallback, object? callback)
     /// Creates a $NetSocket directly and calls Connect (no reflection needed).
+    /// Node signature: connect(options|port|path[, host][, connectListener]) —
+    /// the socket's Connect does the positional-arg parsing.
     /// </summary>
     private void EmitNetCreateConnection(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -56,7 +58,7 @@ public partial class RuntimeEmitter
             "NetCreateConnection",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Object,
-            [_types.Object, _types.Object]
+            [_types.Object, _types.Object, _types.Object]
         );
         runtime.NetCreateConnection = method;
         runtime.RegisterBuiltInModuleMethod("net", "createConnection", method);
@@ -69,15 +71,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, runtime.NetSocketCtor);
         il.Emit(OpCodes.Stloc, socketLocal);
 
-        // socket.Connect(options, callback, null)
+        // socket.Connect(options, hostOrCallback, callback)
         var noOptions = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, noOptions);
 
         il.Emit(OpCodes.Ldloc, socketLocal);
-        il.Emit(OpCodes.Ldarg_0); // options
-        il.Emit(OpCodes.Ldarg_1); // callback
-        il.Emit(OpCodes.Ldnull);  // third arg
+        il.Emit(OpCodes.Ldarg_0); // options/port/path
+        il.Emit(OpCodes.Ldarg_1); // host or callback
+        il.Emit(OpCodes.Ldarg_2); // callback
         il.Emit(OpCodes.Callvirt, runtime.NetSocketConnect);
         il.Emit(OpCodes.Pop);
 
