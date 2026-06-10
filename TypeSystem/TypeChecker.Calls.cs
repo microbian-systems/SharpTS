@@ -851,6 +851,24 @@ public partial class TypeChecker
     /// <summary>
     /// Resolve an overloaded function call by finding the best matching signature.
     /// </summary>
+    /// <summary>
+    /// True when every argument SUBTYPE-matches its parameter — the stricter first-pass relation
+    /// of tsc's two-pass overload resolution: identical to assignability except that an
+    /// <c>any</c> argument only subtype-matches an <c>any</c>/<c>unknown</c> parameter.
+    /// </summary>
+    private static bool ArgsSubtypeMatch(TypeInfo.Function signature, List<TypeInfo> argTypes)
+    {
+        for (int i = 0; i < argTypes.Count && i < signature.ParamTypes.Count; i++)
+        {
+            if (argTypes[i] is TypeInfo.Any &&
+                signature.ParamTypes[i] is not (TypeInfo.Any or TypeInfo.Unknown))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private TypeInfo ResolveOverloadedCall(Expr.Call call, TypeInfo.OverloadedFunction overloadedFunc)
     {
         // Collect argument types
@@ -882,6 +900,16 @@ public partial class TypeChecker
         {
             string argTypesStr = string.Join(", ", argTypes);
             throw new TypeCheckException($"No overload matches call with arguments ({argTypesStr}).", tsCode: "TS2769");
+        }
+
+        // tsc resolves overloads in two passes: SUBTYPE matching first, then assignability. The
+        // practical difference here: an `any` argument is assignable to every parameter but is a
+        // subtype only of any/unknown — so `foo(a)` with `a: any` picks a later `(x: any)`
+        // overload over an earlier `(x: number)` one.
+        var subtypeMatches = matchingSignatures.Where(sig => ArgsSubtypeMatch(sig, argTypes)).ToList();
+        if (subtypeMatches.Count > 0)
+        {
+            matchingSignatures = subtypeMatches;
         }
 
         // If multiple signatures match, select the most specific one
@@ -963,6 +991,16 @@ public partial class TypeChecker
         {
             string argTypesStr = string.Join(", ", argTypes);
             throw new TypeCheckException($"No overload matches call with arguments ({argTypesStr}).", tsCode: "TS2769");
+        }
+
+        // tsc resolves overloads in two passes: SUBTYPE matching first, then assignability. The
+        // practical difference here: an `any` argument is assignable to every parameter but is a
+        // subtype only of any/unknown — so `foo(a)` with `a: any` picks a later `(x: any)`
+        // overload over an earlier `(x: number)` one.
+        var subtypeMatches = matchingSignatures.Where(sig => ArgsSubtypeMatch(sig, argTypes)).ToList();
+        if (subtypeMatches.Count > 0)
+        {
+            matchingSignatures = subtypeMatches;
         }
 
         // If multiple signatures match, select the most specific one

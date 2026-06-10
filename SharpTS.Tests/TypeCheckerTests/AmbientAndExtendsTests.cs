@@ -101,6 +101,24 @@ public class AmbientAndExtendsTests
     }
 
     [Fact]
+    public void OverloadResolution_AnyArgument_PicksAnyOverload()
+    {
+        // tsc's two-pass overload resolution: an `any` argument is assignable to every parameter
+        // but is a SUBTYPE only of any/unknown, so the (x: any) overload wins over (x: number).
+        var source = """
+            declare function f(x: number): number;
+            declare function f(x: any): any;
+            declare function g(x: string): string;
+            declare function g(x: any): any;
+            function use(a: any) {
+                var r = f(a);
+                var r = g(a);
+            }
+            """;
+        TestHarness.RunInterpreted(source); // both calls yield any — redeclarations agree
+    }
+
+    [Fact]
     public void InterfaceExtendsClass_NonObjectBase_StillRejected()
     {
         var source = """
