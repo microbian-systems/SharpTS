@@ -65,7 +65,7 @@ public sealed class SharpTSTransformConstructor : ISharpTSCallable
             if (options.GetProperty("encoding") is string encoding)
             {
                 var setEncoding = stream.GetMember("setEncoding") as Runtime.BuiltIns.BuiltInMethod;
-                setEncoding?.Bind(stream).Call(interpreter, [encoding]);
+                setEncoding?.Bind(stream).CallBoxed(interpreter, [encoding]);
             }
 
             // objectMode option - sets both readable and writable sides
@@ -77,6 +77,9 @@ public sealed class SharpTSTransformConstructor : ISharpTSCallable
 
         return stream;
     }
+
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
     /// Gets a property from the Transform constructor (static properties/methods).

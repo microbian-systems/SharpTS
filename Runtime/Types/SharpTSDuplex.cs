@@ -135,7 +135,7 @@ public class SharpTSDuplex : SharpTSReadable
             var writeArgs = new List<object?> { chunk, encoding ?? "utf8", cbWrapper };
             try
             {
-                _writeCallback.Call(interpreter, writeArgs);
+                _writeCallback.CallBoxed(interpreter, writeArgs);
             }
             catch (Exception ex)
             {
@@ -148,7 +148,7 @@ public class SharpTSDuplex : SharpTSReadable
             // Sync completion
             _pendingWrites--;
             _writableLength -= chunkSize;
-            callback?.Call(interpreter, []);
+            callback?.CallBoxed(interpreter, []);
             CheckDrain(interpreter);
         }
 
@@ -227,7 +227,7 @@ public class SharpTSDuplex : SharpTSReadable
             var finalCbWrapper = new WriteCallbackWrapper(null, interpreter, this, 0);
             try
             {
-                _finalCallback.Call(interpreter, [finalCbWrapper]);
+                _finalCallback.CallBoxed(interpreter, [finalCbWrapper]);
             }
             catch (Exception ex)
             {
@@ -236,7 +236,7 @@ public class SharpTSDuplex : SharpTSReadable
         }
 
         _writableFinished = true;
-        callback?.Call(interpreter, []);
+        callback?.CallBoxed(interpreter, []);
         EmitEvent(interpreter, "finish", []);
 
         return this;
@@ -274,7 +274,7 @@ public class SharpTSDuplex : SharpTSReadable
 
         // Destroy the readable side too via the base Destroy method
         var baseDestroy = base.GetMember("destroy") as BuiltInMethod;
-        baseDestroy?.Bind(this).Call(interpreter, args);
+        baseDestroy?.Bind(this).CallBoxed(interpreter, args);
 
         return this;
     }
@@ -302,9 +302,12 @@ public class SharpTSDuplex : SharpTSReadable
         {
             _stream._pendingWrites--;
             _stream._writableLength -= _chunkSize;
-            _callback?.Call(_interpreter, []);
+            _callback?.CallBoxed(_interpreter, []);
             _stream.CheckDrain(_interpreter);
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }

@@ -52,7 +52,7 @@ public static class IteratorBuiltIns
         {
             callArgs[0] = item;
             callArgs[1] = index++;
-            yield return callback.Call(interp, callArgs);
+            yield return callback.CallBoxed(interp, callArgs);
         }
     }
 
@@ -71,7 +71,7 @@ public static class IteratorBuiltIns
         {
             callArgs[0] = item;
             callArgs[1] = index++;
-            if (IsTruthy(predicate.Call(interp, callArgs)))
+            if (IsTruthy(predicate.CallBoxed(interp, callArgs)))
                 yield return item;
         }
     }
@@ -128,7 +128,7 @@ public static class IteratorBuiltIns
         {
             callArgs[0] = item;
             callArgs[1] = index++;
-            var result = callback.Call(interp, callArgs);
+            var result = callback.CallBoxed(interp, callArgs);
             foreach (var inner in ToIterable(result))
                 yield return inner;
         }
@@ -154,7 +154,7 @@ public static class IteratorBuiltIns
             }
             callArgs[0] = accumulator;
             callArgs[1] = item;
-            accumulator = callback.Call(interp, callArgs);
+            accumulator = callback.CallBoxed(interp, callArgs);
         }
 
         if (first)
@@ -182,7 +182,7 @@ public static class IteratorBuiltIns
         {
             callArgs[0] = item;
             callArgs[1] = index++;
-            callback.Call(interp, callArgs);
+            callback.CallBoxed(interp, callArgs);
         }
         return null;
     }
@@ -198,7 +198,7 @@ public static class IteratorBuiltIns
         {
             callArgs[0] = item;
             callArgs[1] = index++;
-            if (IsTruthy(predicate.Call(interp, callArgs)))
+            if (IsTruthy(predicate.CallBoxed(interp, callArgs)))
                 return true;
         }
         return false;
@@ -215,7 +215,7 @@ public static class IteratorBuiltIns
         {
             callArgs[0] = item;
             callArgs[1] = index++;
-            if (!IsTruthy(predicate.Call(interp, callArgs)))
+            if (!IsTruthy(predicate.CallBoxed(interp, callArgs)))
                 return false;
         }
         return true;
@@ -232,7 +232,7 @@ public static class IteratorBuiltIns
         {
             callArgs[0] = item;
             callArgs[1] = index++;
-            if (IsTruthy(predicate.Call(interp, callArgs)))
+            if (IsTruthy(predicate.CallBoxed(interp, callArgs)))
                 return item;
         }
         return null;

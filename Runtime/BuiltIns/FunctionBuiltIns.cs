@@ -160,7 +160,7 @@ public static class FunctionBuiltIns
         // Arrow functions ignore thisArg
         if (callable is SharpTSArrowFunction arrow && !arrow.HasOwnThis)
         {
-            return callable.Call(interp, args);
+            return callable.CallBoxed(interp, args);
         }
 
         // For regular functions, we need to bind 'this'
@@ -168,31 +168,31 @@ public static class FunctionBuiltIns
         {
             // Create a temporary bound function
             var bound = new BoundFunction(fn, thisArg, new List<object?>());
-            return bound.Call(interp, args);
+            return bound.CallBoxed(interp, args);
         }
 
         if (callable is SharpTSArrowFunction arrowWithThis)
         {
             // Function expression with its own 'this'
             var bound = arrowWithThis.Bind(thisArg!);
-            return bound.Call(interp, args);
+            return bound.CallBoxed(interp, args);
         }
 
         // Array.prototype methods rebind their receiver via BindTo so that
         // Array.prototype.push.apply(target, items) pushes onto `target`.
         if (callable is SharpTSArrayUnboundMethod unbound)
         {
-            return unbound.BindTo(thisArg).Call(interp, args);
+            return unbound.BindTo(thisArg).CallBoxed(interp, args);
         }
         // Function.prototype.toString rebinds so that funcToString.call(fn) works.
         if (callable is SharpTSFunctionProtoToString fnToStr)
         {
-            return fnToStr.BindTo(thisArg).Call(interp, args);
+            return fnToStr.BindTo(thisArg).CallBoxed(interp, args);
         }
         // Object.prototype methods rebind to support hasOwnProperty.call(obj, key).
         if (callable is SharpTSObjectUnboundMethod objUnbound)
         {
-            return objUnbound.BindTo(thisArg).Call(interp, args);
+            return objUnbound.BindTo(thisArg).CallBoxed(interp, args);
         }
 
         // BuiltInMethod (e.g. Array.prototype.every exposed via
@@ -202,7 +202,7 @@ public static class FunctionBuiltIns
         // (typically null), and the implementation sees a null receiver.
         if (callable is BuiltInMethod builtIn)
         {
-            return builtIn.Bind(thisArg).Call(interp, args);
+            return builtIn.Bind(thisArg).CallBoxed(interp, args);
         }
 
         // Array.prototype adapter — same rebind story. Without this,
@@ -210,7 +210,7 @@ public static class FunctionBuiltIns
         // no receiver, silently skipping the spec-mandated ToObject / TypeError.
         if (callable is Types.ArrayPrototypeMethodWrapper arrayProto)
         {
-            return arrayProto.Bind(thisArg).Call(interp, args);
+            return arrayProto.Bind(thisArg).CallBoxed(interp, args);
         }
 
         // String.prototype adapter — same pattern. Rebind so
@@ -218,23 +218,23 @@ public static class FunctionBuiltIns
         // coercion + dispatch.
         if (callable is Types.StringPrototypeMethodWrapper stringProto)
         {
-            return stringProto.Bind(thisArg).Call(interp, args);
+            return stringProto.Bind(thisArg).CallBoxed(interp, args);
         }
 
         // Number.prototype adapter — same pattern.
         if (callable is Types.NumberPrototypeMethodWrapper numberProto)
         {
-            return numberProto.Bind(thisArg).Call(interp, args);
+            return numberProto.Bind(thisArg).CallBoxed(interp, args);
         }
 
         // Boolean.prototype adapter — same pattern.
         if (callable is Types.BooleanPrototypeMethodWrapper boolProto)
         {
-            return boolProto.Bind(thisArg).Call(interp, args);
+            return boolProto.Bind(thisArg).CallBoxed(interp, args);
         }
 
         // For other callables, just call directly
-        return callable.Call(interp, args);
+        return callable.CallBoxed(interp, args);
     }
 }
 
@@ -338,13 +338,13 @@ public class BoundFunction : ISharpTSCallable
                 // Since SharpTSFunction.Bind requires SharpTSInstance, we need a workaround
                 // We'll create a special environment handling in the BoundFunction call
                 var boundFn = CreateBoundSharpTSFunction(fn, _thisArg);
-                return boundFn.Call(interpreter, combinedArgs);
+                return boundFn.CallBoxed(interpreter, combinedArgs);
             }
 
             if (_target is SharpTSArrowFunction arrow && arrow.HasOwnThis)
             {
                 var boundArrow = arrow.Bind(_thisArg);
-                return boundArrow.Call(interpreter, combinedArgs);
+                return boundArrow.CallBoxed(interpreter, combinedArgs);
             }
 
             // Built-in methods read their receiver from the bound `_receiver`
@@ -355,12 +355,12 @@ public class BoundFunction : ISharpTSCallable
             // throws.
             if (_target is BuiltInMethod bim)
             {
-                return bim.Bind(_thisArg).Call(interpreter, combinedArgs);
+                return bim.Bind(_thisArg).CallBoxed(interpreter, combinedArgs);
             }
         }
 
         // For arrow functions or when no 'this' binding needed
-        return _target.Call(interpreter, combinedArgs);
+        return _target.CallBoxed(interpreter, combinedArgs);
     }
 
     /// <summary>
@@ -397,14 +397,14 @@ internal class BoundSharpTSFunctionWrapper : ISharpTSCallable
         if (_thisArg is SharpTSInstance instance)
         {
             var boundFn = _fn.Bind(instance);
-            return boundFn.Call(interpreter, arguments);
+            return boundFn.CallBoxed(interpreter, arguments);
         }
 
         // For non-instance 'this' values, we need to set up the environment manually
         // Create a synthetic instance that wraps the actual object
         var syntheticInstance = new SyntheticThisInstance(_thisArg);
         var boundFn2 = _fn.Bind(syntheticInstance);
-        var result = boundFn2.Call(interpreter, arguments);
+        var result = boundFn2.CallBoxed(interpreter, arguments);
         FlushSyntheticBack(syntheticInstance, _thisArg);
         return result;
     }

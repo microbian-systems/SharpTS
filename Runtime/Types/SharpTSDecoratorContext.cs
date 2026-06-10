@@ -64,7 +64,7 @@ public class SharpTSDecoratorContext
         {
             // Create a bound version of the initializer with 'this' set to instance
             var bound = init is SharpTSFunction fn ? fn.Bind(instance) : init;
-            bound.Call(interpreter, []);
+            bound.CallV2(interpreter, []);
         }
     }
 
@@ -196,8 +196,11 @@ public class SharpTSDecoratorContext
         public int Arity() => 1;
 
         public object? Call(Interpreter interpreter, List<object?> arguments)
+            => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
+
+        public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
         {
-            if (arguments.Count > 0 && arguments[0] is ISharpTSCallable fn)
+            if (arguments.Length > 0 && arguments[0].ToObject() is ISharpTSCallable fn)
             {
                 context.AddInitializer(fn);
             }
@@ -205,7 +208,7 @@ public class SharpTSDecoratorContext
             {
                 throw new Exception("Runtime Error: addInitializer expects a function argument.");
             }
-            return null;
+            return RuntimeValue.Null;
         }
     }
 }

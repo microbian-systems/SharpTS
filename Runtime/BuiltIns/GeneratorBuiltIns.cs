@@ -83,7 +83,7 @@ public static class GeneratorBuiltIns
             var iter = WrapAsIterator((SharpTSGenerator)receiver!);
             var method = IteratorBuiltIns.GetMember(iter, name);
             if (method is BuiltInMethod bm)
-                return bm.Call(interp, args);
+                return bm.CallBoxed(interp, args);
             throw new Exception($"Runtime Error: Iterator method '{name}' not found.");
         });
     }

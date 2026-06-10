@@ -68,8 +68,11 @@ public class SharpTSStdout : SharpTSWritable
             else
                 Console.Write(data);
 
-            callback?.Call(interpreter!, []);
+            callback?.CallBoxed(interpreter!, []);
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }

@@ -150,6 +150,9 @@ public class SharpTSTextDecoder : ISharpTSPropertyAccessor
             return DecodeFromArgs(arguments.ToArray());
         }
 
+        public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
         /// <summary>
         /// Called by compiled mode via reflection (InvokeValue finds this method).
         /// </summary>

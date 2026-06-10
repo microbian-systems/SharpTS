@@ -106,7 +106,7 @@ public static class HttpModuleInterpreter
         }
 
         // Delegate to fetch - use Call which returns a Promise
-        var promise = FetchBuiltIns.FetchMethod.Call(interpreter, new List<object?> { url, options });
+        var promise = FetchBuiltIns.FetchMethod.CallBoxed(interpreter, new List<object?> { url, options });
         if (promise is SharpTSPromise fetchPromise)
         {
             return await fetchPromise.GetValueAsync();
@@ -242,5 +242,8 @@ public static class HttpModuleInterpreter
             // Do nothing - user must add 'request' event listener
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }

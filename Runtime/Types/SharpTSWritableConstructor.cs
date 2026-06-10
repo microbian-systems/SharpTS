@@ -72,6 +72,9 @@ public sealed class SharpTSWritableConstructor : ISharpTSCallable
         return stream;
     }
 
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     /// <summary>
     /// Gets a property from the Writable constructor (static properties/methods).
     /// </summary>

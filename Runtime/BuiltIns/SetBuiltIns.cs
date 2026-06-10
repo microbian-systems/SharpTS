@@ -76,7 +76,7 @@ public static class SetBuiltIns
         {
             callbackArgs[0] = value;
             callbackArgs[1] = value;
-            callback.Call(interp, callbackArgs);
+            callback.CallBoxed(interp, callbackArgs);
         }
         return null;
     }

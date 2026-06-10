@@ -47,7 +47,7 @@ public static class ArrayStaticBuiltIns
                     {
                         callbackArgs[0] = elements[i];
                         callbackArgs[1] = (double)i;
-                        result.Add(mapFn.Call(interpreter, callbackArgs));
+                        result.Add(mapFn.CallBoxed(interpreter, callbackArgs));
                     }
                     return new SharpTSArray(result);
                 }

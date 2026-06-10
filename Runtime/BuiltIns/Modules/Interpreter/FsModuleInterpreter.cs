@@ -678,7 +678,7 @@ public static class FsModuleInterpreter
         if (getTime is BuiltInMethod method)
         {
             // BuiltInMethod.Call needs an Interpreter but we pass null since getTime doesn't use it
-            var result = method.Bind(dateObj).Call(null!, []);
+            var result = method.Bind(dateObj).CallBoxed(null!, []);
             if (result is double ms)
             {
                 return DateTimeOffset.FromUnixTimeMilliseconds((long)ms).LocalDateTime;
@@ -951,7 +951,7 @@ public static class FsModuleInterpreter
     {
         interpreter.ScheduleTimer(0, 0, () =>
         {
-            callback.Call(interpreter, [error, result]);
+            callback.CallBoxed(interpreter, [error, result]);
         }, isInterval: false);
     }
 
@@ -1562,7 +1562,7 @@ public static class FsModuleInterpreter
             if (args.Count > 1 && args[1] is ISharpTSCallable listener)
             {
                 var offMethod = watcher.GetMember("off") as BuiltInMethod;
-                offMethod?.Call(interpreter, ["change", listener]);
+                offMethod?.CallBoxed(interpreter, ["change", listener]);
             }
             else
             {

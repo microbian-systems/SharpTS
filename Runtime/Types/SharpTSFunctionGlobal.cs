@@ -19,6 +19,9 @@ public sealed class SharpTSFunctionGlobal : ISharpTSCallable
     public object? Call(Execution.Interpreter interpreter, List<object?> arguments)
         => throw new Exception("Runtime Error: Dynamic Function() construction is not supported.");
 
+    public RuntimeValue CallV2(Execution.Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     public object? GetMember(string name)
     {
         if (name == "prototype") return _prototype;
@@ -66,10 +69,7 @@ public sealed class SharpTSFunctionProtoToString : ISharpTSCallable
     public int Arity() => 0;
 
     public object? Call(Execution.Interpreter interpreter, List<object?> arguments)
-    {
-        var target = _boundThis ?? (arguments.Count > 0 ? arguments[0] : null);
-        return target?.ToString() ?? "function () { [native code] }";
-    }
+        => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
 
     public RuntimeValue CallV2(Execution.Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {

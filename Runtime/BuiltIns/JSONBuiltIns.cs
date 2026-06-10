@@ -194,10 +194,10 @@ public static class JSONBuiltIns
         // bind attempt; we forward to their plain Call. Both other shapes
         // honor an explicit binding via their respective Bind helpers.
         if (reviver is SharpTSFunction fn)
-            return fn.BindThis(holder).Call(interp, [key, val]);
+            return fn.BindThis(holder).CallBoxed(interp, [key, val]);
         if (reviver is SharpTSArrowFunction arrow && arrow.HasOwnThis && holder != null)
-            return arrow.Bind(holder).Call(interp, [key, val]);
-        return reviver.Call(interp, [key, val]);
+            return arrow.Bind(holder).CallBoxed(interp, [key, val]);
+        return reviver.CallBoxed(interp, [key, val]);
     }
 
     private static object? StringifyJson(Interpreter interp, object? _, List<object?> args)
@@ -248,7 +248,7 @@ public static class JSONBuiltIns
     {
         if (replacer != null)
         {
-            value = replacer.Call(interp, [key, value]);
+            value = replacer.CallBoxed(interp, [key, value]);
         }
 
         // Check for toJSON() method before serializing
@@ -305,12 +305,12 @@ public static class JSONBuiltIns
         {
             var toJson = inst.GetClass().FindMethod("toJSON");
             if (toJson != null)
-                return SharpTSClass.BindMethod(toJson, inst).Call(interp, []);
+                return SharpTSClass.BindMethod(toJson, inst).CallBoxed(interp, []);
         }
         else if (value is SharpTSObject obj && obj.Fields.TryGetValue("toJSON", out var fn))
         {
             if (fn is ISharpTSCallable callable)
-                return callable.Call(interp, []);
+                return callable.CallBoxed(interp, []);
         }
         return value;
     }

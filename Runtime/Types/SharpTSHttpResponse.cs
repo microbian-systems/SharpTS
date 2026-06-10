@@ -218,7 +218,7 @@ public class SharpTSHttpResponse : SharpTSWritable
         ISharpTSCallable? callback = null;
         if (args.Count > 1 && args[1] is ISharpTSCallable cb1) callback = cb1;
         if (args.Count > 2 && args[2] is ISharpTSCallable cb2) callback = cb2;
-        callback?.Call(interpreter, []);
+        callback?.CallBoxed(interpreter, []);
 
         return true;
     }
@@ -263,7 +263,7 @@ public class SharpTSHttpResponse : SharpTSWritable
         {
             if (arg is ISharpTSCallable cb) { callback = cb; break; }
         }
-        callback?.Call(interpreter, []);
+        callback?.CallBoxed(interpreter, []);
 
         // Emit 'finish' event (Writable stream semantics)
         EmitEvent(interpreter, "finish", []);

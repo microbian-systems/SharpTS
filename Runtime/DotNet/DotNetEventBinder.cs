@@ -97,6 +97,9 @@ internal sealed class DotNetEventBinder : ISharpTSCallable
         return SharpTSUndefined.Instance;
     }
 
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     // ----------------------------------------------------------------------
     // Compile-mode entry points
     // ----------------------------------------------------------------------

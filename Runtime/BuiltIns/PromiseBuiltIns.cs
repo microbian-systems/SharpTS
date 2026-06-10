@@ -535,7 +535,7 @@ public static class PromiseBuiltIns
     /// </summary>
     private static object? CallCallback(ISharpTSCallable callback, List<object?> args, Interpreter interpreter)
     {
-        return callback.Call(interpreter, args);
+        return callback.CallBoxed(interpreter, args);
     }
 
     /// <summary>

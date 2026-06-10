@@ -142,5 +142,8 @@ internal sealed class CompiledCallableAdapter(object target, MethodInfo invokeMe
         return invokeMethod.Invoke(target, [args]);
     }
 
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     public override string ToString() => target.ToString() ?? "<compiled function>";
 }

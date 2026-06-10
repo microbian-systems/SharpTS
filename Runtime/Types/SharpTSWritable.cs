@@ -144,7 +144,7 @@ public class SharpTSWritable : SharpTSEventEmitter
             var writeArgs = new List<object?> { chunk, encoding ?? "utf8", cbWrapper };
             try
             {
-                _writeCallback.Call(interpreter, writeArgs);
+                _writeCallback.CallBoxed(interpreter, writeArgs);
             }
             catch (Exception ex)
             {
@@ -157,7 +157,7 @@ public class SharpTSWritable : SharpTSEventEmitter
             // Default behavior: just accept the data (sync completion)
             _pendingWrites--;
             _writableLength -= chunkSize;
-            callback?.Call(interpreter, []);
+            callback?.CallBoxed(interpreter, []);
             CheckDrain(interpreter);
         }
 
@@ -270,7 +270,7 @@ public class SharpTSWritable : SharpTSEventEmitter
             var finalCbWrapper = new WriteCallbackWrapper(null, interpreter, this, 0);
             try
             {
-                _finalCallback.Call(interpreter, [finalCbWrapper]);
+                _finalCallback.CallBoxed(interpreter, [finalCbWrapper]);
             }
             catch (Exception ex)
             {
@@ -279,7 +279,7 @@ public class SharpTSWritable : SharpTSEventEmitter
         }
 
         _finished = true;
-        callback?.Call(interpreter, []);
+        callback?.CallBoxed(interpreter, []);
         EmitFinish(interpreter);
 
         return this;
@@ -343,7 +343,7 @@ public class SharpTSWritable : SharpTSEventEmitter
             try
             {
                 var err = args.Count > 0 ? args[0] : null;
-                _destroyCallback.Call(interpreter, [err, new DestroyCallbackWrapper(interpreter, this)]);
+                _destroyCallback.CallBoxed(interpreter, [err, new DestroyCallbackWrapper(interpreter, this)]);
             }
             catch (Exception ex)
             {
@@ -435,11 +435,14 @@ public class SharpTSWritable : SharpTSEventEmitter
             _stream._pendingWrites--;
             _stream._writableLength -= _chunkSize;
             // Call the original callback
-            _callback?.Call(_interpreter, []);
+            _callback?.CallBoxed(_interpreter, []);
             // Check if we need to emit drain
             _stream.CheckDrain(_interpreter);
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 
     /// <summary>
@@ -468,5 +471,8 @@ public class SharpTSWritable : SharpTSEventEmitter
             _stream.EmitClose(_interpreter);
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }

@@ -219,7 +219,7 @@ public static class ArrayBuiltIns
         {
             _compareArgs[0] = x.Element;
             _compareArgs[1] = y.Element;
-            var result = _fn.Call(_interp, _compareArgs);
+            var result = _fn.CallBoxed(_interp, _compareArgs);
             if (result is double d && !double.IsNaN(d) && d != 0)
                 return d < 0 ? -1 : 1;
             // Stability tie-breaker: preserve original order
@@ -810,7 +810,7 @@ public static class ArrayBuiltIns
                 callbackArgs[0] = accumulator;
                 callbackArgs[1] = arr[i];
                 callbackArgs[2] = (double)i;
-                accumulator = callback.Call(interp, callbackArgs);
+                accumulator = callback.CallBoxed(interp, callbackArgs);
             }
             return RuntimeValue.FromBoxed(accumulator);
         }
@@ -861,7 +861,7 @@ public static class ArrayBuiltIns
                 callbackArgs[0] = accumulator;
                 callbackArgs[1] = arr[i];
                 callbackArgs[2] = (double)i;
-                accumulator = callback.Call(interp, callbackArgs);
+                accumulator = callback.CallBoxed(interp, callbackArgs);
             }
             return RuntimeValue.FromBoxed(accumulator);
         }

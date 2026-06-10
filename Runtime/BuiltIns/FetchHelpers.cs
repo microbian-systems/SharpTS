@@ -178,9 +178,9 @@ public static class FetchHelpers
                 var bound = pushMethod.Bind(stream);
                 if (bodyBytes != null && bodyBytes.Length > 0)
                 {
-                    bound.Call(null!, new List<object?> { new SharpTSBuffer(bodyBytes) });
+                    bound.CallBoxed(null!, new List<object?> { new SharpTSBuffer(bodyBytes) });
                 }
-                bound.Call(null!, new List<object?> { null }); // EOF
+                bound.CallBoxed(null!, new List<object?> { null }); // EOF
             }
         }
     }

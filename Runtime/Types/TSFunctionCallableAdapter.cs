@@ -28,6 +28,9 @@ public class TSFunctionCallableAdapter : ISharpTSCallable
         return _function.Invoke(arguments.ToArray());
     }
 
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     /// <summary>
     /// Creates an ISharpTSCallable from an object that may be a TSFunction,
     /// ISharpTSCallable, or null.
@@ -67,6 +70,9 @@ public class TSFunctionCallableAdapter : ISharpTSCallable
             // Do nothing - user must add 'request' event listener
             return null;
         }
+
+        public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 
     /// <summary>
@@ -100,5 +106,8 @@ public class TSFunctionCallableAdapter : ISharpTSCallable
                 return null;
             }
         }
+
+        public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }

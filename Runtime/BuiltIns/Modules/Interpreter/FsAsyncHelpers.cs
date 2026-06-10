@@ -543,7 +543,7 @@ public static class FsAsyncHelpers
         var getTime = dateObj.GetProperty("getTime");
         if (getTime is BuiltInMethod method)
         {
-            var result = method.Bind(dateObj).Call(null!, []);
+            var result = method.Bind(dateObj).CallBoxed(null!, []);
             if (result is double ms)
             {
                 return DateTimeOffset.FromUnixTimeMilliseconds((long)ms).LocalDateTime;

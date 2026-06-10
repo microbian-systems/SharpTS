@@ -277,7 +277,7 @@ public class SharpTSHeaders : ITypeCategorized
     {
         if (callback is ISharpTSCallable callable)
         {
-            callable.Call(interp!, [value, key]);
+            callable.CallBoxed(interp!, [value, key]);
         }
     }
 

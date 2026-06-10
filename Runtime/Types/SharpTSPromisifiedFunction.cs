@@ -45,7 +45,7 @@ public class SharpTSPromisifiedFunction : ISharpTSCallable
         try
         {
             // Call the original function with the callback
-            _wrapped.Call(interpreter, argsWithCallback);
+            _wrapped.CallBoxed(interpreter, argsWithCallback);
         }
         catch (Exception ex)
         {
@@ -55,6 +55,9 @@ public class SharpTSPromisifiedFunction : ISharpTSCallable
 
         return new SharpTSPromise(tcs.Task);
     }
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     public override string ToString() => "<promisified fn>";
 }
@@ -106,6 +109,9 @@ internal class SharpTSPromisifyCallback : ISharpTSCallable
 
         return null;
     }
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     public override string ToString() => "<promisify callback>";
 }

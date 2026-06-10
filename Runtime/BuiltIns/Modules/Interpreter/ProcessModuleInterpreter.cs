@@ -82,19 +82,19 @@ public static class ProcessModuleInterpreter
     {
         // Delegate to ProcessBuiltIns via GetMember to use cached implementation
         var method = ProcessBuiltIns.GetMember("hrtime") as BuiltInMethod;
-        return method?.Call(interpreter, args);
+        return method?.CallBoxed(interpreter, args);
     }
 
     private static object? Uptime(Interp interpreter, object? receiver, List<object?> args)
     {
         var method = ProcessBuiltIns.GetMember("uptime") as BuiltInMethod;
-        return method?.Call(interpreter, args);
+        return method?.CallBoxed(interpreter, args);
     }
 
     private static object? MemoryUsage(Interp interpreter, object? receiver, List<object?> args)
     {
         var method = ProcessBuiltIns.GetMember("memoryUsage") as BuiltInMethod;
-        return method?.Call(interpreter, args);
+        return method?.CallBoxed(interpreter, args);
     }
 
     /// <summary>

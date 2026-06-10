@@ -287,7 +287,7 @@ public static class ProcessBuiltIns
             {
                 // Use interpreter-based emit for interpreted mode
                 var emit = process.GetMember("emit") as BuiltInMethod;
-                emit?.Bind(process).Call(interpreter, ["exit", (double)exitCode]);
+                emit?.Bind(process).CallBoxed(interpreter, ["exit", (double)exitCode]);
             }
             else
             {
@@ -346,7 +346,7 @@ public static class ProcessBuiltIns
                 var offMethod = process.GetMember(methodName) as BuiltInMethod;
                 if (offMethod != null)
                 {
-                    return offMethod.Bind(process).Call(null!, args.ToList<object?>());
+                    return offMethod.Bind(process).CallBoxed(null!, args.ToList<object?>());
                 }
                 return process;
 
@@ -354,7 +354,7 @@ public static class ProcessBuiltIns
                 var removeMethod = process.GetMember(methodName) as BuiltInMethod;
                 if (removeMethod != null)
                 {
-                    return removeMethod.Bind(process).Call(null!, args.ToList<object?>());
+                    return removeMethod.Bind(process).CallBoxed(null!, args.ToList<object?>());
                 }
                 return process;
 
@@ -362,7 +362,7 @@ public static class ProcessBuiltIns
                 var lcMethod = process.GetMember(methodName) as BuiltInMethod;
                 if (lcMethod != null)
                 {
-                    return lcMethod.Bind(process).Call(null!, args.ToList<object?>());
+                    return lcMethod.Bind(process).CallBoxed(null!, args.ToList<object?>());
                 }
                 return 0.0;
 
@@ -375,7 +375,7 @@ public static class ProcessBuiltIns
                 var method = process.GetMember(methodName) as BuiltInMethod;
                 if (method != null)
                 {
-                    return method.Bind(process).Call(null!, args.ToList<object?>());
+                    return method.Bind(process).CallBoxed(null!, args.ToList<object?>());
                 }
                 return process;
 
@@ -404,7 +404,7 @@ public static class ProcessBuiltIns
             if (interpreter != null)
             {
                 var emit = process.GetMember("emit") as BuiltInMethod;
-                var result = emit?.Bind(process).Call(interpreter, ["uncaughtException", errorObj]);
+                var result = emit?.Bind(process).CallBoxed(interpreter, ["uncaughtException", errorObj]);
                 return result is true;
             }
             else

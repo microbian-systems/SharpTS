@@ -486,4 +486,7 @@ public sealed class VmScriptConstructor : ISharpTSCallable
             ["runInContext"] = runInCtx,
         };
     }
+
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 }

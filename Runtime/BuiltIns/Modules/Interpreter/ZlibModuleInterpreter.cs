@@ -354,11 +354,11 @@ public static class ZlibModuleInterpreter
                 else
                     result = ZlibHelpers.DeflateRawDecompress(input, options);
 
-                callback?.Call(interpreter, [null, new SharpTSBuffer(result)]);
+                callback?.CallBoxed(interpreter, [null, new SharpTSBuffer(result)]);
             }
             catch (Exception ex)
             {
-                callback?.Call(interpreter, [ex.Message]);
+                callback?.CallBoxed(interpreter, [ex.Message]);
             }
         }, isInterval: false);
 
@@ -377,11 +377,11 @@ public static class ZlibModuleInterpreter
             try
             {
                 var result = operation(input, options);
-                callback?.Call(interpreter, [null, new SharpTSBuffer(result)]);
+                callback?.CallBoxed(interpreter, [null, new SharpTSBuffer(result)]);
             }
             catch (Exception ex)
             {
-                callback?.Call(interpreter, [ex.Message]);
+                callback?.CallBoxed(interpreter, [ex.Message]);
             }
         }, isInterval: false);
 

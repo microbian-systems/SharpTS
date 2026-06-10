@@ -48,6 +48,9 @@ public sealed class SharpTSArrayGlobal : ISharpTSCallable
         return new SharpTSArray(new List<object?>(arguments));
     }
 
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     public object? GetMember(string name)
     {
         if (name == "prototype") return _prototype;
@@ -144,7 +147,7 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
 
         // Fast path: receiver is a real array.
         if (_receiver is SharpTSArray arr)
-            return _inner.Bind(arr).Call(interpreter, arguments);
+            return _inner.Bind(arr).CallBoxed(interpreter, arguments);
 
         // Slow path: receiver is array-like (object with `length` + indexed
         // props, or a string). ECMA-262 spec: ToObject(this), then iterate via
@@ -156,13 +159,16 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
         if (TryMaterializeArrayLike(_receiver, interpreter, out var tempArr))
         {
             var wrappedArgs = WrapCallbackArguments(arguments, tempArr, _receiver);
-            return _inner.Bind(tempArr).Call(interpreter, wrappedArgs);
+            return _inner.Bind(tempArr).CallBoxed(interpreter, wrappedArgs);
         }
 
         // Fallback: receiver type we can't coerce — let the inner method try.
         // It will likely throw a meaningful error.
-        return _inner.Bind(_receiver).Call(interpreter, arguments);
+        return _inner.Bind(_receiver).CallBoxed(interpreter, arguments);
     }
+
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
     /// Attempts to build a temp <see cref="SharpTSArray"/> matching the
@@ -237,7 +243,7 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
     {
         var getter = obj.GetGetter(name);
         if (getter != null)
-            return getter.Call(interpreter, new List<object?>());
+            return getter.CallV2(interpreter, []).ToObject();
         return obj.GetProperty(name);
     }
 
@@ -316,8 +322,11 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
                 if (ReferenceEquals(arguments[i], _tempArr))
                     arguments[i] = _originalReceiver;
             }
-            return _inner.Call(interpreter, arguments);
+            return _inner.CallBoxed(interpreter, arguments);
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }
 
@@ -376,6 +385,9 @@ public sealed class SharpTSArrayUnboundMethod : ISharpTSCallable
         }
         return _impl(target, rest);
     }
+
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
     /// Produces a bound variant — used by <c>Function.prototype.apply/call</c>

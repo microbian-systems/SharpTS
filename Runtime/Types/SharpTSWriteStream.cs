@@ -88,10 +88,13 @@ public class SharpTSWriteStream : SharpTSWritable
             }
 
             // Call the done callback
-            callback?.Call(interpreter, []);
+            callback?.CallBoxed(interpreter, []);
 
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 
     /// <summary>
@@ -110,6 +113,9 @@ public class SharpTSWriteStream : SharpTSWritable
             _stream.CloseFileStream(interpreter);
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 
     private void CloseFileStream(Interp interpreter)

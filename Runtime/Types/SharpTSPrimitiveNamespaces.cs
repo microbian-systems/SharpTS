@@ -26,6 +26,9 @@ public class SharpTSStringNamespace : ISharpTSCallable
         return arg.ToString() ?? "";
     }
 
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     /// <summary>
     /// Returns <c>String.prototype</c> so real-world patterns like
     /// <c>String.prototype.trim.call(x)</c> resolve correctly; built-in static
@@ -104,8 +107,11 @@ internal sealed class StringPrototypeMethodWrapper : ISharpTSCallable
         }
 
         var coerced = CoerceToString(_receiver);
-        return _inner.Bind(coerced).Call(interpreter, arguments);
+        return _inner.Bind(coerced).CallBoxed(interpreter, arguments);
     }
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
     /// ECMA-262 ToString abstract operation — mapped to the receiver types
@@ -170,6 +176,9 @@ public class SharpTSNumberNamespace : ISharpTSCallable
         }
         return double.NaN;
     }
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
     /// Returns <c>Number.prototype</c> (so <c>Number.prototype.toString.call(x)</c>
@@ -246,8 +255,11 @@ internal sealed class NumberPrototypeMethodWrapper : ISharpTSCallable
                 $"Number.prototype.{_name} requires that 'this' be a Number"));
         }
 
-        return _inner.Bind(d).Call(interpreter, arguments);
+        return _inner.Bind(d).CallBoxed(interpreter, arguments);
     }
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     public override string ToString() => $"function {_name}() {{ [native code] }}";
 }
@@ -269,6 +281,9 @@ public class SharpTSBooleanNamespace : ISharpTSCallable
         var arg = arguments[0];
         return SharpTS.Compilation.RuntimeTypes.IsTruthy(arg);
     }
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
 
     /// <summary>
     /// Returns <c>Boolean.prototype</c>. Boolean has no static members worth
@@ -338,13 +353,16 @@ internal sealed class BooleanPrototypeMethodWrapper : ISharpTSCallable
         => new(_name, _isToString, receiver);
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
+        => CallV2(interpreter, CallableInterop.ToRuntimeValues(arguments)).ToObject();
+
+    public RuntimeValue CallV2(Interpreter interpreter, ReadOnlySpan<RuntimeValue> arguments)
     {
         if (!_hasReceiver || _receiver is not bool b)
         {
             throw new ThrowException(new SharpTSTypeError(
                 $"Boolean.prototype.{_name} requires that 'this' be a Boolean"));
         }
-        return _isToString ? (b ? "true" : "false") : (object)b;
+        return _isToString ? RuntimeValue.FromString(b ? "true" : "false") : RuntimeValue.FromBoolean(b);
     }
 
     public override string ToString() => $"function {_name}() {{ [native code] }}";

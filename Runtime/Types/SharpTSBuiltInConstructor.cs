@@ -33,6 +33,9 @@ public sealed class SharpTSBuiltInConstructor : ISharpTSCallable
         return _factory(arguments);
     }
 
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     /// <summary>
     /// Resolves static methods like <c>Map.groupBy()</c> via the built-in registry.
     /// Called by the interpreter's GetFieldsProperty dispatch chain via reflection.

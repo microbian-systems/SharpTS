@@ -37,6 +37,9 @@ public sealed class SharpTSEventEmitterConstructor : ISharpTSCallable
         return new SharpTSEventEmitter();
     }
 
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     /// <summary>
     /// Gets a property from the EventEmitter constructor (static properties/methods).
     /// </summary>

@@ -147,7 +147,7 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         // Call the listening callback
         if (callback != null)
         {
-            callback.Call(interpreter, new List<object?>());
+            callback.CallBoxed(interpreter, new List<object?>());
         }
 
         // Emit 'listening' event
@@ -185,7 +185,7 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         _isListening = true;
         interpreter.Ref();
 
-        callback?.Call(interpreter, new List<object?>());
+        callback?.CallBoxed(interpreter, new List<object?>());
         EmitEvent("listening", new List<object?>());
 
         return this;
@@ -277,7 +277,7 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         {
             interp.ScheduleTimer(0, 0, () =>
             {
-                callback?.Call(interp, new List<object?>());
+                callback?.CallBoxed(interp, new List<object?>());
                 EmitEvent("close", new List<object?>());
             }, isInterval: false);
         }
@@ -411,7 +411,7 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
                     EmitEvent("request", new List<object?> { req, res });
 
                     // Call the request handler
-                    _requestHandler.Call(_interpreter!, new List<object?> { req, res });
+                    _requestHandler.CallBoxed(_interpreter!, new List<object?> { req, res });
 
                     // Read and emit body events
                     await req.EmitDataEventsAsync(_interpreter!);

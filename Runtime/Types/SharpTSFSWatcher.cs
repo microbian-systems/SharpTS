@@ -126,7 +126,7 @@ public class SharpTSFSWatcher : SharpTSEventEmitter, IDisposable
         var emitMethod = base.GetMember("emit") as BuiltInMethod;
         if (emitMethod != null)
         {
-            emitMethod.Call(_interpreter, [eventType, eventType, filename]);
+            emitMethod.CallBoxed(_interpreter, [eventType, eventType, filename]);
         }
     }
 
@@ -185,7 +185,7 @@ public class SharpTSFSWatcher : SharpTSEventEmitter, IDisposable
         if (_interpreter != null)
         {
             var emitMethod = base.GetMember("emit") as BuiltInMethod;
-            emitMethod?.Call(_interpreter, ["close"]);
+            emitMethod?.CallBoxed(_interpreter, ["close"]);
         }
 
         _interpreter = null;

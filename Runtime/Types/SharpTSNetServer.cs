@@ -176,7 +176,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
 
         // Emit 'listening' event and call callback
         if (callback != null)
-            callback.Call(interpreter, []);
+            callback.CallBoxed(interpreter, []);
         EmitEvent(interpreter, "listening", []);
 
         // Start accepting connections
@@ -207,7 +207,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
                 StartAcceptingIpcWindows(interpreter, pipeReady);
                 pipeReady.Wait(5000); // Wait up to 5s for pipe to be ready
 
-                callback?.Call(interpreter, []);
+                callback?.CallBoxed(interpreter, []);
                 EmitEvent(interpreter, "listening", []);
             }
             else
@@ -224,7 +224,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
                 _isListening = true;
                 interpreter.Ref();
 
-                callback?.Call(interpreter, []);
+                callback?.CallBoxed(interpreter, []);
                 EmitEvent(interpreter, "listening", []);
 
                 StartAcceptingIpcUnix(interpreter);
@@ -292,7 +292,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
                         var readReady = new ManualResetEventSlim(false);
                         socket.StartReading(interpreter, readReady);
                         readReady.Wait(5000);
-                        _connectionListener?.Call(interpreter, [socket]);
+                        _connectionListener?.CallBoxed(interpreter, [socket]);
                         EmitEvent(interpreter, "connection", [socket]);
                     }, isInterval: false);
                 }
@@ -340,7 +340,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
                         var socket = new SharpTSSocket(stream, _pipePath!);
                         _connections.Add(socket);
                         socket.StartReading(interpreter);
-                        _connectionListener?.Call(interpreter, [socket]);
+                        _connectionListener?.CallBoxed(interpreter, [socket]);
                         EmitEvent(interpreter, "connection", [socket]);
                     }, isInterval: false);
                 }
@@ -370,7 +370,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
             {
                 var socket = new SharpTSSocket(tcpClient);
                 _connections.Add(socket);
-                _connectionListener?.Call(interpreter, [socket]);
+                _connectionListener?.CallBoxed(interpreter, [socket]);
                 EmitEvent(interpreter, "connection", [socket]);
                 socket.StartReading(interpreter);
             }, isInterval: false);
@@ -379,7 +379,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
         _isListening = true;
         interpreter.Ref();
 
-        callback?.Call(interpreter, []);
+        callback?.CallBoxed(interpreter, []);
         EmitEvent(interpreter, "listening", []);
 
         return this;
@@ -412,7 +412,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
                         _connections.Add(socket);
 
                         // Call connection listener if set
-                        _connectionListener?.Call(interpreter, [socket]);
+                        _connectionListener?.CallBoxed(interpreter, [socket]);
 
                         // Emit 'connection' event
                         EmitEvent(interpreter, "connection", [socket]);
@@ -470,7 +470,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
         _interpreter?.Unref();
 
         ISharpTSCallable? callback = args.Count > 0 ? WrapCallbackArg(args[0]) : null;
-        callback?.Call(interpreter, []);
+        callback?.CallBoxed(interpreter, []);
 
         EmitEvent(interpreter, "close", []);
 
@@ -518,7 +518,7 @@ public class SharpTSNetServer : SharpTSEventEmitter, IDisposable
     {
         if (args.Count > 0 && args[0] is ISharpTSCallable callback)
         {
-            callback.Call(interpreter, [null, (double)_connections.Count]);
+            callback.CallBoxed(interpreter, [null, (double)_connections.Count]);
         }
         return this;
     }

@@ -180,7 +180,7 @@ public static class RegExpBuiltIns
             && receiver.TryGetAccessor(name, out var userGetter, out _)
             && userGetter != null)
         {
-            return userGetter.Call(interpreter, []);
+            return userGetter.CallBoxed(interpreter, []);
         }
 
         // User-set DATA properties (set via `r.foo = x` after
@@ -1013,13 +1013,13 @@ public static class RegExpBuiltIns
         if (obj is SharpTSFunction fn)
         {
             if (fn.TryGetSymbolAccessor(symbol, out var getter, out _) && getter != null)
-                return getter.Call(interp, []);
+                return getter.CallBoxed(interp, []);
             if (fn.TryGetSymbolProperty(symbol, out var v)) return v;
         }
         if (obj is SharpTSArrowFunction arr)
         {
             if (arr.TryGetSymbolAccessor(symbol, out var arrGetter, out _) && arrGetter != null)
-                return arrGetter.Call(interp, []);
+                return arrGetter.CallBoxed(interp, []);
             if (arr.TryGetSymbolProperty(symbol, out var v2)) return v2;
         }
         return null;

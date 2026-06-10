@@ -683,7 +683,7 @@ public static class CryptoModuleInterpreter
     {
         interpreter.ScheduleTimer(0, 0, () =>
         {
-            callback.Call(interpreter, [error, result]);
+            callback.CallBoxed(interpreter, [error, result]);
             interpreter.Unref();
         }, isInterval: false);
     }
@@ -819,7 +819,7 @@ public static class CryptoModuleInterpreter
                 // Node.js generateKeyPair callback is (err, publicKey, privateKey)
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [null, result.GetProperty("publicKey"), result.GetProperty("privateKey")]);
+                    callback.CallBoxed(interpreter, [null, result.GetProperty("publicKey"), result.GetProperty("privateKey")]);
                     interpreter.Unref();
                 }, isInterval: false);
             }

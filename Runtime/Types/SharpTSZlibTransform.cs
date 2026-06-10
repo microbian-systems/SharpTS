@@ -212,15 +212,18 @@ public class SharpTSZlibTransform : SharpTSTransform
             try
             {
                 _stream.TransformChunk(interpreter, chunk);
-                callback?.Call(interpreter, [null]);
+                callback?.CallBoxed(interpreter, [null]);
             }
             catch (Exception ex)
             {
-                callback?.Call(interpreter, [ex.Message]);
+                callback?.CallBoxed(interpreter, [ex.Message]);
             }
 
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 
     private class ZlibFlushCallback : ISharpTSCallable
@@ -236,14 +239,17 @@ public class SharpTSZlibTransform : SharpTSTransform
             try
             {
                 _stream.Flush(interpreter);
-                callback?.Call(interpreter, [null]);
+                callback?.CallBoxed(interpreter, [null]);
             }
             catch (Exception ex)
             {
-                callback?.Call(interpreter, [ex.Message]);
+                callback?.CallBoxed(interpreter, [ex.Message]);
             }
 
             return null;
         }
+
+        public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+            => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
     }
 }

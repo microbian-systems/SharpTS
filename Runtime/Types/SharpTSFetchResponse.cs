@@ -215,14 +215,14 @@ public class SharpTSFetchResponse : ITypeCategorized
                 // Push data and EOF into the readable's internal buffer
                 // The readable will drain when a 'data' listener is added
                 var pushMethod = _bodyStream.GetMember("push") as BuiltInMethod;
-                pushMethod?.Bind(_bodyStream).Call(null!, new List<object?> { buf });
-                pushMethod?.Bind(_bodyStream).Call(null!, new List<object?> { null }); // EOF
+                pushMethod?.Bind(_bodyStream).CallBoxed(null!, new List<object?> { buf });
+                pushMethod?.Bind(_bodyStream).CallBoxed(null!, new List<object?> { null }); // EOF
             }
             catch (Exception)
             {
                 // Body already consumed or error - push EOF
                 var pushMethod = _bodyStream.GetMember("push") as BuiltInMethod;
-                pushMethod?.Bind(_bodyStream).Call(null!, new List<object?> { null });
+                pushMethod?.Bind(_bodyStream).CallBoxed(null!, new List<object?> { null });
             }
         }).GetAwaiter().GetResult();
 

@@ -245,7 +245,7 @@ public static class ChildProcessModuleInterpreter
                         {
                             ["message"] = "Command timed out"
                         }));
-                        callback?.Call(null!, [new SharpTSObject(new Dictionary<string, object?>
+                        callback?.CallBoxed(null!, [new SharpTSObject(new Dictionary<string, object?>
                         {
                             ["message"] = "Command timed out"
                         }), stdout, stderr]);
@@ -266,11 +266,11 @@ public static class ChildProcessModuleInterpreter
                         ["message"] = $"Command failed with exit code {process.ExitCode}",
                         ["code"] = (double)process.ExitCode
                     });
-                    callback?.Call(null!, [errorObj, stdout, stderr]);
+                    callback?.CallBoxed(null!, [errorObj, stdout, stderr]);
                 }
                 else
                 {
-                    callback?.Call(null!, [null, stdout, stderr]);
+                    callback?.CallBoxed(null!, [null, stdout, stderr]);
                 }
 
                 childProcess.EmitDirect("close", (double)process.ExitCode);
@@ -283,7 +283,7 @@ public static class ChildProcessModuleInterpreter
                     ["message"] = ex.Message
                 });
                 childProcess.EmitDirect("error", errorObj);
-                callback?.Call(null!, [errorObj, "", ""]);
+                callback?.CallBoxed(null!, [errorObj, "", ""]);
             }
         });
 
@@ -373,9 +373,9 @@ public static class ChildProcessModuleInterpreter
                     }
                     // Call the callback if provided (3rd arg in Node.js write(chunk, enc, cb))
                     if (wargs.Count > 2 && wargs[2] is ISharpTSCallable cb)
-                        cb.Call(null!, [null]);
+                        cb.CallBoxed(null!, [null]);
                     else if (wargs.Count > 1 && wargs[1] is ISharpTSCallable cb2)
-                        cb2.Call(null!, [null]);
+                        cb2.CallBoxed(null!, [null]);
                     return true;
                 }));
 
@@ -573,7 +573,7 @@ public static class ChildProcessModuleInterpreter
                         var timeoutErr = new SharpTSObject(new Dictionary<string, object?>
                             { ["message"] = "Command timed out" });
                         childProcess.EmitDirect("error", timeoutErr);
-                        callback?.Call(null!, [timeoutErr, stdout, stderr]);
+                        callback?.CallBoxed(null!, [timeoutErr, stdout, stderr]);
                         return;
                     }
                 }
@@ -591,11 +591,11 @@ public static class ChildProcessModuleInterpreter
                         ["message"] = $"Command failed with exit code {process.ExitCode}",
                         ["code"] = (double)process.ExitCode
                     });
-                    callback?.Call(null!, [errorObj, stdout, stderr]);
+                    callback?.CallBoxed(null!, [errorObj, stdout, stderr]);
                 }
                 else
                 {
-                    callback?.Call(null!, [null, stdout, stderr]);
+                    callback?.CallBoxed(null!, [null, stdout, stderr]);
                 }
 
                 childProcess.EmitDirect("close", (double)process.ExitCode);
@@ -606,7 +606,7 @@ public static class ChildProcessModuleInterpreter
                 var errorObj = new SharpTSObject(new Dictionary<string, object?>
                     { ["message"] = ex.Message });
                 childProcess.EmitDirect("error", errorObj);
-                callback?.Call(null!, [errorObj, "", ""]);
+                callback?.CallBoxed(null!, [errorObj, "", ""]);
             }
         });
 

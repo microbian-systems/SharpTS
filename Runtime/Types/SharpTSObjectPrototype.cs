@@ -83,6 +83,9 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable
         return _impl(target, rest);
     }
 
+    public RuntimeValue CallV2(Interp interpreter, ReadOnlySpan<RuntimeValue> arguments)
+        => RuntimeValue.FromBoxed(Call(interpreter, CallableInterop.ToBoxedList(arguments)));
+
     public SharpTSObjectUnboundMethod BindTo(object? thisArg) => new(_name, _impl, thisArg);
 
     public override string ToString() => $"function {_name}() {{ [native code] }}";
