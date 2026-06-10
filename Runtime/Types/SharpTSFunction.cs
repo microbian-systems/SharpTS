@@ -26,7 +26,7 @@ public interface ISharpTSCallable
 /// <remarks>
 /// Wraps a <see cref="Stmt.Function"/> AST node along with its closure environment.
 /// Handles parameter binding (including default values and rest parameters),
-/// executes the function body, and catches <see cref="ReturnException"/> to return values.
+/// executes the function body, and propagates return values via <see cref="ExecutionResult"/>.
 /// The <see cref="Bind"/> method creates a new function with <c>this</c> bound for method calls.
 /// </remarks>
 /// <seealso cref="SharpTSArrowFunction"/>

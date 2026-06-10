@@ -15,7 +15,6 @@ namespace SharpTS.Runtime.Exceptions;
 /// C# callers (notably test harnesses using <c>Assert.Throws&lt;Exception&gt;</c>)
 /// can inspect the thrown error's textual form without unwrapping Value.
 /// </remarks>
-/// <seealso cref="ReturnException"/>
 public class ThrowException : Exception
 {
     public object? Value { get; }

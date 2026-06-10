@@ -7,9 +7,8 @@ namespace SharpTS.Runtime.Exceptions;
 /// Used to suspend generator execution and propagate yielded values.
 /// Thrown by <see cref="Interpreter"/> when executing a yield expression, and caught
 /// by <see cref="SharpTSGenerator"/> to extract the yielded value. This is an
-/// intentional use of exceptions for control flow (similar to ReturnException).
+/// intentional use of exceptions for control flow.
 /// </remarks>
-/// <seealso cref="ReturnException"/>
 public class YieldException(object? value, bool isDelegating = false) : Exception
 {
     /// <summary>
