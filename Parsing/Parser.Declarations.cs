@@ -157,7 +157,9 @@ public partial class Parser
         if (Match(TokenType.FUNCTION))
         {
             bool isGenerator = Match(TokenType.STAR);
-            return FunctionDeclaration("function", isAsync: false, isGenerator: isGenerator);
+            // Ambient: the bodyless declaration IS the function — the checker defines it
+            // immediately rather than holding it as a pending overload signature.
+            return FunctionDeclaration("function", isAsync: false, isGenerator: isGenerator, isDeclare: true);
         }
         if (Match(TokenType.CONST))
         {

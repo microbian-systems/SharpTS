@@ -381,6 +381,21 @@ public partial class TypeChecker
             {
                 _pendingOverloadTypeParams[funcName] = typeParams;
             }
+
+            // Ambient (`declare function`): there is no implementation to come — the declaration
+            // itself defines the function. Define with the signatures accumulated so far; a
+            // following ambient overload of the same name re-defines with the grown set.
+            if (funcStmt.IsDeclare)
+            {
+                TypeInfo ambientType = signatures.Count > 1
+                    ? new TypeInfo.OverloadedFunction(new List<TypeInfo.Function>(signatures), signatures[^1])
+                    : typeParams is { Count: > 0 }
+                        ? new TypeInfo.GenericFunction(typeParams, paramTypes, returnType, requiredParams, hasRest, thisType, paramNames)
+                        : thisFuncType;
+                if (typeParams is { Count: > 0 } && signatures.Count > 1)
+                    ambientType = new TypeInfo.GenericOverloadedFunction(typeParams, new List<TypeInfo.Function>(signatures), signatures[^1]);
+                _environment.Define(funcName, ambientType);
+            }
             return;
         }
 

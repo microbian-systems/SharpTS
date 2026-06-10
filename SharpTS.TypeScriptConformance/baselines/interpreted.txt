@@ -8,7 +8,7 @@ tests/cases/conformance/types/conditional/inferTypesInvalidExtendsDeclaration.ts
 tests/cases/conformance/types/conditional/inferTypesWithExtends1.ts ParseError
 tests/cases/conformance/types/conditional/inferTypesWithExtends2.ts Fail
 tests/cases/conformance/types/conditional/variance.ts Pass
-tests/cases/conformance/types/typeRelationships/assignmentCompatibility/anyAssignabilityInInheritance.ts Fail
+tests/cases/conformance/types/typeRelationships/assignmentCompatibility/anyAssignabilityInInheritance.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/anyAssignableToEveryType.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/anyAssignableToEveryType2.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/assignmentCompatBetweenTupleAndArray.ts Pass

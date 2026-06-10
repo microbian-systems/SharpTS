@@ -336,6 +336,21 @@ public partial class TypeChecker
                 {
                     extendsList.Add(extendInterface);
                 }
+                else if (extendType is TypeInfo.InstantiatedGeneric extendIG &&
+                         FlattenInstantiatedInterface(extendIG) is { } flattened)
+                {
+                    // `extends A<Base>` — substitute the type arguments into the generic
+                    // interface's members so the base behaves like a concrete interface.
+                    extendsList.Add(flattened);
+                }
+                else if ((extendType is TypeInfo.Instance inst ? inst.ResolvedClassType : extendType)
+                         is TypeInfo.Class extendClass)
+                {
+                    // TypeScript allows an interface to extend a CLASS: it inherits the class's
+                    // member types as if they were interface members. (A class name in type
+                    // position resolves to its Instance type, so unwrap that first.)
+                    extendsList.Add(ClassAsInterfaceBase(extendClass));
+                }
                 else
                 {
                     throw new TypeCheckException($" Interface '{interfaceStmt.Name.Lexeme}' can only extend other interfaces, but '{extendTypeName}' is not an interface.", tsCode: "TS2312");
@@ -479,6 +494,56 @@ public partial class TypeChecker
             result.Add(new TypeInfo.TypeParameter(tp.Name.Lexeme, constraint, defaultType, tp.IsConst, tp.Variance));
         }
         return result;
+    }
+
+    /// <summary>
+    /// Views a class's instance shape (fields, methods, getters — own and inherited) as an
+    /// interface, for `interface I extends SomeClass`.
+    /// </summary>
+    private TypeInfo.Interface ClassAsInterfaceBase(TypeInfo.Class cls)
+    {
+        Dictionary<string, TypeInfo> members = [];
+        TypeInfo? current = cls;
+        while (current is TypeInfo.Class c)
+        {
+            foreach (var (n, t) in c.FieldTypes) members.TryAdd(n, t);
+            foreach (var (n, t) in c.Methods) if (n != "constructor") members.TryAdd(n, t);
+            foreach (var (n, t) in c.Getters) members.TryAdd(n, t);
+            current = GetSuperclass(current);
+        }
+        return new TypeInfo.Interface(
+            cls.Name,
+            members.ToFrozenDictionary(),
+            FrozenSet<string>.Empty,
+            cls.StringIndexType,
+            cls.NumberIndexType);
+    }
+
+    /// <summary>
+    /// Converts an instantiation of a generic interface (e.g. <c>A&lt;Base&gt;</c>) into a concrete
+    /// <see cref="TypeInfo.Interface"/> by substituting the type arguments into its members and
+    /// index signatures — the shape `extends A&lt;Base&gt;` needs as a base. Returns null when the
+    /// instantiated definition isn't a generic interface.
+    /// </summary>
+    private TypeInfo.Interface? FlattenInstantiatedInterface(TypeInfo.InstantiatedGeneric ig)
+    {
+        if (ig.GenericDefinition is not TypeInfo.GenericInterface gi) return null;
+        Dictionary<string, TypeInfo> subs = [];
+        for (int i = 0; i < gi.TypeParams.Count && i < ig.TypeArguments.Count; i++)
+            subs[gi.TypeParams[i].Name] = ig.TypeArguments[i];
+        var members = gi.Members.ToDictionary(kv => kv.Key, kv => Substitute(kv.Value, subs));
+        return new TypeInfo.Interface(
+            $"{gi.Name}<{string.Join(", ", ig.TypeArguments)}>",
+            members.ToFrozenDictionary(),
+            gi.OptionalMembers,
+            gi.StringIndexType is null ? null : Substitute(gi.StringIndexType, subs),
+            gi.NumberIndexType is null ? null : Substitute(gi.NumberIndexType, subs),
+            gi.SymbolIndexType is null ? null : Substitute(gi.SymbolIndexType, subs),
+            gi.Extends,
+            gi.CallSignatures,
+            gi.ConstructorSignatures,
+            gi.ReadonlyMembers,
+            gi.MethodMembers);
     }
 
     /// <summary>
