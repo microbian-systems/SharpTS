@@ -161,7 +161,7 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         // Call the listening callback
         if (callback != null)
         {
-            callback.Call(interpreter, new List<object?>());
+            interpreter.InvokeGuestCallback(callback, new List<object?>());
         }
 
         // Emit 'listening' event
@@ -217,7 +217,10 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         _isListening = true;
         interpreter.Ref();
 
-        callback?.Call(interpreter, new List<object?>());
+        if (callback != null)
+        {
+            interpreter.InvokeGuestCallback(callback, new List<object?>());
+        }
         EmitEvent("listening", new List<object?>());
 
         return this;
@@ -309,7 +312,10 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
         {
             interp.ScheduleTimer(0, 0, () =>
             {
-                callback?.Call(interp, new List<object?>());
+                if (callback != null)
+                {
+                    interp.InvokeGuestCallback(callback, new List<object?>());
+                }
                 EmitEvent("close", new List<object?>());
             }, isInterval: false);
         }

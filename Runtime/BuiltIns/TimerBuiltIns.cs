@@ -36,7 +36,7 @@ public static class TimerBuiltIns
             {
                 try
                 {
-                    callback.Call(interpreter, args);
+                    interpreter.InvokeGuestCallback(callback, args);
                 }
                 finally
                 {
@@ -94,7 +94,7 @@ public static class TimerBuiltIns
         {
             if (!cts.IsCancellationRequested && !interpreter.IsDisposed)
             {
-                callback.Call(interpreter, args);
+                interpreter.InvokeGuestCallback(callback, args);
             }
         }, isInterval: true);
 

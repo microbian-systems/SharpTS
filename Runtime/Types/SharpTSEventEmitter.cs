@@ -199,7 +199,10 @@ public class SharpTSEventEmitter : ITypeCategorized
     {
         if (listener is ISharpTSCallable callable)
         {
-            callable.Call(interpreter!, eventArgs);
+            var result = callable.Call(interpreter!, eventArgs);
+            // An async listener's promise is unreachable from guest code —
+            // report its rejection instead of swallowing it (#228).
+            interpreter?.ObserveDiscardedCallbackResult(result);
         }
         else
         {

@@ -152,10 +152,10 @@ public static class DnsModuleInterpreter
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
                     if (result is SharpTSObject single)
-                        callback.Call(interpreter,
+                        interpreter.InvokeGuestCallback(callback,
                             [null, single.Fields["address"], single.Fields["family"]]);
                     else
-                        callback.Call(interpreter, [null, result]);
+                        interpreter.InvokeGuestCallback(callback, [null, result]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -163,7 +163,7 @@ public static class DnsModuleInterpreter
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter,
+                    interpreter.InvokeGuestCallback(callback,
                         [CreateDnsError(ExtractErrorCode(ex), hostname), null, null]);
                     interpreter.Unref();
                 }, isInterval: false);
@@ -263,7 +263,7 @@ public static class DnsModuleInterpreter
                 var result = LookupServiceCore(address, port);
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter,
+                    interpreter.InvokeGuestCallback(callback,
                         [null, result.Fields["hostname"], result.Fields["service"]]);
                     interpreter.Unref();
                 }, isInterval: false);
@@ -272,7 +272,7 @@ public static class DnsModuleInterpreter
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter,
+                    interpreter.InvokeGuestCallback(callback,
                         [CreateDnsError(ExtractErrorCode(ex), address), null, null]);
                     interpreter.Unref();
                 }, isInterval: false);
@@ -390,7 +390,7 @@ public static class DnsModuleInterpreter
                 var result = WrapDnsResult(raw);
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [null, result]);
+                    interpreter.InvokeGuestCallback(callback, [null, result]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -398,7 +398,7 @@ public static class DnsModuleInterpreter
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
+                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -422,7 +422,7 @@ public static class DnsModuleInterpreter
                 var wrapped = new SharpTSArray(result);
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [null, wrapped]);
+                    interpreter.InvokeGuestCallback(callback, [null, wrapped]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -430,7 +430,7 @@ public static class DnsModuleInterpreter
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
+                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -453,7 +453,7 @@ public static class DnsModuleInterpreter
                 var wrapped = new SharpTSArray(result);
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [null, wrapped]);
+                    interpreter.InvokeGuestCallback(callback, [null, wrapped]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -461,7 +461,7 @@ public static class DnsModuleInterpreter
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [CreateDnsError(ExtractErrorCode(ex), ip), null]);
+                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(ExtractErrorCode(ex), ip), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -486,7 +486,7 @@ public static class DnsModuleInterpreter
                 var result = WrapDnsResult(raw);
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [null, result]);
+                    interpreter.InvokeGuestCallback(callback, [null, result]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -494,7 +494,7 @@ public static class DnsModuleInterpreter
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
+                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -586,7 +586,7 @@ public static class DnsModuleInterpreter
                 var result = WrapDnsResult(raw);
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [null, result]);
+                    interpreter.InvokeGuestCallback(callback, [null, result]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -594,7 +594,7 @@ public static class DnsModuleInterpreter
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
+                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -644,7 +644,7 @@ public static class DnsModuleInterpreter
                 var result = WrapDnsResult(raw);
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [null, result]);
+                    interpreter.InvokeGuestCallback(callback, [null, result]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -652,7 +652,7 @@ public static class DnsModuleInterpreter
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
+                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -678,7 +678,7 @@ public static class DnsModuleInterpreter
                 var result = ResolveAddresses(hostname, AddressFamily.InterNetwork);
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [null, result]);
+                    interpreter.InvokeGuestCallback(callback, [null, result]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -686,7 +686,7 @@ public static class DnsModuleInterpreter
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [CreateDnsError(GetErrorCode(ex), hostname), null]);
+                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(GetErrorCode(ex), hostname), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -712,7 +712,7 @@ public static class DnsModuleInterpreter
                 var result = ResolveAddresses(hostname, AddressFamily.InterNetworkV6);
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [null, result]);
+                    interpreter.InvokeGuestCallback(callback, [null, result]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -720,7 +720,7 @@ public static class DnsModuleInterpreter
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [CreateDnsError(GetErrorCode(ex), hostname), null]);
+                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(GetErrorCode(ex), hostname), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -750,7 +750,7 @@ public static class DnsModuleInterpreter
                 var hostnames = new SharpTSArray(new List<object?> { hostEntry.HostName });
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [null, hostnames]);
+                    interpreter.InvokeGuestCallback(callback, [null, hostnames]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -758,7 +758,7 @@ public static class DnsModuleInterpreter
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [CreateDnsError(GetErrorCode(ex), ip), null]);
+                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(GetErrorCode(ex), ip), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -766,7 +766,7 @@ public static class DnsModuleInterpreter
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    callback.Call(interpreter, [CreateDnsError("EAI_FAIL", ip), null]);
+                    interpreter.InvokeGuestCallback(callback, [CreateDnsError("EAI_FAIL", ip), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }

@@ -960,7 +960,7 @@ public static class FsModuleInterpreter
         {
             try
             {
-                callback.Call(interpreter, [error, result]);
+                interpreter.InvokeGuestCallback(callback, [error, result]);
             }
             finally
             {
