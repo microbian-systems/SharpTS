@@ -199,13 +199,11 @@ Scoped symbol table for runtime values:
 | `SharpTSObject` | Object literal |
 | `SharpTSMath` | Math singleton |
 
-### Control Flow via Exceptions
+### Control Flow
 
-The interpreter uses exceptions for control flow unwinding:
-- `ReturnException` - Return from function
-- `BreakException` - Break from loop/switch
-- `ContinueException` - Continue to next iteration
-- `ThrowException` - User-thrown errors
+Normal control flow (return/break/continue) is signaled via the lightweight `ExecutionResult` struct (`Execution/ExecutionResult.cs`) — a discriminated union returned by statement execution, not exceptions. Two exceptions remain for genuinely non-local unwinding:
+- `ThrowException` - User-thrown errors (guest `throw`)
+- `YieldException` - Generator suspension
 
 ---
 
@@ -467,13 +465,12 @@ Pluggable IL emission for type-specific operations:
 | `JSONBuiltIns.cs` | JSON.parse and JSON.stringify |
 | `ReflectBuiltIns.cs` | Reflect API methods |
 
-### Control Flow (5 files)
+### Control Flow (2 files)
+
+Return/break/continue use the `ExecutionResult` struct (`Execution/ExecutionResult.cs`), not exceptions.
 
 | File | Purpose |
 |------|---------|
-| `ReturnException.cs` | Return statement unwinding |
-| `BreakException.cs` | Break statement unwinding |
-| `ContinueException.cs` | Continue statement unwinding |
 | `ThrowException.cs` | User-thrown exceptions |
 | `YieldException.cs` | Yield expression control flow |
 

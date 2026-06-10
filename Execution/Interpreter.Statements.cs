@@ -387,7 +387,7 @@ public partial class Interpreter
     /// <param name="switchStmt">The switch statement AST node.</param>
     /// <remarks>
     /// Implements JavaScript/TypeScript switch semantics including fall-through behavior
-    /// and default case handling. Uses <see cref="BreakException"/> for break statements.
+    /// and default case handling. Break statements surface as <see cref="ExecutionResult"/> signals.
     /// </remarks>
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/switch">MDN switch Statement</seealso>
     private ExecutionResult ExecuteSwitch(Stmt.Switch switchStmt)
@@ -660,7 +660,7 @@ public partial class Interpreter
     /// <param name="forOf">The for...of statement AST node.</param>
     /// <remarks>
     /// Creates a new scope for each iteration with the loop variable bound to the current element.
-    /// Supports break and continue via <see cref="BreakException"/> and <see cref="ContinueException"/>.
+    /// Supports break and continue via <see cref="ExecutionResult"/> signals.
     /// </remarks>
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/iterators-and-generators.html#forof-statements">TypeScript for...of</seealso>
     private ExecutionResult ExecuteForOf(Stmt.ForOf forOf)

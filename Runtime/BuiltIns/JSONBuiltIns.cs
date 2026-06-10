@@ -177,9 +177,8 @@ public static class JSONBuiltIns
     /// JS undefined removes the property; JS null is preserved. In our
     /// representation a function with no explicit return yields C# null,
     /// which we conservatively also treat as "remove" to match the
-    /// pre-existing behavior of this path (callers that explicitly return
-    /// null can return <c>null</c> via <c>ReturnException</c> with
-    /// <c>SharpTSUndefined</c> stripped — out of scope to refine here).
+    /// pre-existing behavior of this path (an explicit <c>return null</c>
+    /// is indistinguishable from no return here — out of scope to refine).
     /// </summary>
     private static bool IsUndefinedRevive(object? v) => v is null or SharpTSUndefined;
 

@@ -32,14 +32,14 @@ Source → Lexer → Parser → TypeChecker → Interpreter (tree-walk)
 
 | Directory | Purpose |
 |-----------|---------|
-| `Parsing/` | Lexer, Parser (14 partial files), AST node definitions |
-| `TypeSystem/` | Static type checking (47 files), type compatibility, generics |
-| `Execution/` | Tree-walking interpreter (16 files) |
-| `Compilation/` | IL compilation (316 files), async state machines, bundling |
+| `Parsing/` | Lexer, Parser (partial files), AST node definitions |
+| `TypeSystem/` | Static type checking, type compatibility, generics |
+| `Execution/` | Tree-walking interpreter |
+| `Compilation/` | IL compilation (largest directory), async state machines, bundling |
 | `Runtime/` | Runtime values, environment, built-ins |
-| `Runtime/Types/` | TypeScript value types (87 files): arrays, classes, promises, etc. |
-| `Runtime/BuiltIns/` | Built-in method implementations (41 files) |
-| `Runtime/Exceptions/` | Control flow exceptions (return, break, continue, yield) |
+| `Runtime/Types/` | TypeScript value types: arrays, classes, promises, etc. |
+| `Runtime/BuiltIns/` | Built-in method implementations |
+| `Runtime/Exceptions/` | Non-local unwinding exceptions (throw, yield) |
 | `Modules/` | Module resolution, script detection |
 | `Diagnostics/` | Error reporting, source locations |
 | `Packaging/` | NuGet package generation |
@@ -55,9 +55,9 @@ Source → Lexer → Parser → TypeChecker → Interpreter (tree-walk)
 - `RuntimeEnvironment` - Tracks values during execution (runtime)
 - Never mix these - they serve completely different phases
 
-**Control Flow via Exceptions:**
-- `ReturnException`, `BreakException`, `ContinueException`, `YieldException`
-- This is intentional - exceptions as control flow mechanism for unwinding
+**Control Flow:**
+- Return/break/continue are signaled via the `ExecutionResult` struct (`Execution/ExecutionResult.cs`), not exceptions
+- `ThrowException` (guest `throw`) and `YieldException` (generator suspension) remain as intentional exception-based unwinding
 
 **Type System:**
 - Structural typing for interfaces (duck typing)

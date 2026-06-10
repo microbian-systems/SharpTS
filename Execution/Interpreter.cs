@@ -1247,18 +1247,10 @@ public partial class Interpreter : IDisposable
 
         // Call main with process.argv (pass args even if main() doesn't take them - JS allows this)
         var argv = ProcessBuiltIns.GetArgv();
-        object? result;
-        try
-        {
-            // Pass argv only if main expects it
-            result = mainFunc.Parameters.Count == 0
-                ? mainFn.Call(this, [])
-                : mainFn.Call(this, [argv]);
-        }
-        catch (Runtime.Exceptions.ReturnException ret)
-        {
-            result = ret.Value;
-        }
+        // Pass argv only if main expects it
+        object? result = mainFunc.Parameters.Count == 0
+            ? mainFn.Call(this, [])
+            : mainFn.Call(this, [argv]);
 
         // If result is a Promise, await it
         if (result is SharpTSPromise promise)
