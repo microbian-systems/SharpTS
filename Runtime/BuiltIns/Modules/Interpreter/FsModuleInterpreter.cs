@@ -947,11 +947,25 @@ public static class FsModuleInterpreter
     /// <summary>
     /// Schedules an async callback on the interpreter's event loop.
     /// </summary>
+    /// <remarks>
+    /// Pairs with the <c>interpreter.Ref()</c> taken at each async dispatch
+    /// site (#205): a pending fs callback counts as outstanding work, so the
+    /// loop is released only after the callback has run (or failed). Every
+    /// Task.Run body in this file calls ScheduleCallback exactly once — on
+    /// the success path or the catch path — keeping the pairing balanced.
+    /// </remarks>
     private static void ScheduleCallback(Interp interpreter, ISharpTSCallable callback, object? error, object? result)
     {
         interpreter.ScheduleTimer(0, 0, () =>
         {
-            callback.Call(interpreter, [error, result]);
+            try
+            {
+                callback.Call(interpreter, [error, result]);
+            }
+            finally
+            {
+                interpreter.Unref();
+            }
         }, isInterval: false);
     }
 
@@ -992,6 +1006,7 @@ public static class FsModuleInterpreter
             }
         }
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1016,6 +1031,7 @@ public static class FsModuleInterpreter
         var callback = GetCallback(args);
         var options = args.Length == 4 ? args[2].ToObject() : null;
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1040,6 +1056,7 @@ public static class FsModuleInterpreter
         var callback = GetCallback(args);
         var options = args.Length == 4 ? args[2].ToObject() : null;
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1062,6 +1079,7 @@ public static class FsModuleInterpreter
         var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1084,6 +1102,7 @@ public static class FsModuleInterpreter
         var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1106,6 +1125,7 @@ public static class FsModuleInterpreter
         var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1129,6 +1149,7 @@ public static class FsModuleInterpreter
         var callback = GetCallback(args);
         var options = args.Length == 3 ? args[1].ToObject() : null;
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1152,6 +1173,7 @@ public static class FsModuleInterpreter
         var callback = GetCallback(args);
         var options = args.Length == 3 ? args[1].ToObject() : null;
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1175,6 +1197,7 @@ public static class FsModuleInterpreter
         var callback = GetCallback(args);
         var options = args.Length == 3 ? args[1].ToObject() : null;
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1198,6 +1221,7 @@ public static class FsModuleInterpreter
         var newPath = args[1].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1222,6 +1246,7 @@ public static class FsModuleInterpreter
         var callback = GetCallback(args);
         var mode = args.Length == 4 ? args[2].ToObject() : null;
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1245,6 +1270,7 @@ public static class FsModuleInterpreter
         var callback = GetCallback(args);
         var mode = args.Length == 3 ? args[1].ToObject() : null;
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1268,6 +1294,7 @@ public static class FsModuleInterpreter
         var mode = args[1].ToObject();
         var callback = GetCallback(args);
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1291,6 +1318,7 @@ public static class FsModuleInterpreter
         var callback = GetCallback(args);
         var len = args.Length == 3 ? args[1].ToObject() : null;
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1315,6 +1343,7 @@ public static class FsModuleInterpreter
         var mtime = args[2].ToObject();
         var callback = GetCallback(args);
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1337,6 +1366,7 @@ public static class FsModuleInterpreter
         var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1359,6 +1389,7 @@ public static class FsModuleInterpreter
         var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1383,6 +1414,7 @@ public static class FsModuleInterpreter
         var callback = GetCallback(args);
         var type = args.Length == 4 ? args[2].ToObject() : null;
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1406,6 +1438,7 @@ public static class FsModuleInterpreter
         var newPath = args[1].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
@@ -1428,6 +1461,7 @@ public static class FsModuleInterpreter
         var prefix = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
+        interpreter.Ref(); // released by ScheduleCallback after the callback runs (#205)
         _ = Task.Run(async () =>
         {
             try
