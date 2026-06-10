@@ -63,70 +63,70 @@ public static class FsModuleInterpreter
     {
         return new Dictionary<string, object?>
         {
-            ["existsSync"] = new BuiltInMethod("existsSync", 1, 1, ExistsSync),
-            ["readFileSync"] = new BuiltInMethod("readFileSync", 1, 2, ReadFileSync),
-            ["writeFileSync"] = new BuiltInMethod("writeFileSync", 2, 3, WriteFileSync),
-            ["appendFileSync"] = new BuiltInMethod("appendFileSync", 2, 3, AppendFileSync),
-            ["unlinkSync"] = new BuiltInMethod("unlinkSync", 1, 1, UnlinkSync),
-            ["mkdirSync"] = new BuiltInMethod("mkdirSync", 1, 2, MkdirSync),
-            ["rmdirSync"] = new BuiltInMethod("rmdirSync", 1, 2, RmdirSync),
-            ["readdirSync"] = new BuiltInMethod("readdirSync", 1, 2, ReaddirSync),
-            ["statSync"] = new BuiltInMethod("statSync", 1, 1, StatSync),
-            ["lstatSync"] = new BuiltInMethod("lstatSync", 1, 1, LstatSync),
-            ["renameSync"] = new BuiltInMethod("renameSync", 2, 2, RenameSync),
-            ["copyFileSync"] = new BuiltInMethod("copyFileSync", 2, 3, CopyFileSync),
-            ["accessSync"] = new BuiltInMethod("accessSync", 1, 2, AccessSync),
-            ["chmodSync"] = new BuiltInMethod("chmodSync", 2, 2, ChmodSync),
-            ["chownSync"] = new BuiltInMethod("chownSync", 3, 3, ChownSync),
-            ["lchownSync"] = new BuiltInMethod("lchownSync", 3, 3, LchownSync),
-            ["truncateSync"] = new BuiltInMethod("truncateSync", 1, 2, TruncateSync),
-            ["symlinkSync"] = new BuiltInMethod("symlinkSync", 2, 3, SymlinkSync),
-            ["readlinkSync"] = new BuiltInMethod("readlinkSync", 1, 1, ReadlinkSync),
-            ["realpathSync"] = new BuiltInMethod("realpathSync", 1, 1, RealpathSync),
-            ["utimesSync"] = new BuiltInMethod("utimesSync", 3, 3, UtimesSync),
+            ["existsSync"] = BuiltInMethod.CreateV2("existsSync", 1, 1, ExistsSync),
+            ["readFileSync"] = BuiltInMethod.CreateV2("readFileSync", 1, 2, ReadFileSync),
+            ["writeFileSync"] = BuiltInMethod.CreateV2("writeFileSync", 2, 3, WriteFileSync),
+            ["appendFileSync"] = BuiltInMethod.CreateV2("appendFileSync", 2, 3, AppendFileSync),
+            ["unlinkSync"] = BuiltInMethod.CreateV2("unlinkSync", 1, 1, UnlinkSync),
+            ["mkdirSync"] = BuiltInMethod.CreateV2("mkdirSync", 1, 2, MkdirSync),
+            ["rmdirSync"] = BuiltInMethod.CreateV2("rmdirSync", 1, 2, RmdirSync),
+            ["readdirSync"] = BuiltInMethod.CreateV2("readdirSync", 1, 2, ReaddirSync),
+            ["statSync"] = BuiltInMethod.CreateV2("statSync", 1, 1, StatSync),
+            ["lstatSync"] = BuiltInMethod.CreateV2("lstatSync", 1, 1, LstatSync),
+            ["renameSync"] = BuiltInMethod.CreateV2("renameSync", 2, 2, RenameSync),
+            ["copyFileSync"] = BuiltInMethod.CreateV2("copyFileSync", 2, 3, CopyFileSync),
+            ["accessSync"] = BuiltInMethod.CreateV2("accessSync", 1, 2, AccessSync),
+            ["chmodSync"] = BuiltInMethod.CreateV2("chmodSync", 2, 2, ChmodSync),
+            ["chownSync"] = BuiltInMethod.CreateV2("chownSync", 3, 3, ChownSync),
+            ["lchownSync"] = BuiltInMethod.CreateV2("lchownSync", 3, 3, LchownSync),
+            ["truncateSync"] = BuiltInMethod.CreateV2("truncateSync", 1, 2, TruncateSync),
+            ["symlinkSync"] = BuiltInMethod.CreateV2("symlinkSync", 2, 3, SymlinkSync),
+            ["readlinkSync"] = BuiltInMethod.CreateV2("readlinkSync", 1, 1, ReadlinkSync),
+            ["realpathSync"] = BuiltInMethod.CreateV2("realpathSync", 1, 1, RealpathSync),
+            ["utimesSync"] = BuiltInMethod.CreateV2("utimesSync", 3, 3, UtimesSync),
             // File descriptor APIs
-            ["openSync"] = new BuiltInMethod("openSync", 2, 3, OpenSync),
-            ["closeSync"] = new BuiltInMethod("closeSync", 1, 1, CloseSync),
-            ["readSync"] = new BuiltInMethod("readSync", 5, 5, ReadSync),
-            ["writeSync"] = new BuiltInMethod("writeSync", 2, 5, WriteSync),
-            ["fstatSync"] = new BuiltInMethod("fstatSync", 1, 1, FstatSync),
-            ["ftruncateSync"] = new BuiltInMethod("ftruncateSync", 1, 2, FtruncateSync),
+            ["openSync"] = BuiltInMethod.CreateV2("openSync", 2, 3, OpenSync),
+            ["closeSync"] = BuiltInMethod.CreateV2("closeSync", 1, 1, CloseSync),
+            ["readSync"] = BuiltInMethod.CreateV2("readSync", 5, 5, ReadSync),
+            ["writeSync"] = BuiltInMethod.CreateV2("writeSync", 2, 5, WriteSync),
+            ["fstatSync"] = BuiltInMethod.CreateV2("fstatSync", 1, 1, FstatSync),
+            ["ftruncateSync"] = BuiltInMethod.CreateV2("ftruncateSync", 1, 2, FtruncateSync),
             // Directory utilities
-            ["mkdtempSync"] = new BuiltInMethod("mkdtempSync", 1, 1, MkdtempSync),
-            ["opendirSync"] = new BuiltInMethod("opendirSync", 1, 1, OpendirSync),
+            ["mkdtempSync"] = BuiltInMethod.CreateV2("mkdtempSync", 1, 1, MkdtempSync),
+            ["opendirSync"] = BuiltInMethod.CreateV2("opendirSync", 1, 1, OpendirSync),
             // Hard links
-            ["linkSync"] = new BuiltInMethod("linkSync", 2, 2, LinkSync),
+            ["linkSync"] = BuiltInMethod.CreateV2("linkSync", 2, 2, LinkSync),
             // Stream factory methods
-            ["createReadStream"] = new BuiltInMethod("createReadStream", 1, 2, CreateReadStream),
-            ["createWriteStream"] = new BuiltInMethod("createWriteStream", 1, 2, CreateWriteStream),
+            ["createReadStream"] = BuiltInMethod.CreateV2("createReadStream", 1, 2, CreateReadStream),
+            ["createWriteStream"] = BuiltInMethod.CreateV2("createWriteStream", 1, 2, CreateWriteStream),
             ["constants"] = CreateConstants(),
 
             // Callback-based async methods
-            ["readFile"] = new BuiltInMethod("readFile", 2, 3, ReadFile),
-            ["writeFile"] = new BuiltInMethod("writeFile", 3, 4, WriteFile),
-            ["appendFile"] = new BuiltInMethod("appendFile", 3, 4, AppendFile),
-            ["stat"] = new BuiltInMethod("stat", 2, 3, Stat),
-            ["lstat"] = new BuiltInMethod("lstat", 2, 3, Lstat),
-            ["unlink"] = new BuiltInMethod("unlink", 2, 2, Unlink),
-            ["mkdir"] = new BuiltInMethod("mkdir", 2, 3, Mkdir),
-            ["rmdir"] = new BuiltInMethod("rmdir", 2, 3, Rmdir),
-            ["readdir"] = new BuiltInMethod("readdir", 2, 3, Readdir),
-            ["rename"] = new BuiltInMethod("rename", 3, 3, Rename),
-            ["copyFile"] = new BuiltInMethod("copyFile", 3, 4, CopyFile),
-            ["access"] = new BuiltInMethod("access", 2, 3, Access),
-            ["chmod"] = new BuiltInMethod("chmod", 3, 3, Chmod),
-            ["truncate"] = new BuiltInMethod("truncate", 2, 3, Truncate),
-            ["utimes"] = new BuiltInMethod("utimes", 4, 4, Utimes),
-            ["readlink"] = new BuiltInMethod("readlink", 2, 3, Readlink),
-            ["realpath"] = new BuiltInMethod("realpath", 2, 3, Realpath),
-            ["symlink"] = new BuiltInMethod("symlink", 3, 4, Symlink),
-            ["link"] = new BuiltInMethod("link", 3, 3, Link),
-            ["mkdtemp"] = new BuiltInMethod("mkdtemp", 2, 3, Mkdtemp),
+            ["readFile"] = BuiltInMethod.CreateV2("readFile", 2, 3, ReadFile),
+            ["writeFile"] = BuiltInMethod.CreateV2("writeFile", 3, 4, WriteFile),
+            ["appendFile"] = BuiltInMethod.CreateV2("appendFile", 3, 4, AppendFile),
+            ["stat"] = BuiltInMethod.CreateV2("stat", 2, 3, Stat),
+            ["lstat"] = BuiltInMethod.CreateV2("lstat", 2, 3, Lstat),
+            ["unlink"] = BuiltInMethod.CreateV2("unlink", 2, 2, Unlink),
+            ["mkdir"] = BuiltInMethod.CreateV2("mkdir", 2, 3, Mkdir),
+            ["rmdir"] = BuiltInMethod.CreateV2("rmdir", 2, 3, Rmdir),
+            ["readdir"] = BuiltInMethod.CreateV2("readdir", 2, 3, Readdir),
+            ["rename"] = BuiltInMethod.CreateV2("rename", 3, 3, Rename),
+            ["copyFile"] = BuiltInMethod.CreateV2("copyFile", 3, 4, CopyFile),
+            ["access"] = BuiltInMethod.CreateV2("access", 2, 3, Access),
+            ["chmod"] = BuiltInMethod.CreateV2("chmod", 3, 3, Chmod),
+            ["truncate"] = BuiltInMethod.CreateV2("truncate", 2, 3, Truncate),
+            ["utimes"] = BuiltInMethod.CreateV2("utimes", 4, 4, Utimes),
+            ["readlink"] = BuiltInMethod.CreateV2("readlink", 2, 3, Readlink),
+            ["realpath"] = BuiltInMethod.CreateV2("realpath", 2, 3, Realpath),
+            ["symlink"] = BuiltInMethod.CreateV2("symlink", 3, 4, Symlink),
+            ["link"] = BuiltInMethod.CreateV2("link", 3, 3, Link),
+            ["mkdtemp"] = BuiltInMethod.CreateV2("mkdtemp", 2, 3, Mkdtemp),
 
             // File watching
-            ["watch"] = new BuiltInMethod("watch", 1, 3, Watch),
-            ["watchFile"] = new BuiltInMethod("watchFile", 2, 3, WatchFile),
-            ["unwatchFile"] = new BuiltInMethod("unwatchFile", 1, 2, UnwatchFile),
+            ["watch"] = BuiltInMethod.CreateV2("watch", 1, 3, Watch),
+            ["watchFile"] = BuiltInMethod.CreateV2("watchFile", 2, 3, WatchFile),
+            ["unwatchFile"] = BuiltInMethod.CreateV2("unwatchFile", 1, 2, UnwatchFile),
 
             // Promise-based methods namespace
             ["promises"] = FsPromisesModuleInterpreter.CreatePromisesNamespace()
@@ -172,18 +172,18 @@ public static class FsModuleInterpreter
         });
     }
 
-    private static object? ExistsSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ExistsSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        return File.Exists(path) || Directory.Exists(path);
+        var path = args[0].ToObject()?.ToString() ?? "";
+        return RuntimeValue.FromBoolean(File.Exists(path) || Directory.Exists(path));
     }
 
-    private static object? ReadFileSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ReadFileSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var encoding = args.Count >= 2 ? args[1] : null;
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var encoding = args.Length >= 2 ? args[1].ToObject() : null;
 
-        return WrapFsOperation("open", path, () =>
+        return RuntimeValue.FromBoxed(WrapFsOperation("open", path, () =>
         {
             if (encoding != null)
             {
@@ -196,28 +196,28 @@ public static class FsModuleInterpreter
                 var bytes = File.ReadAllBytes(path);
                 return new SharpTSBuffer(bytes);
             }
-        });
+        }));
     }
 
-    private static object? WriteFileSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue WriteFileSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var data = args[1]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var data = args[1].ToObject()?.ToString() ?? "";
         WrapFsOperation("open", path, () => File.WriteAllText(path, data));
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? AppendFileSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue AppendFileSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var data = args[1]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var data = args[1].ToObject()?.ToString() ?? "";
         WrapFsOperation("open", path, () => File.AppendAllText(path, data));
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? UnlinkSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue UnlinkSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         WrapFsOperation("unlink", path, () =>
         {
             // File.Delete doesn't throw if file doesn't exist, but Node.js does
@@ -227,38 +227,38 @@ public static class FsModuleInterpreter
             }
             File.Delete(path);
         });
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? MkdirSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue MkdirSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         WrapFsOperation("mkdir", path, () => Directory.CreateDirectory(path));
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? RmdirSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue RmdirSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var recursive = false;
 
-        if (args.Count >= 2 && args[1] is SharpTSObject options)
+        if (args.Length >= 2 && args[1].ToObject() is SharpTSObject options)
         {
             var recursiveValue = options.GetProperty("recursive");
             recursive = recursiveValue is true || (recursiveValue is double d && d != 0);
         }
 
         WrapFsOperation("rmdir", path, () => Directory.Delete(path, recursive));
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? ReaddirSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ReaddirSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var withFileTypes = false;
         var recursive = false;
 
-        if (args.Count > 1 && args[1] is SharpTSObject options)
+        if (args.Length > 1 && args[1].ToObject() is SharpTSObject options)
         {
             var wft = options.GetProperty("withFileTypes");
             withFileTypes = wft is true || (wft is double d && d != 0);
@@ -267,7 +267,7 @@ public static class FsModuleInterpreter
             recursive = rec is true || (rec is double rd && rd != 0);
         }
 
-        return WrapFsOperation("readdir", path, () =>
+        return RuntimeValue.FromBoxed(WrapFsOperation("readdir", path, () =>
         {
             var searchOption = recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
             var entries = Directory.GetFileSystemEntries(path, "*", searchOption);
@@ -297,7 +297,7 @@ public static class FsModuleInterpreter
             }
 
             return (object?)new SharpTSArray(list);
-        });
+        }));
     }
 
     /// <summary>
@@ -330,18 +330,18 @@ public static class FsModuleInterpreter
         });
     }
 
-    private static object? StatSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue StatSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
 
-        return WrapFsOperation("stat", path, () =>
+        return RuntimeValue.FromBoxed(WrapFsOperation("stat", path, () =>
         {
             if (Directory.Exists(path))
             {
                 return (object?)new SharpTSObject(new Dictionary<string, object?>
                 {
-                    ["isDirectory"] = new BuiltInMethod("isDirectory", 0, 0, (_, _, _) => true),
-                    ["isFile"] = new BuiltInMethod("isFile", 0, 0, (_, _, _) => false),
+                    ["isDirectory"] = BuiltInMethod.CreateV2("isDirectory", 0, 0, (_, _, _) => RuntimeValue.True),
+                    ["isFile"] = BuiltInMethod.CreateV2("isFile", 0, 0, (_, _, _) => RuntimeValue.False),
                     ["size"] = 0.0
                 });
             }
@@ -350,8 +350,8 @@ public static class FsModuleInterpreter
                 var fileInfo = new FileInfo(path);
                 return new SharpTSObject(new Dictionary<string, object?>
                 {
-                    ["isDirectory"] = new BuiltInMethod("isDirectory", 0, 0, (_, _, _) => false),
-                    ["isFile"] = new BuiltInMethod("isFile", 0, 0, (_, _, _) => true),
+                    ["isDirectory"] = BuiltInMethod.CreateV2("isDirectory", 0, 0, (_, _, _) => RuntimeValue.False),
+                    ["isFile"] = BuiltInMethod.CreateV2("isFile", 0, 0, (_, _, _) => RuntimeValue.True),
                     ["size"] = (double)fileInfo.Length
                 });
             }
@@ -359,13 +359,13 @@ public static class FsModuleInterpreter
             {
                 throw new FileNotFoundException("no such file or directory", path);
             }
-        });
+        }));
     }
 
-    private static object? RenameSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue RenameSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var oldPath = args[0]?.ToString() ?? "";
-        var newPath = args[1]?.ToString() ?? "";
+        var oldPath = args[0].ToObject()?.ToString() ?? "";
+        var newPath = args[1].ToObject()?.ToString() ?? "";
 
         WrapFsOperation("rename", oldPath, () =>
         {
@@ -378,20 +378,20 @@ public static class FsModuleInterpreter
                 File.Move(oldPath, newPath);
             }
         });
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? CopyFileSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CopyFileSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var src = args[0]?.ToString() ?? "";
-        var dest = args[1]?.ToString() ?? "";
+        var src = args[0].ToObject()?.ToString() ?? "";
+        var dest = args[1].ToObject()?.ToString() ?? "";
         WrapFsOperation("copyfile", src, () => File.Copy(src, dest, overwrite: true));
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? AccessSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue AccessSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
 
         WrapFsOperation("access", path, () =>
         {
@@ -401,14 +401,14 @@ public static class FsModuleInterpreter
             }
         });
 
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? LstatSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue LstatSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
 
-        return WrapFsOperation("lstat", path, () =>
+        return RuntimeValue.FromBoxed(WrapFsOperation("lstat", path, () =>
         {
             // Check for symbolic link first (lstat doesn't follow symlinks)
             var fileInfo = new FileInfo(path);
@@ -428,18 +428,18 @@ public static class FsModuleInterpreter
             var isFile = fileInfo.Exists && !isDir;
             return (object?)new SharpTSObject(new Dictionary<string, object?>
             {
-                ["isDirectory"] = new BuiltInMethod("isDirectory", 0, 0, (_, _, _) => isDir),
-                ["isFile"] = new BuiltInMethod("isFile", 0, 0, (_, _, _) => isFile),
-                ["isSymbolicLink"] = new BuiltInMethod("isSymbolicLink", 0, 0, (_, _, _) => isSymlink),
+                ["isDirectory"] = BuiltInMethod.CreateV2("isDirectory", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isDir)),
+                ["isFile"] = BuiltInMethod.CreateV2("isFile", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isFile)),
+                ["isSymbolicLink"] = BuiltInMethod.CreateV2("isSymbolicLink", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isSymlink)),
                 ["size"] = size
             });
-        });
+        }));
     }
 
-    private static object? ChmodSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ChmodSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var mode = Convert.ToInt32(args[1]);
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var mode = Convert.ToInt32(args[1].ToObject());
 
         WrapFsOperation("chmod", path, () =>
         {
@@ -456,14 +456,14 @@ public static class FsModuleInterpreter
             // Windows: No-op (permissions model is different)
         });
 
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? ChownSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ChownSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var uid = Convert.ToInt32(args[1]);
-        var gid = Convert.ToInt32(args[2]);
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var uid = Convert.ToInt32(args[1].ToObject());
+        var gid = Convert.ToInt32(args[2].ToObject());
 
         WrapFsOperation("chown", path, () =>
         {
@@ -491,14 +491,14 @@ public static class FsModuleInterpreter
             }
         });
 
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? LchownSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue LchownSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var uid = Convert.ToInt32(args[1]);
-        var gid = Convert.ToInt32(args[2]);
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var uid = Convert.ToInt32(args[1].ToObject());
+        var gid = Convert.ToInt32(args[2].ToObject());
 
         WrapFsOperation("lchown", path, () =>
         {
@@ -526,13 +526,13 @@ public static class FsModuleInterpreter
             }
         });
 
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? TruncateSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue TruncateSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var len = args.Count > 1 && args[1] != null ? Convert.ToInt64(args[1]) : 0L;
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var len = args.Length > 1 && !args[1].IsNull ? Convert.ToInt64(args[1].ToObject()) : 0L;
 
         WrapFsOperation("truncate", path, () =>
         {
@@ -540,14 +540,14 @@ public static class FsModuleInterpreter
             fs.SetLength(len);
         });
 
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? SymlinkSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue SymlinkSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var target = args[0]?.ToString() ?? "";
-        var linkPath = args[1]?.ToString() ?? "";
-        var type = args.Count > 2 ? args[2]?.ToString() : null;
+        var target = args[0].ToObject()?.ToString() ?? "";
+        var linkPath = args[1].ToObject()?.ToString() ?? "";
+        var type = args.Length > 2 ? args[2].ToObject()?.ToString() : null;
 
         WrapFsOperation("symlink", linkPath, () =>
         {
@@ -561,14 +561,14 @@ public static class FsModuleInterpreter
             }
         });
 
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? ReadlinkSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ReadlinkSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
 
-        return WrapFsOperation("readlink", path, () =>
+        return RuntimeValue.FromBoxed(WrapFsOperation("readlink", path, () =>
         {
             var fileInfo = new FileInfo(path);
             var dirInfo = new DirectoryInfo(path);
@@ -594,14 +594,14 @@ public static class FsModuleInterpreter
             }
 
             return (object?)linkTarget;
-        });
+        }));
     }
 
-    private static object? RealpathSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue RealpathSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
 
-        return WrapFsOperation("realpath", path, () =>
+        return RuntimeValue.FromBoxed(WrapFsOperation("realpath", path, () =>
         {
             if (!File.Exists(path) && !Directory.Exists(path))
             {
@@ -632,14 +632,14 @@ public static class FsModuleInterpreter
             }
 
             return (object?)fullPath;
-        });
+        }));
     }
 
-    private static object? UtimesSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue UtimesSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var atime = ParseTimestamp(args[1]);
-        var mtime = ParseTimestamp(args[2]);
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var atime = ParseTimestamp(args[1].ToObject());
+        var mtime = ParseTimestamp(args[2].ToObject());
 
         WrapFsOperation("utimes", path, () =>
         {
@@ -652,7 +652,7 @@ public static class FsModuleInterpreter
             File.SetLastWriteTime(path, mtime);
         });
 
-        return null;
+        return RuntimeValue.Null;
     }
 
     /// <summary>
@@ -694,40 +694,40 @@ public static class FsModuleInterpreter
     /// </summary>
     private static readonly FileDescriptorTable _fdTable = FileDescriptorTable.Instance;
 
-    private static object? OpenSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue OpenSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var flags = args[1]; // string ('r', 'w', etc.) or number
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var flags = args[1].ToObject(); // string ('r', 'w', etc.) or number
         // mode parameter is ignored on Windows, used on Unix for permissions
 
-        return WrapFsOperation("open", path, () =>
+        return RuntimeValue.FromNumber(WrapFsOperation("open", path, () =>
         {
             var (fileMode, fileAccess, fileShare) = FsFlags.Parse(flags);
             var fd = _fdTable.Open(path, fileMode, fileAccess, fileShare);
             return (double)fd;
-        });
+        }));
     }
 
-    private static object? CloseSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CloseSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var fd = Convert.ToInt32(args[0]);
+        var fd = Convert.ToInt32(args[0].ToObject());
 
         WrapFsOperation("close", null, () =>
         {
             _fdTable.Close(fd);
         });
-        return null;
+        return RuntimeValue.Null;
     }
 
-    private static object? ReadSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ReadSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var fd = Convert.ToInt32(args[0]);
-        var buffer = args[1] as SharpTSBuffer ?? throw new NodeError("ERR_INVALID_ARG_TYPE", "buffer must be a Buffer", "read", null);
-        var offset = Convert.ToInt32(args[2]);
-        var length = Convert.ToInt32(args[3]);
-        var position = args[4]; // null means use current position
+        var fd = Convert.ToInt32(args[0].ToObject());
+        var buffer = args[1].ToObject() as SharpTSBuffer ?? throw new NodeError("ERR_INVALID_ARG_TYPE", "buffer must be a Buffer", "read", null);
+        var offset = Convert.ToInt32(args[2].ToObject());
+        var length = Convert.ToInt32(args[3].ToObject());
+        var position = args[4].ToObject(); // null means use current position
 
-        return WrapFsOperation("read", null, () =>
+        return RuntimeValue.FromNumber(WrapFsOperation("read", null, () =>
         {
             var stream = _fdTable.Get(fd);
 
@@ -742,24 +742,24 @@ public static class FsModuleInterpreter
             var data = buffer.Data;
             var bytesRead = stream.Read(data, offset, length);
             return (double)bytesRead;
-        });
+        }));
     }
 
-    private static object? WriteSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue WriteSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var fd = Convert.ToInt32(args[0]);
-        var data = args[1];
+        var fd = Convert.ToInt32(args[0].ToObject());
+        var data = args[1].ToObject();
 
         // writeSync can be called with:
         // (fd, buffer, offset, length, position) - Buffer write
         // (fd, string, position, encoding) - String write
         if (data is SharpTSBuffer buffer)
         {
-            var offset = args.Count > 2 && args[2] != null ? Convert.ToInt32(args[2]) : 0;
-            var length = args.Count > 3 && args[3] != null ? Convert.ToInt32(args[3]) : buffer.Length;
-            var position = args.Count > 4 ? args[4] : null;
+            var offset = args.Length > 2 && !args[2].IsNull ? Convert.ToInt32(args[2].ToObject()) : 0;
+            var length = args.Length > 3 && !args[3].IsNull ? Convert.ToInt32(args[3].ToObject()) : buffer.Length;
+            var position = args.Length > 4 ? args[4].ToObject() : null;
 
-            return WrapFsOperation("write", null, () =>
+            return RuntimeValue.FromNumber(WrapFsOperation("write", null, () =>
             {
                 var stream = _fdTable.Get(fd);
 
@@ -771,16 +771,16 @@ public static class FsModuleInterpreter
 
                 stream.Write(buffer.Data, offset, length);
                 return (double)length;
-            });
+            }));
         }
         else
         {
             // String write
             var str = data?.ToString() ?? "";
-            var position = args.Count > 2 ? args[2] : null;
+            var position = args.Length > 2 ? args[2].ToObject() : null;
             var bytes = System.Text.Encoding.UTF8.GetBytes(str);
 
-            return WrapFsOperation("write", null, () =>
+            return RuntimeValue.FromNumber(WrapFsOperation("write", null, () =>
             {
                 var stream = _fdTable.Get(fd);
 
@@ -792,80 +792,80 @@ public static class FsModuleInterpreter
 
                 stream.Write(bytes, 0, bytes.Length);
                 return (double)bytes.Length;
-            });
+            }));
         }
     }
 
-    private static object? FstatSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue FstatSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var fd = Convert.ToInt32(args[0]);
+        var fd = Convert.ToInt32(args[0].ToObject());
 
-        return WrapFsOperation("fstat", null, () =>
+        return RuntimeValue.FromBoxed(WrapFsOperation("fstat", null, () =>
         {
             var stream = _fdTable.Get(fd);
 
             return (object?)new SharpTSObject(new Dictionary<string, object?>
             {
-                ["isDirectory"] = new BuiltInMethod("isDirectory", 0, 0, (_, _, _) => false), // File descriptors are always files
-                ["isFile"] = new BuiltInMethod("isFile", 0, 0, (_, _, _) => true),
-                ["isSymbolicLink"] = new BuiltInMethod("isSymbolicLink", 0, 0, (_, _, _) => false),
+                ["isDirectory"] = BuiltInMethod.CreateV2("isDirectory", 0, 0, (_, _, _) => RuntimeValue.False), // File descriptors are always files
+                ["isFile"] = BuiltInMethod.CreateV2("isFile", 0, 0, (_, _, _) => RuntimeValue.True),
+                ["isSymbolicLink"] = BuiltInMethod.CreateV2("isSymbolicLink", 0, 0, (_, _, _) => RuntimeValue.False),
                 ["size"] = (double)stream.Length
             });
-        });
+        }));
     }
 
-    private static object? FtruncateSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue FtruncateSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var fd = Convert.ToInt32(args[0]);
-        var len = args.Count > 1 && args[1] != null ? Convert.ToInt64(args[1]) : 0L;
+        var fd = Convert.ToInt32(args[0].ToObject());
+        var len = args.Length > 1 && !args[1].IsNull ? Convert.ToInt64(args[1].ToObject()) : 0L;
 
         WrapFsOperation("ftruncate", null, () =>
         {
             var stream = _fdTable.Get(fd);
             stream.SetLength(len);
         });
-        return null;
+        return RuntimeValue.Null;
     }
 
     #endregion
 
     #region Directory Utilities
 
-    private static object? MkdtempSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue MkdtempSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var prefix = args[0]?.ToString() ?? "";
+        var prefix = args[0].ToObject()?.ToString() ?? "";
 
-        return WrapFsOperation("mkdtemp", null, () =>
+        return RuntimeValue.FromBoxed(WrapFsOperation("mkdtemp", null, () =>
         {
             // Generate a unique directory name
             var tempPath = Path.Combine(Path.GetTempPath(), prefix + Path.GetRandomFileName().Replace(".", ""));
             Directory.CreateDirectory(tempPath);
             return (object?)tempPath;
-        });
+        }));
     }
 
-    private static object? OpendirSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue OpendirSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
 
-        return WrapFsOperation("opendir", path, () =>
+        return RuntimeValue.FromBoxed(WrapFsOperation("opendir", path, () =>
         {
             if (!Directory.Exists(path))
             {
                 throw new DirectoryNotFoundException($"no such file or directory, opendir '{path}'");
             }
             return (object?)new SharpTSDir(path);
-        });
+        }));
     }
 
     #endregion
 
     #region Hard Links
 
-    private static object? LinkSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue LinkSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var existingPath = args[0]?.ToString() ?? "";
-        var newPath = args[1]?.ToString() ?? "";
+        var existingPath = args[0].ToObject()?.ToString() ?? "";
+        var newPath = args[1].ToObject()?.ToString() ?? "";
 
         WrapFsOperation("link", newPath, () =>
         {
@@ -880,19 +880,19 @@ public static class FsModuleInterpreter
 
             LibC.CreateHardLink(existingPath, newPath);
         });
-        return null;
+        return RuntimeValue.Null;
     }
 
     #endregion
 
     #region Stream Factory Methods
 
-    private static object? CreateReadStream(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CreateReadStream(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? throw new Exception("Runtime Error: path is required");
+        var path = args[0].ToObject()?.ToString() ?? throw new Exception("Runtime Error: path is required");
 
         Dictionary<string, object?>? options = null;
-        if (args.Count > 1 && args[1] is SharpTSObject opts)
+        if (args.Length > 1 && args[1].ToObject() is SharpTSObject opts)
         {
             options = new Dictionary<string, object?>();
             foreach (var key in new[] { "encoding", "start", "end", "highWaterMark", "flags", "autoClose" })
@@ -905,15 +905,15 @@ public static class FsModuleInterpreter
 
         var stream = new SharpTSReadStream(path, options);
         stream.StartReading(interpreter);
-        return stream;
+        return RuntimeValue.FromObject(stream);
     }
 
-    private static object? CreateWriteStream(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CreateWriteStream(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? throw new Exception("Runtime Error: path is required");
+        var path = args[0].ToObject()?.ToString() ?? throw new Exception("Runtime Error: path is required");
 
         Dictionary<string, object?>? options = null;
-        if (args.Count > 1 && args[1] is SharpTSObject opts)
+        if (args.Length > 1 && args[1].ToObject() is SharpTSObject opts)
         {
             options = new Dictionary<string, object?>();
             foreach (var key in new[] { "flags", "autoClose" })
@@ -926,7 +926,7 @@ public static class FsModuleInterpreter
 
         var stream = new SharpTSWriteStream(path, options);
         stream.EmitOpen(interpreter);
-        return stream;
+        return RuntimeValue.FromObject(stream);
     }
 
     #endregion
@@ -937,9 +937,9 @@ public static class FsModuleInterpreter
     /// Extracts the callback function from the arguments.
     /// The callback is always the last argument.
     /// </summary>
-    private static ISharpTSCallable GetCallback(List<object?> args)
+    private static ISharpTSCallable GetCallback(ReadOnlySpan<RuntimeValue> args)
     {
-        var callback = args[^1] as ISharpTSCallable
+        var callback = args[^1].ToObject() as ISharpTSCallable
             ?? throw new Exception("Runtime Error: callback is required");
         return callback;
     }
@@ -972,16 +972,16 @@ public static class FsModuleInterpreter
         });
     }
 
-    private static object? ReadFile(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ReadFile(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
         // Extract encoding from middle argument if present
         object? encoding = null;
-        if (args.Count == 3)
+        if (args.Length == 3)
         {
-            var options = args[1];
+            var options = args[1].ToObject();
             if (options is string s)
             {
                 encoding = s;
@@ -1006,15 +1006,15 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? WriteFile(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue WriteFile(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var data = args[1];
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var data = args[1].ToObject();
         var callback = GetCallback(args);
-        var options = args.Count == 4 ? args[2] : null;
+        var options = args.Length == 4 ? args[2].ToObject() : null;
 
         _ = Task.Run(async () =>
         {
@@ -1030,15 +1030,15 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? AppendFile(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue AppendFile(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var data = args[1];
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var data = args[1].ToObject();
         var callback = GetCallback(args);
-        var options = args.Count == 4 ? args[2] : null;
+        var options = args.Length == 4 ? args[2].ToObject() : null;
 
         _ = Task.Run(async () =>
         {
@@ -1054,12 +1054,12 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Stat(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Stat(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
         _ = Task.Run(async () =>
@@ -1076,12 +1076,12 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Lstat(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Lstat(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
         _ = Task.Run(async () =>
@@ -1098,12 +1098,12 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Unlink(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Unlink(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
         _ = Task.Run(async () =>
@@ -1120,14 +1120,14 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Mkdir(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Mkdir(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
-        var options = args.Count == 3 ? args[1] : null;
+        var options = args.Length == 3 ? args[1].ToObject() : null;
 
         _ = Task.Run(async () =>
         {
@@ -1143,14 +1143,14 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Rmdir(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Rmdir(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
-        var options = args.Count == 3 ? args[1] : null;
+        var options = args.Length == 3 ? args[1].ToObject() : null;
 
         _ = Task.Run(async () =>
         {
@@ -1166,14 +1166,14 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Readdir(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Readdir(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
-        var options = args.Count == 3 ? args[1] : null;
+        var options = args.Length == 3 ? args[1].ToObject() : null;
 
         _ = Task.Run(async () =>
         {
@@ -1189,13 +1189,13 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Rename(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Rename(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var oldPath = args[0]?.ToString() ?? "";
-        var newPath = args[1]?.ToString() ?? "";
+        var oldPath = args[0].ToObject()?.ToString() ?? "";
+        var newPath = args[1].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
         _ = Task.Run(async () =>
@@ -1212,15 +1212,15 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? CopyFile(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CopyFile(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var src = args[0]?.ToString() ?? "";
-        var dest = args[1]?.ToString() ?? "";
+        var src = args[0].ToObject()?.ToString() ?? "";
+        var dest = args[1].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
-        var mode = args.Count == 4 ? args[2] : null;
+        var mode = args.Length == 4 ? args[2].ToObject() : null;
 
         _ = Task.Run(async () =>
         {
@@ -1236,14 +1236,14 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Access(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Access(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
-        var mode = args.Count == 3 ? args[1] : null;
+        var mode = args.Length == 3 ? args[1].ToObject() : null;
 
         _ = Task.Run(async () =>
         {
@@ -1259,13 +1259,13 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Chmod(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Chmod(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var mode = args[1];
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var mode = args[1].ToObject();
         var callback = GetCallback(args);
 
         _ = Task.Run(async () =>
@@ -1282,14 +1282,14 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Truncate(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Truncate(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
-        var len = args.Count == 3 ? args[1] : null;
+        var len = args.Length == 3 ? args[1].ToObject() : null;
 
         _ = Task.Run(async () =>
         {
@@ -1305,14 +1305,14 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Utimes(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Utimes(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
-        var atime = args[1];
-        var mtime = args[2];
+        var path = args[0].ToObject()?.ToString() ?? "";
+        var atime = args[1].ToObject();
+        var mtime = args[2].ToObject();
         var callback = GetCallback(args);
 
         _ = Task.Run(async () =>
@@ -1329,12 +1329,12 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Readlink(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Readlink(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
         _ = Task.Run(async () =>
@@ -1351,12 +1351,12 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Realpath(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Realpath(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var path = args[0]?.ToString() ?? "";
+        var path = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
         _ = Task.Run(async () =>
@@ -1373,15 +1373,15 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Symlink(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Symlink(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var target = args[0]?.ToString() ?? "";
-        var path = args[1]?.ToString() ?? "";
+        var target = args[0].ToObject()?.ToString() ?? "";
+        var path = args[1].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
-        var type = args.Count == 4 ? args[2] : null;
+        var type = args.Length == 4 ? args[2].ToObject() : null;
 
         _ = Task.Run(async () =>
         {
@@ -1397,13 +1397,13 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Link(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Link(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var existingPath = args[0]?.ToString() ?? "";
-        var newPath = args[1]?.ToString() ?? "";
+        var existingPath = args[0].ToObject()?.ToString() ?? "";
+        var newPath = args[1].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
         _ = Task.Run(async () =>
@@ -1420,12 +1420,12 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
-    private static object? Mkdtemp(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Mkdtemp(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var prefix = args[0]?.ToString() ?? "";
+        var prefix = args[0].ToObject()?.ToString() ?? "";
         var callback = GetCallback(args);
 
         _ = Task.Run(async () =>
@@ -1442,7 +1442,7 @@ public static class FsModuleInterpreter
             }
         });
 
-        return SharpTSUndefined.Instance;
+        return RuntimeValue.Undefined;
     }
 
     #endregion
@@ -1454,17 +1454,17 @@ public static class FsModuleInterpreter
     /// </summary>
     private static readonly Dictionary<string, SharpTSStatWatcher> _statWatchers = [];
 
-    private static object? Watch(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Watch(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var filename = args[0]?.ToString() ?? throw new Exception("Runtime Error: watch requires a filename");
+        var filename = args[0].ToObject()?.ToString() ?? throw new Exception("Runtime Error: watch requires a filename");
 
         Dictionary<string, object?>? options = null;
         ISharpTSCallable? listener = null;
 
         // Parse overloaded args: watch(filename, options?, listener?)
-        if (args.Count > 1)
+        if (args.Length > 1)
         {
-            if (args[1] is SharpTSObject optObj)
+            if (args[1].ToObject() is SharpTSObject optObj)
             {
                 options = new Dictionary<string, object?>();
                 foreach (var key in new[] { "recursive", "persistent", "encoding" })
@@ -1474,17 +1474,17 @@ public static class FsModuleInterpreter
                         options[key] = val;
                 }
             }
-            else if (args[1] is Dictionary<string, object?> dict)
+            else if (args[1].ToObject() is Dictionary<string, object?> dict)
             {
                 options = dict;
             }
-            else if (args[1] is ISharpTSCallable cb)
+            else if (args[1].ToObject() is ISharpTSCallable cb)
             {
                 listener = cb;
             }
         }
 
-        if (args.Count > 2 && args[2] is ISharpTSCallable listener2)
+        if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable listener2)
         {
             listener = listener2;
         }
@@ -1497,26 +1497,26 @@ public static class FsModuleInterpreter
             watcher.AddListenerDirect("change", listener);
         }
 
-        return watcher;
+        return RuntimeValue.FromObject(watcher);
     }
 
-    private static object? WatchFile(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue WatchFile(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var filename = args[0]?.ToString() ?? throw new Exception("Runtime Error: watchFile requires a filename");
+        var filename = args[0].ToObject()?.ToString() ?? throw new Exception("Runtime Error: watchFile requires a filename");
         var fullPath = Path.GetFullPath(filename);
 
         Dictionary<string, object?>? options = null;
         ISharpTSCallable? listener = null;
 
         // Parse overloaded args: watchFile(filename, options?, listener)
-        if (args.Count == 2)
+        if (args.Length == 2)
         {
-            if (args[1] is ISharpTSCallable cb)
+            if (args[1].ToObject() is ISharpTSCallable cb)
                 listener = cb;
         }
-        else if (args.Count >= 3)
+        else if (args.Length >= 3)
         {
-            if (args[1] is SharpTSObject optObj)
+            if (args[1].ToObject() is SharpTSObject optObj)
             {
                 options = new Dictionary<string, object?>();
                 foreach (var key in new[] { "persistent", "interval" })
@@ -1526,12 +1526,12 @@ public static class FsModuleInterpreter
                         options[key] = val;
                 }
             }
-            else if (args[1] is Dictionary<string, object?> dict)
+            else if (args[1].ToObject() is Dictionary<string, object?> dict)
             {
                 options = dict;
             }
 
-            if (args[2] is ISharpTSCallable cb2)
+            if (args[2].ToObject() is ISharpTSCallable cb2)
                 listener = cb2;
         }
 
@@ -1548,18 +1548,18 @@ public static class FsModuleInterpreter
         watcher.AddListenerDirect("change", listener);
         _statWatchers[fullPath] = watcher;
 
-        return watcher;
+        return RuntimeValue.FromObject(watcher);
     }
 
-    private static object? UnwatchFile(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue UnwatchFile(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var filename = args[0]?.ToString() ?? throw new Exception("Runtime Error: unwatchFile requires a filename");
+        var filename = args[0].ToObject()?.ToString() ?? throw new Exception("Runtime Error: unwatchFile requires a filename");
         var fullPath = Path.GetFullPath(filename);
 
         if (_statWatchers.TryGetValue(fullPath, out var watcher))
         {
             // If a specific listener was provided, remove just that listener
-            if (args.Count > 1 && args[1] is ISharpTSCallable listener)
+            if (args.Length > 1 && args[1].ToObject() is ISharpTSCallable listener)
             {
                 var offMethod = watcher.GetMember("off") as BuiltInMethod;
                 offMethod?.Call(interpreter, ["change", listener]);
@@ -1572,7 +1572,7 @@ public static class FsModuleInterpreter
             }
         }
 
-        return null;
+        return RuntimeValue.Null;
     }
 
     #endregion

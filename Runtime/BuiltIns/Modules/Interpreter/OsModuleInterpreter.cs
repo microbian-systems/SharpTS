@@ -22,80 +22,80 @@ public static class OsModuleInterpreter
         return new Dictionary<string, object?>
         {
             // Methods
-            ["platform"] = new BuiltInMethod("platform", 0, 0, Platform),
-            ["arch"] = new BuiltInMethod("arch", 0, 0, Arch),
-            ["hostname"] = new BuiltInMethod("hostname", 0, 0, Hostname),
-            ["homedir"] = new BuiltInMethod("homedir", 0, 0, Homedir),
-            ["tmpdir"] = new BuiltInMethod("tmpdir", 0, 0, Tmpdir),
-            ["type"] = new BuiltInMethod("type", 0, 0, Type),
-            ["release"] = new BuiltInMethod("release", 0, 0, Release),
-            ["cpus"] = new BuiltInMethod("cpus", 0, 0, Cpus),
-            ["totalmem"] = new BuiltInMethod("totalmem", 0, 0, Totalmem),
-            ["freemem"] = new BuiltInMethod("freemem", 0, 0, Freemem),
-            ["userInfo"] = new BuiltInMethod("userInfo", 0, 0, UserInfo),
-            ["loadavg"] = new BuiltInMethod("loadavg", 0, 0, Loadavg),
-            ["networkInterfaces"] = new BuiltInMethod("networkInterfaces", 0, 0, NetworkInterfaces),
+            ["platform"] = BuiltInMethod.CreateV2("platform", 0, 0, Platform),
+            ["arch"] = BuiltInMethod.CreateV2("arch", 0, 0, Arch),
+            ["hostname"] = BuiltInMethod.CreateV2("hostname", 0, 0, Hostname),
+            ["homedir"] = BuiltInMethod.CreateV2("homedir", 0, 0, Homedir),
+            ["tmpdir"] = BuiltInMethod.CreateV2("tmpdir", 0, 0, Tmpdir),
+            ["type"] = BuiltInMethod.CreateV2("type", 0, 0, Type),
+            ["release"] = BuiltInMethod.CreateV2("release", 0, 0, Release),
+            ["cpus"] = BuiltInMethod.CreateV2("cpus", 0, 0, Cpus),
+            ["totalmem"] = BuiltInMethod.CreateV2("totalmem", 0, 0, Totalmem),
+            ["freemem"] = BuiltInMethod.CreateV2("freemem", 0, 0, Freemem),
+            ["userInfo"] = BuiltInMethod.CreateV2("userInfo", 0, 0, UserInfo),
+            ["loadavg"] = BuiltInMethod.CreateV2("loadavg", 0, 0, Loadavg),
+            ["networkInterfaces"] = BuiltInMethod.CreateV2("networkInterfaces", 0, 0, NetworkInterfaces),
 
             // Properties
             ["EOL"] = Environment.NewLine
         };
     }
 
-    private static object? Platform(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Platform(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            return "win32";
+            return RuntimeValue.FromString("win32");
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            return "linux";
+            return RuntimeValue.FromString("linux");
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            return "darwin";
-        return "unknown";
+            return RuntimeValue.FromString("darwin");
+        return RuntimeValue.FromString("unknown");
     }
 
-    private static object? Arch(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Arch(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        return RuntimeInformation.ProcessArchitecture switch
+        return RuntimeValue.FromString(RuntimeInformation.ProcessArchitecture switch
         {
             Architecture.X64 => "x64",
             Architecture.X86 => "ia32",
             Architecture.Arm64 => "arm64",
             Architecture.Arm => "arm",
             _ => "unknown"
-        };
+        });
     }
 
-    private static object? Hostname(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Hostname(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        return Environment.MachineName;
+        return RuntimeValue.FromString(Environment.MachineName);
     }
 
-    private static object? Homedir(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Homedir(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        return Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return RuntimeValue.FromString(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
     }
 
-    private static object? Tmpdir(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Tmpdir(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        return Path.GetTempPath();
+        return RuntimeValue.FromString(Path.GetTempPath());
     }
 
-    private static object? Type(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Type(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            return "Windows_NT";
+            return RuntimeValue.FromString("Windows_NT");
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            return "Linux";
+            return RuntimeValue.FromString("Linux");
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
-            return "Darwin";
-        return "Unknown";
+            return RuntimeValue.FromString("Darwin");
+        return RuntimeValue.FromString("Unknown");
     }
 
-    private static object? Release(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Release(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        return Environment.OSVersion.VersionString;
+        return RuntimeValue.FromString(Environment.OSVersion.VersionString);
     }
 
-    private static object? Cpus(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Cpus(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var count = Environment.ProcessorCount;
         var list = new List<object?>();
@@ -107,18 +107,18 @@ public static class OsModuleInterpreter
                 ["speed"] = 0.0
             }));
         }
-        return new SharpTSArray(list);
+        return RuntimeValue.FromObject(new SharpTSArray(list));
     }
 
-    private static object? Totalmem(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Totalmem(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var info = GC.GetGCMemoryInfo();
-        return (double)info.TotalAvailableMemoryBytes;
+        return RuntimeValue.FromNumber(info.TotalAvailableMemoryBytes);
     }
 
-    private static object? Freemem(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Freemem(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        return (double)GetFreeMemoryBytes();
+        return RuntimeValue.FromNumber(GetFreeMemoryBytes());
     }
 
     /// <summary>
@@ -294,26 +294,26 @@ public static class OsModuleInterpreter
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
 
-    private static object? UserInfo(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue UserInfo(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        return new SharpTSObject(new Dictionary<string, object?>
+        return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
         {
             ["username"] = Environment.UserName,
             ["uid"] = -1.0,  // Not available on Windows
             ["gid"] = -1.0,  // Not available on Windows
             ["shell"] = null,  // Not available on Windows
             ["homedir"] = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
-        });
+        }));
     }
 
     /// <summary>
     /// Returns the system load averages for 1, 5, and 15 minutes.
     /// On Windows, returns [0, 0, 0] per Node.js specification.
     /// </summary>
-    private static object? Loadavg(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Loadavg(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var loadavg = GetLoadAverage();
-        return new SharpTSArray([loadavg[0], loadavg[1], loadavg[2]]);
+        return RuntimeValue.FromObject(new SharpTSArray([loadavg[0], loadavg[1], loadavg[2]]));
     }
 
     /// <summary>
@@ -405,7 +405,7 @@ public static class OsModuleInterpreter
     /// <summary>
     /// Returns network interface information as an object with interface names as keys.
     /// </summary>
-    private static object? NetworkInterfaces(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue NetworkInterfaces(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var result = new Dictionary<string, object?>();
 
@@ -456,7 +456,7 @@ public static class OsModuleInterpreter
             // Return empty object on error
         }
 
-        return new SharpTSObject(result);
+        return RuntimeValue.FromObject(new SharpTSObject(result));
     }
 
     /// <summary>
