@@ -100,6 +100,13 @@ public partial class TypeChecker
             return;
         }
 
+        // The empty object type ({} / Object) constrains nothing — tsc performs no excess
+        // property check against it (`var o: Object = { a: 1 }` is fine).
+        if (expectedKeys.Count == 0)
+        {
+            return;
+        }
+
         // Find properties in actual that are not in expected
         List<string> excessKeys = [];
         foreach (var actualKey in actual.Fields.Keys)
