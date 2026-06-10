@@ -654,90 +654,90 @@ public static class SharpTSAtomics
     {
         return name switch
         {
-            "load" => new BuiltInMethod("load", 2, (interp, recv, args) =>
+            "load" => BuiltInMethod.CreateV2("load", 2, static (_, _, args) =>
             {
-                if (args.Count < 2 || args[0] is not SharpTSTypedArray arr || args[1] is not double idx)
+                if (args.Length < 2 || args[0].ToObject() is not SharpTSTypedArray arr || !args[1].IsNumber)
                     throw new Exception("Atomics.load requires a typed array and index");
-                return Load(arr, (int)idx);
+                return RuntimeValue.FromBoxed(Load(arr, (int)args[1].AsNumberUnsafe()));
             }),
 
-            "store" => new BuiltInMethod("store", 3, (interp, recv, args) =>
+            "store" => BuiltInMethod.CreateV2("store", 3, static (_, _, args) =>
             {
-                if (args.Count < 3 || args[0] is not SharpTSTypedArray arr || args[1] is not double idx)
+                if (args.Length < 3 || args[0].ToObject() is not SharpTSTypedArray arr || !args[1].IsNumber)
                     throw new Exception("Atomics.store requires a typed array, index, and value");
-                return Store(arr, (int)idx, args[2]);
+                return RuntimeValue.FromBoxed(Store(arr, (int)args[1].AsNumberUnsafe(), args[2].ToObject()));
             }),
 
-            "add" => new BuiltInMethod("add", 3, (interp, recv, args) =>
+            "add" => BuiltInMethod.CreateV2("add", 3, static (_, _, args) =>
             {
-                if (args.Count < 3 || args[0] is not SharpTSTypedArray arr || args[1] is not double idx)
+                if (args.Length < 3 || args[0].ToObject() is not SharpTSTypedArray arr || !args[1].IsNumber)
                     throw new Exception("Atomics.add requires a typed array, index, and value");
-                return Add(arr, (int)idx, args[2]);
+                return RuntimeValue.FromBoxed(Add(arr, (int)args[1].AsNumberUnsafe(), args[2].ToObject()));
             }),
 
-            "sub" => new BuiltInMethod("sub", 3, (interp, recv, args) =>
+            "sub" => BuiltInMethod.CreateV2("sub", 3, static (_, _, args) =>
             {
-                if (args.Count < 3 || args[0] is not SharpTSTypedArray arr || args[1] is not double idx)
+                if (args.Length < 3 || args[0].ToObject() is not SharpTSTypedArray arr || !args[1].IsNumber)
                     throw new Exception("Atomics.sub requires a typed array, index, and value");
-                return Sub(arr, (int)idx, args[2]);
+                return RuntimeValue.FromBoxed(Sub(arr, (int)args[1].AsNumberUnsafe(), args[2].ToObject()));
             }),
 
-            "and" => new BuiltInMethod("and", 3, (interp, recv, args) =>
+            "and" => BuiltInMethod.CreateV2("and", 3, static (_, _, args) =>
             {
-                if (args.Count < 3 || args[0] is not SharpTSTypedArray arr || args[1] is not double idx)
+                if (args.Length < 3 || args[0].ToObject() is not SharpTSTypedArray arr || !args[1].IsNumber)
                     throw new Exception("Atomics.and requires a typed array, index, and value");
-                return And(arr, (int)idx, args[2]);
+                return RuntimeValue.FromBoxed(And(arr, (int)args[1].AsNumberUnsafe(), args[2].ToObject()));
             }),
 
-            "or" => new BuiltInMethod("or", 3, (interp, recv, args) =>
+            "or" => BuiltInMethod.CreateV2("or", 3, static (_, _, args) =>
             {
-                if (args.Count < 3 || args[0] is not SharpTSTypedArray arr || args[1] is not double idx)
+                if (args.Length < 3 || args[0].ToObject() is not SharpTSTypedArray arr || !args[1].IsNumber)
                     throw new Exception("Atomics.or requires a typed array, index, and value");
-                return Or(arr, (int)idx, args[2]);
+                return RuntimeValue.FromBoxed(Or(arr, (int)args[1].AsNumberUnsafe(), args[2].ToObject()));
             }),
 
-            "xor" => new BuiltInMethod("xor", 3, (interp, recv, args) =>
+            "xor" => BuiltInMethod.CreateV2("xor", 3, static (_, _, args) =>
             {
-                if (args.Count < 3 || args[0] is not SharpTSTypedArray arr || args[1] is not double idx)
+                if (args.Length < 3 || args[0].ToObject() is not SharpTSTypedArray arr || !args[1].IsNumber)
                     throw new Exception("Atomics.xor requires a typed array, index, and value");
-                return Xor(arr, (int)idx, args[2]);
+                return RuntimeValue.FromBoxed(Xor(arr, (int)args[1].AsNumberUnsafe(), args[2].ToObject()));
             }),
 
-            "exchange" => new BuiltInMethod("exchange", 3, (interp, recv, args) =>
+            "exchange" => BuiltInMethod.CreateV2("exchange", 3, static (_, _, args) =>
             {
-                if (args.Count < 3 || args[0] is not SharpTSTypedArray arr || args[1] is not double idx)
+                if (args.Length < 3 || args[0].ToObject() is not SharpTSTypedArray arr || !args[1].IsNumber)
                     throw new Exception("Atomics.exchange requires a typed array, index, and value");
-                return Exchange(arr, (int)idx, args[2]);
+                return RuntimeValue.FromBoxed(Exchange(arr, (int)args[1].AsNumberUnsafe(), args[2].ToObject()));
             }),
 
-            "compareExchange" => new BuiltInMethod("compareExchange", 4, (interp, recv, args) =>
+            "compareExchange" => BuiltInMethod.CreateV2("compareExchange", 4, static (_, _, args) =>
             {
-                if (args.Count < 4 || args[0] is not SharpTSTypedArray arr || args[1] is not double idx)
+                if (args.Length < 4 || args[0].ToObject() is not SharpTSTypedArray arr || !args[1].IsNumber)
                     throw new Exception("Atomics.compareExchange requires a typed array, index, expected value, and replacement value");
-                return CompareExchange(arr, (int)idx, args[2], args[3]);
+                return RuntimeValue.FromBoxed(CompareExchange(arr, (int)args[1].AsNumberUnsafe(), args[2].ToObject(), args[3].ToObject()));
             }),
 
-            "wait" => new BuiltInMethod("wait", 3, 4, (interp, recv, args) =>
+            "wait" => BuiltInMethod.CreateV2("wait", 3, 4, static (_, _, args) =>
             {
-                if (args.Count < 3 || args[0] is not SharpTSTypedArray arr || args[1] is not double idx)
+                if (args.Length < 3 || args[0].ToObject() is not SharpTSTypedArray arr || !args[1].IsNumber)
                     throw new Exception("Atomics.wait requires a typed array, index, and expected value");
-                double? timeout = args.Count > 3 && args[3] is double t ? t : null;
-                return Wait(arr, (int)idx, args[2], timeout);
+                double? timeout = args.Length > 3 && args[3].IsNumber ? args[3].AsNumberUnsafe() : null;
+                return RuntimeValue.FromString(Wait(arr, (int)args[1].AsNumberUnsafe(), args[2].ToObject(), timeout));
             }),
 
-            "notify" => new BuiltInMethod("notify", 2, 3, (interp, recv, args) =>
+            "notify" => BuiltInMethod.CreateV2("notify", 2, 3, static (_, _, args) =>
             {
-                if (args.Count < 2 || args[0] is not SharpTSTypedArray arr || args[1] is not double idx)
+                if (args.Length < 2 || args[0].ToObject() is not SharpTSTypedArray arr || !args[1].IsNumber)
                     throw new Exception("Atomics.notify requires a typed array and index");
-                int? count = args.Count > 2 && args[2] is double c ? (int)c : null;
-                return Notify(arr, (int)idx, count);
+                int? count = args.Length > 2 && args[2].IsNumber ? (int)args[2].AsNumberUnsafe() : null;
+                return RuntimeValue.FromNumber(Notify(arr, (int)args[1].AsNumberUnsafe(), count));
             }),
 
-            "isLockFree" => new BuiltInMethod("isLockFree", 1, (interp, recv, args) =>
+            "isLockFree" => BuiltInMethod.CreateV2("isLockFree", 1, static (_, _, args) =>
             {
-                if (args.Count < 1 || args[0] is not double size)
+                if (args.Length < 1 || !args[0].IsNumber)
                     throw new Exception("Atomics.isLockFree requires a size argument");
-                return IsLockFree((int)size);
+                return RuntimeValue.FromBoolean(IsLockFree((int)args[0].AsNumberUnsafe()));
             }),
 
             _ => null

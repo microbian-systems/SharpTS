@@ -416,360 +416,256 @@ public class SharpTSBuffer : ITypeCategorized
         {
             "length" => (double)Length,
 
-            "toString" => new BuiltInMethod("toString", 0, 1, (interp, recv, args) =>
+            "toString" => BuiltInMethod.CreateV2("toString", 0, 1, (_, _, args) =>
             {
-                var encoding = args.Count > 0 ? args[0]?.ToString() ?? "utf8" : "utf8";
-                return ToString(encoding);
+                var encoding = args.Length > 0 ? args[0].ToObject()?.ToString() ?? "utf8" : "utf8";
+                return RuntimeValue.FromString(ToString(encoding));
             }),
 
-            "slice" => new BuiltInMethod("slice", 0, 2, (interp, recv, args) =>
+            "slice" => BuiltInMethod.CreateV2("slice", 0, 2, (_, _, args) =>
             {
-                int start = args.Count > 0 && args[0] is double s ? (int)s : 0;
-                int? end = args.Count > 1 && args[1] is double e ? (int)e : null;
-                return Slice(start, end);
+                int start = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+                int? end = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : null;
+                return RuntimeValue.FromObject(Slice(start, end));
             }),
 
-            "copy" => new BuiltInMethod("copy", 1, 4, (interp, recv, args) =>
+            "copy" => BuiltInMethod.CreateV2("copy", 1, 4, (_, _, args) =>
             {
-                if (args.Count == 0 || args[0] is not SharpTSBuffer target)
+                if (args.Length == 0 || args[0].ToObject() is not SharpTSBuffer target)
                     throw new Exception("Buffer.copy requires a target buffer");
-                int targetStart = args.Count > 1 && args[1] is double ts ? (int)ts : 0;
-                int sourceStart = args.Count > 2 && args[2] is double ss ? (int)ss : 0;
-                int? sourceEnd = args.Count > 3 && args[3] is double se ? (int)se : null;
-                return (double)Copy(target, targetStart, sourceStart, sourceEnd);
+                int targetStart = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+                int sourceStart = args.Length > 2 && args[2].IsNumber ? (int)args[2].AsNumberUnsafe() : 0;
+                int? sourceEnd = args.Length > 3 && args[3].IsNumber ? (int)args[3].AsNumberUnsafe() : null;
+                return RuntimeValue.FromNumber(Copy(target, targetStart, sourceStart, sourceEnd));
             }),
 
-            "compare" => new BuiltInMethod("compare", 1, (interp, recv, args) =>
+            "compare" => BuiltInMethod.CreateV2("compare", 1, (_, _, args) =>
             {
-                if (args.Count == 0 || args[0] is not SharpTSBuffer other)
+                if (args.Length == 0 || args[0].ToObject() is not SharpTSBuffer other)
                     throw new Exception("Buffer.compare requires a buffer argument");
-                return (double)Compare(other);
+                return RuntimeValue.FromNumber(Compare(other));
             }),
 
-            "equals" => new BuiltInMethod("equals", 1, (interp, recv, args) =>
+            "equals" => BuiltInMethod.CreateV2("equals", 1, (_, _, args) =>
             {
-                if (args.Count == 0 || args[0] is not SharpTSBuffer other)
-                    return false;
-                return Equals(other);
+                if (args.Length == 0 || args[0].ToObject() is not SharpTSBuffer other)
+                    return RuntimeValue.False;
+                return RuntimeValue.FromBoolean(Equals(other));
             }),
 
-            "fill" => new BuiltInMethod("fill", 1, 4, (interp, recv, args) =>
+            "fill" => BuiltInMethod.CreateV2("fill", 1, 4, (_, _, args) =>
             {
-                if (args.Count == 0)
+                if (args.Length == 0)
                     throw new Exception("Buffer.fill requires a value");
-                var value = args[0];
-                int start = args.Count > 1 && args[1] is double s ? (int)s : 0;
-                int? end = args.Count > 2 && args[2] is double e ? (int)e : null;
-                string encoding = args.Count > 3 ? args[3]?.ToString() ?? "utf8" : "utf8";
-                return Fill(value!, start, end, encoding);
+                var value = args[0].ToObject();
+                int start = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+                int? end = args.Length > 2 && args[2].IsNumber ? (int)args[2].AsNumberUnsafe() : null;
+                string encoding = args.Length > 3 ? args[3].ToObject()?.ToString() ?? "utf8" : "utf8";
+                return RuntimeValue.FromObject(Fill(value!, start, end, encoding));
             }),
 
-            "write" => new BuiltInMethod("write", 1, 4, (interp, recv, args) =>
+            "write" => BuiltInMethod.CreateV2("write", 1, 4, (_, _, args) =>
             {
-                if (args.Count == 0 || args[0] is not string data)
+                if (args.Length == 0 || args[0].Kind != ValueKind.String)
                     throw new Exception("Buffer.write requires a string argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                int? length = args.Count > 2 && args[2] is double l ? (int)l : null;
-                string encoding = args.Count > 3 ? args[3]?.ToString() ?? "utf8" : "utf8";
-                return (double)Write(data, offset, length, encoding);
+                var data = args[0].AsStringUnsafe();
+                int offset = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+                int? length = args.Length > 2 && args[2].IsNumber ? (int)args[2].AsNumberUnsafe() : null;
+                string encoding = args.Length > 3 ? args[3].ToObject()?.ToString() ?? "utf8" : "utf8";
+                return RuntimeValue.FromNumber(Write(data, offset, length, encoding));
             }),
 
-            "readUInt8" => new BuiltInMethod("readUInt8", 0, 1, (interp, recv, args) =>
+            "readUInt8" => BuiltInMethod.CreateV2("readUInt8", 0, 1, (_, _, args) =>
             {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadUInt8(offset);
+                int offset = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+                return RuntimeValue.FromNumber(ReadUInt8(offset));
             }),
 
-            "writeUInt8" => new BuiltInMethod("writeUInt8", 1, 2, (interp, recv, args) =>
+            "writeUInt8" => BuiltInMethod.CreateV2("writeUInt8", 1, 2, (_, _, args) =>
             {
-                if (args.Count == 0 || args[0] is not double value)
+                if (args.Length == 0 || !args[0].IsNumber)
                     throw new Exception("Buffer.writeUInt8 requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return (double)WriteUInt8(value, offset);
+                int offset = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+                return RuntimeValue.FromNumber(WriteUInt8(args[0].AsNumberUnsafe(), offset));
             }),
 
-            "toJSON" => new BuiltInMethod("toJSON", 0, (interp, recv, args) =>
+            "toJSON" => BuiltInMethod.CreateV2("toJSON", 0, (_, _, _) =>
             {
                 var elements = new List<object?>(_data.Length);
                 foreach (var b in _data)
                 {
                     elements.Add((double)b);
                 }
-                return new SharpTSObject(new Dictionary<string, object?>
+                return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
                 {
                     ["type"] = "Buffer",
                     ["data"] = new SharpTSArray(elements)
-                });
+                }));
             }),
 
             // Multi-byte read methods
-            "readInt8" => new BuiltInMethod("readInt8", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadInt8(offset);
-            }),
+            "readInt8" => BuiltInMethod.CreateV2("readInt8", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadInt8(OffsetArg(args, 0)))),
 
-            "readUInt16LE" => new BuiltInMethod("readUInt16LE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadUInt16LE(offset);
-            }),
+            "readUInt16LE" => BuiltInMethod.CreateV2("readUInt16LE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadUInt16LE(OffsetArg(args, 0)))),
 
-            "readUInt16BE" => new BuiltInMethod("readUInt16BE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadUInt16BE(offset);
-            }),
+            "readUInt16BE" => BuiltInMethod.CreateV2("readUInt16BE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadUInt16BE(OffsetArg(args, 0)))),
 
-            "readUInt32LE" => new BuiltInMethod("readUInt32LE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadUInt32LE(offset);
-            }),
+            "readUInt32LE" => BuiltInMethod.CreateV2("readUInt32LE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadUInt32LE(OffsetArg(args, 0)))),
 
-            "readUInt32BE" => new BuiltInMethod("readUInt32BE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadUInt32BE(offset);
-            }),
+            "readUInt32BE" => BuiltInMethod.CreateV2("readUInt32BE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadUInt32BE(OffsetArg(args, 0)))),
 
-            "readInt16LE" => new BuiltInMethod("readInt16LE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadInt16LE(offset);
-            }),
+            "readInt16LE" => BuiltInMethod.CreateV2("readInt16LE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadInt16LE(OffsetArg(args, 0)))),
 
-            "readInt16BE" => new BuiltInMethod("readInt16BE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadInt16BE(offset);
-            }),
+            "readInt16BE" => BuiltInMethod.CreateV2("readInt16BE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadInt16BE(OffsetArg(args, 0)))),
 
-            "readInt32LE" => new BuiltInMethod("readInt32LE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadInt32LE(offset);
-            }),
+            "readInt32LE" => BuiltInMethod.CreateV2("readInt32LE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadInt32LE(OffsetArg(args, 0)))),
 
-            "readInt32BE" => new BuiltInMethod("readInt32BE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadInt32BE(offset);
-            }),
+            "readInt32BE" => BuiltInMethod.CreateV2("readInt32BE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadInt32BE(OffsetArg(args, 0)))),
 
-            "readFloatLE" => new BuiltInMethod("readFloatLE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadFloatLE(offset);
-            }),
+            "readFloatLE" => BuiltInMethod.CreateV2("readFloatLE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadFloatLE(OffsetArg(args, 0)))),
 
-            "readFloatBE" => new BuiltInMethod("readFloatBE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadFloatBE(offset);
-            }),
+            "readFloatBE" => BuiltInMethod.CreateV2("readFloatBE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadFloatBE(OffsetArg(args, 0)))),
 
-            "readDoubleLE" => new BuiltInMethod("readDoubleLE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadDoubleLE(offset);
-            }),
+            "readDoubleLE" => BuiltInMethod.CreateV2("readDoubleLE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadDoubleLE(OffsetArg(args, 0)))),
 
-            "readDoubleBE" => new BuiltInMethod("readDoubleBE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return ReadDoubleBE(offset);
-            }),
+            "readDoubleBE" => BuiltInMethod.CreateV2("readDoubleBE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadDoubleBE(OffsetArg(args, 0)))),
 
-            "readBigInt64LE" => new BuiltInMethod("readBigInt64LE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return new SharpTSBigInt(ReadBigInt64LE(offset));
-            }),
+            "readBigInt64LE" => BuiltInMethod.CreateV2("readBigInt64LE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromBigInt(new SharpTSBigInt(ReadBigInt64LE(OffsetArg(args, 0))))),
 
-            "readBigInt64BE" => new BuiltInMethod("readBigInt64BE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return new SharpTSBigInt(ReadBigInt64BE(offset));
-            }),
+            "readBigInt64BE" => BuiltInMethod.CreateV2("readBigInt64BE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromBigInt(new SharpTSBigInt(ReadBigInt64BE(OffsetArg(args, 0))))),
 
-            "readBigUInt64LE" => new BuiltInMethod("readBigUInt64LE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return new SharpTSBigInt(ReadBigUInt64LE(offset));
-            }),
+            "readBigUInt64LE" => BuiltInMethod.CreateV2("readBigUInt64LE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromBigInt(new SharpTSBigInt(ReadBigUInt64LE(OffsetArg(args, 0))))),
 
-            "readBigUInt64BE" => new BuiltInMethod("readBigUInt64BE", 0, 1, (interp, recv, args) =>
-            {
-                int offset = args.Count > 0 && args[0] is double o ? (int)o : 0;
-                return new SharpTSBigInt(ReadBigUInt64BE(offset));
-            }),
+            "readBigUInt64BE" => BuiltInMethod.CreateV2("readBigUInt64BE", 0, 1, (_, _, args) =>
+                RuntimeValue.FromBigInt(new SharpTSBigInt(ReadBigUInt64BE(OffsetArg(args, 0))))),
 
             // Multi-byte write methods
-            "writeInt8" => new BuiltInMethod("writeInt8", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeInt8 requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteInt8(value, offset);
-            }),
+            "writeInt8" => BuiltInMethod.CreateV2("writeInt8", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteInt8(NumberArg(args, "writeInt8"), OffsetArg(args, 1)))),
 
-            "writeUInt16LE" => new BuiltInMethod("writeUInt16LE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeUInt16LE requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteUInt16LE(value, offset);
-            }),
+            "writeUInt16LE" => BuiltInMethod.CreateV2("writeUInt16LE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteUInt16LE(NumberArg(args, "writeUInt16LE"), OffsetArg(args, 1)))),
 
-            "writeUInt16BE" => new BuiltInMethod("writeUInt16BE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeUInt16BE requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteUInt16BE(value, offset);
-            }),
+            "writeUInt16BE" => BuiltInMethod.CreateV2("writeUInt16BE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteUInt16BE(NumberArg(args, "writeUInt16BE"), OffsetArg(args, 1)))),
 
-            "writeUInt32LE" => new BuiltInMethod("writeUInt32LE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeUInt32LE requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteUInt32LE(value, offset);
-            }),
+            "writeUInt32LE" => BuiltInMethod.CreateV2("writeUInt32LE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteUInt32LE(NumberArg(args, "writeUInt32LE"), OffsetArg(args, 1)))),
 
-            "writeUInt32BE" => new BuiltInMethod("writeUInt32BE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeUInt32BE requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteUInt32BE(value, offset);
-            }),
+            "writeUInt32BE" => BuiltInMethod.CreateV2("writeUInt32BE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteUInt32BE(NumberArg(args, "writeUInt32BE"), OffsetArg(args, 1)))),
 
-            "writeInt16LE" => new BuiltInMethod("writeInt16LE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeInt16LE requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteInt16LE(value, offset);
-            }),
+            "writeInt16LE" => BuiltInMethod.CreateV2("writeInt16LE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteInt16LE(NumberArg(args, "writeInt16LE"), OffsetArg(args, 1)))),
 
-            "writeInt16BE" => new BuiltInMethod("writeInt16BE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeInt16BE requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteInt16BE(value, offset);
-            }),
+            "writeInt16BE" => BuiltInMethod.CreateV2("writeInt16BE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteInt16BE(NumberArg(args, "writeInt16BE"), OffsetArg(args, 1)))),
 
-            "writeInt32LE" => new BuiltInMethod("writeInt32LE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeInt32LE requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteInt32LE(value, offset);
-            }),
+            "writeInt32LE" => BuiltInMethod.CreateV2("writeInt32LE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteInt32LE(NumberArg(args, "writeInt32LE"), OffsetArg(args, 1)))),
 
-            "writeInt32BE" => new BuiltInMethod("writeInt32BE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeInt32BE requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteInt32BE(value, offset);
-            }),
+            "writeInt32BE" => BuiltInMethod.CreateV2("writeInt32BE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteInt32BE(NumberArg(args, "writeInt32BE"), OffsetArg(args, 1)))),
 
-            "writeFloatLE" => new BuiltInMethod("writeFloatLE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeFloatLE requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteFloatLE(value, offset);
-            }),
+            "writeFloatLE" => BuiltInMethod.CreateV2("writeFloatLE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteFloatLE(NumberArg(args, "writeFloatLE"), OffsetArg(args, 1)))),
 
-            "writeFloatBE" => new BuiltInMethod("writeFloatBE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeFloatBE requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteFloatBE(value, offset);
-            }),
+            "writeFloatBE" => BuiltInMethod.CreateV2("writeFloatBE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteFloatBE(NumberArg(args, "writeFloatBE"), OffsetArg(args, 1)))),
 
-            "writeDoubleLE" => new BuiltInMethod("writeDoubleLE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeDoubleLE requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteDoubleLE(value, offset);
-            }),
+            "writeDoubleLE" => BuiltInMethod.CreateV2("writeDoubleLE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteDoubleLE(NumberArg(args, "writeDoubleLE"), OffsetArg(args, 1)))),
 
-            "writeDoubleBE" => new BuiltInMethod("writeDoubleBE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is not double value)
-                    throw new Exception("Buffer.writeDoubleBE requires a number argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteDoubleBE(value, offset);
-            }),
+            "writeDoubleBE" => BuiltInMethod.CreateV2("writeDoubleBE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteDoubleBE(NumberArg(args, "writeDoubleBE"), OffsetArg(args, 1)))),
 
-            "writeBigInt64LE" => new BuiltInMethod("writeBigInt64LE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is null)
-                    throw new Exception("Buffer.writeBigInt64LE requires a BigInt argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteBigInt64LE(args[0]!, offset);
-            }),
+            "writeBigInt64LE" => BuiltInMethod.CreateV2("writeBigInt64LE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteBigInt64LE(BigIntArg(args, "writeBigInt64LE"), OffsetArg(args, 1)))),
 
-            "writeBigInt64BE" => new BuiltInMethod("writeBigInt64BE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is null)
-                    throw new Exception("Buffer.writeBigInt64BE requires a BigInt argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteBigInt64BE(args[0]!, offset);
-            }),
+            "writeBigInt64BE" => BuiltInMethod.CreateV2("writeBigInt64BE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteBigInt64BE(BigIntArg(args, "writeBigInt64BE"), OffsetArg(args, 1)))),
 
-            "writeBigUInt64LE" => new BuiltInMethod("writeBigUInt64LE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is null)
-                    throw new Exception("Buffer.writeBigUInt64LE requires a BigInt argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteBigUInt64LE(args[0]!, offset);
-            }),
+            "writeBigUInt64LE" => BuiltInMethod.CreateV2("writeBigUInt64LE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteBigUInt64LE(BigIntArg(args, "writeBigUInt64LE"), OffsetArg(args, 1)))),
 
-            "writeBigUInt64BE" => new BuiltInMethod("writeBigUInt64BE", 1, 2, (interp, recv, args) =>
-            {
-                if (args.Count == 0 || args[0] is null)
-                    throw new Exception("Buffer.writeBigUInt64BE requires a BigInt argument");
-                int offset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                return WriteBigUInt64BE(args[0]!, offset);
-            }),
+            "writeBigUInt64BE" => BuiltInMethod.CreateV2("writeBigUInt64BE", 1, 2, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteBigUInt64BE(BigIntArg(args, "writeBigUInt64BE"), OffsetArg(args, 1)))),
 
             // Search methods
-            "indexOf" => new BuiltInMethod("indexOf", 1, 3, (interp, recv, args) =>
+            "indexOf" => BuiltInMethod.CreateV2("indexOf", 1, 3, (_, _, args) =>
             {
-                if (args.Count == 0 || args[0] is null)
+                if (args.Length == 0 || args[0].IsNull)
                     throw new Exception("Buffer.indexOf requires a value argument");
-                int byteOffset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                string encoding = args.Count > 2 ? args[2]?.ToString() ?? "utf8" : "utf8";
-                return IndexOf(args[0]!, byteOffset, encoding);
+                int byteOffset = OffsetArg(args, 1);
+                string encoding = args.Length > 2 ? args[2].ToObject()?.ToString() ?? "utf8" : "utf8";
+                return RuntimeValue.FromNumber(IndexOf(args[0].ToObject()!, byteOffset, encoding));
             }),
 
-            "includes" => new BuiltInMethod("includes", 1, 3, (interp, recv, args) =>
+            "includes" => BuiltInMethod.CreateV2("includes", 1, 3, (_, _, args) =>
             {
-                if (args.Count == 0 || args[0] is null)
+                if (args.Length == 0 || args[0].IsNull)
                     throw new Exception("Buffer.includes requires a value argument");
-                int byteOffset = args.Count > 1 && args[1] is double o ? (int)o : 0;
-                string encoding = args.Count > 2 ? args[2]?.ToString() ?? "utf8" : "utf8";
-                return Includes(args[0]!, byteOffset, encoding);
+                int byteOffset = OffsetArg(args, 1);
+                string encoding = args.Length > 2 ? args[2].ToObject()?.ToString() ?? "utf8" : "utf8";
+                return RuntimeValue.FromBoolean(Includes(args[0].ToObject()!, byteOffset, encoding));
             }),
 
             // Swap methods
-            "swap16" => new BuiltInMethod("swap16", 0, (interp, recv, args) => Swap16()),
+            "swap16" => BuiltInMethod.CreateV2("swap16", 0, (_, _, _) => RuntimeValue.FromObject(Swap16())),
 
-            "swap32" => new BuiltInMethod("swap32", 0, (interp, recv, args) => Swap32()),
+            "swap32" => BuiltInMethod.CreateV2("swap32", 0, (_, _, _) => RuntimeValue.FromObject(Swap32())),
 
-            "swap64" => new BuiltInMethod("swap64", 0, (interp, recv, args) => Swap64()),
+            "swap64" => BuiltInMethod.CreateV2("swap64", 0, (_, _, _) => RuntimeValue.FromObject(Swap64())),
 
             _ => null
         };
+    }
+
+    /// <summary>
+    /// Reads an optional numeric argument at <paramref name="index"/>;
+    /// missing or non-number args coerce to 0 (matches the legacy
+    /// <c>args[i] is double o ? (int)o : 0</c> pattern).
+    /// </summary>
+    private static int OffsetArg(ReadOnlySpan<RuntimeValue> args, int index)
+        => args.Length > index && args[index].IsNumber ? (int)args[index].AsNumberUnsafe() : 0;
+
+    /// <summary>
+    /// Reads the required numeric value argument at index 0 for write* methods,
+    /// throwing the same error the legacy bodies threw on a missing/non-number arg.
+    /// </summary>
+    private static double NumberArg(ReadOnlySpan<RuntimeValue> args, string methodName)
+    {
+        if (args.Length == 0 || !args[0].IsNumber)
+            throw new Exception($"Buffer.{methodName} requires a number argument");
+        return args[0].AsNumberUnsafe();
+    }
+
+    /// <summary>
+    /// Reads the required BigInt-ish value argument at index 0 for writeBig* methods.
+    /// The legacy bodies only rejected missing/null args (the conversion itself
+    /// validates the value), so this does the same.
+    /// </summary>
+    private static object BigIntArg(ReadOnlySpan<RuntimeValue> args, string methodName)
+    {
+        if (args.Length == 0 || args[0].IsNull)
+            throw new Exception($"Buffer.{methodName} requires a BigInt argument");
+        return args[0].ToObject()!;
     }
 
     #endregion
