@@ -35,6 +35,17 @@ public partial class CompilationContext
     // For static members: current class being compiled
     public TypeBuilder? CurrentClassBuilder { get; set; }
 
+    /// <summary>
+    /// The TypeBuilder whose method body the context's <see cref="CompilationContext.IL"/>
+    /// is generating, set ONLY when emitting directly into a class's own methods
+    /// (instance/static methods, constructors, accessors). Null for top-level code,
+    /// arrow display classes, and async/generator state machines — those bodies live on
+    /// other types even though <see cref="CurrentClassBuilder"/> still points at the class.
+    /// Used to decide whether the instantiated self-form of a generic class
+    /// (e.g. <c>Stack&lt;!T&gt;</c>) is expressible for direct member dispatch (#178).
+    /// </summary>
+    public TypeBuilder? EmittingTypeBuilder { get; set; }
+
     // For inheritance: current class's superclass name (if any)
     public string? CurrentSuperclassName { get; set; }
 

@@ -88,6 +88,7 @@ public partial class ILCompiler
             // ES2022 Private Class Elements support
             CurrentClassName = className,
             CurrentClassBuilder = typeBuilder,
+            EmittingTypeBuilder = typeBuilder,
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Module-level variable access

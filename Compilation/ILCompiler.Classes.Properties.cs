@@ -107,10 +107,14 @@ public partial class ILCompiler
             Type.EmptyTypes
         );
 
+        // Field tokens inside a generic type's methods must reference the instantiated
+        // form (Stack<!T>::field), not the open TypeDef — see EmitterTypeHelpers.SelfFieldReference
+        var backingFieldRef = EmitterTypeHelpers.SelfFieldReference(backingField);
+
         var getterIL = getter.GetILGenerator();
-        getterIL.Emit(OpCodes.Ldarg_0);             // this
-        getterIL.Emit(OpCodes.Ldfld, backingField); // this.__fieldName (typed value)
-        getterIL.Emit(OpCodes.Ret);                 // Return typed value directly
+        getterIL.Emit(OpCodes.Ldarg_0);                // this
+        getterIL.Emit(OpCodes.Ldfld, backingFieldRef); // this.__fieldName (typed value)
+        getterIL.Emit(OpCodes.Ret);                    // Return typed value directly
 
         property.SetGetMethod(getter);
 
@@ -136,7 +140,7 @@ public partial class ILCompiler
             var setterIL = setter.GetILGenerator();
             setterIL.Emit(OpCodes.Ldarg_0);          // this
             setterIL.Emit(OpCodes.Ldarg_1);          // value (already typed)
-            setterIL.Emit(OpCodes.Stfld, backingField);  // this.__fieldName = value
+            setterIL.Emit(OpCodes.Stfld, backingFieldRef);  // this.__fieldName = value
             setterIL.Emit(OpCodes.Ret);
 
             // Only link to PropertyBuilder for non-readonly (C# interop visibility)

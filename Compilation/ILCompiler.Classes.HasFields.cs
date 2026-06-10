@@ -296,8 +296,9 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Brfalse, nextLabel);
 
                 // return this.<getter>()
+                // (instantiated form for generic classes — open MethodDef tokens are unloadable, #178)
                 il.Emit(OpCodes.Ldarg_0);
-                il.Emit(OpCodes.Callvirt, getterMethod);
+                il.Emit(OpCodes.Callvirt, EmitterTypeHelpers.SelfMethodReference(getterMethod));
                 il.Emit(OpCodes.Ret);
 
                 il.MarkLabel(nextLabel);
@@ -376,7 +377,8 @@ public partial class ILCompiler
         var setFieldsLabel = il.DefineLabel();
 
         // 1. Check typed properties with backing fields (compile-time dispatch)
-        if (_typedInterop.PropertyBackingFields.TryGetValue(className, out var backingFields))
+        _typedInterop.PropertyBackingFields.TryGetValue(className, out var backingFields);
+        if (backingFields != null)
         {
             foreach (var (propName, backingField) in backingFields)
             {
@@ -398,6 +400,45 @@ public partial class ILCompiler
                 else if (backingField.FieldType != _types.Object)
                     il.Emit(OpCodes.Castclass, backingField.FieldType);
                 il.Emit(OpCodes.Stfld, backingField);
+                il.Emit(OpCodes.Ret);
+
+                il.MarkLabel(nextLabel);
+            }
+        }
+
+        // 1b. Check instance setters (accessors with `set` keyword). JS semantics: writing
+        // `obj.foo` where `foo` is a setter must INVOKE it — mirrors the getter dispatch in
+        // EmitGetPropertyBody. Without this, dynamic property writes (the main path for
+        // generic class instances) would store into _fields while reads keep hitting the
+        // accessor, silently desynchronizing the two. Backing-field names are handled above.
+        if (_classes.InstanceSetters.TryGetValue(className, out var instanceSetters))
+        {
+            foreach (var (setterPascalName, setterMethod) in instanceSetters)
+            {
+                if (backingFields != null && backingFields.ContainsKey(setterPascalName))
+                    continue;
+
+                var camelName = NamingConventions.ToCamelCase(setterPascalName);
+                var nextLabel = il.DefineLabel();
+
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldstr, camelName);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+                il.Emit(OpCodes.Brfalse, nextLabel);
+
+                // this.set_<Name>(value)
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldarg_2);
+                var setterParams = setterMethod.GetParameters();
+                var paramType = setterParams.Length > 0 ? setterParams[0].ParameterType : _types.Object;
+                if (paramType.IsValueType)
+                    il.Emit(OpCodes.Unbox_Any, paramType);
+                else if (paramType != _types.Object)
+                    il.Emit(OpCodes.Castclass, paramType);
+                // (instantiated form for generic classes — open MethodDef tokens are unloadable, #178)
+                il.Emit(OpCodes.Callvirt, EmitterTypeHelpers.SelfMethodReference(setterMethod));
+                if (setterMethod.ReturnType != _types.Void)
+                    il.Emit(OpCodes.Pop);
                 il.Emit(OpCodes.Ret);
 
                 il.MarkLabel(nextLabel);

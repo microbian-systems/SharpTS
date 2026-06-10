@@ -267,6 +267,12 @@ public partial class ILEmitter
         if (!_ctx.Classes.TryGetValue(className, out var classType))
             return false;
 
+        // Generic classes need instantiated tokens (Stack<!T>), only expressible inside
+        // the class's own bodies; otherwise fall back to runtime dispatch (#178)
+        if (!EmitterTypeHelpers.TryResolveInstanceDispatch(
+                classType, methodBuilder, _ctx.EmittingTypeBuilder, out var castType, out var callTarget))
+            return false;
+
         // Get target parameter types for proper conversion
         var targetParams = methodBuilder.GetParameters();
         int expectedParamCount = targetParams.Length;
@@ -285,7 +291,7 @@ public partial class ILEmitter
         // Emit: ((ClassName)receiver).method(args)
         EmitExpression(receiver);
         EmitBoxIfNeeded(receiver);
-        IL.Emit(OpCodes.Castclass, classType);
+        IL.Emit(OpCodes.Castclass, castType);
 
         // Emit leading regular arguments with type conversion.
         int regularArgsToEmit = Math.Min(arguments.Count, regularParamCount);
@@ -332,7 +338,7 @@ public partial class ILEmitter
         }
 
         // Emit the virtual call
-        IL.Emit(OpCodes.Callvirt, methodBuilder);
+        IL.Emit(OpCodes.Callvirt, callTarget);
         SetStackUnknown();
         return true;
     }
@@ -376,6 +382,12 @@ public partial class ILEmitter
         if (methodBuilder == null)
             return false;
 
+        // Generic superclasses need the member referenced through the instantiated base
+        // (e.g. Base<float64>::count) — an open MethodDef token is not executable (#178)
+        if (!EmitterTypeHelpers.TryResolveSuperCall(
+                _ctx.CurrentClassBuilder, methodBuilder, _ctx.EmittingTypeBuilder, out var superTarget))
+            return false;
+
         var methodParams = methodBuilder.GetParameters();
 
         // Emit: this.Base::method(args) via non-virtual Call
@@ -401,7 +413,7 @@ public partial class ILEmitter
         }
 
         // Use Call (NOT Callvirt) to bypass virtual dispatch
-        IL.Emit(OpCodes.Call, methodBuilder);
+        IL.Emit(OpCodes.Call, superTarget);
         SetStackUnknown();
         return true;
     }

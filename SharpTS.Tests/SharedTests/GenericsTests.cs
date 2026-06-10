@@ -159,6 +159,208 @@ public class GenericsTests
         Assert.Equal("age\n25\n", output);
     }
 
+    // Regression tests for #178: compiled mode emitted castclass/callvirt tokens against
+    // the open generic TypeDef inside the class's own method bodies, which the CLR refuses
+    // to load at JIT time (TypeLoadException: Could not load type 'Stack').
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GenericClass_ArrayFieldAndGetter_Works(ExecutionMode mode)
+    {
+        var source = """
+            class Stack<T> {
+                private items: T[] = [];
+                push(item: T): void {
+                    this.items.push(item);
+                }
+                pop(): T | undefined {
+                    return this.items.pop();
+                }
+                peek(): T | undefined {
+                    return this.items[this.items.length - 1];
+                }
+                get size(): number {
+                    return this.items.length;
+                }
+            }
+            const stack = new Stack<number>();
+            stack.push(10);
+            stack.push(20);
+            stack.push(30);
+            console.log(stack.size);
+            console.log(stack.peek());
+            console.log(stack.pop());
+            console.log(stack.size);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("3\n30\n30\n2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GenericClass_NonGenericFields_Work(ExecutionMode mode)
+    {
+        var source = """
+            class Mixed<T> {
+                private maybe: T | undefined;
+                private label: string = "lbl";
+                private count: number = 0;
+                set(v: T): void {
+                    this.maybe = v;
+                    this.count = this.count + 1;
+                }
+                describe(): string {
+                    return this.label + ":" + this.count + ":" + this.maybe;
+                }
+            }
+            const m = new Mixed<number>();
+            m.set(42);
+            console.log(m.describe());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("lbl:1:42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GenericClass_MethodCallingOwnMethod_Works(ExecutionMode mode)
+    {
+        var source = """
+            class Box<T> {
+                describe(): string {
+                    return "box:" + this.tag();
+                }
+                tag(): string {
+                    return "generic";
+                }
+            }
+            console.log(new Box<number>().describe());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("box:generic\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GenericClass_ExtendedByNonGeneric_InheritedFieldAndSuperCall_Work(ExecutionMode mode)
+    {
+        var source = """
+            class Base<T> {
+                protected stored: T[] = [];
+                put(v: T): void {
+                    this.stored.push(v);
+                }
+                count(): number {
+                    return this.stored.length;
+                }
+            }
+            class IntBag extends Base<number> {
+                sum(): number {
+                    let t = 0;
+                    for (const v of this.stored) {
+                        t += v;
+                    }
+                    return t + super.count();
+                }
+            }
+            const bag = new IntBag();
+            bag.put(5);
+            bag.put(7);
+            console.log(bag.sum() + " " + bag.count());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("14 2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GenericClass_ExplicitAccessors_Work(ExecutionMode mode)
+    {
+        var source = """
+            class Temp<T> {
+                private _v: number = 0;
+                get value(): number {
+                    return this._v;
+                }
+                set value(n: number) {
+                    this._v = n;
+                }
+                bump(): number {
+                    this.value = this.value + 5;
+                    return this.value;
+                }
+            }
+            const t = new Temp<boolean>();
+            t.value = 10;
+            console.log(t.bump());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("15\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GenericClass_AsyncMethodTouchingFields_Works(ExecutionMode mode)
+    {
+        var source = """
+            class Repo<T> {
+                private items: T[] = [];
+                add(item: T): void {
+                    this.items.push(item);
+                }
+                async fetchAll(): Promise<number> {
+                    await Promise.resolve();
+                    return this.items.length;
+                }
+            }
+            async function main(): Promise<void> {
+                const r = new Repo<number>();
+                r.add(1);
+                r.add(2);
+                console.log(await r.fetchAll());
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GenericClass_GeneratorMethodTouchingFields_Works(ExecutionMode mode)
+    {
+        var source = """
+            class Seq<T> {
+                private items: T[] = [];
+                add(item: T): void {
+                    this.items.push(item);
+                }
+                *iterate(): Generator<T> {
+                    for (const x of this.items) {
+                        yield x;
+                    }
+                }
+            }
+            const s = new Seq<string>();
+            s.add("a");
+            s.add("b");
+            let out = "";
+            for (const v of s.iterate()) {
+                out += v;
+            }
+            console.log(out);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("ab\n", output);
+    }
+
     #endregion
 
     #region Generic Interfaces

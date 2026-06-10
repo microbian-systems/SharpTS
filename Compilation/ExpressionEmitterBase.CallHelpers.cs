@@ -906,6 +906,13 @@ public abstract partial class ExpressionEmitterBase
         if (!Ctx.Classes.TryGetValue(className, out var classType2))
             return false;
 
+        // Generic classes need instantiated tokens (Stack<!T>), only expressible inside
+        // the class's own bodies — never the case for state-machine emitters, where
+        // EmittingTypeBuilder is null. Fall back to runtime dispatch there (#178).
+        if (!EmitterTypeHelpers.TryResolveInstanceDispatch(
+                classType2, methodBuilder, Ctx.EmittingTypeBuilder, out var castType, out var callTarget))
+            return false;
+
         var methodParams = methodBuilder.GetParameters();
         int expectedParamCount = methodParams.Length;
 
@@ -921,7 +928,7 @@ public abstract partial class ExpressionEmitterBase
 
         EmitExpression(receiver);
         EnsureBoxed();
-        IL.Emit(OpCodes.Castclass, classType2);
+        IL.Emit(OpCodes.Castclass, castType);
 
         for (int i = 0; i < argTemps.Count; i++)
         {
@@ -941,7 +948,7 @@ public abstract partial class ExpressionEmitterBase
             EmitDefaultForType(methodParams[i].ParameterType);
         }
 
-        IL.Emit(OpCodes.Callvirt, methodBuilder);
+        IL.Emit(OpCodes.Callvirt, callTarget);
         SetStackUnknown();
         return true;
     }
@@ -975,6 +982,12 @@ public abstract partial class ExpressionEmitterBase
         string resolvedSuperName = Ctx.ResolveClassName(superclassName);
         var methodBuilder = Ctx.ResolveInstanceMethod(resolvedSuperName, methodName);
         if (methodBuilder == null)
+            return false;
+
+        // Generic superclasses need the member referenced through the instantiated base
+        // (e.g. Base<float64>::count) — an open MethodDef token is not executable (#178)
+        if (!EmitterTypeHelpers.TryResolveSuperCall(
+                Ctx.CurrentClassBuilder, methodBuilder, Ctx.EmittingTypeBuilder, out var superTarget))
             return false;
 
         var methodParams = methodBuilder.GetParameters();
@@ -1018,7 +1031,7 @@ public abstract partial class ExpressionEmitterBase
             EmitDefaultForType(methodParams[i].ParameterType);
         }
 
-        IL.Emit(OpCodes.Call, methodBuilder);
+        IL.Emit(OpCodes.Call, superTarget);
         SetStackUnknown();
         return true;
     }

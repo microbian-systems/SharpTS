@@ -69,6 +69,7 @@ public partial class ILCompiler
             DisplayClassFields = _closures.DisplayClassFields,
             DisplayClassConstructors = _closures.DisplayClassConstructors,
             CurrentClassBuilder = typeBuilder,
+            EmittingTypeBuilder = typeBuilder,
             CurrentClassName = qualifiedClassName, // Required for static member access via 'this'
             FunctionRestParams = _functions.RestParams,
             FunctionsCapturingArguments = _functions.CapturingArguments,
@@ -264,6 +265,7 @@ public partial class ILCompiler
             DisplayClassFields = _closures.DisplayClassFields,
             DisplayClassConstructors = _closures.DisplayClassConstructors,
             CurrentClassBuilder = typeBuilder,
+            EmittingTypeBuilder = typeBuilder,
             FunctionRestParams = _functions.RestParams,
             FunctionsCapturingArguments = _functions.CapturingArguments,
             EnumMembers = _enums.Members,
@@ -488,6 +490,7 @@ public partial class ILCompiler
             DisplayClassFields = _closures.DisplayClassFields,
             DisplayClassConstructors = _closures.DisplayClassConstructors,
             CurrentClassBuilder = typeBuilder,
+            EmittingTypeBuilder = typeBuilder,
             FunctionRestParams = _functions.RestParams,
             FunctionsCapturingArguments = _functions.CapturingArguments,
             EnumMembers = _enums.Members,
