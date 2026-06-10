@@ -623,7 +623,7 @@ public partial class Interpreter
     /// Property access on arrays. Checks named properties and ISharpTSPropertyAccessor
     /// before falling through to built-in array members.
     /// </summary>
-    private static RuntimeValue EvaluateGetOnArrayRV(object obj, string memberName)
+    private RuntimeValue EvaluateGetOnArrayRV(object obj, string memberName)
     {
         // ISharpTSPropertyAccessor check (handles SharpTSTemplateStringsArray.raw)
         if (obj is ISharpTSPropertyAccessor accessor && accessor.HasProperty(memberName))
@@ -632,6 +632,21 @@ public partial class Interpreter
         // Named properties from Object.defineProperty
         if (obj is SharpTSArray array && array.HasNamedProperty(memberName))
             return RuntimeValue.FromBoxed(array.GetNamedProperty(memberName));
+
+        // Array subclass instances (#233): class getters and methods resolve
+        // before built-in Array members so user overrides win; declared fields
+        // were handled above as named properties (own props shadow methods).
+        if (obj is SharpTSArraySubclassInstance subclassArray)
+        {
+            if (memberName == "constructor")
+                return RuntimeValue.FromObject(subclassArray.Klass);
+            var classGetter = subclassArray.Klass.FindGetter(memberName);
+            if (classGetter != null)
+                return RuntimeValue.FromBoxed(classGetter.BindThis(subclassArray).Call(this, []));
+            var classMethod = subclassArray.Klass.FindMethod(memberName);
+            if (classMethod != null)
+                return RuntimeValue.FromObject(SharpTSClass.BindMethodToReceiver(classMethod, subclassArray));
+        }
 
         // Numeric-string index on $Array — `arr["0"]` is equivalent to
         // `arr[0]` per JS semantics. ECMA-262 §10.4.2 (Array exotic objects)
@@ -1026,7 +1041,14 @@ public partial class Interpreter
             // process-wide static FrozenDictionary).
             if (memberName == "prototype" && ctor.Name == BuiltInNames.RegExp)
                 return GetRegExpPrototype();
-            return ctor.GetMember(memberName) ?? SharpTSUndefined.Instance;
+            var ctorMember = ctor.GetMember(memberName);
+            // Materialize constant-wrapping members (e.g. Symbol.species via an
+            // alias: `const S = Symbol; S.species`) the same way the syntactic
+            // path in EvaluateGet does — otherwise the alias path returns the
+            // BuiltInMethod wrapper and identity with the direct form breaks.
+            if (ctorMember is BuiltInMethod { IsConstant: true } ctorConstant)
+                return ctorConstant.Call(this, []);
+            return ctorMember ?? SharpTSUndefined.Instance;
         }
 
         // Handle plain Dictionary<string, object?> objects (e.g., segment items from Intl.Segments)
@@ -1046,6 +1068,21 @@ public partial class Interpreter
         if (obj is SharpTSArray array && array.HasNamedProperty(memberName))
         {
             return array.GetNamedProperty(memberName);
+        }
+
+        // Array subclass instances (#233): class getters and methods resolve
+        // before the built-in Array members so user overrides win; fields were
+        // handled above as named properties (own properties shadow methods).
+        if (obj is SharpTSArraySubclassInstance subclassArray)
+        {
+            if (memberName == "constructor")
+                return subclassArray.Klass;
+            var classGetter = subclassArray.Klass.FindGetter(memberName);
+            if (classGetter != null)
+                return classGetter.BindThis(subclassArray).Call(this, []);
+            var classMethod = subclassArray.Klass.FindMethod(memberName);
+            if (classMethod != null)
+                return SharpTSClass.BindMethodToReceiver(classMethod, subclassArray);
         }
 
         // Handle built-in instance members: strings, arrays, Math, Promise

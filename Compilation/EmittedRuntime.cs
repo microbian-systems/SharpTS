@@ -1213,6 +1213,8 @@ public class EmittedRuntime
     /// </summary>
     public MethodBuilder CallArgsPoolGet { get; set; } = null!;
     public ConstructorBuilder TSArrayCtor { get; set; } = null!;
+    /// <summary>$Array(object?[] ctorArgs) — ECMA-262 Array-constructor semantics for guest classes extending Array (#233): implicit ctors and super(...) chain through this.</summary>
+    public ConstructorBuilder TSArrayCtorFromCtorArgs { get; set; } = null!;
     public MethodBuilder TSArrayElementsGetter { get; set; } = null!;
     public MethodBuilder TSArrayIsFrozenGetter { get; set; } = null!;
     public MethodBuilder TSArrayIsSealedGetter { get; set; } = null!;

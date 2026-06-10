@@ -150,6 +150,10 @@ public partial class RuntimeEmitter
         EmitTSArraySetLength(typeBuilder, runtime, tryCollapseSparse, syncLength);
         EmitTSArrayDeleteAt(typeBuilder, runtime, syncLength);
 
+        // Constructor-args overload for guest classes extending Array (#233) —
+        // must be emitted after SetLength, whose MethodBuilder it calls.
+        EmitTSArraySubclassConstructor(typeBuilder, runtime);
+
         EmitTSArrayToString(typeBuilder, runtime);
         // IList<object?> impl is inherited from List<object?> — no explicit
         // bridges needed (was the old composition-based approach).
@@ -182,6 +186,87 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Conv_I8);
         il.Emit(OpCodes.Stfld, _tsArrayLengthField);
 
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// <c>public $Array(object?[] ctorArgs)</c> — ECMA-262 §23.1.1.1 Array
+    /// constructor semantics applied to a fresh instance, for guest classes
+    /// extending Array (#233): their emitted constructors chain here (both the
+    /// implicit-constructor path and explicit <c>super(...)</c> calls). A
+    /// single numeric argument sets the length (holes); any other shape
+    /// appends the arguments as elements.
+    /// </summary>
+    private void EmitTSArraySubclassConstructor(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var ctor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public,
+            CallingConventions.Standard,
+            [_types.ObjectArray]
+        );
+        runtime.TSArrayCtorFromCtorArgs = ctor;
+
+        var il = ctor.GetILGenerator();
+        var elementsLabel = il.DefineLabel();
+        var loopStart = il.DefineLabel();
+        var loopCheck = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+        var iLocal = il.DeclareLocal(_types.Int32);
+
+        // base() — empty List<object?>
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.ListOfObject));
+        // _length starts at 0 (field default)
+
+        // if (ctorArgs.Length == 1 && ctorArgs[0] is double) { SetLength((long)d); return; }
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Bne_Un, elementsLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, elementsLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Call, runtime.TSArraySetLength);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        // else: append each ctor arg as an element, then sync _length.
+        il.MarkLabel(elementsLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopCheck);
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _tsArrayListAdd!);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.MarkLabel(loopCheck);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Blt, loopStart);
+
+        // _length = (long)Count
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _tsArrayListCountGetter!);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Stfld, _tsArrayLengthField);
+
+        il.MarkLabel(doneLabel);
         il.Emit(OpCodes.Ret);
     }
 

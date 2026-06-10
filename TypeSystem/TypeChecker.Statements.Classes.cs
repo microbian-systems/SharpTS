@@ -37,32 +37,45 @@ public partial class TypeChecker
                     // Instantiate the generic class with the type arguments
                     superclass = InstantiateGenericClass(gc, typeArgs);
                 }
+                else if (superType is TypeInfo.Any)
+                {
+                    // Built-in generic globals (Promise<T>, Array<T>) resolve to
+                    // Any in value position; `extends Promise<T>` must not be
+                    // rejected as "non-generic" (#233). Validate the type args
+                    // resolve, then fall through to the Any placeholder below.
+                    foreach (var typeArg in classStmt.SuperclassTypeArgs)
+                        ToTypeInfo(typeArg);
+                }
                 else
                 {
                     throw new TypeCheckException($"Cannot use type arguments with non-generic class '{Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)}'", tsCode: "TS2315");
                 }
             }
-            else if (superType is TypeInfo.Instance si && si.ClassType is TypeInfo.Class sic)
-                superclass = sic;
-            else if (superType is TypeInfo.Class sc)
-                superclass = sc;
-            else if (superType is TypeInfo.GenericClass gc)
+            if (superclass == null)
             {
-                // Generic class without type arguments - error
-                throw new TypeCheckException($"Generic class '{gc.Name}' requires type arguments", tsCode: "TS2314");
+                if (superType is TypeInfo.Instance si && si.ClassType is TypeInfo.Class sic)
+                    superclass = sic;
+                else if (superType is TypeInfo.Class sc)
+                    superclass = sc;
+                else if (superType is TypeInfo.GenericClass gc2)
+                {
+                    // Generic class without type arguments - error
+                    throw new TypeCheckException($"Generic class '{gc2.Name}' requires type arguments", tsCode: "TS2314");
+                }
+                else if (superType is TypeInfo.Any)
+                {
+                    // Allow extending Any-typed globals (e.g. Error, TypeError,
+                    // Promise<T>, Array). Create a placeholder class so super()
+                    // calls and constructor validation type-check correctly
+                    // (accept any number of args).
+                    var placeholder = new TypeInfo.MutableClass(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!);
+                    placeholder.Methods["constructor"] = new TypeInfo.Function(
+                        [new TypeInfo.Any()], new TypeInfo.Void(), RequiredParams: 0, HasRestParam: true);
+                    superclass = placeholder;
+                }
+                else
+                    throw new TypeCheckException("Superclass must be a class", tsCode: "TS2507");
             }
-            else if (superType is TypeInfo.Any)
-            {
-                // Allow extending Any-typed globals (e.g. Error, TypeError).
-                // Create a placeholder class so super() calls and constructor
-                // validation type-check correctly (accept any number of args).
-                var placeholder = new TypeInfo.MutableClass(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!);
-                placeholder.Methods["constructor"] = new TypeInfo.Function(
-                    [new TypeInfo.Any()], new TypeInfo.Void(), RequiredParams: 0, HasRestParam: true);
-                superclass = placeholder;
-            }
-            else
-                throw new TypeCheckException("Superclass must be a class", tsCode: "TS2507");
         }
 
         // Handle generic type parameters

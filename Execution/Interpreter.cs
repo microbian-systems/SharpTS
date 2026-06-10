@@ -192,6 +192,18 @@ public partial class Interpreter : IDisposable
         // MessageChannel as a value (construction already worked by name).
         globals[BuiltInNames.MessageChannel] = WorkerBuiltIns.MessageChannelConstructor;
 
+        // Symbol as a value-position global (#234): `typeof Symbol`,
+        // `const f = Symbol`, and `(Symbol as any).species` need a real
+        // binding. Its namespace is registered as non-singleton (member
+        // access routes through SymbolBuiltIns via GetMember), so the
+        // singleton loop above didn't bind it. The factory implements the
+        // call form Symbol(description); JS has no `new Symbol()`.
+        globals[BuiltInNames.Symbol] = new SharpTSBuiltInConstructor(
+            BuiltInNames.Symbol,
+            args => new SharpTSSymbol(args.Count > 0 && args[0] is not SharpTSUndefined
+                ? args[0]?.ToString()
+                : null));
+
         // Promise needs a bare-reference global so `x instanceof Promise`,
         // `typeof Promise === 'function'`, and stdlib modules that carry
         // Promise as a value can type-check/run. Its namespace is registered
@@ -2058,8 +2070,25 @@ public partial class Interpreter : IDisposable
         {
             superclass = Evaluate(classStmt.SuperclassExpr);
 
+            // `extends Array` (#233): the Array global is a constructor
+            // singleton, not a SharpTSClass — substitute the SharpTSArrayClass
+            // bridge so the class machinery (super(), method lookup,
+            // instanceof) sees a real superclass.
+            if (superclass is SharpTSArrayGlobal)
+            {
+                superclass = SharpTSArrayClass.ArrayBase;
+            }
+
             if (superclass is not SharpTSClass)
             {
+                // Built-in constructors that don't have a class bridge yet
+                // (Promise is the big one — see #221) get a precise error
+                // instead of the generic "Superclass must be a class".
+                if (superclass is SharpTSBuiltInConstructor builtInCtor)
+                {
+                    throw new InterpreterException(
+                        $"Class '{classStmt.Name.Lexeme}' cannot extend built-in '{builtInCtor.Name}': subclassing this built-in is not supported yet.");
+                }
                 throw new InterpreterException("Superclass must be a class.");
             }
         }
@@ -2226,10 +2255,31 @@ public partial class Interpreter : IDisposable
 
         // If the superclass is an Error type, create a SharpTSErrorClass so that
         // instances carry error fields (name, message, stack) and instanceof works.
+        // Likewise an Array superclass produces a SharpTSArrayClass whose
+        // instances are real arrays (#233).
         SharpTSClass klass = superclass is SharpTSErrorClass errorSuper
             ? new SharpTSErrorClass(
                 classStmt.Name.Lexeme,
                 errorSuper,
+                methods,
+                staticMethods,
+                staticProperties,
+                getters,
+                setters,
+                classStmt.IsAbstract,
+                instanceFields,
+                instancePrivateFields,
+                privateMethods,
+                staticPrivateFields,
+                staticPrivateMethods,
+                instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
+                staticGetters.Count > 0 ? staticGetters : null,
+                staticSetters.Count > 0 ? staticSetters : null)
+            : superclass is SharpTSArrayClass arraySuper
+            ? new SharpTSArrayClass(
+                classStmt.Name.Lexeme,
+                arraySuper,
                 methods,
                 staticMethods,
                 staticProperties,

@@ -142,6 +142,26 @@ public partial class ILCompiler
             // Built-in error types: extend the emitted $Error/$TypeError/etc.
             baseType = GetEmittedErrorType(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!);
         }
+        else if (qualifiedSuperclassName != null && classStmt.SuperclassExpr != null
+            && Expr.GetSuperclassLeafName(classStmt.SuperclassExpr) == "Array")
+        {
+            // `extends Array` (#233): derive from the emitted $Array, which
+            // itself inherits List<object?> — every IList-based array dispatch
+            // (push/length/iteration/Array.isArray/instanceof Array) applies
+            // to instances unchanged.
+            baseType = _runtime.TSArrayType;
+        }
+        else if (qualifiedSuperclassName != null && classStmt.SuperclassExpr != null
+            && Expr.GetSuperclassLeafName(classStmt.SuperclassExpr) is
+                "Promise" or "Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer")
+        {
+            // Built-in constructors without a subclassing bridge (#233/#221):
+            // fail loudly at compile time rather than silently extending
+            // System.Object and misbehaving at runtime. Mirrors the
+            // interpreter's "subclassing this built-in is not supported yet".
+            throw new Diagnostics.Exceptions.CompileException(
+                $"Class '{classStmt.Name.Lexeme}' cannot extend built-in '{Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)}': subclassing this built-in is not supported yet.");
+        }
 
         // Track Error subclass status (direct or transitive)
         if (classStmt.SuperclassExpr != null && Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!))
@@ -151,6 +171,18 @@ public partial class ILCompiler
         else if (qualifiedSuperclassName != null && _classes.ErrorSubclasses.Contains(qualifiedSuperclassName))
         {
             _classes.ErrorSubclasses.Add(qualifiedClassName);
+        }
+
+        // Track Array subclass status (direct or transitive) for constructor
+        // base-call emission (#233)
+        if (classStmt.SuperclassExpr != null && Expr.GetSuperclassLeafName(classStmt.SuperclassExpr) == "Array"
+            && !_classes.Builders.ContainsKey(qualifiedSuperclassName ?? ""))
+        {
+            _classes.ArraySubclasses.Add(qualifiedClassName);
+        }
+        else if (qualifiedSuperclassName != null && _classes.ArraySubclasses.Contains(qualifiedSuperclassName))
+        {
+            _classes.ArraySubclasses.Add(qualifiedClassName);
         }
 
         // Set the parent type (defaults to Object if baseType is null)

@@ -52,6 +52,9 @@ public class SharpTSClass(
     private readonly FrozenDictionary<string, SharpTSFunction> _staticSetters = staticSetters?.ToFrozenDictionary() ?? FrozenDictionary<string, SharpTSFunction>.Empty;
     private readonly List<Stmt.Field> _instanceFields = instanceFields ?? [];
 
+    /// <summary>Declared public instance fields, for subclasses that initialize them onto non-SharpTSInstance receivers (e.g. Array-backed instances).</summary>
+    protected IReadOnlyList<Stmt.Field> InstanceFields => _instanceFields;
+
     // Method lookup cache - avoids repeated inheritance chain walks
     // Key: method name, Value: method (null means not found in entire chain)
     private readonly Dictionary<string, ISharpTSCallable?> _methodCache = [];
@@ -122,6 +125,25 @@ public class SharpTSClass(
             SharpTSAsyncGeneratorFunction asyncGenFunc => asyncGenFunc.Bind(instance),
             IInstanceBindable bindable => bindable.BindTo(instance),
             _ => method // For other callables that don't need binding
+        };
+    }
+
+    /// <summary>
+    /// Binds a method to an arbitrary receiver. Receivers that are
+    /// <see cref="SharpTSInstance"/> route through <see cref="BindMethod"/>;
+    /// built-in-backed instances (e.g. Array subclass instances, which are
+    /// <see cref="SharpTSArray"/>s) bind `this` via <see cref="SharpTSFunction.BindThis"/>
+    /// — the method's closure still resolves `super` lexically.
+    /// </summary>
+    public static ISharpTSCallable BindMethodToReceiver(ISharpTSCallable method, object receiver)
+    {
+        if (receiver is SharpTSInstance instance)
+            return BindMethod(method, instance);
+        return method switch
+        {
+            SharpTSFunction func => func.BindThis(receiver),
+            IReceiverBindable bindable => bindable.BindToReceiver(receiver),
+            _ => method
         };
     }
 

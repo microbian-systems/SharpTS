@@ -732,6 +732,106 @@ public class PromiseMethodTests
         Assert.Equal("caught\nAggregateError\n0\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Any_RejectionIsInstanceofAggregateError(ExecutionMode mode)
+    {
+        // #232: the combinator's rejection must be the same representation
+        // `new AggregateError()` produces, so instanceof checks hold.
+        var source = """
+            async function main(): Promise<void> {
+                try {
+                    await Promise.any([Promise.reject("e1")]);
+                } catch (e: any) {
+                    console.log(e instanceof AggregateError);
+                    console.log(e instanceof Error);
+                }
+                try {
+                    await Promise.any([]);
+                } catch (e: any) {
+                    console.log(e instanceof AggregateError, e instanceof Error);
+                }
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\ntrue true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Any_ErrorsCarryGuestRejectionValues(ExecutionMode mode)
+    {
+        // #232: e.errors must hold what each promise rejected with — the
+        // guest values themselves, not host exception wrapper messages.
+        var source = """
+            async function thrower(): Promise<number> {
+                throw new Error("boom");
+            }
+            async function main(): Promise<void> {
+                try {
+                    await Promise.any([Promise.reject(new TypeError("t1")), thrower()]);
+                } catch (e: any) {
+                    console.log(e.errors.length);
+                    console.log(e.errors[0] instanceof TypeError, e.errors[0].message);
+                    console.log(e.errors[1] instanceof Error, e.errors[1].message);
+                }
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2\ntrue t1\ntrue boom\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AllSettled_ReasonCarriesGuestValue(ExecutionMode mode)
+    {
+        // #232 (adjacent): allSettled's rejected outcome must carry the guest
+        // rejection value, including guest throws from async functions.
+        var source = """
+            async function thrower(): Promise<number> {
+                throw new RangeError("r1");
+            }
+            async function main(): Promise<void> {
+                const results: any = await Promise.allSettled([thrower()]);
+                console.log(results[0].status);
+                console.log(results[0].reason instanceof RangeError, results[0].reason.message);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("rejected\ntrue r1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void InstanceofError_InsideAsyncFunction(ExecutionMode mode)
+    {
+        // #232 root cause in compiled mode: state-machine bodies (async
+        // functions) resolved built-in constructor identifiers to null, so
+        // EVERY `x instanceof Error/Map/Date` inside async was false.
+        var source = """
+            async function main(): Promise<void> {
+                const e: any = new Error("x");
+                console.log(e instanceof Error);
+                const t: any = new TypeError("x");
+                console.log(t instanceof TypeError, t instanceof Error);
+                const m: any = new Map();
+                console.log(m instanceof Map);
+                const d: any = new Date();
+                console.log(d instanceof Date);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue true\ntrue\ntrue\n", output);
+    }
+
     #endregion
 
     #region Promise Executor Constructor Tests

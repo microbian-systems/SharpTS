@@ -446,7 +446,7 @@ public partial class RuntimeEmitter
         );
         runtime.ProcessElementSettled = processElementSettled;
         EmitProcessElementSettledWrapper(processElementSettled.GetILGenerator(), processElementSettledSM);
-        EmitProcessElementSettledMoveNext(processElementSettledSM);
+        EmitProcessElementSettledMoveNext(processElementSettledSM, runtime);
         processElementSettledSM.Type.CreateType();
 
         // Promise.allSettled(iterable) - async state machine using helper + WhenAll

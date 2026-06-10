@@ -287,6 +287,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.ArrayConstructor);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notArrayTypeLabel);
+
+        // $TSSymbol (#234): bare `Symbol` resolves to the $TSSymbol Type token,
+        // so the aliased call form (`const f = Symbol; f("desc")`) lands here.
+        // Mirrors BuiltInConstructorHandler.EmitSymbol: description is
+        // Stringify(args[0]) when present, null otherwise.
+        var notSymbolTypeLabel = il.DefineLabel();
+        var symbolNoDescLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.Type);
+        il.Emit(OpCodes.Ldtoken, runtime.TSSymbolType);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle", [_types.RuntimeTypeHandle])!);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Brfalse, notSymbolTypeLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Brfalse, symbolNoDescLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Newobj, runtime.TSSymbolCtor);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(symbolNoDescLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Newobj, runtime.TSSymbolCtor);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notSymbolTypeLabel);
+
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 

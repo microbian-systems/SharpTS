@@ -817,6 +817,20 @@ public partial class Interpreter
             return false;
         }
 
+        // Array subclass instances (#233): real SharpTSArrays carrying a guest
+        // class — walk its chain (`m instanceof Array` is handled by the
+        // SharpTSArrayGlobal arm above via `left is SharpTSArray`).
+        if (left is SharpTSArraySubclassInstance subclassArray)
+        {
+            SharpTSClass? current = subclassArray.Klass;
+            while (current != null)
+            {
+                if (current.Name == targetClass.Name) return true;
+                current = current.Superclass;
+            }
+            return false;
+        }
+
         // Legacy path: SharpTSError instances created via BuiltInConstructorFactory
         // (not SharpTSInstance, but should still pass instanceof Error/TypeError/etc.)
         if (left is SharpTSError error && targetClass is SharpTSErrorClass)

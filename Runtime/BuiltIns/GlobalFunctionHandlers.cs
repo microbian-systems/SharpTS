@@ -67,9 +67,12 @@ internal static class GlobalFunctionHandlers
         if (arguments.Count > 0)
         {
             var arg = await evaluateArg(arguments[0]);
-            description = arg.ToObject()?.ToString();
+            // ECMA-262 §20.4.1.1: Symbol(undefined) has no description.
+            description = arg.IsUndefined ? null : arg.ToObject()?.ToString();
         }
-        return RuntimeValue.FromObject(new SharpTSSymbol(description));
+        // FromSymbol (not FromObject) so the result carries ValueKind.Symbol —
+        // otherwise `typeof Symbol("x")` reports "object".
+        return RuntimeValue.FromSymbol(new SharpTSSymbol(description));
     }
 
     private static async ValueTask<RuntimeValue> HandleBigInt(

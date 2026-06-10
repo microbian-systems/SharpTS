@@ -344,33 +344,13 @@ public static class PromiseBuiltIns
                 });
                 results.Add(outcome);
             }
-            catch (SharpTSPromiseRejectedException ex)
-            {
-                // Create rejected outcome object
-                var outcome = new SharpTSObject(new Dictionary<string, object?>
-                {
-                    ["status"] = "rejected",
-                    ["reason"] = ex.Reason
-                });
-                results.Add(outcome);
-            }
-            catch (AggregateException aggEx) when (aggEx.InnerException is SharpTSPromiseRejectedException rejEx)
-            {
-                // Handle wrapped rejection exception
-                var outcome = new SharpTSObject(new Dictionary<string, object?>
-                {
-                    ["status"] = "rejected",
-                    ["reason"] = rejEx.Reason
-                });
-                results.Add(outcome);
-            }
             catch (Exception ex)
             {
-                // Handle other exceptions as rejections
+                // Create rejected outcome object carrying the guest rejection value
                 var outcome = new SharpTSObject(new Dictionary<string, object?>
                 {
                     ["status"] = "rejected",
-                    ["reason"] = ex.Message
+                    ["reason"] = ExtractRejectionReason(ex)
                 });
                 results.Add(outcome);
             }
@@ -401,16 +381,13 @@ public static class PromiseBuiltIns
             throw new Exception("Runtime Error: Promise.any requires an array argument.");
         }
 
-        // Empty array rejects immediately with AggregateError
+        // Empty array rejects immediately with AggregateError. Must be a real
+        // SharpTSAggregateError — the same representation `new AggregateError()`
+        // produces — so `e instanceof AggregateError` holds (#232).
         if (array.Length == 0)
         {
-            var aggregateError = new SharpTSObject(new Dictionary<string, object?>
-            {
-                ["name"] = "AggregateError",
-                ["message"] = "All promises were rejected",
-                ["errors"] = new SharpTSArray([])
-            });
-            throw new SharpTSPromiseRejectedException(aggregateError);
+            throw new SharpTSPromiseRejectedException(
+                new SharpTSAggregateError(new SharpTSArray([])));
         }
 
         var state = new AnyState { PendingCount = array.Length };
@@ -442,18 +419,30 @@ public static class PromiseBuiltIns
             // First fulfillment wins
             state.Tcs.TrySetResult(result);
         }
-        catch (SharpTSPromiseRejectedException ex)
-        {
-            HandleRejectionForAny(ex.Reason, state);
-        }
-        catch (AggregateException aggEx) when (aggEx.InnerException is SharpTSPromiseRejectedException rejEx)
-        {
-            HandleRejectionForAny(rejEx.Reason, state);
-        }
         catch (Exception ex)
         {
-            HandleRejectionForAny(ex.Message, state);
+            HandleRejectionForAny(ExtractRejectionReason(ex), state);
         }
+    }
+
+    /// <summary>
+    /// Extracts the guest rejection value from a faulted-promise exception:
+    /// the rejection Reason, a guest-thrown value (ThrowException from a
+    /// `throw` inside an async function), either of those wrapped in the
+    /// AggregateException that Task faults arrive in, or — last resort —
+    /// the host exception message. Keeps `e.errors` / allSettled `reason`
+    /// carrying what the promise actually rejected with (#232).
+    /// </summary>
+    private static object? ExtractRejectionReason(Exception ex)
+    {
+        if (ex is AggregateException agg && agg.InnerException is Exception inner)
+            ex = inner;
+        return ex switch
+        {
+            SharpTSPromiseRejectedException rejected => rejected.Reason,
+            Exceptions.ThrowException thrown => thrown.Value,
+            _ => ex.Message
+        };
     }
 
     /// <summary>
@@ -466,16 +455,12 @@ public static class PromiseBuiltIns
             state.RejectionReasons.Add(reason);
             state.PendingCount--;
 
-            // If all promises rejected, reject with AggregateError
+            // If all promises rejected, reject with a real SharpTSAggregateError
+            // so `e instanceof AggregateError` / `instanceof Error` hold (#232).
             if (state.PendingCount == 0)
             {
-                // Create an AggregateError-like object with errors array
-                var aggregateError = new SharpTSObject(new Dictionary<string, object?>
-                {
-                    ["name"] = "AggregateError",
-                    ["message"] = "All promises were rejected",
-                    ["errors"] = new SharpTSArray(state.RejectionReasons)
-                });
+                var aggregateError = new SharpTSAggregateError(
+                    new SharpTSArray(state.RejectionReasons));
 
                 state.Tcs.TrySetException(new SharpTSPromiseRejectedException(aggregateError));
             }

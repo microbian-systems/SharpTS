@@ -143,13 +143,16 @@ public partial class RuntimeEmitter
         // try block
         il.BeginExceptionBlock();
 
-        // state.RejectionReasons.Add(task.Exception?.Message ?? "Unknown error")
+        // state.RejectionReasons.Add(WrapException(task.Exception.InnerException ?? task.Exception))
+        // — the guest rejection VALUE, not the AggregateException wrapper's
+        // Message, so `e.errors` matches what each promise rejected with (#232).
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldfld, anyState.RejectionReasonsField);
 
-        // Get exception message
         var hasExceptionLabel = il.DefineLabel();
+        var unwrapDoneLabel = il.DefineLabel();
         var afterExceptionLabel = il.DefineLabel();
+        var aggExLocal = il.DeclareLocal(_types.Exception);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Task, "Exception").GetGetMethod()!);
         il.Emit(OpCodes.Dup);
@@ -158,8 +161,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "Unknown error");
         il.Emit(OpCodes.Br, afterExceptionLabel);
 
+        // Unwrap the AggregateException Task.Exception always wraps faults in;
+        // WrapException then yields the guest value (__tsValue / rejection
+        // Reason / message dictionary fallback).
         il.MarkLabel(hasExceptionLabel);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Message").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, aggExLocal);
+        il.Emit(OpCodes.Ldloc, aggExLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "InnerException").GetGetMethod()!);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, unwrapDoneLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, aggExLocal);
+        il.MarkLabel(unwrapDoneLabel);
+        il.Emit(OpCodes.Call, runtime.WrapException);
 
         il.MarkLabel(afterExceptionLabel);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", [_types.Object]));
