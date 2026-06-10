@@ -377,6 +377,7 @@ public partial class Parser
         List<Stmt> tryBlock = Block();
 
         Token? catchParam = null;
+        string? catchParamType = null;
         List<Stmt>? catchBlock = null;
         List<Stmt>? finallyBlock = null;
 
@@ -387,6 +388,13 @@ public partial class Parser
             {
                 Consume(TokenType.LEFT_PAREN, "Expect '(' after 'catch'.");
                 catchParam = Consume(TokenType.IDENTIFIER, "Expect catch parameter name.");
+                // TS catch-binding annotation: `catch (e: any)` / `(e: unknown)`.
+                // Parse any annotation here; restricting it to any/unknown is the
+                // type checker's job (TS1196), not a parse error (#215).
+                if (Match(TokenType.COLON))
+                {
+                    catchParamType = ParseTypeAnnotation();
+                }
                 Consume(TokenType.RIGHT_PAREN, "Expect ')' after catch parameter.");
             }
             // else: catchParam remains null for parameterless catch
@@ -406,7 +414,7 @@ public partial class Parser
             throw new Exception("Try statement must have catch or finally clause.");
         }
 
-        return new Stmt.TryCatch(tryBlock, catchParam, catchBlock, finallyBlock);
+        return new Stmt.TryCatch(tryBlock, catchParam, catchBlock, finallyBlock, catchParamType);
     }
 
     private Stmt ThrowStatement()
