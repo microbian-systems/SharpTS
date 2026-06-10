@@ -142,25 +142,28 @@ public partial class RuntimeEmitter
 
         // Labels
         var state0Label = il.DefineLabel();  // Resume after promise await
-        var state1Label = il.DefineLabel();  // Resume after flatten await
+        var state1Label = il.DefineLabel();  // Resume after flatten await (inside handler try)
         var continue0Label = il.DefineLabel();
         var continue1Label = il.DefineLabel();
         var checkFlattenLabel = il.DefineLabel();
         var setResultLabel = il.DefineLabel();
         var returnLabel = il.DefineLabel();
-        var catchLabel = il.DefineLabel();
+        var handlerTryStartLabel = il.DefineLabel();  // First instruction of the onFulfilled guard try
 
         // Begin outer try block
         il.BeginExceptionBlock();
 
-        // State dispatch
+        // State dispatch. State 1 resumes inside the nested onFulfilled guard
+        // try — IL only permits entering a protected region at its first
+        // instruction, so branch there and let the nested dispatch take over
+        // (same shape Roslyn emits for await-inside-try).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.StateField);
         il.Emit(OpCodes.Brfalse, state0Label);  // state == 0
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.StateField);
         il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Beq, state1Label);  // state == 1
+        il.Emit(OpCodes.Beq, handlerTryStartLabel);  // state == 1
 
         // ========== STATE -1: Initial - await input promise ==========
 
@@ -239,6 +242,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, noCallbackLabel);
         il.MarkLabel(onFulfilledCallableLabel);
 
+        // ========== onFulfilled guard try ==========
+        // ECMA-262 §27.2.5.4: "input promise rejected" and "onFulfilled threw"
+        // are distinct — a throwing onFulfilled (or a rejecting thenable it
+        // returned) rejects the OUTPUT promise and must NOT dispatch to this
+        // same then's onRejected (which only handles rejection of the input
+        // promise). Guard the invocation + flatten await with a nested try
+        // whose catch rejects the builder task directly (#195).
+        var fulfillExceptionLocal = il.DeclareLocal(typeof(Exception));
+        il.BeginExceptionBlock();
+        il.MarkLabel(handlerTryStartLabel);
+
+        // Nested dispatch: state 1 (flatten await resume) re-enters here.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, sm.StateField);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Beq, state1Label);
+
         // Invoke callback: result = InvokeCallback(onFulfilled, value)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, sm.OnFulfilledField);
@@ -295,13 +315,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldflda, sm.FlattenAwaiterField);
         il.Emit(OpCodes.Call, awaiterType.GetMethod("GetResult")!);
         il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, setResultLabel);
+        il.Emit(OpCodes.Leave, setResultLabel);
 
         // ========== checkFlattenLabel: callback returned non-Task ==========
         il.MarkLabel(checkFlattenLabel);
         il.Emit(OpCodes.Ldloc, callbackResultLocal);
         il.Emit(OpCodes.Stloc, resultLocal);
-        il.Emit(OpCodes.Br, setResultLabel);
+        il.Emit(OpCodes.Leave, setResultLabel);
+
+        // onFulfilled threw (or its returned thenable rejected) — reject the
+        // output promise; deliberately bypasses the outer catch's onRejected
+        // dispatch.
+        il.BeginCatchBlock(typeof(Exception));
+        il.Emit(OpCodes.Stloc, fulfillExceptionLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, -2);
+        il.Emit(OpCodes.Stfld, sm.StateField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldflda, sm.BuilderField);
+        il.Emit(OpCodes.Ldloc, fulfillExceptionLocal);
+        il.Emit(OpCodes.Call, sm.BuilderType.GetMethod("SetException")!);
+        il.Emit(OpCodes.Leave, returnLabel);
+        il.EndExceptionBlock();
 
         // ========== noCallbackLabel: no callback, use original value ==========
         il.MarkLabel(noCallbackLabel);

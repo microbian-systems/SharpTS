@@ -76,28 +76,21 @@ public static class PromiseBuiltIns
         var onFulfilled = args.Count > 0 ? args[0] as ISharpTSCallable : null;
         var onRejected = args.Count > 1 ? args[1] as ISharpTSCallable : null;
 
+        // ECMA-262 §27.2.5.4: onRejected only handles rejection of the INPUT
+        // promise. Guard only the input await with the rejection dispatch —
+        // a throwing onFulfilled (or a rejecting thenable it returned) must
+        // reject the output promise, not invoke this same then's onRejected
+        // (#195). Handler invocation happens after this try.
+        object? value;
         try
         {
-            // Wait for the promise to settle
-            var value = await promise.GetValueAsync();
-
-            // If fulfilled, call onFulfilled callback
-            if (onFulfilled != null)
-            {
-                var result = CallCallback(onFulfilled, [value], interpreter);
-                return await UnwrapResult(result);
-            }
-
-            // No onFulfilled callback - pass through value
-            return value;
+            value = await promise.GetValueAsync();
         }
         catch (SharpTSPromiseRejectedException ex)
         {
-            // If rejected, call onRejected callback
             if (onRejected != null)
             {
-                var result = CallCallback(onRejected, [ex.Reason], interpreter);
-                return await UnwrapResult(result);
+                return await InvokeHandler(onRejected, ex.Reason, interpreter);
             }
 
             // No onRejected callback - re-throw to propagate rejection
@@ -105,13 +98,40 @@ public static class PromiseBuiltIns
         }
         catch (AggregateException aggEx) when (aggEx.InnerException is SharpTSPromiseRejectedException rejEx)
         {
-            // Handle wrapped rejection exception
             if (onRejected != null)
             {
-                var result = CallCallback(onRejected, [rejEx.Reason], interpreter);
-                return await UnwrapResult(result);
+                return await InvokeHandler(onRejected, rejEx.Reason, interpreter);
             }
             throw rejEx;
+        }
+
+        // Fulfilled: call onFulfilled (its throw rejects the output promise)
+        if (onFulfilled != null)
+        {
+            return await InvokeHandler(onFulfilled, value, interpreter);
+        }
+
+        // No onFulfilled callback - pass through value
+        return value;
+    }
+
+    /// <summary>
+    /// Invokes a then/catch reaction handler. A throwing handler rejects the
+    /// output promise with the thrown value (ECMA-262 §27.2.5.4) instead of
+    /// letting the guest ThrowException fault the task as a host error.
+    /// A rejected promise returned by the handler propagates unchanged.
+    /// </summary>
+    private static async Task<object?> InvokeHandler(
+        ISharpTSCallable handler, object? arg, Interpreter interpreter)
+    {
+        try
+        {
+            var result = CallCallback(handler, [arg], interpreter);
+            return await UnwrapResult(result);
+        }
+        catch (Exceptions.ThrowException tex)
+        {
+            throw new SharpTSPromiseRejectedException(tex.Value);
         }
     }
 
@@ -135,8 +155,7 @@ public static class PromiseBuiltIns
         {
             if (onRejected != null)
             {
-                var result = CallCallback(onRejected, [ex.Reason], interpreter);
-                return await UnwrapResult(result);
+                return await InvokeHandler(onRejected, ex.Reason, interpreter);
             }
             throw;
         }
@@ -144,8 +163,7 @@ public static class PromiseBuiltIns
         {
             if (onRejected != null)
             {
-                var result = CallCallback(onRejected, [rejEx.Reason], interpreter);
-                return await UnwrapResult(result);
+                return await InvokeHandler(onRejected, rejEx.Reason, interpreter);
             }
             throw rejEx;
         }
