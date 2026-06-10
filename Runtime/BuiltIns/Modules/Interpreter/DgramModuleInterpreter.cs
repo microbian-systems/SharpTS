@@ -12,19 +12,19 @@ public static class DgramModuleInterpreter
     {
         return new Dictionary<string, object?>
         {
-            ["createSocket"] = new BuiltInMethod("createSocket", 1, 2, CreateSocket),
+            ["createSocket"] = BuiltInMethod.CreateV2("createSocket", 1, 2, CreateSocket),
             ["Socket"] = SharpTSDatagramSocketConstructor.Instance
         };
     }
 
-    private static object? CreateSocket(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CreateSocket(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         string type = "udp4";
 
-        if (args.Count > 0)
+        if (args.Length > 0)
         {
-            if (args[0] is string t) type = t;
-            else if (args[0] is SharpTSObject options)
+            if (args[0].IsString) type = args[0].AsStringUnsafe();
+            else if (args[0].ToObject() is SharpTSObject options)
             {
                 if (options.GetProperty("type") is string ot) type = ot;
             }
@@ -33,13 +33,13 @@ public static class DgramModuleInterpreter
         var socket = new SharpTSDatagramSocket(type);
 
         // If callback provided, attach as 'message' listener
-        if (args.Count > 1 && args[1] is ISharpTSCallable callback)
+        if (args.Length > 1 && args[1].ToObject() is ISharpTSCallable callback)
         {
             var onMethod = socket.GetMember("on") as BuiltInMethod;
             onMethod?.Bind(socket).Call(interpreter, new List<object?> { "message", callback });
         }
 
-        return socket;
+        return RuntimeValue.FromObject(socket);
     }
 
     public sealed class SharpTSDatagramSocketConstructor : ISharpTSCallable
@@ -51,7 +51,10 @@ public static class DgramModuleInterpreter
 
         public object? Call(Interp interpreter, List<object?> args)
         {
-            return CreateSocket(interpreter, null, args);
+            var rvArgs = new RuntimeValue[args.Count];
+            for (int i = 0; i < args.Count; i++)
+                rvArgs[i] = RuntimeValue.FromBoxed(args[i]);
+            return CreateSocket(interpreter, RuntimeValue.Null, rvArgs).ToObject();
         }
     }
 }

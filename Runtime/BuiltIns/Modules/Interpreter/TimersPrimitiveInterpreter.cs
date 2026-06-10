@@ -22,7 +22,7 @@ public static class TimersPrimitiveInterpreter
         {
             ["setTimeout"] = new BuiltInAsyncMethod("setTimeout", 0, 3, SetTimeoutPromise),
             ["setImmediate"] = new BuiltInAsyncMethod("setImmediate", 0, 2, SetImmediatePromise),
-            ["setInterval"] = new BuiltInMethod("setInterval", 0, 3, SetIntervalIterable)
+            ["setInterval"] = BuiltInMethod.CreateV2("setInterval", 0, 3, SetIntervalIterable)
         };
     }
 
@@ -111,15 +111,15 @@ public static class TimersPrimitiveInterpreter
     /// Promise-based setInterval: returns an AsyncIterable that yields value on each interval.
     /// Supports options.signal for AbortSignal cancellation. Pre-aborted signal throws synchronously.
     /// </summary>
-    private static object? SetIntervalIterable(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue SetIntervalIterable(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        double delay = args.Count > 0 && args[0] is double d ? d : 0;
-        object? value = args.Count > 1 ? args[1] : SharpTSUndefined.Instance;
+        double delay = args.Length > 0 && args[0].IsNumber ? args[0].AsNumberUnsafe() : 0;
+        object? value = args.Length > 1 ? args[1].ToObject() : SharpTSUndefined.Instance;
         int delayMs = Math.Max(0, (int)delay);
 
-        var token = ExtractSignalToken(args.Count > 2 ? args[2] : null);
+        var token = ExtractSignalToken(args.Length > 2 ? args[2].ToObject() : null);
 
-        return new SharpTSAsyncIntervalIterator(delayMs, value, token);
+        return RuntimeValue.FromObject(new SharpTSAsyncIntervalIterator(delayMs, value, token));
     }
 
     /// <summary>
@@ -129,77 +129,77 @@ public static class TimersPrimitiveInterpreter
     {
         return new Dictionary<string, object?>
         {
-            ["setTimeout"] = new BuiltInMethod("setTimeout", 1, int.MaxValue, SetTimeout),
-            ["clearTimeout"] = new BuiltInMethod("clearTimeout", 0, 1, ClearTimeout),
-            ["setInterval"] = new BuiltInMethod("setInterval", 1, int.MaxValue, SetInterval),
-            ["clearInterval"] = new BuiltInMethod("clearInterval", 0, 1, ClearInterval),
-            ["setImmediate"] = new BuiltInMethod("setImmediate", 1, int.MaxValue, SetImmediate),
-            ["clearImmediate"] = new BuiltInMethod("clearImmediate", 0, 1, ClearImmediate)
+            ["setTimeout"] = BuiltInMethod.CreateV2("setTimeout", 1, int.MaxValue, SetTimeout),
+            ["clearTimeout"] = BuiltInMethod.CreateV2("clearTimeout", 0, 1, ClearTimeout),
+            ["setInterval"] = BuiltInMethod.CreateV2("setInterval", 1, int.MaxValue, SetInterval),
+            ["clearInterval"] = BuiltInMethod.CreateV2("clearInterval", 0, 1, ClearInterval),
+            ["setImmediate"] = BuiltInMethod.CreateV2("setImmediate", 1, int.MaxValue, SetImmediate),
+            ["clearImmediate"] = BuiltInMethod.CreateV2("clearImmediate", 0, 1, ClearImmediate)
         };
     }
 
     /// <summary>
     /// setTimeout(callback, delay?, ...args) - schedules callback after delay milliseconds.
     /// </summary>
-    private static object? SetTimeout(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue SetTimeout(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0)
+        if (args.Length == 0)
             throw new Exception("Runtime Error: setTimeout requires at least 1 argument");
 
-        var callback = args[0] as ISharpTSCallable
+        var callback = args[0].ToObject() as ISharpTSCallable
             ?? throw new Exception("Runtime Error: setTimeout callback must be a function");
 
         double delayMs = 0;
-        if (args.Count > 1 && args[1] is double d)
-            delayMs = d;
+        if (args.Length > 1 && args[1].IsNumber)
+            delayMs = args[1].AsNumberUnsafe();
 
-        var callbackArgs = args.Count > 2
-            ? args.Skip(2).ToList()
-            : new List<object?>();
+        var callbackArgs = new List<object?>(Math.Max(0, args.Length - 2));
+        for (int i = 2; i < args.Length; i++)
+            callbackArgs.Add(args[i].ToObject());
 
-        return TimerBuiltIns.SetTimeout(interpreter, callback, delayMs, callbackArgs);
+        return RuntimeValue.FromObject(TimerBuiltIns.SetTimeout(interpreter, callback, delayMs, callbackArgs));
     }
 
     /// <summary>
     /// clearTimeout(handle?) - cancels a pending timeout.
     /// </summary>
-    private static object? ClearTimeout(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ClearTimeout(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        object? handle = args.Count > 0 ? args[0] : null;
+        object? handle = args.Length > 0 ? args[0].ToObject() : null;
         TimerBuiltIns.ClearTimeout(handle);
-        return null;
+        return RuntimeValue.Null;
     }
 
     /// <summary>
     /// setInterval(callback, delay?, ...args) - schedules callback to repeat every delay milliseconds.
     /// </summary>
-    private static object? SetInterval(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue SetInterval(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0)
+        if (args.Length == 0)
             throw new Exception("Runtime Error: setInterval requires at least 1 argument");
 
-        var callback = args[0] as ISharpTSCallable
+        var callback = args[0].ToObject() as ISharpTSCallable
             ?? throw new Exception("Runtime Error: setInterval callback must be a function");
 
         double delayMs = 0;
-        if (args.Count > 1 && args[1] is double d)
-            delayMs = d;
+        if (args.Length > 1 && args[1].IsNumber)
+            delayMs = args[1].AsNumberUnsafe();
 
-        var callbackArgs = args.Count > 2
-            ? args.Skip(2).ToList()
-            : new List<object?>();
+        var callbackArgs = new List<object?>(Math.Max(0, args.Length - 2));
+        for (int i = 2; i < args.Length; i++)
+            callbackArgs.Add(args[i].ToObject());
 
-        return TimerBuiltIns.SetInterval(interpreter, callback, delayMs, callbackArgs);
+        return RuntimeValue.FromObject(TimerBuiltIns.SetInterval(interpreter, callback, delayMs, callbackArgs));
     }
 
     /// <summary>
     /// clearInterval(handle?) - cancels a pending interval.
     /// </summary>
-    private static object? ClearInterval(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ClearInterval(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        object? handle = args.Count > 0 ? args[0] : null;
+        object? handle = args.Length > 0 ? args[0].ToObject() : null;
         TimerBuiltIns.ClearInterval(handle);
-        return null;
+        return RuntimeValue.Null;
     }
 
     /// <summary>
@@ -209,30 +209,30 @@ public static class TimersPrimitiveInterpreter
     /// Implemented as setTimeout(callback, 0, ...args) since the interpreter doesn't have
     /// a separate immediate queue.
     /// </remarks>
-    private static object? SetImmediate(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue SetImmediate(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0)
+        if (args.Length == 0)
             throw new Exception("Runtime Error: setImmediate requires at least 1 argument");
 
-        var callback = args[0] as ISharpTSCallable
+        var callback = args[0].ToObject() as ISharpTSCallable
             ?? throw new Exception("Runtime Error: setImmediate callback must be a function");
 
-        var callbackArgs = args.Count > 1
-            ? args.Skip(1).ToList()
-            : new List<object?>();
+        var callbackArgs = new List<object?>(Math.Max(0, args.Length - 1));
+        for (int i = 1; i < args.Length; i++)
+            callbackArgs.Add(args[i].ToObject());
 
         // setImmediate is essentially setTimeout with 0 delay
-        return TimerBuiltIns.SetTimeout(interpreter, callback, 0, callbackArgs);
+        return RuntimeValue.FromObject(TimerBuiltIns.SetTimeout(interpreter, callback, 0, callbackArgs));
     }
 
     /// <summary>
     /// clearImmediate(handle?) - cancels a pending immediate.
     /// </summary>
-    private static object? ClearImmediate(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ClearImmediate(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         // clearImmediate uses the same mechanism as clearTimeout
-        object? handle = args.Count > 0 ? args[0] : null;
+        object? handle = args.Length > 0 ? args[0].ToObject() : null;
         TimerBuiltIns.ClearTimeout(handle);
-        return null;
+        return RuntimeValue.Null;
     }
 }

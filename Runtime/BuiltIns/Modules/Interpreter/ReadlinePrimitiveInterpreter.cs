@@ -15,21 +15,21 @@ public static class ReadlinePrimitiveInterpreter
     {
         return new Dictionary<string, object?>
         {
-            ["questionSync"] = new BuiltInMethod("questionSync", 1, QuestionSync),
-            ["createInterface"] = new BuiltInMethod("createInterface", 0, 1, CreateInterface)
+            ["questionSync"] = BuiltInMethod.CreateV2("questionSync", 1, QuestionSync),
+            ["createInterface"] = BuiltInMethod.CreateV2("createInterface", 0, 1, CreateInterface)
         };
     }
 
-    private static object? QuestionSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue QuestionSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var query = args.Count > 0 ? args[0]?.ToString() ?? "" : "";
+        var query = args.Length > 0 ? args[0].ToObject()?.ToString() ?? "" : "";
         Console.Write(query);
-        return Console.ReadLine() ?? "";
+        return RuntimeValue.FromString(Console.ReadLine() ?? "");
     }
 
-    private static object? CreateInterface(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue CreateInterface(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        var options = args.Count > 0 ? args[0] as SharpTSObject : null;
-        return new SharpTSReadlineInterface(options);
+        var options = args.Length > 0 ? args[0].ToObject() as SharpTSObject : null;
+        return RuntimeValue.FromObject(new SharpTSReadlineInterface(options));
     }
 }

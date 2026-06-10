@@ -19,22 +19,22 @@ public static class ChildProcessModuleInterpreter
     {
         return new Dictionary<string, object?>
         {
-            ["execSync"] = new BuiltInMethod("execSync", 1, 2, ExecSync),
-            ["spawnSync"] = new BuiltInMethod("spawnSync", 1, 3, SpawnSync),
-            ["exec"] = new BuiltInMethod("exec", 1, 3, Exec),
-            ["spawn"] = new BuiltInMethod("spawn", 1, 3, Spawn),
-            ["execFileSync"] = new BuiltInMethod("execFileSync", 1, 3, ExecFileSync),
-            ["execFile"] = new BuiltInMethod("execFile", 1, 4, ExecFile),
-            ["fork"] = new BuiltInMethod("fork", 1, 3, Fork)
+            ["execSync"] = BuiltInMethod.CreateV2("execSync", 1, 2, ExecSync),
+            ["spawnSync"] = BuiltInMethod.CreateV2("spawnSync", 1, 3, SpawnSync),
+            ["exec"] = BuiltInMethod.CreateV2("exec", 1, 3, Exec),
+            ["spawn"] = BuiltInMethod.CreateV2("spawn", 1, 3, Spawn),
+            ["execFileSync"] = BuiltInMethod.CreateV2("execFileSync", 1, 3, ExecFileSync),
+            ["execFile"] = BuiltInMethod.CreateV2("execFile", 1, 4, ExecFile),
+            ["fork"] = BuiltInMethod.CreateV2("fork", 1, 3, Fork)
         };
     }
 
-    private static object? ExecSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ExecSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string command)
+        if (args.Length == 0 || args[0].ToObject() is not string command)
             throw new Exception("child_process.execSync requires a command string");
 
-        var options = args.Count > 1 ? args[1] as SharpTSObject : null;
+        var options = args.Length > 1 ? args[1].ToObject() as SharpTSObject : null;
         var cwd = GetStringOption(options, "cwd");
         var timeout = GetDoubleOption(options, "timeout", -1);
 
@@ -88,16 +88,16 @@ public static class ChildProcessModuleInterpreter
             throw new Exception($"Command failed with exit code {process.ExitCode}: {stderr}");
         }
 
-        return stdout;
+        return RuntimeValue.FromString(stdout);
     }
 
-    private static object? SpawnSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue SpawnSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string command)
+        if (args.Length == 0 || args[0].ToObject() is not string command)
             throw new Exception("child_process.spawnSync requires a command");
 
         var cmdArgs = new List<string>();
-        if (args.Count > 1 && args[1] is SharpTSArray argsArray)
+        if (args.Length > 1 && args[1].ToObject() is SharpTSArray argsArray)
         {
             foreach (var arg in argsArray)
             {
@@ -105,7 +105,7 @@ public static class ChildProcessModuleInterpreter
             }
         }
 
-        var options = args.Count > 2 ? args[2] as SharpTSObject : null;
+        var options = args.Length > 2 ? args[2].ToObject() as SharpTSObject : null;
         var cwd = GetStringOption(options, "cwd");
         var useShell = GetBoolOption(options, "shell", false);
 
@@ -144,48 +144,48 @@ public static class ChildProcessModuleInterpreter
         }
         catch (Exception ex)
         {
-            return new SharpTSObject(new Dictionary<string, object?>
+            return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
             {
                 ["stdout"] = "",
                 ["stderr"] = "",
                 ["status"] = (double)-1,
                 ["signal"] = null,
                 ["error"] = ex.Message
-            });
+            }));
         }
 
-        return new SharpTSObject(new Dictionary<string, object?>
+        return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
         {
             ["stdout"] = stdout,
             ["stderr"] = stderr,
             ["status"] = (double)exitCode,
             ["signal"] = signal
-        });
+        }));
     }
 
     /// <summary>
     /// exec(command, options?, callback?) - Executes a command asynchronously.
     /// Returns a ChildProcess object. Calls callback(error, stdout, stderr) when done.
     /// </summary>
-    private static object? Exec(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Exec(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string command)
+        if (args.Length == 0 || args[0].ToObject() is not string command)
             throw new Exception("child_process.exec requires a command string");
 
         SharpTSObject? options = null;
         ISharpTSCallable? callback = null;
 
         // Parse arguments: exec(command, options?, callback?)
-        if (args.Count > 1)
+        if (args.Length > 1)
         {
-            if (args[1] is ISharpTSCallable cb1)
+            if (args[1].ToObject() is ISharpTSCallable cb1)
             {
                 callback = cb1;
             }
             else
             {
-                options = args[1] as SharpTSObject;
-                if (args.Count > 2 && args[2] is ISharpTSCallable cb2)
+                options = args[1].ToObject() as SharpTSObject;
+                if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb2)
                 {
                     callback = cb2;
                 }
@@ -287,33 +287,33 @@ public static class ChildProcessModuleInterpreter
             }
         });
 
-        return childProcess;
+        return RuntimeValue.FromObject(childProcess);
     }
 
     /// <summary>
     /// spawn(command, args?, options?) - Spawns a process asynchronously.
     /// Returns a ChildProcess object with stdout/stderr streams.
     /// </summary>
-    private static object? Spawn(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Spawn(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string command)
+        if (args.Length == 0 || args[0].ToObject() is not string command)
             throw new Exception("child_process.spawn requires a command");
 
         var cmdArgs = new List<string>();
         SharpTSObject? options = null;
 
-        if (args.Count > 1 && args[1] is SharpTSArray argsArray)
+        if (args.Length > 1 && args[1].ToObject() is SharpTSArray argsArray)
         {
             foreach (var arg in argsArray)
             {
                 cmdArgs.Add(arg?.ToString() ?? "");
             }
-            if (args.Count > 2)
-                options = args[2] as SharpTSObject;
+            if (args.Length > 2)
+                options = args[2].ToObject() as SharpTSObject;
         }
-        else if (args.Count > 1)
+        else if (args.Length > 1)
         {
-            options = args[1] as SharpTSObject;
+            options = args[1].ToObject() as SharpTSObject;
         }
 
         var cwd = GetStringOption(options, "cwd");
@@ -360,23 +360,23 @@ public static class ChildProcessModuleInterpreter
 
                 // Wire up stdin: when write() is called on the writable stream,
                 // forward data to the process stdin
-                stdinStream.SetWriteCallback(new BuiltInMethod("write", 1, 3, (interp, recv, wargs) =>
+                stdinStream.SetWriteCallback(BuiltInMethod.CreateV2("write", 1, 3, (interp, recv, wargs) =>
                 {
-                    if (wargs.Count > 0 && wargs[0] != null)
+                    if (wargs.Length > 0 && !wargs[0].IsNull)
                     {
                         try
                         {
-                            process.StandardInput.Write(wargs[0]!.ToString());
+                            process.StandardInput.Write(wargs[0].ToObject()!.ToString());
                             process.StandardInput.Flush();
                         }
                         catch { }
                     }
                     // Call the callback if provided (3rd arg in Node.js write(chunk, enc, cb))
-                    if (wargs.Count > 2 && wargs[2] is ISharpTSCallable cb)
+                    if (wargs.Length > 2 && wargs[2].ToObject() is ISharpTSCallable cb)
                         cb.Call(null!, [null]);
-                    else if (wargs.Count > 1 && wargs[1] is ISharpTSCallable cb2)
+                    else if (wargs.Length > 1 && wargs[1].ToObject() is ISharpTSCallable cb2)
                         cb2.Call(null!, [null]);
-                    return true;
+                    return RuntimeValue.True;
                 }));
 
                 // Read stdout and stderr asynchronously and push to streams
@@ -419,31 +419,31 @@ public static class ChildProcessModuleInterpreter
             }
         });
 
-        return childProcess;
+        return RuntimeValue.FromObject(childProcess);
     }
 
     /// <summary>
     /// execFileSync(file, args?, options?) - Executes a file synchronously without a shell.
     /// Returns stdout as a string. Throws on non-zero exit code.
     /// </summary>
-    private static object? ExecFileSync(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ExecFileSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string file)
+        if (args.Length == 0 || args[0].ToObject() is not string file)
             throw new Exception("child_process.execFileSync requires a file path");
 
         var cmdArgs = new List<string>();
         SharpTSObject? options = null;
 
-        if (args.Count > 1 && args[1] is SharpTSArray argsArray)
+        if (args.Length > 1 && args[1].ToObject() is SharpTSArray argsArray)
         {
             foreach (var arg in argsArray)
                 cmdArgs.Add(arg?.ToString() ?? "");
-            if (args.Count > 2)
-                options = args[2] as SharpTSObject;
+            if (args.Length > 2)
+                options = args[2].ToObject() as SharpTSObject;
         }
-        else if (args.Count > 1)
+        else if (args.Length > 1)
         {
-            options = args[1] as SharpTSObject;
+            options = args[1].ToObject() as SharpTSObject;
         }
 
         var cwd = GetStringOption(options, "cwd");
@@ -490,16 +490,16 @@ public static class ChildProcessModuleInterpreter
             throw new Exception($"Command failed with exit code {process.ExitCode}: {stderr}");
         }
 
-        return stdout;
+        return RuntimeValue.FromString(stdout);
     }
 
     /// <summary>
     /// execFile(file, args?, options?, callback?) - Executes a file asynchronously without a shell.
     /// Returns a ChildProcess object. Calls callback(error, stdout, stderr) when done.
     /// </summary>
-    private static object? ExecFile(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue ExecFile(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string file)
+        if (args.Length == 0 || args[0].ToObject() is not string file)
             throw new Exception("child_process.execFile requires a file path");
 
         var cmdArgs = new List<string>();
@@ -508,24 +508,24 @@ public static class ChildProcessModuleInterpreter
 
         // Parse: execFile(file, args?, options?, callback?)
         var nextIdx = 1;
-        if (args.Count > nextIdx && args[nextIdx] is SharpTSArray argsArray)
+        if (args.Length > nextIdx && args[nextIdx].ToObject() is SharpTSArray argsArray)
         {
             foreach (var arg in argsArray)
                 cmdArgs.Add(arg?.ToString() ?? "");
             nextIdx++;
         }
 
-        if (args.Count > nextIdx)
+        if (args.Length > nextIdx)
         {
-            if (args[nextIdx] is ISharpTSCallable cb)
+            if (args[nextIdx].ToObject() is ISharpTSCallable cb)
             {
                 callback = cb;
             }
             else
             {
-                options = args[nextIdx] as SharpTSObject;
+                options = args[nextIdx].ToObject() as SharpTSObject;
                 nextIdx++;
-                if (args.Count > nextIdx && args[nextIdx] is ISharpTSCallable cb2)
+                if (args.Length > nextIdx && args[nextIdx].ToObject() is ISharpTSCallable cb2)
                     callback = cb2;
             }
         }
@@ -610,31 +610,31 @@ public static class ChildProcessModuleInterpreter
             }
         });
 
-        return childProcess;
+        return RuntimeValue.FromObject(childProcess);
     }
 
     /// <summary>
     /// fork(modulePath, args?, options?) - Spawns a new SharpTS process with IPC channel.
     /// Returns a ChildProcess with send()/on('message') support.
     /// </summary>
-    private static object? Fork(Interp interpreter, object? receiver, List<object?> args)
+    private static RuntimeValue Fork(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (args.Count == 0 || args[0] is not string modulePath)
+        if (args.Length == 0 || args[0].ToObject() is not string modulePath)
             throw new Exception("child_process.fork requires a module path");
 
         var forkArgs = new List<string>();
         SharpTSObject? options = null;
 
-        if (args.Count > 1 && args[1] is SharpTSArray argsArray)
+        if (args.Length > 1 && args[1].ToObject() is SharpTSArray argsArray)
         {
             foreach (var arg in argsArray)
                 forkArgs.Add(arg?.ToString() ?? "");
-            if (args.Count > 2)
-                options = args[2] as SharpTSObject;
+            if (args.Length > 2)
+                options = args[2].ToObject() as SharpTSObject;
         }
-        else if (args.Count > 1)
+        else if (args.Length > 1)
         {
-            options = args[1] as SharpTSObject;
+            options = args[1].ToObject() as SharpTSObject;
         }
 
         var cwd = GetStringOption(options, "cwd");
@@ -790,7 +790,7 @@ public static class ChildProcessModuleInterpreter
             }
         });
 
-        return childProcess;
+        return RuntimeValue.FromObject(childProcess);
     }
 
     private static string? GetStringOption(SharpTSObject? options, string name)

@@ -12,10 +12,10 @@ public static class TtyPrimitiveInterpreter
     {
         return new Dictionary<string, object?>
         {
-            ["isatty"] = new BuiltInMethod("isatty", 1, (interp, recv, args) =>
+            ["isatty"] = BuiltInMethod.CreateV2("isatty", 1, (interp, recv, args) =>
             {
-                var fd = Convert.ToInt32(args[0]);
-                return (object?)(fd switch
+                var fd = Convert.ToInt32(args[0].ToObject());
+                return RuntimeValue.FromBoolean(fd switch
                 {
                     0 => !Console.IsInputRedirected,
                     1 => !Console.IsOutputRedirected,
