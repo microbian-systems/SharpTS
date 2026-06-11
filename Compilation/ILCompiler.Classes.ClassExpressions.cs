@@ -80,6 +80,18 @@ public partial class ILCompiler
             {
                 // Found in class declarations
             }
+            else if (_classExprs.VarToClassExpr.TryGetValue(superclassName, out var parentClassExpr)
+                     && _classExprs.Builders.TryGetValue(parentClassExpr, out var parentExprBuilder))
+            {
+                // Superclass is another class expression bound to a variable
+                // (e.g. `const A = class {}; const B = class extends A {}`).
+                // _classExprs.Names holds GENERATED names ($ClassExpr_N), so the
+                // by-generated-name scan below never matches the source variable
+                // name — without this, B's parent defaults to System.Object while
+                // super() still chains A..ctor, tripping ILVerify CallCtor /
+                // ThisUninitReturn (#287 family).
+                superTypeBuilder = parentExprBuilder;
+            }
             else
             {
                 // Check other class expressions by their generated name
@@ -587,21 +599,38 @@ public partial class ILCompiler
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stfld, fieldsField);
 
+        // Emit constructor body first if present (contains super() call)
+        var emitter = new ILEmitter(ctx);
+
         // Determine if we need to call base constructor automatically
         // If there's an explicit constructor body, it should contain super() call
         bool hasExplicitSuperCall = constructor?.Body?.Any(stmt => ContainsSuperCall(stmt)) ?? false;
 
         if (!hasExplicitSuperCall)
         {
-            // No explicit super() - call parent constructor automatically
-            Type baseType = typeBuilder.BaseType ?? typeof(object);
+            // No explicit super() - call parent constructor automatically.
             il.Emit(OpCodes.Ldarg_0);
-            var baseCtor = baseType.GetConstructor([]) ?? _types.ObjectDefaultCtor;
-            il.Emit(OpCodes.Call, baseCtor);
-        }
 
-        // Emit constructor body first if present (contains super() call)
-        var emitter = new ILEmitter(ctx);
+            // When the superclass is another emitted class (declaration or
+            // expression), its base is a TypeBuilder — Type.GetConstructor is
+            // not supported on an unbaked TypeBuilder, so resolve the parent's
+            // ConstructorBuilder from the registries instead (#287 family). The
+            // implicit derived constructor forwards no args, so supply defaults
+            // for any base ctor parameters (parameterless in the common case).
+            var baseCtor = ResolveClassExprImplicitBaseConstructor(classExpr);
+            if (baseCtor != null)
+            {
+                foreach (var p in baseCtor.GetParameters())
+                    emitter.EmitDefaultForType(p.ParameterType);
+                il.Emit(OpCodes.Call, baseCtor);
+            }
+            else
+            {
+                Type baseType = typeBuilder.BaseType ?? typeof(object);
+                var fallbackCtor = baseType.GetConstructor([]) ?? _types.ObjectDefaultCtor;
+                il.Emit(OpCodes.Call, fallbackCtor);
+            }
+        }
         if (constructor != null)
         {
             // Define parameters with typed parameter types from constructor signature
@@ -667,6 +696,33 @@ public partial class ILCompiler
         }
 
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Resolves the parent constructor for a class expression's implicit
+    /// (no explicit super()) base-constructor call. The parent may be another
+    /// class expression bound to a variable or a class declaration; in both
+    /// cases the parent's base type is an unbaked TypeBuilder for which
+    /// Type.GetConstructor throws, so the ConstructorBuilder is pulled from the
+    /// emit-time registries instead. Returns null when the superclass is a
+    /// baked/built-in type (caller falls back to reflection).
+    /// </summary>
+    private System.Reflection.ConstructorInfo? ResolveClassExprImplicitBaseConstructor(Expr.ClassExpr classExpr)
+    {
+        if (!_classExprs.Superclass.TryGetValue(classExpr, out var superName) || superName == null)
+            return null;
+
+        // Parent is another class expression bound to a variable.
+        if (_classExprs.VarToClassExpr.TryGetValue(superName, out var parentExpr)
+            && _classExprs.Constructors.TryGetValue(parentExpr, out var exprCtor))
+            return exprCtor;
+
+        // Parent is a class declaration.
+        var resolved = GetDefinitionContext().ResolveClassName(superName);
+        if (_classes.Constructors.TryGetValue(resolved, out var declCtor))
+            return declCtor;
+
+        return null;
     }
 
     /// <summary>

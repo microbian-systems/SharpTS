@@ -147,6 +147,41 @@ public class ILVerificationTests
     }
 
     [Fact]
+    public void ClassExpressionExtendsClassExpression_PassesILVerification()
+    {
+        // A class expression extending ANOTHER class expression resolved its
+        // superclass by the generated $ClassExpr_N name instead of the source
+        // variable name, so the parent type was never set — the child silently
+        // extended System.Object while super() still chained the real parent
+        // ctor, tripping CallCtor / ThisUninitReturn, and `instanceof` against
+        // the parent returned false. With the parent type now set, the IL
+        // verifies and instanceof is correct. (#296)
+        var source = """
+            const Animal = class {
+                constructor(public name: string) {}
+                speak(): string { return this.name + " makes a sound"; }
+            };
+            const Dog = class extends Animal {
+                constructor(name: string) { super(name); }
+                speak(): string { return this.name + " barks"; }
+            };
+            const a = new Animal("Generic");
+            const d = new Dog("Fido");
+            console.log(a.speak());
+            console.log(d.speak(), d instanceof Animal);
+            """;
+
+        // Verify-only: the reference-assembly rewrite in CompileVerifyAndRun
+        // mangles the ldtoken-derived MethodInfo used by class-expression method
+        // dispatch (BadImageFormatException at run time). Runtime behavior of
+        // class-expression inheritance is covered by the shared-mode tests in
+        // ClassExpressionTests, which run the real compiled output.
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
     public void Generators_PassesILVerification()
     {
         var source = """
