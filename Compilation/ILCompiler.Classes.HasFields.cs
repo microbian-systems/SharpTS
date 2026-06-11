@@ -453,6 +453,12 @@ public partial class ILCompiler
             }
         }
 
+        // 1c. Getter-only accessors: assigning to a property that has a `get` but no `set` is a
+        // no-op in sloppy mode (matches the interpreter). Without this the write falls through to
+        // _fields and that entry then shadows the getter on subsequent reads (#293).
+        _classes.InstanceGetters.TryGetValue(className, out var instanceGetters);
+        EmitGetterOnlyNoOpBranches(il, instanceGetters, instanceSettersForNoOp: _classes.InstanceSetters.GetValueOrDefault(className), backingFields);
+
         // 2. Fall back to _fields dictionary
         il.MarkLabel(setFieldsLabel);
         il.Emit(OpCodes.Ldarg_0);
@@ -461,6 +467,48 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("set_Item", [_types.String, _types.Object])!);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits a no-op (return) branch in a SetProperty body for each getter-only accessor — a
+    /// property registered as a getter that has neither a matching setter nor a same-named
+    /// backing field. Per JS <c>[[Set]]</c>, simple assignment to a property whose prototype
+    /// chain exposes an accessor without a setter never creates an own data property; in sloppy
+    /// mode the write is silently ignored. Emitting the no-op here keeps GetProperty's accessor
+    /// dispatch authoritative, since no shadowing <c>_fields</c> entry is ever created (#293).
+    /// </summary>
+    private void EmitGetterOnlyNoOpBranches(
+        ILGenerator il,
+        Dictionary<string, MethodBuilder>? getters,
+        Dictionary<string, MethodBuilder>? instanceSettersForNoOp,
+        Dictionary<string, FieldBuilder>? backingFields)
+    {
+        if (getters == null)
+            return;
+
+        foreach (var getterPascalName in getters.Keys)
+        {
+            // A getter WITH a setter is handled by the setter section above; a getter that shadows
+            // a backing field is handled by the field section. Only a true getter-only property
+            // reaches the _fields fallback and needs the no-op.
+            if (instanceSettersForNoOp != null && instanceSettersForNoOp.ContainsKey(getterPascalName))
+                continue;
+            if (backingFields != null && backingFields.ContainsKey(getterPascalName))
+                continue;
+
+            var camelName = NamingConventions.ToCamelCase(getterPascalName);
+            var nextLabel = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, camelName);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, nextLabel);
+
+            // Assignment to a getter-only accessor is a no-op (sloppy mode).
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(nextLabel);
+        }
     }
 
     /// <summary>
@@ -784,6 +832,11 @@ public partial class ILCompiler
                 il.MarkLabel(nextLabel);
             }
         }
+
+        // 1c. Getter-only accessors are no-ops on write (sloppy mode) — mirrors section 1c in
+        // EmitSetPropertyBody. Without this the write shadows the getter via _fields (#293).
+        _classExprs.Getters.TryGetValue(classExpr, out var classExprGetters);
+        EmitGetterOnlyNoOpBranches(il, classExprGetters, _classExprs.Setters.GetValueOrDefault(classExpr), backingFields);
 
         // 2. Fall back to _fields dictionary
         il.MarkLabel(setFieldsLabel);
