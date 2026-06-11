@@ -2251,6 +2251,10 @@ public partial class Interpreter : IDisposable
         Dictionary<string, SharpTSFunction> staticGetters = [];
         Dictionary<string, SharpTSFunction> staticSetters = [];
 
+        // Symbol-keyed accessors can't go into the string dictionaries; collected
+        // here and attached to the class after construction.
+        List<(SharpTSSymbol Symbol, SharpTSFunction Func, bool IsStatic, bool IsGetter)>? symbolAccessors = null;
+
         if (classStmt.Accessors != null)
         {
             foreach (var accessor in classStmt.Accessors)
@@ -2265,11 +2269,29 @@ public partial class Interpreter : IDisposable
                     accessor.ReturnType);
 
                 SharpTSFunction func = new(funcStmt, _environment);
+                bool isGetter = accessor.Kind.Type == TokenType.GET;
+
+                // Computed accessor names (`get [Symbol.toStringTag]()`,
+                // `static get [Symbol.species]()`) are evaluated at
+                // class-definition time, like computed field keys.
+                if (accessor.ComputedKey != null)
+                {
+                    object? key = Evaluate(accessor.ComputedKey);
+                    if (key is SharpTSSymbol symbolKey)
+                    {
+                        (symbolAccessors ??= []).Add((symbolKey, func, accessor.IsStatic, isGetter));
+                        continue;
+                    }
+                    string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
+                    if (isGetter) (accessor.IsStatic ? staticGetters : getters)[keyStr] = func;
+                    else (accessor.IsStatic ? staticSetters : setters)[keyStr] = func;
+                    continue;
+                }
 
                 var targetGet = accessor.IsStatic ? staticGetters : getters;
                 var targetSet = accessor.IsStatic ? staticSetters : setters;
 
-                if (accessor.Kind.Type == TokenType.GET)
+                if (isGetter)
                 {
                     targetGet[accessor.Name.Lexeme] = func;
                 }
@@ -2384,6 +2406,14 @@ public partial class Interpreter : IDisposable
                 staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
                 staticGetters.Count > 0 ? staticGetters : null,
                 staticSetters.Count > 0 ? staticSetters : null);
+
+        if (symbolAccessors != null)
+        {
+            foreach (var (symbol, func, isStatic, isGetter) in symbolAccessors)
+            {
+                klass.AddSymbolAccessor(symbol, func, isStatic, isGetter);
+            }
+        }
 
         // Execute static initializers in declaration order (if present)
         if (hasStaticInitializers)

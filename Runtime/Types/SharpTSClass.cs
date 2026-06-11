@@ -250,6 +250,68 @@ public class SharpTSClass(
         _staticProperties[name] = value;
     }
 
+    // Symbol-keyed expando statics (`(C as any)[Symbol.species] = V`). Node allows
+    // arbitrary statics on class constructors; string keys reuse _staticProperties.
+    // Lazy — most classes never receive symbol-keyed statics.
+    private Dictionary<SharpTSSymbol, object?>? _staticSymbolProperties;
+
+    public void SetStaticBySymbol(SharpTSSymbol symbol, object? value)
+    {
+        (_staticSymbolProperties ??= [])[symbol] = value;
+    }
+
+    /// <summary>
+    /// Looks up a symbol-keyed static, walking the superclass chain — class
+    /// constructors inherit from the parent constructor per ECMA-262, so
+    /// e.g. a Symbol.species set on a base class is visible on subclasses.
+    /// </summary>
+    public bool TryGetStaticBySymbol(SharpTSSymbol symbol, out object? value)
+    {
+        if (_staticSymbolProperties != null && _staticSymbolProperties.TryGetValue(symbol, out value))
+        {
+            return true;
+        }
+        if (Superclass != null)
+        {
+            return Superclass.TryGetStaticBySymbol(symbol, out value);
+        }
+        value = null;
+        return false;
+    }
+
+    // Symbol-keyed declared accessors (`get [Symbol.toStringTag]() {...}`,
+    // `static get [Symbol.species]() {...}`). Computed accessor keys are
+    // evaluated at class-definition time; symbol-valued keys land here,
+    // string-valued keys go into the regular getter/setter dictionaries.
+    // Lazy — most classes declare none.
+    private Dictionary<SharpTSSymbol, SharpTSFunction>? _symbolGetters;
+    private Dictionary<SharpTSSymbol, SharpTSFunction>? _symbolSetters;
+    private Dictionary<SharpTSSymbol, SharpTSFunction>? _staticSymbolGetters;
+    private Dictionary<SharpTSSymbol, SharpTSFunction>? _staticSymbolSetters;
+
+    public void AddSymbolAccessor(SharpTSSymbol symbol, SharpTSFunction func, bool isStatic, bool isGetter)
+    {
+        switch (isStatic, isGetter)
+        {
+            case (true, true): (_staticSymbolGetters ??= [])[symbol] = func; break;
+            case (true, false): (_staticSymbolSetters ??= [])[symbol] = func; break;
+            case (false, true): (_symbolGetters ??= [])[symbol] = func; break;
+            case (false, false): (_symbolSetters ??= [])[symbol] = func; break;
+        }
+    }
+
+    public SharpTSFunction? FindSymbolGetter(SharpTSSymbol symbol)
+        => _symbolGetters?.GetValueOrDefault(symbol) ?? Superclass?.FindSymbolGetter(symbol);
+
+    public SharpTSFunction? FindSymbolSetter(SharpTSSymbol symbol)
+        => _symbolSetters?.GetValueOrDefault(symbol) ?? Superclass?.FindSymbolSetter(symbol);
+
+    public SharpTSFunction? FindStaticSymbolGetter(SharpTSSymbol symbol)
+        => _staticSymbolGetters?.GetValueOrDefault(symbol) ?? Superclass?.FindStaticSymbolGetter(symbol);
+
+    public SharpTSFunction? FindStaticSymbolSetter(SharpTSSymbol symbol)
+        => _staticSymbolSetters?.GetValueOrDefault(symbol) ?? Superclass?.FindStaticSymbolSetter(symbol);
+
     public SharpTSFunction? FindGetter(string name)
     {
         // Check cache first

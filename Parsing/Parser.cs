@@ -353,6 +353,36 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         return ConsumePropertyName(message);
     }
 
+    /// <summary>
+    /// Parses an accessor name in a class body: an identifier/keyword/string/number
+    /// property name, or a computed name <c>[expr]</c> (e.g. <c>get [Symbol.species]()</c>).
+    /// For computed names the returned token is synthetic and the key expression is
+    /// carried separately (mirrors Stmt.Field.ComputedKey).
+    /// </summary>
+    private (Token Name, Expr? ComputedKey) ParseAccessorName()
+    {
+        if (Match(TokenType.LEFT_BRACKET))
+        {
+            Expr computedKey = Expression();
+            Consume(TokenType.RIGHT_BRACKET, "Expect ']' after computed accessor name.");
+
+            // Literal string/number keys are static names — fold them so every
+            // phase (checker, interpreter, compiler) treats `get ["foo"]()`
+            // exactly like `get foo()`.
+            if (computedKey is Expr.Literal { Value: string s })
+            {
+                return (new Token(TokenType.IDENTIFIER, s, null, Previous().Line), null);
+            }
+            if (computedKey is Expr.Literal { Value: double d })
+            {
+                return (new Token(TokenType.IDENTIFIER, d.ToString(System.Globalization.CultureInfo.InvariantCulture), null, Previous().Line), null);
+            }
+
+            return (new Token(TokenType.IDENTIFIER, "<computed>", null, Previous().Line), computedKey);
+        }
+        return (ConsumePropertyNameOrLiteral("Expect property name after 'get'/'set'."), null);
+    }
+
     private Token ConsumePropertyName(string message)
     {
         Token current = Peek();

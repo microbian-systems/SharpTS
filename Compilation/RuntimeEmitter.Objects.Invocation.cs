@@ -29,6 +29,22 @@ public partial class RuntimeEmitter
         il.MarkLabel(stackOkLabel);
     }
 
+    /// <summary>
+    /// Emits a guest TypeError throw — "&lt;typeof callee&gt; is not a function" —
+    /// matching the interpreter's message for invoking a non-callable (#260).
+    /// <paramref name="loadCallee"/> must push the callee value onto the stack.
+    /// </summary>
+    private void EmitThrowNotAFunction(ILGenerator il, EmittedRuntime runtime, Action loadCallee)
+    {
+        loadCallee();
+        il.Emit(OpCodes.Call, runtime.TypeOf);
+        il.Emit(OpCodes.Ldstr, " is not a function");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+    }
+
     private void EmitGetArrayMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // GetArrayMethod(object arr, string methodName) -> TSFunction or null
@@ -121,8 +137,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, nullLabel);
 
         // ECMA-262 §22.2.6: a RegExp object is not callable — calling one throws
-        // TypeError rather than falling through to the null fallback. Targeted
-        // so the general non-callable→null behavior is unchanged.
+        // TypeError. Checked early so it doesn't fall into the dispatch chain.
         if (runtime.TSRegExpType != null)
         {
             var notRegExpCallee = il.DefineLabel();
@@ -266,15 +281,17 @@ public partial class RuntimeEmitter
         var notProxyLabel = il.DefineLabel();
         EmitProxyInvokeCheck(il, () => il.Emit(OpCodes.Ldarg_0), () => il.Emit(OpCodes.Ldarg_1), notProxyLabel);
 
+        // ECMA-262 §7.3.13: invoking a non-callable throws TypeError. This was
+        // a silent `return null` for years, which masked dispatch regressions
+        // (#239) — see #260.
         il.MarkLabel(notProxyLabel);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+        EmitThrowNotAFunction(il, runtime, () => il.Emit(OpCodes.Ldarg_0));
 
         // Type dispatch — currently only Array (IList<object>) has a runtime
         // constructor helper wired up. Other built-in Type constructors
-        // (Date, Map, Set, RegExp, Promise, …) called without `new` return
-        // null, matching pre-fix behavior; they can be wired in incrementally
-        // as usage patterns surface.
+        // (Date, Map, Set, RegExp, Promise, …) called without `new` throw a
+        // TypeError below; they can be wired in incrementally as usage
+        // patterns surface.
         il.MarkLabel(typeCalleeLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.Type);
@@ -315,6 +332,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notSymbolTypeLabel);
 
+        // A built-in constructor Type without a call-form helper (e.g. the
+        // aliased `var f = Object; f(x)` pattern lodash uses). These ARE
+        // callable in JS, so the #260 throwing fallback must not fire here;
+        // unwired ones keep returning null until their call forms are wired
+        // in incrementally (#61).
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
@@ -489,9 +511,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.MethodCallableInvoke);
         il.Emit(OpCodes.Ret);
 
+        // Null callee: `f(x)` where f is null. Throws TypeError per ECMA-262
+        // (previously a silent `return null` — #260).
         il.MarkLabel(nullLabel);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+        EmitThrowNotAFunction(il, runtime, () => il.Emit(OpCodes.Ldarg_0));
     }
 
     private void EmitInvokeMethodValue(TypeBuilder typeBuilder, EmittedRuntime runtime)
@@ -510,20 +533,19 @@ public partial class RuntimeEmitter
         // arg0 = receiver, arg1 = function, arg2 = args
         var notTSFunctionLabel = il.DefineLabel();
 
-        // if (function == null) return null immediately — we can't fall through to the
-        // later Isinst chain because it ends with a proxy check that calls GetType() on
-        // the function value, which NREs on null.
+        // if (function == null) throw TypeError immediately — we can't fall through to
+        // the later Isinst chain because it ends with a proxy check that calls GetType()
+        // on the function value, which NREs on null. This was a silent `return null`
+        // for years, which masked dispatch regressions like #239 — see #260.
         var notNullLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brtrue, notNullLabel);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+        EmitThrowNotAFunction(il, runtime, () => il.Emit(OpCodes.Ldarg_1));
         il.MarkLabel(notNullLabel);
 
         // ECMA-262 §22.2.6: a RegExp object has no [[Call]] — calling one
-        // (`/x/()`, `RegExp("a","g")()`) must throw TypeError, not fall through
-        // to the null fallback (which would silently return null). Targeted
-        // check so the general non-callable→null behavior is untouched.
+        // (`/x/()`, `RegExp("a","g")()`) must throw TypeError. Checked early
+        // so it doesn't fall into the dispatch chain.
         if (runtime.TSRegExpType != null)
         {
             var notRegExpCallee = il.DefineLabel();
@@ -825,9 +847,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
 
+        // Unrecognized non-callable (plain object, number, $Undefined, …):
+        // throw TypeError per ECMA-262 instead of silently returning null (#260).
         il.MarkLabel(noCallMethodLabel);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+        EmitThrowNotAFunction(il, runtime, () => il.Emit(OpCodes.Ldarg_1));
     }
 
     /// <summary>
@@ -902,8 +925,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Stloc, enumLocal);
         il.Emit(OpCodes.Brtrue, synthLabel);
-        // Not an enumerator and no JS method → preserve prior behavior:
-        // InvokeMethodValue(recv, fn, args) (fn is null/undefined → null).
+        // Not an enumerator and no JS method → InvokeMethodValue(recv, fn, args).
+        // fn is null/undefined here, so this throws TypeError ("undefined is not
+        // a function") — matching JS for an explicit `it.next()` / `it.return()`
+        // call on a receiver without that member (#260; previously a silent null).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, fn);
         il.Emit(OpCodes.Ldarg_2);

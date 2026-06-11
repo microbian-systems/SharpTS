@@ -35,11 +35,20 @@ public abstract partial class ExpressionEmitterBase
         if (TryEmitCjsRequireCall(c))
             return;
 
+        if (TryEmitFunctionReturnThisIdiom(c))
+            return;
+
         // Handler chain covers: console methods, fetch, parseInt/parseFloat/isNaN/isFinite,
         // setTimeout/clearTimeout/setInterval/clearInterval/queueMicrotask, Symbol/BigInt/Date/Error,
         // Date.now(), Math/JSON/Object/Array/Number/Promise/Symbol statics, built-in module methods,
         // __objectRest
         if (_callHandlers.TryHandle(this, c))
+            return;
+
+        // Optional-chain method calls (a.b?.m(x)) short-circuit to undefined
+        // when a link is nullish — must be explicit now that InvokeMethodValue
+        // throws for non-callable callees (#260).
+        if (TryEmitOptionalChainMethodCall(c))
             return;
 
         // Special case: super.method() call — emit non-virtual Call to base method
@@ -698,6 +707,23 @@ public abstract partial class ExpressionEmitterBase
         var calleeLocal = IL.DeclareLocal(Types.Object);
         IL.Emit(OpCodes.Stloc, calleeLocal);
 
+        // Optional link in the callee chain (a?.[0](), (x?.f)()): a nullish
+        // callee means the chain short-circuited — yield undefined instead of
+        // letting InvokeMethodValue throw (#260). The Expr.Get-callee shape is
+        // intercepted earlier by TryEmitOptionalChainMethodCall.
+        Label? optChainNullishLabel = null;
+        Label? optChainEndLabel = null;
+        if (HasOptionalLink(c.Callee))
+        {
+            optChainNullishLabel = IL.DefineLabel();
+            optChainEndLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, calleeLocal);
+            IL.Emit(OpCodes.Brfalse, optChainNullishLabel.Value);
+            IL.Emit(OpCodes.Ldloc, calleeLocal);
+            IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+            IL.Emit(OpCodes.Brtrue, optChainNullishLabel.Value);
+        }
+
         // Evaluate all arguments into temps first (await-safe for async emitters)
         List<LocalBuilder> argTemps = [];
         List<bool> isSpread = [];
@@ -773,7 +799,138 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Ldloc, calleeLocal);
         IL.Emit(OpCodes.Ldloc, argsLocal);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeMethodValue);
+
+        if (optChainNullishLabel != null)
+        {
+            IL.Emit(OpCodes.Br, optChainEndLabel!.Value);
+            IL.MarkLabel(optChainNullishLabel.Value);
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
+            IL.MarkLabel(optChainEndLabel.Value);
+        }
+
         SetStackUnknown();
+    }
+
+    /// <summary>
+    /// lodash/core-js global-detection idiom: <c>Function('return this')()</c>.
+    /// The Function constructor isn't supported in either mode, but this probe
+    /// just means "give me globalThis". Compiled mode represents globalThis in
+    /// value position as null (see EmitVariable), so emit the same null —
+    /// packages probing via <c>freeGlobal || freeSelf || Function('return this')()</c>
+    /// keep their pre-#260 fallback behavior instead of hitting the
+    /// non-callable TypeError (the Function constructor result isn't callable).
+    /// </summary>
+    protected bool TryEmitFunctionReturnThisIdiom(Expr.Call c)
+    {
+        if (c.Arguments.Count == 0
+            && c.Callee is Expr.Call inner
+            && inner.Callee is Expr.Variable { Name.Lexeme: "Function" }
+            && inner.Arguments.Count == 1
+            && inner.Arguments[0] is Expr.Literal { Value: string body }
+            && body.Trim() == "return this")
+        {
+            IL.Emit(OpCodes.Ldnull);
+            SetStackUnknown();
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// True when the expression chain contains an optional link (<c>?.</c>),
+    /// mirroring the interpreter's HasOptionalInChain: a call at the end of such
+    /// a chain short-circuits to undefined when the callee resolves nullish
+    /// (ECMA-262 §13.3 OptionalExpression) instead of throwing.
+    /// </summary>
+    protected static bool HasOptionalLink(Expr expr) => expr switch
+    {
+        Expr.Get g => g.Optional || HasOptionalLink(g.Object),
+        Expr.GetIndex gi => gi.Optional || HasOptionalLink(gi.Object),
+        Expr.Call call => call.Optional || HasOptionalLink(call.Callee),
+        Expr.Grouping gr => HasOptionalLink(gr.Expression),
+        Expr.TypeAssertion ta => HasOptionalLink(ta.Expression),
+        _ => false
+    };
+
+    /// <summary>
+    /// Intercepts a method call whose callee chain contains an optional link
+    /// (<c>a.b?.m(x)</c>, <c>a?.b.m(x)</c>) and emits a receiver-preserving
+    /// dynamic dispatch that short-circuits to undefined when the receiver or
+    /// resolved method is nullish. Before #260 these shapes leaned on
+    /// InvokeMethodValue's silent null for the short-circuit; now that the
+    /// fallback throws, the chain semantics must be emitted explicitly.
+    /// Returns false when the call doesn't match (callee isn't a Get with an
+    /// optional link, or the call itself is optional — EmitOptionalCall owns
+    /// <c>?.()</c>).
+    /// </summary>
+    protected bool TryEmitOptionalChainMethodCall(Expr.Call c)
+    {
+        if (c.Optional || c.Callee is not Expr.Get g || !HasOptionalLink(g))
+            return false;
+
+        EmitExpression(g.Object);
+        EnsureBoxed();
+        var recvLocal = IL.DeclareLocal(Types.Object);
+        IL.Emit(OpCodes.Stloc, recvLocal);
+
+        var nullishLabel = IL.DefineLabel();
+        var endLabel = IL.DefineLabel();
+
+        IL.Emit(OpCodes.Ldloc, recvLocal);
+        IL.Emit(OpCodes.Brfalse, nullishLabel);
+        IL.Emit(OpCodes.Ldloc, recvLocal);
+        IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+        IL.Emit(OpCodes.Brtrue, nullishLabel);
+
+        // GetProperty can't resolve most string prototype methods (see
+        // EmitDynamicMethodCallPreservingThis) — keep its string fast path.
+        if (IsRuntimeDispatchableStringMethod(g.Name.Lexeme))
+        {
+            var notStringLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, recvLocal);
+            IL.Emit(OpCodes.Isinst, Types.String);
+            IL.Emit(OpCodes.Brfalse, notStringLabel);
+            EmitRuntimeStringMethod(recvLocal, g.Name.Lexeme, c.Arguments);
+            IL.Emit(OpCodes.Br, endLabel);
+            IL.MarkLabel(notStringLabel);
+        }
+
+        // fn = GetProperty(recv, name); nullish fn short-circuits to undefined,
+        // matching the interpreter's HasOptionalInChain rule.
+        IL.Emit(OpCodes.Ldloc, recvLocal);
+        IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+        var fnLocal = IL.DeclareLocal(Types.Object);
+        IL.Emit(OpCodes.Stloc, fnLocal);
+        IL.Emit(OpCodes.Ldloc, fnLocal);
+        IL.Emit(OpCodes.Brfalse, nullishLabel);
+        IL.Emit(OpCodes.Ldloc, fnLocal);
+        IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+        IL.Emit(OpCodes.Brtrue, nullishLabel);
+
+        // InvokeMethodValue(recv, fn, args) — args evaluated only on the
+        // non-nullish path, per spec.
+        IL.Emit(OpCodes.Ldloc, recvLocal);
+        IL.Emit(OpCodes.Ldloc, fnLocal);
+        IL.Emit(OpCodes.Ldc_I4, c.Arguments.Count);
+        IL.Emit(OpCodes.Newarr, Types.Object);
+        for (int i = 0; i < c.Arguments.Count; i++)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldc_I4, i);
+            EmitExpression(c.Arguments[i]);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Stelem_Ref);
+        }
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeMethodValue);
+        IL.Emit(OpCodes.Br, endLabel);
+
+        IL.MarkLabel(nullishLabel);
+        IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
+
+        IL.MarkLabel(endLabel);
+        SetStackUnknown();
+        return true;
     }
 
     /// <summary>

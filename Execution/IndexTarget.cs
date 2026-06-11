@@ -25,6 +25,12 @@ public abstract record IndexTarget
     public sealed record InstanceSymbol(SharpTSInstance Target, SharpTSSymbol Key) : IndexTarget;
     public sealed record GlobalThis(SharpTSGlobalThis Target, string Key) : IndexTarget;
     public sealed record HeadersString(SharpTSHeaders Target, string Key) : IndexTarget;
+    /// <summary>
+    /// Class constructor expando statics — Node allows arbitrary string/symbol-keyed
+    /// statics on class objects (<c>(C as any)["foo"] = 1</c>, <c>(C as any)[Symbol.species] = P</c>).
+    /// </summary>
+    public sealed record ClassString(SharpTSClass Target, string Key) : IndexTarget;
+    public sealed record ClassSymbol(SharpTSClass Target, SharpTSSymbol Key) : IndexTarget;
 
     // Get-only targets
     public sealed record EnumReverse(SharpTSEnum Target, double Index) : IndexTarget;

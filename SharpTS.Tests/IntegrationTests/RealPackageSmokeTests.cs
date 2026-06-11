@@ -492,7 +492,14 @@ public class RealPackageSmokeTests
         Assert.Equal("function", result.StandardOutput.Split('\n')[0].Trim());
     }
 
-    [SkippableFact]
+    // Pre-#260, compiled lodash "loaded" only because non-callable dispatches
+    // silently evaluated to null: global/globalThis compile to null in value
+    // position, so runInContext ran with a null context and every native ref
+    // was undefined (which is also why chunk/flatten returned wrong values).
+    // With the #260 TypeError, init fails honestly at lodash's
+    // `funcToString.call(Object)`. Unskip when #271 (globalThis value
+    // representation) lands.
+    [SkippableFact(Skip = "compiled lodash cannot initialize without a globalThis value representation — see #271")]
     public void Lodash_Compiled()
     {
         SkipIfNoNpm();

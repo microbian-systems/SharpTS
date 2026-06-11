@@ -9,8 +9,25 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class ILCompiler
 {
+    /// <summary>
+    /// Computed accessor names with non-literal keys (e.g. <c>static get [Symbol.species]()</c>)
+    /// have no static .NET member name to emit. The interpreter supports them; compiled
+    /// mode does not yet (#266) — fail loudly rather than emitting a broken
+    /// property literally named "&lt;computed&gt;". Literal keys (<c>get ["foo"]()</c>)
+    /// are folded to ordinary names by the parser and never reach this check.
+    /// </summary>
+    private static void RejectComputedAccessor(Stmt.Accessor accessor)
+    {
+        if (accessor.ComputedKey != null)
+        {
+            throw new Diagnostics.Exceptions.CompileException(
+                $"Accessors with computed names (line {accessor.Name.Line}) are not supported in compiled mode yet.");
+        }
+    }
+
     private void EmitAccessor(TypeBuilder typeBuilder, Stmt.Accessor accessor, FieldInfo fieldsField)
     {
+        RejectComputedAccessor(accessor);
         // Use PascalCase naming convention: get_<PascalPropertyName> or set_<PascalPropertyName>
         string pascalName = NamingConventions.ToPascalCase(accessor.Name.Lexeme);
         string methodName = accessor.Kind.Type == TokenType.GET

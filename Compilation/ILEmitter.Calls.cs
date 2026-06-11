@@ -38,6 +38,9 @@ public partial class ILEmitter
         // `'[object Math]' === Object.prototype.toString.call(Math)`.
         if (TryEmitObjectPrototypeToStringCall(c)) return;
 
+        // Function('return this')() — global-detection probe; see helper doc.
+        if (TryEmitFunctionReturnThisIdiom(c)) return;
+
         // `String(x)` / `Number(x)` / `Boolean(x)` — non-`new` coercion calls.
         // Compiled mode would otherwise resolve `String` as `typeof(string)` and
         // try to "call" the Type, which devolves to Stringify → wrong format for
@@ -153,6 +156,12 @@ public partial class ILEmitter
             // Handler chain: static types, Date.now, built-in modules, process streams,
             // globalThis chaining, imported/class-expr/this statics
             if (_callHandlers.TryHandle(this, c))
+                return;
+
+            // Optional-chain method calls (a.b?.m(x)) short-circuit to undefined
+            // when a link is nullish — must be explicit now that InvokeMethodValue
+            // throws for non-callable callees (#260).
+            if (TryEmitOptionalChainMethodCall(c))
                 return;
 
             // module.promises.methodName() (fs.promises, dns.promises, stream.promises)

@@ -745,6 +745,10 @@ public partial class Interpreter
         (SharpTSInstance instance, _) => new IndexTarget.InstanceString(instance, PropertyKeyConverter.ToPropertyKeyString(index)),
         (SharpTSGlobalThis globalThis, string globalKey) => new IndexTarget.GlobalThis(globalThis, globalKey),
         (SharpTSHeaders headers, string headerKey) => new IndexTarget.HeadersString(headers, headerKey),
+        // Class constructors accept expando statics (Node: `C["foo"] = 1`,
+        // `C[Symbol.species] = P`). #262.
+        (SharpTSClass cls, SharpTSSymbol clsSym) => new IndexTarget.ClassSymbol(cls, clsSym),
+        (SharpTSClass cls, _) => new IndexTarget.ClassString(cls, PropertyKeyConverter.ToPropertyKeyString(index)),
         (string str, double strIdx) => new IndexTarget.StringChar(str, (int)strIdx),
         _ => new IndexTarget.Unsupported(obj, index)
     };
@@ -769,7 +773,18 @@ public partial class Interpreter
         }
 
         object? index = Evaluate(getIndex.Index);
+        return PerformIndexGet(getIndex.Object, obj, index);
+    }
 
+    /// <summary>
+    /// Performs an index read on already-evaluated operands. Shared by the sync
+    /// evaluator and the async evaluator (Interpreter.Async.cs) so both contexts
+    /// dispatch identically. <paramref name="objectExpr"/> is the unevaluated
+    /// receiver expression, needed only to synthesize a Get for the dot-notation
+    /// fallback path.
+    /// </summary>
+    private RuntimeValue PerformIndexGet(Expr objectExpr, object? obj, object? index)
+    {
         // Proxy: intercept index access via get trap
         if (obj is SharpTSProxy proxy)
         {
@@ -826,7 +841,7 @@ public partial class Interpreter
         if (obj != null && index is string strIndexKey)
         {
             var syntheticName = new Token(TokenType.IDENTIFIER, strIndexKey, null, 0);
-            var syntheticGet = new Expr.Get(getIndex.Object, syntheticName, Optional: false);
+            var syntheticGet = new Expr.Get(objectExpr, syntheticName, Optional: false);
             return EvaluateGetOnObject(syntheticGet, obj);
         }
 
@@ -865,7 +880,12 @@ public partial class Interpreter
             IndexTarget.ObjectString t => t.Target.GetProperty(t.Key),
             IndexTarget.ObjectSymbol t => t.Target.GetBySymbol(t.Key) ?? SharpTSUndefined.Instance,
             IndexTarget.InstanceString t => t.Target.Get(new Token(TokenType.IDENTIFIER, t.Key, null, 0)),
-            IndexTarget.InstanceSymbol t => t.Target.GetBySymbol(t.Key) ?? SharpTSUndefined.Instance,
+            IndexTarget.InstanceSymbol t => GetInstanceSymbolValue(t.Target, t.Key),
+            // String keys on classes are normally intercepted by the synthetic-Get
+            // path above; this arm catches non-string keys (numbers, booleans)
+            // after ToPropertyKey normalization.
+            IndexTarget.ClassString t => EvaluateGetOnClass(t.Target, t.Key),
+            IndexTarget.ClassSymbol t => GetClassSymbolValue(t.Target, t.Key),
             IndexTarget.GlobalThis t => t.Target.GetProperty(t.Key),
             IndexTarget.HeadersString t => (object?)t.Target.Get(t.Key) ?? SharpTSUndefined.Instance,
             IndexTarget.StringChar t => (t.Index >= 0 && t.Index < t.Target.Length)
@@ -874,6 +894,37 @@ public partial class Interpreter
             IndexTarget.Unsupported => throw new InterpreterException("Index access not supported on this type."),
             _ => throw new InterpreterException("Index access not supported on this type.")
         });
+    }
+
+    /// <summary>
+    /// Reads a symbol-keyed member from an instance: own symbol data property
+    /// first, then a declared symbol-keyed getter (`get [Symbol.x]()`) from the
+    /// class chain.
+    /// </summary>
+    private object? GetInstanceSymbolValue(SharpTSInstance instance, SharpTSSymbol symbol)
+    {
+        object? own = instance.GetBySymbol(symbol);
+        if (own != null) return own;
+        if (instance.GetClass().FindSymbolGetter(symbol) is { } getter)
+        {
+            return getter.Bind(instance).Call(this, []);
+        }
+        return SharpTSUndefined.Instance;
+    }
+
+    /// <summary>
+    /// Reads a symbol-keyed static from a class: a declared static symbol-keyed
+    /// getter (`static get [Symbol.species]()`) wins over expando data statics.
+    /// </summary>
+    private object? GetClassSymbolValue(SharpTSClass klass, SharpTSSymbol symbol)
+    {
+        if (klass.FindStaticSymbolGetter(symbol) is { } getter)
+        {
+            return getter.BindStatic(klass).Call(this, []);
+        }
+        return klass.TryGetStaticBySymbol(symbol, out var value)
+            ? value ?? SharpTSUndefined.Instance
+            : SharpTSUndefined.Instance;
     }
 
     /// <summary>
@@ -890,6 +941,16 @@ public partial class Interpreter
         object? obj = Evaluate(setIndex.Object);
         object? index = Evaluate(setIndex.Index);
         object? value = Evaluate(setIndex.Value);
+        return PerformIndexSet(obj, index, value);
+    }
+
+    /// <summary>
+    /// Performs an index assignment on already-evaluated operands. Shared by the
+    /// sync evaluator and the async evaluator (Interpreter.Async.cs) so both
+    /// contexts dispatch identically.
+    /// </summary>
+    private RuntimeValue PerformIndexSet(object? obj, object? index, object? value)
+    {
         bool strictMode = _environment.IsStrictMode;
 
         // Proxy: intercept index assignment via set trap
@@ -995,8 +1056,29 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.InstanceSymbol t:
+                // A declared symbol-keyed setter (`set [Symbol.x](v)`) intercepts
+                // assignment unless shadowed by an own symbol data property.
+                if (t.Target.GetBySymbol(t.Key) == null
+                    && t.Target.GetClass().FindSymbolSetter(t.Key) is { } symSetter)
+                {
+                    symSetter.Bind(t.Target).Call(this, [value]);
+                    break;
+                }
                 if (strictMode) t.Target.SetBySymbolStrict(t.Key, value, strictMode);
                 else t.Target.SetBySymbol(t.Key, value);
+                break;
+
+            case IndexTarget.ClassString t:
+                t.Target.SetStaticProperty(t.Key, value);
+                break;
+
+            case IndexTarget.ClassSymbol t:
+                if (t.Target.FindStaticSymbolSetter(t.Key) is { } staticSymSetter)
+                {
+                    staticSymSetter.BindStatic(t.Target).Call(this, [value]);
+                    break;
+                }
+                t.Target.SetStaticBySymbol(t.Key, value);
                 break;
 
             case IndexTarget.GlobalThis t:
@@ -1194,6 +1276,7 @@ public partial class Interpreter
             // Create accessor functions
             Dictionary<string, SharpTSFunction> getters = [];
             Dictionary<string, SharpTSFunction> setters = [];
+            List<(SharpTSSymbol Symbol, SharpTSFunction Func, bool IsStatic, bool IsGetter)>? symbolAccessors = null;
 
             if (classExpr.Accessors != null)
             {
@@ -1208,14 +1291,29 @@ public partial class Interpreter
                         accessor.ReturnType);
 
                     SharpTSFunction func = new(funcStmt, _environment);
+                    bool isGetter = accessor.Kind.Type == TokenType.GET;
+                    string nameKey = accessor.Name.Lexeme;
 
-                    if (accessor.Kind.Type == TokenType.GET)
+                    // Computed accessor names, evaluated at class-definition time
+                    // (mirrors VisitClass).
+                    if (accessor.ComputedKey != null)
                     {
-                        getters[accessor.Name.Lexeme] = func;
+                        object? key = Evaluate(accessor.ComputedKey);
+                        if (key is SharpTSSymbol symbolKey)
+                        {
+                            (symbolAccessors ??= []).Add((symbolKey, func, accessor.IsStatic, isGetter));
+                            continue;
+                        }
+                        nameKey = PropertyKeyConverter.ToPropertyKeyString(key);
+                    }
+
+                    if (isGetter)
+                    {
+                        getters[nameKey] = func;
                     }
                     else
                     {
-                        setters[accessor.Name.Lexeme] = func;
+                        setters[nameKey] = func;
                     }
                 }
             }
@@ -1265,6 +1363,14 @@ public partial class Interpreter
                     setters,
                     classExpr.IsAbstract,
                     instanceFields);
+
+            if (symbolAccessors != null)
+            {
+                foreach (var (symbol, func, isStatic, isGetter) in symbolAccessors)
+                {
+                    klass.AddSymbolAccessor(symbol, func, isStatic, isGetter);
+                }
+            }
 
             // Execute static initializers in declaration order (if present)
             if (hasStaticInitializers)
