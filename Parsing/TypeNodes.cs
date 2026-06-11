@@ -59,10 +59,11 @@ public sealed record IndexedAccessTypeNode(TypeNode ObjectType, TypeNode IndexTy
 /// path-independent.</summary>
 public sealed record ConditionalTypeNode(TypeNode CheckType, TypeNode ExtendsType, TypeNode TrueType, TypeNode FalseType, int Line) : TypeNode(Line);
 
-/// <summary>An <c>infer U</c> placeholder inside a conditional's extends clause. Resolves to
-/// <c>TypeInfo.InferredTypeParameter</c>. Constrained infer (<c>infer U extends C</c>) has no
-/// node yet and falls back to the string path.</summary>
-public sealed record InferTypeNode(string Name, int Line) : TypeNode(Line);
+/// <summary>An <c>infer U</c> placeholder inside a conditional's extends clause, optionally
+/// constrained (<c>infer U extends C</c>). Resolves to <c>TypeInfo.InferredTypeParameter</c>;
+/// the constraint gates the match in <c>EvaluateConditionalType</c> (an inferred type that does
+/// not satisfy it sends the conditional to its false branch).</summary>
+public sealed record InferTypeNode(string Name, int Line, TypeNode? Constraint = null) : TypeNode(Line);
 
 /// <summary>A <c>typeof entity</c> query. The entity path is carried in its string-path spelling
 /// (<c>obj.prop</c>, <c>arr[0]</c>) and resolved by <c>EvaluateTypeOf</c> — the same evaluator the

@@ -116,7 +116,11 @@ public partial class TypeChecker
             }
 
             case InferTypeNode infer:
-                return new TypeInfo.InferredTypeParameter(infer.Name);
+                if (infer.Constraint is null)
+                    return new TypeInfo.InferredTypeParameter(infer.Name);
+                return TryToTypeInfo(infer.Constraint) is { } inferConstraint
+                    ? new TypeInfo.InferredTypeParameter(infer.Name, inferConstraint)
+                    : null;
 
             // `readonly T[]` / `readonly [A, B]` — mark the resolved array/tuple readonly; any other
             // inner type ignores the modifier (mirrors ToTypeInfoCore's readonly branch).

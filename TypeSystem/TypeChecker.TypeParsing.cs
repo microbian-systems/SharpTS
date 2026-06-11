@@ -158,10 +158,16 @@ public partial class TypeChecker
             return new TypeInfo.KeyOf(innerType);
         }
 
-        // Handle infer keyword for conditional types: "infer U"
+        // Handle infer keyword for conditional types: "infer U" or "infer U extends C"
         if (typeName.StartsWith("infer "))
         {
             string paramName = typeName[6..].Trim();
+            int extendsIdx = paramName.IndexOf(" extends ", StringComparison.Ordinal);
+            if (extendsIdx > 0 && IsValidIdentifier(paramName[..extendsIdx]))
+            {
+                TypeInfo constraint = ToTypeInfo(paramName[(extendsIdx + 9)..].Trim());
+                return new TypeInfo.InferredTypeParameter(paramName[..extendsIdx], constraint);
+            }
             return new TypeInfo.InferredTypeParameter(paramName);
         }
 

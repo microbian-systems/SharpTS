@@ -5,8 +5,8 @@ tests/cases/conformance/types/conditional/conditionalTypesExcessProperties.ts Pa
 tests/cases/conformance/types/conditional/inferTypes1.ts Fail
 tests/cases/conformance/types/conditional/inferTypes2.ts Pass
 tests/cases/conformance/types/conditional/inferTypesInvalidExtendsDeclaration.ts Skipped:lib-drift
-tests/cases/conformance/types/conditional/inferTypesWithExtends1.ts ParseError
-tests/cases/conformance/types/conditional/inferTypesWithExtends2.ts Fail
+tests/cases/conformance/types/conditional/inferTypesWithExtends1.ts Pass
+tests/cases/conformance/types/conditional/inferTypesWithExtends2.ts Pass
 tests/cases/conformance/types/conditional/variance.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/anyAssignabilityInInheritance.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/anyAssignableToEveryType.ts Pass

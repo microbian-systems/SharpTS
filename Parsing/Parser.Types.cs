@@ -15,6 +15,17 @@ public partial class Parser
     /// </summary>
     private TypeNode? _lastTypeNode;
 
+    /// <summary>
+    /// True while parsing a position where conditional types are not allowed: the extends clause
+    /// of a conditional type and the constraint of an <c>infer</c> declaration (tsc's
+    /// DisallowConditionalTypes context). Read by the <c>infer ... extends</c> disambiguation:
+    /// in an allow-conditionals context, `infer U extends T ?` re-parses with `extends` starting a
+    /// conditional type instead of a constraint. Bracketed sub-positions (grouped types, tuple
+    /// elements, object members, mapped-type clauses, type arguments) re-allow conditionals by
+    /// re-entering <see cref="ParseConditionalType"/>, which saves/clears/restores the flag.
+    /// </summary>
+    private bool _disallowConditionalTypes;
+
     /// <summary>Reads and clears the node for the most recent type-parse call.</summary>
     private TypeNode? TakeTypeNode()
     {
@@ -214,6 +225,23 @@ public partial class Parser
     /// </summary>
     private string ParseConditionalType()
     {
+        // Entering a full-type position re-allows conditional types (tsc: parseType resets the
+        // DisallowConditionalTypes context). Restored before every return so an enclosing extends
+        // clause keeps its disallow state after a bracketed sub-parse.
+        bool savedDisallow = _disallowConditionalTypes;
+        _disallowConditionalTypes = false;
+        try
+        {
+            return ParseConditionalTypeCore();
+        }
+        finally
+        {
+            _disallowConditionalTypes = savedDisallow;
+        }
+    }
+
+    private string ParseConditionalTypeCore()
+    {
         string checkType = ParseUnionType();
         TypeNode? checkNode = TakeTypeNode();
 
@@ -231,8 +259,12 @@ public partial class Parser
 
         int conditionalLine = Previous().Line;
 
-        // Parse the extends type (which may contain 'infer' keywords)
+        // Parse the extends type (which may contain 'infer' keywords). Conditional types are
+        // not allowed directly in an extends clause, which is what lets `infer U extends C`
+        // keep its constraint here (X13-style) while re-allowing inside brackets.
+        _disallowConditionalTypes = true;
         string extendsType = ParseUnionType();
+        _disallowConditionalTypes = false;
         TypeNode? extendsNode = TakeTypeNode();
 
         // Must have '?' for this to be a conditional type
@@ -354,15 +386,33 @@ public partial class Parser
         if (Match(TokenType.INFER))
         {
             Token paramName = Consume(TokenType.IDENTIFIER, "Expect type parameter name after 'infer'.");
-            if (Match(TokenType.EXTENDS))
+            if (Check(TokenType.EXTENDS))
             {
-                // Constraint binds tighter than the enclosing conditional's `?`, so stop at union level.
+                int savedPos = _current;
+                bool outerDisallow = _disallowConditionalTypes;
+                Advance(); // consume 'extends'
+                // The constraint itself never contains a top-level conditional (tsc parses it in a
+                // DisallowConditionalTypes context); union level is the ceiling.
+                _disallowConditionalTypes = true;
                 string constraint = ParseUnionType();
-                TakeTypeNode(); // drain the constraint's side-channel node
-                // Mirror the string path exactly: the whole "U extends C" becomes the inferred
-                // parameter's name (the checker's InferredTypeParameter has no separate constraint).
-                _lastTypeNode = new InferTypeNode($"{paramName.Lexeme} extends {constraint}", paramName.Line);
-                return $"infer {paramName.Lexeme} extends {constraint}";
+                TypeNode? constraintNode = TakeTypeNode();
+                _disallowConditionalTypes = outerDisallow;
+                if (!outerDisallow && Check(TokenType.QUESTION))
+                {
+                    // `infer U extends T ?` where conditional types are allowed: the `extends`
+                    // starts a conditional type whose check type is the bare `infer U`, not a
+                    // constraint (tsc's speculative lookahead). Backtrack to before 'extends'.
+                    _current = savedPos;
+                }
+                else
+                {
+                    // Node requires the constraint node; a constraint without node support drops
+                    // the whole infer to the string path rather than losing the constraint.
+                    _lastTypeNode = constraintNode is not null
+                        ? new InferTypeNode(paramName.Lexeme, paramName.Line, constraintNode)
+                        : null;
+                    return $"infer {paramName.Lexeme} extends {constraint}";
+                }
             }
             _lastTypeNode = new InferTypeNode(paramName.Lexeme, paramName.Line);
             return $"infer {paramName.Lexeme}";
