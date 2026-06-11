@@ -292,4 +292,55 @@ public class GettersSettersTests
     }
 
     #endregion
+
+    #region Top-level variable capture (#300)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Getter_ResolvesCapturedTopLevelVariable(ExecutionMode mode)
+    {
+        // #300: in compiled mode an accessor body that referenced a top-level
+        // binding threw `ReferenceError: Undefined variable` because the accessor
+        // emit context omitted the four top-level-variable-access properties every
+        // other body-emission path sets. An ordinary method dodged it.
+        var source = """
+            let counter = 5;
+            const label = "v";
+            class D {
+                get tag(): string { return label + counter; }
+            }
+            console.log(new D().tag);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("v5\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SetterAndStaticGetter_ResolveCapturedTopLevelVariable(ExecutionMode mode)
+    {
+        // Cover the setter and static-getter accessor shapes too — all share the
+        // EmitAccessorBody context that was missing top-level-var access.
+        var source = """
+            let base = 10;
+            const factor = 3;
+            class C {
+                _v: number = 0;
+                get scaled(): number { return this._v * factor + base; }
+                set scaled(n: number) { this._v = n - base; }
+                static get answer(): number { return base + 32; }
+            }
+            const c = new C();
+            c.scaled = 13;
+            console.log(c._v);
+            console.log(c.scaled);
+            console.log(C.answer);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("3\n19\n42\n", output);
+    }
+
+    #endregion
 }

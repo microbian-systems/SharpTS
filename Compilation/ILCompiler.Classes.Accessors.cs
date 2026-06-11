@@ -208,7 +208,7 @@ public partial class ILCompiler
             // accessor body that references a top-level binding (a captured `let`,
             // a same-module export, an import) throws ReferenceError at runtime —
             // every other body-emission context (methods, ctors, functions, …)
-            // sets them; the accessor path was the lone omission.
+            // sets them; the accessor path was the lone omission. (#300)
             TopLevelStaticVars = BuildClassMethodTopLevelStaticVarsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
