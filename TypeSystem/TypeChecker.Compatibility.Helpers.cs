@@ -148,6 +148,10 @@ public partial class TypeChecker
         if (target is TypeInfo.Union || source is TypeInfo.Union)
             return "TS2322";
 
+        // Weak-type failures report tsc's dedicated code.
+        if (FailsWeakTypeCheck(target, source))
+            return "TS2559";
+
         // tsc promotes the missing-property elaboration to a top-level TS2741 only the FIRST time
         // a given type pair fails — its relation cache makes repeated failures of the same pair
         // report the plain headline (TS2322). unionTypesAssignability pins this: `d = e` is
@@ -259,6 +263,46 @@ public partial class TypeChecker
             }
         }
         return true;
+    }
+
+    /// <summary>True when the named member of an object-like type is declared optional.</summary>
+    private bool IsMemberOptionalOn(TypeInfo t, string name) => t switch
+    {
+        TypeInfo.Record r => r.IsFieldOptional(name),
+        TypeInfo.Interface i => i.GetAllOptionalMembers().Contains(name),
+        TypeInfo.Instance inst => IsMemberOptionalOn(inst.ResolvedClassType, name),
+        _ => false,
+    };
+
+    /// <summary>
+    /// tsc's WEAK TYPE check (TS2559): a target with at least one property, ALL of them optional,
+    /// is not satisfied by a source that has properties but NONE in common — even though the
+    /// all-optional target would otherwise be vacuously satisfied. Targets with index or
+    /// call/construct signatures are exempt, as are empty sources.
+    /// </summary>
+    private bool FailsWeakTypeCheck(TypeInfo expected, TypeInfo actual)
+    {
+        List<string> targetNames;
+        HashSet<string> targetOptional;
+        switch (expected)
+        {
+            case TypeInfo.Interface i when !i.IsCallable && !i.IsConstructable &&
+                                           i.StringIndexType is null && i.NumberIndexType is null:
+                targetNames = i.GetAllMembers().Select(kv => kv.Key).ToList();
+                targetOptional = i.GetAllOptionalMembers().ToHashSet();
+                break;
+            case TypeInfo.Record r when !r.IsCallable && !r.IsConstructable && !r.HasIndexSignature:
+                targetNames = r.Fields.Keys.ToList();
+                targetOptional = r.OptionalFields?.ToHashSet() ?? [];
+                break;
+            default:
+                return false;
+        }
+        if (targetNames.Count == 0 || !targetNames.All(targetOptional.Contains))
+            return false;
+
+        var sourceNames = NamedMembersWithOptionality(actual).Select(m => m.Name).ToList();
+        return sourceNames.Count > 0 && !sourceNames.Any(targetNames.Contains);
     }
 
     /// <summary>Named members of an object-like type with their declared optionality.</summary>
