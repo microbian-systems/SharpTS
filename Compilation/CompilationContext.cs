@@ -248,6 +248,25 @@ public partial class CompilationContext
         return false;
     }
 
+    /// <summary>
+    /// With a boxed object on the stack destined for a Starg into
+    /// <paramref name="paramName"/>'s arg slot, converts it to the slot's
+    /// declared type when the parameter is typed: Unbox_Any for value types,
+    /// castclass for reference types. No-op for untyped (object) slots.
+    /// Captured-parameter dual-writes need this — storing the boxed object
+    /// straight into a double/string slot fails IL verification
+    /// (StackUnexpected family, see #284).
+    /// </summary>
+    public void EmitConvertForParamSlot(ILGenerator il, string paramName)
+    {
+        if (!_parameterTypes.TryGetValue(paramName, out var pt) || pt == Types.Object)
+            return;
+        if (pt.IsValueType)
+            il.Emit(OpCodes.Unbox_Any, pt);
+        else
+            il.Emit(OpCodes.Castclass, pt);
+    }
+
     public void ClearParameters()
     {
         _parameters.Clear();

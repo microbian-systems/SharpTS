@@ -114,7 +114,21 @@ public partial class ILCompiler
         {
             if (!arrow.IsAsync)
             {
-                DefineArrowScopeDisplayClass(arrow);
+                DefineScopeDisplayClass(arrow, "ArrowScopeDC");
+            }
+        }
+
+        // Inner function declarations whose locals are captured by nested closures
+        // get the same scope-DC treatment (#313) — without it, sibling closures
+        // created in the same invocation each snapshot the local instead of
+        // sharing storage. Async/generator inner functions are skipped for the
+        // same reason async arrows are: their bodies go through state-machine
+        // emitters that don't instantiate scope DCs.
+        foreach (var (func, _, _) in _collectedInnerFunctions)
+        {
+            if (!func.IsAsync && !func.IsGenerator)
+            {
+                DefineScopeDisplayClass(func, $"FuncScopeDC_{func.Name.Lexeme}_");
             }
         }
 
@@ -246,9 +260,10 @@ public partial class ILCompiler
                 bool needsFunctionDC = _arrowsNeedingFunctionDC.Contains(arrow);
                 string? sourceFunction = needsFunctionDC && _closures.ArrowFunctionDCSource.TryGetValue(arrow, out var src) ? src : null;
 
-                // Check if this arrow needs arrow scope DC
+                // Check if this arrow needs a scope DC reference (source may be an
+                // arrow or an inner function declaration, #313)
                 bool needsArrowDC = _arrowsNeedingArrowDC.Contains(arrow);
-                Expr.ArrowFunction? sourceArrow = needsArrowDC && _closures.ArrowScopeDCSource.TryGetValue(arrow, out var srcArrow) ? srcArrow : null;
+                object? sourceArrow = needsArrowDC && _closures.ArrowScopeDCSource.TryGetValue(arrow, out var srcArrow) ? srcArrow : null;
 
                 // Add fields for captured variables (except top-level, function-level, and arrow-scope captured vars)
                 Dictionary<string, FieldBuilder> fieldMap = [];
@@ -275,8 +290,8 @@ public partial class ILCompiler
                 }
 
                 // EXTRA ancestor scope DC references (multi-source captures) —
-                // one field per additional source arrow beyond the primary.
-                Dictionary<Expr.ArrowFunction, FieldBuilder>? extraScopeDCFields = null;
+                // one field per additional source scope beyond the primary.
+                Dictionary<object, FieldBuilder>? extraScopeDCFields = null;
                 if (_arrowExtraScopeSources.TryGetValue(arrow, out var extraScopeSources))
                 {
                     int extraIdx = 0;
@@ -317,7 +332,7 @@ public partial class ILCompiler
 
                     // Skip vars covered by an EXTRA ancestor scope DC reference
                     if (extraScopeDCFields != null &&
-                        _closures.Analyzer.GetCaptureSource(arrow, capturedVar) is Expr.ArrowFunction extraSrc &&
+                        _closures.Analyzer.GetCaptureSource(arrow, capturedVar) is { } extraSrc &&
                         extraScopeDCFields.ContainsKey(extraSrc) &&
                         _closures.ArrowScopeDisplayClassFields.TryGetValue(extraSrc, out var extraSrcFields) &&
                         extraSrcFields.ContainsKey(capturedVar))
@@ -865,17 +880,22 @@ public partial class ILCompiler
     }
 
     /// <summary>
-    /// Creates a display class for an arrow function's captured local variables.
-    /// This is needed when local variables are captured by inner arrow functions.
+    /// Creates a display class for a callable's captured local variables.
+    /// This is needed when local variables are captured by nested closures.
+    /// The callable may be an arrow function or an inner function declaration
+    /// (#313); the name suffix only aids debugging.
     /// </summary>
-    private void DefineArrowScopeDisplayClass(Expr.ArrowFunction arrow)
+    private void DefineScopeDisplayClass(object callable, string nameSuffix)
     {
-        var capturedLocals = _closures.Analyzer.GetCapturedLocals(arrow);
+        if (_closures.ArrowScopeDisplayClasses.ContainsKey(callable))
+            return;
+
+        var capturedLocals = _closures.Analyzer.GetCapturedLocals(callable);
         if (capturedLocals.Count == 0)
             return;
 
         var displayClass = _moduleBuilder.DefineType(
-            $"<>c__ArrowScopeDC{_closures.DisplayClassCounter++}",
+            $"<>c__{nameSuffix}{_closures.DisplayClassCounter++}",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
             _types.Object);
 
@@ -895,9 +915,9 @@ public partial class ILCompiler
         ctorIl.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
         ctorIl.Emit(OpCodes.Ret);
 
-        _closures.ArrowScopeDisplayClasses[arrow] = displayClass;
-        _closures.ArrowScopeDisplayClassCtors[arrow] = ctor;
-        _closures.ArrowScopeDisplayClassFields[arrow] = fieldMap;
+        _closures.ArrowScopeDisplayClasses[callable] = displayClass;
+        _closures.ArrowScopeDisplayClassCtors[callable] = ctor;
+        _closures.ArrowScopeDisplayClassFields[callable] = fieldMap;
     }
 
     /// <summary>
@@ -923,10 +943,10 @@ public partial class ILCompiler
         // are settled before nested closures thread pass-throughs onto it.
         foreach (var (arrow, captures) in _collectedArrows)
         {
-            Dictionary<Expr.ArrowFunction, int>? candidates = null;
+            Dictionary<object, int>? candidates = null;
             foreach (var c in captures)
             {
-                if (_closures.Analyzer.GetCaptureSource(arrow, c) is not Expr.ArrowFunction sa)
+                if (_closures.Analyzer.GetCaptureSource(arrow, c) is not { } sa)
                     continue;
                 if (!_closures.ArrowScopeDisplayClassFields.TryGetValue(sa, out var fields) ||
                     !fields.ContainsKey(c))
@@ -1258,6 +1278,7 @@ public partial class ILCompiler
         // the DC fields see defaulted values, not the raw missing-arg padding.
         if (ctx.ArrowScopeDisplayClassLocal != null)
         {
+            _closures.ArrowParameterTypes.TryGetValue(arrow, out var capturedParamTypes);
             for (int i = 0; i < arrow.Parameters.Count; i++)
             {
                 var paramName = arrow.Parameters[i].Name.Lexeme;
@@ -1271,6 +1292,13 @@ public partial class ILCompiler
                     int argOffset = displayClass != null ? 1 : 0;
                     if (arrow.HasOwnThis) argOffset++;
                     il.Emit(OpCodes.Ldarg, i + argOffset);
+                    // Typed (value-type) parameter slots must be boxed before
+                    // landing in the object-typed DC field — Stfld of a raw
+                    // double fails verification (StackUnexpected family, #284).
+                    var capturedParamType = !arrow.Parameters[i].IsRest &&
+                        capturedParamTypes != null && i < capturedParamTypes.Length ? capturedParamTypes[i] : null;
+                    if (capturedParamType != null && capturedParamType.IsValueType)
+                        il.Emit(OpCodes.Box, capturedParamType);
                     il.Emit(OpCodes.Stfld, arrowDCField);
                 }
             }
@@ -1323,7 +1351,12 @@ public partial class ILCompiler
                 // Return type is bool - ensure unboxed bool on stack
                 emitter.EnsureBoolean();
             }
-            // For string and other reference types, no conversion needed
+            // For string and other reference types, no conversion needed.
+            // NOTE: a `: string` return slot with a statically-object value on the
+            // stack fails IL verification here (same family as #275), but a
+            // castclass is NOT safe — inferred-string expressions can produce
+            // $Undefined at runtime (e.g. `(n: any) => cond ? "x" : undefined`),
+            // which no string-typed slot can carry. See #318.
 
             il.Emit(OpCodes.Ret);
         }

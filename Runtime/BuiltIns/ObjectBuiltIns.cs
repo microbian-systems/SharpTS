@@ -80,6 +80,18 @@ public static class ObjectBuiltIns
             var keys = math.OwnEnumerableProperties.Select(kv => (object?)kv.Key).ToList();
             return RuntimeValue.FromObject(new SharpTSArray(keys));
         }
+        // Functions are objects (ECMA-262 ToObject is the identity for them):
+        // own enumerable keys are the user-assigned expando properties. lodash
+        // mixes its utility map onto the `lodash` function and enumerates it
+        // via keys() — the correct "[object Function]" tag (#314) routes
+        // functions through baseKeys → Object.keys instead of arrayLikeKeys,
+        // so throwing here broke lodash init.
+        if (arg is SharpTSFunction fn)
+            return RuntimeValue.FromObject(new SharpTSArray(fn.PropertyKeys.Select(k => (object?)k).ToList()));
+        if (arg is SharpTSArrowFunction arrowFn)
+            return RuntimeValue.FromObject(new SharpTSArray(arrowFn.PropertyKeys.Select(k => (object?)k).ToList()));
+        if (arg is ISharpTSCallable)
+            return RuntimeValue.FromObject(new SharpTSArray([]));
         throw new Exception("Object.keys() requires an object argument");
     }
 
@@ -113,6 +125,15 @@ public static class ObjectBuiltIns
             var values = math.OwnEnumerableProperties.Select(kv => kv.Value).ToList();
             return RuntimeValue.FromObject(new SharpTSArray(values));
         }
+        // Functions are objects — see Object.keys.
+        if (arg is SharpTSFunction fn)
+            return RuntimeValue.FromObject(new SharpTSArray(
+                fn.PropertyKeys.Select(k => fn.TryGetProperty(k, out var v) ? v : null).ToList()));
+        if (arg is SharpTSArrowFunction arrowFn)
+            return RuntimeValue.FromObject(new SharpTSArray(
+                arrowFn.PropertyKeys.Select(k => arrowFn.TryGetProperty(k, out var v) ? v : null).ToList()));
+        if (arg is ISharpTSCallable)
+            return RuntimeValue.FromObject(new SharpTSArray([]));
         throw new Exception("Object.values() requires an object argument");
     }
 
@@ -154,6 +175,17 @@ public static class ObjectBuiltIns
                 (object?)new SharpTSArray([(object?)kv.Key, kv.Value])).ToList();
             return RuntimeValue.FromObject(new SharpTSArray(entries));
         }
+        // Functions are objects — see Object.keys.
+        if (arg is SharpTSFunction fn)
+            return RuntimeValue.FromObject(new SharpTSArray(
+                fn.PropertyKeys.Select(k =>
+                    (object?)new SharpTSArray([(object?)k, fn.TryGetProperty(k, out var v) ? v : null])).ToList()));
+        if (arg is SharpTSArrowFunction arrowFn)
+            return RuntimeValue.FromObject(new SharpTSArray(
+                arrowFn.PropertyKeys.Select(k =>
+                    (object?)new SharpTSArray([(object?)k, arrowFn.TryGetProperty(k, out var v) ? v : null])).ToList()));
+        if (arg is ISharpTSCallable)
+            return RuntimeValue.FromObject(new SharpTSArray([]));
         throw new Exception("Object.entries() requires an object argument");
     }
 

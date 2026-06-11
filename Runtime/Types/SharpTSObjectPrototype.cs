@@ -130,6 +130,15 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable
         if (target is bool) return "[object Boolean]";
         if (target is SharpTSArray) return "[object Array]";
         if (target is SharpTSMath) return "[object Math]";
+        // Function classification — any value `typeof` reports as "function"
+        // must tag "[object Function]" (ECMA-262 20.1.3.6 step 7, IsCallable):
+        // lodash's baseGetTag/isFunction classifies built-in constructors held
+        // as values (`var O = Object`) by this tag (#314). Mirrors
+        // GetTypeofString in Interpreter.Operators.cs.
+        if (target is SharpTSProxy proxy) return proxy.IsCallable ? "[object Function]" : "[object Object]";
+        if (target is SharpTSFunction or SharpTSArrowFunction or SharpTSClass
+            or BuiltInMethod or ISharpTSCallable or SharpTSBufferConstructor)
+            return "[object Function]";
         return "[object Object]";
     }
 

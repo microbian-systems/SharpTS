@@ -312,6 +312,16 @@ public partial class RuntimeEmitter
         EmitTag("[object Array]");
         il.MarkLabel(notArrayProtoLabel);
 
+        // $Arguments : List<object> — sloppy arguments object marker. Must come
+        // before the List<object> check since $Arguments inherits from it and
+        // would otherwise tag "[object Array]".
+        var notArgumentsTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.ArgumentsType);
+        il.Emit(OpCodes.Brfalse, notArgumentsTypeLabel);
+        EmitTag("[object Arguments]");
+        il.MarkLabel(notArgumentsTypeLabel);
+
         // object[]
         var notArgsLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -360,13 +370,43 @@ public partial class RuntimeEmitter
         EmitTag("[object Number]");
         il.MarkLabel(notDoubleLabel);
 
-        // $TSFunction
-        var notTSFunctionLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
-        il.Emit(OpCodes.Brfalse, notTSFunctionLabel);
-        EmitTag("[object Function]");
-        il.MarkLabel(notTSFunctionLabel);
+        // Function classification — every value the emitted TypeOf reports as
+        // "function" must brand "[object Function]" (ECMA-262 §20.1.3.6 step 7
+        // IsCallable). lodash's baseGetTag/isFunction classifies by this tag;
+        // mismatches send built-in constructors down the host-constructor path
+        // (#314). Mirrors the TypeOf ladder in RuntimeEmitter.CoreUtilities.cs.
+        void EmitFunctionBranch(Type? callableType)
+        {
+            if (callableType == null) return;
+            var notMatch = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, callableType);
+            il.Emit(OpCodes.Brfalse, notMatch);
+            EmitTag("[object Function]");
+            il.MarkLabel(notMatch);
+        }
+
+        EmitFunctionBranch(runtime.TSFunctionType);
+        EmitFunctionBranch(runtime.BoundTSFunctionType);
+        EmitFunctionBranch(runtime.FunctionBindWrapperType);
+        EmitFunctionBranch(runtime.FunctionCallWrapperType);
+        EmitFunctionBranch(runtime.FunctionApplyWrapperType);
+        EmitFunctionBranch(_types.Delegate);
+        if (_features.UsesUtilPromisify)
+        {
+            EmitFunctionBranch(runtime.TSPromisifiedFunctionType);
+            EmitFunctionBranch(runtime.TSDeprecatedFunctionType);
+        }
+        EmitFunctionBranch(runtime.BoundArrayMethodType);
+        if (_features.UsesMap)
+            EmitFunctionBranch(runtime.BoundMapMethodType);
+        if (_features.UsesSet)
+            EmitFunctionBranch(runtime.BoundSetMethodType);
+        EmitFunctionBranch(runtime.BoundAnyFunctionType);
+        // System.Type — built-in constructors and class references held as
+        // values are Type tokens (`var O = Object`); typeof says "function",
+        // so the toString tag must agree (#314).
+        EmitFunctionBranch(_types.Type);
 
         // $Date — ECMA-262 §21.4.4.42 brand check via [[DateValue]] slot.
         if (runtime.TSDateType != null)
