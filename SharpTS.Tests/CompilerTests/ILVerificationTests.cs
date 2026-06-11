@@ -181,6 +181,30 @@ public class ILVerificationTests
     }
 
     [Fact]
+    public void FunctionReturningStringConcat_PassesILVerification()
+    {
+        // A `: string` function whose body produces a runtime-helper result (string concat
+        // or member get) previously left an `object` on the stack where the verifier expected
+        // a string, raising StackUnexpected even though it ran correctly. (#275)
+        var source = """
+            function cat(a: string): string { return "hi " + a; }
+            function viaLocal(a: string): string { let r = "x" + a; return r; }
+            function withNumber(a: number): string { return "val=" + a; }
+            interface Named { name: string; }
+            function pick(n: Named): string { return n.name; }
+            console.log(cat("z"));
+            console.log(viaLocal("y"));
+            console.log(withNumber(42));
+            console.log(pick({ name: "w" }));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("hi z\nxy\nval=42\nw\n", output);
+    }
+
+    [Fact]
     public void TryCatchFinally_PassesILVerification()
     {
         var source = """
