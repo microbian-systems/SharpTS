@@ -459,12 +459,14 @@ public partial class RuntimeEmitter
 
             il.MarkLabel(endLockLabel);
 
-            // tcs.TrySetException(new Exception(reason?.ToString() ?? "Promise rejected"))
+            // tcs.TrySetException(new $PromiseRejectedException(reason)) —
+            // the carrier whose Reason the then/catch state machines extract,
+            // so `new Promise((res, rej) => rej(err)).catch(e => ...)` hands
+            // the guest value through unchanged (mirrors the interpreter's
+            // SharpTSPromiseRejectedException; #232 reason-preservation).
             il.Emit(OpCodes.Ldloc, tcsLocal);
             il.Emit(OpCodes.Ldloc, reasonLocal);
-            il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-            var exceptionCtor = _types.GetConstructor(_types.Exception, [_types.String]);
-            il.Emit(OpCodes.Newobj, exceptionCtor);
+            il.Emit(OpCodes.Newobj, runtime.TSPromiseRejectedExceptionCtor);
             var trySetException = typeof(TaskCompletionSource<object?>).GetMethod("TrySetException", [typeof(Exception)])!;
             il.Emit(OpCodes.Callvirt, trySetException);
             il.Emit(OpCodes.Pop);
