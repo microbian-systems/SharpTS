@@ -757,6 +757,13 @@ public partial class TypeChecker
             return true;
         }
 
+        // tsc's weak-type check (TS2559): an all-optional-properties target rejects a source
+        // with properties but none in common, despite being vacuously satisfied structurally.
+        if (FailsWeakTypeCheck(expected, actual))
+        {
+            return false;
+        }
+
         if (expected is TypeInfo.Interface itf)
         {
             // Callable interface: every target call signature must be satisfied by the source.
@@ -800,6 +807,7 @@ public partial class TypeChecker
                 var allExpectedMembers = itf.GetAllMembers().ToDictionary(m => m.Key, m => m.Value);
                 var allExpectedOptional = itf.GetAllOptionalMembers().ToHashSet();
                 var allActualMembers = actualItf.GetAllMembers().ToDictionary(m => m.Key, m => m.Value);
+                var allActualOptional = actualItf.GetAllOptionalMembers().ToHashSet();
 
                 foreach (var member in allExpectedMembers)
                 {
@@ -808,6 +816,12 @@ public partial class TypeChecker
                         // Member missing - check if optional
                         if (!allExpectedOptional.Contains(member.Key))
                             return false;
+                    }
+                    // A source-OPTIONAL member never satisfies a target-REQUIRED one (presence,
+                    // not type: tsc errors regardless of strictNullChecks).
+                    else if (!allExpectedOptional.Contains(member.Key) && allActualOptional.Contains(member.Key))
+                    {
+                        return false;
                     }
                     else if (!IsMemberCompatible(member.Value, actualMemberType,
                                  itf.IsMethodMember(member.Key) || actualItf.IsMethodMember(member.Key)))
@@ -921,6 +935,11 @@ public partial class TypeChecker
                     // Field missing - only OK if the field is optional
                     if (!expRecord.IsFieldOptional(name))
                         return false;
+                }
+                // Source-optional vs target-required: not satisfied (presence rule).
+                else if (!expRecord.IsFieldOptional(name) && actRecord.IsFieldOptional(name))
+                {
+                    return false;
                 }
                 else if (!IsMemberCompatible(expectedFieldType, actualFieldType,
                              expRecord.IsMethodMember(name) || actRecord.IsMethodMember(name)))

@@ -85,6 +85,14 @@ public enum TypeParameterVariance
 public abstract record TypeInfo
 {
     /// <summary>
+    /// The identity string used by <see cref="TypeInfoEqualityComparer"/> (compatibility-cache
+    /// keys). Defaults to <see cref="object.ToString"/>; NAMED types whose ToString is name-only
+    /// (e.g. <see cref="Interface"/>) override this with a structural fingerprint so same-named
+    /// declarations in different scopes don't collide in the cache.
+    /// </summary>
+    internal virtual string CacheKey() => ToString()!;
+
+    /// <summary>
     /// Represents a spread of a tuple/array type within a tuple: [...T]
     /// The inner type must be constrained to extend unknown[] or be a concrete tuple/array.
     /// </summary>
@@ -504,6 +512,32 @@ public abstract record TypeInfo
         }
 
         public override string ToString() => $"interface {Name}";
+
+        [ThreadStatic] private static int _cacheKeyDepth;
+
+        /// <summary>
+        /// Structural fingerprint: two distinct same-named interfaces (e.g. module-scoped
+        /// redeclarations) must not share a compatibility-cache entry. Nested interface
+        /// references render name-only past depth 1 so recursive types terminate.
+        /// </summary>
+        internal override string CacheKey()
+        {
+            if (_cacheKeyDepth > 1) return $"interface {Name}";
+            _cacheKeyDepth++;
+            try
+            {
+                var parts = Members
+                    .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                    .Select(kv => $"{kv.Key}{(OptionalMembers.Contains(kv.Key) ? "?" : "")}:{kv.Value.CacheKey()}");
+                var ext = Extends is null or { Count: 0 }
+                    ? ""
+                    : "+" + string.Join(",", Extends.Select(e => e.Name).OrderBy(n => n, StringComparer.Ordinal));
+                var idx = $"{(StringIndexType is null ? "" : $"[s]:{StringIndexType.CacheKey()};")}{(NumberIndexType is null ? "" : $"[n]:{NumberIndexType.CacheKey()};")}";
+                var sigs = $"{(CallSignatures is { Count: > 0 } cs ? "call:" + cs.Count : "")}{(ConstructorSignatures is { Count: > 0 } xs ? "ctor:" + xs.Count : "")}";
+                return $"interface {Name}{{{string.Join(";", parts)}}}{idx}{sigs}{ext}";
+            }
+            finally { _cacheKeyDepth--; }
+        }
     }
 
     public record Enum(string Name, FrozenDictionary<string, object> Members, EnumKind Kind, bool IsConst = false) : TypeInfo
@@ -1410,6 +1444,6 @@ public abstract record TypeInfo
 public class TypeInfoEqualityComparer : IEqualityComparer<TypeInfo>
 {
     public static readonly TypeInfoEqualityComparer Instance = new();
-    public bool Equals(TypeInfo? x, TypeInfo? y) => x?.ToString() == y?.ToString();
-    public int GetHashCode(TypeInfo obj) => obj.ToString().GetHashCode();
+    public bool Equals(TypeInfo? x, TypeInfo? y) => x?.CacheKey() == y?.CacheKey();
+    public int GetHashCode(TypeInfo obj) => obj.CacheKey().GetHashCode();
 }

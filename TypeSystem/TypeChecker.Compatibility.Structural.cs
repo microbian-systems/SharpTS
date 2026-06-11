@@ -27,6 +27,13 @@ public partial class TypeChecker
             {
                 return false;
             }
+
+            // A source-OPTIONAL member never satisfies a target-REQUIRED one (presence, not
+            // type — tsc errors regardless of strictNullChecks).
+            if (optionalMembers?.Contains(member.Key) != true && IsMemberOptionalOn(actual, member.Key))
+            {
+                return false;
+            }
         }
         return true;
     }
