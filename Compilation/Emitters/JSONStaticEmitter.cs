@@ -150,6 +150,22 @@ public sealed class JSONStaticEmitter : IStaticTypeEmitterStrategy
         return true;
     }
 
+    /// <summary>
+    /// Canonical source of the spec-stable JSON static methods exposed in value
+    /// form, with the matching <c>$Runtime</c> method and ECMA-262 §17 spec
+    /// length. Consumed both by <see cref="TryEmitStaticPropertyGet"/>
+    /// (<c>let p = JSON.parse</c>) and by the JSON singleton populate step that
+    /// fills <c>_jsonSingleton</c> for value-form receivers
+    /// (<c>const j = JSON; j.stringify(x)</c>, issue #276). The rawJSON/isRawJSON
+    /// proposal stubs are intentionally excluded — they exist only to satisfy
+    /// typeof/isConstructor probes, not to be invoked off a JSON value.
+    /// </summary>
+    internal static IEnumerable<(string Name, MethodInfo? Method, int Length)> EnumerateValueFormMethods(EmittedRuntime runtime)
+    {
+        yield return ("parse",     runtime.JsonParse, 2);
+        yield return ("stringify", runtime.JsonStringify, 3);
+    }
+
     public bool HasStaticProperty(string memberName) =>
         memberName is "parse" or "stringify";
 }

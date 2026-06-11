@@ -326,6 +326,8 @@ public partial class RuntimeEmitter
         // referenced. Idempotent — populate methods early-return if Count > 0.
         DefineObjectPrototypePopulateShell(typeBuilder, runtime);
         DefineArrayPrototypePopulateShell(typeBuilder, runtime);
+        DefineMathSingletonPopulateShell(typeBuilder, runtime);
+        DefineJsonSingletonPopulateShell(typeBuilder, runtime);
         DefineStringPrototypePopulateShell(typeBuilder, runtime);
         DefineNumberPrototypePopulateShell(typeBuilder, runtime);
         DefineBooleanPrototypePopulateShell(typeBuilder, runtime);
@@ -477,6 +479,11 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Call, runtime.ErrorPrototypePopulateMethod);
         cctorIL.Emit(OpCodes.Call, runtime.FunctionPrototypePopulateMethod);
         cctorIL.Emit(OpCodes.Call, runtime.RegExpPrototypePopulateMethod);
+        // Math / JSON value-form singletons (`const m = Math; m.max(...)`). Each
+        // populate is idempotent and skips null backings, so calling the JSON one
+        // unconditionally is safe even when the program doesn't use JSON (#276).
+        cctorIL.Emit(OpCodes.Call, runtime.MathSingletonPopulateMethod);
+        cctorIL.Emit(OpCodes.Call, runtime.JsonSingletonPopulateMethod);
 
         cctorIL.Emit(OpCodes.Ret);
 
@@ -915,6 +922,12 @@ public partial class RuntimeEmitter
             EmitJsonStringify(typeBuilder, runtime);
             EmitJsonStringifyFull(typeBuilder, runtime);
         }
+        // Math / JSON value-form singleton populate bodies. Emitted here — after
+        // EmitMathAdapters (Math.*Adapter) and the JSON methods above — so their
+        // backing MethodBuilders are resolved. JSON helpers are null when JSON is
+        // unused; EmitBuiltinSingletonPopulate skips null backings. (#276)
+        EmitMathSingletonPopulate(runtime);
+        EmitJsonSingletonPopulate(runtime);
         // BigInt methods — gated on UsesBigInt. Detector flips it on for any
         // `123n` literal, bare `BigInt` identifier, or BigInt64Array/BigUint64Array
         // typed-array reference. EmitBigIntBinary in ILEmitter.Operators.cs only

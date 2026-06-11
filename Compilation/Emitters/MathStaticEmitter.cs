@@ -447,48 +447,7 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
         // Stage 4z5: tuple of (adapter, jsName, jsLength) so .name reports
         // the JS-spec name (lowercase) instead of the .NET adapter method
         // name (e.g. "MathFloorAdapter") and .length reports the spec length.
-        // Spec lengths from ECMA-262 21.3.2:
-        //   pow/atan2/imul/max/min ... → 2
-        //   hypot → 2 (per spec); others → 1; random → 0.
-        (MethodInfo? adapter, int len) info = propertyName switch
-        {
-            "floor"  => (runtime.MathFloorAdapter, 1),
-            "ceil"   => (runtime.MathCeilAdapter, 1),
-            "abs"    => (runtime.MathAbsAdapter, 1),
-            "sqrt"   => (runtime.MathSqrtAdapter, 1),
-            "round"  => (runtime.MathRoundAdapter, 1),
-            "trunc"  => (runtime.MathTruncAdapter, 1),
-            "sign"   => (runtime.MathSignAdapter, 1),
-            "sin"    => (runtime.MathSinAdapter, 1),
-            "cos"    => (runtime.MathCosAdapter, 1),
-            "tan"    => (runtime.MathTanAdapter, 1),
-            "log"    => (runtime.MathLogAdapter, 1),
-            "exp"    => (runtime.MathExpAdapter, 1),
-            "pow"    => (runtime.MathPowAdapter, 2),
-            "max"    => (runtime.MathMaxAdapter, 2),
-            "min"    => (runtime.MathMinAdapter, 2),
-            "random" => (runtime.Random, 0),
-            "asin"   => (runtime.MathAsinAdapter, 1),
-            "acos"   => (runtime.MathAcosAdapter, 1),
-            "atan"   => (runtime.MathAtanAdapter, 1),
-            "atan2"  => (runtime.MathAtan2Adapter, 2),
-            "sinh"   => (runtime.MathSinhAdapter, 1),
-            "cosh"   => (runtime.MathCoshAdapter, 1),
-            "tanh"   => (runtime.MathTanhAdapter, 1),
-            "asinh"  => (runtime.MathAsinhAdapter, 1),
-            "acosh"  => (runtime.MathAcoshAdapter, 1),
-            "atanh"  => (runtime.MathAtanhAdapter, 1),
-            "cbrt"   => (runtime.MathCbrtAdapter, 1),
-            "log10"  => (runtime.MathLog10Adapter, 1),
-            "log2"   => (runtime.MathLog2Adapter, 1),
-            "log1p"  => (runtime.MathLog1pAdapter, 1),
-            "expm1"  => (runtime.MathExpm1Adapter, 1),
-            "fround" => (runtime.MathFroundAdapter, 1),
-            "clz32"  => (runtime.MathClz32Adapter, 1),
-            "imul"   => (runtime.MathImulAdapter, 2),
-            "hypot"  => (runtime.MathHypotAdapter, 2),
-            _ => (null, 0)
-        };
+        (MethodInfo? adapter, int len) info = ResolveValueFormMethod(runtime, propertyName);
         if (info.adapter == null) return false;
 
         // $TSFunction.GetOrCreate(MethodInfo, name, length) — cached identity
@@ -503,6 +462,67 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
         il.Emit(OpCodes.Ldc_I4, info.len);
         il.Emit(OpCodes.Call, runtime.TSFunctionGetOrCreate);
         return true;
+    }
+
+    /// <summary>
+    /// Canonical source of the Math static methods exposed in value form, with
+    /// the matching <c>$Runtime</c> adapter and ECMA-262 21.3.2 spec length.
+    /// Consumed both by <see cref="TryEmitStaticPropertyGet"/> (syntactic
+    /// <c>var f = Math.floor</c>) and by the Math singleton populate step that
+    /// fills <c>_mathSingleton</c> for value-form receivers
+    /// (<c>const m = Math; m.floor(x)</c>, issue #276). Single source of truth so
+    /// the two paths can never drift on names/lengths.
+    /// </summary>
+    internal static IEnumerable<(string Name, MethodInfo? Adapter, int Length)> EnumerateValueFormMethods(EmittedRuntime runtime)
+    {
+        yield return ("floor",  runtime.MathFloorAdapter, 1);
+        yield return ("ceil",   runtime.MathCeilAdapter, 1);
+        yield return ("abs",    runtime.MathAbsAdapter, 1);
+        yield return ("sqrt",   runtime.MathSqrtAdapter, 1);
+        yield return ("round",  runtime.MathRoundAdapter, 1);
+        yield return ("trunc",  runtime.MathTruncAdapter, 1);
+        yield return ("sign",   runtime.MathSignAdapter, 1);
+        yield return ("sin",    runtime.MathSinAdapter, 1);
+        yield return ("cos",    runtime.MathCosAdapter, 1);
+        yield return ("tan",    runtime.MathTanAdapter, 1);
+        yield return ("log",    runtime.MathLogAdapter, 1);
+        yield return ("exp",    runtime.MathExpAdapter, 1);
+        yield return ("pow",    runtime.MathPowAdapter, 2);
+        yield return ("max",    runtime.MathMaxAdapter, 2);
+        yield return ("min",    runtime.MathMinAdapter, 2);
+        yield return ("random", runtime.Random, 0);
+        yield return ("asin",   runtime.MathAsinAdapter, 1);
+        yield return ("acos",   runtime.MathAcosAdapter, 1);
+        yield return ("atan",   runtime.MathAtanAdapter, 1);
+        yield return ("atan2",  runtime.MathAtan2Adapter, 2);
+        yield return ("sinh",   runtime.MathSinhAdapter, 1);
+        yield return ("cosh",   runtime.MathCoshAdapter, 1);
+        yield return ("tanh",   runtime.MathTanhAdapter, 1);
+        yield return ("asinh",  runtime.MathAsinhAdapter, 1);
+        yield return ("acosh",  runtime.MathAcoshAdapter, 1);
+        yield return ("atanh",  runtime.MathAtanhAdapter, 1);
+        yield return ("cbrt",   runtime.MathCbrtAdapter, 1);
+        yield return ("log10",  runtime.MathLog10Adapter, 1);
+        yield return ("log2",   runtime.MathLog2Adapter, 1);
+        yield return ("log1p",  runtime.MathLog1pAdapter, 1);
+        yield return ("expm1",  runtime.MathExpm1Adapter, 1);
+        yield return ("fround", runtime.MathFroundAdapter, 1);
+        yield return ("clz32",  runtime.MathClz32Adapter, 1);
+        yield return ("imul",   runtime.MathImulAdapter, 2);
+        yield return ("hypot",  runtime.MathHypotAdapter, 2);
+    }
+
+    /// <summary>
+    /// Looks up a single value-form Math method by name. Returns
+    /// <c>(null, 0)</c> if the name is not a value-form method.
+    /// </summary>
+    internal static (MethodInfo? adapter, int len) ResolveValueFormMethod(EmittedRuntime runtime, string propertyName)
+    {
+        foreach (var (name, adapter, len) in EnumerateValueFormMethods(runtime))
+        {
+            if (name == propertyName) return (adapter, len);
+        }
+        return (null, 0);
     }
 
     public bool HasStaticProperty(string memberName) =>
