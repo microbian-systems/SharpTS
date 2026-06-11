@@ -160,6 +160,91 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
    Wiring fixed en route: ambient `declare let/const` annotations and pre-registered
    (forward-referenced) alias definitions now carry their nodes; arrow-hoisting resolves
    annotations node-first so both resolutions of one annotation agree.
+5a. ✅ **Shipped: operator + conditional coverage (toward slice 6).** Nodes for the remaining
+   composite operators and conditionals, so they stop falling back to the string scanner:
+   `IntersectionTypeNode` (resolved through the same `SimplifyIntersection`), `KeyofTypeNode`,
+   `IndexedAccessTypeNode` (chained `T[K][J]` nests structurally), `ConditionalTypeNode` +
+   `InferTypeNode` (the deferred `ConditionalType` is built node-first; distribution and `infer`
+   inference still run path-independently in `EvaluateConditionalType`), and `TypeQueryNode`
+   (`typeof`, delegating to the same `EvaluateTypeOf`). Conditional alias definitions now carry
+   nodes, so generic conditional aliases expand through `TryExpandGenericAliasFromNode`. Corpus
+   coverage: 68.7% → **75.0%** (410 node / 137 fallback). No baseline movement — the conditional
+   Fails are `EvaluateConditionalType`/`infer`-inference semantic gaps, not string round-trip
+   damage (verified: node and string paths produce identical verdicts).
+5b. ✅ **Shipped: mapped types.** `MappedTypeNode` (parameter, constraint, value, optional
+   `as`-clause, and the `+/-readonly` / `+/-?` modifier flags carried as bools so the syntax layer
+   needs no dependency on `MappedTypeModifiers`). `ParseMappedType` is now a node producer;
+   resolution (`TryResolveMappedType`) mirrors `ParseMappedTypeInfo` exactly — constraint first,
+   then the mapped parameter registered in `_openTypeVariablesInScope` (the SAME shared set) while
+   the as-clause and value type resolve, so their bodies build the identical deferred
+   IndexedAccess/TypeParameter forms `ExpandMappedType` substitutes per key. Generic mapped alias
+   definitions now expand through the node path (`TryExpandGenericAliasFromNode`'s post-pass calls
+   `ExpandMappedType`). A mapped type whose `as`-clause needs a template-literal (no node yet)
+   falls back whole. Corpus annotation-site coverage flat at 75.0% (the corpus's mapped types live
+   inside alias definitions, which the coarse annotation counter doesn't measure) — like slice 3b,
+   the win is the mechanism. No baseline movement; full unit suite green.
+
+5c. ✅ **Shipped: generic signatures + template-literal types.** `GenericFunctionTypeNode`
+   (carries the `TypeParam` list and the body `FunctionTypeNode`; `TryResolveGenericFunctionType`
+   mirrors `TryParseGenericFunctionTypeInfo`'s two-pass scope so constraints/defaults and the body's
+   `T`s resolve identically) and `TemplateLiteralTypeNode` (N+1 static segments around N
+   interpolations; resolves through the same `NormalizeTemplateLiteralType` — concrete parts expand
+   to a string-literal union, a `string` part stays a pattern type). **Fixed a pre-existing latent
+   bug en route:** template-literal types in type position were entirely broken — the lexer emits a
+   `TemplateStringValue` (cooked+raw) but the type parser still cast `Token.Literal` to `string`,
+   so every `` `a${T}` `` annotation threw a parse error on the *string* path too. Now reads
+   `.Cooked` (both paths). Corpus coverage: 75.0% → **87.6%** (479 node / 68 fallback). No baseline
+   movement. Generic *constructor* types (`new <T>(…) => R`) deliberately still fall back.
+
+5d. ✅ **Shipped: long-tail constructs.** `ReadonlyTypeNode` (`readonly T[]` / `readonly [A,B]`
+   → marks the resolved array/tuple readonly), qualified names (the dotted name carries on
+   `NamedTypeNode`, handed to the same single-name / `ResolveGenericType` path), `TypePredicateNode`
+   + `AssertsNonNullTypeNode` (`x is T`, `asserts x is T`, `asserts x` — completes function types
+   with predicate returns), and constrained `infer U extends C` (the whole `U extends C` becomes the
+   inferred parameter's name, matching the string path's `InferredTypeParameter` quirk exactly).
+   Corpus annotation-site coverage flat at 87.6% (these forms live in alias defs / function returns,
+   not the three counted sites) — mechanism, not metric. No baseline movement; equivalence verified
+   (e.g. qualified namespace type-alias exports resolve permissively to `any` on BOTH paths).
+
+5e. ✅ **Shipped: generic signatures — 100% corpus annotation coverage.** An audit of the
+   remaining fallbacks showed they were almost entirely generic constructor types and generic
+   call/construct signatures. `GenericConstructorTypeNode` (`new <T>(…) => R` → object type with a
+   generic construct signature) and object-type generic call/construct signatures
+   (`{ <T>(x): T; <U>(a): U }`, `{ new <T>(x): T[] }`) — `ParseMethodSignature` now keeps its
+   type parameters and emits a `GenericFunctionTypeNode`; the call/construct signature member nodes
+   widened from `FunctionTypeNode` to `TypeNode`. All share one `TryResolveGenericSignature` helper
+   (the two-pass type-parameter scope, mirroring the string path's `ResolveSignature`). Corpus
+   coverage: 87.6% → **100.0% (547 node / 0 fallback)** — every annotation site in the 79-file
+   corpus now resolves through the node path; the string scanner is no longer reached for any of
+   them. No baseline movement; full unit suite green.
+
+   The string path (`ToTypeInfo(string)` / `TypeChecker.TypeParsing.cs`) is still reached for a few
+   long-tail constructs absent from the corpus — bigint literal types (`1n`), `this`-parameter
+   generic/constructor types, `unique symbol` — and remains the implementation for the REPL/embedding
+   API.
+
+   **The construct layer is done; the consumer layer is not.** Coverage above is measured at the
+   `ResolveAnnotation` sites only (originally var/const/function-param-hoist + alias defs + generic
+   args). The *other* annotation consumers — class fields, function/method params, return types,
+   `this` types, interface members, accessors, index signatures, type assertions — still call
+   `ToTypeInfo(string)` directly and must each be flipped to the node path before the scanner can go.
+   There are also internal **rendered-string round-trips** (`ResolveGenericType` arg-string overload,
+   string alias expansion, `SubstituteTypeParamInString`) whose strings are NOT valid source, so
+   they can't be reparsed — they need structural reimplementation, independent of the consumer flips.
+
+5f. ✅ **Shipped (first consumer flip): class field annotations.** `Stmt.Field.TypeAnnotationNode`
+   populated by the parser (captured immediately after the field's `ParseTypeAnnotation`, before the
+   initializer expression); both checker passes (signature collection + body check) resolve via
+   `ResolveAnnotation`. Constructor **parameter properties** (`constructor(public x: T)`) are a
+   separate field-creation path still on the string path. No baseline movement; full unit suite green.
+
+### Slice 6 — deleting the scanner (remaining)
+1. Flip the rest of the annotation consumers to the node path (class/interface members, function
+   signatures, accessors, index signatures, parameter properties, assertions) — mechanical breadth,
+   one AST `…Node` field + parser capture + checker `ResolveAnnotation` per site.
+2. Eliminate the internal rendered-string round-trips (work on `TypeInfo`/nodes, not `ToString()`).
+3. Reimplement `ToTypeInfo(string)` as parse-to-node + convert for the REPL/embedding surface, then
+   delete `TypeChecker.TypeParsing.cs`'s scanning.
 6. Delete `TypeChecker.TypeParsing.cs` string scanning; `ToTypeInfo(string)` survives only
    for the REPL/embedding API surface, implemented as parse-to-node + convert.
 

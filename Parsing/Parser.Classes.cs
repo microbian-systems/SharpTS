@@ -365,11 +365,14 @@ public partial class Parser
                     throw new Exception($"Parse Error at line {fieldName.Line}: A property cannot be both optional and have a definite assignment assertion.");
                 }
 
-                // Type annotation is optional (ES class fields).
+                // Type annotation is optional (ES class fields). Capture the structured node
+                // immediately (before the initializer Expression() can touch the side channel).
                 string? typeAnnotation = null;
+                TypeNode? typeAnnotationNode = null;
                 if (Match(TokenType.COLON))
                 {
                     typeAnnotation = ParseTypeAnnotation();
+                    typeAnnotationNode = TakeTypeNode();
                 }
 
                 Expr? initializer = null;
@@ -390,7 +393,7 @@ public partial class Parser
                 }
 
                 ConsumeSemicolon("Expect ';' after field declaration.");
-                var field = new Stmt.Field(fieldName, typeAnnotation, initializer, isStatic, access, isReadonly, isOptional, hasDefiniteAssignment, memberDecorators, IsPrivate: false, IsDeclare: isMemberDeclare);
+                var field = new Stmt.Field(fieldName, typeAnnotation, initializer, isStatic, access, isReadonly, isOptional, hasDefiniteAssignment, memberDecorators, IsPrivate: false, IsDeclare: isMemberDeclare, TypeAnnotationNode: typeAnnotationNode);
                 fields.Add(field);
                 if (isStatic)
                 {

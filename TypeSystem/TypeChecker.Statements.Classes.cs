@@ -258,9 +258,8 @@ public partial class TypeChecker
             CheckDecorators(field.Decorators, fieldTarget);
 
             string fieldName = field.Name.Lexeme;
-            TypeInfo fieldType = field.TypeAnnotation != null
-                ? ToTypeInfo(field.TypeAnnotation)
-                : new TypeInfo.Any();
+            TypeInfo fieldType = ResolveAnnotation(field.TypeAnnotation, field.TypeAnnotationNode)
+                ?? new TypeInfo.Any();
 
             // Handle ES2022 private fields (#field)
             if (field.IsPrivate)
@@ -976,9 +975,8 @@ public partial class TypeChecker
         // Collect field types
         foreach (var field in classStmt.Fields)
         {
-            TypeInfo fieldType = field.TypeAnnotation != null
-                ? ToTypeInfo(field.TypeAnnotation)
-                : new TypeInfo.Any();
+            TypeInfo fieldType = ResolveAnnotation(field.TypeAnnotation, field.TypeAnnotationNode)
+                ?? new TypeInfo.Any();
 
             if (field.IsStatic)
             {

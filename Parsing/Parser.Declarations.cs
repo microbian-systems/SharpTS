@@ -609,9 +609,11 @@ public partial class Parser
     {
         // Parse optional generic type parameters: <T, U extends Base>
         string genericPrefix = "";
+        List<TypeParam>? methodTypeParams = null;
         if (Check(TokenType.LESS))
         {
-            genericPrefix = FormatTypeParams(ParseTypeParameters());
+            methodTypeParams = ParseTypeParameters();
+            genericPrefix = FormatTypeParams(methodTypeParams);
         }
 
         Consume(TokenType.LEFT_PAREN, "Expect '(' for method parameters.");
@@ -620,8 +622,7 @@ public partial class Parser
         TypeNode? thisTypeNode = null;
         List<string> paramTypes = [];
         List<ParameterTypeNode> paramNodes = [];
-        // Generic signatures await type-parameter scoping (slice 3) — no node for those.
-        bool nodeComplete = genericPrefix.Length == 0;
+        bool nodeComplete = true;
 
         // Check for 'this' parameter in interface method
         if (Check(TokenType.THIS))
@@ -663,10 +664,17 @@ public partial class Parser
         string returnType = ParseTypeAnnotation();
         TypeNode? returnTypeNode = TakeTypeNode();
 
-        // Publish the structured form (or explicitly clear, so no nested node leaks out).
-        _lastTypeNode = nodeComplete && returnTypeNode is not null
+        // Publish the structured form (or explicitly clear, so no nested node leaks out). A generic
+        // method signature wraps the function in a GenericFunctionTypeNode; a `this` parameter has
+        // no slot on a generic signature's resolved form, so those fall back.
+        FunctionTypeNode? functionNode = nodeComplete && returnTypeNode is not null
             ? new FunctionTypeNode(thisTypeNode, paramNodes, returnTypeNode, startLine)
             : null;
+        _lastTypeNode = functionNode is null
+            ? null
+            : methodTypeParams is { Count: > 0 }
+                ? (thisTypeNode is null ? new GenericFunctionTypeNode(methodTypeParams, functionNode, startLine) : null)
+                : functionNode;
 
         if (thisType != null)
         {

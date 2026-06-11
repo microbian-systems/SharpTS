@@ -30,14 +30,49 @@ public class TypeNodeSliceTests
     [Fact]
     public void NodePath_FallsBackForUnsupportedConstructs()
     {
-        // Mapped-type alias bodies have no node form yet, so the reference falls back.
+        // bigint literal types (1n) still have no node form, so they fall back.
         TypeNodeStats.Reset();
         TestHarness.RunInterpreted("""
-            type RO<T> = { [K in keyof T]: T[K] };
-            var r: RO<{ a: number }> = { a: 1 };
+            let x: 1n;
             """);
         Assert.True(TypeNodeStats.StringFallbacks >= 1,
-            $"expected the mapped-alias annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+            $"expected the bigint-literal-type annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+    }
+
+    [Fact]
+    public void NodePath_EngagesForMappedAlias()
+    {
+        // Mapped-type alias bodies now carry nodes, so the reference expands node-first.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            type RO<T> = { readonly [K in keyof T]: T[K] };
+            type Partialize<T> = { [K in keyof T]?: T[K] };
+            var r: RO<{ a: number }> = { a: 1 };
+            var p: Partialize<{ a: number; b: string }> = { a: 1 };
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 2,
+            $"expected the mapped-alias annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_MappedTypePreservesValueType()
+    {
+        // RO<{ a: number }> maps to { readonly a: number }; a string value must be rejected.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type RO<T> = { readonly [K in keyof T]: T[K] };
+            var r: RO<{ a: number }> = { a: "x" };
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_MappedTypeOptionalModifierMatchesStringPath()
+    {
+        // Partialize makes every member optional, so omitting one is allowed.
+        TestHarness.RunInterpreted("""
+            type Partialize<T> = { [K in keyof T]?: T[K] };
+            var p: Partialize<{ a: number; b: string }> = { a: 1 };
+            """);
     }
 
     [Fact]
@@ -90,8 +125,10 @@ public class TypeNodeSliceTests
     public void NodePath_EngagesForGenericReferences()
     {
         TypeNodeStats.Reset();
+        // Plain fields (not constructor parameter properties) so this stays focused on the generic
+        // references — parameter-property fields are a separate consumer site not yet node-wired.
         TestHarness.RunInterpreted("""
-            class Pair<A, B> { constructor(public first: A, public second: B) {} }
+            class Pair<A, B> { first!: A; second!: B; constructor(a: A, b: B) {} }
             var xs: Array<number> = [1, 2];
             var p: Promise<string> = Promise.resolve("x");
             var pr: Pair<string, number> = new Pair<string, number>("x", 1);
@@ -264,5 +301,250 @@ public class TypeNodeSliceTests
         TestHarness.RunInterpreted("""
             var a: any | never = null;
             """);
+    }
+
+    [Fact]
+    public void NodePath_EngagesForIntersectionKeyofIndexedAndTypeof()
+    {
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            type A = { a: number };
+            type B = { b: string };
+            var ab: A & B = { a: 1, b: "x" };
+            var k: keyof A = "a";
+            var v: A["a"] = 1;
+            const origin = { n: 5 };
+            var t: typeof origin = origin;
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 4,
+            $"expected the node path for intersection/keyof/indexed/typeof, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_IntersectionMergesMembers()
+    {
+        // Both members' properties are required in the merged type.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type A = { a: number };
+            type B = { b: string };
+            var ab: A & B = { a: 1 };
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_KeyofEnforcesKeys()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type A = { a: number; b: string };
+            var k: keyof A = "c";
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_IndexedAccessEnforcesValueType()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type A = { a: number };
+            var v: A["a"] = "not a number";
+            """));
+    }
+
+    [Fact]
+    public void NodePath_EngagesForConditionalAliasWithInfer()
+    {
+        // The alias definition is now a ConditionalTypeNode carrying an InferTypeNode, so the
+        // reference expands through the node path (no string fallback).
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            type Elem<T> = T extends (infer U)[] ? U : never;
+            var e: Elem<number[]> = 1;
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 1,
+            $"expected the conditional/infer alias on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_ConditionalEvaluatesToSelectedBranch()
+    {
+        // IsNum<number> resolves to the true branch ("yes"), so "no" must be rejected — the same
+        // verdict the string path produces (EvaluateConditionalType is path-independent).
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type IsNum<T> = T extends number ? "yes" : "no";
+            var r: IsNum<number> = "no";
+            """));
+        // The false branch is selected for a non-number argument.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type IsNum<T> = T extends number ? "yes" : "no";
+            var r: IsNum<string> = "yes";
+            """));
+    }
+
+    [Fact]
+    public void NodePath_EngagesForGenericFunctionType()
+    {
+        // Declaration-only so the (pre-existing, path-independent) generic-arrow assignment
+        // limitation doesn't mask which path resolved the annotation.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            let id: <T>(x: T) => T;
+            let pick: <T extends object, K extends keyof T>(o: T, k: K) => T[K];
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 2,
+            $"expected the generic-function-type annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_GenericFunctionTypeResolvesWithoutError()
+    {
+        // A generic function type whose body references its own type parameters (keyof T, T[K])
+        // must resolve cleanly — the parameters resolve in the signature's fresh scope, not to any.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            let get: <T, K extends keyof T>(o: T, k: K) => T[K];
+            let map: <T, U>(items: T[], f: (x: T) => U) => U[];
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 2,
+            $"expected both generic-function annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodePath_EngagesForTemplateLiteralType()
+    {
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            type Dir = "left" | "right";
+            var s: `padding-${Dir}` = "padding-left";
+            var f: `f-${string}` = "f-anything";
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 2,
+            $"expected the template-literal annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodePath_EngagesForClassFieldAnnotations()
+    {
+        // Class field type annotations now resolve node-first (consumer wired off the string path).
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            class C {
+                a: number = 1;
+                b: string[] = [];
+                c: { x: number } = { x: 0 };
+            }
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 3,
+            $"expected the class-field annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_ClassFieldEnforcesAnnotatedType()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            class C { a: number = "not a number"; }
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_TemplateLiteralExpandsConcreteUnion()
+    {
+        // `padding-${Dir}` expands to "padding-left" | "padding-right"; another value is rejected.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type Dir = "left" | "right";
+            var s: `padding-${Dir}` = "padding-up";
+            """));
+    }
+
+    [Fact]
+    public void NodePath_EngagesForReadonlyAndQualifiedAndPredicate()
+    {
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            namespace N { export type Id = number; }
+            var ro: readonly number[] = [1, 2];
+            var rt: readonly [number, string] = [1, "x"];
+            var q: N.Id = 5;
+            var pred: (x: unknown) => x is string;
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 4,
+            $"expected readonly/qualified/predicate annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_ReadonlyArrayStillEnforcesElementType()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var a: readonly number[] = ["x"];
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_QualifiedNameMatchesStringPath()
+    {
+        // The dotted name is handed to the same single-name resolution as the string path; the
+        // checker resolves namespace type-alias exports permissively (to any), so this assigns
+        // cleanly on BOTH paths — the node path introduces no divergence.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            namespace N { export type Id = number; }
+            var q: N.Id = 5;
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 1,
+            $"expected the qualified-name annotation on the node path, got {TypeNodeStats.NodeHits}");
+    }
+
+    [Fact]
+    public void NodePath_EngagesForGenericConstructorType()
+    {
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            let make: new <T>(x: T) => T[];
+            let build: new <T extends object, K extends keyof T>(o: T, k: K) => T[K];
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 2,
+            $"expected the generic-constructor-type annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodePath_EngagesForObjectTypeWithGenericSignatures()
+    {
+        // Overloaded generic call signatures and a generic construct signature inside object types.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            let overloads: { <T>(x: T): T; <U, V>(a: U, b: V): U };
+            let factory: { new <T>(x: T): T[] };
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 2,
+            $"expected the object-type generic-signature annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_GenericConstructorTypeIsConstructable()
+    {
+        // A generic constructor type resolves to a constructable object type; a non-constructable
+        // value must be rejected — the same verdict the string path produces.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var ctor: new <T>(x: T) => T[] = 42;
+            """));
+    }
+
+    [Fact]
+    public void NodePath_EngagesForConstrainedInferAlias()
+    {
+        // `infer U extends string` now carries a node, so the conditional alias expands node-first.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            type StrElem<T> = T extends Array<infer U extends string> ? U : never;
+            var e: StrElem<string[]> = "x";
+            """);
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
     }
 }

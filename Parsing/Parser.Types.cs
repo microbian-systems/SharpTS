@@ -35,17 +35,20 @@ public partial class Parser
             if (Check(TokenType.IDENTIFIER))
             {
                 string paramName = Advance().Lexeme;
+                int assertsLine = Previous().Line;
                 if (Match(TokenType.IS))
                 {
                     // asserts x is T
                     string predicateType = ParseConditionalType();
-                    _lastTypeNode = null; // predicates have no node form yet
+                    _lastTypeNode = TakeTypeNode() is { } predNode
+                        ? new TypePredicateNode(paramName, predNode, IsAssertion: true, assertsLine)
+                        : null;
                     return $"asserts {paramName} is {predicateType}";
                 }
                 else
                 {
                     // asserts x (shorthand for asserting non-null/truthy)
-                    _lastTypeNode = null;
+                    _lastTypeNode = new AssertsNonNullTypeNode(paramName, assertsLine);
                     return $"asserts {paramName}";
                 }
             }
@@ -58,10 +61,13 @@ public partial class Parser
         // Check for "x is T" / "this is T" type predicate: an identifier (or `this`) followed by `is`.
         if ((Check(TokenType.IDENTIFIER) || Check(TokenType.THIS)) && PeekNext().Type == TokenType.IS)
         {
+            int predLine = Peek().Line;
             string paramName = Advance().Lexeme;
             Consume(TokenType.IS, "Expected 'is' after parameter name.");
             string predicateType = ParseConditionalType();
-            _lastTypeNode = null; // predicates have no node form yet
+            _lastTypeNode = TakeTypeNode() is { } predNode
+                ? new TypePredicateNode(paramName, predNode, IsAssertion: false, predLine)
+                : null;
             return $"{paramName} is {predicateType}";
         }
 
@@ -223,9 +229,11 @@ public partial class Parser
         int saved = _current;
         Advance(); // consume 'extends'
 
+        int conditionalLine = Previous().Line;
+
         // Parse the extends type (which may contain 'infer' keywords)
         string extendsType = ParseUnionType();
-        _lastTypeNode = null; // discard the lookahead's node
+        TypeNode? extendsNode = TakeTypeNode();
 
         // Must have '?' for this to be a conditional type
         if (!Check(TokenType.QUESTION))
@@ -240,13 +248,18 @@ public partial class Parser
 
         // Parse true branch (recursive - can contain nested conditionals)
         string trueType = ParseConditionalType();
+        TypeNode? trueNode = TakeTypeNode();
 
         Consume(TokenType.COLON, "Expect ':' in conditional type.");
 
         // Parse false branch (recursive - can contain nested conditionals)
         string falseType = ParseConditionalType();
+        TypeNode? falseNode = TakeTypeNode();
 
-        _lastTypeNode = null; // conditional types have no node form yet
+        _lastTypeNode = checkNode is not null && extendsNode is not null
+                        && trueNode is not null && falseNode is not null
+            ? new ConditionalTypeNode(checkNode, extendsNode, trueNode, falseNode, conditionalLine)
+            : null;
         return $"{checkType} extends {extendsType} ? {trueType} : {falseType}";
     }
 
@@ -291,18 +304,29 @@ public partial class Parser
         // is written on its own line):  type T = & A & B;
         Match(TokenType.AMPERSAND);
 
+        int startLine = Peek().Line;
         List<string> types = [ParsePrimaryType()];
-        TypeNode? singleNode = TakeTypeNode();
+        List<TypeNode>? memberNodes = TakeTypeNode() is { } firstNode ? [firstNode] : null;
 
         while (Match(TokenType.AMPERSAND))
         {
             types.Add(ParsePrimaryType());
-            TakeTypeNode(); // intersections have no node form yet
-            singleNode = null;
+            var node = TakeTypeNode();
+            if (memberNodes is not null && node is not null)
+                memberNodes.Add(node);
+            else
+                memberNodes = null; // any node-less member disables the intersection node
         }
 
-        _lastTypeNode = types.Count == 1 ? singleNode : null;
-        return types.Count == 1 ? types[0] : string.Join(" & ", types);
+        if (types.Count == 1)
+        {
+            _lastTypeNode = memberNodes is { Count: 1 } ? memberNodes[0] : null;
+            return types[0];
+        }
+        _lastTypeNode = memberNodes is { } all && all.Count == types.Count
+            ? new IntersectionTypeNode(all, startLine)
+            : null;
+        return string.Join(" & ", types);
     }
 
     private string ParsePrimaryType()
@@ -319,9 +343,10 @@ public partial class Parser
         // nested positions. ToTypeInfo marks the array/tuple readonly.
         if (Check(TokenType.READONLY))
         {
+            int readonlyLine = Peek().Line;
             Advance();
             string readonlyInner = ParsePrimaryType();
-            _lastTypeNode = null; // readonly modifier has no node form yet
+            _lastTypeNode = TakeTypeNode() is { } innerNode ? new ReadonlyTypeNode(innerNode, readonlyLine) : null;
             return "readonly " + readonlyInner;
         }
 
@@ -333,10 +358,13 @@ public partial class Parser
             {
                 // Constraint binds tighter than the enclosing conditional's `?`, so stop at union level.
                 string constraint = ParseUnionType();
-                _lastTypeNode = null;
+                TakeTypeNode(); // drain the constraint's side-channel node
+                // Mirror the string path exactly: the whole "U extends C" becomes the inferred
+                // parameter's name (the checker's InferredTypeParameter has no separate constraint).
+                _lastTypeNode = new InferTypeNode($"{paramName.Lexeme} extends {constraint}", paramName.Line);
                 return $"infer {paramName.Lexeme} extends {constraint}";
             }
-            _lastTypeNode = null;
+            _lastTypeNode = new InferTypeNode(paramName.Lexeme, paramName.Line);
             return $"infer {paramName.Lexeme}";
         }
 
@@ -352,17 +380,22 @@ public partial class Parser
         // constructable-object-type modelling.
         if (Match(TokenType.NEW))
         {
+            int ctorLine = Previous().Line;
             string genericPrefix = "";
+            List<TypeParam>? ctorTypeParams = null;
             if (Check(TokenType.LESS))
             {
-                genericPrefix = FormatTypeParams(ParseTypeParameters());
+                ctorTypeParams = ParseTypeParameters();
+                genericPrefix = FormatTypeParams(ctorTypeParams);
             }
             Consume(TokenType.LEFT_PAREN, "Expect '(' in constructor type.");
             string ctorBody = ParseFunctionTypeBody(); // returns "(params) => ReturnType"
-            // Generic constructor types await type-parameter scoping (slice 3), and a `this`
-            // parameter has no slot on a ConstructorSignature — both fall back to the string path.
-            _lastTypeNode = TakeTypeNode() is FunctionTypeNode { ThisType: null } ctorFn && genericPrefix.Length == 0
-                ? new ConstructorTypeNode(ctorFn.Parameters, ctorFn.ReturnType, ctorFn.Line)
+            // A `this` parameter has no slot on a ConstructorSignature, so it falls back. Otherwise
+            // the construct signature (with or without type parameters) carries onto a node.
+            _lastTypeNode = TakeTypeNode() is FunctionTypeNode { ThisType: null } ctorFn
+                ? (ctorTypeParams is { Count: > 0 }
+                    ? new GenericConstructorTypeNode(ctorTypeParams, ctorFn, ctorLine)
+                    : new ConstructorTypeNode(ctorFn.Parameters, ctorFn.ReturnType, ctorFn.Line))
                 : null;
             return $"{{ new {genericPrefix}{ctorBody} }}";
         }
@@ -370,8 +403,9 @@ public partial class Parser
         // Handle keyof prefix operator: keyof T
         if (Match(TokenType.KEYOF))
         {
+            int keyofLine = Previous().Line;
             string innerType = ParsePrimaryType();
-            _lastTypeNode = null;
+            _lastTypeNode = TakeTypeNode() is { } innerNode ? new KeyofTypeNode(innerNode, keyofLine) : null;
             return $"keyof {innerType}";
         }
 
@@ -390,6 +424,7 @@ public partial class Parser
         // Handle typeof in type position: typeof someVariable, typeof obj.prop, typeof arr[0]
         if (Match(TokenType.TYPEOF))
         {
+            int typeofLine = Previous().Line;
             StringBuilder sb = new();
             sb.Append("typeof ");
 
@@ -445,7 +480,9 @@ public partial class Parser
                 }
             }
 
-            _lastTypeNode = null;
+            // The entity path is everything after the "typeof " prefix; the resolver hands it to
+            // the same EvaluateTypeOf the string path uses.
+            _lastTypeNode = new TypeQueryNode(sb.ToString()["typeof ".Length..], typeofLine);
             return sb.ToString();
         }
 
@@ -454,11 +491,16 @@ public partial class Parser
         // type-parameter list (e.g. `<U extends boolean>(a: U) => never`).
         if (Check(TokenType.LESS))
         {
+            int genericLine = Peek().Line;
             List<TypeParam>? typeParams = ParseTypeParameters(); // consumes <...>
             Consume(TokenType.LEFT_PAREN, "Expect '(' after type parameters in function type.");
             string body = ParseFunctionTypeBody(); // returns "(params) => ReturnType"
+            // The checker resolves type-parameter constraints/defaults from their TypeParam strings
+            // in a fresh scope, so the node only needs the params plus a node-formed body.
+            _lastTypeNode = typeParams is { Count: > 0 } && TakeTypeNode() is FunctionTypeNode bodyNode
+                ? new GenericFunctionTypeNode(typeParams, bodyNode, genericLine)
+                : null;
             string genericPrefix = FormatTypeParams(typeParams);
-            _lastTypeNode = null;
             return $"{genericPrefix}{body}";
         }
 
@@ -533,11 +575,15 @@ public partial class Parser
         // Handle template literal types: `literal` or `prefix${Type}suffix`
         else if (Match(TokenType.TEMPLATE_FULL))
         {
-            typeName = "`" + (string)Previous().Literal! + "`";
+            string literal = ((TemplateStringValue)Previous().Literal!).Cooked ?? "";
+            typeName = "`" + literal + "`";
+            // No interpolations — a single static segment (resolves to a string-literal type).
+            typeNode = new TemplateLiteralTypeNode([literal], [], Previous().Line);
         }
         else if (Match(TokenType.TEMPLATE_HEAD))
         {
             typeName = ParseTemplateLiteralType();
+            typeNode = TakeTypeNode();
         }
         // Handle string literal types: "success" | "error"
         else if (Match(TokenType.STRING))
@@ -580,12 +626,15 @@ public partial class Parser
             typeNode = new NamedTypeNode(typeName, null, Previous().Line);
 
             // Qualified type name (namespace member): `Intl.CollatorOptions`, `NodeJS.Timer`.
+            // The dotted name carries on the NamedTypeNode; resolution hands the whole "Foo.Bar"
+            // to the same single-name path the string side uses (and ResolveGenericType for
+            // `Foo.Bar<T>`), so namespace lookup is identical.
             while (Check(TokenType.DOT) &&
                    (PeekNext().Type == TokenType.IDENTIFIER || IsContextualKeyword(PeekNext().Type)))
             {
                 Advance(); // consume '.'
                 typeName += "." + Advance().Lexeme;
-                typeNode = null; // qualified names have no node form yet
+                typeNode = new NamedTypeNode(typeName, null, Previous().Line);
             }
         }
         else
@@ -647,10 +696,14 @@ public partial class Parser
             else
             {
                 // Indexed access type: T[K] or T["key"]
+                int indexLine = Previous().Line;
                 string indexType = ParseTypeAnnotation();
+                TypeNode? indexNode = TakeTypeNode();
                 Consume(TokenType.RIGHT_BRACKET, "Expect ']' after indexed access type.");
+                typeNode = typeNode is { } objNode && indexNode is not null
+                    ? new IndexedAccessTypeNode(objNode, indexNode, indexLine)
+                    : null;
                 typeName = $"{typeName}[{indexType}]";
-                typeNode = null; // indexed access has no node form yet
             }
         }
 
@@ -783,9 +836,7 @@ public partial class Parser
         // Mapped types have a single member that uses 'in' instead of ':'
         if (IsMappedTypeStart())
         {
-            string mapped = ParseMappedType();
-            _lastTypeNode = null; // mapped types have no node yet
-            return mapped;
+            return ParseMappedType(); // sets _lastTypeNode (or null) itself
         }
 
         while (!Check(TokenType.RIGHT_BRACE) && !IsAtEnd())
@@ -872,7 +923,8 @@ public partial class Parser
                 // type, producing an arrow string "(params) => ret"; prefix "new " for a
                 // construct signature so ParseInlineObjectTypeInfo can tell the two apart.
                 members.Add("new " + ParseMethodSignature());
-                if (TakeTypeNode() is FunctionTypeNode ctorSig)
+                var ctorSig = TakeTypeNode();
+                if (ctorSig is FunctionTypeNode or GenericFunctionTypeNode)
                     memberNodes.Add(new ConstructSignatureMemberNode(ctorSig, newLine));
                 else
                     nodeComplete = false;
@@ -882,7 +934,8 @@ public partial class Parser
             {
                 int callLine = Peek().Line;
                 members.Add(ParseMethodSignature());
-                if (TakeTypeNode() is FunctionTypeNode callSig)
+                var callSig = TakeTypeNode();
+                if (callSig is FunctionTypeNode or GenericFunctionTypeNode)
                     memberNodes.Add(new CallSignatureMemberNode(callSig, callLine));
                 else
                     nodeComplete = false;
@@ -1001,14 +1054,18 @@ public partial class Parser
     /// </summary>
     private string ParseMappedType()
     {
-        // Parse optional leading modifiers: +readonly, -readonly, readonly
+        int startLine = Peek().Line;
+        // Parse optional leading modifiers: +readonly, -readonly, readonly. Track flags alongside
+        // the string spelling so the node carries the same modifier intent the string path derives.
         string readonlyMod = "";
+        bool addReadonly = false, removeReadonly = false;
         if (Match(TokenType.PLUS))
         {
             if (Check(TokenType.READONLY))
             {
                 Advance();
                 readonlyMod = "+readonly ";
+                addReadonly = true;
             }
             else
             {
@@ -1021,6 +1078,7 @@ public partial class Parser
             {
                 Advance();
                 readonlyMod = "-readonly ";
+                removeReadonly = true;
             }
             else
             {
@@ -1030,6 +1088,7 @@ public partial class Parser
         else if (Match(TokenType.READONLY))
         {
             readonlyMod = "readonly ";
+            addReadonly = true; // plain readonly == AddReadonly (mirrors ParseMappedTypeInfo)
         }
 
         // Parse [K in Constraint]
@@ -1043,12 +1102,17 @@ public partial class Parser
 
         // Parse constraint (e.g., keyof T, or a union of string literals)
         string constraint = ParseTypeAnnotation();
+        TypeNode? constraintNode = TakeTypeNode();
 
         // Parse optional 'as' clause for key remapping
         string asClause = "";
+        TypeNode? asNode = null;
+        bool hasAs = false;
         if (Match(TokenType.AS))
         {
+            hasAs = true;
             string remapType = ParseTypeAnnotation();
+            asNode = TakeTypeNode();
             asClause = $" as {remapType}";
         }
 
@@ -1056,11 +1120,13 @@ public partial class Parser
 
         // Parse optional trailing modifiers: +?, -?, ?
         string optionalMod = "";
+        bool addOptional = false, removeOptional = false;
         if (Match(TokenType.PLUS))
         {
             if (Match(TokenType.QUESTION))
             {
                 optionalMod = "+?";
+                addOptional = true;
             }
             else
             {
@@ -1072,6 +1138,7 @@ public partial class Parser
             if (Match(TokenType.QUESTION))
             {
                 optionalMod = "-?";
+                removeOptional = true;
             }
             else
             {
@@ -1081,16 +1148,24 @@ public partial class Parser
         else if (Match(TokenType.QUESTION))
         {
             optionalMod = "?";
+            addOptional = true;
         }
 
         // Parse : ValueType
         Consume(TokenType.COLON, "Expect ':' after mapped type parameter.");
         string valueType = ParseTypeAnnotation();
+        TypeNode? valueNode = TakeTypeNode();
 
         // Handle optional separator and closing brace
         Match(TokenType.SEMICOLON);
         Consume(TokenType.RIGHT_BRACE, "Expect '}' after mapped type.");
 
+        // The node needs the constraint, the value type, and (when present) the as-clause to all
+        // have node forms. Any missing component drops the whole mapped type to the string path.
+        _lastTypeNode = constraintNode is not null && valueNode is not null && (!hasAs || asNode is not null)
+            ? new MappedTypeNode(paramName.Lexeme, constraintNode, valueNode, asNode,
+                addReadonly, removeReadonly, addOptional, removeOptional, startLine)
+            : null;
         return $"{{ {readonlyMod}[{paramName.Lexeme} in {constraint}{asClause}]{optionalMod}: {valueType} }}";
     }
 
@@ -1258,28 +1333,44 @@ public partial class Parser
     /// </summary>
     private string ParseTemplateLiteralType()
     {
+        int startLine = Previous().Line;
         var sb = new StringBuilder("`");
-        sb.Append((string)Previous().Literal!); // head string
+        // Static segments (N+1) around the N interpolations, mirroring NormalizeTemplateLiteralType.
+        var strings = new List<string>();
+        var interpolated = new List<TypeNode>();
+        bool nodeComplete = true;
+
+        // Template tokens carry a TemplateStringValue (cooked + raw); the type uses the cooked text.
+        string head = ((TemplateStringValue)Previous().Literal!).Cooked ?? "";
+        sb.Append(head);
+        strings.Add(head);
 
         // Parse first interpolated type
         sb.Append("${");
         sb.Append(ParseUnionType()); // Allow unions inside interpolation
         sb.Append('}');
+        if (TakeTypeNode() is { } firstNode) interpolated.Add(firstNode); else nodeComplete = false;
 
         // Parse middle parts
         while (Match(TokenType.TEMPLATE_MIDDLE))
         {
-            sb.Append((string)Previous().Literal!);
+            string mid = ((TemplateStringValue)Previous().Literal!).Cooked ?? "";
+            sb.Append(mid);
+            strings.Add(mid);
             sb.Append("${");
             sb.Append(ParseUnionType());
             sb.Append('}');
+            if (TakeTypeNode() is { } midNode) interpolated.Add(midNode); else nodeComplete = false;
         }
 
         // Expect tail
         Consume(TokenType.TEMPLATE_TAIL, "Expect end of template literal type.");
-        sb.Append((string)Previous().Literal!);
+        string tail = ((TemplateStringValue)Previous().Literal!).Cooked ?? "";
+        sb.Append(tail);
         sb.Append('`');
+        strings.Add(tail);
 
+        _lastTypeNode = nodeComplete ? new TemplateLiteralTypeNode(strings, interpolated, startLine) : null;
         return sb.ToString();
     }
 }

@@ -79,6 +79,105 @@ public partial class TypeChecker
                 return members.Aggregate(CreateUnion);
             }
 
+            case IntersectionTypeNode intersection:
+            {
+                List<TypeInfo> members = new(intersection.Members.Count);
+                foreach (var member in intersection.Members)
+                {
+                    if (TryToTypeInfo(member) is not { } resolved) return null;
+                    members.Add(resolved);
+                }
+                // Identical merge rules (primitive conflicts, object-member union, never/any
+                // absorption) as the string path's "A & B" split.
+                return SimplifyIntersection(members);
+            }
+
+            case KeyofTypeNode keyof:
+                return TryToTypeInfo(keyof.Operand) is { } operand ? new TypeInfo.KeyOf(operand) : null;
+
+            case IndexedAccessTypeNode indexed:
+            {
+                if (TryToTypeInfo(indexed.ObjectType) is not { } objectType) return null;
+                if (TryToTypeInfo(indexed.IndexType) is not { } indexType) return null;
+                // Chained T[K][J] is already nested structurally by the parser, so a single
+                // IndexedAccess per node mirrors the string path's iterative suffix consumption.
+                return new TypeInfo.IndexedAccess(objectType, indexType);
+            }
+
+            // Deferred form — distribution and `infer` inference run later in
+            // EvaluateConditionalType, exactly as for a string-built ConditionalType.
+            case ConditionalTypeNode conditional:
+            {
+                if (TryToTypeInfo(conditional.CheckType) is not { } checkType) return null;
+                if (TryToTypeInfo(conditional.ExtendsType) is not { } extendsType) return null;
+                if (TryToTypeInfo(conditional.TrueType) is not { } trueType) return null;
+                if (TryToTypeInfo(conditional.FalseType) is not { } falseType) return null;
+                return new TypeInfo.ConditionalType(checkType, extendsType, trueType, falseType);
+            }
+
+            case InferTypeNode infer:
+                return new TypeInfo.InferredTypeParameter(infer.Name);
+
+            // `readonly T[]` / `readonly [A, B]` — mark the resolved array/tuple readonly; any other
+            // inner type ignores the modifier (mirrors ToTypeInfoCore's readonly branch).
+            case ReadonlyTypeNode ro:
+                return TryToTypeInfo(ro.Inner) switch
+                {
+                    null => null,
+                    TypeInfo.Array arr => arr with { IsReadonly = true },
+                    TypeInfo.Tuple tup => tup with { IsReadonly = true },
+                    { } inner => inner,
+                };
+
+            case TypePredicateNode predicate:
+                return TryToTypeInfo(predicate.PredicateType) is { } predType
+                    ? new TypeInfo.TypePredicate(predicate.ParameterName, predType, predicate.IsAssertion)
+                    : null;
+
+            case AssertsNonNullTypeNode asserts:
+                return new TypeInfo.AssertsNonNull(asserts.ParameterName);
+
+            // typeof resolves through the same evaluator as the string path; the node only spares
+            // the top-level scan that splits unions/intersections before `typeof` (the parser
+            // already separated them into sibling nodes).
+            case TypeQueryNode query:
+                return EvaluateTypeOf(query.EntityPath);
+
+            case GenericFunctionTypeNode genericFn:
+            {
+                if (TryResolveGenericSignature(genericFn.TypeParameters, genericFn.Body) is not ({ } typeParams, { } func))
+                    return null;
+                return new TypeInfo.GenericFunction(
+                    typeParams, func.ParamTypes, func.ReturnType, func.RequiredParams, func.HasRestParam,
+                    func.ThisType, func.ParamNames);
+            }
+
+            // `new <T>(…) => R` — an object type with a single GENERIC construct signature, mirroring
+            // the string path's "{ new <T>(…) => R }" rendering resolved via ResolveSignature.
+            case GenericConstructorTypeNode genericCtor:
+            {
+                if (TryResolveGenericSignature(genericCtor.TypeParameters, genericCtor.Body) is not ({ } typeParams, { } func))
+                    return null;
+                var signature = new TypeInfo.ConstructorSignature(
+                    typeParams, func.ParamTypes, func.ReturnType, func.RequiredParams, func.HasRestParam, func.ParamNames);
+                return new TypeInfo.Record(
+                    FrozenDictionary<string, TypeInfo>.Empty,
+                    ConstructorSignatures: [signature]);
+            }
+
+            case TemplateLiteralTypeNode template:
+            {
+                List<TypeInfo> interpolated = new(template.InterpolatedTypes.Count);
+                foreach (var part in template.InterpolatedTypes)
+                {
+                    if (TryToTypeInfo(part) is not { } resolved) return null;
+                    interpolated.Add(resolved);
+                }
+                // Same normalization the string path applies: all-concrete → union of string
+                // literals; a string-primitive part → pattern TemplateLiteralType.
+                return NormalizeTemplateLiteralType(template.Strings, interpolated);
+            }
+
             case FunctionTypeNode fn:
             {
                 TypeInfo? thisType = null;
@@ -110,6 +209,9 @@ public partial class TypeChecker
             case ObjectTypeNode obj:
                 return TryResolveObjectType(obj);
 
+            case MappedTypeNode mapped:
+                return TryResolveMappedType(mapped);
+
             case TupleTypeNode tuple:
                 return TryResolveTupleType(tuple);
 
@@ -131,8 +233,8 @@ public partial class TypeChecker
         TypeInfo? stringIndexType = null;
         TypeInfo? numberIndexType = null;
         TypeInfo? symbolIndexType = null;
-        List<FunctionTypeNode> callSignatures = [];
-        List<FunctionTypeNode> constructSignatures = [];
+        List<TypeNode> callSignatures = [];
+        List<TypeNode> constructSignatures = [];
 
         foreach (var member in obj.Members)
         {
@@ -180,14 +282,16 @@ public partial class TypeChecker
         foreach (var signature in callSignatures)
         {
             // The string path's CallSignature copies drop a `this` type; mirror via the parts.
-            if (TryToTypeInfo(signature) is not TypeInfo.Function f) return null;
-            (recCallSigs ??= []).Add(new TypeInfo.CallSignature(null, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
+            // Generic overloads carry their type parameters (resolved through the shared scope);
+            // non-generic signatures bind a null tps.
+            if (ResolveSignatureNode(signature) is not (var tps, { } f)) return null;
+            (recCallSigs ??= []).Add(new TypeInfo.CallSignature(tps, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
         }
         List<TypeInfo.ConstructorSignature>? recCtorSigs = null;
         foreach (var signature in constructSignatures)
         {
-            if (TryToTypeInfo(signature) is not TypeInfo.Function f) return null;
-            (recCtorSigs ??= []).Add(new TypeInfo.ConstructorSignature(null, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
+            if (ResolveSignatureNode(signature) is not (var tps, { } f)) return null;
+            (recCtorSigs ??= []).Add(new TypeInfo.ConstructorSignature(tps, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
         }
 
         return new TypeInfo.Record(
@@ -252,6 +356,99 @@ public partial class TypeChecker
         }
 
         return new TypeInfo.Tuple(elements, requiredCount, restType);
+    }
+
+    /// <summary>
+    /// Resolves a call/construct signature node to its (optional) type parameters and function shape.
+    /// A <see cref="GenericFunctionTypeNode"/> resolves through the shared generic-signature scope; a
+    /// plain <see cref="FunctionTypeNode"/> yields null type parameters. Returns null (fallback) for
+    /// any other node or an unresolvable body.
+    /// </summary>
+    private (List<TypeInfo.TypeParameter>? TypeParams, TypeInfo.Function Func)? ResolveSignatureNode(TypeNode signature)
+    {
+        switch (signature)
+        {
+            case GenericFunctionTypeNode generic:
+                return TryResolveGenericSignature(generic.TypeParameters, generic.Body);
+            case FunctionTypeNode:
+                return TryToTypeInfo(signature) is TypeInfo.Function f ? (null, f) : null;
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// Resolves a generic signature's type parameters and body, shared by generic function types and
+    /// generic constructor types. Mirror of the string path's <c>TryParseGenericFunctionTypeInfo</c> /
+    /// <c>ResolveSignature</c>: every type-parameter name is defined unconstrained first (so a
+    /// constraint/default may forward-reference a later parameter), constraints/defaults then resolve
+    /// in that scope, and the body <see cref="FunctionTypeNode"/> resolves with the parameters in
+    /// scope so its <c>T</c>s bind to them. Constraints/defaults come from the <see cref="TypeParam"/>
+    /// strings (resolved via the shared single-name path), so they cannot diverge from the string
+    /// path. Null (e.g. a body component without a node) signals fallback.
+    /// </summary>
+    private (List<TypeInfo.TypeParameter> TypeParams, TypeInfo.Function Func)? TryResolveGenericSignature(
+        List<TypeParam> typeParameters, FunctionTypeNode body)
+    {
+        var typeParamEnv = new TypeEnvironment(_environment);
+
+        // First pass: declare every name unconstrained.
+        foreach (var tp in typeParameters)
+            typeParamEnv.DefineTypeParameter(tp.Name.Lexeme, new TypeInfo.TypeParameter(tp.Name.Lexeme));
+
+        var typeParams = new List<TypeInfo.TypeParameter>();
+        TypeInfo? bodyType;
+        using (new EnvironmentScope(this, typeParamEnv))
+        {
+            // Second pass: resolve constraints/defaults now that all names are in scope.
+            foreach (var tp in typeParameters)
+            {
+                TypeInfo? constraint = tp.Constraint is not null ? ToTypeInfo(tp.Constraint) : null;
+                TypeInfo? defaultType = tp.Default is not null ? ToTypeInfo(tp.Default) : null;
+                var resolved = new TypeInfo.TypeParameter(tp.Name.Lexeme, constraint, defaultType);
+                typeParams.Add(resolved);
+                typeParamEnv.DefineTypeParameter(tp.Name.Lexeme, resolved);
+            }
+
+            bodyType = TryToTypeInfo(body);
+        }
+
+        return bodyType is TypeInfo.Function func ? (typeParams, func) : null;
+    }
+
+    /// <summary>
+    /// Mirror of the string path's <c>ParseMappedTypeInfo</c>: the constraint resolves first, then
+    /// the mapped parameter is registered as an open type variable (so the as-clause and value type
+    /// build the same deferred forms <c>ExpandMappedType</c> substitutes per key) before those
+    /// resolve. The modifier flags translate 1:1 to <see cref="MappedTypeModifiers"/>.
+    /// </summary>
+    private TypeInfo? TryResolveMappedType(MappedTypeNode mapped)
+    {
+        MappedTypeModifiers modifiers = MappedTypeModifiers.None;
+        if (mapped.AddReadonly) modifiers |= MappedTypeModifiers.AddReadonly;
+        if (mapped.RemoveReadonly) modifiers |= MappedTypeModifiers.RemoveReadonly;
+        if (mapped.AddOptional) modifiers |= MappedTypeModifiers.AddOptional;
+        if (mapped.RemoveOptional) modifiers |= MappedTypeModifiers.RemoveOptional;
+
+        if (TryToTypeInfo(mapped.Constraint) is not { } constraint) return null;
+
+        _openTypeVariablesInScope ??= new HashSet<string>(StringComparer.Ordinal);
+        bool openVarAdded = _openTypeVariablesInScope.Add(mapped.ParamName);
+        try
+        {
+            TypeInfo? asClause = null;
+            if (mapped.AsClause is { } asNode)
+            {
+                if (TryToTypeInfo(asNode) is not { } resolvedAs) return null;
+                asClause = resolvedAs;
+            }
+            if (TryToTypeInfo(mapped.ValueType) is not { } valueType) return null;
+            return new TypeInfo.MappedType(mapped.ParamName, constraint, valueType, modifiers, asClause);
+        }
+        finally
+        {
+            if (openVarAdded) _openTypeVariablesInScope.Remove(mapped.ParamName);
+        }
     }
 
     /// <summary>
