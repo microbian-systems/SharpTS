@@ -27,6 +27,13 @@ public static class PromiseBuiltIns
             "finally" => new BuiltInAsyncMethod("finally", 1, 1, (interp, recv, args) =>
                 FinallyImpl((SharpTSPromise)recv!, args, interp)).Bind(receiver),
 
+            // ECMA-262 §27.2.5.1: Promise.prototype.constructor is %Promise%.
+            // First SpeciesConstructor increment for #221 — then/catch/finally
+            // result construction still always uses %Promise%; species dispatch
+            // stays unobservable until guest classes can subclass Promise (#233)
+            // and Symbol is a first-class value (#234).
+            "constructor" => Interpreter.PromiseGlobalValue,
+
             _ => null
         };
     }

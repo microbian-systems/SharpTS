@@ -2533,6 +2533,21 @@ public partial class RuntimeEmitter
         EmitPromiseProtoLookup("catch");
         EmitPromiseProtoLookup("finally");
 
+        // ECMA-262 §27.2.5.1: Promise.prototype.constructor is %Promise%.
+        // Bare `Promise` resolves to typeof(Task<object?>) in compiled mode
+        // (TryEmitBuiltInClassType / GlobalThisGetProperty), so return the
+        // same Type token here for identity:
+        // `Promise.resolve(1).constructor === Promise` (#221 increment).
+        var notPromiseCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notPromiseCtorLabel);
+        il.Emit(OpCodes.Ldtoken, _types.TaskOfObject);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notPromiseCtorLabel);
+
         // Unknown promise property - return null
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);

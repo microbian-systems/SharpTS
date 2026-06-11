@@ -48,6 +48,16 @@ public partial class Interpreter : IDisposable
         InterpreterRegistry.Create();
 
     /// <summary>
+    /// The %Promise% constructor sentinel registered when no Promise singleton
+    /// claimed the global first. MUST be declared before
+    /// <see cref="_globalConstants"/> — static initializers run in textual
+    /// order and CreateGlobalsLookup reads this field.
+    /// </summary>
+    internal static readonly SharpTSBuiltInConstructor PromiseConstructorSentinel = new(
+        BuiltInNames.Promise,
+        _ => throw new Exception("Runtime Error: Use 'new Promise(executor)' syntax."));
+
+    /// <summary>
     /// Frozen dictionary of global constants and built-in singletons for fast lookup.
     /// Combines global constants (NaN, Infinity, undefined) with built-in namespaces
     /// (Math, JSON, Object, etc.) into a single lookup to minimize dictionary operations.
@@ -213,13 +223,21 @@ public partial class Interpreter : IDisposable
         // own dedicated path and does not route through this factory.
         if (!globals.ContainsKey(BuiltInNames.Promise))
         {
-            globals[BuiltInNames.Promise] = new SharpTSBuiltInConstructor(
-                BuiltInNames.Promise,
-                _ => throw new Exception("Runtime Error: Use 'new Promise(executor)' syntax."));
+            globals[BuiltInNames.Promise] = PromiseConstructorSentinel;
         }
 
         return globals.ToFrozenDictionary();
     }
+
+    /// <summary>
+    /// The value bare <c>Promise</c> resolves to — whatever the global table
+    /// actually holds (a registry singleton when one exists, otherwise
+    /// <see cref="PromiseConstructorSentinel"/>). Surfaced as
+    /// <c>promise.constructor</c> by PromiseBuiltIns.GetMember so the
+    /// ECMA-262 §27.2.5.1 identity holds:
+    /// <c>Promise.resolve(1).constructor === Promise</c> (#221).
+    /// </summary>
+    internal static object PromiseGlobalValue => _globalConstants[BuiltInNames.Promise];
 
     private RuntimeEnvironment _environment = new();
     private readonly Dictionary<Expr, int> _locals = []; // Depth for resolved variables
