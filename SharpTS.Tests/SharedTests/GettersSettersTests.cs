@@ -265,6 +265,32 @@ public class GettersSettersTests
         Assert.Equal("10\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AccessorBody_ResolvesCapturedTopLevelVariable(ExecutionMode mode)
+    {
+        // Regression for #300: a getter/setter body referencing a top-level
+        // binding (here a captured `let`) threw "ReferenceError: Undefined
+        // variable" in compiled mode — EmitAccessorBody was the lone body-
+        // emission context that omitted the top-level-variable-access wiring
+        // every other context (methods, ctors, functions, …) sets. A normal
+        // method body resolving the same identifier always worked.
+        var source = """
+            let counter = 5;
+            class Box {
+                get tag(): string { return "v" + counter; }
+                set tag(v: string) { counter = counter + v.length; }
+            }
+            const b = new Box();
+            console.log(b.tag);
+            b.tag = "abc";
+            console.log(b.tag);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("v5\nv8\n", output);
+    }
+
     #endregion
 
     #region Top-level variable capture (#300)

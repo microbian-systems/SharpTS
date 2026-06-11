@@ -143,6 +143,58 @@ public class ClassExpressionTests
         Assert.Equal("Rex barks\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_InheritedMethod_NotOverridden(ExecutionMode mode)
+    {
+        // A child class expression that does NOT override a parent method must
+        // still resolve it. Class-expression instances are anonymously typed, so
+        // every call is dynamically dispatched through the compiled
+        // GetProperty helper, which only covered a class's OWN members — an
+        // inherited method resolved to undefined and threw. Now GetProperty
+        // delegates to the base class. (#287 family)
+        var source = """
+            const Animal = class {
+                constructor(public name: string) {}
+                speak(): string { return this.name + " makes a sound"; }
+            };
+            const Dog = class extends Animal {
+                constructor(name: string) { super(name); }
+            };
+            const d = new Dog("Fido");
+            console.log(d.speak());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Fido makes a sound\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_MultiLevelInheritedMethod(ExecutionMode mode)
+    {
+        // Three-level class-expression chain: the grandchild inherits the
+        // grandparent's method (using `this`), exercising recursive base-class
+        // GetProperty delegation. (#287 family)
+        var source = """
+            const Animal = class {
+                constructor(public name: string) {}
+                speak(): string { return this.name + " sound"; }
+            };
+            const Dog = class extends Animal {
+                constructor(name: string) { super(name); }
+                speak(): string { return this.name + " barks"; }
+            };
+            const Puppy = class extends Dog {
+                constructor() { super("Rex"); }
+            };
+            console.log(new Puppy().speak());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Rex barks\n", output);
+    }
+
     #endregion
 
     #region Arrays and Variables
@@ -304,6 +356,30 @@ public class ClassExpressionTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("10\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_MethodBody_ResolvesCapturedTopLevelVariable(ExecutionMode mode)
+    {
+        // Regression for #300: a class-expression method or accessor body
+        // referencing a top-level binding (a captured `let` here) threw
+        // "ReferenceError: Undefined variable" in compiled mode —
+        // CreateClassExpressionContext omitted the top-level-variable-access
+        // wiring, the same gap #300 fixed for class-declaration accessors.
+        var source = """
+            let counter = 7;
+            const Box = class {
+                m(): string { return "m" + counter; }
+                get tag(): string { return "t" + counter; }
+            };
+            const b = new Box();
+            console.log(b.m());
+            console.log(b.tag);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("m7\nt7\n", output);
     }
 
     #endregion

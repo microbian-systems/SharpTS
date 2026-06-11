@@ -6,9 +6,10 @@ namespace SharpTS.Tests.SharedTests;
 /// <summary>
 /// Tests for computed accessor names in class bodies (#261):
 /// get [Symbol.toStringTag]() / static get [Symbol.species]().
-/// Symbol-keyed accessors on class declarations run in both modes (compiled
-/// support added in #266); on class expressions they stay interpreted-only
-/// (#281). Literal computed keys fold to ordinary names in the parser.
+/// Symbol-keyed accessors run in both modes on class declarations (compiled
+/// support added in #266; module-local Symbol keys confirmed by #282) and on
+/// class expressions (compiled support added in #281). Literal computed keys
+/// fold to ordinary names in the parser.
 /// </summary>
 public class ComputedAccessorNameTests
 {
@@ -63,10 +64,12 @@ public class ComputedAccessorNameTests
         Assert.Equal("true\n", output);
     }
 
-    // Class expressions use a separate emission path with no .cctor registration
-    // hook; compiled symbol-accessor support there is tracked by #281.
+    // Regression for #281: symbol-keyed computed accessors on class EXPRESSIONS.
+    // The class-expression emission path gained a .cctor registration hook +
+    // synthetic-method body emission mirroring the class-declaration path (#266),
+    // so these now run in both modes.
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void SymbolAccessor_InClassExpression(ExecutionMode mode)
     {
         var source = """
@@ -78,6 +81,48 @@ public class ComputedAccessorNameTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("expr\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SymbolAccessor_InClassExpression_GetterSetterWithFieldAndModuleLocalKey(ExecutionMode mode)
+    {
+        // Getter + setter sharing one symbol slot, a well-known key reading an
+        // instance field, and a module-local Symbol key — all on a class
+        // expression. (#281)
+        var source = """
+            const mk = Symbol("mk");
+            const C = class {
+                _v: number = 5;
+                get [Symbol.toStringTag]() { return "tag" + this._v; }
+                get [mk]() { return this._v; }
+                set [mk](x: number) { this._v = x; }
+            };
+            const c = new C() as any;
+            console.log(c[Symbol.toStringTag], c[mk]);
+            c[mk] = 99;
+            console.log(c[Symbol.toStringTag], c[mk]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("tag5 5\ntag99 99\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SymbolAccessor_InClassExpression_Static(ExecutionMode mode)
+    {
+        // Static symbol-keyed getter on a class expression dispatches through the
+        // registry's static slot. (#281)
+        var source = """
+            const C = class {
+                static get [Symbol.toStringTag]() { return "StaticTag"; }
+            };
+            console.log((C as any)[Symbol.toStringTag]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("StaticTag\n", output);
     }
 
     // A get and set accessor for the SAME symbol must coexist (they merge into one
@@ -101,6 +146,32 @@ public class ComputedAccessorNameTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("42\n7\n", output);
+    }
+
+    // Regression for #282: a MODULE-LOCAL Symbol key (not a well-known symbol)
+    // must register and dispatch in compiled mode. The key expression is
+    // evaluated in the lazily-run class .cctor, which executes after the
+    // top-level binding is assigned, so `key` resolves correctly. Getter and
+    // setter share one registry slot.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SymbolAccessor_ModuleLocalKey(ExecutionMode mode)
+    {
+        var source = """
+            const key = Symbol("k");
+            class Box {
+                _v: number = 10;
+                get [key]() { return this._v; }
+                set [key](x: number) { this._v = x; }
+            }
+            const b = new Box() as any;
+            console.log(b[key]);
+            b[key] = 42;
+            console.log(b[key]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10\n42\n", output);
     }
 
     [Theory]

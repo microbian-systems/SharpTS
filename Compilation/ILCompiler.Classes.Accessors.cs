@@ -204,12 +204,11 @@ public partial class ILCompiler
             IsStrictMode = _isStrictMode,
             // Registry services
             ClassRegistry = GetClassRegistry(),
-            // Top-level variable access. Accessor bodies are body-emission
-            // contexts like methods/constructors/static-blocks and must set the
-            // same four properties, or a bare top-level identifier (captured
-            // let/const, same-module ESM export, or import) falls through to the
-            // dynamic runtime lookup and throws ReferenceError. Use the
-            // class-method builder so same-module ESM exports resolve too. (#300)
+            // Module-level / captured top-level variable access. Without these an
+            // accessor body that references a top-level binding (a captured `let`,
+            // a same-module export, an import) throws ReferenceError at runtime —
+            // every other body-emission context (methods, ctors, functions, …)
+            // sets them; the accessor path was the lone omission. (#300)
             TopLevelStaticVars = BuildClassMethodTopLevelStaticVarsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),

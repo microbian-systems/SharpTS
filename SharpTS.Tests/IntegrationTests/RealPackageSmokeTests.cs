@@ -502,8 +502,11 @@ public class RealPackageSmokeTests
     // init gets past `funcToString.call(Object)`. It still throws later because
     // value-form built-in singleton methods (e.g. `context.Math.max`) are not
     // populated in compiled mode (the Math/JSON singleton dicts hold no method
-    // wrappers). Tracked by #276; unskip when that lands.
-    [SkippableFact(Skip = "compiled lodash init reaches value-form Math.max, unpopulated in compiled mode — see #276")]
+    // wrappers). #276 populated those wrappers and got init past `context.Math.max`,
+    // but compiled init now fails one step deeper in lodash's `getNative` helper
+    // ("object is not a function") — a separate value-form dispatch gap tracked by
+    // #302. Unskip when that lands.
+    [SkippableFact(Skip = "compiled lodash init fails in getNative ('object is not a function') after #276 — see #302")]
     public void Lodash_Compiled()
     {
         SkipIfNoNpm();

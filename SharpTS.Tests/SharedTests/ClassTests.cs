@@ -29,6 +29,32 @@ public class ClassTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedMethod_ResolvesUnderDynamicDispatch(ExecutionMode mode)
+    {
+        // Accessing an inherited method through an `any`-typed receiver forces
+        // DYNAMIC dispatch (compiled: $Runtime.GetProperty). The per-class
+        // GetProperty helper only knew the class's OWN members and returned
+        // undefined for inherited ones, so the call threw "undefined is not a
+        // function" — statically-typed receivers dodged this via direct virtual
+        // calls. GetProperty now delegates to the base class. (#287 family)
+        var source = """
+            class Animal {
+                constructor(public name: string) {}
+                speak(): string { return this.name + " sound"; }
+            }
+            class Dog extends Animal {
+                constructor(name: string) { super(name); }
+            }
+            const d: any = new Dog("Fido");
+            console.log(d.speak());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Fido sound\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ClassMethod_CanBeInvoked(ExecutionMode mode)
     {
         var source = """

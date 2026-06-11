@@ -80,6 +80,18 @@ public partial class ILCompiler
             {
                 // Found in class declarations
             }
+            else if (_classExprs.VarToClassExpr.TryGetValue(superclassName, out var parentClassExpr)
+                     && _classExprs.Builders.TryGetValue(parentClassExpr, out var parentExprBuilder))
+            {
+                // Superclass is another class expression bound to a variable
+                // (e.g. `const A = class {}; const B = class extends A {}`).
+                // _classExprs.Names holds GENERATED names ($ClassExpr_N), so the
+                // by-generated-name scan below never matches the source variable
+                // name — without this, B's parent defaults to System.Object while
+                // super() still chains A..ctor, tripping ILVerify CallCtor /
+                // ThisUninitReturn (#287 family).
+                superTypeBuilder = parentExprBuilder;
+            }
             else
             {
                 // Check other class expressions by their generated name
@@ -338,13 +350,15 @@ public partial class ILCompiler
         {
             foreach (var accessor in classExpr.Accessors)
             {
-                // Symbol-keyed accessors are supported on class *declarations* (#266)
-                // but not yet on class *expressions* (separate emission path with no
-                // .cctor registration hook) — tracked by #281.
+                // Symbol-keyed computed accessor (#281): define a synthetic
+                // $sym_get/set_N method recorded in _classes.SymbolAccessors keyed
+                // by this class's generated name. It is registered in the class-
+                // expression .cctor and dispatched through the $Runtime symbol-
+                // accessor registry, mirroring the class-declaration path (#266).
                 if (accessor.ComputedKey != null)
                 {
-                    throw new Diagnostics.Exceptions.CompileException(
-                        $"Symbol-keyed computed accessors (line {accessor.Name.Line}) are not yet supported on class expressions in compiled mode (#281).");
+                    DefineSymbolAccessorMethod(typeBuilder, accessor);
+                    continue;
                 }
                 string accessorName = accessor.Name.Lexeme;
                 string pascalName = NamingConventions.ToPascalCase(accessorName);
@@ -422,12 +436,17 @@ public partial class ILCompiler
         {
             foreach (var accessor in classExpr.Accessors)
             {
-                if (!accessor.IsAbstract)
+                // Symbol-keyed accessors are emitted below from _classes.SymbolAccessors
+                // (their synthetic methods aren't in _classExprs.Getters/Setters).
+                if (!accessor.IsAbstract && accessor.ComputedKey == null)
                 {
                     EmitClassExpressionAccessor(classExpr, typeBuilder, accessor, fieldsField);
                 }
             }
         }
+
+        // Emit symbol-keyed computed accessor bodies (#281)
+        EmitClassExpressionSymbolAccessors(classExpr, typeBuilder, fieldsField);
 
         // Emit $IHasFields interface method bodies (now that method builders are available)
         EmitHasFieldsInterfaceMethodBodies(className, classExpr);
@@ -499,7 +518,15 @@ public partial class ILCompiler
             VarToClassExpr = _classExprs.VarToClassExpr,
             IsStrictMode = _isStrictMode,
             // Registry services
-            ClassRegistry = GetClassRegistry()
+            ClassRegistry = GetClassRegistry(),
+            // Module-level / captured top-level variable access — without these a
+            // class-expression method or accessor body referencing a top-level
+            // binding throws ReferenceError at runtime (same omission #300 fixed
+            // for class-declaration accessor bodies).
+            TopLevelStaticVars = BuildClassMethodTopLevelStaticVarsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
         };
     }
 
@@ -510,8 +537,11 @@ public partial class ILCompiler
     {
         bool hasStaticFields = classExpr.Fields.Any(f => f.IsStatic && f.Initializer != null);
         bool hasStaticInitializers = classExpr.StaticInitializers?.Count > 0;
+        // Symbol-keyed computed accessors (#281) register in the .cctor, keyed by
+        // this class's generated name (mirrors the class-declaration path #266).
+        bool hasSymbolAccessors = _classes.SymbolAccessors.ContainsKey(typeBuilder.Name);
 
-        if (!hasStaticFields && !hasStaticInitializers) return;
+        if (!hasStaticFields && !hasStaticInitializers && !hasSymbolAccessors) return;
 
         var cctor = typeBuilder.DefineConstructor(
             MethodAttributes.Static | MethodAttributes.Private | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
@@ -559,6 +589,10 @@ public partial class ILCompiler
             }
         }
 
+        // Register symbol-keyed computed accessors (#281) in the runtime registry,
+        // keyed by this class's Type so dynamic bracket get/set can dispatch them.
+        EmitSymbolAccessorRegistrations(emitter, il, typeBuilder);
+
         il.Emit(OpCodes.Ret);
     }
 
@@ -587,21 +621,38 @@ public partial class ILCompiler
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
         il.Emit(OpCodes.Stfld, fieldsField);
 
+        // Emit constructor body first if present (contains super() call)
+        var emitter = new ILEmitter(ctx);
+
         // Determine if we need to call base constructor automatically
         // If there's an explicit constructor body, it should contain super() call
         bool hasExplicitSuperCall = constructor?.Body?.Any(stmt => ContainsSuperCall(stmt)) ?? false;
 
         if (!hasExplicitSuperCall)
         {
-            // No explicit super() - call parent constructor automatically
-            Type baseType = typeBuilder.BaseType ?? typeof(object);
+            // No explicit super() - call parent constructor automatically.
             il.Emit(OpCodes.Ldarg_0);
-            var baseCtor = baseType.GetConstructor([]) ?? _types.ObjectDefaultCtor;
-            il.Emit(OpCodes.Call, baseCtor);
-        }
 
-        // Emit constructor body first if present (contains super() call)
-        var emitter = new ILEmitter(ctx);
+            // When the superclass is another emitted class (declaration or
+            // expression), its base is a TypeBuilder — Type.GetConstructor is
+            // not supported on an unbaked TypeBuilder, so resolve the parent's
+            // ConstructorBuilder from the registries instead (#287 family). The
+            // implicit derived constructor forwards no args, so supply defaults
+            // for any base ctor parameters (parameterless in the common case).
+            var baseCtor = ResolveClassExprImplicitBaseConstructor(classExpr);
+            if (baseCtor != null)
+            {
+                foreach (var p in baseCtor.GetParameters())
+                    emitter.EmitDefaultForType(p.ParameterType);
+                il.Emit(OpCodes.Call, baseCtor);
+            }
+            else
+            {
+                Type baseType = typeBuilder.BaseType ?? typeof(object);
+                var fallbackCtor = baseType.GetConstructor([]) ?? _types.ObjectDefaultCtor;
+                il.Emit(OpCodes.Call, fallbackCtor);
+            }
+        }
         if (constructor != null)
         {
             // Define parameters with typed parameter types from constructor signature
@@ -667,6 +718,33 @@ public partial class ILCompiler
         }
 
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Resolves the parent constructor for a class expression's implicit
+    /// (no explicit super()) base-constructor call. The parent may be another
+    /// class expression bound to a variable or a class declaration; in both
+    /// cases the parent's base type is an unbaked TypeBuilder for which
+    /// Type.GetConstructor throws, so the ConstructorBuilder is pulled from the
+    /// emit-time registries instead. Returns null when the superclass is a
+    /// baked/built-in type (caller falls back to reflection).
+    /// </summary>
+    private System.Reflection.ConstructorInfo? ResolveClassExprImplicitBaseConstructor(Expr.ClassExpr classExpr)
+    {
+        if (!_classExprs.Superclass.TryGetValue(classExpr, out var superName) || superName == null)
+            return null;
+
+        // Parent is another class expression bound to a variable.
+        if (_classExprs.VarToClassExpr.TryGetValue(superName, out var parentExpr)
+            && _classExprs.Constructors.TryGetValue(parentExpr, out var exprCtor))
+            return exprCtor;
+
+        // Parent is a class declaration.
+        var resolved = GetDefinitionContext().ResolveClassName(superName);
+        if (_classes.Constructors.TryGetValue(resolved, out var declCtor))
+            return declCtor;
+
+        return null;
     }
 
     /// <summary>
@@ -808,6 +886,49 @@ public partial class ILCompiler
     /// <summary>
     /// Emits an accessor body for a class expression.
     /// </summary>
+    /// <summary>
+    /// Emits the bodies of the synthetic symbol-keyed accessor methods (#281)
+    /// recorded for a class expression by <see cref="DefineSymbolAccessorMethod"/>.
+    /// Uses the class-expression compilation context (so `this`, fields, and
+    /// top-level bindings resolve) rather than the class-declaration accessor path.
+    /// </summary>
+    private void EmitClassExpressionSymbolAccessors(
+        Expr.ClassExpr classExpr,
+        TypeBuilder typeBuilder,
+        FieldInfo fieldsField)
+    {
+        if (!_classes.SymbolAccessors.TryGetValue(typeBuilder.Name, out var list))
+            return;
+
+        foreach (var (accessor, methodBuilder) in list)
+        {
+            var il = methodBuilder.GetILGenerator();
+            var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, accessor.IsStatic ? null : fieldsField);
+            ctx.IsInstanceMethod = !accessor.IsStatic;
+
+            if (accessor.Kind.Type == TokenType.SET && accessor.SetterParam != null)
+            {
+                var accessorParams = methodBuilder.GetParameters();
+                Type? paramType = accessorParams.Length > 0 ? accessorParams[0].ParameterType : null;
+                // Instance setter: arg0 is `this`, value at index 1. Static: value at index 0.
+                int paramIndex = accessor.IsStatic ? 0 : 1;
+                ctx.DefineParameter(accessor.SetterParam.Name.Lexeme, paramIndex, paramType);
+            }
+
+            var emitter = new ILEmitter(ctx);
+            foreach (var stmt in accessor.Body)
+                emitter.EmitStatement(stmt);
+
+            if (emitter.HasDeferredReturns)
+                emitter.FinalizeReturns();
+            else
+            {
+                il.Emit(OpCodes.Ldnull);
+                il.Emit(OpCodes.Ret);
+            }
+        }
+    }
+
     private void EmitClassExpressionAccessor(
         Expr.ClassExpr classExpr,
         TypeBuilder typeBuilder,

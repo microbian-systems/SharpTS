@@ -115,6 +115,105 @@ public class ILVerificationTests
     }
 
     [Fact]
+    public void DerivedConstructorWithSuper_PassesILVerification()
+    {
+        // A subclass with an EXPLICIT constructor calling super(...) emitted a
+        // base-ctor `call` (Object..ctor) before super() chained the real parent
+        // ctor, so the verifier saw a base-ctor call on an already-initialized /
+        // wrong-base `this` — CallCtor. The program ran correctly; the IL was
+        // merely unverifiable. Now the Object..ctor is skipped when super() will
+        // chain the real base. Covers no-arg and arg'd bases, parameter
+        // properties, multi-level chains, and generic bases. (#287)
+        var source = """
+            class A0 { constructor() {} }
+            class B0 extends A0 { constructor() { super(); } }
+            class A1 { constructor(public x: number) {} }
+            class B1 extends A1 { y: number; constructor() { super(5); this.y = 9; } }
+            class C1 extends B1 { constructor() { super(); } }
+            class Box<T> { constructor(public v: T) {} }
+            class IntBox extends Box<number> { constructor() { super(42); } }
+            console.log(new B0() instanceof A0);
+            const b1 = new B1();
+            console.log(b1.x, b1.y);
+            const c1 = new C1();
+            console.log(c1.x, c1.y);
+            console.log(new IntBox().v);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("true\n5 9\n5 9\n42\n", output);
+    }
+
+    [Fact]
+    public void ClassExpressionExtendsClassExpression_PassesILVerification()
+    {
+        // A class expression extending ANOTHER class expression resolved its
+        // superclass by the generated $ClassExpr_N name instead of the source
+        // variable name, so the parent type was never set — the child silently
+        // extended System.Object while super() still chained the real parent
+        // ctor, tripping CallCtor / ThisUninitReturn, and `instanceof` against
+        // the parent returned false. With the parent type now set, the IL
+        // verifies and instanceof is correct. (#296)
+        var source = """
+            const Animal = class {
+                constructor(public name: string) {}
+                speak(): string { return this.name + " makes a sound"; }
+            };
+            const Dog = class extends Animal {
+                constructor(name: string) { super(name); }
+                speak(): string { return this.name + " barks"; }
+            };
+            const a = new Animal("Generic");
+            const d = new Dog("Fido");
+            console.log(a.speak());
+            console.log(d.speak(), d instanceof Animal);
+            """;
+
+        // Verify-only: the reference-assembly rewrite in CompileVerifyAndRun
+        // mangles the ldtoken-derived MethodInfo used by class-expression method
+        // dispatch (BadImageFormatException at run time). Runtime behavior of
+        // class-expression inheritance is covered by the shared-mode tests in
+        // ClassExpressionTests, which run the real compiled output.
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void ClassExpressionInheritedMethodDispatch_PassesILVerification()
+    {
+        // The compiled per-class GetProperty helper only dispatched a class's
+        // OWN members, so a method inherited from a base class resolved to
+        // undefined under the (always dynamic) class-expression dispatch and the
+        // call threw. GetProperty now delegates to the base class. Three-level
+        // chain exercises recursive delegation: Puppy inherits Dog.speak. (#297)
+        var source = """
+            const Animal = class {
+                constructor(public name: string) {}
+                speak(): string { return this.name + " makes a sound"; }
+            };
+            const Dog = class extends Animal {
+                constructor(name: string) { super(name); }
+                speak(): string { return this.name + " barks"; }
+            };
+            const Puppy = class extends Dog {
+                constructor() { super("Rex"); }
+            };
+            const p = new Puppy();
+            console.log(p.speak(), p.name, p instanceof Dog, p instanceof Animal);
+            """;
+
+        // Verify-only (see ClassExpressionExtendsClassExpression note). Runtime
+        // inherited-dispatch behavior is asserted by the shared-mode test
+        // ClassExpressionTests.ClassExpression_MultiLevelInheritedMethod.
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
     public void Generators_PassesILVerification()
     {
         var source = """
