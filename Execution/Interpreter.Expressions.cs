@@ -1051,7 +1051,23 @@ public partial class Interpreter
                 break;
 
             case IndexTarget.InstanceString t:
-                if (strictMode) t.Target.SetRawFieldStrict(t.Key, value, strictMode);
+                // Bracket assignment must invoke a declared setter / auto-accessor, mirroring
+                // dot assignment (SharpTSInstance.Set) and JS [[Set]] semantics. Without this the
+                // write lands in _fields while reads keep hitting the getter, silently
+                // desynchronizing the two (#290). Plain data writes stay on SetRawField so the
+                // defineProperty `writable:false` flag continues to be honored.
+                if (t.Target.GetClass().FindSetter(t.Key) != null
+                    || t.Target.GetClass().HasInstanceAutoAccessor(t.Key))
+                {
+                    // Set/SetStrict invoke the setter only when the instance has an interpreter
+                    // reference; the dot-assignment path primes it the same way (cold instances
+                    // created by `new` don't carry one until first member access).
+                    t.Target.SetInterpreter(this);
+                    var setToken = new Token(TokenType.IDENTIFIER, t.Key, null, 0);
+                    if (strictMode) t.Target.SetStrict(setToken, value, strictMode);
+                    else t.Target.Set(setToken, value);
+                }
+                else if (strictMode) t.Target.SetRawFieldStrict(t.Key, value, strictMode);
                 else t.Target.SetRawField(t.Key, value);
                 break;
 

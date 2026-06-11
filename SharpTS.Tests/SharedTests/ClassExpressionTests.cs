@@ -285,5 +285,26 @@ public class ClassExpressionTests
         Assert.Equal("42\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_Setter_DynamicAccess(ExecutionMode mode)
+    {
+        // Dynamic (bracket) assignment must invoke the setter in both modes. Compiled mode is
+        // covered by #283's SetProperty dispatch; the interpreter's bracket path is fixed by #290.
+        var source = """
+            const Counter = class {
+                private _n: number = 0;
+                get n(): number { return this._n; }
+                set n(v: number) { this._n = v * 2; }
+            };
+            const c = new Counter();
+            (c as any)["n"] = 5;
+            console.log((c as any)["n"]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10\n", output);
+    }
+
     #endregion
 }

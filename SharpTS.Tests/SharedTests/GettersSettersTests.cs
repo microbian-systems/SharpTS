@@ -243,5 +243,27 @@ public class GettersSettersTests
         Assert.Equal("Alice\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Setter_InvokedViaBracketAssignment(ExecutionMode mode)
+    {
+        // Regression for #290: bracket assignment `obj["n"] = v` must invoke the declared setter,
+        // matching dot assignment and JS [[Set]] semantics. The interpreter previously stored
+        // straight into the field dictionary, desynchronizing reads (getter) from writes.
+        var source = """
+            class Counter {
+                private _n: number = 0;
+                get n(): number { return this._n; }
+                set n(v: number) { this._n = v * 2; }
+            }
+            const c = new Counter();
+            (c as any)["n"] = 5;
+            console.log((c as any)["n"]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10\n", output);
+    }
+
     #endregion
 }
