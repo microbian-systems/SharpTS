@@ -300,7 +300,10 @@ public partial class Parser
             StringBuilder sb = new();
             sb.Append("typeof ");
 
-            Token first = Consume(TokenType.IDENTIFIER, "Expect identifier after 'typeof' in type position.");
+            // `typeof undefined` / `typeof this` are valid queries alongside identifiers.
+            Token first = Check(TokenType.UNDEFINED) || Check(TokenType.THIS)
+                ? Advance()
+                : Consume(TokenType.IDENTIFIER, "Expect identifier after 'typeof' in type position.");
             sb.Append(first.Lexeme);
 
             // Handle property paths and index access: typeof obj.prop, typeof arr[0], typeof obj["key"]
@@ -446,6 +449,11 @@ public partial class Parser
         else if (Match(TokenType.NUMBER))
         {
             typeName = Previous().Literal!.ToString()!;
+        }
+        // Handle bigint literal types: 1n | 2n
+        else if (Match(TokenType.BIGINT_LITERAL))
+        {
+            typeName = Previous().Literal!.ToString()! + "n";
         }
         // Handle boolean literal types: true | false
         else if (Match(TokenType.TRUE))
@@ -721,7 +729,8 @@ public partial class Parser
                 {
                     // Property: name: type
                     Consume(TokenType.COLON, "Expect ':' after property name in object type.");
-                    propertyType = ParseUnionType();
+                    // Member values may be conditional types: { x: T extends number ? T : string }
+                    propertyType = ParseConditionalType();
                 }
 
                 // Build member string. Method members carry a '#m' marker (stripped by

@@ -1215,6 +1215,13 @@ public partial class TypeChecker
         // For assignment, check against the DECLARED type, not the narrowed type
         // This allows reassigning within narrowed scopes (e.g., x = "found" when x was narrowed to null)
         // Use GetDeclaredType to get the original declared type, not the potentially narrowed type
+        // tsc: assigning to `undefined` is TS2539 ("Cannot assign to 'undefined' because it is
+        // not a variable") — the parser lets it through as an identifier-shaped target.
+        if (assign.Name.Lexeme == "undefined")
+        {
+            throw new TypeCheckException($" Cannot assign to 'undefined' because it is not a variable.", line: assign.Name.Line, tsCode: "TS2539");
+        }
+
         var declaredType = GetDeclaredType(assign.Name.Lexeme);
         if (declaredType == null)
         {

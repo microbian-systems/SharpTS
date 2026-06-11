@@ -306,9 +306,14 @@ public partial class Parser
                 decl = VarDeclaration();
             }
         }
-        else if (Match(TokenType.LET) || Match(TokenType.VAR))
+        else if (Match(TokenType.LET))
         {
             decl = VarDeclaration();
+        }
+        else if (Match(TokenType.VAR))
+        {
+            // IsVar so the declaration participates in var hoisting (VarHoister).
+            decl = VarDeclaration(isConst: false, isVar: true);
         }
         else if (Match(TokenType.INTERFACE))
         {
@@ -325,6 +330,11 @@ public partial class Parser
         else if (Match(TokenType.NAMESPACE))
         {
             decl = NamespaceDeclaration(isExported: true);
+        }
+        else if (Match(TokenType.DECLARE))
+        {
+            // `export declare function/const/…` — an exported ambient declaration.
+            decl = AmbientDeclaration();
         }
         else
         {

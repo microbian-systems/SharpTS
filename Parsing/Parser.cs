@@ -514,6 +514,10 @@ public partial class Parser(List<Token> tokens, DecoratorMode decoratorMode = De
         Check(TokenType.READONLY) ||  // readonly array/tuple modifier: readonly T[], readonly [A, B]
         Check(TokenType.TYPE_SYMBOL) || Check(TokenType.TYPE_BIGINT) ||  // symbol / bigint primitive types
         Check(TokenType.SYMBOL) || Check(TokenType.BIGINT) ||  // `Symbol` / `BigInt` as type names
+        Check(TokenType.BIGINT_LITERAL) ||  // bigint literal types: 1n | 2n
+        Check(TokenType.NEW) ||  // constructor types: new (x) => T (e.g. inside InstanceType<...>)
+        Check(TokenType.ABSTRACT) ||  // abstract constructor types: abstract new (x) => T
+        Check(TokenType.LESS) ||  // generic function types: <T>(x: T) => T as a type argument
         Check(TokenType.THIS);  // polymorphic `this` type
 
     // ============== GENERIC TYPE CLOSING BRACKET HANDLING ==============
