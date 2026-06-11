@@ -1603,6 +1603,14 @@ public class EmittedRuntime
     // globalThis methods (ES2020)
     public MethodBuilder GlobalThisGetProperty { get; set; } = null!;
     public MethodBuilder GlobalThisSetProperty { get; set; } = null!;
+
+    // Symbol-keyed class accessor registry (#266). The field holds
+    // Dictionary<Type, Dictionary<object, object[]>>; each object[4] slot is
+    // {instanceGetter, instanceSetter, staticGetter, staticSetter} MethodInfos.
+    public FieldBuilder SymbolAccessorRegistryField { get; set; } = null!;
+    public MethodBuilder RegisterSymbolAccessor { get; set; } = null!;
+    public MethodBuilder FindSymbolGetter { get; set; } = null!;
+    public MethodBuilder FindSymbolSetter { get; set; } = null!;
     public FieldBuilder CachedFetchFunction { get; set; } = null!;
     public FieldBuilder CachedParseIntFunction { get; set; } = null!;
     public FieldBuilder CachedParseFloatFunction { get; set; } = null!;

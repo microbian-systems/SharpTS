@@ -444,7 +444,14 @@ public partial class ILCompiler
 
             foreach (var accessor in classStmt.Accessors)
             {
-                RejectComputedAccessor(accessor);
+                // Symbol-keyed computed accessors (#266) have no static .NET member
+                // name; pre-define a synthetic method here, register it in the class
+                // .cctor, and dispatch through the runtime symbol-accessor registry.
+                if (accessor.ComputedKey != null)
+                {
+                    DefineSymbolAccessorMethod(typeBuilder, accessor);
+                    continue;
+                }
                 string accessorName = accessor.Name.Lexeme;
                 string pascalName = NamingConventions.ToPascalCase(accessorName);
                 string methodName = accessor.Kind.Type == TokenType.GET
@@ -670,8 +677,12 @@ public partial class ILCompiler
         {
             foreach (var accessor in classStmt.Accessors)
             {
+                // Symbol-keyed computed accessors (#266) are emitted together below
+                // (their bodies live on synthetic methods pre-defined in Pass 1).
+                if (accessor.ComputedKey != null) continue;
                 EmitAccessor(typeBuilder, accessor, fieldsField);
             }
+            EmitSymbolAccessors(typeBuilder, fieldsField);
         }
 
         // Emit ES2022 private method bodies

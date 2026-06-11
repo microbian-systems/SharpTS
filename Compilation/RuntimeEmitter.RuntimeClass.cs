@@ -364,6 +364,9 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.Object));
         cctorIL.Emit(OpCodes.Stsfld, globalThisSingletonField);
 
+        // Initialize the symbol-keyed accessor registry (#266).
+        InitSymbolAccessorRegistry(cctorIL, runtime);
+
         // Boolean/Number/String prototype singletons (lazy-feeling but eagerly
         // initialized so Type→prototype lookups never hit a null).
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
@@ -950,6 +953,8 @@ public partial class RuntimeEmitter
         // Fill in LookupBuiltInStaticMember's body now that IsArray, NumberIs*,
         // StringFrom*, and TSFunctionCtor are all in place (#63).
         EmitLookupBuiltInStaticMemberBody(runtime);
+        // Fill in the symbol-keyed accessor registry helper bodies (#266).
+        EmitSymbolAccessorRegistryBodies(runtime);
         // Microtask method (queueMicrotask) - must come before timer infrastructure so ProcessMicrotasks is available
         EmitQueueMicrotaskMethod(typeBuilder, runtime);
         // Virtual timer infrastructure (must come before DateMethods which calls ProcessPendingTimers)

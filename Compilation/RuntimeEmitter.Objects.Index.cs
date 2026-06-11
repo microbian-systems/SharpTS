@@ -175,6 +175,30 @@ public partial class RuntimeEmitter
         var symbolFoundLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, symbolFoundLabel);
 
+        // #266: symbol-keyed class accessor (`get [Symbol.x]() {...}`). After an
+        // own symbol data property misses, consult the per-class accessor registry
+        // (walking the base chain). A found getter is a MethodInfo invoked with the
+        // receiver — instance getters bind `this`, static getters ignore it.
+        {
+            var noSymGetterLabel = il.DefineLabel();
+            var symGetterLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.FindSymbolGetter);
+            il.Emit(OpCodes.Stloc, symGetterLocal);
+            il.Emit(OpCodes.Ldloc, symGetterLocal);
+            il.Emit(OpCodes.Brfalse, noSymGetterLabel);
+            // return ((MethodBase)getter).Invoke(obj, Array.Empty<object>());
+            il.Emit(OpCodes.Ldloc, symGetterLocal);
+            il.Emit(OpCodes.Castclass, _types.MethodBase);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(noSymGetterLabel);
+        }
+
         // Not found in user-set symbol dict — fall back to prototype-keyed
         // well-known-symbol dispatch. Currently only RegExp.prototype carries
         // symbol-keyed methods (@@match/@@matchAll/@@replace/@@search/@@split,
@@ -880,6 +904,33 @@ public partial class RuntimeEmitter
         // strict).
         il.MarkLabel(symbolKeyLabel);
         {
+            // #266: symbol-keyed class accessor setter (`set [Symbol.x](v) {...}`).
+            // A registered setter takes the write (accessor semantics) instead of
+            // storing a data property. Found setter is a MethodInfo invoked with the
+            // receiver + value — instance setters bind `this`, static ignore it.
+            var noSymSetterLabel = il.DefineLabel();
+            var symSetterLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.FindSymbolSetter);
+            il.Emit(OpCodes.Stloc, symSetterLocal);
+            il.Emit(OpCodes.Ldloc, symSetterLocal);
+            il.Emit(OpCodes.Brfalse, noSymSetterLabel);
+            // ((MethodBase)setter).Invoke(obj, new object[] { value }); return;
+            il.Emit(OpCodes.Ldloc, symSetterLocal);
+            il.Emit(OpCodes.Castclass, _types.MethodBase);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(noSymSetterLabel);
+
             var symDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);

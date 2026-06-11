@@ -49,9 +49,11 @@ public partial class ILCompiler
         bool hasPrivateFieldStorage = _classes.PrivateFieldStorage.ContainsKey(qualifiedClassName);
         bool hasStaticPrivateFields = _classes.StaticPrivateFields.TryGetValue(qualifiedClassName, out var staticPrivateFields) && staticPrivateFields.Count > 0;
         bool hasStaticInitializers = classStmt.StaticInitializers != null && classStmt.StaticInitializers.Count > 0;
+        // Symbol-keyed computed accessors (#266) register in the .cctor.
+        bool hasSymbolAccessors = _classes.SymbolAccessors.ContainsKey(typeBuilder.Name);
 
-        // Only emit if there are static fields with initializers, static lock fields, private field storage, static auto-accessors, or static blocks
-        if (staticFieldsWithInit.Count == 0 && !hasStaticLockFields && !hasPrivateFieldStorage && !hasStaticPrivateFields && staticAutoAccessorsWithInit.Count == 0 && !hasStaticInitializers) return;
+        // Only emit if there are static fields with initializers, static lock fields, private field storage, static auto-accessors, static blocks, or symbol accessors
+        if (staticFieldsWithInit.Count == 0 && !hasStaticLockFields && !hasPrivateFieldStorage && !hasStaticPrivateFields && staticAutoAccessorsWithInit.Count == 0 && !hasStaticInitializers && !hasSymbolAccessors) return;
 
         var cctor = typeBuilder.DefineConstructor(
             MethodAttributes.Static | MethodAttributes.Private | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
@@ -236,7 +238,63 @@ public partial class ILCompiler
             EmitAutoAccessorInitializer(emitter, autoAccessor, qualifiedClassName, isStatic: true);
         }
 
+        // Register symbol-keyed computed accessors (#266) in the runtime registry,
+        // keyed by this class's Type so dynamic bracket get/set can dispatch them.
+        EmitSymbolAccessorRegistrations(emitter, il, typeBuilder);
+
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits <c>$Runtime.RegisterSymbolAccessor(typeof(ThisClass), symbol, getter, setter, isStatic)</c>
+    /// for each symbol-keyed accessor recorded for this class (#266).
+    /// </summary>
+    private void EmitSymbolAccessorRegistrations(ILEmitter emitter, ILGenerator il, TypeBuilder typeBuilder)
+    {
+        if (!_classes.SymbolAccessors.TryGetValue(typeBuilder.Name, out var list))
+            return;
+
+        var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
+        var getMethodFromHandle = _types.MethodBase.GetMethod(
+            "GetMethodFromHandle", [_types.RuntimeMethodHandle, _types.RuntimeTypeHandle])!;
+
+        foreach (var (accessor, method) in list)
+        {
+            bool isGetter = accessor.Kind.Type == TokenType.GET;
+
+            // owner: typeof(ThisClass)
+            il.Emit(OpCodes.Ldtoken, typeBuilder);
+            il.Emit(OpCodes.Call, getTypeFromHandle);
+
+            // symbol: evaluate the computed key expression
+            emitter.EmitExpression(accessor.ComputedKey!);
+            emitter.EmitBoxIfNeeded(accessor.ComputedKey!);
+
+            // getter MethodInfo (or null)
+            if (isGetter)
+                EmitMethodInfoLiteral(il, method, typeBuilder, getMethodFromHandle);
+            else
+                il.Emit(OpCodes.Ldnull);
+
+            // setter MethodInfo (or null)
+            if (isGetter)
+                il.Emit(OpCodes.Ldnull);
+            else
+                EmitMethodInfoLiteral(il, method, typeBuilder, getMethodFromHandle);
+
+            // isStatic
+            il.Emit(accessor.IsStatic ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+
+            il.Emit(OpCodes.Call, _runtime.RegisterSymbolAccessor);
+        }
+    }
+
+    private void EmitMethodInfoLiteral(ILGenerator il, MethodBuilder method, TypeBuilder declaringType, MethodInfo getMethodFromHandle)
+    {
+        il.Emit(OpCodes.Ldtoken, method);
+        il.Emit(OpCodes.Ldtoken, declaringType);
+        il.Emit(OpCodes.Call, getMethodFromHandle);
+        il.Emit(OpCodes.Castclass, _types.MethodInfo);
     }
 
     private void EmitStaticMethodBody(string className, Stmt.Function method)

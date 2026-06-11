@@ -51,6 +51,10 @@ public partial class ILCompiler
         public Dictionary<string, Dictionary<string, MethodBuilder>> StaticSetters { get; } = [];
         public Dictionary<string, Dictionary<string, MethodBuilder>> PreDefinedMethods { get; } = [];
         public Dictionary<string, Dictionary<string, MethodBuilder>> PreDefinedAccessors { get; } = [];
+        // Symbol-keyed computed accessors (#266): class name (typeBuilder.Name) ->
+        // list of (accessor AST node, emitted getter/setter MethodBuilder). Used to
+        // emit the bodies and to register them in the class .cctor.
+        public Dictionary<string, List<(Parsing.Stmt.Accessor Accessor, MethodBuilder Method)>> SymbolAccessors { get; } = [];
         public Dictionary<string, FieldBuilder> InstanceFieldsField { get; } = [];
         public Dictionary<string, GenericTypeParameterBuilder[]> GenericParams { get; } = [];
 
