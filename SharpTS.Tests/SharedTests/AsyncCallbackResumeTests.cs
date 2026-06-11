@@ -37,7 +37,7 @@ public class AsyncCallbackResumeTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncCallback_ResumesWithModuleScope_AfterAwait(ExecutionMode mode)
     {
         // #207: an async arrow passed to a built-in (server.listen) suspends at
@@ -65,7 +65,7 @@ public class AsyncCallbackResumeTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncCallback_FetchAfterAwait_InListenCallback(ExecutionMode mode)
     {
         // The full #207 repro: await fetch() against the just-started server,

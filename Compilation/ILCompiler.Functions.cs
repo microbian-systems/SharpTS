@@ -847,6 +847,25 @@ public partial class ILCompiler
     }
 
     /// <summary>
+    /// Emits, at the top of an entry-point Main, the install of the event-loop
+    /// SynchronizationContext so async/await continuations resume on the
+    /// event-loop thread instead of escaping to the thread pool (Node
+    /// semantics). Must run before the first top-level await — the first awaiter
+    /// captures whatever context is current. Standalone-safe: the ctor is in the
+    /// emitted assembly and <see cref="System.Threading.SynchronizationContext"/>
+    /// is BCL. In-process hosts (the test harness, CompilationService) save and
+    /// restore the ambient context around the Main invoke; a real EXE simply
+    /// exits, so no restore is emitted here.
+    /// </summary>
+    private void EmitInstallEventLoopSyncContext(ILGenerator il)
+    {
+        il.Emit(OpCodes.Newobj, _runtime.EventLoopSyncContextCtor);
+        il.Emit(OpCodes.Call, typeof(System.Threading.SynchronizationContext).GetMethod(
+            "SetSynchronizationContext",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)!);
+    }
+
+    /// <summary>
     /// Emits the default entry point where top-level statements run as the program.
     /// Used for DLL target or EXE without user-defined main().
     /// </summary>
@@ -862,6 +881,7 @@ public partial class ILCompiler
         _entryPoint = mainMethod;
 
         var il = mainMethod.GetILGenerator();
+        EmitInstallEventLoopSyncContext(il);
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
         {
             ClosureAnalyzer = _closures.Analyzer,
@@ -1076,6 +1096,7 @@ public partial class ILCompiler
         _entryPoint = mainMethod;
 
         var il = mainMethod.GetILGenerator();
+        EmitInstallEventLoopSyncContext(il);
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
         {
             ClosureAnalyzer = _closures.Analyzer,

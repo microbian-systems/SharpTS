@@ -2691,6 +2691,16 @@ public class EmittedRuntime
     public MethodBuilder EventLoopWaitForTask { get; set; } = null!;
     public FieldBuilder EventLoopTimerProcessorField { get; set; } = null!;
 
+    /// <summary>
+    /// Parameterless constructor of the emitted <c>$EventLoopSyncContext</c> (a
+    /// <see cref="System.Threading.SynchronizationContext"/> subclass whose
+    /// <c>Post</c> schedules continuations onto the event-loop queue). The entry
+    /// point installs an instance via <c>SetSynchronizationContext</c> so
+    /// async/await continuations resume on the event-loop thread instead of
+    /// escaping to the thread pool.
+    /// </summary>
+    public ConstructorBuilder EventLoopSyncContextCtor { get; set; } = null!;
+
     // ============================================================
     // $NetServer — emitted TCP server (extends $EventEmitter)
     // ============================================================
