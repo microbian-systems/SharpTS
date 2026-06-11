@@ -1833,6 +1833,37 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    // StringFromValue — ECMA-262 §22.1.1.1 String(value) constructor called as a
+    // function. Identical to ToJsString except that Symbol arguments return
+    // SymbolDescriptiveString instead of throwing: the String() call form is the
+    // single coercion site the spec exempts from ToString's Symbol TypeError.
+    private void EmitStringFromValue(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "StringFromValue",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]);
+        runtime.StringFromValueMethod = method;
+
+        var il = method.GetILGenerator();
+
+        // if (value is $TSSymbol) return value.ToString();  // "Symbol(desc)"
+        var notSymbolLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brfalse, notSymbolLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notSymbolLabel);
+
+        // return ToJsString(value);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Ret);
+    }
+
     // ToJsString — ECMA-262 ToString protocol. For Dictionary/$Object receivers
     // with a user-defined "toString" function, invoke it and use the result.
     // Falls back to Stringify for primitives. Used by String.prototype methods

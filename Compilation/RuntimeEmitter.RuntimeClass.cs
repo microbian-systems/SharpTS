@@ -626,6 +626,9 @@ public partial class RuntimeEmitter
         // HasOwnPropertyHelper's Symbol-key arm can call them).
         // ToJsString depends on GetProperty + InvokeMethodValue + Stringify; emit after those.
         EmitToJsString(typeBuilder, runtime);
+        // StringFromValue (String(x) call form) wraps ToJsString with the
+        // §22.1.1.1 Symbol exemption; emit right after it.
+        EmitStringFromValue(typeBuilder, runtime);
         // Equals body — must come after ToJsString since the Object-vs-String
         // branch calls runtime.ToJsString.
         EmitEquals(typeBuilder, runtime);

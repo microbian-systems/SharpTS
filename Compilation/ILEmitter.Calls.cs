@@ -48,9 +48,11 @@ public partial class ILEmitter
             switch (coerceVar.Name.Lexeme)
             {
                 case "String":
+                    // StringFromValue, not ToJsString: §22.1.1.1 exempts the
+                    // String() call form from ToString's Symbol TypeError.
                     EmitExpression(c.Arguments[0]);
                     EmitBoxIfNeeded(c.Arguments[0]);
-                    IL.Emit(OpCodes.Call, _ctx.Runtime!.ToJsString);
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.StringFromValueMethod);
                     SetStackUnknown();
                     return;
                 case "Number":

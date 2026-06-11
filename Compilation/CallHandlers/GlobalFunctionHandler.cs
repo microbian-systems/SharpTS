@@ -130,9 +130,13 @@ public class GlobalFunctionHandler : ICallHandler
         }
         else
         {
+            // StringFromValue (not Stringify): runs the spec ToString chain —
+            // user toString/@@toPrimitive on objects — with the §22.1.1.1
+            // Symbol exemption. Keeps this path consistent with the sync
+            // emitter's String(x) handling in ILEmitter.Calls.cs.
             emitter.EmitExpression(call.Arguments[0]);
             emitter.EmitBoxIfNeeded(call.Arguments[0]);
-            il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.Stringify);
+            il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime!.StringFromValueMethod);
         }
         emitter.SetStackType(StackType.String);
         return true;

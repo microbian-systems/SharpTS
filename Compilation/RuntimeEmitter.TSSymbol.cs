@@ -398,6 +398,20 @@ public partial class RuntimeEmitter
         toStringIL.MarkLabel(doneToString);
         toStringIL.Emit(OpCodes.Ret);
 
+        // valueOf method: public object valueOf() => this — Symbol.prototype.valueOf
+        // (ECMA-262 §20.4.3.4). Dynamic dispatch resolves it via GetFieldsProperty's
+        // reflection fallback (IgnoreCase method lookup), the same path that already
+        // serves `description` and `toString` on symbol receivers.
+        var valueOfBuilder = typeBuilder.DefineMethod(
+            "valueOf",
+            MethodAttributes.Public | MethodAttributes.HideBySig,
+            _types.Object,
+            Type.EmptyTypes
+        );
+        var valueOfIL = valueOfBuilder.GetILGenerator();
+        valueOfIL.Emit(OpCodes.Ldarg_0);
+        valueOfIL.Emit(OpCodes.Ret);
+
         // ============================================================
         // Description property getter: public object get_description()
         // Returns the description string or $Undefined.Instance if null

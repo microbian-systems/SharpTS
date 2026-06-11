@@ -324,14 +324,7 @@ public sealed class BuiltInRegistry
             FunctionBuiltIns.GetMember((ISharpTSCallable)instance, name));
 
         registry.RegisterCategoryType(TypeCategory.Symbol, (instance, name) =>
-        {
-            var symbol = (SharpTSSymbol)instance;
-            return name switch
-            {
-                "description" => symbol.Description ?? (object)SharpTSUndefined.Instance,
-                _ => null
-            };
-        });
+            SymbolBuiltIns.GetInstanceMember((SharpTSSymbol)instance, name));
     }
 
     private static void RegisterMathNamespace(BuiltInRegistry registry)
@@ -1247,16 +1240,9 @@ public sealed class BuiltInRegistry
 
     private static void RegisterSymbolType(BuiltInRegistry registry)
     {
-        // Symbol instance members (description property)
+        // Symbol instance members (description, toString, valueOf)
         registry.RegisterInstanceType(typeof(SharpTSSymbol), (instance, name) =>
-        {
-            var symbol = (SharpTSSymbol)instance;
-            return name switch
-            {
-                "description" => symbol.Description ?? (object)SharpTSUndefined.Instance,
-                _ => null
-            };
-        });
+            SymbolBuiltIns.GetInstanceMember((SharpTSSymbol)instance, name));
     }
 
     private static void RegisterAbortSignalNamespace(BuiltInRegistry registry)

@@ -473,6 +473,70 @@ public class SymbolTests
 
     #endregion
 
+    #region Symbol.prototype Surface (#237)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_ToString_ReturnsDescriptiveString(ExecutionMode mode)
+    {
+        var source = """
+            let s = Symbol("d");
+            console.log(s.toString());
+            let noDesc = Symbol();
+            console.log(noDesc.toString());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Symbol(d)\nSymbol()\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_ValueOf_ReturnsSelf(ExecutionMode mode)
+    {
+        var source = """
+            let s = Symbol("d");
+            console.log(s.valueOf() === s);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_StringCallForm_ReturnsDescriptiveString(ExecutionMode mode)
+    {
+        // ECMA-262 §22.1.1.1: the String() call form is exempt from ToString's
+        // Symbol TypeError and returns SymbolDescriptiveString instead.
+        var source = """
+            console.log(String(Symbol("d")));
+            console.log(String(Symbol()));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Symbol(d)\nSymbol()\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_AnyTyped_PrototypeMembers_Work(ExecutionMode mode)
+    {
+        // Dynamic-dispatch path (receiver statically `any`) must resolve the
+        // same Symbol.prototype surface as the typed path.
+        var source = """
+            const s: any = Symbol("dyn");
+            console.log(s.description);
+            console.log(s.toString());
+            console.log(s.valueOf() === s);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("dyn\nSymbol(dyn)\ntrue\n", output);
+    }
+
+    #endregion
+
     #region Symbol as First-Class Global (#234)
 
     [Theory]
