@@ -45,9 +45,9 @@ public class TimerTests
         var source = @"
             let executed = false;
             setTimeout(() => { executed = true; }, 0);
-            // Small delay to allow async execution
+            // Spin until the callback fires; the deadline only bounds a genuine failure
             let start = Date.now();
-            while (Date.now() - start < 50) { }
+            while (!executed && Date.now() - start < 5000) { }
             console.log(executed);
         ";
         var output = TestHarness.Run(source, mode);
@@ -60,10 +60,11 @@ public class TimerTests
     {
         // setTimeout with 0 delay should execute callback (compiled: check console output)
         var source = @"
-            setTimeout(() => { console.log('executed'); }, 0);
-            // Busy wait to allow async execution
+            let fired = false;
+            setTimeout(() => { console.log('executed'); fired = true; }, 0);
+            // Spin until the callback fires; the deadline only bounds a genuine failure
             let start = Date.now();
-            while (Date.now() - start < 100) { }
+            while (!fired && Date.now() - start < 5000) { }
             console.log('done');
         ";
         var output = TestHarness.Run(source, mode);
@@ -80,7 +81,7 @@ public class TimerTests
             let executed = false;
             setTimeout(() => { executed = true; });
             let start = Date.now();
-            while (Date.now() - start < 50) { }
+            while (!executed && Date.now() - start < 5000) { }
             console.log(executed);
         ";
         var output = TestHarness.Run(source, mode);
@@ -93,9 +94,10 @@ public class TimerTests
     {
         // setTimeout without delay should default to 0 and execute (compiled)
         var source = @"
-            setTimeout(() => { console.log('executed'); });
+            let fired = false;
+            setTimeout(() => { console.log('executed'); fired = true; });
             let start = Date.now();
-            while (Date.now() - start < 100) { }
+            while (!fired && Date.now() - start < 5000) { }
             console.log('done');
         ";
         var output = TestHarness.Run(source, mode);
@@ -306,7 +308,7 @@ public class TimerTests
             let result: any = '';
             setTimeout((a: any, b: any) => { result = a + b; }, 0, 'hello', 'world');
             let start = Date.now();
-            while (Date.now() - start < 50) { }
+            while (result === '' && Date.now() - start < 5000) { }
             console.log(result);
         ";
         var output = TestHarness.Run(source, mode);
@@ -319,9 +321,10 @@ public class TimerTests
     {
         // Additional args should be passed to callback (compiled: console.log)
         var source = @"
-            setTimeout((a: any, b: any) => { console.log(a + b); }, 0, 'hello', 'world');
+            let fired = false;
+            setTimeout((a: any, b: any) => { console.log(a + b); fired = true; }, 0, 'hello', 'world');
             let start = Date.now();
-            while (Date.now() - start < 100) { }
+            while (!fired && Date.now() - start < 5000) { }
         ";
         var output = TestHarness.Run(source, mode);
         Assert.Contains("helloworld", output);
@@ -391,12 +394,12 @@ public class TimerTests
     public void SetInterval_ExecutesMultipleTimes_Interpreted(ExecutionMode mode)
     {
         // setInterval should execute multiple times (interpreted: count variable)
-        // Note: Uses generous timing margins to account for thread scheduling differences
+        // Spin until 3 ticks land; a fixed wall-clock window is not CPU time on loaded CI runners
         var source = @"
             let count = 0;
             let t = setInterval(() => { count++; }, 20);
             let start = Date.now();
-            while (Date.now() - start < 200) { }
+            while (count < 3 && Date.now() - start < 5000) { }
             clearInterval(t);
             console.log(count >= 3);
         ";
@@ -410,14 +413,16 @@ public class TimerTests
     {
         // setInterval should execute callback (compiled: console.log and self-clear)
         var source = @"
+            let fired = false;
             let t = setInterval(() => {
                 console.log('tick');
                 clearInterval(t);
                 console.log('done');
+                fired = true;
             }, 20);
-            // Keep process alive long enough for callback to execute
+            // Spin until the callback completes; the deadline only bounds a genuine failure
             let start = Date.now();
-            while (Date.now() - start < 500) { }
+            while (!fired && Date.now() - start < 5000) { }
             console.log('timeout');
         ";
         var output = TestHarness.Run(source, mode);
@@ -474,7 +479,7 @@ public class TimerTests
             let result: any = '';
             let t = setInterval((a: any, b: any) => { result = a + b; }, 10, 'hello', 'world');
             let start = Date.now();
-            while (Date.now() - start < 50) { }
+            while (result === '' && Date.now() - start < 5000) { }
             clearInterval(t);
             console.log(result);
         ";
@@ -487,11 +492,11 @@ public class TimerTests
     public void SetInterval_PassesArgsToCallback_Compiled(ExecutionMode mode)
     {
         // Additional args should be passed to callback (compiled: console.log)
-        // Note: Uses generous timing margins to account for thread scheduling differences
         var source = @"
-            let t = setInterval((a: any, b: any) => { console.log(a + b); }, 10, 'hello', 'world');
+            let fired = false;
+            let t = setInterval((a: any, b: any) => { console.log(a + b); fired = true; }, 10, 'hello', 'world');
             let start = Date.now();
-            while (Date.now() - start < 150) { }
+            while (!fired && Date.now() - start < 5000) { }
             clearInterval(t);
         ";
         var output = TestHarness.Run(source, mode);
@@ -507,7 +512,7 @@ public class TimerTests
             let executed = false;
             let t = setInterval(() => { executed = true; });
             let start = Date.now();
-            while (Date.now() - start < 50) { }
+            while (!executed && Date.now() - start < 5000) { }
             clearInterval(t);
             console.log(executed);
         ";
@@ -521,9 +526,10 @@ public class TimerTests
     {
         // setInterval without delay should default to 0 and execute (compiled)
         var source = @"
-            let t = setInterval(() => { console.log('executed'); });
+            let fired = false;
+            let t = setInterval(() => { console.log('executed'); fired = true; });
             let start = Date.now();
-            while (Date.now() - start < 50) { }
+            while (!fired && Date.now() - start < 5000) { }
             clearInterval(t);
             console.log('done');
         ";
