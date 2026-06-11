@@ -170,9 +170,23 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
    nodes, so generic conditional aliases expand through `TryExpandGenericAliasFromNode`. Corpus
    coverage: 68.7% → **75.0%** (410 node / 137 fallback). No baseline movement — the conditional
    Fails are `EvaluateConditionalType`/`infer`-inference semantic gaps, not string round-trip
-   damage (verified: node and string paths produce identical verdicts). Remaining fallback is
-   dominated by **mapped types** (and the template-literal `as`-clauses some need) plus generic
-   `<T>(…) => R` signatures — the last constructs before the scanner can go.
+   damage (verified: node and string paths produce identical verdicts).
+5b. ✅ **Shipped: mapped types.** `MappedTypeNode` (parameter, constraint, value, optional
+   `as`-clause, and the `+/-readonly` / `+/-?` modifier flags carried as bools so the syntax layer
+   needs no dependency on `MappedTypeModifiers`). `ParseMappedType` is now a node producer;
+   resolution (`TryResolveMappedType`) mirrors `ParseMappedTypeInfo` exactly — constraint first,
+   then the mapped parameter registered in `_openTypeVariablesInScope` (the SAME shared set) while
+   the as-clause and value type resolve, so their bodies build the identical deferred
+   IndexedAccess/TypeParameter forms `ExpandMappedType` substitutes per key. Generic mapped alias
+   definitions now expand through the node path (`TryExpandGenericAliasFromNode`'s post-pass calls
+   `ExpandMappedType`). A mapped type whose `as`-clause needs a template-literal (no node yet)
+   falls back whole. Corpus annotation-site coverage flat at 75.0% (the corpus's mapped types live
+   inside alias definitions, which the coarse annotation counter doesn't measure) — like slice 3b,
+   the win is the mechanism. No baseline movement; full unit suite green.
+
+   Remaining fallback before the scanner can go: generic `<T>(…) => R` signatures, template-literal
+   types, qualified names (`Foo.Bar`), and a handful of long-tail forms (`asserts`/predicates,
+   `unique symbol`, constrained `infer U extends C`).
 6. Delete `TypeChecker.TypeParsing.cs` string scanning; `ToTypeInfo(string)` survives only
    for the REPL/embedding API surface, implemented as parse-to-node + convert.
 

@@ -155,6 +155,9 @@ public partial class TypeChecker
             case ObjectTypeNode obj:
                 return TryResolveObjectType(obj);
 
+            case MappedTypeNode mapped:
+                return TryResolveMappedType(mapped);
+
             case TupleTypeNode tuple:
                 return TryResolveTupleType(tuple);
 
@@ -297,6 +300,41 @@ public partial class TypeChecker
         }
 
         return new TypeInfo.Tuple(elements, requiredCount, restType);
+    }
+
+    /// <summary>
+    /// Mirror of the string path's <c>ParseMappedTypeInfo</c>: the constraint resolves first, then
+    /// the mapped parameter is registered as an open type variable (so the as-clause and value type
+    /// build the same deferred forms <c>ExpandMappedType</c> substitutes per key) before those
+    /// resolve. The modifier flags translate 1:1 to <see cref="MappedTypeModifiers"/>.
+    /// </summary>
+    private TypeInfo? TryResolveMappedType(MappedTypeNode mapped)
+    {
+        MappedTypeModifiers modifiers = MappedTypeModifiers.None;
+        if (mapped.AddReadonly) modifiers |= MappedTypeModifiers.AddReadonly;
+        if (mapped.RemoveReadonly) modifiers |= MappedTypeModifiers.RemoveReadonly;
+        if (mapped.AddOptional) modifiers |= MappedTypeModifiers.AddOptional;
+        if (mapped.RemoveOptional) modifiers |= MappedTypeModifiers.RemoveOptional;
+
+        if (TryToTypeInfo(mapped.Constraint) is not { } constraint) return null;
+
+        _openTypeVariablesInScope ??= new HashSet<string>(StringComparer.Ordinal);
+        bool openVarAdded = _openTypeVariablesInScope.Add(mapped.ParamName);
+        try
+        {
+            TypeInfo? asClause = null;
+            if (mapped.AsClause is { } asNode)
+            {
+                if (TryToTypeInfo(asNode) is not { } resolvedAs) return null;
+                asClause = resolvedAs;
+            }
+            if (TryToTypeInfo(mapped.ValueType) is not { } valueType) return null;
+            return new TypeInfo.MappedType(mapped.ParamName, constraint, valueType, modifiers, asClause);
+        }
+        finally
+        {
+            if (openVarAdded) _openTypeVariablesInScope.Remove(mapped.ParamName);
+        }
     }
 
     /// <summary>

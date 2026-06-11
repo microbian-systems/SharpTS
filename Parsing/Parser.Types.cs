@@ -809,9 +809,7 @@ public partial class Parser
         // Mapped types have a single member that uses 'in' instead of ':'
         if (IsMappedTypeStart())
         {
-            string mapped = ParseMappedType();
-            _lastTypeNode = null; // mapped types have no node yet
-            return mapped;
+            return ParseMappedType(); // sets _lastTypeNode (or null) itself
         }
 
         while (!Check(TokenType.RIGHT_BRACE) && !IsAtEnd())
@@ -1027,14 +1025,18 @@ public partial class Parser
     /// </summary>
     private string ParseMappedType()
     {
-        // Parse optional leading modifiers: +readonly, -readonly, readonly
+        int startLine = Peek().Line;
+        // Parse optional leading modifiers: +readonly, -readonly, readonly. Track flags alongside
+        // the string spelling so the node carries the same modifier intent the string path derives.
         string readonlyMod = "";
+        bool addReadonly = false, removeReadonly = false;
         if (Match(TokenType.PLUS))
         {
             if (Check(TokenType.READONLY))
             {
                 Advance();
                 readonlyMod = "+readonly ";
+                addReadonly = true;
             }
             else
             {
@@ -1047,6 +1049,7 @@ public partial class Parser
             {
                 Advance();
                 readonlyMod = "-readonly ";
+                removeReadonly = true;
             }
             else
             {
@@ -1056,6 +1059,7 @@ public partial class Parser
         else if (Match(TokenType.READONLY))
         {
             readonlyMod = "readonly ";
+            addReadonly = true; // plain readonly == AddReadonly (mirrors ParseMappedTypeInfo)
         }
 
         // Parse [K in Constraint]
@@ -1069,12 +1073,17 @@ public partial class Parser
 
         // Parse constraint (e.g., keyof T, or a union of string literals)
         string constraint = ParseTypeAnnotation();
+        TypeNode? constraintNode = TakeTypeNode();
 
         // Parse optional 'as' clause for key remapping
         string asClause = "";
+        TypeNode? asNode = null;
+        bool hasAs = false;
         if (Match(TokenType.AS))
         {
+            hasAs = true;
             string remapType = ParseTypeAnnotation();
+            asNode = TakeTypeNode();
             asClause = $" as {remapType}";
         }
 
@@ -1082,11 +1091,13 @@ public partial class Parser
 
         // Parse optional trailing modifiers: +?, -?, ?
         string optionalMod = "";
+        bool addOptional = false, removeOptional = false;
         if (Match(TokenType.PLUS))
         {
             if (Match(TokenType.QUESTION))
             {
                 optionalMod = "+?";
+                addOptional = true;
             }
             else
             {
@@ -1098,6 +1109,7 @@ public partial class Parser
             if (Match(TokenType.QUESTION))
             {
                 optionalMod = "-?";
+                removeOptional = true;
             }
             else
             {
@@ -1107,16 +1119,24 @@ public partial class Parser
         else if (Match(TokenType.QUESTION))
         {
             optionalMod = "?";
+            addOptional = true;
         }
 
         // Parse : ValueType
         Consume(TokenType.COLON, "Expect ':' after mapped type parameter.");
         string valueType = ParseTypeAnnotation();
+        TypeNode? valueNode = TakeTypeNode();
 
         // Handle optional separator and closing brace
         Match(TokenType.SEMICOLON);
         Consume(TokenType.RIGHT_BRACE, "Expect '}' after mapped type.");
 
+        // The node needs the constraint, the value type, and (when present) the as-clause to all
+        // have node forms. Any missing component drops the whole mapped type to the string path.
+        _lastTypeNode = constraintNode is not null && valueNode is not null && (!hasAs || asNode is not null)
+            ? new MappedTypeNode(paramName.Lexeme, constraintNode, valueNode, asNode,
+                addReadonly, removeReadonly, addOptional, removeOptional, startLine)
+            : null;
         return $"{{ {readonlyMod}[{paramName.Lexeme} in {constraint}{asClause}]{optionalMod}: {valueType} }}";
     }
 

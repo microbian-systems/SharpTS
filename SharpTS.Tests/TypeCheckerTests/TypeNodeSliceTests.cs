@@ -30,14 +30,49 @@ public class TypeNodeSliceTests
     [Fact]
     public void NodePath_FallsBackForUnsupportedConstructs()
     {
-        // Mapped-type alias bodies have no node form yet, so the reference falls back.
+        // Generic function types (<T>(x: T) => T) still have no node form, so they fall back.
         TypeNodeStats.Reset();
         TestHarness.RunInterpreted("""
-            type RO<T> = { [K in keyof T]: T[K] };
-            var r: RO<{ a: number }> = { a: 1 };
+            let f: <T>(x: T) => T;
             """);
         Assert.True(TypeNodeStats.StringFallbacks >= 1,
-            $"expected the mapped-alias annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+            $"expected the generic-function-type annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+    }
+
+    [Fact]
+    public void NodePath_EngagesForMappedAlias()
+    {
+        // Mapped-type alias bodies now carry nodes, so the reference expands node-first.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            type RO<T> = { readonly [K in keyof T]: T[K] };
+            type Partialize<T> = { [K in keyof T]?: T[K] };
+            var r: RO<{ a: number }> = { a: 1 };
+            var p: Partialize<{ a: number; b: string }> = { a: 1 };
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 2,
+            $"expected the mapped-alias annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_MappedTypePreservesValueType()
+    {
+        // RO<{ a: number }> maps to { readonly a: number }; a string value must be rejected.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type RO<T> = { readonly [K in keyof T]: T[K] };
+            var r: RO<{ a: number }> = { a: "x" };
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_MappedTypeOptionalModifierMatchesStringPath()
+    {
+        // Partialize makes every member optional, so omitting one is allowed.
+        TestHarness.RunInterpreted("""
+            type Partialize<T> = { [K in keyof T]?: T[K] };
+            var p: Partialize<{ a: number; b: string }> = { a: 1 };
+            """);
     }
 
     [Fact]

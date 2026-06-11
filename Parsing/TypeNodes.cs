@@ -70,9 +70,26 @@ public sealed record FunctionTypeNode(TypeNode? ThisType, List<ParameterTypeNode
 /// Generic constructor types (<c>new &lt;T&gt;(…) =&gt; R</c>) have no node yet (slice 3).</summary>
 public sealed record ConstructorTypeNode(List<ParameterTypeNode> Parameters, TypeNode ReturnType, int Line) : TypeNode(Line);
 
-/// <summary>An inline object type: <c>{ name: string; greet(x: number): void }</c>.
-/// Mapped types (<c>{ [K in keyof T]: … }</c>) have no node (slice 2 follow-up).</summary>
+/// <summary>An inline object type: <c>{ name: string; greet(x: number): void }</c>.</summary>
 public sealed record ObjectTypeNode(List<ObjectTypeMemberNode> Members, int Line) : TypeNode(Line);
+
+/// <summary>A mapped type: <c>{ [K in Constraint as Remap]?: Value }</c>, with optional
+/// <c>+/-readonly</c> and <c>+/-?</c> modifiers. The mapped parameter is registered as an open
+/// type variable while the as-clause and value type resolve, so their bodies build the same
+/// deferred forms (IndexedAccess, deferred references) <c>ExpandMappedType</c> substitutes per
+/// key — identical to the string path. The modifier flags map 1:1 to
+/// <c>MappedTypeModifiers</c> in the checker (kept as bools so this syntax layer needs no
+/// dependency on the semantic enum).</summary>
+public sealed record MappedTypeNode(
+    string ParamName,
+    TypeNode Constraint,
+    TypeNode ValueType,
+    TypeNode? AsClause,
+    bool AddReadonly,
+    bool RemoveReadonly,
+    bool AddOptional,
+    bool RemoveOptional,
+    int Line) : TypeNode(Line);
 
 /// <summary>A member of an <see cref="ObjectTypeNode"/>. Not itself a type.</summary>
 public abstract record ObjectTypeMemberNode(int Line);
