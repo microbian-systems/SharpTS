@@ -32,6 +32,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
     private readonly int _maxArity;
     private readonly Func<Interpreter, object?, List<object?>, Task<object?>> _implementation;
     private readonly Func<Interpreter, Task<object?>, SharpTSPromise>? _promiseFactory;
+    private readonly bool _refsEventLoopWhileInFlight;
     private object? _receiver;
 
     // Cache for bound methods - uses weak references to avoid memory leaks
@@ -49,18 +50,28 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
     /// promises (then/catch/finally results, inherited statics) come out as
     /// subclass instances; null means a plain <see cref="SharpTSPromise"/>.
     /// </param>
+    /// <param name="refsEventLoopWhileInFlight">
+    /// True for built-ins whose task is real native I/O that always completes (fs, dns, …):
+    /// the in-flight task Refs the event loop so the quiescence heuristics cannot abandon a
+    /// program whose only pending work is that I/O (the promise-API counterpart of the
+    /// callback-API Ref convention from #205). Must stay false for state promises that may
+    /// legitimately never settle (reader.closed, pipeline of an unfinished stream, then-
+    /// chaining) — those would otherwise hold the loop open forever.
+    /// </param>
     public BuiltInAsyncMethod(
         string name,
         int minArity,
         int maxArity,
         Func<Interpreter, object?, List<object?>, Task<object?>> implementation,
-        Func<Interpreter, Task<object?>, SharpTSPromise>? promiseFactory = null)
+        Func<Interpreter, Task<object?>, SharpTSPromise>? promiseFactory = null,
+        bool refsEventLoopWhileInFlight = false)
     {
         _name = name;
         _minArity = minArity;
         _maxArity = maxArity;
         _implementation = implementation;
         _promiseFactory = promiseFactory;
+        _refsEventLoopWhileInFlight = refsEventLoopWhileInFlight;
     }
 
     // Private constructor for creating bound instances
@@ -70,6 +81,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         int maxArity,
         Func<Interpreter, object?, List<object?>, Task<object?>> implementation,
         Func<Interpreter, Task<object?>, SharpTSPromise>? promiseFactory,
+        bool refsEventLoopWhileInFlight,
         object? receiver)
     {
         _name = name;
@@ -77,6 +89,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         _maxArity = maxArity;
         _implementation = implementation;
         _promiseFactory = promiseFactory;
+        _refsEventLoopWhileInFlight = refsEventLoopWhileInFlight;
         _receiver = receiver;
     }
 
@@ -87,13 +100,13 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         // Null receivers don't need caching
         if (receiver == null)
         {
-            return new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, null);
+            return new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, _refsEventLoopWhileInFlight, null);
         }
 
         // Value types can't be cached efficiently
         if (receiver.GetType().IsValueType)
         {
-            return new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, receiver);
+            return new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, _refsEventLoopWhileInFlight, receiver);
         }
 
         // Initialize cache lazily
@@ -106,7 +119,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         }
 
         // Create new bound method and cache it
-        var bound = new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, receiver);
+        var bound = new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, _refsEventLoopWhileInFlight, receiver);
         _boundMethodCache.AddOrUpdate(receiver, bound);
         return bound;
     }
@@ -120,6 +133,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         try
         {
             var task = _implementation(interpreter, _receiver, arguments);
+            KeepEventLoopAliveUntilComplete(interpreter, task);
             return WrapResult(interpreter, task);
         }
         catch (Exception ex)
@@ -148,7 +162,30 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
     public async Task<object?> CallAsync(Interpreter interpreter, List<object?> arguments)
     {
         ValidateArguments(arguments);
-        return await _implementation(interpreter, _receiver, arguments);
+        var task = _implementation(interpreter, _receiver, arguments);
+        KeepEventLoopAliveUntilComplete(interpreter, task);
+        return await task;
+    }
+
+    /// <summary>
+    /// Refs the event loop for the lifetime of an in-flight native task (opt-in via
+    /// <c>refsEventLoopWhileInFlight</c>). An I/O built-in's thread-pool task is otherwise
+    /// invisible to <c>HasPendingEventLoopWork</c>, so the "never-settling promise" quiescence
+    /// heuristic in <c>WaitForPromise</c>/<c>RunEventLoop</c> would abandon a program whose only
+    /// pending work is real I/O slower than the quiescence window (the fs-on-slow-CI empty-output
+    /// failure class). Mirrors Node: in-flight I/O keeps the process alive; a bare pending
+    /// promise does not.
+    /// </summary>
+    private void KeepEventLoopAliveUntilComplete(Interpreter interpreter, Task task)
+    {
+        if (!_refsEventLoopWhileInFlight || task.IsCompleted) return;
+        interpreter.Ref();
+        task.ContinueWith(
+            static (_, state) => ((Interpreter)state!).Unref(),
+            interpreter,
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private void ValidateArguments(List<object?> arguments)

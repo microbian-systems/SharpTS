@@ -20,27 +20,27 @@ public static class FsPromisesModuleInterpreter
     {
         return new Dictionary<string, object?>
         {
-            ["readFile"] = new BuiltInAsyncMethod("readFile", 1, 2, ReadFile),
-            ["writeFile"] = new BuiltInAsyncMethod("writeFile", 2, 3, WriteFile),
-            ["appendFile"] = new BuiltInAsyncMethod("appendFile", 2, 3, AppendFile),
-            ["stat"] = new BuiltInAsyncMethod("stat", 1, 2, Stat),
-            ["lstat"] = new BuiltInAsyncMethod("lstat", 1, 2, Lstat),
-            ["unlink"] = new BuiltInAsyncMethod("unlink", 1, 1, Unlink),
-            ["mkdir"] = new BuiltInAsyncMethod("mkdir", 1, 2, Mkdir),
-            ["rmdir"] = new BuiltInAsyncMethod("rmdir", 1, 2, Rmdir),
-            ["rm"] = new BuiltInAsyncMethod("rm", 1, 2, Rm),
-            ["readdir"] = new BuiltInAsyncMethod("readdir", 1, 2, Readdir),
-            ["rename"] = new BuiltInAsyncMethod("rename", 2, 2, Rename),
-            ["copyFile"] = new BuiltInAsyncMethod("copyFile", 2, 3, CopyFile),
-            ["access"] = new BuiltInAsyncMethod("access", 1, 2, Access),
-            ["chmod"] = new BuiltInAsyncMethod("chmod", 2, 2, Chmod),
-            ["truncate"] = new BuiltInAsyncMethod("truncate", 1, 2, Truncate),
-            ["utimes"] = new BuiltInAsyncMethod("utimes", 3, 3, Utimes),
-            ["readlink"] = new BuiltInAsyncMethod("readlink", 1, 2, Readlink),
-            ["realpath"] = new BuiltInAsyncMethod("realpath", 1, 2, Realpath),
-            ["symlink"] = new BuiltInAsyncMethod("symlink", 2, 3, Symlink),
-            ["link"] = new BuiltInAsyncMethod("link", 2, 2, Link),
-            ["mkdtemp"] = new BuiltInAsyncMethod("mkdtemp", 1, 2, Mkdtemp),
+            ["readFile"] = new BuiltInAsyncMethod("readFile", 1, 2, ReadFile, refsEventLoopWhileInFlight: true),
+            ["writeFile"] = new BuiltInAsyncMethod("writeFile", 2, 3, WriteFile, refsEventLoopWhileInFlight: true),
+            ["appendFile"] = new BuiltInAsyncMethod("appendFile", 2, 3, AppendFile, refsEventLoopWhileInFlight: true),
+            ["stat"] = new BuiltInAsyncMethod("stat", 1, 2, Stat, refsEventLoopWhileInFlight: true),
+            ["lstat"] = new BuiltInAsyncMethod("lstat", 1, 2, Lstat, refsEventLoopWhileInFlight: true),
+            ["unlink"] = new BuiltInAsyncMethod("unlink", 1, 1, Unlink, refsEventLoopWhileInFlight: true),
+            ["mkdir"] = new BuiltInAsyncMethod("mkdir", 1, 2, Mkdir, refsEventLoopWhileInFlight: true),
+            ["rmdir"] = new BuiltInAsyncMethod("rmdir", 1, 2, Rmdir, refsEventLoopWhileInFlight: true),
+            ["rm"] = new BuiltInAsyncMethod("rm", 1, 2, Rm, refsEventLoopWhileInFlight: true),
+            ["readdir"] = new BuiltInAsyncMethod("readdir", 1, 2, Readdir, refsEventLoopWhileInFlight: true),
+            ["rename"] = new BuiltInAsyncMethod("rename", 2, 2, Rename, refsEventLoopWhileInFlight: true),
+            ["copyFile"] = new BuiltInAsyncMethod("copyFile", 2, 3, CopyFile, refsEventLoopWhileInFlight: true),
+            ["access"] = new BuiltInAsyncMethod("access", 1, 2, Access, refsEventLoopWhileInFlight: true),
+            ["chmod"] = new BuiltInAsyncMethod("chmod", 2, 2, Chmod, refsEventLoopWhileInFlight: true),
+            ["truncate"] = new BuiltInAsyncMethod("truncate", 1, 2, Truncate, refsEventLoopWhileInFlight: true),
+            ["utimes"] = new BuiltInAsyncMethod("utimes", 3, 3, Utimes, refsEventLoopWhileInFlight: true),
+            ["readlink"] = new BuiltInAsyncMethod("readlink", 1, 2, Readlink, refsEventLoopWhileInFlight: true),
+            ["realpath"] = new BuiltInAsyncMethod("realpath", 1, 2, Realpath, refsEventLoopWhileInFlight: true),
+            ["symlink"] = new BuiltInAsyncMethod("symlink", 2, 3, Symlink, refsEventLoopWhileInFlight: true),
+            ["link"] = new BuiltInAsyncMethod("link", 2, 2, Link, refsEventLoopWhileInFlight: true),
+            ["mkdtemp"] = new BuiltInAsyncMethod("mkdtemp", 1, 2, Mkdtemp, refsEventLoopWhileInFlight: true),
             ["constants"] = FsModuleInterpreter.CreateConstants()
         };
     }
@@ -407,3 +407,4 @@ public static class FsPromisesModuleInterpreter
         return new NodeError(code, ex.Message, syscall, path);
     }
 }
+
