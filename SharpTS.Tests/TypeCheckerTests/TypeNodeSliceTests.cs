@@ -30,13 +30,13 @@ public class TypeNodeSliceTests
     [Fact]
     public void NodePath_FallsBackForUnsupportedConstructs()
     {
-        // Generic function types (<T>(x: T) => T) still have no node form, so they fall back.
+        // The `readonly` array/tuple modifier still has no node form, so it falls back.
         TypeNodeStats.Reset();
         TestHarness.RunInterpreted("""
-            let f: <T>(x: T) => T;
+            var a: readonly number[] = [1];
             """);
         Assert.True(TypeNodeStats.StringFallbacks >= 1,
-            $"expected the generic-function-type annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+            $"expected the readonly-modifier annotation to fall back, got {TypeNodeStats.StringFallbacks}");
     }
 
     [Fact]
@@ -376,6 +376,60 @@ public class TypeNodeSliceTests
         Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
             type IsNum<T> = T extends number ? "yes" : "no";
             var r: IsNum<string> = "yes";
+            """));
+    }
+
+    [Fact]
+    public void NodePath_EngagesForGenericFunctionType()
+    {
+        // Declaration-only so the (pre-existing, path-independent) generic-arrow assignment
+        // limitation doesn't mask which path resolved the annotation.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            let id: <T>(x: T) => T;
+            let pick: <T extends object, K extends keyof T>(o: T, k: K) => T[K];
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 2,
+            $"expected the generic-function-type annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_GenericFunctionTypeResolvesWithoutError()
+    {
+        // A generic function type whose body references its own type parameters (keyof T, T[K])
+        // must resolve cleanly — the parameters resolve in the signature's fresh scope, not to any.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            let get: <T, K extends keyof T>(o: T, k: K) => T[K];
+            let map: <T, U>(items: T[], f: (x: T) => U) => U[];
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 2,
+            $"expected both generic-function annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodePath_EngagesForTemplateLiteralType()
+    {
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            type Dir = "left" | "right";
+            var s: `padding-${Dir}` = "padding-left";
+            var f: `f-${string}` = "f-anything";
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 2,
+            $"expected the template-literal annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_TemplateLiteralExpandsConcreteUnion()
+    {
+        // `padding-${Dir}` expands to "padding-left" | "padding-right"; another value is rejected.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type Dir = "left" | "right";
+            var s: `padding-${Dir}` = "padding-up";
             """));
     }
 }

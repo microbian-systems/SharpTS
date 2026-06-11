@@ -67,8 +67,23 @@ public sealed record FunctionTypeNode(TypeNode? ThisType, List<ParameterTypeNode
 
 /// <summary>A constructor type: <c>new (a: T) =&gt; R</c>. Resolves to an object type carrying a
 /// single construct signature, mirroring the string path's <c>{ new (…) =&gt; R }</c> rendering.
-/// Generic constructor types (<c>new &lt;T&gt;(…) =&gt; R</c>) have no node yet (slice 3).</summary>
+/// Generic constructor types (<c>new &lt;T&gt;(…) =&gt; R</c>) have no node yet.</summary>
 public sealed record ConstructorTypeNode(List<ParameterTypeNode> Parameters, TypeNode ReturnType, int Line) : TypeNode(Line);
+
+/// <summary>A generic function type: <c>&lt;T&gt;(a: T) =&gt; R</c>. The type-parameter list is carried
+/// in its AST <see cref="TypeParam"/> form (constraints/defaults are resolved by the checker in a
+/// fresh type-parameter scope, exactly like the string path's two-pass
+/// <c>TryParseGenericFunctionTypeInfo</c>); the body is the inner <see cref="FunctionTypeNode"/>,
+/// resolved within that scope so its <c>T</c>s bind to the parameters. Resolves to
+/// <c>TypeInfo.GenericFunction</c>.</summary>
+public sealed record GenericFunctionTypeNode(List<TypeParam> TypeParameters, FunctionTypeNode Body, int Line) : TypeNode(Line);
+
+/// <summary>A template literal type: <c>`a${T}b`</c>. <see cref="Strings"/> holds the N+1 static
+/// segments around the N <see cref="InterpolatedTypes"/> (a plain <c>`text`</c> has one string and
+/// no interpolations). Resolution mirrors the string path's <c>NormalizeTemplateLiteralType</c>:
+/// all-concrete interpolations expand to a union of string literals, otherwise it stays a pattern
+/// <c>TypeInfo.TemplateLiteralType</c>.</summary>
+public sealed record TemplateLiteralTypeNode(List<string> Strings, List<TypeNode> InterpolatedTypes, int Line) : TypeNode(Line);
 
 /// <summary>An inline object type: <c>{ name: string; greet(x: number): void }</c>.</summary>
 public sealed record ObjectTypeNode(List<ObjectTypeMemberNode> Members, int Line) : TypeNode(Line);

@@ -476,11 +476,16 @@ public partial class Parser
         // type-parameter list (e.g. `<U extends boolean>(a: U) => never`).
         if (Check(TokenType.LESS))
         {
+            int genericLine = Peek().Line;
             List<TypeParam>? typeParams = ParseTypeParameters(); // consumes <...>
             Consume(TokenType.LEFT_PAREN, "Expect '(' after type parameters in function type.");
             string body = ParseFunctionTypeBody(); // returns "(params) => ReturnType"
+            // The checker resolves type-parameter constraints/defaults from their TypeParam strings
+            // in a fresh scope, so the node only needs the params plus a node-formed body.
+            _lastTypeNode = typeParams is { Count: > 0 } && TakeTypeNode() is FunctionTypeNode bodyNode
+                ? new GenericFunctionTypeNode(typeParams, bodyNode, genericLine)
+                : null;
             string genericPrefix = FormatTypeParams(typeParams);
-            _lastTypeNode = null;
             return $"{genericPrefix}{body}";
         }
 
@@ -555,11 +560,15 @@ public partial class Parser
         // Handle template literal types: `literal` or `prefix${Type}suffix`
         else if (Match(TokenType.TEMPLATE_FULL))
         {
-            typeName = "`" + (string)Previous().Literal! + "`";
+            string literal = ((TemplateStringValue)Previous().Literal!).Cooked ?? "";
+            typeName = "`" + literal + "`";
+            // No interpolations — a single static segment (resolves to a string-literal type).
+            typeNode = new TemplateLiteralTypeNode([literal], [], Previous().Line);
         }
         else if (Match(TokenType.TEMPLATE_HEAD))
         {
             typeName = ParseTemplateLiteralType();
+            typeNode = TakeTypeNode();
         }
         // Handle string literal types: "success" | "error"
         else if (Match(TokenType.STRING))
@@ -1304,28 +1313,44 @@ public partial class Parser
     /// </summary>
     private string ParseTemplateLiteralType()
     {
+        int startLine = Previous().Line;
         var sb = new StringBuilder("`");
-        sb.Append((string)Previous().Literal!); // head string
+        // Static segments (N+1) around the N interpolations, mirroring NormalizeTemplateLiteralType.
+        var strings = new List<string>();
+        var interpolated = new List<TypeNode>();
+        bool nodeComplete = true;
+
+        // Template tokens carry a TemplateStringValue (cooked + raw); the type uses the cooked text.
+        string head = ((TemplateStringValue)Previous().Literal!).Cooked ?? "";
+        sb.Append(head);
+        strings.Add(head);
 
         // Parse first interpolated type
         sb.Append("${");
         sb.Append(ParseUnionType()); // Allow unions inside interpolation
         sb.Append('}');
+        if (TakeTypeNode() is { } firstNode) interpolated.Add(firstNode); else nodeComplete = false;
 
         // Parse middle parts
         while (Match(TokenType.TEMPLATE_MIDDLE))
         {
-            sb.Append((string)Previous().Literal!);
+            string mid = ((TemplateStringValue)Previous().Literal!).Cooked ?? "";
+            sb.Append(mid);
+            strings.Add(mid);
             sb.Append("${");
             sb.Append(ParseUnionType());
             sb.Append('}');
+            if (TakeTypeNode() is { } midNode) interpolated.Add(midNode); else nodeComplete = false;
         }
 
         // Expect tail
         Consume(TokenType.TEMPLATE_TAIL, "Expect end of template literal type.");
-        sb.Append((string)Previous().Literal!);
+        string tail = ((TemplateStringValue)Previous().Literal!).Cooked ?? "";
+        sb.Append(tail);
         sb.Append('`');
+        strings.Add(tail);
 
+        _lastTypeNode = nodeComplete ? new TemplateLiteralTypeNode(strings, interpolated, startLine) : null;
         return sb.ToString();
     }
 }

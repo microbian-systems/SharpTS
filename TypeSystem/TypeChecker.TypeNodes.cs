@@ -124,6 +124,22 @@ public partial class TypeChecker
             case TypeQueryNode query:
                 return EvaluateTypeOf(query.EntityPath);
 
+            case GenericFunctionTypeNode genericFn:
+                return TryResolveGenericFunctionType(genericFn);
+
+            case TemplateLiteralTypeNode template:
+            {
+                List<TypeInfo> interpolated = new(template.InterpolatedTypes.Count);
+                foreach (var part in template.InterpolatedTypes)
+                {
+                    if (TryToTypeInfo(part) is not { } resolved) return null;
+                    interpolated.Add(resolved);
+                }
+                // Same normalization the string path applies: all-concrete → union of string
+                // literals; a string-primitive part → pattern TemplateLiteralType.
+                return NormalizeTemplateLiteralType(template.Strings, interpolated);
+            }
+
             case FunctionTypeNode fn:
             {
                 TypeInfo? thisType = null;
@@ -300,6 +316,47 @@ public partial class TypeChecker
         }
 
         return new TypeInfo.Tuple(elements, requiredCount, restType);
+    }
+
+    /// <summary>
+    /// Mirror of the string path's <c>TryParseGenericFunctionTypeInfo</c>: every type-parameter name
+    /// is defined unconstrained first (so a constraint/default may forward-reference a later
+    /// parameter), constraints/defaults then resolve in that scope, and the body
+    /// <see cref="FunctionTypeNode"/> resolves with the parameters in scope so its <c>T</c>s bind to
+    /// them. Constraints/defaults come from the <see cref="TypeParam"/> strings (resolved via the
+    /// shared single-name path), so they cannot diverge from the string path. Null (e.g. a body
+    /// component without a node) falls back.
+    /// </summary>
+    private TypeInfo? TryResolveGenericFunctionType(GenericFunctionTypeNode genericFn)
+    {
+        var typeParamEnv = new TypeEnvironment(_environment);
+
+        // First pass: declare every name unconstrained.
+        foreach (var tp in genericFn.TypeParameters)
+            typeParamEnv.DefineTypeParameter(tp.Name.Lexeme, new TypeInfo.TypeParameter(tp.Name.Lexeme));
+
+        var typeParams = new List<TypeInfo.TypeParameter>();
+        TypeInfo? bodyType;
+        using (new EnvironmentScope(this, typeParamEnv))
+        {
+            // Second pass: resolve constraints/defaults now that all names are in scope.
+            foreach (var tp in genericFn.TypeParameters)
+            {
+                TypeInfo? constraint = tp.Constraint is not null ? ToTypeInfo(tp.Constraint) : null;
+                TypeInfo? defaultType = tp.Default is not null ? ToTypeInfo(tp.Default) : null;
+                var resolved = new TypeInfo.TypeParameter(tp.Name.Lexeme, constraint, defaultType);
+                typeParams.Add(resolved);
+                typeParamEnv.DefineTypeParameter(tp.Name.Lexeme, resolved);
+            }
+
+            bodyType = TryToTypeInfo(genericFn.Body);
+        }
+
+        if (bodyType is not TypeInfo.Function func) return null;
+
+        return new TypeInfo.GenericFunction(
+            typeParams, func.ParamTypes, func.ReturnType, func.RequiredParams, func.HasRestParam,
+            func.ThisType, func.ParamNames);
     }
 
     /// <summary>

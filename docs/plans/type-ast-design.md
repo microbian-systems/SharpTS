@@ -184,9 +184,21 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
    inside alias definitions, which the coarse annotation counter doesn't measure) — like slice 3b,
    the win is the mechanism. No baseline movement; full unit suite green.
 
-   Remaining fallback before the scanner can go: generic `<T>(…) => R` signatures, template-literal
-   types, qualified names (`Foo.Bar`), and a handful of long-tail forms (`asserts`/predicates,
-   `unique symbol`, constrained `infer U extends C`).
+5c. ✅ **Shipped: generic signatures + template-literal types.** `GenericFunctionTypeNode`
+   (carries the `TypeParam` list and the body `FunctionTypeNode`; `TryResolveGenericFunctionType`
+   mirrors `TryParseGenericFunctionTypeInfo`'s two-pass scope so constraints/defaults and the body's
+   `T`s resolve identically) and `TemplateLiteralTypeNode` (N+1 static segments around N
+   interpolations; resolves through the same `NormalizeTemplateLiteralType` — concrete parts expand
+   to a string-literal union, a `string` part stays a pattern type). **Fixed a pre-existing latent
+   bug en route:** template-literal types in type position were entirely broken — the lexer emits a
+   `TemplateStringValue` (cooked+raw) but the type parser still cast `Token.Literal` to `string`,
+   so every `` `a${T}` `` annotation threw a parse error on the *string* path too. Now reads
+   `.Cooked` (both paths). Corpus coverage: 75.0% → **87.6%** (479 node / 68 fallback). No baseline
+   movement. Generic *constructor* types (`new <T>(…) => R`) deliberately still fall back.
+
+   Remaining fallback before the scanner can go: generic constructor types, qualified names
+   (`Foo.Bar`), the `readonly` array/tuple modifier, and a handful of long-tail forms
+   (`asserts`/predicates, `unique symbol`, constrained `infer U extends C`).
 6. Delete `TypeChecker.TypeParsing.cs` string scanning; `ToTypeInfo(string)` survives only
    for the REPL/embedding API surface, implemented as parse-to-node + convert.
 
