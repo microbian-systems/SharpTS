@@ -220,9 +220,18 @@ public partial class ILCompiler
 
             il.Emit(OpCodes.Call, ctorToCall);
         }
+        else if (constructor != null && qualifiedSuperclass != null && _classes.Constructors.ContainsKey(qualifiedSuperclass))
+        {
+            // Explicit constructor with a user-class superclass: the super(...)
+            // call in the body chains the base constructor via
+            // SuperConstructorHandler. Emitting Object..ctor here would call the
+            // WRONG base (Object instead of the real parent) and leave the
+            // verifier seeing a base-ctor `call` on an already-initialized
+            // `this` — ILVerify CallCtor (#287). Emit nothing; super() handles it.
+        }
         else if (!isErrorSubclass && !isDirectArraySubclass && !isDirectPromiseSubclass)
         {
-            // Has explicit constructor (which should have super() call) or no superclass.
+            // No superclass (base is Object): initialize via Object..ctor.
             // For Error/Array/Promise subclasses with an explicit constructor, skip this —
             // super() in the constructor body calls the base constructor via
             // SuperConstructorHandler.
