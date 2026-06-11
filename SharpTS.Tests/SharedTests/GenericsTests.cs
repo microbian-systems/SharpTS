@@ -117,6 +117,33 @@ public class GenericsTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GenericClass_InferredTypeArguments_Works(ExecutionMode mode)
+    {
+        // `new Box(5)` relies on type-argument inference from the constructor argument.
+        // In compiled mode this previously emitted Newobj against the open generic TypeDef
+        // and threw TypeLoadException at load time. (#274)
+        var source = """
+            class Box<T> {
+                constructor(public v: T) {}
+                get(): T { return this.v; }
+            }
+            console.log(new Box(5).get());
+            console.log(new Box("hello").get());
+            console.log(new Box(true).get());
+
+            class Pair<A, B> {
+                constructor(public a: A, public b: B) {}
+            }
+            let p = new Pair("x", 42);
+            console.log(p.a, p.b);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("5\nhello\ntrue\nx 42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void GenericClass_WithMethod_Works(ExecutionMode mode)
     {
         var source = """
