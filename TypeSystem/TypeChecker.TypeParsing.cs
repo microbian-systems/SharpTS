@@ -63,9 +63,13 @@ public partial class TypeChecker
         var aliasExpansion = _environment.GetTypeAlias(typeName);
         if (aliasExpansion != null)
         {
-            // Check cache first - reusing the same TypeInfo object enables identity-based caching
+            // Check cache first - reusing the same TypeInfo object enables identity-based caching.
+            // Keyed by name AND definition: two same-named aliases in different scopes (e.g.
+            // namespace-local `type T = …` redeclarations) must not share an expansion — the
+            // name alone served one namespace's T for another's.
+            string aliasCacheKey = $"{typeName}={aliasExpansion}";
             _expandedTypeAliasCache ??= new Dictionary<string, TypeInfo>(StringComparer.Ordinal);
-            if (_expandedTypeAliasCache.TryGetValue(typeName, out var cached))
+            if (_expandedTypeAliasCache.TryGetValue(aliasCacheKey, out var cached))
             {
                 return cached;
             }
@@ -97,7 +101,7 @@ public partial class TypeChecker
                 }
 
                 // Cache the expanded type for future use
-                _expandedTypeAliasCache[typeName] = expanded;
+                _expandedTypeAliasCache[aliasCacheKey] = expanded;
 
                 return expanded;
             }

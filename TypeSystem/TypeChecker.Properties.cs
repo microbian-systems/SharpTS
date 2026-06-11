@@ -649,6 +649,26 @@ public partial class TypeChecker
             }
             return CheckExpr(set.Value);
         }
+        // Property write on a union: every constituent must expose the member, and the value
+        // must be assignable to the union of the constituents' member types. (tsc permits
+        // discriminant-property writes that select a constituent — `axis.type = getAxisType()`
+        // where axis: ILinearAxis | ICategoricalAxis.)
+        if (objType is TypeInfo.Union unionObj)
+        {
+            List<TypeInfo> memberTypes = [];
+            foreach (var constituent in unionObj.FlattenedTypes)
+            {
+                if (constituent is TypeInfo.Any) { memberTypes.Add(constituent); continue; }
+                if (GetMemberTypeWithOptionality(constituent, set.Name.Lexeme) is not { } member)
+                    throw new TypeCheckException($" Property '{set.Name.Lexeme}' does not exist on type '{unionObj}'.", tsCode: "TS2339");
+                memberTypes.Add(member.Type);
+            }
+            var memberUnion = memberTypes.Aggregate(CreateUnion);
+            TypeInfo unionValueType = CheckExpr(set.Value);
+            if (!IsCompatible(memberUnion, unionValueType))
+                throw new TypeCheckException($" Cannot assign '{unionValueType}' to property '{set.Name.Lexeme}' of type '{memberUnion}'.", tsCode: "TS2322");
+            return unionValueType;
+        }
         throw new TypeCheckException("Only instances and objects have properties.", tsCode: "TS2339");
     }
 
