@@ -111,12 +111,24 @@ public partial class ILEmitter
     /// </summary>
     private void EmitTypedClassConstruction(TypeBuilder typeBuilder, ConstructorBuilder ctorBuilder, string resolvedClassName, Expr.New n)
     {
+        var genericParams = _ctx.ClassRegistry!.GetGenericParams(resolvedClassName);
+        bool isGeneric = genericParams != null && genericParams.Length > 0;
+
+        // Generic class with inferred type arguments (e.g. `new Box(5)` for `class Box<T>`).
+        // Emitting Newobj against the open generic TypeDef throws TypeLoadException at load
+        // time (ECMA-335 II.9.4 — the open definition is not a loadable type). Infer the
+        // closed type from the constructor arguments before constructing. (#274)
+        if (isGeneric && (n.TypeArgs == null || n.TypeArgs.Count == 0))
+        {
+            EmitInferredGenericClassConstruction(typeBuilder, ctorBuilder, genericParams!, n);
+            return;
+        }
+
         Type targetType = typeBuilder;
         ConstructorInfo targetCtor = ctorBuilder;
 
-        // Handle generic class instantiation (e.g., new Box<number>(42))
-        if (n.TypeArgs != null && n.TypeArgs.Count > 0 &&
-            _ctx.ClassRegistry!.GetGenericParams(resolvedClassName) != null)
+        // Handle generic class instantiation with explicit type arguments (e.g., new Box<number>(42))
+        if (isGeneric && n.TypeArgs != null && n.TypeArgs.Count > 0)
         {
             Type[] typeArgs = n.TypeArgs.Select(ResolveTypeArg).ToArray();
             targetType = typeBuilder.MakeGenericType(typeArgs);
@@ -138,6 +150,94 @@ public partial class ILEmitter
 
         for (int i = n.Arguments.Count; i < expectedParamCount; i++)
             EmitDefaultForType(ctorParams[i].ParameterType);
+
+        IL.Emit(OpCodes.Newobj, targetCtor);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Constructs a generic class whose type arguments were left to inference
+    /// (e.g. <c>new Box(5)</c> for <c>class Box&lt;T&gt;</c>). Arguments are emitted into
+    /// typed locals so their <em>actual</em> stack types can drive type-argument inference:
+    /// each type parameter that appears directly as a constructor parameter type is bound to
+    /// the corresponding argument's CLR type, and any parameter not pinned by an argument
+    /// falls back to <c>System.Object</c>. The open generic is then closed before <c>Newobj</c>,
+    /// avoiding the <c>TypeLoadException</c> the CLR raises when asked to load the open TypeDef. (#274)
+    ///
+    /// Inferring from observed stack types (rather than predicting them) keeps the closed
+    /// constructor's generic-parameter slots in exact agreement with the emitted values, so no
+    /// per-argument boxing/unboxing fix-ups are needed for those positions.
+    /// </summary>
+    private void EmitInferredGenericClassConstruction(
+        TypeBuilder typeBuilder, ConstructorBuilder ctorBuilder,
+        GenericTypeParameterBuilder[] genericParams, Expr.New n)
+    {
+        var openParams = ctorBuilder.GetParameters();
+
+        // 1. Emit each argument into a typed local, recording its stack type.
+        var argSlots = new List<(LocalBuilder local, Type clrType, StackType stackType)>(n.Arguments.Count);
+        foreach (var arg in n.Arguments)
+        {
+            EmitExpression(arg);
+            StackType st = StackType;
+            Type clr = st switch
+            {
+                StackType.Double => _ctx.Types.Double,
+                StackType.Boolean => _ctx.Types.Boolean,
+                StackType.String => _ctx.Types.String,
+                _ => _ctx.Types.Object
+            };
+            if (clr == _ctx.Types.Object)
+                EmitBoxIfNeeded(arg);
+            var local = IL.DeclareLocal(clr);
+            IL.Emit(OpCodes.Stloc, local);
+            argSlots.Add((local, clr, st));
+        }
+
+        // 2. Bind each type parameter from a constructor parameter that is exactly that
+        //    type parameter (the open ctor's parameter types reference the generic params).
+        var inferred = new Type?[genericParams.Length];
+        for (int p = 0; p < openParams.Length && p < argSlots.Count; p++)
+        {
+            var pt = openParams[p].ParameterType;
+            if (pt.IsGenericParameter && pt.GenericParameterPosition < inferred.Length
+                && inferred[pt.GenericParameterPosition] == null)
+            {
+                inferred[pt.GenericParameterPosition] = argSlots[p].clrType;
+            }
+        }
+
+        // 3. Fill any parameter no argument pinned. Object is the erased-generic default and
+        //    matches the interpreter, which treats unconstrained type parameters as `any`.
+        for (int i = 0; i < inferred.Length; i++)
+            inferred[i] ??= _ctx.Types.Object;
+
+        Type targetType = typeBuilder.MakeGenericType(inferred!);
+        ConstructorInfo targetCtor = EmitterTypeHelpers.ResolveConstructor(targetType, ctorBuilder);
+
+        // 4. Reload arguments. Generic-parameter slots already hold a value whose CLR type
+        //    equals the closed parameter type, so they load as-is; concrete parameters get the
+        //    standard conversion against their (open == closed) parameter type.
+        for (int i = 0; i < openParams.Length; i++)
+        {
+            var pt = openParams[i].ParameterType;
+            if (i < argSlots.Count)
+            {
+                IL.Emit(OpCodes.Ldloc, argSlots[i].local);
+                SetStackType(argSlots[i].stackType);
+                if (!pt.IsGenericParameter)
+                    EmitConversionForParameter(n.Arguments[i], pt);
+            }
+            else if (pt.IsGenericParameter)
+            {
+                // Under-applied generic-typed parameter: default for the closed type.
+                EmitDefaultForType(inferred[pt.GenericParameterPosition]!);
+            }
+            else
+            {
+                EmitDefaultForType(pt);
+            }
+        }
 
         IL.Emit(OpCodes.Newobj, targetCtor);
         SetStackUnknown();
