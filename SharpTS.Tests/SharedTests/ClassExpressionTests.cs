@@ -221,4 +221,69 @@ public class ClassExpressionTests
     }
 
     #endregion
+
+    #region Accessors (get / set)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_Getter(ExecutionMode mode)
+    {
+        // Regression for #283: a named getter on a class expression returned undefined
+        // in compiled mode because the class-expr GetProperty body never dispatched accessors.
+        var source = """
+            const Widget = class {
+                constructor(public id: number) {}
+                get label(): string { return "w" + this.id; }
+                greet(): string { return "hi"; }
+            };
+            const w = new Widget(3);
+            console.log(w.id);
+            console.log(w.greet());
+            console.log(w.label);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("3\nhi\nw3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_Getter_DynamicAccess(ExecutionMode mode)
+    {
+        // Dynamic (bracket) access also routes through the class-expr GetProperty body (#283).
+        var source = """
+            const Widget = class {
+                constructor(public id: number) {}
+                get label(): string { return "w" + this.id; }
+            };
+            const w = new Widget(7);
+            console.log((w as any)["label"]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("w7\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_Setter(ExecutionMode mode)
+    {
+        // Symmetric gap (#283): the class-expr SetProperty body never dispatched setters,
+        // so writes landed in _fields while reads kept hitting the getter.
+        var source = """
+            const Counter = class {
+                private _n: number = 0;
+                get n(): number { return this._n; }
+                set n(v: number) { this._n = v * 2; }
+            };
+            const c = new Counter();
+            c.n = 21;
+            console.log(c.n);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    #endregion
 }

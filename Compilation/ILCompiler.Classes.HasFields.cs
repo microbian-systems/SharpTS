@@ -537,8 +537,42 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Ret);
 
-        // 3. Check instance methods (compile-time dispatch)
+        // 2c. Check instance getters (accessors with `get` keyword). Mirrors section 2c in
+        // EmitGetPropertyBody for class declarations: reading `obj.foo` where `foo` is a getter
+        // must INVOKE the getter and return its result. Without this, dynamic property access on
+        // a class-expression instance falls through to the method-wrapper path (or returns
+        // $Undefined for a getter with no same-named method) instead of the getter's value (#283).
+        // _classExprs.Getters mixes backing-field property getters with user `get` accessors, but
+        // backing-field names are already handled (and returned) by section 1, so those entries
+        // become dead branches here — matching the class-declaration registry's behavior.
         il.MarkLabel(tryMethodsLabel);
+        if (_classExprs.Getters.TryGetValue(classExpr, out var instanceGetters))
+        {
+            foreach (var (getterPascalName, getterMethod) in instanceGetters)
+            {
+                var camelName = NamingConventions.ToCamelCase(getterPascalName);
+                var nextLabel = il.DefineLabel();
+
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldstr, camelName);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+                il.Emit(OpCodes.Brfalse, nextLabel);
+
+                // return this.<getter>()
+                // (instantiated form for generic classes — open MethodDef tokens are unloadable, #178)
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Callvirt, EmitterTypeHelpers.SelfMethodReference(getterMethod));
+                // GetProperty's return slot is object; box value-type / generic-parameter results
+                // to satisfy the verifier (#279).
+                if (getterMethod.ReturnType.IsValueType || getterMethod.ReturnType.IsGenericParameter)
+                    il.Emit(OpCodes.Box, getterMethod.ReturnType);
+                il.Emit(OpCodes.Ret);
+
+                il.MarkLabel(nextLabel);
+            }
+        }
+
+        // 3. Check instance methods (compile-time dispatch)
         if (_classExprs.InstanceMethods.TryGetValue(classExpr, out var instanceMethods))
         {
             // Check if this is a generic type - generic types require runtime reflection
@@ -631,6 +665,46 @@ public partial class ILCompiler
                 else if (backingField.FieldType != _types.Object)
                     il.Emit(OpCodes.Castclass, backingField.FieldType);
                 il.Emit(OpCodes.Stfld, backingField);
+                il.Emit(OpCodes.Ret);
+
+                il.MarkLabel(nextLabel);
+            }
+        }
+
+        // 1b. Check instance setters (accessors with `set` keyword). Mirrors section 1b in
+        // EmitSetPropertyBody for class declarations: writing `obj.foo` where `foo` is a setter
+        // must INVOKE it rather than storing into _fields, which would silently desynchronize
+        // reads (hitting the getter) from writes (hitting the dict) (#283). _classExprs.Setters
+        // mixes backing-field property setters with user `set` accessors; backing-field names are
+        // already handled (and returned) by section 1, so skip them here to avoid dead branches.
+        if (_classExprs.Setters.TryGetValue(classExpr, out var instanceSetters))
+        {
+            foreach (var (setterPascalName, setterMethod) in instanceSetters)
+            {
+                if (backingFields != null && backingFields.ContainsKey(setterPascalName))
+                    continue;
+
+                var camelName = NamingConventions.ToCamelCase(setterPascalName);
+                var nextLabel = il.DefineLabel();
+
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldstr, camelName);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+                il.Emit(OpCodes.Brfalse, nextLabel);
+
+                // this.set_<Name>(value)
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldarg_2);
+                var setterParams = setterMethod.GetParameters();
+                var paramType = setterParams.Length > 0 ? setterParams[0].ParameterType : _types.Object;
+                if (paramType.IsValueType)
+                    il.Emit(OpCodes.Unbox_Any, paramType);
+                else if (paramType != _types.Object)
+                    il.Emit(OpCodes.Castclass, paramType);
+                // (instantiated form for generic classes — open MethodDef tokens are unloadable, #178)
+                il.Emit(OpCodes.Callvirt, EmitterTypeHelpers.SelfMethodReference(setterMethod));
+                if (setterMethod.ReturnType != _types.Void)
+                    il.Emit(OpCodes.Pop);
                 il.Emit(OpCodes.Ret);
 
                 il.MarkLabel(nextLabel);
