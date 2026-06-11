@@ -325,6 +325,22 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     }
 
     /// <summary>
+    /// Emits an expression boxed and spills it into a fresh object local.
+    /// State-machine emitters (the only users of these base implementations) can suspend
+    /// inside any subexpression (await); values left on the IL evaluation stack across a
+    /// suspension produce invalid IL, so multi-operand emission must evaluate each operand
+    /// into a local first — the same await-safe pattern as EmitFunctionValueCall.
+    /// </summary>
+    protected LocalBuilder SpillBoxed(Expr e)
+    {
+        EmitExpression(e);
+        EnsureBoxed();
+        var local = IL.DeclareLocal(typeof(object));
+        IL.Emit(OpCodes.Stloc, local);
+        return local;
+    }
+
+    /// <summary>
     /// Emits a binary operator expression. Default boxes both operands and delegates to TryEmitBinaryOperator.
     /// ILEmitter overrides with stack-type-tracked fast paths.
     /// </summary>
@@ -337,10 +353,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             return;
         }
 
-        EmitExpression(b.Left);
-        EnsureBoxed();
-        EmitExpression(b.Right);
-        EnsureBoxed();
+        // Spill operands so an await inside Right doesn't suspend with Left on the stack.
+        var leftLocal = SpillBoxed(b.Left);
+        var rightLocal = SpillBoxed(b.Right);
+        IL.Emit(OpCodes.Ldloc, leftLocal);
+        IL.Emit(OpCodes.Ldloc, rightLocal);
 
         // `in` and `instanceof` are binary operators not covered by TryEmitBinaryOperator.
         switch (b.Operator.Type)
@@ -380,13 +397,21 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     private void EmitBitwiseOrShiftBinary(Expr.Binary b)
     {
+        // Spill the coerced left operand so an await inside Right suspends with an empty stack.
         EmitExpression(b.Left);
         EnsureBoxed();
         IL.Emit(OpCodes.Call, Ctx.Runtime!.JsToInt32);
+        var leftLocal = IL.DeclareLocal(typeof(int));
+        IL.Emit(OpCodes.Stloc, leftLocal);
 
         EmitExpression(b.Right);
         EnsureBoxed();
         IL.Emit(OpCodes.Call, Ctx.Runtime!.JsToInt32);
+        var rightLocal = IL.DeclareLocal(typeof(int));
+        IL.Emit(OpCodes.Stloc, rightLocal);
+
+        IL.Emit(OpCodes.Ldloc, leftLocal);
+        IL.Emit(OpCodes.Ldloc, rightLocal);
 
         switch (b.Operator.Type)
         {
@@ -437,8 +462,8 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             return;
         }
 
-        EmitExpression(gi.Object);
-        EnsureBoxed();
+        // Spill the object so an await inside Index doesn't suspend with it on the stack.
+        var objLocal = SpillBoxed(gi.Object);
 
         if (gi.Optional)
         {
@@ -446,22 +471,22 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             var endLabel = IL.DefineLabel();
 
             // Check for null
-            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldloc, objLocal);
             IL.Emit(OpCodes.Brfalse, nullishLabel);
 
             // Check for undefined
-            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldloc, objLocal);
             IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
             IL.Emit(OpCodes.Brtrue, nullishLabel);
 
             // Not nullish — proceed with index access
-            EmitExpression(gi.Index);
-            EnsureBoxed();
+            var idxLocal = SpillBoxed(gi.Index);
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Ldloc, idxLocal);
             IL.Emit(OpCodes.Call, Ctx.Runtime!.GetIndex);
             IL.Emit(OpCodes.Br, endLabel);
 
             IL.MarkLabel(nullishLabel);
-            IL.Emit(OpCodes.Pop);
             IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
 
             IL.MarkLabel(endLabel);
@@ -469,8 +494,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         }
         else
         {
-            EmitExpression(gi.Index);
-            EnsureBoxed();
+            var idxLocal = SpillBoxed(gi.Index);
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Ldloc, idxLocal);
             IL.Emit(OpCodes.Call, Ctx.Runtime!.GetIndex);
             SetStackUnknown();
         }
@@ -500,15 +526,13 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             return;
         }
 
-        EmitExpression(si.Value);
-        EnsureBoxed();
-        var valueLocal = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, valueLocal);
+        // Spill everything so an await inside any operand suspends with an empty stack.
+        var valueLocal = SpillBoxed(si.Value);
+        var objLocal = SpillBoxed(si.Object);
+        var idxLocal = SpillBoxed(si.Index);
 
-        EmitExpression(si.Object);
-        EnsureBoxed();
-        EmitExpression(si.Index);
-        EnsureBoxed();
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Ldloc, idxLocal);
         IL.Emit(OpCodes.Ldloc, valueLocal);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.SetIndex);
 
@@ -650,19 +674,16 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         // Type-first dispatch: property setter via TypeEmitterRegistry
         if (TryEmitTypeRegistryPropertySet(s)) return;
 
-        // Default: dynamic property assignment
-        EmitExpression(s.Object);
-        EnsureBoxed();
+        // Default: dynamic property assignment.
+        // Spill operands so an await inside Value doesn't suspend with the object on the stack.
+        var objLocal = SpillBoxed(s.Object);
+        var valueLocal = SpillBoxed(s.Value);
+
+        IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Ldstr, s.Name.Lexeme);
-        EmitExpression(s.Value);
-        EnsureBoxed();
-
-        IL.Emit(OpCodes.Dup);
-        var resultTemp = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, resultTemp);
-
+        IL.Emit(OpCodes.Ldloc, valueLocal);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.SetProperty);
-        IL.Emit(OpCodes.Ldloc, resultTemp);
+        IL.Emit(OpCodes.Ldloc, valueLocal);
         SetStackUnknown();
     }
 
@@ -1031,6 +1052,16 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     {
         bool hasSpreads = a.Elements.Any(e => e is Expr.Spread);
 
+        // Evaluate all elements into locals first so an await inside any element
+        // suspends with an empty stack (holes need no evaluation).
+        var elementLocals = new LocalBuilder?[a.Elements.Count];
+        for (int i = 0; i < a.Elements.Count; i++)
+        {
+            if (a.IsHole(i))
+                continue;
+            elementLocals[i] = SpillBoxed(a.Elements[i] is Expr.Spread spread ? spread.Expression : a.Elements[i]);
+        }
+
         if (!hasSpreads)
         {
             IL.Emit(OpCodes.Ldc_I4, a.Elements.Count);
@@ -1040,15 +1071,14 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             {
                 IL.Emit(OpCodes.Dup);
                 IL.Emit(OpCodes.Ldc_I4, i);
-                if (a.IsHole(i))
+                if (elementLocals[i] == null)
                 {
                     // Elided position → true ECMA-262 hole, not an undefined element.
                     IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.ArrayHoleInstance);
                 }
                 else
                 {
-                    EmitExpression(a.Elements[i]);
-                    EnsureBoxed();
+                    IL.Emit(OpCodes.Ldloc, elementLocals[i]!);
                 }
                 IL.Emit(OpCodes.Stelem_Ref);
             }
@@ -1065,10 +1095,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 IL.Emit(OpCodes.Dup);
                 IL.Emit(OpCodes.Ldc_I4, i);
 
-                if (a.Elements[i] is Expr.Spread spread)
+                if (a.Elements[i] is Expr.Spread)
                 {
-                    EmitExpression(spread.Expression);
-                    EnsureBoxed();
+                    IL.Emit(OpCodes.Ldloc, elementLocals[i]!);
                 }
                 else
                 {
@@ -1076,14 +1105,13 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     IL.Emit(OpCodes.Newarr, typeof(object));
                     IL.Emit(OpCodes.Dup);
                     IL.Emit(OpCodes.Ldc_I4_0);
-                    if (a.IsHole(i))
+                    if (elementLocals[i] == null)
                     {
                         IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.ArrayHoleInstance);
                     }
                     else
                     {
-                        EmitExpression(a.Elements[i]);
-                        EnsureBoxed();
+                        IL.Emit(OpCodes.Ldloc, elementLocals[i]!);
                     }
                     IL.Emit(OpCodes.Stelem_Ref);
                     IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateArray);
@@ -1116,14 +1144,16 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         }
         else if (!hasSpreads && !hasComputedKeys)
         {
+            // Spill values first so an await inside any value suspends with an empty stack.
+            var valueLocals = o.Properties.Select(p => SpillBoxed(p.Value)).ToList();
+
             IL.Emit(OpCodes.Newobj, Types.DictionaryStringObjectCtor);
 
-            foreach (var prop in o.Properties)
+            for (int i = 0; i < o.Properties.Count; i++)
             {
                 IL.Emit(OpCodes.Dup);
-                EmitStaticPropertyKey(prop.Key!);
-                EmitExpression(prop.Value);
-                EnsureBoxed();
+                EmitStaticPropertyKey(o.Properties[i].Key!);
+                IL.Emit(OpCodes.Ldloc, valueLocals[i]);
                 IL.Emit(OpCodes.Callvirt, Types.DictionaryStringObjectSetItem);
             }
 
@@ -1131,31 +1161,38 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         }
         else
         {
+            // Spill computed keys and values first (evaluation order: key before value, per property).
+            var keyLocals = new LocalBuilder?[o.Properties.Count];
+            var valueLocals = new LocalBuilder[o.Properties.Count];
+            for (int i = 0; i < o.Properties.Count; i++)
+            {
+                if (o.Properties[i].Key is Expr.ComputedKey ck)
+                    keyLocals[i] = SpillBoxed(ck.Expression);
+                valueLocals[i] = SpillBoxed(o.Properties[i].Value);
+            }
+
             IL.Emit(OpCodes.Newobj, Types.DictionaryStringObjectNullableCtor);
 
-            foreach (var prop in o.Properties)
+            for (int i = 0; i < o.Properties.Count; i++)
             {
+                var prop = o.Properties[i];
                 IL.Emit(OpCodes.Dup);
 
                 if (prop.IsSpread)
                 {
-                    EmitExpression(prop.Value);
-                    EnsureBoxed();
+                    IL.Emit(OpCodes.Ldloc, valueLocals[i]);
                     IL.Emit(OpCodes.Call, Ctx.Runtime!.MergeIntoObject);
                 }
-                else if (prop.Key is Expr.ComputedKey ck)
+                else if (prop.Key is Expr.ComputedKey)
                 {
-                    EmitExpression(ck.Expression);
-                    EnsureBoxed();
-                    EmitExpression(prop.Value);
-                    EnsureBoxed();
+                    IL.Emit(OpCodes.Ldloc, keyLocals[i]!);
+                    IL.Emit(OpCodes.Ldloc, valueLocals[i]);
                     IL.Emit(OpCodes.Call, Ctx.Runtime!.SetIndex);
                 }
                 else
                 {
                     EmitStaticPropertyKey(prop.Key!);
-                    EmitExpression(prop.Value);
-                    EnsureBoxed();
+                    IL.Emit(OpCodes.Ldloc, valueLocals[i]);
                     IL.Emit(OpCodes.Callvirt, Types.DictionaryStringObjectNullableSetItem);
                 }
             }
@@ -1178,40 +1215,34 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
         foreach (var prop in o.Properties)
         {
+            // Spill the value first so an await inside it suspends with an empty stack.
+            var valueLocal = SpillBoxed(prop.Value);
+
             if (prop.IsSpread)
             {
                 IL.Emit(OpCodes.Ldloc, objLocal);
-                EmitExpression(prop.Value);
-                EnsureBoxed();
+                IL.Emit(OpCodes.Ldloc, valueLocal);
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.MergeIntoTSObject);
                 continue;
             }
 
             string propKey = GetPropertyKeyString(prop.Key!);
 
+            IL.Emit(OpCodes.Ldloc, objLocal);
+            IL.Emit(OpCodes.Ldstr, propKey);
+            IL.Emit(OpCodes.Ldloc, valueLocal);
+
             switch (prop.Kind)
             {
                 case Expr.ObjectPropertyKind.Getter:
-                    IL.Emit(OpCodes.Ldloc, objLocal);
-                    IL.Emit(OpCodes.Ldstr, propKey);
-                    EmitExpression(prop.Value);
-                    EnsureBoxed();
                     IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSObjectDefineGetter);
                     break;
 
                 case Expr.ObjectPropertyKind.Setter:
-                    IL.Emit(OpCodes.Ldloc, objLocal);
-                    IL.Emit(OpCodes.Ldstr, propKey);
-                    EmitExpression(prop.Value);
-                    EnsureBoxed();
                     IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSObjectDefineSetter);
                     break;
 
                 default:
-                    IL.Emit(OpCodes.Ldloc, objLocal);
-                    IL.Emit(OpCodes.Ldstr, propKey);
-                    EmitExpression(prop.Value);
-                    EnsureBoxed();
                     IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.TSObjectSetProperty);
                     break;
             }

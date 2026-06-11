@@ -231,13 +231,11 @@ public abstract partial class ExpressionEmitterBase
         EmitLogicalConditionCheck(ls.Operator.Type, skipLabel);
 
         IL.Emit(OpCodes.Pop);
+        // Spill the value so an await inside it suspends with an empty stack.
+        var resultLocal = SpillBoxed(ls.Value);
         IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Ldstr, ls.Name.Lexeme);
-        EmitExpression(ls.Value);
-        EnsureBoxed();
-        var resultLocal = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Dup);
-        IL.Emit(OpCodes.Stloc, resultLocal);
+        IL.Emit(OpCodes.Ldloc, resultLocal);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.SetProperty);
         IL.Emit(OpCodes.Ldloc, resultLocal);
         IL.Emit(OpCodes.Br, endLabel);
@@ -275,13 +273,11 @@ public abstract partial class ExpressionEmitterBase
         EmitLogicalConditionCheck(lsi.Operator.Type, skipLabel);
 
         IL.Emit(OpCodes.Pop);
+        // Spill the value so an await inside it suspends with an empty stack.
+        var resultLocal = SpillBoxed(lsi.Value);
         IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Ldloc, indexLocal);
-        EmitExpression(lsi.Value);
-        EnsureBoxed();
-        var resultLocal = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Dup);
-        IL.Emit(OpCodes.Stloc, resultLocal);
+        IL.Emit(OpCodes.Ldloc, resultLocal);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.SetIndex);
         IL.Emit(OpCodes.Ldloc, resultLocal);
         IL.Emit(OpCodes.Br, endLabel);
@@ -327,9 +323,15 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Ldloc, objTemp);
         IL.Emit(OpCodes.Ldstr, cs.Name.Lexeme);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+        var currentTemp = IL.DeclareLocal(typeof(object));
+        IL.Emit(OpCodes.Stloc, currentTemp);
 
-        EmitExpression(cs.Value);
-        EnsureBoxed();
+        // Spill the value so an await inside it suspends with an empty stack
+        // (the current property value must not stay on the stack across it).
+        var rhsTemp = SpillBoxed(cs.Value);
+
+        IL.Emit(OpCodes.Ldloc, currentTemp);
+        IL.Emit(OpCodes.Ldloc, rhsTemp);
         EmitCompoundOperation(cs.Operator.Type);
 
         var resultLocal = IL.DeclareLocal(typeof(object));
@@ -362,9 +364,15 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Ldloc, objTemp);
         IL.Emit(OpCodes.Ldloc, indexTemp);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.GetIndex);
+        var currentTemp = IL.DeclareLocal(typeof(object));
+        IL.Emit(OpCodes.Stloc, currentTemp);
 
-        EmitExpression(csi.Value);
-        EnsureBoxed();
+        // Spill the value so an await inside it suspends with an empty stack
+        // (the current element value must not stay on the stack across it).
+        var valueTemp = SpillBoxed(csi.Value);
+
+        IL.Emit(OpCodes.Ldloc, currentTemp);
+        IL.Emit(OpCodes.Ldloc, valueTemp);
         EmitCompoundOperation(csi.Operator.Type);
 
         var resultLocal = IL.DeclareLocal(typeof(object));

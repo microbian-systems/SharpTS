@@ -60,9 +60,13 @@ public partial class AsyncMoveNextEmitter
 
     protected override void EmitTaggedTemplateLiteral(Expr.TaggedTemplateLiteral ttl)
     {
-        // 1. Emit the tag function reference
-        EmitExpression(ttl.Tag);
-        EnsureBoxed();
+        // Spill the tag and interpolated expressions first: an await inside any of them
+        // must suspend with an empty stack (same two-phase pattern as EmitTemplateLiteral).
+        var tagLocal = SpillBoxed(ttl.Tag);
+        var exprLocals = ttl.Expressions.Select(SpillBoxed).ToList();
+
+        // 1. Load the tag function reference
+        _il.Emit(OpCodes.Ldloc, tagLocal);
 
         // 2. Create cooked strings array (object?[] to allow null for invalid escapes)
         _il.Emit(OpCodes.Ldc_I4, ttl.CookedStrings.Count);
@@ -93,15 +97,14 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Stelem_Ref);
         }
 
-        // 4. Create expressions array
-        _il.Emit(OpCodes.Ldc_I4, ttl.Expressions.Count);
+        // 4. Create expressions array (from the pre-spilled locals)
+        _il.Emit(OpCodes.Ldc_I4, exprLocals.Count);
         _il.Emit(OpCodes.Newarr, typeof(object));
-        for (int i = 0; i < ttl.Expressions.Count; i++)
+        for (int i = 0; i < exprLocals.Count; i++)
         {
             _il.Emit(OpCodes.Dup);
             _il.Emit(OpCodes.Ldc_I4, i);
-            EmitExpression(ttl.Expressions[i]);
-            EnsureBoxed();
+            _il.Emit(OpCodes.Ldloc, exprLocals[i]);
             _il.Emit(OpCodes.Stelem_Ref);
         }
 
@@ -110,67 +113,9 @@ public partial class AsyncMoveNextEmitter
         SetStackUnknown();
     }
 
-    protected override void EmitSet(Expr.Set s)
-    {
-        // Handle globalThis.x = value
-        if (s.Object is Expr.Variable gtVar && gtVar.Name.Lexeme == "globalThis")
-        {
-            EmitExpression(s.Value);
-            EnsureBoxed();
-            var gtResultTemp = _il.DeclareLocal(typeof(object));
-            _il.Emit(OpCodes.Stloc, gtResultTemp);
-            _il.Emit(OpCodes.Ldstr, s.Name.Lexeme);
-            _il.Emit(OpCodes.Ldloc, gtResultTemp);
-            _il.Emit(OpCodes.Call, _ctx!.Runtime!.GlobalThisSetProperty);
-            _il.Emit(OpCodes.Ldloc, gtResultTemp);
-            SetStackUnknown();
-            return;
-        }
-
-        // Handle static field assignment: Class.field = value
-        if (s.Object is Expr.Variable classVar &&
-            _ctx!.Classes.TryGetValue(_ctx.ResolveClassName(classVar.Name.Lexeme), out var classBuilder))
-        {
-            string resolvedClassName = _ctx.ResolveClassName(classVar.Name.Lexeme);
-            if (_ctx.ClassRegistry!.TryGetStaticField(resolvedClassName, s.Name.Lexeme, out var staticField))
-            {
-                // Emit value
-                EmitExpression(s.Value);
-                EnsureBoxed();
-
-                // Dup for expression result (assignment returns the value)
-                _il.Emit(OpCodes.Dup);
-
-                // Store to static field
-                _il.Emit(OpCodes.Stsfld, staticField!);
-                SetStackUnknown();
-                return;
-            }
-        }
-
-        // Type-first dispatch: property setter via TypeEmitterRegistry
-        if (TryEmitTypeRegistryPropertySet(s)) return;
-
-        // Default: dynamic property assignment
-        // Build stack for SetProperty(obj, name, value)
-        EmitExpression(s.Object);
-        EnsureBoxed();
-        _il.Emit(OpCodes.Ldstr, s.Name.Lexeme);
-        EmitExpression(s.Value);
-        EnsureBoxed();
-
-        // Dup value for expression result (assignment returns the value)
-        _il.Emit(OpCodes.Dup);
-        var resultTemp = _il.DeclareLocal(typeof(object));
-        _il.Emit(OpCodes.Stloc, resultTemp);
-
-        // Call SetProperty (returns void)
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.SetProperty);
-
-        // Put result back on stack
-        _il.Emit(OpCodes.Ldloc, resultTemp);
-        SetStackUnknown();
-    }
+    // EmitSet is inherited from ExpressionEmitterBase: it covers the same cases
+    // (globalThis, static fields, registry, dynamic SetProperty) plus CommonJS
+    // module.exports, and spills operands so awaits inside Value are suspension-safe.
 
     protected override void EmitGetPrivate(Expr.GetPrivate gp)
     {
@@ -207,9 +152,10 @@ public partial class AsyncMoveNextEmitter
             var dictType = typeof(Dictionary<string, object?>);
             var dictLocal = _il.DeclareLocal(dictType);
 
+            // Spill the object so an await inside it doesn't suspend with the storage field on the stack.
+            var objLocal = SpillBoxed(gp.Object);
             _il.Emit(OpCodes.Ldsfld, storageField);
-            EmitExpression(gp.Object);
-            EnsureBoxed();
+            _il.Emit(OpCodes.Ldloc, objLocal);
             _il.Emit(OpCodes.Ldloca, dictLocal);
             var tryGetValueMethod = cwtType.GetMethod("TryGetValue", [typeof(object), dictType.MakeByRefType()])!;
             _il.Emit(OpCodes.Callvirt, tryGetValueMethod);
@@ -280,9 +226,10 @@ public partial class AsyncMoveNextEmitter
             var dictLocal = _il.DeclareLocal(dictType);
             var valueLocal = _il.DeclareLocal(typeof(object));
 
+            // Spill the object so an await inside it doesn't suspend with the storage field on the stack.
+            var objLocal = SpillBoxed(sp.Object);
             _il.Emit(OpCodes.Ldsfld, storageField);
-            EmitExpression(sp.Object);
-            EnsureBoxed();
+            _il.Emit(OpCodes.Ldloc, objLocal);
             _il.Emit(OpCodes.Ldloca, dictLocal);
             var tryGetValueMethod = cwtType.GetMethod("TryGetValue", [typeof(object), dictType.MakeByRefType()])!;
             _il.Emit(OpCodes.Callvirt, tryGetValueMethod);
@@ -344,11 +291,10 @@ public partial class AsyncMoveNextEmitter
             classVar.Name.Lexeme == _ctx!.CurrentClassShortName &&
             _ctx!.ClassRegistry!.TryGetStaticPrivateMethod(className, methodName, out var staticMethod))
         {
-            foreach (var arg in cp.Arguments)
-            {
-                EmitExpression(arg);
-                EnsureBoxed();
-            }
+            // Spill args so an await inside one doesn't suspend with earlier args on the stack.
+            var argLocals = cp.Arguments.Select(SpillBoxed).ToList();
+            foreach (var argLocal in argLocals)
+                _il.Emit(OpCodes.Ldloc, argLocal);
             _il.Emit(OpCodes.Call, staticMethod!);
             SetStackUnknown();
             return;
@@ -383,15 +329,15 @@ public partial class AsyncMoveNextEmitter
                 _il.Emit(OpCodes.Throw);
                 _il.MarkLabel(validLabel);
 
+                // Spill args so an await inside one doesn't suspend with the receiver on the stack.
+                var argLocals = cp.Arguments.Select(SpillBoxed).ToList();
+
                 _il.Emit(OpCodes.Ldloc, objLocal);
                 if (_ctx.CurrentClassBuilder != null)
                     _il.Emit(OpCodes.Castclass, _ctx.CurrentClassBuilder);
 
-                foreach (var arg in cp.Arguments)
-                {
-                    EmitExpression(arg);
-                    EnsureBoxed();
-                }
+                foreach (var argLocal in argLocals)
+                    _il.Emit(OpCodes.Ldloc, argLocal);
 
                 _il.Emit(OpCodes.Callvirt, instanceMethod!);
                 SetStackUnknown();
@@ -400,17 +346,16 @@ public partial class AsyncMoveNextEmitter
             else
             {
                 // No private field storage (class has private methods but no private fields)
-                // Skip brand check - just emit the call directly
-                EmitExpression(cp.Object);
-                EnsureBoxed();
+                // Skip brand check - spill receiver and args, then emit the call directly
+                var objLocal = SpillBoxed(cp.Object);
+                var argLocals = cp.Arguments.Select(SpillBoxed).ToList();
+
+                _il.Emit(OpCodes.Ldloc, objLocal);
                 if (_ctx.CurrentClassBuilder != null)
                     _il.Emit(OpCodes.Castclass, _ctx.CurrentClassBuilder);
 
-                foreach (var arg in cp.Arguments)
-                {
-                    EmitExpression(arg);
-                    EnsureBoxed();
-                }
+                foreach (var argLocal in argLocals)
+                    _il.Emit(OpCodes.Ldloc, argLocal);
 
                 _il.Emit(OpCodes.Callvirt, instanceMethod!);
                 SetStackUnknown();
@@ -439,23 +384,6 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Ldstr, "Cannot access private members outside of class context");
             _il.Emit(OpCodes.Newobj, Types.InvalidOperationExceptionCtorString);
             _il.Emit(OpCodes.Throw);
-        }
-    }
-
-    /// <summary>
-    /// Emits an object[] array from argument expressions.
-    /// </summary>
-    private void EmitArgumentArray(List<Expr> arguments)
-    {
-        _il.Emit(OpCodes.Ldc_I4, arguments.Count);
-        _il.Emit(OpCodes.Newarr, typeof(object));
-        for (int i = 0; i < arguments.Count; i++)
-        {
-            _il.Emit(OpCodes.Dup);
-            _il.Emit(OpCodes.Ldc_I4, i);
-            EmitExpression(arguments[i]);
-            EnsureBoxed();
-            _il.Emit(OpCodes.Stelem_Ref);
         }
     }
 

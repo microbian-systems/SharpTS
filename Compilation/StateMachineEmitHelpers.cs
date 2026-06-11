@@ -1115,6 +1115,44 @@ public class StateMachineEmitHelpers
     #region Console Intrinsics
 
     /// <summary>
+    /// Evaluates call arguments (from <paramref name="start"/>) into temp locals, in order.
+    /// State-machine emitters can suspend (await) inside emitArgumentBoxed; a value left on
+    /// the IL evaluation stack across a suspension produces invalid IL, so arguments must be
+    /// spilled to locals before the args array is assembled.
+    /// </summary>
+    private List<LocalBuilder> SpillArgumentsToLocals(
+        SharpTS.Parsing.Expr.Call call,
+        Action<SharpTS.Parsing.Expr> emitArgumentBoxed,
+        int start = 0)
+    {
+        var temps = new List<LocalBuilder>();
+        for (int i = start; i < call.Arguments.Count; i++)
+        {
+            emitArgumentBoxed(call.Arguments[i]);
+            var temp = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, temp);
+            temps.Add(temp);
+        }
+        return temps;
+    }
+
+    /// <summary>
+    /// Builds an object[] on the stack from previously spilled argument locals.
+    /// </summary>
+    private void EmitArgsArrayFromLocals(List<LocalBuilder> temps)
+    {
+        _il.Emit(OpCodes.Ldc_I4, temps.Count);
+        _il.Emit(OpCodes.Newarr, _types.Object);
+        for (int i = 0; i < temps.Count; i++)
+        {
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Ldc_I4, i);
+            _il.Emit(OpCodes.Ldloc, temps[i]);
+            _il.Emit(OpCodes.Stelem_Ref);
+        }
+    }
+
+    /// <summary>
     /// Checks if the call expression is a console.log call (either Variable or Get pattern).
     /// </summary>
     public static bool IsConsoleLogCall(SharpTS.Parsing.Expr.Call call)
@@ -1164,16 +1202,8 @@ public class StateMachineEmitHelpers
         }
         else if (consoleLogMultipleMethod != null)
         {
-            // Multiple arguments - use ConsoleLogMultiple
-            _il.Emit(OpCodes.Ldc_I4, call.Arguments.Count);
-            _il.Emit(OpCodes.Newarr, _types.Object);
-            for (int i = 0; i < call.Arguments.Count; i++)
-            {
-                _il.Emit(OpCodes.Dup);
-                _il.Emit(OpCodes.Ldc_I4, i);
-                emitArgumentBoxed(call.Arguments[i]);
-                _il.Emit(OpCodes.Stelem_Ref);
-            }
+            // Multiple arguments - use ConsoleLogMultiple (args spilled for await-safety)
+            EmitArgsArrayFromLocals(SpillArgumentsToLocals(call, emitArgumentBoxed));
             _il.Emit(OpCodes.Call, consoleLogMultipleMethod);
         }
         else
@@ -1371,18 +1401,10 @@ public class StateMachineEmitHelpers
         }
         else
         {
-            // Condition + message args
-            emitArgumentBoxed(call.Arguments[0]);
-            // Build array of remaining args
-            _il.Emit(OpCodes.Ldc_I4, call.Arguments.Count - 1);
-            _il.Emit(OpCodes.Newarr, _types.Object);
-            for (int i = 1; i < call.Arguments.Count; i++)
-            {
-                _il.Emit(OpCodes.Dup);
-                _il.Emit(OpCodes.Ldc_I4, i - 1);
-                emitArgumentBoxed(call.Arguments[i]);
-                _il.Emit(OpCodes.Stelem_Ref);
-            }
+            // Condition + message args (all spilled for await-safety)
+            var temps = SpillArgumentsToLocals(call, emitArgumentBoxed);
+            _il.Emit(OpCodes.Ldloc, temps[0]);
+            EmitArgsArrayFromLocals(temps.GetRange(1, temps.Count - 1));
             _il.Emit(OpCodes.Call, runtime.ConsoleAssertMultiple);
         }
         _il.Emit(OpCodes.Ldnull);
@@ -1397,23 +1419,18 @@ public class StateMachineEmitHelpers
         Action<SharpTS.Parsing.Expr> emitArgumentBoxed,
         EmittedRuntime runtime)
     {
-        if (call.Arguments.Count >= 1)
-        {
-            emitArgumentBoxed(call.Arguments[0]);
-        }
+        // Both operands spilled for await-safety (data must not sit on the stack across
+        // a suspension inside the columns argument).
+        var tableTemps = SpillArgumentsToLocals(call, emitArgumentBoxed);
+        if (tableTemps.Count >= 1)
+            _il.Emit(OpCodes.Ldloc, tableTemps[0]);
         else
-        {
             _il.Emit(OpCodes.Ldnull);
-        }
 
-        if (call.Arguments.Count >= 2)
-        {
-            emitArgumentBoxed(call.Arguments[1]);
-        }
+        if (tableTemps.Count >= 2)
+            _il.Emit(OpCodes.Ldloc, tableTemps[1]);
         else
-        {
             _il.Emit(OpCodes.Ldnull);
-        }
         _il.Emit(OpCodes.Call, runtime.ConsoleTable);
         _il.Emit(OpCodes.Ldnull);
         SetStackUnknown();
@@ -1460,16 +1477,8 @@ public class StateMachineEmitHelpers
         }
         else
         {
-            // Multiple arguments - build array
-            _il.Emit(OpCodes.Ldc_I4, call.Arguments.Count);
-            _il.Emit(OpCodes.Newarr, _types.Object);
-            for (int i = 0; i < call.Arguments.Count; i++)
-            {
-                _il.Emit(OpCodes.Dup);
-                _il.Emit(OpCodes.Ldc_I4, i);
-                emitArgumentBoxed(call.Arguments[i]);
-                _il.Emit(OpCodes.Stelem_Ref);
-            }
+            // Multiple arguments (spilled for await-safety)
+            EmitArgsArrayFromLocals(SpillArgumentsToLocals(call, emitArgumentBoxed));
             _il.Emit(OpCodes.Call, runtime.ConsoleGroupMultiple);
         }
         _il.Emit(OpCodes.Ldnull);
@@ -1496,16 +1505,8 @@ public class StateMachineEmitHelpers
         }
         else
         {
-            // Multiple arguments - build array
-            _il.Emit(OpCodes.Ldc_I4, call.Arguments.Count);
-            _il.Emit(OpCodes.Newarr, _types.Object);
-            for (int i = 0; i < call.Arguments.Count; i++)
-            {
-                _il.Emit(OpCodes.Dup);
-                _il.Emit(OpCodes.Ldc_I4, i);
-                emitArgumentBoxed(call.Arguments[i]);
-                _il.Emit(OpCodes.Stelem_Ref);
-            }
+            // Multiple arguments (spilled for await-safety)
+            EmitArgsArrayFromLocals(SpillArgumentsToLocals(call, emitArgumentBoxed));
             _il.Emit(OpCodes.Call, runtime.ConsoleTraceMultiple);
         }
         _il.Emit(OpCodes.Ldnull);
@@ -1534,16 +1535,8 @@ public class StateMachineEmitHelpers
         }
         else
         {
-            // Multiple arguments
-            _il.Emit(OpCodes.Ldc_I4, call.Arguments.Count);
-            _il.Emit(OpCodes.Newarr, _types.Object);
-            for (int i = 0; i < call.Arguments.Count; i++)
-            {
-                _il.Emit(OpCodes.Dup);
-                _il.Emit(OpCodes.Ldc_I4, i);
-                emitArgumentBoxed(call.Arguments[i]);
-                _il.Emit(OpCodes.Stelem_Ref);
-            }
+            // Multiple arguments (spilled for await-safety)
+            EmitArgsArrayFromLocals(SpillArgumentsToLocals(call, emitArgumentBoxed));
             _il.Emit(OpCodes.Call, multipleArgMethod);
         }
 
@@ -1572,16 +1565,8 @@ public class StateMachineEmitHelpers
         }
         else
         {
-            // Multiple arguments
-            _il.Emit(OpCodes.Ldc_I4, call.Arguments.Count);
-            _il.Emit(OpCodes.Newarr, _types.Object);
-            for (int i = 0; i < call.Arguments.Count; i++)
-            {
-                _il.Emit(OpCodes.Dup);
-                _il.Emit(OpCodes.Ldc_I4, i);
-                emitArgumentBoxed(call.Arguments[i]);
-                _il.Emit(OpCodes.Stelem_Ref);
-            }
+            // Multiple arguments (spilled for await-safety)
+            EmitArgsArrayFromLocals(SpillArgumentsToLocals(call, emitArgumentBoxed));
             _il.Emit(OpCodes.Call, multipleArgMethod);
         }
 
