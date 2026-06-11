@@ -10,6 +10,15 @@ namespace SharpTS.TypeSystem;
 public enum EnumKind { Numeric, String, Heterogeneous }
 
 /// <summary>
+/// Accessibility origin of a member that an interface inherited from a class (via
+/// <c>interface I extends SomeClass</c>). TypeScript relates such members nominally: a
+/// private member is only compatible with the identical declaration (matched by
+/// <see cref="DeclaringClassId"/>); a protected member additionally with declarations in
+/// derived classes. Ordinary interface members are public and carry no brand.
+/// </summary>
+public readonly record struct MemberAccessBrand(AccessModifier Access, int DeclaringClassId);
+
+/// <summary>
 /// The target of a decorator application.
 /// </summary>
 public enum DecoratorTarget
@@ -440,7 +449,8 @@ public abstract record TypeInfo
         List<CallSignature>? CallSignatures = null,
         List<ConstructorSignature>? ConstructorSignatures = null,
         FrozenSet<string>? ReadonlyMembers = null,
-        FrozenSet<string>? MethodMembers = null
+        FrozenSet<string>? MethodMembers = null,
+        FrozenDictionary<string, MemberAccessBrand>? MemberBrands = null
     ) : TypeInfo
     {
         /// <summary>True when the member (own or inherited) was declared with method syntax —

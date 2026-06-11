@@ -503,11 +503,18 @@ public partial class TypeChecker
     private TypeInfo.Interface ClassAsInterfaceBase(TypeInfo.Class cls)
     {
         Dictionary<string, TypeInfo> members = [];
+        // Non-public members (TypeScript `private`/`protected`) keep their nominal origin so the
+        // resulting interface relates them like the class did — a private member is only assignable
+        // to/from the identical declaration. The declaring class id matches the source class.
+        Dictionary<string, MemberAccessBrand> brands = [];
         TypeInfo? current = cls;
         while (current is TypeInfo.Class c)
         {
-            foreach (var (n, t) in c.FieldTypes) members.TryAdd(n, t);
-            foreach (var (n, t) in c.Methods) if (n != "constructor") members.TryAdd(n, t);
+            var core = c.Core;
+            foreach (var (n, t) in c.FieldTypes)
+                if (members.TryAdd(n, t)) RecordMemberBrand(brands, n, core.FieldAccess, core.DeclarationId);
+            foreach (var (n, t) in c.Methods)
+                if (n != "constructor" && members.TryAdd(n, t)) RecordMemberBrand(brands, n, core.MethodAccess, core.DeclarationId);
             foreach (var (n, t) in c.Getters) members.TryAdd(n, t);
             current = GetSuperclass(current);
         }
@@ -516,7 +523,20 @@ public partial class TypeChecker
             members.ToFrozenDictionary(),
             FrozenSet<string>.Empty,
             cls.StringIndexType,
-            cls.NumberIndexType);
+            cls.NumberIndexType,
+            MemberBrands: brands.Count == 0 ? null : brands.ToFrozenDictionary());
+    }
+
+    /// <summary>Records a member's brand when it is non-public (private/protected). Public members
+    /// carry no brand — their absence from the map means "public, no nominal origin".</summary>
+    private static void RecordMemberBrand(
+        Dictionary<string, MemberAccessBrand> brands,
+        string name,
+        FrozenDictionary<string, AccessModifier> access,
+        int declaringClassId)
+    {
+        if (access.TryGetValue(name, out var mod) && mod != AccessModifier.Public)
+            brands[name] = new MemberAccessBrand(mod, declaringClassId);
     }
 
     /// <summary>

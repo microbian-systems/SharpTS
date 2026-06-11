@@ -686,6 +686,14 @@ public partial class TypeChecker
             return IsCompatible(expWeakRef.TargetType, actWeakRef.TargetType);
         }
 
+        // Member accessibility (TypeScript private/protected): two object types are unrelated when a
+        // member they share has a conflicting accessibility origin — a public member cannot satisfy a
+        // private one, and two private members must originate from the same declaration. Applies in
+        // both directions to every object-like pair, ahead of the structural paths below.
+        if (IsObjectLikeForAccessibility(expected) && IsObjectLikeForAccessibility(actual) &&
+            !MembersAccessibilityCompatible(expected, actual))
+            return false;
+
         if (expected is TypeInfo.Instance i1 && actual is TypeInfo.Instance i2)
         {
             // Handle InstantiatedGeneric expected type - check if actual's class hierarchy includes it

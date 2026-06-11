@@ -116,6 +116,92 @@ public class NominalTypingTests
     }
 
     [Fact]
+    public void SourceWithPrivateMember_NotAssignableToPublicTarget()
+    {
+        // A class whose `foo` is private cannot be assigned to a target whose `foo` is public —
+        // TypeScript relates the property nominally even when the TARGET carries no brand. The
+        // conflict is on the source side. (assignmentCompatWithObjectMembersAccessibility)
+        var source = """
+            class Pub {
+                public foo: string = "";
+            }
+            class Priv {
+                private foo: string = "";
+            }
+
+            let target: Pub = new Pub();
+            let src: Priv = new Priv();
+            target = src;
+            """;
+
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
+        Assert.Contains("Type Error", ex.Message);
+    }
+
+    [Fact]
+    public void ObjectLiteralTarget_RejectsSourceWithPrivateMember()
+    {
+        // An anonymous object type is all-public; a class with a private `foo` is not assignable to it.
+        var source = """
+            class Priv {
+                private foo: string = "";
+            }
+
+            let target: { foo: string };
+            let src: Priv = new Priv();
+            target = src;
+            """;
+
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
+        Assert.Contains("Type Error", ex.Message);
+    }
+
+    [Fact]
+    public void InterfaceExtendingClass_SameOriginPrivate_Assignable()
+    {
+        // `interface I extends Base` inherits Base's private member with Base's identity, so a Base
+        // instance IS assignable to the interface (and vice versa) — same declaration. The branded
+        // target must not reject the structurally-identical, same-origin source.
+        var source = """
+            class Base {
+                private foo: string = "x";
+            }
+            interface I extends Base {}
+
+            let b: Base = new Base();
+            let i: I = b;
+            let back: Base = i;
+            console.log("ok");
+            """;
+
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("ok\n", result);
+    }
+
+    [Fact]
+    public void InterfaceExtendingClass_PublicSource_NotAssignable()
+    {
+        // The interface inherited a PRIVATE `foo` from Base, so an unrelated public-`foo` class is
+        // not assignable to it (public cannot satisfy a private member).
+        var source = """
+            class Base {
+                private foo: string = "x";
+            }
+            interface I extends Base {}
+            class Pub {
+                public foo: string = "y";
+            }
+
+            let i: I;
+            let p: Pub = new Pub();
+            i = p;
+            """;
+
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
+        Assert.Contains("Type Error", ex.Message);
+    }
+
+    [Fact]
     public void SameShapeClass_WithExtraMembers_AssignableToSmallerTarget()
     {
         // Width subtyping: a source with extra public members is assignable to an unbranded
