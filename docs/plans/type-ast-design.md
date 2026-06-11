@@ -221,8 +221,30 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
    The string path (`ToTypeInfo(string)` / `TypeChecker.TypeParsing.cs`) is still reached for a few
    long-tail constructs absent from the corpus — bigint literal types (`1n`), `this`-parameter
    generic/constructor types, `unique symbol` — and remains the implementation for the REPL/embedding
-   API. Slice 6 (deleting the scanner) is now viable: give those last forms nodes, then reimplement
-   `ToTypeInfo(string)` as parse-to-node + convert.
+   API.
+
+   **The construct layer is done; the consumer layer is not.** Coverage above is measured at the
+   `ResolveAnnotation` sites only (originally var/const/function-param-hoist + alias defs + generic
+   args). The *other* annotation consumers — class fields, function/method params, return types,
+   `this` types, interface members, accessors, index signatures, type assertions — still call
+   `ToTypeInfo(string)` directly and must each be flipped to the node path before the scanner can go.
+   There are also internal **rendered-string round-trips** (`ResolveGenericType` arg-string overload,
+   string alias expansion, `SubstituteTypeParamInString`) whose strings are NOT valid source, so
+   they can't be reparsed — they need structural reimplementation, independent of the consumer flips.
+
+5f. ✅ **Shipped (first consumer flip): class field annotations.** `Stmt.Field.TypeAnnotationNode`
+   populated by the parser (captured immediately after the field's `ParseTypeAnnotation`, before the
+   initializer expression); both checker passes (signature collection + body check) resolve via
+   `ResolveAnnotation`. Constructor **parameter properties** (`constructor(public x: T)`) are a
+   separate field-creation path still on the string path. No baseline movement; full unit suite green.
+
+### Slice 6 — deleting the scanner (remaining)
+1. Flip the rest of the annotation consumers to the node path (class/interface members, function
+   signatures, accessors, index signatures, parameter properties, assertions) — mechanical breadth,
+   one AST `…Node` field + parser capture + checker `ResolveAnnotation` per site.
+2. Eliminate the internal rendered-string round-trips (work on `TypeInfo`/nodes, not `ToString()`).
+3. Reimplement `ToTypeInfo(string)` as parse-to-node + convert for the REPL/embedding surface, then
+   delete `TypeChecker.TypeParsing.cs`'s scanning.
 6. Delete `TypeChecker.TypeParsing.cs` string scanning; `ToTypeInfo(string)` survives only
    for the REPL/embedding API surface, implemented as parse-to-node + convert.
 

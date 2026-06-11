@@ -125,8 +125,10 @@ public class TypeNodeSliceTests
     public void NodePath_EngagesForGenericReferences()
     {
         TypeNodeStats.Reset();
+        // Plain fields (not constructor parameter properties) so this stays focused on the generic
+        // references — parameter-property fields are a separate consumer site not yet node-wired.
         TestHarness.RunInterpreted("""
-            class Pair<A, B> { constructor(public first: A, public second: B) {} }
+            class Pair<A, B> { first!: A; second!: B; constructor(a: A, b: B) {} }
             var xs: Array<number> = [1, 2];
             var p: Promise<string> = Promise.resolve("x");
             var pr: Pair<string, number> = new Pair<string, number>("x", 1);
@@ -421,6 +423,31 @@ public class TypeNodeSliceTests
         Assert.True(TypeNodeStats.NodeHits >= 2,
             $"expected the template-literal annotations on the node path, got {TypeNodeStats.NodeHits}");
         Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodePath_EngagesForClassFieldAnnotations()
+    {
+        // Class field type annotations now resolve node-first (consumer wired off the string path).
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            class C {
+                a: number = 1;
+                b: string[] = [];
+                c: { x: number } = { x: 0 };
+            }
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 3,
+            $"expected the class-field annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_ClassFieldEnforcesAnnotatedType()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            class C { a: number = "not a number"; }
+            """));
     }
 
     [Fact]
