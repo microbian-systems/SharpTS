@@ -45,6 +45,12 @@ public class ClosureAnalyzer : AstVisitorBase
     // Maps function node → set of its local variables that are captured by inner closures
     private readonly Dictionary<object, HashSet<string>> _functionCapturedLocals = [];
 
+    // Maps capturing function node → (captured name → defining function node).
+    // Records WHICH enclosing scope provides each captured variable, so the
+    // compiler can route the access to the correct display class without
+    // name-matching across unrelated scopes (which aliases shadowed names).
+    private readonly Dictionary<object, Dictionary<string, object>> _captureSources = [];
+
     // ============================================
     // Performance optimization: Inverse index
     // ============================================
@@ -88,6 +94,19 @@ public class ClosureAnalyzer : AstVisitorBase
     public bool HasCapturedLocals(object functionNode)
     {
         return _functionCapturedLocals.TryGetValue(functionNode, out var locals) && locals.Count > 0;
+    }
+
+    /// <summary>
+    /// Returns the function/arrow AST node whose scope defines the variable
+    /// <paramref name="name"/> captured by <paramref name="functionNode"/>,
+    /// or null when the variable is top-level (or not a recorded capture).
+    /// </summary>
+    public object? GetCaptureSource(object functionNode, string name)
+    {
+        return _captureSources.TryGetValue(functionNode, out var sources) &&
+               sources.TryGetValue(name, out var src)
+            ? src
+            : null;
     }
 
 
@@ -185,6 +204,16 @@ public class ClosureAnalyzer : AstVisitorBase
                     _functionCapturedLocals[definingFunc] = capturedLocals;
                 }
                 capturedLocals.Add(name);
+
+                // Record the defining scope for this capture. Within a single
+                // function's analysis the scope stack is fixed, so repeated
+                // references resolve to the same defining function.
+                if (!_captureSources.TryGetValue(_currentFunction, out var sources))
+                {
+                    sources = [];
+                    _captureSources[_currentFunction] = sources;
+                }
+                sources[name] = definingFunc;
             }
         }
     }

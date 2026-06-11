@@ -293,6 +293,7 @@ public partial class ILCompiler
             CapturedFunctionLocals = capturedLocals,
             ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
             ArrowScopeDCFields = _closures.ArrowScopeDCFields.Count > 0 ? _closures.ArrowScopeDCFields : null,
+            ArrowScopeDCExtraFieldsByArrow = _arrowScopeDCExtraFields.Count > 0 ? _arrowScopeDCExtraFields : null,
             // Inner function support
             InnerFunctionMethods = _innerFunctionMethods,
             InnerFunctionDisplayClasses = _innerFunctionDisplayClasses,

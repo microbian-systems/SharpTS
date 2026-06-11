@@ -170,6 +170,37 @@ public partial class CompilationContext
     /// </summary>
     public HashSet<string>? ParentArrowCapturedLocals { get; set; }
 
+    /// <summary>
+    /// A captured variable's live access path when it lives on an ancestor
+    /// arrow's scope DC referenced by an EXTRA (non-primary) reference field:
+    /// load <see cref="RefField"/> off the current display class (arg0), then
+    /// load/store <see cref="VarField"/> on that scope DC instance.
+    /// </summary>
+    public readonly record struct ExtraScopeBinding(FieldBuilder RefField, FieldBuilder VarField);
+
+    /// <summary>
+    /// Per-name live bindings for captured variables whose source scope DC is
+    /// referenced by an extra reference field on the current closure's display
+    /// class. Populated from the analyzer's capture-source record, so entries
+    /// are shadow-correct for THIS closure. Checked by LocalVariableResolver
+    /// after the primary parent-DC path.
+    /// </summary>
+    public Dictionary<string, ExtraScopeBinding>? ExtraArrowScopeBindings { get; set; }
+
+    /// <summary>
+    /// The current closure's own EXTRA ancestor-scope reference fields, keyed
+    /// by source arrow. Used to chain references into closures created inside
+    /// this body (type-matched against the new closure's reference fields).
+    /// </summary>
+    public Dictionary<ArrowFunction, FieldBuilder>? CurrentArrowScopeDCExtraFields { get; set; }
+
+    /// <summary>
+    /// Global map of every arrow's EXTRA ancestor-scope reference fields
+    /// (closure arrow → source arrow → field). The creation-site emitter
+    /// populates these alongside the primary $arrowDC field.
+    /// </summary>
+    public Dictionary<ArrowFunction, Dictionary<ArrowFunction, FieldBuilder>>? ArrowScopeDCExtraFieldsByArrow { get; set; }
+
     // ============================================
     // Inner Function Support
     // ============================================

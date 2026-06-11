@@ -366,6 +366,15 @@ public partial class ILEmitter
 
             IL.Emit(OpCodes.Ldloc, temp);
             IL.Emit(OpCodes.Stfld, funcDCField);
+            // Captured PARAMETER of this function: also sync the arg slot —
+            // reads resolve parameters before the DC, so a DC-only store would
+            // leave later same-body reads seeing the stale argument.
+            if (_ctx.FunctionDisplayClassLocal != null &&
+                _ctx.TryGetParameter(a.Name.Lexeme, out var funcParamSync))
+            {
+                IL.Emit(OpCodes.Ldloc, temp);
+                IL.Emit(OpCodes.Starg, funcParamSync);
+            }
             SetStackUnknown();
             return;
         }
@@ -399,6 +408,51 @@ public partial class ILEmitter
 
             IL.Emit(OpCodes.Ldloc, temp);
             IL.Emit(OpCodes.Stfld, arrowDCField);
+            // Captured PARAMETER of this arrow: also sync the arg slot — reads
+            // resolve parameters before the scope DC, so a DC-only store would
+            // leave later same-body reads seeing the stale argument (lodash's
+            // `context = context || root; ... context.Date` failure mode).
+            if (_ctx.ArrowScopeDisplayClassLocal != null &&
+                _ctx.TryGetParameter(a.Name.Lexeme, out var arrowParamSync))
+            {
+                IL.Emit(OpCodes.Ldloc, temp);
+                IL.Emit(OpCodes.Starg, arrowParamSync);
+            }
+            SetStackUnknown();
+            return;
+        }
+
+        // 1c. PARENT arrow's scope DC, reachable through the current closure's
+        // $arrowDC / $arrowScopeDC reference field. Mirrors LocalVariableResolver
+        // store path 1c; without this branch the assignment falls through to the
+        // "Unknown target" tail and leaves a dangling value on the stack.
+        if (_ctx.ParentArrowCapturedLocals?.Contains(a.Name.Lexeme) == true &&
+            _ctx.ParentArrowScopeDisplayClassFields?.TryGetValue(a.Name.Lexeme, out var parentArrowDCField) == true &&
+            _ctx.CurrentArrowScopeDCField != null)
+        {
+            EmitBoxIfNeeded(a.Value);
+            IL.Emit(OpCodes.Dup);
+            var temp = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, temp);
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField);
+            IL.Emit(OpCodes.Ldloc, temp);
+            IL.Emit(OpCodes.Stfld, parentArrowDCField);
+            SetStackUnknown();
+            return;
+        }
+
+        // 1d. EXTRA ancestor arrow scope DCs — mirror of LocalVariableResolver 1d.
+        if (_ctx.ExtraArrowScopeBindings?.TryGetValue(a.Name.Lexeme, out var extraAssignBinding) == true)
+        {
+            EmitBoxIfNeeded(a.Value);
+            IL.Emit(OpCodes.Dup);
+            var temp = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, temp);
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, extraAssignBinding.RefField);
+            IL.Emit(OpCodes.Ldloc, temp);
+            IL.Emit(OpCodes.Stfld, extraAssignBinding.VarField);
             SetStackUnknown();
             return;
         }

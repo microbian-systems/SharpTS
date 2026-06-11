@@ -260,23 +260,69 @@ public partial class ILEmitter
             }
         }
 
-        // Populate $arrowDC field if this arrow captures arrow-scope variables
+        // Populate $arrowDC field if this arrow captures arrow-scope variables.
+        // When both a scope-DC local (this context's own DC) and a chained
+        // reference field are available, pick by DC TYPE: the new arrow may
+        // reference a GRANDPARENT scope DC that only the chain field carries.
         if (_ctx.ArrowScopeDCFields?.TryGetValue(af, out var arrowScopeDCField) == true)
         {
-            if (_ctx.ArrowScopeDisplayClassLocal != null)
+            bool localMatches = _ctx.ArrowScopeDisplayClassLocal != null &&
+                _ctx.ArrowScopeDisplayClassLocal.LocalType == arrowScopeDCField.FieldType;
+            bool chainMatches = _ctx.CurrentArrowScopeDCField != null &&
+                _ctx.CurrentArrowScopeDCField.FieldType == arrowScopeDCField.FieldType;
+
+            if (localMatches || (_ctx.ArrowScopeDisplayClassLocal != null && !chainMatches))
             {
                 // In parent arrow body - use local variable
                 IL.Emit(OpCodes.Dup);
-                IL.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
+                IL.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal!);
                 IL.Emit(OpCodes.Stfld, arrowScopeDCField);
             }
-            else if (_ctx.CurrentArrowScopeDCField != null)
+            else if (chainMatches)
             {
-                // In nested arrow body - chain through parent's $arrowDC field
+                // In nested closure body - chain through the $arrowDC /
+                // $arrowScopeDC reference field
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField!);
+                IL.Emit(OpCodes.Stfld, arrowScopeDCField);
+            }
+            else if (!EmitScopeDCRefFromExtras(arrowScopeDCField) && _ctx.CurrentArrowScopeDCField != null)
+            {
+                // Legacy fallback: no type-matching source available — keep the
+                // historical chain-through behavior.
                 IL.Emit(OpCodes.Dup);
                 IL.Emit(OpCodes.Ldarg_0);
                 IL.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField);
                 IL.Emit(OpCodes.Stfld, arrowScopeDCField);
+            }
+        }
+
+        // EXTRA ancestor scope DC references (multi-source captures): populate
+        // each one from whatever this context can reach by DC type.
+        if (_ctx.ArrowScopeDCExtraFieldsByArrow?.TryGetValue(af, out var extraScopeRefFields) == true)
+        {
+            foreach (var extraRefField in extraScopeRefFields.Values)
+            {
+                if (_ctx.ArrowScopeDisplayClassLocal != null &&
+                    _ctx.ArrowScopeDisplayClassLocal.LocalType == extraRefField.FieldType)
+                {
+                    IL.Emit(OpCodes.Dup);
+                    IL.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
+                    IL.Emit(OpCodes.Stfld, extraRefField);
+                }
+                else if (_ctx.CurrentArrowScopeDCField != null &&
+                         _ctx.CurrentArrowScopeDCField.FieldType == extraRefField.FieldType)
+                {
+                    IL.Emit(OpCodes.Dup);
+                    IL.Emit(OpCodes.Ldarg_0);
+                    IL.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField);
+                    IL.Emit(OpCodes.Stfld, extraRefField);
+                }
+                else
+                {
+                    EmitScopeDCRefFromExtras(extraRefField);
+                }
             }
         }
 
@@ -340,6 +386,30 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Ldarg_0); // this (display class)
                 IL.Emit(OpCodes.Ldfld, capturedField);
             }
+            else if (_ctx.CapturedArrowLocals?.Contains(capturedVar) == true &&
+                     _ctx.ArrowScopeDisplayClassFields?.TryGetValue(capturedVar, out var ownScopeField) == true &&
+                     _ctx.ArrowScopeDisplayClassLocal != null)
+            {
+                // Variable lives on the creating scope's arrow scope DC (e.g. a
+                // hoisted inner function declaration stored there). Without this
+                // branch the populate falls through to Locals and emits null.
+                IL.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
+                IL.Emit(OpCodes.Ldfld, ownScopeField);
+            }
+            else if (_ctx.ParentArrowScopeDisplayClassFields?.TryGetValue(capturedVar, out var parentScopeField) == true &&
+                     _ctx.CurrentArrowScopeDCField != null)
+            {
+                // Variable lives on an ancestor arrow's scope DC reachable through
+                // the creating closure's $arrowDC/$arrowScopeDC reference. Arises
+                // when the new arrow's single $arrowDC slot is bound to a different
+                // source scope, so this variable became a copy-field. Keyed on the
+                // fields map alone (not the creating closure's own capture set) —
+                // the variable belongs to the NEW closure's captures, which the
+                // creating closure may not share.
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldfld, _ctx.CurrentArrowScopeDCField);
+                IL.Emit(OpCodes.Ldfld, parentScopeField);
+            }
             else if (_ctx.CapturedTopLevelVars?.Contains(capturedVar) == true &&
                      _ctx.EntryPointDisplayClassFields?.TryGetValue(capturedVar, out var entryPointField) == true)
             {
@@ -398,6 +468,29 @@ public partial class ILEmitter
 
             IL.Emit(OpCodes.Stfld, field);
         }
+    }
+
+    /// <summary>
+    /// With a new display instance on top of the stack, tries to populate
+    /// <paramref name="targetField"/> (a scope-DC reference field) from one of
+    /// the current closure's own EXTRA ancestor-scope reference fields, matched
+    /// by DC type. Returns false when no extra reference matches.
+    /// </summary>
+    private bool EmitScopeDCRefFromExtras(FieldBuilder targetField)
+    {
+        if (_ctx.CurrentArrowScopeDCExtraFields == null)
+            return false;
+        foreach (var ownRef in _ctx.CurrentArrowScopeDCExtraFields.Values)
+        {
+            if (ownRef.FieldType != targetField.FieldType)
+                continue;
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, ownRef);
+            IL.Emit(OpCodes.Stfld, targetField);
+            return true;
+        }
+        return false;
     }
 
     /// <summary>
