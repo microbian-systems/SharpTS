@@ -1509,7 +1509,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, paramCountLocal);
         il.Emit(OpCodes.Bge, needsTrimming);
 
-        // Pad with nulls: result = new object[paramCount]; Array.Copy(args, result, argsLength)
+        // Pad missing args: result = new object[paramCount]; Array.Copy(args, result, argsLength)
         il.Emit(OpCodes.Ldloc, paramCountLocal);
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Stloc, resultLocal);
@@ -1517,6 +1517,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldloc, argsLengthLocal);
         il.Emit(OpCodes.Call, _types.ArrayType.GetMethod("Copy", [_types.ArrayType, _types.ArrayType, _types.Int32])!);
+
+        // Missing args pad as null. NOT the $Undefined singleton: emitted
+        // built-ins broadly use null-checks for optional-arg absence (stream
+        // write/end callbacks, encodings, ...), so sentinel padding makes them
+        // treat the slot as a real argument. The one built-in that must
+        // distinguish absent (skip) from explicit JS null (throw) — value-form
+        // Object.create's props — gets a dedicated wrapper instead
+        // (ObjectCreateValueForm in RuntimeEmitter.Objects.Prototype.cs).
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 

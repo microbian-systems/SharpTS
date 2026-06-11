@@ -503,15 +503,15 @@ public class RealPackageSmokeTests
     // value-form built-in singleton methods (e.g. `context.Math.max`) are not
     // populated in compiled mode (the Math/JSON singleton dicts hold no method
     // wrappers). #276 populated those wrappers and got init past `context.Math.max`,
-    // but compiled init still fails inside lodash's `getNative` helper
+    // but compiled init still failed inside lodash's `getNative` helper
     // ("object is not a function"). #302's original hypothesis (a value-form
-    // dispatch gap) was DISPROVEN while triaging: the true root cause (#307) is a
+    // dispatch gap) was DISPROVEN while triaging: the true root cause (#307) was a
     // closure bug — inner function declarations nested in an arrow/function-
-    // expression capture enclosing locals by snapshot (at hoist time) instead of
+    // expression captured enclosing locals by snapshot (at hoist time) instead of
     // by live reference, so `getValue` / `Object` / `symToStringTag` read back
-    // null (`typeof null === "object"` → "object is not a function"). Unskip when
-    // #307 lands.
-    [SkippableFact(Skip = "compiled lodash init fails in getNative ('object is not a function') — closure snapshot-vs-live-capture bug, see #307 (root cause of #302)")]
+    // null (`typeof null === "object"` → "object is not a function"). #307's
+    // $arrowScopeDC live-reference fix got init past that.
+    [SkippableFact]
     public void Lodash_Compiled()
     {
         SkipIfNoNpm();
@@ -525,9 +525,9 @@ public class RealPackageSmokeTests
         var (exit, output) = CompileAndRun(script);
         Assert.Equal(0, exit);
         // See Lodash_Interpreter above for rationale.
-        Assert.Equal("function", output.Split('\n')[0].Trim());
-        // Note: _.chunk and _.flatten still return wrong values in compiled
-        // mode — separate behavioral bug tracked outside #40/#59. Strengthen
-        // these assertions once that's resolved.
+        var lines = output.Split('\n').Select(l => l.Trim()).ToArray();
+        Assert.Equal("function", lines[0]);
+        Assert.Equal("[[1, 2], [3, 4]]", lines[1]);
+        Assert.Equal("[1, 2, 3, 4]", lines[2]);
     }
 }

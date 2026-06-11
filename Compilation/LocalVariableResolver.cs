@@ -132,6 +132,18 @@ public class LocalVariableResolver : IVariableResolver
             return StackType.Unknown;
         }
 
+        // 2d. EXTRA ancestor arrow scope DCs — per-name bindings for captures
+        // whose source scope is referenced by a non-primary $arrowDC{n} /
+        // $arrowScopeDC{n} field (closures capturing from multiple ancestor
+        // arrow scopes). Analyzer-confirmed entries only, so shadowing-safe.
+        if (_ctx.ExtraArrowScopeBindings?.TryGetValue(name, out var extraBinding) == true)
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, extraBinding.RefField);
+            _il.Emit(OpCodes.Ldfld, extraBinding.VarField);
+            return StackType.Unknown;
+        }
+
         // (Removed: the old CapturedArrowLocals + $arrowDC chain path. With
         // ParentArrowCapturedLocals now the dedicated parent slot, the old
         // path was emitting broken Ldarg_0 sequences in non-display-class
@@ -206,6 +218,7 @@ public class LocalVariableResolver : IVariableResolver
             _ctx.ArrowScopeDisplayClassFields?.ContainsKey(name) == true) return true;
         if (_ctx.ParentArrowCapturedLocals?.Contains(name) == true &&
             _ctx.ParentArrowScopeDisplayClassFields?.ContainsKey(name) == true) return true;
+        if (_ctx.ExtraArrowScopeBindings?.ContainsKey(name) == true) return true;
         if (_ctx.Locals.HasLocal(name)) return true;
         if (_ctx.CapturedFields?.ContainsKey(name) == true) return true;
         if (_ctx.CapturedTopLevelVars?.Contains(name) == true &&
@@ -231,6 +244,13 @@ public class LocalVariableResolver : IVariableResolver
                 _il.Emit(OpCodes.Ldloc, _ctx.FunctionDisplayClassLocal);
                 _il.Emit(OpCodes.Ldloc, temp);
                 _il.Emit(OpCodes.Stfld, funcDCField);
+                // Captured PARAMETER: also sync the arg slot — reads resolve
+                // parameters before the function DC (see 1b's mirror comment).
+                if (_ctx.TryGetParameter(name, out var funcParamSync))
+                {
+                    _il.Emit(OpCodes.Ldloc, temp);
+                    _il.Emit(OpCodes.Starg, funcParamSync);
+                }
                 return true;
             }
 
@@ -283,6 +303,16 @@ public class LocalVariableResolver : IVariableResolver
             _il.Emit(OpCodes.Ldloc, _ctx.ArrowScopeDisplayClassLocal);
             _il.Emit(OpCodes.Ldloc, tempArrow);
             _il.Emit(OpCodes.Stfld, arrowDCFieldStore);
+            // Captured PARAMETER: also sync the arg slot. Reads resolve
+            // parameters before the scope DC, so a DC-only store would leave
+            // later same-body reads seeing the stale argument (lodash:
+            // `context = context || root; ... context.Date` read the original
+            // undefined arg after the reassignment).
+            if (_ctx.TryGetParameter(name, out var arrowParamSync))
+            {
+                _il.Emit(OpCodes.Ldloc, tempArrow);
+                _il.Emit(OpCodes.Starg, arrowParamSync);
+            }
             return true;
         }
 
@@ -313,6 +343,18 @@ public class LocalVariableResolver : IVariableResolver
                 _il.Emit(OpCodes.Stfld, storeField);
                 return true;
             }
+        }
+
+        // 1d. EXTRA ancestor arrow scope DCs — mirror of read path 2d.
+        if (_ctx.ExtraArrowScopeBindings?.TryGetValue(name, out var extraStoreBinding) == true)
+        {
+            var tempExtra = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, tempExtra);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, extraStoreBinding.RefField);
+            _il.Emit(OpCodes.Ldloc, tempExtra);
+            _il.Emit(OpCodes.Stfld, extraStoreBinding.VarField);
+            return true;
         }
 
         // 2. Locals

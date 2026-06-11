@@ -162,7 +162,10 @@ public partial class RuntimeEmitter
         EmitObjectMethodLookup("defineProperties",        runtime.ObjectDefineProperties, 2);
         EmitObjectMethodLookup("getOwnPropertyDescriptor",  runtime.ObjectGetOwnPropertyDescriptor, 2);
         EmitObjectMethodLookup("getOwnPropertyDescriptors", runtime.ObjectGetOwnPropertyDescriptors, 1);
-        EmitObjectMethodLookup("create",                  runtime.ObjectCreate, 2);
+        // create routes through the value-form wrapper: reflection dispatch
+        // pads the missing props arg with null, which raw ObjectCreate must
+        // treat as the explicit-null TypeError case.
+        EmitObjectMethodLookup("create",                  runtime.ObjectCreateValueForm, 2);
         EmitObjectMethodLookup("assign",                  runtime.ObjectAssign, 2);
         EmitObjectMethodLookup("is",                      runtime.ObjectIs, 2);
         EmitObjectMethodLookup("hasOwn",                  runtime.ObjectHasOwn, 2);
@@ -179,6 +182,15 @@ public partial class RuntimeEmitter
         // static-method probe misses.
         EmitLookup(runtime.TSSymbolType, "for", runtime.SymbolFor, 1);
         EmitLookup(runtime.TSSymbolType, "keyFor", runtime.SymbolKeyFor, 1);
+
+        // Date.* — bare `Date` resolves to the $TSDate Type token. The static
+        // is .NET-cased ("Now"), so the case-sensitive static-method probe in
+        // GetProperty misses it; route through $Runtime.DateNow so value-form
+        // dispatch (`var nativeNow = Date.now;` — lodash's shortOut idiom)
+        // matches the syntactic Date.now() path, virtual timers included.
+        // Null when UsesDate is off — Date can't be referenced then anyway.
+        if (runtime.DateNow != null)
+            EmitLookup(runtime.TSDateType, "now", runtime.DateNow, 0);
 
         // Math.* deliberately not handled here — bare `Math` emits the null
         // pseudo-variable (not a Type token), so its value-form access goes

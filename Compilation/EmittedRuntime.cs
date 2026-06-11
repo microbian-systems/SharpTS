@@ -563,6 +563,12 @@ public class EmittedRuntime
     public MethodBuilder ObjectDefineProperties { get; set; } = null!;
     public MethodBuilder ObjectGetOwnPropertyDescriptors { get; set; } = null!;
     public MethodBuilder ObjectCreate { get; set; } = null!;
+    /// <summary>
+    /// Value-form dispatch wrapper for Object.create: maps a null (reflection-
+    /// padded, i.e. absent) props slot to $Undefined before delegating, so
+    /// under-application doesn't trip ObjectCreate's explicit-null TypeError.
+    /// </summary>
+    public MethodBuilder ObjectCreateValueForm { get; set; } = null!;
     public MethodBuilder ObjectPreventExtensions { get; set; } = null!;
     public MethodBuilder ObjectIsExtensible { get; set; } = null!;
     public MethodBuilder GetOwnPropertySymbols { get; set; } = null!;

@@ -177,6 +177,46 @@ public partial class RuntimeEmitter
         // Return result
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
+
+        EmitObjectCreateValueForm(typeBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Emits the VALUE-FORM dispatch wrapper for Object.create. Reflection
+    /// dispatch through $TSFunction pads missing args with CLR null, which
+    /// ObjectCreate must treat as explicit JS null (TypeError per ECMA-262
+    /// §20.1.2.2 step 3 / test262 15.2.3.5-4-3). This wrapper maps a
+    /// null props slot — which through this path means ABSENT — to the
+    /// $Undefined singleton before delegating, so `var oc = Object.create;
+    /// oc(proto)` works. The syntactic call path emits the sentinel for the
+    /// missing arg itself and keeps calling ObjectCreate directly, preserving
+    /// the explicit-null throw.
+    /// </summary>
+    private void EmitObjectCreateValueForm(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ObjectCreateValueForm",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]
+        );
+        runtime.ObjectCreateValueForm = method;
+
+        var il = method.GetILGenerator();
+        var propsPresentLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brtrue, propsPresentLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Call, runtime.ObjectCreate);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(propsPresentLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ObjectCreate);
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>

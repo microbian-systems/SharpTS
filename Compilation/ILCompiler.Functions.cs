@@ -293,6 +293,7 @@ public partial class ILCompiler
             CapturedFunctionLocals = capturedLocals,
             ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
             ArrowScopeDCFields = _closures.ArrowScopeDCFields.Count > 0 ? _closures.ArrowScopeDCFields : null,
+            ArrowScopeDCExtraFieldsByArrow = _arrowScopeDCExtraFields.Count > 0 ? _arrowScopeDCExtraFields : null,
             // Inner function support
             InnerFunctionMethods = _innerFunctionMethods,
             InnerFunctionDisplayClasses = _innerFunctionDisplayClasses,
@@ -329,28 +330,6 @@ public partial class ILCompiler
             ctx.DefineParameter(funcStmt.Parameters[i].Name.Lexeme, i, paramType);
         }
 
-        // Initialize captured parameters into the function display class
-        // This must happen after parameter definitions so we have correct indices
-        if (displayLocal != null && capturedLocals != null && _closures.FunctionDisplayClassFields.TryGetValue(qualifiedFunctionName, out var funcDCFieldMap))
-        {
-            for (int i = 0; i < funcStmt.Parameters.Count; i++)
-            {
-                var paramName = funcStmt.Parameters[i].Name.Lexeme;
-                if (capturedLocals.Contains(paramName) && funcDCFieldMap.TryGetValue(paramName, out var field))
-                {
-                    il.Emit(OpCodes.Ldloc, displayLocal);
-                    il.Emit(OpCodes.Ldarg, i);
-                    // Box if the parameter is a value type (numbers are double)
-                    Type paramType = i < methodParams.Length ? methodParams[i].ParameterType : typeof(object);
-                    if (paramType.IsValueType)
-                    {
-                        il.Emit(OpCodes.Box, paramType);
-                    }
-                    il.Emit(OpCodes.Stfld, field);
-                }
-            }
-        }
-
         var emitter = new ILEmitter(ctx);
 
         // Top-level functions should always have a body
@@ -374,6 +353,29 @@ public partial class ILCompiler
             isInstanceMethod: false,
             hasOwnThis: false,
             paramTypes: resolvedParamTypes);
+
+        // Initialize captured parameters into the function display class. Runs
+        // AFTER EmitDefaultParameters (which writes defaults back via Starg) so
+        // closures see the defaulted value, not the missing-arg padding.
+        if (displayLocal != null && capturedLocals != null && _closures.FunctionDisplayClassFields.TryGetValue(qualifiedFunctionName, out var funcDCFieldMap))
+        {
+            for (int i = 0; i < funcStmt.Parameters.Count; i++)
+            {
+                var paramName = funcStmt.Parameters[i].Name.Lexeme;
+                if (capturedLocals.Contains(paramName) && funcDCFieldMap.TryGetValue(paramName, out var field))
+                {
+                    il.Emit(OpCodes.Ldloc, displayLocal);
+                    il.Emit(OpCodes.Ldarg, i);
+                    // Box if the parameter is a value type (numbers are double)
+                    Type paramType = i < methodParams.Length ? methodParams[i].ParameterType : typeof(object);
+                    if (paramType.IsValueType)
+                    {
+                        il.Emit(OpCodes.Box, paramType);
+                    }
+                    il.Emit(OpCodes.Stfld, field);
+                }
+            }
+        }
 
         // If the body references `arguments`, materialize the JS-spec array-like
         // from the declared parameters and bind it as a local. Arrow functions

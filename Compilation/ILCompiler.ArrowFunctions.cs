@@ -17,6 +17,11 @@ public partial class ILCompiler
     // resolves against the wrong module's storage.
     private readonly Dictionary<Expr.ArrowFunction, string?> _arrowToModule = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Expr.ArrowFunction, Expr.ArrowFunction?> _arrowParent = new(ReferenceEqualityComparer.Instance);
+    // Immediately enclosing callable (Expr.ArrowFunction or Stmt.Function) of each
+    // collected arrow — i.e. the body whose emission context creates the arrow's
+    // display class. Unlike _arrowParent this does NOT skip function-declaration
+    // boundaries; used to thread $arrowScopeDC references for inner functions (#307).
+    private readonly Dictionary<Expr.ArrowFunction, object?> _arrowEnclosingCallable = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.ArrowFunction> _arrowsNeedingFunctionDC = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr.ArrowFunction> _arrowsNeedingArrowDC = new(ReferenceEqualityComparer.Instance);
     // Maps each collected arrow (or `function` expression) to the AST node of
@@ -37,6 +42,12 @@ public partial class ILCompiler
     private Stmt.Function? _currentEnclosingFunctionStmt;
     private Expr.ArrowFunction? _currentParentArrow;
     private string? _currentCollectClassName;
+    // The IMMEDIATELY enclosing callable (Expr.ArrowFunction or Stmt.Function) during
+    // collection. Unlike _currentParentArrow (nearest ancestor arrow, which skips
+    // function-declaration boundaries), this tells CollectInnerFunction whether an
+    // inner function declaration is hoisted directly into an arrow's body — the
+    // case that needs a live $arrowScopeDC reference instead of value snapshots (#307).
+    private object? _currentEnclosingCallable;
 
     private void CollectAndDefineArrowFunctions(List<Stmt> statements)
     {
@@ -109,6 +120,13 @@ public partial class ILCompiler
 
         // Propagate arrow scope DC requirements through arrow nesting
         PropagateArrowDCRequirements();
+
+        // Resolve which arrow scope DC (if any) each inner function declaration
+        // reads its captures from, marking intermediate arrows that must carry
+        // the reference (#307). Runs after arrows' own $arrowDC sources are
+        // assigned so threading conflicts are detected, and before the define
+        // loop below so marked arrows get their $arrowDC field.
+        ResolveInnerFunctionArrowScopeSources();
 
         // Define methods and display classes
         foreach (var (arrow, captures) in _collectedArrows)
@@ -256,6 +274,25 @@ public partial class ILCompiler
                     arrowDCField = displayClass.DefineField("$arrowDC", arrowScopeDC, FieldAttributes.Public);
                 }
 
+                // EXTRA ancestor scope DC references (multi-source captures) —
+                // one field per additional source arrow beyond the primary.
+                Dictionary<Expr.ArrowFunction, FieldBuilder>? extraScopeDCFields = null;
+                if (_arrowExtraScopeSources.TryGetValue(arrow, out var extraScopeSources))
+                {
+                    int extraIdx = 0;
+                    foreach (var extraSource in extraScopeSources)
+                    {
+                        if (ReferenceEquals(extraSource, sourceArrow))
+                            continue;
+                        if (!_closures.ArrowScopeDisplayClasses.TryGetValue(extraSource, out var extraDC))
+                            continue;
+                        var refField = displayClass.DefineField($"$arrowDC{++extraIdx}", extraDC, FieldAttributes.Public);
+                        (extraScopeDCFields ??= new(ReferenceEqualityComparer.Instance))[extraSource] = refField;
+                    }
+                    if (extraScopeDCFields != null)
+                        _arrowScopeDCExtraFields[arrow] = extraScopeDCFields;
+                }
+
                 foreach (var capturedVar in captures)
                 {
                     // Skip top-level captured vars - they'll be accessed through $entryPointDC
@@ -276,6 +313,14 @@ public partial class ILCompiler
                     if (needsArrowDC && sourceArrow != null &&
                         _closures.ArrowScopeDisplayClassFields.TryGetValue(sourceArrow, out var arrowFields) &&
                         arrowFields.ContainsKey(capturedVar))
+                        continue;
+
+                    // Skip vars covered by an EXTRA ancestor scope DC reference
+                    if (extraScopeDCFields != null &&
+                        _closures.Analyzer.GetCaptureSource(arrow, capturedVar) is Expr.ArrowFunction extraSrc &&
+                        extraScopeDCFields.ContainsKey(extraSrc) &&
+                        _closures.ArrowScopeDisplayClassFields.TryGetValue(extraSrc, out var extraSrcFields) &&
+                        extraSrcFields.ContainsKey(capturedVar))
                         continue;
 
                     var field = displayClass.DefineField(capturedVar, _types.Object, FieldAttributes.Public);
@@ -379,12 +424,14 @@ public partial class ILCompiler
 
                     var previousEnclosing = _currentEnclosingFunctionName;
                     var previousEnclosingStmt = _currentEnclosingFunctionStmt;
+                    var previousCallable = _currentEnclosingCallable;
                     if (_functionNestingDepth == 0)
                     {
                         // Top-level function: use its qualified name as enclosing context
                         _currentEnclosingFunctionName = GetDefinitionContext().GetQualifiedFunctionName(f.Name.Lexeme);
                         _currentEnclosingFunctionStmt = f;
                     }
+                    _currentEnclosingCallable = f;
 
                     _functionNestingDepth++;
                     foreach (var s in f.Body)
@@ -393,6 +440,7 @@ public partial class ILCompiler
 
                     _currentEnclosingFunctionName = previousEnclosing;
                     _currentEnclosingFunctionStmt = previousEnclosingStmt;
+                    _currentEnclosingCallable = previousCallable;
                 }
                 foreach (var p in f.Parameters)
                     if (p.DefaultValue != null)
@@ -546,8 +594,11 @@ public partial class ILCompiler
 
                 // Track parent arrow for function DC propagation
                 _arrowParent[af] = _currentParentArrow;
+                _arrowEnclosingCallable[af] = _currentEnclosingCallable;
                 var previousParent = _currentParentArrow;
+                var previousCallable = _currentEnclosingCallable;
                 _currentParentArrow = af;
+                _currentEnclosingCallable = af;
 
                 // Entering an arrow body is the same as entering a function body for the
                 // purpose of "inner function declaration" classification: `function X() {}`
@@ -567,6 +618,7 @@ public partial class ILCompiler
                 _functionNestingDepth--;
 
                 _currentParentArrow = previousParent;
+                _currentEnclosingCallable = previousCallable;
                 break;
             case Expr.Binary b:
                 CollectArrowsFromExpr(b.Left);
@@ -706,6 +758,11 @@ public partial class ILCompiler
             case Expr.ClassExpr ce:
                 // Collect the class expression for later definition
                 CollectClassExpression(ce);
+                // Method/accessor bodies are separate callables — an inner function
+                // declaration inside them is NOT hoisted into the enclosing arrow's
+                // body, so clear the immediate-callable marker while walking them.
+                var prevCallableCE = _currentEnclosingCallable;
+                _currentEnclosingCallable = null;
                 // Also collect arrows inside class expression methods
                 foreach (var method in ce.Methods)
                     if (method.Body != null)
@@ -720,6 +777,7 @@ public partial class ILCompiler
                     foreach (var accessor in ce.Accessors)
                         foreach (var s in accessor.Body)
                             CollectArrowsFromStmt(s);
+                _currentEnclosingCallable = prevCallableCE;
                 break;
         }
     }
@@ -848,17 +906,53 @@ public partial class ILCompiler
     /// </summary>
     private void PropagateArrowDCRequirements()
     {
-        // First, identify arrows that directly capture arrow-scope locals
+        var collectedInnerFuncs = new HashSet<Stmt.Function>(ReferenceEqualityComparer.Instance);
+        foreach (var (f, _, _) in _collectedInnerFunctions)
+            collectedInnerFuncs.Add(f);
+
+        // First, identify arrows that directly capture arrow-scope locals.
+        // The source arrow is resolved from the analyzer's capture-source record
+        // (the scope that actually DEFINES each captured variable), not by name-
+        // matching across every scope DC — name matching aliased same-named
+        // variables across unrelated scopes and picked sources in arbitrary
+        // dictionary order. When captures span multiple ancestor arrow scopes,
+        // the single $arrowDC slot is bound to the candidate covering the most
+        // captures whose chain can be threaded; the rest fall back to copy-field
+        // population through the chained DC (see EmitDisplayInstanceFieldPopulation).
+        // Collection order is outer-to-inner, so an enclosing arrow's own needs
+        // are settled before nested closures thread pass-throughs onto it.
         foreach (var (arrow, captures) in _collectedArrows)
         {
-            foreach (var (parentArrow, arrowDCFields) in _closures.ArrowScopeDisplayClassFields)
+            Dictionary<Expr.ArrowFunction, int>? candidates = null;
+            foreach (var c in captures)
             {
-                if (captures.Any(c => arrowDCFields.ContainsKey(c)))
-                {
-                    _arrowsNeedingArrowDC.Add(arrow);
-                    _closures.ArrowScopeDCSource[arrow] = parentArrow;
-                    break;
-                }
+                if (_closures.Analyzer.GetCaptureSource(arrow, c) is not Expr.ArrowFunction sa)
+                    continue;
+                if (!_closures.ArrowScopeDisplayClassFields.TryGetValue(sa, out var fields) ||
+                    !fields.ContainsKey(c))
+                    continue;
+                candidates ??= new(ReferenceEqualityComparer.Instance);
+                candidates[sa] = candidates.TryGetValue(sa, out var n) ? n + 1 : 1;
+            }
+            if (candidates == null)
+                continue;
+
+            // Nearest threadable candidate claims the primary $arrowDC slot
+            // (unless pass-through threading already did); the rest become
+            // EXTRA reference fields. The $arrowDC is populated at the arrow's
+            // creation site (the enclosing callable's body), so chains are
+            // walked from there.
+            _arrowEnclosingCallable.TryGetValue(arrow, out var start);
+            foreach (var sa in OrderByAncestorProximity(start, candidates))
+            {
+                if (!ReferenceEquals(start, sa) && !TryThreadArrowScopeSource(start, sa, collectedInnerFuncs))
+                    continue; // unreachable chain — this source keeps snapshot semantics
+
+                _arrowsNeedingArrowDC.Add(arrow);
+                if (!_closures.ArrowScopeDCSource.TryGetValue(arrow, out var existingSrc))
+                    _closures.ArrowScopeDCSource[arrow] = sa;
+                else if (!ReferenceEquals(existingSrc, sa))
+                    AddExtraScopeSource(_arrowExtraScopeSources, arrow, sa);
             }
         }
 
@@ -989,6 +1083,7 @@ public partial class ILCompiler
             ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
             // Arrow scope display class for nested arrow functions
             ArrowScopeDCFields = _closures.ArrowScopeDCFields.Count > 0 ? _closures.ArrowScopeDCFields : null,
+            ArrowScopeDCExtraFieldsByArrow = _arrowScopeDCExtraFields.Count > 0 ? _arrowScopeDCExtraFields : null,
             // Inner function metadata — required for any `function X() {}` declared INSIDE this
             // arrow body to be reachable from sibling statements. Without this, IIFE-style
             // wrappers that declare nested functions (lodash's `(function() { function basePropertyOf() {...} }())`)
@@ -1079,6 +1174,16 @@ public partial class ILCompiler
                 }
             }
 
+            // EXTRA ancestor scope references (multi-source captures): per-name
+            // live bindings, plus the raw ref fields for chaining into closures
+            // created in this body.
+            if (_arrowScopeDCExtraFields.TryGetValue(arrow, out var ownExtraScopeRefs))
+            {
+                ctx.CurrentArrowScopeDCExtraFields = ownExtraScopeRefs;
+                ctx.ExtraArrowScopeBindings = BuildExtraScopeBindings(
+                    arrow, _closures.Analyzer.GetCaptures(arrow), ownExtraScopeRefs);
+            }
+
             // Get resolved parameter types for this arrow (for typed parameter optimization)
             _closures.ArrowParameterTypes.TryGetValue(arrow, out var arrowParamTypes);
 
@@ -1139,17 +1244,27 @@ public partial class ILCompiler
             ctx.ArrowScopeDisplayClassLocal = arrowScopeDCLocal;
             ctx.ArrowScopeDisplayClassFields = _closures.ArrowScopeDisplayClassFields[arrow];
             ctx.CapturedArrowLocals = _closures.Analyzer.GetCapturedLocals(arrow);
+        }
 
-            // Initialize captured parameters into the arrow scope display class.
-            // This mirrors the equivalent code in ILCompiler.Functions.cs lines 287-305.
-            // Without this, inner arrows that read parameters via $arrowDC get null.
+        var emitter = new ILEmitter(ctx);
+
+        // Emit default parameter checks
+        emitter.EmitDefaultParameters(arrow.Parameters, displayClass != null, arrow.HasOwnThis);
+
+        // Initialize captured parameters into the arrow scope display class.
+        // This mirrors the equivalent code in ILCompiler.Functions.cs.
+        // Without this, inner arrows that read parameters via $arrowDC get null.
+        // Runs AFTER EmitDefaultParameters (which writes defaults via Starg) so
+        // the DC fields see defaulted values, not the raw missing-arg padding.
+        if (ctx.ArrowScopeDisplayClassLocal != null)
+        {
             for (int i = 0; i < arrow.Parameters.Count; i++)
             {
                 var paramName = arrow.Parameters[i].Name.Lexeme;
-                if (ctx.CapturedArrowLocals.Contains(paramName) &&
-                    ctx.ArrowScopeDisplayClassFields.TryGetValue(paramName, out var arrowDCField))
+                if (ctx.CapturedArrowLocals!.Contains(paramName) &&
+                    ctx.ArrowScopeDisplayClassFields!.TryGetValue(paramName, out var arrowDCField))
                 {
-                    il.Emit(OpCodes.Ldloc, arrowScopeDCLocal);
+                    il.Emit(OpCodes.Ldloc, ctx.ArrowScopeDisplayClassLocal);
                     // Arg index must match DefineParameter calls (lines 841-858 / 866-883):
                     //   instance (displayClass != null): params at i+1, or i+2 with HasOwnThis
                     //   static (displayClass == null):   params at i,   or i+1 with HasOwnThis
@@ -1160,11 +1275,6 @@ public partial class ILCompiler
                 }
             }
         }
-
-        var emitter = new ILEmitter(ctx);
-
-        // Emit default parameter checks
-        emitter.EmitDefaultParameters(arrow.Parameters, displayClass != null, arrow.HasOwnThis);
 
         // Bind the `arguments` array-like for function expressions (HasOwnThis=true).
         // True arrows don't get their own `arguments` per ECMA-262. Matches the same

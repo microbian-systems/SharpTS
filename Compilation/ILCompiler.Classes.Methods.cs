@@ -788,6 +788,7 @@ public partial class ILCompiler
             ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
             ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
             ArrowScopeDCFields = _closures.ArrowScopeDCFields.Count > 0 ? _closures.ArrowScopeDCFields : null,
+            ArrowScopeDCExtraFieldsByArrow = _arrowScopeDCExtraFields.Count > 0 ? _arrowScopeDCExtraFields : null,
             // CJS resolution — needed so `exports`, `module.exports`, and `require(...)`
             // work inside class method bodies nested in a CJS module.
             ModuleResolver = _modules.Resolver,
