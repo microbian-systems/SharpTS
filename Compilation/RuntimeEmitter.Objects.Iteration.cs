@@ -285,15 +285,37 @@ public partial class RuntimeEmitter
 
         var dictLoopStart = il.DefineLabel();
         var dictLoopEnd = il.DefineLabel();
+        var valDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
         il.MarkLabel(dictLoopStart);
         il.Emit(OpCodes.Ldloca, enumeratorLocal);
         il.Emit(OpCodes.Call, enumeratorType.GetMethod("MoveNext")!);
         il.Emit(OpCodes.Brfalse, dictLoopEnd);
 
-        il.Emit(OpCodes.Ldloc, resultLocal);
+        // current = enumerator.Current
         il.Emit(OpCodes.Ldloca, enumeratorLocal);
         il.Emit(OpCodes.Call, enumeratorType.GetProperty("Current")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, currentLocal);
+
+        // ECMA-262 §20.1.2.23 EnumerableOwnProperties: skip a key whose installed
+        // descriptor is non-enumerable. The Math/JSON singleton dicts carry their
+        // built-in methods with Enumerable=false, so without this filter
+        // Object.values leaks the built-ins while Object.keys (which already
+        // filters) does not — making keys and values mutually inconsistent.
+        var valIncludeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldloca, currentLocal);
+        il.Emit(OpCodes.Call, kvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, valDescLocal);
+        il.Emit(OpCodes.Ldloc, valDescLocal);
+        il.Emit(OpCodes.Brfalse, valIncludeLabel);  // no descriptor → enumerable by default
+        il.Emit(OpCodes.Ldloc, valDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, dictLoopStart);  // non-enumerable → skip
+        il.MarkLabel(valIncludeLabel);
+
+        // result.Add(current.Value)
+        il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldloca, currentLocal);
         il.Emit(OpCodes.Call, kvpType.GetProperty("Value")!.GetGetMethod()!);
         il.Emit(OpCodes.Callvirt, listType.GetMethod("Add")!);
@@ -776,6 +798,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, enumeratorLocal);
         il.Emit(OpCodes.Call, enumeratorType.GetProperty("Current")!.GetGetMethod()!);
         il.Emit(OpCodes.Stloc, currentLocal);
+
+        // ECMA-262 §20.1.2.5 EnumerableOwnProperties: skip a key whose installed
+        // descriptor is non-enumerable, mirroring the GetKeys/GetValues filter so
+        // Object.entries stays consistent with Object.keys (the Math/JSON
+        // singleton built-ins carry Enumerable=false).
+        var entDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        var entIncludeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldloca, currentLocal);
+        il.Emit(OpCodes.Call, kvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, entDescLocal);
+        il.Emit(OpCodes.Ldloc, entDescLocal);
+        il.Emit(OpCodes.Brfalse, entIncludeLabel);  // no descriptor → enumerable by default
+        il.Emit(OpCodes.Ldloc, entDescLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorEnumerable.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, dictLoopStart);  // non-enumerable → skip
+        il.MarkLabel(entIncludeLabel);
 
         // var entry = new List<object?> { kvp.Key, kvp.Value };
         il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
