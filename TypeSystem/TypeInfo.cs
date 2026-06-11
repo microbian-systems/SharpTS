@@ -254,6 +254,12 @@ public abstract record TypeInfo
         public FrozenDictionary<string, TypeInfo> StaticPrivateMethodTypes => Core.StaticPrivateMethodTypes;
 
         public override string ToString() => IsAbstract ? $"abstract class {Name}" : $"class {Name}";
+
+        // Two same-name, same-shape classes declared in different scopes are distinct types to
+        // tsc — without the declaration id, the rendered key would let one declaration's cached
+        // compat verdicts answer for the other (assignmentCompatWithObjectMembers4).
+        internal override string CacheKey() =>
+            Core.DeclarationId != 0 ? $"{ToString()}#{Core.DeclarationId}" : base.CacheKey();
     }
 
     /// <summary>
@@ -268,6 +274,13 @@ public abstract record TypeInfo
     /// </remarks>
     public sealed record MutableClass(string Name) : TypeInfo
     {
+        private static int _nextDeclarationId;
+
+        /// <summary>Unique per class declaration (one MutableClass is created per declaration);
+        /// carried onto the frozen <see cref="ClassMetadataCore"/> so cache keys can tell
+        /// same-name declarations apart.</summary>
+        public int DeclarationId { get; } = System.Threading.Interlocked.Increment(ref _nextDeclarationId);
+
         public TypeInfo? Superclass { get; set; }  // Can be Class or InstantiatedGeneric
         public Dictionary<string, TypeInfo> Methods { get; } = [];
         public Dictionary<string, TypeInfo> StaticMethods { get; } = [];
@@ -324,7 +337,8 @@ public abstract record TypeInfo
                 StaticPrivateMethods.Count > 0 ? StaticPrivateMethods.ToFrozenDictionary() : null,
                 StringIndexType,
                 NumberIndexType,
-                SymbolIndexType);
+                SymbolIndexType,
+                DeclarationId);
             return _frozenCore;
         }
 
@@ -611,6 +625,16 @@ public abstract record TypeInfo
             MutableClass mc => mc.Name,
             InstantiatedGeneric ig => ig.ToString(),
             _ => "instance"
+        };
+
+        // Instances of same-name classes from different declarations must not share cache
+        // entries (see Class.CacheKey). MutableClass and its frozen form share one id, so a
+        // mid-declaration instance keys identically to the final one.
+        internal override string CacheKey() => ResolvedClassType switch
+        {
+            Class { Core.DeclarationId: not 0 and var id } => $"{ToString()}#{id}",
+            MutableClass mc => $"{ToString()}#{mc.DeclarationId}",
+            _ => base.CacheKey(),
         };
     }
 

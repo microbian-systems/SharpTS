@@ -939,10 +939,11 @@ public partial class TypeChecker
                     // Handle exported type declarations
                     PreRegisterTypeDeclarations([export.Declaration]);
                     break;
-                case Stmt.Namespace ns:
-                    // Pre-register namespace contents
-                    PreRegisterTypeDeclarations(ns.Members);
-                    break;
+                // Namespace members are NOT pre-registered here: that would leak them into the
+                // enclosing scope, where a same-named declaration in a later namespace would be
+                // skipped as "already defined" and its references silently bind to the first
+                // declaration (assignmentCompatWithObjectMembers' module-scoped redeclarations).
+                // CheckNamespace pre-registers its members inside the namespace scope instead.
             }
         }
     }

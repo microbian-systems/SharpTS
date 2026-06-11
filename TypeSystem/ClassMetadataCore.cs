@@ -29,7 +29,8 @@ public sealed record ClassMetadataCore(
     FrozenDictionary<string, TypeInfo>? StaticPrivateMethods = null,
     TypeInfo? StringIndexType = null,
     TypeInfo? NumberIndexType = null,
-    TypeInfo? SymbolIndexType = null
+    TypeInfo? SymbolIndexType = null,
+    int DeclarationId = 0
 )
 {
     /// <summary>True when the class declares any index signature.</summary>

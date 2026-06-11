@@ -136,6 +136,18 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
      instantiation), which is what slice 5's substitution-origin marking builds on.
 4. Declaration handles on `TypeInfo.Interface/Class` resolved via nodes (kills the
    `CacheKey()` workaround; fixes the cross-module diagnostic tests).
+   - ✅ **Shipped (first installment): Pass 63 → 66.** Three mechanisms:
+     (a) classes carry a per-declaration id (`MutableClass.DeclarationId` →
+     `ClassMetadataCore`), mixed into `Class`/`Instance.CacheKey` — same-name classes in
+     different scopes stop sharing compat-cache verdicts (`assignmentCompatWithObjectMembers4`);
+     (b) the TS2741 first-failure set keys on INSTANCE identity, mirroring tsc's per-type-id
+     relation cache (`…Optionality2`, `…StringNumericNames`);
+     (c) found-by-(a): namespace type pre-registration leaked members into the enclosing
+     scope, so a later same-named interface bound to the earlier declaration — pre-registration
+     now happens inside the namespace scope (`assignmentCompatWithObjectMembers`, where the
+     leak and a name-keyed stale-true cache hit had been cancelling each other out).
+     Interface declaration ids (replacing the `CacheKey()` structural fingerprint) remain —
+     they need instantiation-aware keys, which ties into slice 5.
 5. Substitution-origin marking (unblocks #202's callback rule → `covariantCallbacks`).
 6. Delete `TypeChecker.TypeParsing.cs` string scanning; `ToTypeInfo(string)` survives only
    for the REPL/embedding API surface, implemented as parse-to-node + convert.
