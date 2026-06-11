@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using SharpTS.Parsing;
 
 namespace SharpTS.TypeSystem;
@@ -56,9 +57,75 @@ public partial class TypeChecker
                 return members.Aggregate(CreateUnion);
             }
 
+            case FunctionTypeNode fn:
+            {
+                TypeInfo? thisType = null;
+                if (fn.ThisType is { } thisNode)
+                {
+                    if (TryToTypeInfo(thisNode) is not { } resolvedThis) return null;
+                    thisType = resolvedThis;
+                }
+                if (!TryResolveParameters(fn.Parameters, out var paramTypes, out int requiredParams, out bool hasRestParam))
+                    return null;
+                if (TryToTypeInfo(fn.ReturnType) is not { } returnType) return null;
+                return new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRestParam, thisType);
+            }
+
+            // `new (…) => R` models as an object type carrying a single construct signature —
+            // the same shape the string path produces for its "{ new (…) => R }" rendering.
+            case ConstructorTypeNode ctor:
+            {
+                if (!TryResolveParameters(ctor.Parameters, out var paramTypes, out int requiredParams, out bool hasRestParam))
+                    return null;
+                if (TryToTypeInfo(ctor.ReturnType) is not { } returnType) return null;
+                var signature = new TypeInfo.ConstructorSignature(null, paramTypes, returnType, requiredParams, hasRestParam);
+                return new TypeInfo.Record(
+                    FrozenDictionary<string, TypeInfo>.Empty,
+                    ConstructorSignatures: [signature]);
+            }
+
             default:
                 return null;
         }
+    }
+
+    /// <summary>
+    /// Resolves a function/constructor type node's parameter list with the string path's arity
+    /// accounting: optional/rest parameters are not required, and nothing after the first
+    /// optional/rest parameter counts as required. False when any parameter type lacks a node-path
+    /// resolution (the whole signature then falls back to the string).
+    /// </summary>
+    private bool TryResolveParameters(
+        List<ParameterTypeNode> parameters,
+        out List<TypeInfo> paramTypes,
+        out int requiredParams,
+        out bool hasRestParam)
+    {
+        paramTypes = new List<TypeInfo>(parameters.Count);
+        requiredParams = 0;
+        hasRestParam = false;
+        bool sawOptionalOrRest = false;
+
+        foreach (var parameter in parameters)
+        {
+            if (TryToTypeInfo(parameter.Type) is not { } paramType) return false;
+            paramTypes.Add(paramType);
+
+            if (parameter.IsRest)
+            {
+                hasRestParam = true;
+                sawOptionalOrRest = true;
+            }
+            else if (parameter.IsOptional)
+            {
+                sawOptionalOrRest = true;
+            }
+            else if (!sawOptionalOrRest)
+            {
+                requiredParams++;
+            }
+        }
+        return true;
     }
 
     /// <summary>

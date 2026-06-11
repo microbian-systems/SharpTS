@@ -75,8 +75,12 @@ public partial class Parser
     /// </summary>
     private string ParseFunctionTypeBody()
     {
+        int startLine = Previous().Line; // the '(' the caller consumed
         string? thisType = null;
+        TypeNode? thisTypeNode = null;
         List<string> paramTypes = [];
+        List<ParameterTypeNode> paramNodes = [];
+        bool nodeComplete = true; // false once any component lacks a node → whole type falls back
 
         // Check for 'this' parameter: (this: Window, ...)
         if (Check(TokenType.THIS) && PeekNext().Type == TokenType.COLON)
@@ -84,6 +88,8 @@ public partial class Parser
             Advance(); // consume 'this'
             Consume(TokenType.COLON, "Expect ':' after 'this' in function type.");
             thisType = ParseTypeAnnotation();
+            thisTypeNode = TakeTypeNode();
+            if (thisTypeNode is null) nodeComplete = false;
             if (Check(TokenType.COMMA))
             {
                 Advance(); // consume ','
@@ -104,29 +110,47 @@ public partial class Parser
                 // Parameter can be: name: type, name?: type, name (bare, implicit any),
                 // name? (bare optional, implicit any), or just a type expression.
                 string paramType;
+                string? paramName = null;
+                TypeNode? paramTypeNode;
                 if ((Check(TokenType.IDENTIFIER) || IsContextualKeyword(Peek().Type)) &&
                     (PeekNext().Type == TokenType.COLON || PeekNext().Type == TokenType.QUESTION))
                 {
-                    Advance(); // skip name (may be a contextual keyword, e.g. `set: Set<T>`)
+                    paramName = Advance().Lexeme; // name may be a contextual keyword, e.g. `set: Set<T>`
                     if (Match(TokenType.QUESTION))
                     {
                         isOptional = true;
                     }
                     // The type annotation is optional: `(x?) => R` / `(x) => R` give the parameter
                     // an implicit `any` type (the name is a label only).
-                    paramType = Match(TokenType.COLON) ? ParseTypeAnnotation() : "any";
+                    if (Match(TokenType.COLON))
+                    {
+                        paramType = ParseTypeAnnotation();
+                        paramTypeNode = TakeTypeNode();
+                    }
+                    else
+                    {
+                        paramType = "any";
+                        paramTypeNode = new NamedTypeNode("any", null, Previous().Line);
+                    }
                 }
                 else if (!isRest && Check(TokenType.IDENTIFIER) &&
                          (PeekNext().Type == TokenType.RIGHT_PAREN || PeekNext().Type == TokenType.COMMA))
                 {
                     // Bare parameter name with no annotation: implicit `any`.
-                    Advance(); // consume name
+                    paramName = Advance().Lexeme;
                     paramType = "any";
+                    paramTypeNode = new NamedTypeNode("any", null, Previous().Line);
                 }
                 else
                 {
                     paramType = ParseTypeAnnotation();
+                    paramTypeNode = TakeTypeNode();
                 }
+
+                if (paramTypeNode is null)
+                    nodeComplete = false;
+                else
+                    paramNodes.Add(new ParameterTypeNode(paramName, paramTypeNode, isOptional, isRest, paramTypeNode.Line));
 
                 // Preserve optional/rest info in the type string representation
                 if (isRest)
@@ -142,6 +166,12 @@ public partial class Parser
         Consume(TokenType.RIGHT_PAREN, "Expect ')' after function type parameters.");
         Consume(TokenType.ARROW, "Expect '=>' after function type parameters.");
         string returnType = ParseTypeAnnotation();
+        TypeNode? returnTypeNode = TakeTypeNode();
+
+        // Publish the structured form (or explicitly clear, so no nested node leaks out).
+        _lastTypeNode = nodeComplete && returnTypeNode is not null
+            ? new FunctionTypeNode(thisTypeNode, paramNodes, returnTypeNode, startLine)
+            : null;
 
         // Build the function type string
         if (thisType != null)
@@ -329,7 +359,11 @@ public partial class Parser
             }
             Consume(TokenType.LEFT_PAREN, "Expect '(' in constructor type.");
             string ctorBody = ParseFunctionTypeBody(); // returns "(params) => ReturnType"
-            _lastTypeNode = null;
+            // Generic constructor types await type-parameter scoping (slice 3), and a `this`
+            // parameter has no slot on a ConstructorSignature — both fall back to the string path.
+            _lastTypeNode = TakeTypeNode() is FunctionTypeNode { ThisType: null } ctorFn && genericPrefix.Length == 0
+                ? new ConstructorTypeNode(ctorFn.Parameters, ctorFn.ReturnType, ctorFn.Line)
+                : null;
             return $"{{ new {genericPrefix}{ctorBody} }}";
         }
 
@@ -482,6 +516,7 @@ public partial class Parser
             if (isFunctionType)
             {
                 typeName = ParseFunctionTypeBody();
+                typeNode = TakeTypeNode();
             }
             else
             {

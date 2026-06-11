@@ -98,8 +98,15 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
 
 ### Order of subsequent slices (each independently shippable)
 
-1. Function/constructor type nodes (`(a: T) => R`, `new (...) => R`) — unlocks retiring the
-   `=>`-scanning bug family.
+1. ✅ **Shipped.** Function/constructor type nodes (`(a: T) => R`, `new (...) => R`), plus
+   `const` annotations wired into the node path. Coverage over the conformance corpus:
+   37% → 46.4% (254 node / 293 fallback). Generic function/constructor types
+   (`<T>(…) => R`) and `this`-parameter constructor types still fall back (slice 3).
+   Shipping this slice immediately caught the **fifth** `>`-of-`=>` instance: the node
+   path parsed `(x: (a: B) => D, y: (a2: B) => D) => R` correctly while the string path's
+   `SplitFunctionParams` fused both parameters into one — previously masked because both
+   sides of the comparison were equally mangled. The string path got the same arrow guard
+   `SplitObjectMembers` already had.
 2. Object-type / tuple / conditional / mapped nodes — the big checker-scanner retirement.
 3. Type aliases store nodes (kills alias string substitution; enables alias-instantiation
    identity for #202's variance cases).

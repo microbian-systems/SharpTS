@@ -287,7 +287,7 @@ public partial class TypeChecker
         }
         else if (stmt.TypeAnnotation != null)
         {
-            constDeclaredType = ToTypeInfo(stmt.TypeAnnotation);
+            constDeclaredType = ResolveAnnotation(stmt.TypeAnnotation, stmt.TypeAnnotationNode)!;
             _environment.Define(stmt.Name.Lexeme, constDeclaredType);
             var initType = CheckExpr(stmt.Initializer);
             if (!IsCompatible(constDeclaredType, initType))

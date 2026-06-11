@@ -27,6 +27,20 @@ public sealed record ArrayTypeNode(TypeNode ElementType, int Line) : TypeNode(Li
 /// <summary>A union type: <c>A | B | C</c>.</summary>
 public sealed record UnionTypeNode(List<TypeNode> Members, int Line) : TypeNode(Line);
 
+/// <summary>A parameter inside a function or constructor type: <c>x: T</c>, <c>x?: T</c>,
+/// <c>...rest: T[]</c>. A bare name (<c>(x) =&gt; R</c>) gets an explicit <c>any</c> type node —
+/// the name is a label only, never resolved. Not itself a type.</summary>
+public sealed record ParameterTypeNode(string? Name, TypeNode Type, bool IsOptional, bool IsRest, int Line);
+
+/// <summary>A function type: <c>(a: T) =&gt; R</c>, optionally with a leading
+/// <c>this: X</c> pseudo-parameter (carried separately — it does not count toward arity).</summary>
+public sealed record FunctionTypeNode(TypeNode? ThisType, List<ParameterTypeNode> Parameters, TypeNode ReturnType, int Line) : TypeNode(Line);
+
+/// <summary>A constructor type: <c>new (a: T) =&gt; R</c>. Resolves to an object type carrying a
+/// single construct signature, mirroring the string path's <c>{ new (…) =&gt; R }</c> rendering.
+/// Generic constructor types (<c>new &lt;T&gt;(…) =&gt; R</c>) have no node yet (slice 3).</summary>
+public sealed record ConstructorTypeNode(List<ParameterTypeNode> Parameters, TypeNode ReturnType, int Line) : TypeNode(Line);
+
 /// <summary>
 /// Counters proving how much of the corpus the node path already covers — read by tests and
 /// dumped by the checker when <c>SHARPTS_TYPENODE_STATS=1</c>. Coarse by design (spike

@@ -756,7 +756,7 @@ public partial class Parser
         }
 
         if (isConst)
-            return new Stmt.Const(name, typeAnnotation, initializer!);
+            return new Stmt.Const(name, typeAnnotation, initializer!, typeAnnotationNode);
         return new Stmt.Var(name, typeAnnotation, initializer, hasDefiniteAssignment, isVar, typeAnnotationNode);
     }
 
