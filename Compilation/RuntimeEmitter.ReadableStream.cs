@@ -114,6 +114,12 @@ public partial class RuntimeEmitter
         runtime.ReadableStreamErrorStream = errorMethod;
         runtime.ReadableStreamRead = readMethod;
 
+        // Static ReadableStream.from(iterable) (#269) — must be defined before
+        // streamBuilder.CreateType() below. Uses the ctor + Enqueue + CloseStream
+        // just defined and the $Runtime.IterateToList primitive.
+        runtime.ReadableStreamFrom = EmitReadableStreamFromStatic(
+            streamBuilder, streamCtor, enqueueMethod, closeMethod, runtime);
+
         // Controller methods (forward to stream).
         EmitReadableControllerEnqueue(controllerBuilder, streamBuilder, enqueueMethod);
         EmitReadableControllerClose(controllerBuilder, streamBuilder, closeMethod);
@@ -353,6 +359,81 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _readableStreamQueueField);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _listOfObject.GetMethod("Add", [typeof(object)])!);
+        il.Emit(OpCodes.Ret);
+
+        return method;
+    }
+
+    /// <summary>
+    /// Emits <c>public static object From(object iterable)</c> on $ReadableStream
+    /// (#269). Mirrors the interpreter's ReadableStream.from: eagerly drains the
+    /// iterable (via $Runtime.IterateToList, which honours the Symbol.iterator
+    /// protocol plus arrays/strings/sets) into a fresh stream's queue, then closes
+    /// it so a reader observes the elements followed by done.
+    /// </summary>
+    private MethodBuilder EmitReadableStreamFromStatic(
+        TypeBuilder streamBuilder,
+        ConstructorBuilder streamCtor,
+        MethodBuilder enqueueMethod,
+        MethodBuilder closeMethod,
+        EmittedRuntime runtime)
+    {
+        // Named lowercase "from" (not "From") so the dynamic property path —
+        // `(ReadableStream as any).from(...)` → GetProperty($ReadableStream, "from")
+        // → SafeGetMethod (case-sensitive) — finds it and wraps it in a $TSFunction
+        // callable. The static-emitter path calls it by MethodBuilder, so the name
+        // is irrelevant there.
+        var method = streamBuilder.DefineMethod(
+            "from",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+
+        var il = method.GetILGenerator();
+
+        // var stream = new $ReadableStream(null, null);
+        var streamLocal = il.DeclareLocal(streamBuilder);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Newobj, streamCtor);
+        il.Emit(OpCodes.Stloc, streamLocal);
+
+        // var list = $Runtime.IterateToList(iterable, Symbol.iterator, typeof($Runtime));
+        var listLocal = il.DeclareLocal(_types.ListOfObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolIterator);
+        il.Emit(OpCodes.Ldtoken, runtime.RuntimeType);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Call, runtime.IterateToList);
+        il.Emit(OpCodes.Stloc, listLocal);
+
+        // for (int i = 0; i < list.Count; i++) stream.Enqueue(list[i]);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        var loopCond = il.DefineLabel();
+        var loopBody = il.DefineLabel();
+        il.Emit(OpCodes.Br, loopCond);
+        il.MarkLabel(loopBody);
+        il.Emit(OpCodes.Ldloc, streamLocal);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, _listOfObject.GetMethod("get_Item", [_types.Int32])!);
+        il.Emit(OpCodes.Callvirt, enqueueMethod);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.MarkLabel(loopCond);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Callvirt, _listOfObject.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Blt, loopBody);
+
+        // stream.CloseStream(); return stream;
+        il.Emit(OpCodes.Ldloc, streamLocal);
+        il.Emit(OpCodes.Callvirt, closeMethod);
+        il.Emit(OpCodes.Ldloc, streamLocal);
         il.Emit(OpCodes.Ret);
 
         return method;

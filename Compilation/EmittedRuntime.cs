@@ -2760,6 +2760,11 @@ public class EmittedRuntime
     public MethodBuilder ReadableStreamCloseStream { get; set; } = null!;
     public MethodBuilder ReadableStreamErrorStream { get; set; } = null!;
     public MethodBuilder ReadableStreamRead { get; set; } = null!;
+    /// <summary>
+    /// Static $ReadableStream.From(object iterable) → object (#269) — eagerly
+    /// drains a guest iterable into a closed readable stream.
+    /// </summary>
+    public MethodBuilder ReadableStreamFrom { get; set; } = null!;
     public TypeBuilder ReadableStreamDefaultControllerType { get; set; } = null!;
     public TypeBuilder ReadableStreamDefaultReaderType { get; set; } = null!;
     public ConstructorBuilder ReadableStreamDefaultReaderCtor { get; set; } = null!;
