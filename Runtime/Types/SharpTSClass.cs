@@ -250,6 +250,35 @@ public class SharpTSClass(
         _staticProperties[name] = value;
     }
 
+    // Symbol-keyed expando statics (`(C as any)[Symbol.species] = V`). Node allows
+    // arbitrary statics on class constructors; string keys reuse _staticProperties.
+    // Lazy — most classes never receive symbol-keyed statics.
+    private Dictionary<SharpTSSymbol, object?>? _staticSymbolProperties;
+
+    public void SetStaticBySymbol(SharpTSSymbol symbol, object? value)
+    {
+        (_staticSymbolProperties ??= [])[symbol] = value;
+    }
+
+    /// <summary>
+    /// Looks up a symbol-keyed static, walking the superclass chain — class
+    /// constructors inherit from the parent constructor per ECMA-262, so
+    /// e.g. a Symbol.species set on a base class is visible on subclasses.
+    /// </summary>
+    public bool TryGetStaticBySymbol(SharpTSSymbol symbol, out object? value)
+    {
+        if (_staticSymbolProperties != null && _staticSymbolProperties.TryGetValue(symbol, out value))
+        {
+            return true;
+        }
+        if (Superclass != null)
+        {
+            return Superclass.TryGetStaticBySymbol(symbol, out value);
+        }
+        value = null;
+        return false;
+    }
+
     public SharpTSFunction? FindGetter(string name)
     {
         // Check cache first

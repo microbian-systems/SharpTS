@@ -640,7 +640,7 @@ public partial class Interpreter
         }
 
         object? index = (await EvaluateAsync(getIndex.Index)).ToObject();
-        return RuntimeValue.FromBoxed(EvaluateIndexGet(obj, index));
+        return PerformIndexGet(getIndex.Object, obj, index);
     }
 
     private async Task<RuntimeValue> EvaluateSetIndexAsync(Expr.SetIndex setIndex)
@@ -648,7 +648,7 @@ public partial class Interpreter
         object? obj = (await EvaluateAsync(setIndex.Object)).ToObject();
         object? index = (await EvaluateAsync(setIndex.Index)).ToObject();
         object? value = (await EvaluateAsync(setIndex.Value)).ToObject();
-        return RuntimeValue.FromBoxed(EvaluateIndexSet(obj, index, value));
+        return PerformIndexSet(obj, index, value);
     }
 
     private async Task<RuntimeValue> EvaluateCompoundAssignAsync(Expr.CompoundAssign compound)
@@ -675,10 +675,10 @@ public partial class Interpreter
     {
         object? obj = (await EvaluateAsync(compoundSetIndex.Object)).ToObject();
         object? index = (await EvaluateAsync(compoundSetIndex.Index)).ToObject();
-        object? currentValue = EvaluateIndexGet(obj, index);
+        object? currentValue = PerformIndexGet(compoundSetIndex.Object, obj, index).ToObject();
         object? operandValue = (await EvaluateAsync(compoundSetIndex.Value)).ToObject();
         object? result = ApplyCompoundOperator(compoundSetIndex.Operator.Type, currentValue, operandValue);
-        return RuntimeValue.FromBoxed(EvaluateIndexSet(obj, index, result));
+        return PerformIndexSet(obj, index, result);
     }
 
     private async Task<RuntimeValue> EvaluateLogicalAssignAsync(Expr.LogicalAssign logical)
@@ -738,7 +738,7 @@ public partial class Interpreter
     {
         object? obj = (await EvaluateAsync(logical.Object)).ToObject();
         object? index = (await EvaluateAsync(logical.Index)).ToObject();
-        object? currentValue = EvaluateIndexGet(obj, index);
+        object? currentValue = PerformIndexGet(logical.Object, obj, index).ToObject();
 
         switch (logical.Operator.Type)
         {
@@ -754,7 +754,7 @@ public partial class Interpreter
         }
 
         object? newValue = (await EvaluateAsync(logical.Value)).ToObject();
-        return RuntimeValue.FromBoxed(EvaluateIndexSet(obj, index, newValue));
+        return PerformIndexSet(obj, index, newValue);
     }
 
     private async Task<RuntimeValue> EvaluateTemplateLiteralAsync(Expr.TemplateLiteral template)
@@ -784,126 +784,4 @@ public partial class Interpreter
         return RuntimeValue.FromBoxed(callable.Call(this, args));
     }
 
-    // Helper methods for index operations
-    private object? EvaluateIndexGet(object? obj, object? index)
-    {
-        // Proxy interception for index access
-        if (obj is SharpTSProxy proxy)
-        {
-            string key = index is SharpTSSymbol ? index.ToString()! : Stringify(index);
-            return proxy.TrapGet(key, this);
-        }
-
-        if (obj is SharpTSArray array && index is double idx)
-        {
-            return array.Get((int)idx);
-        }
-        if (obj is SharpTSEnum enumObj && index is double enumIdx)
-        {
-            return enumObj.GetReverse(enumIdx);
-        }
-        // Handle symbol keys - return undefined for missing symbol properties
-        if (index is SharpTSSymbol symbol)
-        {
-            if (obj is SharpTSObject symObj)
-            {
-                return symObj.GetBySymbol(symbol) ?? SharpTSUndefined.Instance;
-            }
-            if (obj is SharpTSInstance symInst)
-            {
-                return symInst.GetBySymbol(symbol) ?? SharpTSUndefined.Instance;
-            }
-        }
-        if (obj is SharpTSObject sharpObj && index is string strKey)
-        {
-            return sharpObj.GetProperty(strKey);
-        }
-        if (obj is SharpTSObject numObj && index is double numKey)
-        {
-            return numObj.GetProperty(numKey.ToString());
-        }
-        if (obj is SharpTSInstance instance && index is string instanceKey)
-        {
-            return instance.Get(new Token(TokenType.IDENTIFIER, instanceKey, null, 0));
-        }
-        if (obj is SharpTSHeaders headers && index is string headerKey)
-        {
-            return (object?)headers.Get(headerKey) ?? SharpTSUndefined.Instance;
-        }
-        if (obj is string str && index is double strIdx)
-        {
-            int i = (int)strIdx;
-            return (i >= 0 && i < str.Length) ? (object)str[i].ToString() : SharpTSUndefined.Instance;
-        }
-        throw new InterpreterException("Index access not supported on this type.");
-    }
-
-    private object? EvaluateIndexSet(object? obj, object? index, object? value)
-    {
-        // Proxy interception for index set
-        if (obj is SharpTSProxy proxy)
-        {
-            string key = index is SharpTSSymbol ? index.ToString()! : Stringify(index);
-            proxy.TrapSet(key, value, this);
-            return value;
-        }
-
-        bool strictMode = _environment.IsStrictMode;
-
-        if (obj is SharpTSArray array && index is double idx)
-        {
-            if (strictMode)
-            {
-                array.SetStrict((int)idx, value, strictMode);
-            }
-            else
-            {
-                array.Set((int)idx, value);
-            }
-            return value;
-        }
-        if (obj is SharpTSObject sharpObj && index is string strKey)
-        {
-            if (strictMode)
-            {
-                sharpObj.SetPropertyStrict(strKey, value, strictMode);
-            }
-            else
-            {
-                sharpObj.SetProperty(strKey, value);
-            }
-            return value;
-        }
-        if (obj is SharpTSObject numObj && index is double numKey)
-        {
-            if (strictMode)
-            {
-                numObj.SetPropertyStrict(numKey.ToString(), value, strictMode);
-            }
-            else
-            {
-                numObj.SetProperty(numKey.ToString(), value);
-            }
-            return value;
-        }
-        if (obj is SharpTSInstance instance && index is string instanceKey)
-        {
-            if (strictMode)
-            {
-                instance.SetRawFieldStrict(instanceKey, value, strictMode);
-            }
-            else
-            {
-                instance.SetRawField(instanceKey, value);
-            }
-            return value;
-        }
-        // Math[n] = v — Math is extensible per ECMA-262.
-        if (obj is SharpTSMath math)
-        {
-            math.SetExtra(Stringify(index), value);
-            return value;
-        }
-        throw new InterpreterException("Index assignment not supported on this type.");
-    }
 }

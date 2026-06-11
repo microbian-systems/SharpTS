@@ -745,6 +745,10 @@ public partial class Interpreter
         (SharpTSInstance instance, _) => new IndexTarget.InstanceString(instance, PropertyKeyConverter.ToPropertyKeyString(index)),
         (SharpTSGlobalThis globalThis, string globalKey) => new IndexTarget.GlobalThis(globalThis, globalKey),
         (SharpTSHeaders headers, string headerKey) => new IndexTarget.HeadersString(headers, headerKey),
+        // Class constructors accept expando statics (Node: `C["foo"] = 1`,
+        // `C[Symbol.species] = P`). #262.
+        (SharpTSClass cls, SharpTSSymbol clsSym) => new IndexTarget.ClassSymbol(cls, clsSym),
+        (SharpTSClass cls, _) => new IndexTarget.ClassString(cls, PropertyKeyConverter.ToPropertyKeyString(index)),
         (string str, double strIdx) => new IndexTarget.StringChar(str, (int)strIdx),
         _ => new IndexTarget.Unsupported(obj, index)
     };
@@ -769,7 +773,18 @@ public partial class Interpreter
         }
 
         object? index = Evaluate(getIndex.Index);
+        return PerformIndexGet(getIndex.Object, obj, index);
+    }
 
+    /// <summary>
+    /// Performs an index read on already-evaluated operands. Shared by the sync
+    /// evaluator and the async evaluator (Interpreter.Async.cs) so both contexts
+    /// dispatch identically. <paramref name="objectExpr"/> is the unevaluated
+    /// receiver expression, needed only to synthesize a Get for the dot-notation
+    /// fallback path.
+    /// </summary>
+    private RuntimeValue PerformIndexGet(Expr objectExpr, object? obj, object? index)
+    {
         // Proxy: intercept index access via get trap
         if (obj is SharpTSProxy proxy)
         {
@@ -826,7 +841,7 @@ public partial class Interpreter
         if (obj != null && index is string strIndexKey)
         {
             var syntheticName = new Token(TokenType.IDENTIFIER, strIndexKey, null, 0);
-            var syntheticGet = new Expr.Get(getIndex.Object, syntheticName, Optional: false);
+            var syntheticGet = new Expr.Get(objectExpr, syntheticName, Optional: false);
             return EvaluateGetOnObject(syntheticGet, obj);
         }
 
@@ -866,6 +881,13 @@ public partial class Interpreter
             IndexTarget.ObjectSymbol t => t.Target.GetBySymbol(t.Key) ?? SharpTSUndefined.Instance,
             IndexTarget.InstanceString t => t.Target.Get(new Token(TokenType.IDENTIFIER, t.Key, null, 0)),
             IndexTarget.InstanceSymbol t => t.Target.GetBySymbol(t.Key) ?? SharpTSUndefined.Instance,
+            // String keys on classes are normally intercepted by the synthetic-Get
+            // path above; this arm catches non-string keys (numbers, booleans)
+            // after ToPropertyKey normalization.
+            IndexTarget.ClassString t => EvaluateGetOnClass(t.Target, t.Key),
+            IndexTarget.ClassSymbol t => t.Target.TryGetStaticBySymbol(t.Key, out var clsSymVal)
+                ? clsSymVal ?? SharpTSUndefined.Instance
+                : SharpTSUndefined.Instance,
             IndexTarget.GlobalThis t => t.Target.GetProperty(t.Key),
             IndexTarget.HeadersString t => (object?)t.Target.Get(t.Key) ?? SharpTSUndefined.Instance,
             IndexTarget.StringChar t => (t.Index >= 0 && t.Index < t.Target.Length)
@@ -890,6 +912,16 @@ public partial class Interpreter
         object? obj = Evaluate(setIndex.Object);
         object? index = Evaluate(setIndex.Index);
         object? value = Evaluate(setIndex.Value);
+        return PerformIndexSet(obj, index, value);
+    }
+
+    /// <summary>
+    /// Performs an index assignment on already-evaluated operands. Shared by the
+    /// sync evaluator and the async evaluator (Interpreter.Async.cs) so both
+    /// contexts dispatch identically.
+    /// </summary>
+    private RuntimeValue PerformIndexSet(object? obj, object? index, object? value)
+    {
         bool strictMode = _environment.IsStrictMode;
 
         // Proxy: intercept index assignment via set trap
@@ -997,6 +1029,14 @@ public partial class Interpreter
             case IndexTarget.InstanceSymbol t:
                 if (strictMode) t.Target.SetBySymbolStrict(t.Key, value, strictMode);
                 else t.Target.SetBySymbol(t.Key, value);
+                break;
+
+            case IndexTarget.ClassString t:
+                t.Target.SetStaticProperty(t.Key, value);
+                break;
+
+            case IndexTarget.ClassSymbol t:
+                t.Target.SetStaticBySymbol(t.Key, value);
                 break;
 
             case IndexTarget.GlobalThis t:
