@@ -115,6 +115,38 @@ public class ILVerificationTests
     }
 
     [Fact]
+    public void DerivedConstructorWithSuper_PassesILVerification()
+    {
+        // A subclass with an EXPLICIT constructor calling super(...) emitted a
+        // base-ctor `call` (Object..ctor) before super() chained the real parent
+        // ctor, so the verifier saw a base-ctor call on an already-initialized /
+        // wrong-base `this` — CallCtor. The program ran correctly; the IL was
+        // merely unverifiable. Now the Object..ctor is skipped when super() will
+        // chain the real base. Covers no-arg and arg'd bases, parameter
+        // properties, multi-level chains, and generic bases. (#287)
+        var source = """
+            class A0 { constructor() {} }
+            class B0 extends A0 { constructor() { super(); } }
+            class A1 { constructor(public x: number) {} }
+            class B1 extends A1 { y: number; constructor() { super(5); this.y = 9; } }
+            class C1 extends B1 { constructor() { super(); } }
+            class Box<T> { constructor(public v: T) {} }
+            class IntBox extends Box<number> { constructor() { super(42); } }
+            console.log(new B0() instanceof A0);
+            const b1 = new B1();
+            console.log(b1.x, b1.y);
+            const c1 = new C1();
+            console.log(c1.x, c1.y);
+            console.log(new IntBox().v);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("true\n5 9\n5 9\n42\n", output);
+    }
+
+    [Fact]
     public void Generators_PassesILVerification()
     {
         var source = """
