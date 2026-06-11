@@ -232,7 +232,7 @@ public partial class TypeChecker
         return new TypeInfo.Union([nonNullishLeft, rightType]);
     }
 
-    private TypeInfo CheckTernary(Expr.Ternary ternary)
+    private TypeInfo CheckTernary(Expr.Ternary ternary, TypeInfo? contextualType = null)
     {
         CheckExpr(ternary.Condition);
 
@@ -273,7 +273,7 @@ public partial class TypeChecker
                 }
                 try
                 {
-                    thenType = CheckExpr(ternary.ThenBranch);
+                    thenType = CheckExprWithContext(ternary.ThenBranch, contextualType);
                 }
                 finally
                 {
@@ -313,7 +313,7 @@ public partial class TypeChecker
                 }
                 try
                 {
-                    elseType = CheckExpr(ternary.ElseBranch);
+                    elseType = CheckExprWithContext(ternary.ElseBranch, contextualType);
                 }
                 finally
                 {
@@ -326,8 +326,8 @@ public partial class TypeChecker
         }
         else
         {
-            thenType = CheckExpr(ternary.ThenBranch);
-            elseType = CheckExpr(ternary.ElseBranch);
+            thenType = CheckExprWithContext(ternary.ThenBranch, contextualType);
+            elseType = CheckExprWithContext(ternary.ElseBranch, contextualType);
         }
 
         // Return the more specific type, or thenType if both are compatible
