@@ -380,17 +380,22 @@ public partial class Parser
         // constructable-object-type modelling.
         if (Match(TokenType.NEW))
         {
+            int ctorLine = Previous().Line;
             string genericPrefix = "";
+            List<TypeParam>? ctorTypeParams = null;
             if (Check(TokenType.LESS))
             {
-                genericPrefix = FormatTypeParams(ParseTypeParameters());
+                ctorTypeParams = ParseTypeParameters();
+                genericPrefix = FormatTypeParams(ctorTypeParams);
             }
             Consume(TokenType.LEFT_PAREN, "Expect '(' in constructor type.");
             string ctorBody = ParseFunctionTypeBody(); // returns "(params) => ReturnType"
-            // Generic constructor types await type-parameter scoping (slice 3), and a `this`
-            // parameter has no slot on a ConstructorSignature — both fall back to the string path.
-            _lastTypeNode = TakeTypeNode() is FunctionTypeNode { ThisType: null } ctorFn && genericPrefix.Length == 0
-                ? new ConstructorTypeNode(ctorFn.Parameters, ctorFn.ReturnType, ctorFn.Line)
+            // A `this` parameter has no slot on a ConstructorSignature, so it falls back. Otherwise
+            // the construct signature (with or without type parameters) carries onto a node.
+            _lastTypeNode = TakeTypeNode() is FunctionTypeNode { ThisType: null } ctorFn
+                ? (ctorTypeParams is { Count: > 0 }
+                    ? new GenericConstructorTypeNode(ctorTypeParams, ctorFn, ctorLine)
+                    : new ConstructorTypeNode(ctorFn.Parameters, ctorFn.ReturnType, ctorFn.Line))
                 : null;
             return $"{{ new {genericPrefix}{ctorBody} }}";
         }
@@ -918,7 +923,8 @@ public partial class Parser
                 // type, producing an arrow string "(params) => ret"; prefix "new " for a
                 // construct signature so ParseInlineObjectTypeInfo can tell the two apart.
                 members.Add("new " + ParseMethodSignature());
-                if (TakeTypeNode() is FunctionTypeNode ctorSig)
+                var ctorSig = TakeTypeNode();
+                if (ctorSig is FunctionTypeNode or GenericFunctionTypeNode)
                     memberNodes.Add(new ConstructSignatureMemberNode(ctorSig, newLine));
                 else
                     nodeComplete = false;
@@ -928,7 +934,8 @@ public partial class Parser
             {
                 int callLine = Peek().Line;
                 members.Add(ParseMethodSignature());
-                if (TakeTypeNode() is FunctionTypeNode callSig)
+                var callSig = TakeTypeNode();
+                if (callSig is FunctionTypeNode or GenericFunctionTypeNode)
                     memberNodes.Add(new CallSignatureMemberNode(callSig, callLine));
                 else
                     nodeComplete = false;

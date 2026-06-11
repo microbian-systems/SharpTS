@@ -144,7 +144,26 @@ public partial class TypeChecker
                 return EvaluateTypeOf(query.EntityPath);
 
             case GenericFunctionTypeNode genericFn:
-                return TryResolveGenericFunctionType(genericFn);
+            {
+                if (TryResolveGenericSignature(genericFn.TypeParameters, genericFn.Body) is not ({ } typeParams, { } func))
+                    return null;
+                return new TypeInfo.GenericFunction(
+                    typeParams, func.ParamTypes, func.ReturnType, func.RequiredParams, func.HasRestParam,
+                    func.ThisType, func.ParamNames);
+            }
+
+            // `new <T>(…) => R` — an object type with a single GENERIC construct signature, mirroring
+            // the string path's "{ new <T>(…) => R }" rendering resolved via ResolveSignature.
+            case GenericConstructorTypeNode genericCtor:
+            {
+                if (TryResolveGenericSignature(genericCtor.TypeParameters, genericCtor.Body) is not ({ } typeParams, { } func))
+                    return null;
+                var signature = new TypeInfo.ConstructorSignature(
+                    typeParams, func.ParamTypes, func.ReturnType, func.RequiredParams, func.HasRestParam, func.ParamNames);
+                return new TypeInfo.Record(
+                    FrozenDictionary<string, TypeInfo>.Empty,
+                    ConstructorSignatures: [signature]);
+            }
 
             case TemplateLiteralTypeNode template:
             {
@@ -214,8 +233,8 @@ public partial class TypeChecker
         TypeInfo? stringIndexType = null;
         TypeInfo? numberIndexType = null;
         TypeInfo? symbolIndexType = null;
-        List<FunctionTypeNode> callSignatures = [];
-        List<FunctionTypeNode> constructSignatures = [];
+        List<TypeNode> callSignatures = [];
+        List<TypeNode> constructSignatures = [];
 
         foreach (var member in obj.Members)
         {
@@ -263,14 +282,16 @@ public partial class TypeChecker
         foreach (var signature in callSignatures)
         {
             // The string path's CallSignature copies drop a `this` type; mirror via the parts.
-            if (TryToTypeInfo(signature) is not TypeInfo.Function f) return null;
-            (recCallSigs ??= []).Add(new TypeInfo.CallSignature(null, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
+            // Generic overloads carry their type parameters (resolved through the shared scope);
+            // non-generic signatures bind a null tps.
+            if (ResolveSignatureNode(signature) is not (var tps, { } f)) return null;
+            (recCallSigs ??= []).Add(new TypeInfo.CallSignature(tps, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
         }
         List<TypeInfo.ConstructorSignature>? recCtorSigs = null;
         foreach (var signature in constructSignatures)
         {
-            if (TryToTypeInfo(signature) is not TypeInfo.Function f) return null;
-            (recCtorSigs ??= []).Add(new TypeInfo.ConstructorSignature(null, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
+            if (ResolveSignatureNode(signature) is not (var tps, { } f)) return null;
+            (recCtorSigs ??= []).Add(new TypeInfo.ConstructorSignature(tps, f.ParamTypes, f.ReturnType, f.RequiredParams, f.HasRestParam, f.ParamNames));
         }
 
         return new TypeInfo.Record(
@@ -338,20 +359,41 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Mirror of the string path's <c>TryParseGenericFunctionTypeInfo</c>: every type-parameter name
-    /// is defined unconstrained first (so a constraint/default may forward-reference a later
-    /// parameter), constraints/defaults then resolve in that scope, and the body
-    /// <see cref="FunctionTypeNode"/> resolves with the parameters in scope so its <c>T</c>s bind to
-    /// them. Constraints/defaults come from the <see cref="TypeParam"/> strings (resolved via the
-    /// shared single-name path), so they cannot diverge from the string path. Null (e.g. a body
-    /// component without a node) falls back.
+    /// Resolves a call/construct signature node to its (optional) type parameters and function shape.
+    /// A <see cref="GenericFunctionTypeNode"/> resolves through the shared generic-signature scope; a
+    /// plain <see cref="FunctionTypeNode"/> yields null type parameters. Returns null (fallback) for
+    /// any other node or an unresolvable body.
     /// </summary>
-    private TypeInfo? TryResolveGenericFunctionType(GenericFunctionTypeNode genericFn)
+    private (List<TypeInfo.TypeParameter>? TypeParams, TypeInfo.Function Func)? ResolveSignatureNode(TypeNode signature)
+    {
+        switch (signature)
+        {
+            case GenericFunctionTypeNode generic:
+                return TryResolveGenericSignature(generic.TypeParameters, generic.Body);
+            case FunctionTypeNode:
+                return TryToTypeInfo(signature) is TypeInfo.Function f ? (null, f) : null;
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// Resolves a generic signature's type parameters and body, shared by generic function types and
+    /// generic constructor types. Mirror of the string path's <c>TryParseGenericFunctionTypeInfo</c> /
+    /// <c>ResolveSignature</c>: every type-parameter name is defined unconstrained first (so a
+    /// constraint/default may forward-reference a later parameter), constraints/defaults then resolve
+    /// in that scope, and the body <see cref="FunctionTypeNode"/> resolves with the parameters in
+    /// scope so its <c>T</c>s bind to them. Constraints/defaults come from the <see cref="TypeParam"/>
+    /// strings (resolved via the shared single-name path), so they cannot diverge from the string
+    /// path. Null (e.g. a body component without a node) signals fallback.
+    /// </summary>
+    private (List<TypeInfo.TypeParameter> TypeParams, TypeInfo.Function Func)? TryResolveGenericSignature(
+        List<TypeParam> typeParameters, FunctionTypeNode body)
     {
         var typeParamEnv = new TypeEnvironment(_environment);
 
         // First pass: declare every name unconstrained.
-        foreach (var tp in genericFn.TypeParameters)
+        foreach (var tp in typeParameters)
             typeParamEnv.DefineTypeParameter(tp.Name.Lexeme, new TypeInfo.TypeParameter(tp.Name.Lexeme));
 
         var typeParams = new List<TypeInfo.TypeParameter>();
@@ -359,7 +401,7 @@ public partial class TypeChecker
         using (new EnvironmentScope(this, typeParamEnv))
         {
             // Second pass: resolve constraints/defaults now that all names are in scope.
-            foreach (var tp in genericFn.TypeParameters)
+            foreach (var tp in typeParameters)
             {
                 TypeInfo? constraint = tp.Constraint is not null ? ToTypeInfo(tp.Constraint) : null;
                 TypeInfo? defaultType = tp.Default is not null ? ToTypeInfo(tp.Default) : null;
@@ -368,14 +410,10 @@ public partial class TypeChecker
                 typeParamEnv.DefineTypeParameter(tp.Name.Lexeme, resolved);
             }
 
-            bodyType = TryToTypeInfo(genericFn.Body);
+            bodyType = TryToTypeInfo(body);
         }
 
-        if (bodyType is not TypeInfo.Function func) return null;
-
-        return new TypeInfo.GenericFunction(
-            typeParams, func.ParamTypes, func.ReturnType, func.RequiredParams, func.HasRestParam,
-            func.ThisType, func.ParamNames);
+        return bodyType is TypeInfo.Function func ? (typeParams, func) : null;
     }
 
     /// <summary>

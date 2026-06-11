@@ -206,10 +206,23 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
    not the three counted sites) — mechanism, not metric. No baseline movement; equivalence verified
    (e.g. qualified namespace type-alias exports resolve permissively to `any` on BOTH paths).
 
-   Remaining fallback before the scanner can go: generic **constructor** types
-   (`new <T>(…) => R`), `unique symbol` (intentionally throws TS1331), bigint literal types
-   (`1n`), and whatever the remaining 68 corpus annotation-site fallbacks turn out to be (audit
-   next).
+5e. ✅ **Shipped: generic signatures — 100% corpus annotation coverage.** An audit of the
+   remaining fallbacks showed they were almost entirely generic constructor types and generic
+   call/construct signatures. `GenericConstructorTypeNode` (`new <T>(…) => R` → object type with a
+   generic construct signature) and object-type generic call/construct signatures
+   (`{ <T>(x): T; <U>(a): U }`, `{ new <T>(x): T[] }`) — `ParseMethodSignature` now keeps its
+   type parameters and emits a `GenericFunctionTypeNode`; the call/construct signature member nodes
+   widened from `FunctionTypeNode` to `TypeNode`. All share one `TryResolveGenericSignature` helper
+   (the two-pass type-parameter scope, mirroring the string path's `ResolveSignature`). Corpus
+   coverage: 87.6% → **100.0% (547 node / 0 fallback)** — every annotation site in the 79-file
+   corpus now resolves through the node path; the string scanner is no longer reached for any of
+   them. No baseline movement; full unit suite green.
+
+   The string path (`ToTypeInfo(string)` / `TypeChecker.TypeParsing.cs`) is still reached for a few
+   long-tail constructs absent from the corpus — bigint literal types (`1n`), `this`-parameter
+   generic/constructor types, `unique symbol` — and remains the implementation for the REPL/embedding
+   API. Slice 6 (deleting the scanner) is now viable: give those last forms nodes, then reimplement
+   `ToTypeInfo(string)` as parse-to-node + convert.
 6. Delete `TypeChecker.TypeParsing.cs` string scanning; `ToTypeInfo(string)` survives only
    for the REPL/embedding API surface, implemented as parse-to-node + convert.
 

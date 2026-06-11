@@ -30,13 +30,13 @@ public class TypeNodeSliceTests
     [Fact]
     public void NodePath_FallsBackForUnsupportedConstructs()
     {
-        // Generic constructor types (new <T>(…) => R) still have no node form, so they fall back.
+        // bigint literal types (1n) still have no node form, so they fall back.
         TypeNodeStats.Reset();
         TestHarness.RunInterpreted("""
-            let f: new <T>(x: T) => T;
+            let x: 1n;
             """);
         Assert.True(TypeNodeStats.StringFallbacks >= 1,
-            $"expected the generic-constructor-type annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+            $"expected the bigint-literal-type annotation to fall back, got {TypeNodeStats.StringFallbacks}");
     }
 
     [Fact]
@@ -470,6 +470,43 @@ public class TypeNodeSliceTests
             """);
         Assert.True(TypeNodeStats.NodeHits >= 1,
             $"expected the qualified-name annotation on the node path, got {TypeNodeStats.NodeHits}");
+    }
+
+    [Fact]
+    public void NodePath_EngagesForGenericConstructorType()
+    {
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            let make: new <T>(x: T) => T[];
+            let build: new <T extends object, K extends keyof T>(o: T, k: K) => T[K];
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 2,
+            $"expected the generic-constructor-type annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodePath_EngagesForObjectTypeWithGenericSignatures()
+    {
+        // Overloaded generic call signatures and a generic construct signature inside object types.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            let overloads: { <T>(x: T): T; <U, V>(a: U, b: V): U };
+            let factory: { new <T>(x: T): T[] };
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 2,
+            $"expected the object-type generic-signature annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_GenericConstructorTypeIsConstructable()
+    {
+        // A generic constructor type resolves to a constructable object type; a non-constructable
+        // value must be rejected — the same verdict the string path produces.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var ctor: new <T>(x: T) => T[] = 42;
+            """));
     }
 
     [Fact]

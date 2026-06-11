@@ -83,6 +83,12 @@ public sealed record FunctionTypeNode(TypeNode? ThisType, List<ParameterTypeNode
 /// Generic constructor types (<c>new &lt;T&gt;(…) =&gt; R</c>) have no node yet.</summary>
 public sealed record ConstructorTypeNode(List<ParameterTypeNode> Parameters, TypeNode ReturnType, int Line) : TypeNode(Line);
 
+/// <summary>A generic constructor type: <c>new &lt;T&gt;(a: T) =&gt; R</c>. Resolves to an object type
+/// carrying a single GENERIC construct signature; the type parameters scope the body exactly like
+/// <see cref="GenericFunctionTypeNode"/> (and the string path's per-signature scoping). A <c>this</c>
+/// parameter has no slot on a construct signature, so such constructors fall back.</summary>
+public sealed record GenericConstructorTypeNode(List<TypeParam> TypeParameters, FunctionTypeNode Body, int Line) : TypeNode(Line);
+
 /// <summary>A generic function type: <c>&lt;T&gt;(a: T) =&gt; R</c>. The type-parameter list is carried
 /// in its AST <see cref="TypeParam"/> form (constraints/defaults are resolved by the checker in a
 /// fresh type-parameter scope, exactly like the string path's two-pass
@@ -132,11 +138,14 @@ public sealed record PropertyMemberNode(string Name, TypeNode Type, bool IsOptio
 /// <c>string</c>, <c>number</c>, or <c>symbol</c>.</summary>
 public sealed record IndexSignatureNode(string KeyKind, TypeNode ValueType, int Line) : ObjectTypeMemberNode(Line);
 
-/// <summary>A call signature member: <c>(x: T): R</c>.</summary>
-public sealed record CallSignatureMemberNode(FunctionTypeNode Signature, int Line) : ObjectTypeMemberNode(Line);
+/// <summary>A call signature member: <c>(x: T): R</c> or generic <c>&lt;T&gt;(x: T): R</c>. The
+/// signature is a <see cref="FunctionTypeNode"/> (non-generic) or a
+/// <see cref="GenericFunctionTypeNode"/> (generic overload).</summary>
+public sealed record CallSignatureMemberNode(TypeNode Signature, int Line) : ObjectTypeMemberNode(Line);
 
-/// <summary>A construct signature member: <c>new (x: T): R</c>.</summary>
-public sealed record ConstructSignatureMemberNode(FunctionTypeNode Signature, int Line) : ObjectTypeMemberNode(Line);
+/// <summary>A construct signature member: <c>new (x: T): R</c> or generic <c>new &lt;T&gt;(x: T): R</c>.
+/// The signature is a <see cref="FunctionTypeNode"/> or a <see cref="GenericFunctionTypeNode"/>.</summary>
+public sealed record ConstructSignatureMemberNode(TypeNode Signature, int Line) : ObjectTypeMemberNode(Line);
 
 /// <summary>A tuple type: <c>[string, n?: number, ...rest: boolean[]]</c>.</summary>
 public sealed record TupleTypeNode(List<TupleElementNode> Elements, int Line) : TypeNode(Line);
