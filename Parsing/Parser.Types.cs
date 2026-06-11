@@ -468,6 +468,7 @@ public partial class Parser
         if (Match(TokenType.LEFT_BRACKET))
         {
             typeName = ParseTupleType();
+            typeNode = TakeTypeNode();
         }
         // Handle inline object type syntax: { name: string; age?: number }
         // Assigns typeName (rather than returning) so postfix indexed access applies to
@@ -475,6 +476,7 @@ public partial class Parser
         else if (Match(TokenType.LEFT_BRACE))
         {
             typeName = ParseInlineObjectType();
+            typeNode = TakeTypeNode();
         }
         // Handle parenthesized types: (string | number) or function types: (x: number) => number
         else if (Match(TokenType.LEFT_PAREN))
@@ -647,7 +649,10 @@ public partial class Parser
     private string ParseTupleType()
     {
         // Already consumed LEFT_BRACKET
+        int startLine = Previous().Line;
         List<string> elements = [];
+        List<TupleElementNode> elementNodes = [];
+        bool nodeComplete = true;
 
         while (!Check(TokenType.RIGHT_BRACKET) && !IsAtEnd())
         {
@@ -655,6 +660,13 @@ public partial class Parser
             if (Match(TokenType.DOT_DOT_DOT))
             {
                 string spreadType = ParsePrimaryType();
+                // The resolver distinguishes a trailing rest (`...T[]`) from a variadic spread
+                // TEXTUALLY (EndsWith "[]"). Only carry a node when the structured view agrees —
+                // e.g. a grouped `...(T[])` reads as an array node but not as a "[]" suffix.
+                if (TakeTypeNode() is { } spreadNode && spreadType.EndsWith("[]") == spreadNode is ArrayTypeNode)
+                    elementNodes.Add(new TupleElementNode(null, spreadNode, false, true, spreadNode.Line));
+                else
+                    nodeComplete = false;
 
                 if (spreadType.EndsWith("[]"))
                 {
@@ -702,14 +714,27 @@ public partial class Parser
                 Consume(TokenType.COLON, ""); // consume colon
                 string innerType = ParseUnionType();
                 elementType = isOptional ? $"{name.Lexeme}?: {innerType}" : $"{name.Lexeme}: {innerType}";
+                // The resolver rejects type-keyword names ("string:", "object:", …) and reparses
+                // the whole element as a type — don't model those as named elements.
+                if (TakeTypeNode() is { } innerNode && IsValidTupleElementNameLexeme(name.Lexeme))
+                    elementNodes.Add(new TupleElementNode(name.Lexeme, innerNode, isOptional, false, innerNode.Line));
+                else
+                    nodeComplete = false;
             }
             else
             {
                 elementType = ParseUnionType(); // Support union elements like [string | number, boolean]
+                TypeNode? elementNode = TakeTypeNode();
 
                 // Check for optional marker on unnamed element
-                if (Match(TokenType.QUESTION))
+                bool isOptional = Match(TokenType.QUESTION);
+                if (isOptional)
                     elementType += "?";
+
+                if (elementNode is { })
+                    elementNodes.Add(new TupleElementNode(null, elementNode, isOptional, false, elementNode.Line));
+                else
+                    nodeComplete = false;
             }
 
             elements.Add(elementType);
@@ -719,21 +744,36 @@ public partial class Parser
         }
 
         Consume(TokenType.RIGHT_BRACKET, "Expect ']' after tuple type.");
+        _lastTypeNode = nodeComplete ? new TupleTypeNode(elementNodes, startLine) : null;
         return "[" + string.Join(", ", elements) + "]";
     }
+
+    /// <summary>
+    /// Mirror of the resolver's tuple-element-name validation: the string path only treats
+    /// <c>name:</c> as a label when it isn't a type keyword (otherwise the element re-parses as a
+    /// type). Token-level parsing already guarantees identifier shape; only the keyword list matters.
+    /// </summary>
+    private static bool IsValidTupleElementNameLexeme(string s) =>
+        s is not ("string" or "number" or "boolean" or "void" or "null" or "undefined"
+                or "unknown" or "never" or "any" or "symbol" or "bigint" or "object");
 
     private string ParseInlineObjectType()
     {
         // Already consumed LEFT_BRACE
         // Parses: { name: string; age?: number; greet(x: number): string; [key: string]: number }
         // Also handles mapped types: { [K in keyof T]: T[K] }, { +readonly [K in keyof T]-?: T[K] }
+        int startLine = Previous().Line;
         List<string> members = [];
+        List<ObjectTypeMemberNode> memberNodes = [];
+        bool nodeComplete = true;
 
         // Check for mapped type syntax: { [+/-readonly] [K in ...]: ... }
         // Mapped types have a single member that uses 'in' instead of ':'
         if (IsMappedTypeStart())
         {
-            return ParseMappedType();
+            string mapped = ParseMappedType();
+            _lastTypeNode = null; // mapped types have no node yet
+            return mapped;
         }
 
         while (!Check(TokenType.RIGHT_BRACE) && !IsAtEnd())
@@ -754,6 +794,7 @@ public partial class Parser
                 string computedName = raw.StartsWith("Symbol.") ? "@@" + raw["Symbol.".Length..] : "@@" + raw;
                 bool computedOptional = Match(TokenType.QUESTION);
                 string computedType;
+                int computedLine = Previous().Line;
                 if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS))
                 {
                     computedType = ParseMethodSignature();
@@ -763,6 +804,11 @@ public partial class Parser
                     Consume(TokenType.COLON, "Expect ':' after computed member name.");
                     computedType = ParseUnionType();
                 }
+                // The string path renders computed members as plain fields (no method marker).
+                if (TakeTypeNode() is { } computedNode)
+                    memberNodes.Add(new PropertyMemberNode(computedName, computedNode, computedOptional, false, computedLine));
+                else
+                    nodeComplete = false;
                 members.Add($"{computedName}{(computedOptional ? "?" : "")}: {computedType}");
             }
             // Check for index signature: [key: string]: type
@@ -796,23 +842,38 @@ public partial class Parser
 
                 Consume(TokenType.RIGHT_BRACKET, "Expect ']' after index signature key type.");
                 Consume(TokenType.COLON, "Expect ':' after index signature.");
+                int indexLine = Previous().Line;
                 string valueType = ParseUnionType();
 
+                if (TakeTypeNode() is { } valueNode)
+                    memberNodes.Add(new IndexSignatureNode(keyType, valueNode, indexLine));
+                else
+                    nodeComplete = false;
                 members.Add($"[{keyType}]: {valueType}");
             }
             // Construct signature: new (params): ReturnType or new <T>(params): ReturnType
             else if (Check(TokenType.NEW))
             {
                 Advance(); // consume 'new'
+                int newLine = Previous().Line;
                 // ParseMethodSignature consumes optional <generics>, the params, and the return
                 // type, producing an arrow string "(params) => ret"; prefix "new " for a
                 // construct signature so ParseInlineObjectTypeInfo can tell the two apart.
                 members.Add("new " + ParseMethodSignature());
+                if (TakeTypeNode() is FunctionTypeNode ctorSig)
+                    memberNodes.Add(new ConstructSignatureMemberNode(ctorSig, newLine));
+                else
+                    nodeComplete = false;
             }
             // Call signature: (params): ReturnType or <T>(params): ReturnType
             else if (Check(TokenType.LEFT_PAREN) || (Check(TokenType.LESS) && IsCallSignatureStart()))
             {
+                int callLine = Peek().Line;
                 members.Add(ParseMethodSignature());
+                if (TakeTypeNode() is FunctionTypeNode callSig)
+                    memberNodes.Add(new CallSignatureMemberNode(callSig, callLine));
+                else
+                    nodeComplete = false;
             }
             else
             {
@@ -842,6 +903,11 @@ public partial class Parser
                     propertyType = ParseConditionalType();
                 }
 
+                if (TakeTypeNode() is { } propertyNode)
+                    memberNodes.Add(new PropertyMemberNode(propertyName.Lexeme, propertyNode, isOptional, isMethodMember, propertyName.Line));
+                else
+                    nodeComplete = false;
+
                 // Build member string. Method members carry a '#m' marker (stripped by
                 // ParseInlineObjectTypeInfo) so method-ness survives the string round-trip —
                 // under strictFunctionTypes methods keep bivariant parameter relating.
@@ -860,6 +926,7 @@ public partial class Parser
         }
 
         Consume(TokenType.RIGHT_BRACE, "Expect '}' after object type.");
+        _lastTypeNode = nodeComplete ? new ObjectTypeNode(memberNodes, startLine) : null;
         return "{ " + string.Join("; ", members) + " }";
     }
 
