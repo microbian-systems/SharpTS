@@ -428,6 +428,18 @@ public class EmittedRuntime
     /// the Array helper MethodBuilders are defined.
     /// </summary>
     public MethodBuilder ArrayPrototypePopulateMethod { get; set; } = null!;
+    /// <summary>
+    /// Populates <see cref="MathSingletonField"/> with $TSFunction wrappers for
+    /// the Math static methods (max/min/floor/…) so value-form access
+    /// (<c>const m = Math; m.max(1,2)</c>) resolves. Idempotent. See issue #276.
+    /// </summary>
+    public MethodBuilder MathSingletonPopulateMethod { get; set; } = null!;
+    /// <summary>
+    /// Populates <see cref="JsonSingletonField"/> with $TSFunction wrappers for
+    /// JSON.parse / JSON.stringify so value-form access
+    /// (<c>const j = JSON; j.stringify(x)</c>) resolves. Idempotent. See issue #276.
+    /// </summary>
+    public MethodBuilder JsonSingletonPopulateMethod { get; set; } = null!;
     /// <summary>Populates <see cref="StringPrototypeField"/> with $TSFunction wrappers; idempotent.</summary>
     public MethodBuilder StringPrototypePopulateMethod { get; set; } = null!;
     /// <summary>Populates <see cref="NumberPrototypeField"/> with $TSFunction wrappers; idempotent.</summary>
