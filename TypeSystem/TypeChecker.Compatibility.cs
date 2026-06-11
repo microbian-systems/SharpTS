@@ -450,15 +450,20 @@ public partial class TypeChecker
         {
             var expectedTypes = expectedUnion.FlattenedTypes;
             var actualTypes = actualUnion.FlattenedTypes;
+            // Per source constituent: some-target-constituent first, then the discriminated
+            // path (a constituent may relate only through its discriminant combinations).
             return actualTypes.All(actualType =>
-                expectedTypes.Any(expectedType => IsCompatible(expectedType, actualType)));
+                expectedTypes.Any(expectedType => IsCompatible(expectedType, actualType)) ||
+                RelatedToDiscriminatedUnion(expectedUnion, actualType));
         }
 
-        // Union as expected: actual must match at least one member
+        // Union as expected: actual must match at least one member — or relate through the
+        // discriminated-union path (tsc typeRelatedToDiscriminatedType).
         if (expected is TypeInfo.Union expUnion)
         {
             var expTypes = expUnion.FlattenedTypes;
-            return expTypes.Any(t => IsCompatible(t, actual));
+            return expTypes.Any(t => IsCompatible(t, actual)) ||
+                RelatedToDiscriminatedUnion(expUnion, actual);
         }
 
         // Union as actual: all members must be compatible with expected
