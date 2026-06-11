@@ -182,6 +182,38 @@ public class ILVerificationTests
     }
 
     [Fact]
+    public void ClassExpressionInheritedMethodDispatch_PassesILVerification()
+    {
+        // The compiled per-class GetProperty helper only dispatched a class's
+        // OWN members, so a method inherited from a base class resolved to
+        // undefined under the (always dynamic) class-expression dispatch and the
+        // call threw. GetProperty now delegates to the base class. Three-level
+        // chain exercises recursive delegation: Puppy inherits Dog.speak. (#297)
+        var source = """
+            const Animal = class {
+                constructor(public name: string) {}
+                speak(): string { return this.name + " makes a sound"; }
+            };
+            const Dog = class extends Animal {
+                constructor(name: string) { super(name); }
+                speak(): string { return this.name + " barks"; }
+            };
+            const Puppy = class extends Dog {
+                constructor() { super("Rex"); }
+            };
+            const p = new Puppy();
+            console.log(p.speak(), p.name, p instanceof Dog, p instanceof Animal);
+            """;
+
+        // Verify-only (see ClassExpressionExtendsClassExpression note). Runtime
+        // inherited-dispatch behavior is asserted by the shared-mode test
+        // ClassExpressionTests.ClassExpression_MultiLevelInheritedMethod.
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
     public void Generators_PassesILVerification()
     {
         var source = """

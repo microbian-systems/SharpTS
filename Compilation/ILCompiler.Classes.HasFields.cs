@@ -368,10 +368,11 @@ public partial class ILCompiler
             }
         }
 
-        // 4. Return $Undefined.Instance if nothing found
+        // 4. Not found on this class — delegate to the base class's GetProperty
+        // so inherited members resolve under dynamic dispatch (else fall back to
+        // returning $Undefined).
         il.MarkLabel(returnNullLabel);
-        il.Emit(OpCodes.Ldsfld, _runtime.UndefinedInstance);
-        il.Emit(OpCodes.Ret);
+        EmitGetPropertyBaseFallthrough(il, ResolveBaseStubClassName(classStmt), _classes.Builders[className].BaseType);
     }
 
     /// <summary>
@@ -627,10 +628,83 @@ public partial class ILCompiler
             }
         }
 
-        // 4. Return $Undefined.Instance if nothing found
+        // 4. Not found on this class — delegate to the base class's GetProperty
+        // so inherited members resolve under dynamic dispatch (else fall back to
+        // returning $Undefined).
         il.MarkLabel(returnNullLabel);
+        EmitGetPropertyBaseFallthrough(il, ResolveBaseStubClassName(classExpr), _classExprs.Builders[classExpr].BaseType);
+    }
+
+    /// <summary>
+    /// Emits the GetProperty inheritance fallthrough: when a class's own
+    /// compile-time dispatch finds nothing, delegate to the base class's
+    /// GetProperty so members inherited from a base class (methods, getters,
+    /// typed properties) resolve under DYNAMIC dispatch. Without this, an
+    /// inherited member accessed dynamically — e.g. `(x as any).inherited()`,
+    /// or ANY method call on a class-expression instance (always anonymously
+    /// typed, so always dynamically dispatched) — resolves to undefined and the
+    /// call throws "undefined is not a function". Falls back to returning
+    /// $Undefined when the base is System.Object or a built-in (no emitted
+    /// $IHasFields stub).
+    /// </summary>
+    private void EmitGetPropertyBaseFallthrough(ILGenerator il, string? baseClassName, Type? baseType)
+    {
+        if (baseClassName != null && _classes.HasFieldsStubs.TryGetValue(baseClassName, out var baseStubs))
+        {
+            // return base.GetProperty(name);  — non-virtual `call` to the
+            // specific base implementation (not callvirt, which would recurse
+            // into this class's own override). The chain terminates at the
+            // topmost emitted class whose base has no stub.
+            MethodInfo target = baseStubs.GetProperty;
+            if (baseType != null && baseType.IsGenericType && baseType.IsConstructedGenericType)
+                target = EmitterTypeHelpers.ResolveMethod(baseType, baseStubs.GetProperty);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, target);
+            il.Emit(OpCodes.Ret);
+            return;
+        }
+
         il.Emit(OpCodes.Ldsfld, _runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Resolves the emitted base class name (a $IHasFields stub key) for a class
+    /// declaration's GetProperty inheritance fallthrough, or null when the base
+    /// is System.Object / a built-in without a stub.
+    /// </summary>
+    private string? ResolveBaseStubClassName(Stmt.Class classStmt)
+    {
+        if (classStmt.SuperclassExpr == null)
+            return null;
+        var leaf = Expr.GetSuperclassLeafName(classStmt.SuperclassExpr);
+        if (leaf == null)
+            return null;
+        var resolved = GetDefinitionContext().ResolveClassName(leaf);
+        return _classes.HasFieldsStubs.ContainsKey(resolved) ? resolved : null;
+    }
+
+    /// <summary>
+    /// Resolves the emitted base class name (a $IHasFields stub key) for a class
+    /// expression's GetProperty inheritance fallthrough. The superclass may be
+    /// another class expression bound to a variable or a class declaration.
+    /// </summary>
+    private string? ResolveBaseStubClassName(Expr.ClassExpr classExpr)
+    {
+        if (!_classExprs.Superclass.TryGetValue(classExpr, out var superName) || superName == null)
+            return null;
+
+        string? baseClassName;
+        if (_classExprs.VarToClassExpr.TryGetValue(superName, out var parentExpr)
+            && _classExprs.Names.TryGetValue(parentExpr, out var generatedName))
+            baseClassName = generatedName;
+        else
+            baseClassName = GetDefinitionContext().ResolveClassName(superName);
+
+        return baseClassName != null && _classes.HasFieldsStubs.ContainsKey(baseClassName)
+            ? baseClassName
+            : null;
     }
 
     /// <summary>
