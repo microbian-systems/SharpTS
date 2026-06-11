@@ -116,6 +116,16 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
    resolution, so they ride with slice 3.
 3. Type aliases store nodes (kills alias string substitution; enables alias-instantiation
    identity for #202's variance cases).
+   - ✅ **3a shipped: generic references.** `NamedTypeNode.TypeArguments` is built by the
+     parser; the checker resolves argument nodes and reuses `ResolveGenericType`'s
+     existing `TypeInfo`-args overload (built-in generics, utility types, generic
+     classes/interfaces/functions, same TS2314 arity errors). Generic **aliases**
+     deliberately still fall back — their expansion is textual substitution of the
+     ORIGINAL argument spellings, so node-resolved arguments could shift
+     recursion/instantiation keys. Coverage: 65.3% → **68.7%**.
+   - 3b remaining: alias definitions stored as nodes, expansion via scoped node
+     resolution instead of `SubstituteTypeParamInString` (this is the part that buys
+     alias-instantiation identity). Mapped/conditional nodes ride with this.
 4. Declaration handles on `TypeInfo.Interface/Class` resolved via nodes (kills the
    `CacheKey()` workaround; fixes the cross-module diagnostic tests).
 5. Substitution-origin marking (unblocks #202's callback rule → `covariantCallbacks`).

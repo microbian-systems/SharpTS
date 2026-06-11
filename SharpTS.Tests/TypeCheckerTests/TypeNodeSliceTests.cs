@@ -30,12 +30,47 @@ public class TypeNodeSliceTests
     [Fact]
     public void NodePath_FallsBackForUnsupportedConstructs()
     {
+        // Generic ALIAS references stay on the string path until alias definitions store nodes.
         TypeNodeStats.Reset();
         TestHarness.RunInterpreted("""
-            var xs: Array<number> = [1];
+            type Box<T> = { value: T };
+            var b: Box<number> = { value: 1 };
             """);
         Assert.True(TypeNodeStats.StringFallbacks >= 1,
-            $"expected the generic-reference annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+            $"expected the generic-alias annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+    }
+
+    [Fact]
+    public void NodePath_EngagesForGenericReferences()
+    {
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            class Pair<A, B> { constructor(public first: A, public second: B) {} }
+            var xs: Array<number> = [1, 2];
+            var p: Promise<string> = Promise.resolve("x");
+            var pr: Pair<string, number> = new Pair<string, number>("x", 1);
+            var part: Partial<{ a: number; b: string }> = { a: 1 };
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 4,
+            $"expected the node path for all four generic annotations, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_GenericReferencesEnforceArguments()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var xs: Array<number> = ["not a number"];
+            """));
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            class Pair<A, B> { constructor(public first: A, public second: B) {} }
+            var p: Pair<string, number> = new Pair<number, string>(1, "x");
+            """));
+        // Utility-type expansion through the node path: Partial makes members optional,
+        // but still rejects mistyped ones.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var part: Partial<{ a: number }> = { a: "no" };
+            """));
     }
 
     [Fact]

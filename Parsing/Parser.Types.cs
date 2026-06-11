@@ -602,13 +602,25 @@ public partial class Parser
             Advance(); // consume <
             if (IsTypeStart())
             {
+                List<TypeNode>? argNodes = [];
                 List<string> typeArgs = [ParseTypeAnnotation()];
+                if (TakeTypeNode() is { } firstArgNode) argNodes.Add(firstArgNode);
+                else argNodes = null;
                 while (Match(TokenType.COMMA))
+                {
                     typeArgs.Add(ParseTypeAnnotation());
+                    // Always drain the side channel, even once a previous argument had no node.
+                    var argNode = TakeTypeNode();
+                    if (argNodes is not null && argNode is not null) argNodes.Add(argNode);
+                    else argNodes = null;
+                }
                 if (MatchGreaterInTypeContext())
                 {
                     typeName = $"{typeName}<{string.Join(", ", typeArgs)}>";
-                    typeNode = null; // generic references: slice 2 (alias-expansion parity)
+                    // Attach argument nodes to the bare reference (qualified names stay node-less).
+                    typeNode = typeNode is NamedTypeNode { TypeArguments: null } bare && argNodes is not null
+                        ? bare with { TypeArguments = argNodes }
+                        : null;
                 }
                 else
                     _current = saved; // Backtrack if not a valid generic type
