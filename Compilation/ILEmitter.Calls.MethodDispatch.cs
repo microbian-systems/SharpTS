@@ -418,90 +418,9 @@ public partial class ILEmitter
         return true;
     }
 
-    /// <summary>
-    /// Emits a Promise instance method call (.then, .catch, .finally).
-    /// These methods take callbacks and return a new Promise (Task).
-    /// </summary>
-    private new void EmitPromiseInstanceMethodCall(Expr promise, string methodName, List<Expr> arguments)
-    {
-        // Emit the promise (should be Task<object?>)
-        EmitExpression(promise);
-        EmitBoxIfNeeded(promise);
-
-        // Cast to Task<object?> if needed
-        IL.Emit(OpCodes.Castclass, typeof(Task<object?>));
-
-        switch (methodName)
-        {
-            case "then":
-                // promise.then(onFulfilled?, onRejected?)
-                // PromiseThen(Task<object?> promise, object? onFulfilled, object? onRejected)
-
-                // onFulfilled callback (optional)
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EmitBoxIfNeeded(arguments[0]);
-                }
-                else
-                {
-                    IL.Emit(OpCodes.Ldnull);
-                }
-
-                // onRejected callback (optional)
-                if (arguments.Count > 1)
-                {
-                    EmitExpression(arguments[1]);
-                    EmitBoxIfNeeded(arguments[1]);
-                }
-                else
-                {
-                    IL.Emit(OpCodes.Ldnull);
-                }
-
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.PromiseThen);
-                break;
-
-            case "catch":
-                // promise.catch(onRejected)
-                // PromiseCatch(Task<object?> promise, object? onRejected)
-
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EmitBoxIfNeeded(arguments[0]);
-                }
-                else
-                {
-                    IL.Emit(OpCodes.Ldnull);
-                }
-
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.PromiseCatch);
-                break;
-
-            case "finally":
-                // promise.finally(onFinally)
-                // PromiseFinally(Task<object?> promise, object? onFinally)
-
-                if (arguments.Count > 0)
-                {
-                    EmitExpression(arguments[0]);
-                    EmitBoxIfNeeded(arguments[0]);
-                }
-                else
-                {
-                    IL.Emit(OpCodes.Ldnull);
-                }
-
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.PromiseFinally);
-                break;
-
-            default:
-                // Unknown method - just return the promise unchanged
-                break;
-        }
-
-        SetStackUnknown();
-    }
-
+    // Promise instance method calls (.then/.catch/.finally) are emitted by
+    // ExpressionEmitterBase.EmitPromiseInstanceMethodCall — shared with the
+    // state-machine emitters. It unwraps $Promise receivers (incl. #242
+    // Promise subclasses) to their task and wraps results back into the
+    // receiver's subclass type.
 }

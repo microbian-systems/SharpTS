@@ -59,6 +59,9 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Ldarg_2);
             il.Emit(OpCodes.Call, runtime.PromiseThen);
+            // Promise-subclass receivers get subclass-typed results (#242).
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.WrapDerivedPromiseResultMethod);
             il.Emit(OpCodes.Ret);
         }
 
@@ -171,6 +174,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, taskLocal);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, isCatch ? runtime.PromiseCatch : runtime.PromiseFinally);
+        // Promise-subclass receivers get subclass-typed results (#242).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.WrapDerivedPromiseResultMethod);
         il.Emit(OpCodes.Br, endLabel);
 
         // Branch C: user object — look up `then`, validate callable, invoke.

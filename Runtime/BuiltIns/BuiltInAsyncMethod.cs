@@ -31,6 +31,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
     private readonly int _minArity;
     private readonly int _maxArity;
     private readonly Func<Interpreter, object?, List<object?>, Task<object?>> _implementation;
+    private readonly Func<Interpreter, Task<object?>, SharpTSPromise>? _promiseFactory;
     private object? _receiver;
 
     // Cache for bound methods - uses weak references to avoid memory leaks
@@ -42,16 +43,24 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         Func<Interpreter, object?, List<object?>, Task<object?>> implementation)
         : this(name, arity, arity, implementation) { }
 
+    /// <param name="promiseFactory">
+    /// Optional factory used to materialize the result promise from the
+    /// implementation's task. Promise subclasses (#242) pass one so derived
+    /// promises (then/catch/finally results, inherited statics) come out as
+    /// subclass instances; null means a plain <see cref="SharpTSPromise"/>.
+    /// </param>
     public BuiltInAsyncMethod(
         string name,
         int minArity,
         int maxArity,
-        Func<Interpreter, object?, List<object?>, Task<object?>> implementation)
+        Func<Interpreter, object?, List<object?>, Task<object?>> implementation,
+        Func<Interpreter, Task<object?>, SharpTSPromise>? promiseFactory = null)
     {
         _name = name;
         _minArity = minArity;
         _maxArity = maxArity;
         _implementation = implementation;
+        _promiseFactory = promiseFactory;
     }
 
     // Private constructor for creating bound instances
@@ -60,12 +69,14 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         int minArity,
         int maxArity,
         Func<Interpreter, object?, List<object?>, Task<object?>> implementation,
+        Func<Interpreter, Task<object?>, SharpTSPromise>? promiseFactory,
         object? receiver)
     {
         _name = name;
         _minArity = minArity;
         _maxArity = maxArity;
         _implementation = implementation;
+        _promiseFactory = promiseFactory;
         _receiver = receiver;
     }
 
@@ -76,13 +87,13 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         // Null receivers don't need caching
         if (receiver == null)
         {
-            return new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, null);
+            return new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, null);
         }
 
         // Value types can't be cached efficiently
         if (receiver.GetType().IsValueType)
         {
-            return new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, receiver);
+            return new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, receiver);
         }
 
         // Initialize cache lazily
@@ -95,7 +106,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         }
 
         // Create new bound method and cache it
-        var bound = new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, receiver);
+        var bound = new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, receiver);
         _boundMethodCache.AddOrUpdate(receiver, bound);
         return bound;
     }
@@ -109,7 +120,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         try
         {
             var task = _implementation(interpreter, _receiver, arguments);
-            return new SharpTSPromise(task);
+            return WrapResult(interpreter, task);
         }
         catch (Exception ex)
         {
@@ -120,9 +131,16 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
                 SharpTSPromiseRejectedException rex => rex.Reason,
                 _ => ex.Message
             };
-            return SharpTSPromise.Reject(errorValue);
+            if (_promiseFactory == null)
+                return SharpTSPromise.Reject(errorValue);
+            var tcs = new TaskCompletionSource<object?>();
+            tcs.SetException(new SharpTSPromiseRejectedException(errorValue));
+            return WrapResult(interpreter, tcs.Task);
         }
     }
+
+    private SharpTSPromise WrapResult(Interpreter interpreter, Task<object?> task)
+        => _promiseFactory != null ? _promiseFactory(interpreter, task) : new SharpTSPromise(task);
 
     /// <summary>
     /// Async call - awaits the implementation directly.

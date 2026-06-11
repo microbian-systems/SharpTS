@@ -26,6 +26,205 @@ public partial class RuntimeEmitter
     {
         // Emit the PromiseFromExecutor method
         EmitPromiseFromExecutorMethod(runtimeType, runtime, runtime.PromiseResolveCallbackType, runtime.PromiseRejectCallbackType);
+
+        // Promise-subclass support (#242): receiver unwrapping + derived-result wrapping
+        EmitUnwrapPromiseReceiverMethod(runtimeType, runtime);
+        EmitWrapDerivedPromiseResultMethod(runtimeType, runtime);
+    }
+
+    /// <summary>
+    /// Emits NormalizePromiseList(object iterable) -> object: when the arg is
+    /// a List&lt;object?&gt;, returns a copy with $Promise elements (incl. #242
+    /// Promise subclasses) replaced by their wrapped Task — the combinator
+    /// state machines only test elements for Task&lt;object?&gt;, so without
+    /// this a subclass promise element would be treated as an already-resolved
+    /// plain value. Non-list args pass through unchanged.
+    /// </summary>
+    internal void EmitNormalizePromiseList(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var method = runtimeType.DefineMethod(
+            "NormalizePromiseList",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.NormalizePromiseListMethod = method;
+
+        var il = method.GetILGenerator();
+        var listType = _types.ListOfObject;
+        var passThroughLabel = il.DefineLabel();
+
+        var listLocal = il.DeclareLocal(listType);
+        var resultLocal = il.DeclareLocal(listType);
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        var elementLocal = il.DeclareLocal(_types.Object);
+
+        // if (iterable is not List<object?>) return iterable;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, listType);
+        il.Emit(OpCodes.Stloc, listLocal);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Brfalse, passThroughLabel);
+
+        // var result = new List<object?>(); for each element: $Promise → .Task
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(listType, _types.EmptyTypes));
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var addRawLabel = il.DefineLabel();
+        var nextLabel = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, elementLocal);
+
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+        il.Emit(OpCodes.Brfalse, addRawLabel);
+
+        // result.Add(((​$Promise)element).Task)
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSPromiseType);
+        il.Emit(OpCodes.Callvirt, runtime.TSPromiseTaskGetter);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(listType, "Add", _types.Object));
+        il.Emit(OpCodes.Br, nextLabel);
+
+        // result.Add(element)
+        il.MarkLabel(addRawLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, elementLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(listType, "Add", _types.Object));
+
+        il.MarkLabel(nextLabel);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(passThroughLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits UnwrapPromiseReceiver(object receiver) -> Task&lt;object?&gt;:
+    /// $Promise instances (including #242 Promise subclasses) yield their
+    /// wrapped task; anything else is cast to Task&lt;object?&gt; (matching the
+    /// previous inline Castclass that broke for $Promise receivers).
+    /// </summary>
+    private void EmitUnwrapPromiseReceiverMethod(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var method = runtimeType.DefineMethod(
+            "UnwrapPromiseReceiver",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.TaskOfObject,
+            [_types.Object]
+        );
+        runtime.UnwrapPromiseReceiverMethod = method;
+
+        var il = method.GetILGenerator();
+        var notPromiseObjLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+        il.Emit(OpCodes.Brfalse, notPromiseObjLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSPromiseType);
+        il.Emit(OpCodes.Callvirt, runtime.TSPromiseTaskGetter);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notPromiseObjLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.TaskOfObject);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits WrapDerivedPromiseResult(Task&lt;object?&gt; result, object receiver) -> object:
+    /// when the receiver is a $Promise SUBCLASS instance (#242), constructs a
+    /// receiver-typed promise around the result task by invoking the
+    /// subclass's single-object (executor) constructor reflectively —
+    /// PromiseFromExecutor adopts a raw task, so the new instance wraps
+    /// `result`. Plain $Promise / Task receivers (and subclasses without a
+    /// matching constructor) return the task unchanged. This is the
+    /// species-lite step giving subclass-typed then/catch/finally results;
+    /// full SpeciesConstructor semantics remain tracked by #221.
+    /// </summary>
+    private void EmitWrapDerivedPromiseResultMethod(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var method = runtimeType.DefineMethod(
+            "WrapDerivedPromiseResult",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.TaskOfObject, _types.Object]
+        );
+        runtime.WrapDerivedPromiseResultMethod = method;
+
+        var il = method.GetILGenerator();
+        var returnResultLabel = il.DefineLabel();
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var ctorLocal = il.DeclareLocal(typeof(ConstructorInfo));
+
+        // if (receiver is not $Promise) return result;
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+        il.Emit(OpCodes.Brfalse, returnResultLabel);
+
+        // if (receiver.GetType() == typeof($Promise)) return result;
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, typeLocal);
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldtoken, runtime.TSPromiseType);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Beq, returnResultLabel);
+
+        // var ctor = receiverType.GetConstructor(new[] { typeof(object) });
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Type);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.Type.GetMethod("GetConstructor", [typeof(Type[])])!);
+        il.Emit(OpCodes.Stloc, ctorLocal);
+
+        // if (ctor == null) return result;
+        il.Emit(OpCodes.Ldloc, ctorLocal);
+        il.Emit(OpCodes.Brfalse, returnResultLabel);
+
+        // return ctor.Invoke(new object[] { result });
+        il.Emit(OpCodes.Ldloc, ctorLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, typeof(ConstructorInfo).GetMethod("Invoke", [typeof(object[])])!);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(returnResultLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
@@ -307,6 +506,21 @@ public partial class RuntimeEmitter
         var resolveLocal = il.DeclareLocal(resolveCallbackType);
         var rejectLocal = il.DeclareLocal(rejectCallbackType);
         var argsLocal = il.DeclareLocal(typeof(object[]));
+
+        // Task adoption (#242): a raw Task<object?> in place of an executor is
+        // adopted as the promise's task directly. Promise-subclass constructors
+        // chain through here (super(executor) → PromiseFromExecutor → base
+        // $Promise ctor), so passing a task to that same constructor is the
+        // derived-promise construction path used by inherited statics
+        // (MyPromise.resolve) and subclass-typed then/catch/finally results.
+        var notTaskLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.TaskOfObject);
+        il.Emit(OpCodes.Brfalse, notTaskLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.TaskOfObject);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notTaskLabel);
 
         // TaskCompletionSource<object?> tcs = new TaskCompletionSource<object?>();
         var tcsCtor = typeof(TaskCompletionSource<object?>).GetConstructor([])!;

@@ -50,6 +50,15 @@ public class SuperConstructorHandler : ICallHandler
             return true;
         }
 
+        // Built-in Promise (#242): run the executor through
+        // PromiseFromExecutor and chain the resulting Task<object?> to
+        // $Promise's constructor.
+        if (ctx.CurrentSuperclassName == "Promise" && ctx.Runtime?.TSPromiseCtor != null)
+        {
+            EmitSuperPromiseCtorCall(emitter, call.Arguments);
+            return true;
+        }
+
         // Try class expression constructors
         if (ctx.CurrentClassExpr != null &&
             ctx.ClassExprSuperclass?.TryGetValue(ctx.CurrentClassExpr, out var superclassName) == true &&
@@ -173,6 +182,35 @@ public class SuperConstructorHandler : ICallHandler
             il.Emit(OpCodes.Stelem_Ref);
         }
         il.Emit(OpCodes.Call, ctx.Runtime!.TSArrayCtorFromCtorArgs);
+
+        il.Emit(OpCodes.Ldnull); // super() returns undefined
+        emitter.SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits a super(executor) call that chains to $Promise's constructor:
+    /// PromiseFromExecutor(executor) produces the Task&lt;object?&gt; the base
+    /// wraps. PromiseFromExecutor also adopts a raw Task passed in place of
+    /// an executor — that's how derived-promise construction (inherited
+    /// statics, subclass-typed then results) reuses this same constructor.
+    /// </summary>
+    private static void EmitSuperPromiseCtorCall(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var il = emitter.IL;
+        var ctx = emitter.Context;
+
+        il.Emit(OpCodes.Ldarg_0); // this
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+        il.Emit(OpCodes.Call, ctx.Runtime!.PromiseFromExecutor);
+        il.Emit(OpCodes.Call, ctx.Runtime!.TSPromiseCtor);
 
         il.Emit(OpCodes.Ldnull); // super() returns undefined
         emitter.SetStackUnknown();

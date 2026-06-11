@@ -323,6 +323,11 @@ public partial class ILCompiler
                     // Error subclass with no constructor — accept a single message arg
                     ctorParamTypes = [typeof(object)];
                 }
+                else if (_classes.PromiseSubclasses.Contains(qualifiedClassName))
+                {
+                    // Promise subclass with no constructor — accept the executor arg (#242)
+                    ctorParamTypes = [typeof(object)];
+                }
                 else
                 {
                     ctorParamTypes = [];

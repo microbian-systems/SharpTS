@@ -1833,6 +1833,37 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    // StringFromValue — ECMA-262 §22.1.1.1 String(value) constructor called as a
+    // function. Identical to ToJsString except that Symbol arguments return
+    // SymbolDescriptiveString instead of throwing: the String() call form is the
+    // single coercion site the spec exempts from ToString's Symbol TypeError.
+    private void EmitStringFromValue(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "StringFromValue",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]);
+        runtime.StringFromValueMethod = method;
+
+        var il = method.GetILGenerator();
+
+        // if (value is $TSSymbol) return value.ToString();  // "Symbol(desc)"
+        var notSymbolLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brfalse, notSymbolLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notSymbolLabel);
+
+        // return ToJsString(value);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Ret);
+    }
+
     // ToJsString — ECMA-262 ToString protocol. For Dictionary/$Object receivers
     // with a user-defined "toString" function, invoke it and use the result.
     // Falls back to Stringify for primitives. Used by String.prototype methods
@@ -3599,6 +3630,52 @@ public partial class RuntimeEmitter
         CheckBoxed(_types.Boolean, "Boolean");
         CheckBoxed(_types.Double,  "Number");
         CheckBoxed(_types.String,  "String");
+
+        // `x instanceof Promise`: the Promise identifier resolves to
+        // typeof(Task<object?>), but $Promise instances (and #242 Promise
+        // subclasses, which derive from $Promise) wrap their task instead of
+        // being one — accept them here; raw tasks fall through to the
+        // IsAssignableFrom below.
+        var notTaskTargetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Ldtoken, _types.TaskOfObject);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Bne_Un, notTaskTargetLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+        il.Emit(OpCodes.Brtrue, trueLabel);
+        il.MarkLabel(notTaskTargetLabel);
+
+        // Generic class target: `b instanceof Box` emits the OPEN generic
+        // definition (Box`1) while instances carry constructed types
+        // (Box<object>) — IsAssignableFrom never matches across that gap.
+        // Walk the instance's base-type chain comparing generic definitions.
+        var notGenericDefLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.Type.GetProperty("IsGenericTypeDefinition")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, notGenericDefLabel);
+        var walkTypeLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, walkTypeLocal);
+        var genericWalkLoop = il.DefineLabel();
+        var genericWalkNext = il.DefineLabel();
+        il.MarkLabel(genericWalkLoop);
+        il.Emit(OpCodes.Ldloc, walkTypeLocal);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Ldloc, walkTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.Type.GetProperty("IsGenericType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, genericWalkNext);
+        il.Emit(OpCodes.Ldloc, walkTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition"));
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Beq, trueLabel);
+        il.MarkLabel(genericWalkNext);
+        il.Emit(OpCodes.Ldloc, walkTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.Type.GetProperty("BaseType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, walkTypeLocal);
+        il.Emit(OpCodes.Br, genericWalkLoop);
+        il.MarkLabel(notGenericDefLabel);
 
         // classType is Type, use it directly
         il.Emit(OpCodes.Ldloc, classTypeLocal);

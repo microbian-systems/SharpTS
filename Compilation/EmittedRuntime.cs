@@ -119,6 +119,8 @@ public class EmittedRuntime
     // Type coercion methods
     public MethodBuilder Stringify { get; set; } = null!;
     public MethodBuilder ToJsString { get; set; } = null!;
+    /// <summary>$Runtime.StringFromValue(object) -> string — ECMA-262 §22.1.1.1 String(value) call form: Symbol → SymbolDescriptiveString (via $TSSymbol.ToString()); everything else → ToJsString. Only the String() constructor-call form is exempt from ToString's Symbol TypeError; implicit coercions (template literals, concat) must keep throwing.</summary>
+    public MethodBuilder StringFromValueMethod { get; set; } = null!;
     public MethodBuilder ToNumber { get; set; } = null!;
     public MethodBuilder ConvertToNumber { get; set; } = null!;
     public MethodBuilder JsToInt32 { get; set; } = null!;
@@ -810,6 +812,12 @@ public class EmittedRuntime
     public MethodBuilder PromiseAny { get; set; } = null!;
     public MethodBuilder PromiseFromExecutor { get; set; } = null!;
     public MethodBuilder PromiseWithResolvers { get; set; } = null!;
+    /// <summary>$Runtime.UnwrapPromiseReceiver(object) -> Task&lt;object?&gt; — $Promise (incl. #242 subclasses) → .Task; anything else is cast to Task&lt;object?&gt;. Used by then/catch/finally emission so promise-typed receivers work regardless of representation.</summary>
+    public MethodBuilder UnwrapPromiseReceiverMethod { get; set; } = null!;
+    /// <summary>$Runtime.NormalizePromiseList(object) -> object — when the arg is a List&lt;object?&gt;, returns a copy with $Promise elements (incl. #242 subclasses) replaced by their wrapped Task so the combinator state machines (which only test for Task&lt;object?&gt;) await them; non-list args pass through. Applied at every combinator entry.</summary>
+    public MethodBuilder NormalizePromiseListMethod { get; set; } = null!;
+    /// <summary>$Runtime.WrapDerivedPromiseResult(Task&lt;object?&gt; result, object receiver) -> object — when the receiver is a $Promise SUBCLASS (#242), constructs a receiver-typed promise around the result task via the subclass's (object executor) constructor (PromiseFromExecutor adopts the task); otherwise returns the task unchanged. The species-lite step for subclass then/catch/finally results.</summary>
+    public MethodBuilder WrapDerivedPromiseResultMethod { get; set; } = null!;
     public TypeBuilder PromiseResolveCallbackType { get; set; } = null!;
     public ConstructorBuilder PromiseResolveCallbackCtor { get; set; } = null!;
     public MethodBuilder PromiseResolveCallbackInvoke { get; set; } = null!;

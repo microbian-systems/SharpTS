@@ -2123,11 +2123,18 @@ public partial class Interpreter : IDisposable
                 superclass = SharpTSArrayClass.ArrayBase;
             }
 
+            // `extends Promise` (#242): same substitution for the Promise
+            // constructor sentinel.
+            if (superclass is SharpTSBuiltInConstructor { Name: BuiltInNames.Promise })
+            {
+                superclass = SharpTSPromiseClass.PromiseBase;
+            }
+
             if (superclass is not SharpTSClass)
             {
                 // Built-in constructors that don't have a class bridge yet
-                // (Promise is the big one — see #221) get a precise error
-                // instead of the generic "Superclass must be a class".
+                // get a precise error instead of the generic
+                // "Superclass must be a class".
                 if (superclass is SharpTSBuiltInConstructor builtInCtor)
                 {
                     throw new InterpreterException(
@@ -2300,7 +2307,8 @@ public partial class Interpreter : IDisposable
         // If the superclass is an Error type, create a SharpTSErrorClass so that
         // instances carry error fields (name, message, stack) and instanceof works.
         // Likewise an Array superclass produces a SharpTSArrayClass whose
-        // instances are real arrays (#233).
+        // instances are real arrays (#233), and a Promise superclass produces a
+        // SharpTSPromiseClass whose instances are real promises (#242).
         SharpTSClass klass = superclass is SharpTSErrorClass errorSuper
             ? new SharpTSErrorClass(
                 classStmt.Name.Lexeme,
@@ -2324,6 +2332,25 @@ public partial class Interpreter : IDisposable
             ? new SharpTSArrayClass(
                 classStmt.Name.Lexeme,
                 arraySuper,
+                methods,
+                staticMethods,
+                staticProperties,
+                getters,
+                setters,
+                classStmt.IsAbstract,
+                instanceFields,
+                instancePrivateFields,
+                privateMethods,
+                staticPrivateFields,
+                staticPrivateMethods,
+                instanceAutoAccessors.Count > 0 ? instanceAutoAccessors : null,
+                staticAutoAccessors.Count > 0 ? staticAutoAccessors : null,
+                staticGetters.Count > 0 ? staticGetters : null,
+                staticSetters.Count > 0 ? staticSetters : null)
+            : superclass is SharpTSPromiseClass promiseSuper
+            ? new SharpTSPromiseClass(
+                classStmt.Name.Lexeme,
+                promiseSuper,
                 methods,
                 staticMethods,
                 staticProperties,

@@ -410,6 +410,12 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
         }
 
+        // NormalizePromiseList — replaces $Promise elements (#242 Promise
+        // subclasses) with their wrapped Task so the combinator state machines
+        // (which only test elements for Task<object?>) await them. Emitted
+        // before the combinators; each wrapper applies it to its iterable.
+        EmitNormalizePromiseList(typeBuilder, runtime);
+
         // Promise.all(iterable) - async state machine using Task.WhenAll
         var promiseAllSM = DefinePromiseAllStateMachine(moduleBuilder);
         var all = typeBuilder.DefineMethod(
@@ -419,7 +425,7 @@ public partial class RuntimeEmitter
             [_types.Object]
         );
         runtime.PromiseAll = all;
-        EmitPromiseAllWrapper(all.GetILGenerator(), promiseAllSM);
+        EmitPromiseAllWrapper(all.GetILGenerator(), promiseAllSM, runtime);
         EmitPromiseAllMoveNext(promiseAllSM, runtime);
         promiseAllSM.Type.CreateType();
 
@@ -432,7 +438,7 @@ public partial class RuntimeEmitter
             [_types.Object]
         );
         runtime.PromiseRace = race;
-        EmitPromiseRaceWrapper(race.GetILGenerator(), promiseRaceSM);
+        EmitPromiseRaceWrapper(race.GetILGenerator(), promiseRaceSM, runtime);
         EmitPromiseRaceMoveNext(promiseRaceSM, runtime);
         promiseRaceSM.Type.CreateType();
 
@@ -458,7 +464,7 @@ public partial class RuntimeEmitter
             [_types.Object]
         );
         runtime.PromiseAllSettled = allSettled;
-        EmitPromiseAllSettledWrapper(allSettled.GetILGenerator(), promiseAllSettledSM, processElementSettled);
+        EmitPromiseAllSettledWrapper(allSettled.GetILGenerator(), promiseAllSettledSM, processElementSettled, runtime);
         EmitPromiseAllSettledMoveNext(promiseAllSettledSM, processElementSettled, runtime);
         promiseAllSettledSM.Type.CreateType();
 
@@ -498,7 +504,7 @@ public partial class RuntimeEmitter
             [_types.Object]
         );
         runtime.PromiseAny = any;
-        EmitPromiseAnyWrapper(any.GetILGenerator(), promiseAnySM);
+        EmitPromiseAnyWrapper(any.GetILGenerator(), promiseAnySM, runtime);
         EmitPromiseAnyMoveNext(promiseAnySM, anyState, handleAnyCompletionShim, runtime);
         promiseAnySM.Type.CreateType();
 

@@ -14,18 +14,25 @@ public static class PromiseBuiltIns
     /// Gets an instance member of a Promise.
     /// The interpreter is passed at call time through BuiltInAsyncMethod.
     /// </summary>
+    /// <remarks>
+    /// For Promise subclass instances (#242), then/catch/finally construct
+    /// their result promise via the receiver's guest class ("species-lite" —
+    /// the receiver's own class stands in for the spec's
+    /// SpeciesConstructor(promise.constructor) lookup, which #221 tracks).
+    /// </remarks>
     public static object? GetMember(SharpTSPromise receiver, string name)
     {
+        var factory = DerivedPromiseFactory(receiver);
         return name switch
         {
             "then" => new BuiltInAsyncMethod("then", 1, 2, (interp, recv, args) =>
-                ThenImpl((SharpTSPromise)recv!, args, interp)).Bind(receiver),
+                ThenImpl((SharpTSPromise)recv!, args, interp), factory).Bind(receiver),
 
             "catch" => new BuiltInAsyncMethod("catch", 1, 1, (interp, recv, args) =>
-                CatchImpl((SharpTSPromise)recv!, args, interp)).Bind(receiver),
+                CatchImpl((SharpTSPromise)recv!, args, interp), factory).Bind(receiver),
 
             "finally" => new BuiltInAsyncMethod("finally", 1, 1, (interp, recv, args) =>
-                FinallyImpl((SharpTSPromise)recv!, args, interp)).Bind(receiver),
+                FinallyImpl((SharpTSPromise)recv!, args, interp), factory).Bind(receiver),
 
             // ECMA-262 §27.2.5.1: Promise.prototype.constructor is %Promise%.
             // First SpeciesConstructor increment for #221 — then/catch/finally
@@ -41,33 +48,63 @@ public static class PromiseBuiltIns
     /// <summary>
     /// Gets a static method from the Promise namespace.
     /// </summary>
-    public static ISharpTSCallable? GetStaticMethod(string name)
+    public static ISharpTSCallable? GetStaticMethod(string name) => GetStaticMethod(name, null);
+
+    /// <summary>
+    /// Gets a static method from the Promise static side. When
+    /// <paramref name="subclass"/> is a guest Promise subclass (#242), the
+    /// returned method constructs its result promise through that class so
+    /// inherited statics (e.g. <c>MyPromise.resolve(v)</c>) produce
+    /// subclass-typed instances.
+    /// </summary>
+    public static ISharpTSCallable? GetStaticMethod(string name, SharpTSPromiseClass? subclass)
     {
+        var factory = DerivedPromiseFactory(subclass);
         return name switch
         {
             "all" => new BuiltInAsyncMethod("all", 1, 1, (interp, _, args) =>
-                AllImpl(args, interp)),
+                AllImpl(args, interp), factory),
 
             "race" => new BuiltInAsyncMethod("race", 1, 1, (interp, _, args) =>
-                RaceImpl(args, interp)),
+                RaceImpl(args, interp), factory),
 
             "resolve" => new BuiltInAsyncMethod("resolve", 0, 1, (_, _, args) =>
-                ResolveImplAsync(args)),
+                ResolveImplAsync(args), factory),
 
             "reject" => new BuiltInAsyncMethod("reject", 1, 1, (_, _, args) =>
-                Task.FromResult(RejectImpl(args))),
+                Task.FromResult(RejectImpl(args)), factory),
 
             "allSettled" => new BuiltInAsyncMethod("allSettled", 1, 1, (interp, _, args) =>
-                AllSettledImpl(args, interp)),
+                AllSettledImpl(args, interp), factory),
 
             "any" => new BuiltInAsyncMethod("any", 1, 1, (interp, _, args) =>
-                AnyImpl(args, interp)),
+                AnyImpl(args, interp), factory),
 
-            "withResolvers" => BuiltInMethod.CreateV2("withResolvers", 0, static (_, _, _) =>
-                RuntimeValue.FromBoxed(WithResolversImpl())),
+            "withResolvers" => BuiltInMethod.CreateV2("withResolvers", 0, (interp, _, _) =>
+                RuntimeValue.FromBoxed(WithResolversImpl(interp, factory))),
 
             _ => null
         };
+    }
+
+    /// <summary>
+    /// Returns the derived-promise factory for a Promise subclass receiver or
+    /// subclass constructor, or null for plain promises (which keeps the
+    /// default <see cref="SharpTSPromise"/> wrapping).
+    /// </summary>
+    private static Func<Interpreter, Task<object?>, SharpTSPromise>? DerivedPromiseFactory(object? receiverOrClass)
+    {
+        var klass = receiverOrClass switch
+        {
+            SharpTSPromiseSubclassInstance sub => sub.Klass,
+            SharpTSPromiseClass pc => pc,
+            _ => null
+        };
+        // PromiseBase itself (the bridge singleton for the built-in
+        // constructor) keeps the plain wrapping.
+        if (klass == null || ReferenceEquals(klass, SharpTSPromiseClass.PromiseBase))
+            return null;
+        return (interp, task) => klass.ConstructDerived(interp, task);
     }
 
     #region Instance Methods
@@ -508,8 +545,12 @@ public static class PromiseBuiltIns
     /// <summary>
     /// Implementation of Promise.withResolvers()
     /// Returns {promise, resolve, reject} for external promise resolution.
+    /// The promise comes from <paramref name="promiseFactory"/> when called
+    /// off a Promise subclass (#242), else is a plain SharpTSPromise.
     /// </summary>
-    private static object? WithResolversImpl()
+    private static object? WithResolversImpl(
+        Interpreter interpreter,
+        Func<Interpreter, Task<object?>, SharpTSPromise>? promiseFactory)
     {
         var tcs = new TaskCompletionSource<object?>();
 
@@ -527,7 +568,9 @@ public static class PromiseBuiltIns
             return RuntimeValue.Null;
         });
 
-        var promise = new SharpTSPromise(tcs.Task);
+        var promise = promiseFactory != null
+            ? promiseFactory(interpreter, tcs.Task)
+            : new SharpTSPromise(tcs.Task);
 
         return new SharpTSObject(new Dictionary<string, object?>
         {

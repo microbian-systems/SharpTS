@@ -33,7 +33,9 @@ public partial class ILCompiler
                 ? ParameterTypeResolver.ResolveConstructorParameters(className, constructor.Parameters, _typeMapper, _typeMap)
                 : _classes.ErrorSubclasses.Contains(className)
                     ? [typeof(object)]  // Accept any value; converted to string by base Error constructor
-                    : [];
+                    : _classes.PromiseSubclasses.Contains(className)
+                        ? [typeof(object)]  // Executor arg, forwarded to PromiseFromExecutor (#242)
+                        : [];
             ctorBuilder = typeBuilder.DefineConstructor(
                 MethodAttributes.Public,
                 CallingConventions.Standard,
@@ -162,6 +164,13 @@ public partial class ILCompiler
         bool isDirectArraySubclass = classStmt.SuperclassExpr != null
             && Expr.GetSuperclassLeafName(classStmt.SuperclassExpr) == "Array"
             && (qualifiedSuperclass == null || !_classes.Builders.ContainsKey(qualifiedSuperclass));
+        // Direct `extends Promise` (#242): base is the emitted $Promise,
+        // chained via PromiseFromExecutor (which also adopts a raw
+        // Task<object?> in place of an executor — the derived-promise
+        // construction path).
+        bool isDirectPromiseSubclass = classStmt.SuperclassExpr != null
+            && Expr.GetSuperclassLeafName(classStmt.SuperclassExpr) == "Promise"
+            && (qualifiedSuperclass == null || !_classes.Builders.ContainsKey(qualifiedSuperclass));
         if (constructor == null && isDirectArraySubclass)
         {
             // No explicit constructor, extends Array — empty array per
@@ -170,6 +179,15 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldc_I4_0);
             il.Emit(OpCodes.Newarr, typeof(object));
             il.Emit(OpCodes.Call, _runtime.TSArrayCtorFromCtorArgs);
+        }
+        else if (constructor == null && isDirectPromiseSubclass)
+        {
+            // No explicit constructor, extends Promise — implicit
+            // `constructor(executor) { super(executor) }`.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1); // executor (object?)
+            il.Emit(OpCodes.Call, _runtime.PromiseFromExecutor);
+            il.Emit(OpCodes.Call, _runtime.TSPromiseCtor);
         }
         else if (constructor == null && qualifiedSuperclass != null && isErrorSubclass)
         {
@@ -202,11 +220,12 @@ public partial class ILCompiler
 
             il.Emit(OpCodes.Call, ctorToCall);
         }
-        else if (!isErrorSubclass && !isDirectArraySubclass)
+        else if (!isErrorSubclass && !isDirectArraySubclass && !isDirectPromiseSubclass)
         {
             // Has explicit constructor (which should have super() call) or no superclass.
-            // For Error/Array subclasses with an explicit constructor, skip this — super()
-            // in the constructor body calls the base constructor via SuperConstructorHandler.
+            // For Error/Array/Promise subclasses with an explicit constructor, skip this —
+            // super() in the constructor body calls the base constructor via
+            // SuperConstructorHandler.
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Call, _types.ObjectDefaultCtor);
         }

@@ -67,4 +67,28 @@ public static class SymbolBuiltIns
             _ => null
         };
     }
+
+    /// <summary>
+    /// Gets an instance member for a symbol value (Symbol.prototype surface).
+    /// </summary>
+    /// <param name="symbol">The receiver symbol</param>
+    /// <param name="name">The member name (e.g., "description", "toString")</param>
+    /// <returns>The member value or bound method, or null if not found</returns>
+    public static object? GetInstanceMember(SharpTSSymbol symbol, string name)
+    {
+        return name switch
+        {
+            "description" => symbol.Description ?? (object)SharpTSUndefined.Instance,
+
+            // Symbol.prototype.toString - returns SymbolDescriptiveString, e.g. "Symbol(desc)"
+            "toString" => BuiltInMethod.CreateV2("toString", 0, (_, _, _) =>
+                RuntimeValue.FromString(symbol.ToString())),
+
+            // Symbol.prototype.valueOf - returns the symbol itself
+            "valueOf" => BuiltInMethod.CreateV2("valueOf", 0, (_, _, _) =>
+                RuntimeValue.FromSymbol(symbol)),
+
+            _ => null
+        };
+    }
 }

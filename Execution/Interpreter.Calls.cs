@@ -831,6 +831,20 @@ public partial class Interpreter
             return false;
         }
 
+        // Promise subclass instances (#242): real SharpTSPromises carrying a
+        // guest class — walk its chain (`p instanceof Promise` is handled by
+        // the SharpTSBuiltInConstructor arm above via `left is SharpTSPromise`).
+        if (left is SharpTSPromiseSubclassInstance subclassPromise)
+        {
+            SharpTSClass? current = subclassPromise.Klass;
+            while (current != null)
+            {
+                if (current.Name == targetClass.Name) return true;
+                current = current.Superclass;
+            }
+            return false;
+        }
+
         // Legacy path: SharpTSError instances created via BuiltInConstructorFactory
         // (not SharpTSInstance, but should still pass instanceof Error/TypeError/etc.)
         if (left is SharpTSError error && targetClass is SharpTSErrorClass)
