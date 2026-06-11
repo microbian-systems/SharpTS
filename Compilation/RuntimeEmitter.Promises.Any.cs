@@ -283,7 +283,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits the wrapper method for PromiseAny.
     /// </summary>
-    private void EmitPromiseAnyWrapper(ILGenerator il, PromiseAnyStateMachine sm)
+    private void EmitPromiseAnyWrapper(ILGenerator il, PromiseAnyStateMachine sm, EmittedRuntime runtime)
     {
         var smLocal = il.DeclareLocal(sm.Type);
 
@@ -296,9 +296,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_M1);
         il.Emit(OpCodes.Stfld, sm.StateField);
 
-        // sm.iterable = arg0
+        // sm.iterable = NormalizePromiseList(arg0) — see PromiseAll wrapper.
         il.Emit(OpCodes.Ldloca, smLocal);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.NormalizePromiseListMethod);
         il.Emit(OpCodes.Stfld, sm.IterableField);
 
         // sm.<>t__builder = AsyncTaskMethodBuilder<object>.Create()

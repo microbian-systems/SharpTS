@@ -65,7 +65,7 @@ public partial class RuntimeEmitter
     /// <summary>
     /// Emits the PromiseAll wrapper method that creates and starts the state machine.
     /// </summary>
-    private void EmitPromiseAllWrapper(ILGenerator il, EmittedStateMachine sm)
+    private void EmitPromiseAllWrapper(ILGenerator il, EmittedStateMachine sm, EmittedRuntime runtime)
     {
         var smLocal = il.DeclareLocal(sm.Type);
 
@@ -78,9 +78,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_M1);
         il.Emit(OpCodes.Stfld, sm.StateField);
 
-        // sm.iterable = arg0;
+        // sm.iterable = NormalizePromiseList(arg0); — $Promise elements
+        // (#242 subclasses) become their wrapped Task so the SM awaits them.
         il.Emit(OpCodes.Ldloca, smLocal);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.NormalizePromiseListMethod);
         il.Emit(OpCodes.Stfld, sm.IterableField);
 
         // sm.<>t__builder = AsyncTaskMethodBuilder<object>.Create();

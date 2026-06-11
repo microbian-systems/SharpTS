@@ -117,18 +117,17 @@ public class ArraySubclassTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    public void ExtendsPromise_TypeChecksButRuntimeUnsupported(ExecutionMode mode)
+    public void ExtendsUnbridgedBuiltIn_PreciseRuntimeError(ExecutionMode mode)
     {
-        // #233: `extends Promise<T>` must pass the type checker (it used to be
-        // rejected with TS2315 "Cannot use type arguments with non-generic
-        // class"). The runtime bridge is tracked separately (#221) — until it
-        // lands, instantiating the hierarchy yields a precise error.
+        // Built-ins without a subclassing bridge (Error/Array/#233 and
+        // Promise/#242 have bridges; Map et al do not yet) keep yielding a
+        // precise error rather than the generic "Superclass must be a class".
         var source = """
-            class MyPromise<T> extends Promise<T> {}
+            class MyMap extends Map {}
             console.log("declared");
             """;
 
         var ex = Assert.ThrowsAny<Exception>(() => TestHarness.Run(source, mode));
-        Assert.Contains("cannot extend built-in 'Promise'", ex.Message);
+        Assert.Contains("cannot extend built-in 'Map'", ex.Message);
     }
 }

@@ -612,6 +612,24 @@ public partial class Interpreter
                 return RuntimeValue.FromBoxed(RegExpConstructorObject);
         }
 
+        // Promise subclass instances (#242): own fields, class getters, and
+        // methods resolve before the built-in Promise members so user
+        // overrides win; then/catch/finally fall through to the category
+        // dispatch (PromiseBuiltIns wraps their results in the subclass).
+        if (obj is SharpTSPromiseSubclassInstance promiseSub)
+        {
+            if (memberName == "constructor")
+                return RuntimeValue.FromObject(promiseSub.Klass);
+            if (promiseSub.TryGetOwnProperty(memberName, out var ownProp))
+                return RuntimeValue.FromBoxed(ownProp);
+            var promiseGetter = promiseSub.Klass.FindGetter(memberName);
+            if (promiseGetter != null)
+                return RuntimeValue.FromBoxed(promiseGetter.BindThis(promiseSub).Call(this, []));
+            var promiseMethod = promiseSub.Klass.FindMethod(memberName);
+            if (promiseMethod != null)
+                return RuntimeValue.FromObject(SharpTSClass.BindMethodToReceiver(promiseMethod, promiseSub));
+        }
+
         var member = BuiltInRegistry.Instance.GetMemberByCategory(category, obj, memberName);
         if (member != null)
             return RuntimeValue.FromBoxed(BindBuiltInMember(member, obj));
@@ -749,6 +767,15 @@ public partial class Interpreter
         // shadowed them with a static property (handled above).
         if (memberName == "name") return klass.Name;
         if (memberName == "length") return 0.0;
+
+        // Promise subclasses (#242) inherit the Promise static side
+        // (resolve/reject/all/race/allSettled/any/withResolvers); inherited
+        // statics construct subclass-typed result promises.
+        if (klass is SharpTSPromiseClass promiseKlass)
+        {
+            var promiseStatic = Runtime.BuiltIns.PromiseBuiltIns.GetStaticMethod(memberName, promiseKlass);
+            if (promiseStatic != null) return promiseStatic;
+        }
 
         throw new InterpreterException($"Static member '{memberName}' does not exist on class '{klass.Name}'.");
     }
@@ -1085,6 +1112,22 @@ public partial class Interpreter
                 return SharpTSClass.BindMethodToReceiver(classMethod, subclassArray);
         }
 
+        // Promise subclass instances (#242): mirror the RV-path arm — own
+        // fields, class getters, and methods before built-in Promise members.
+        if (obj is SharpTSPromiseSubclassInstance promiseSub)
+        {
+            if (memberName == "constructor")
+                return promiseSub.Klass;
+            if (promiseSub.TryGetOwnProperty(memberName, out var promiseOwnProp))
+                return promiseOwnProp;
+            var promiseGetter = promiseSub.Klass.FindGetter(memberName);
+            if (promiseGetter != null)
+                return promiseGetter.BindThis(promiseSub).Call(this, []);
+            var promiseMethod = promiseSub.Klass.FindMethod(memberName);
+            if (promiseMethod != null)
+                return SharpTSClass.BindMethodToReceiver(promiseMethod, promiseSub);
+        }
+
         // Handle built-in instance members: strings, arrays, Math, Promise
         if (obj != null)
         {
@@ -1309,6 +1352,18 @@ public partial class Interpreter
                 if (ErrorBuiltIns.SetMember(error, memberName, value))
                     return value;
                 throw new InterpreterException($"Cannot set property '{memberName}' on Error.");
+
+            case TypeCategory.Promise when obj is SharpTSPromiseSubclassInstance promiseSub:
+                // Promise subclass instances (#242): class setters win, then
+                // own properties (declared fields and expando assignments).
+                var promiseSetter = promiseSub.Klass.FindSetter(memberName);
+                if (promiseSetter != null)
+                {
+                    promiseSetter.BindThis(promiseSub).Call(this, [value]);
+                    return value;
+                }
+                promiseSub.SetOwnProperty(memberName, value);
+                return value;
 
             case TypeCategory.Array when obj is SharpTSArray array:
                 if (memberName == "length")

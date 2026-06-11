@@ -152,8 +152,17 @@ public partial class ILCompiler
             baseType = _runtime.TSArrayType;
         }
         else if (qualifiedSuperclassName != null && classStmt.SuperclassExpr != null
+            && Expr.GetSuperclassLeafName(classStmt.SuperclassExpr) == "Promise")
+        {
+            // `extends Promise` (#242): derive from the emitted $Promise, the
+            // promise object representation (wraps Task<object?>) — await,
+            // then/catch/finally, and instanceof Promise apply to instances
+            // unchanged.
+            baseType = _runtime.TSPromiseType;
+        }
+        else if (qualifiedSuperclassName != null && classStmt.SuperclassExpr != null
             && Expr.GetSuperclassLeafName(classStmt.SuperclassExpr) is
-                "Promise" or "Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer")
+                "Map" or "Set" or "WeakMap" or "WeakSet" or "Date" or "RegExp" or "Buffer")
         {
             // Built-in constructors without a subclassing bridge (#233/#221):
             // fail loudly at compile time rather than silently extending
@@ -183,6 +192,18 @@ public partial class ILCompiler
         else if (qualifiedSuperclassName != null && _classes.ArraySubclasses.Contains(qualifiedSuperclassName))
         {
             _classes.ArraySubclasses.Add(qualifiedClassName);
+        }
+
+        // Track Promise subclass status (direct or transitive) for constructor
+        // base-call emission and static-side inheritance (#242)
+        if (classStmt.SuperclassExpr != null && Expr.GetSuperclassLeafName(classStmt.SuperclassExpr) == "Promise"
+            && !_classes.Builders.ContainsKey(qualifiedSuperclassName ?? ""))
+        {
+            _classes.PromiseSubclasses.Add(qualifiedClassName);
+        }
+        else if (qualifiedSuperclassName != null && _classes.PromiseSubclasses.Contains(qualifiedSuperclassName))
+        {
+            _classes.PromiseSubclasses.Add(qualifiedClassName);
         }
 
         // Set the parent type (defaults to Object if baseType is null)

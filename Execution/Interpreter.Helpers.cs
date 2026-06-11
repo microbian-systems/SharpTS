@@ -369,65 +369,11 @@ public partial class Interpreter
             throw new InterpreterException("Promise executor must be callable.");
         }
 
+        // The executor wiring (host resolve/reject callbacks, promise
+        // flattening, throw-to-rejection) is shared with the Promise
+        // subclass bridge's super(executor) path (#242).
         var tcs = new TaskCompletionSource<object?>();
-        bool settled = false;
-        object settledLock = new();
-
-        // Create the resolve callback
-        var resolveCallback = new PromiseResolveCallback((value) =>
-        {
-            lock (settledLock)
-            {
-                if (settled) return;
-                settled = true;
-            }
-
-            // Handle promise flattening - if value is a Promise, wait for it
-            if (value is SharpTSPromise innerPromise)
-            {
-                innerPromise.Task.ContinueWith(t =>
-                {
-                    if (t.IsFaulted)
-                        tcs.TrySetException(t.Exception!.InnerException ?? t.Exception);
-                    else
-                        tcs.TrySetResult(t.Result);
-                }, TaskScheduler.Default);
-            }
-            else
-            {
-                tcs.TrySetResult(value);
-            }
-        });
-
-        // Create the reject callback
-        var rejectCallback = new PromiseRejectCallback((reason) =>
-        {
-            lock (settledLock)
-            {
-                if (settled) return;
-                settled = true;
-            }
-            tcs.TrySetException(new SharpTSPromiseRejectedException(reason));
-        });
-
-        // Call the executor synchronously with resolve and reject callbacks
-        try
-        {
-            callable.Call(this, [resolveCallback, rejectCallback]);
-        }
-        catch (Exception ex)
-        {
-            // If executor throws, reject the promise
-            lock (settledLock)
-            {
-                if (!settled)
-                {
-                    settled = true;
-                    tcs.TrySetException(new SharpTSPromiseRejectedException(ex.Message));
-                }
-            }
-        }
-
+        SharpTSPromiseClass.RunExecutor(this, callable, tcs);
         return new SharpTSPromise(tcs.Task);
     }
 

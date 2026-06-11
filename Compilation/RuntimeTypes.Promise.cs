@@ -467,6 +467,14 @@ public static partial class RuntimeTypes
             throw new Exception("Runtime Error: Promise executor must be a function.");
         }
 
+        // Task adoption (#242): mirrors the emitted PromiseFromExecutor — a
+        // raw Task<object?> in place of an executor is adopted directly, the
+        // derived-promise construction path for Promise subclasses.
+        if (executor is Task<object?> adoptedTask)
+        {
+            return adoptedTask;
+        }
+
         var tcs = new TaskCompletionSource<object?>();
         bool settled = false;
         object settledLock = new();

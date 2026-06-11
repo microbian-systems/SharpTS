@@ -1578,6 +1578,32 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.TaskOfObject);
         il.Emit(OpCodes.Brtrue, promiseLabel);
 
+        // User Promise subclass (#242): a guest class extending Promise
+        // derives from $Promise AND implements $IHasFields. Its class members
+        // (declared fields, getters, methods) take precedence over the
+        // built-in promise surface; the per-class GetProperty returns
+        // $Undefined on miss, in which case we fall through to the ordinary
+        // $Promise dispatch below. Mirrors the $Array subclass arm above.
+        var notPromiseSubclassLabel = il.DefineLabel();
+        var promiseSubclassMissLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+        il.Emit(OpCodes.Brfalse, notPromiseSubclassLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Brfalse, notPromiseSubclassLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.IHasFieldsInterface);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.IHasFieldsGetProperty);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Beq, promiseSubclassMissLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(promiseSubclassMissLabel);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(notPromiseSubclassLabel);
+
         // $Promise type (used by fetch, etc.) - check for then/catch/finally
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSPromiseType);

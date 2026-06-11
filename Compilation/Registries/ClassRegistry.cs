@@ -363,6 +363,26 @@ public sealed class ClassRegistry
     }
 
     /// <summary>
+    /// True when the class (directly or transitively) extends the built-in
+    /// Promise (#242) — its superclass chain ends at the name "Promise"
+    /// without a user class claiming that name. Used for static-side
+    /// inheritance of the Promise built-ins (MyPromise.resolve etc.).
+    /// </summary>
+    public bool IsPromiseSubclass(string qualifiedClassName)
+    {
+        string? current = qualifiedClassName;
+        for (int depth = 0; current != null && depth < 64; depth++)
+        {
+            if (!_superclass.TryGetValue(current, out var superName) || superName == null)
+                return false;
+            if (!_builders.ContainsKey(superName))
+                return superName == "Promise";
+            current = superName;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Tries to get a static getter for a class.
     /// </summary>
     public bool TryGetStaticGetter(string qualifiedClassName, string propertyName, out MethodBuilder? getter)

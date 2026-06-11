@@ -1106,6 +1106,11 @@ public partial class Interpreter
             {
                 superclass = SharpTSArrayClass.ArrayBase;
             }
+            // `extends Promise` (#242): same substitution, mirroring VisitClass.
+            if (superclass is SharpTSBuiltInConstructor { Name: BuiltInNames.Promise })
+            {
+                superclass = SharpTSPromiseClass.PromiseBase;
+            }
             if (superclass is not SharpTSClass)
             {
                 if (superclass is SharpTSBuiltInConstructor builtInCtor)
@@ -1215,8 +1220,8 @@ public partial class Interpreter
                 }
             }
 
-            // Mirror VisitClass: Error/Array superclasses need their dedicated
-            // SharpTSClass subtypes so instances get the right backing.
+            // Mirror VisitClass: Error/Array/Promise superclasses need their
+            // dedicated SharpTSClass subtypes so instances get the right backing.
             SharpTSClass klass = superclass is SharpTSErrorClass errorSuper
                 ? new SharpTSErrorClass(
                     className,
@@ -1232,6 +1237,17 @@ public partial class Interpreter
                 ? new SharpTSArrayClass(
                     className,
                     arraySuper,
+                    methods,
+                    staticMethods,
+                    staticProperties,
+                    getters,
+                    setters,
+                    classExpr.IsAbstract,
+                    instanceFields)
+                : superclass is SharpTSPromiseClass promiseSuper
+                ? new SharpTSPromiseClass(
+                    className,
+                    promiseSuper,
                     methods,
                     staticMethods,
                     staticProperties,

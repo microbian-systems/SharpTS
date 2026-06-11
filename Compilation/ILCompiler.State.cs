@@ -33,6 +33,13 @@ public partial class ILCompiler
         /// emission to chain to $Array's ctor-args constructor.
         /// </summary>
         public HashSet<string> ArraySubclasses { get; } = [];
+        /// <summary>
+        /// Qualified names of classes that (directly or transitively) extend the
+        /// built-in Promise (#242). Set during DefineClass; used by constructor
+        /// emission to chain to $Promise via PromiseFromExecutor and by static
+        /// dispatch to inherit the Promise static side.
+        /// </summary>
+        public HashSet<string> PromiseSubclasses { get; } = [];
         public Dictionary<string, ConstructorBuilder> Constructors { get; } = [];
         public Dictionary<string, List<ConstructorBuilder>> ConstructorOverloads { get; } = [];
         public Dictionary<string, Dictionary<string, FieldBuilder>> StaticFields { get; } = [];
