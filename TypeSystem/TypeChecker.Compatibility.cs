@@ -385,11 +385,25 @@ public partial class TypeChecker
         // conditional collapsed to `any` first, or the null rule rejects it sight unseen.
         if (expected is TypeInfo.ConditionalType expectedCondEarly)
         {
-            return IsCompatible(EvaluateConditionalType(expectedCondEarly), actual);
+            var evaluated = EvaluateConditionalType(expectedCondEarly);
+            // A conditional whose check type is still a naked type parameter can't be
+            // resolved to a branch (tsc defers it). Assigning *to* a deferred conditional
+            // is sound only when the source satisfies BOTH branches — the conditional could
+            // resolve to either at instantiation time. (checker.ts relateConditionalTypes.)
+            if (evaluated is TypeInfo.ConditionalType stillDeferred)
+                return IsCompatible(stillDeferred.TrueType, actual)
+                    && IsCompatible(stillDeferred.FalseType, actual);
+            return IsCompatible(evaluated, actual);
         }
         if (actual is TypeInfo.ConditionalType actualCondEarly)
         {
-            return IsCompatible(expected, EvaluateConditionalType(actualCondEarly));
+            var evaluated = EvaluateConditionalType(actualCondEarly);
+            // Assigning *from* a deferred conditional: both possible results must satisfy
+            // the target (the conditional's constraint is the union of its branches).
+            if (evaluated is TypeInfo.ConditionalType stillDeferred)
+                return IsCompatible(expected, stillDeferred.TrueType)
+                    && IsCompatible(expected, stillDeferred.FalseType);
+            return IsCompatible(expected, evaluated);
         }
 
         // Null compatibility (strictNullChecks: on — the off case is handled early in IsCompatibleCore)
