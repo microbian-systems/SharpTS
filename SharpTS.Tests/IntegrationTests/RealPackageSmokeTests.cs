@@ -503,10 +503,15 @@ public class RealPackageSmokeTests
     // value-form built-in singleton methods (e.g. `context.Math.max`) are not
     // populated in compiled mode (the Math/JSON singleton dicts hold no method
     // wrappers). #276 populated those wrappers and got init past `context.Math.max`,
-    // but compiled init now fails one step deeper in lodash's `getNative` helper
-    // ("object is not a function") — a separate value-form dispatch gap tracked by
-    // #302. Unskip when that lands.
-    [SkippableFact(Skip = "compiled lodash init fails in getNative ('object is not a function') after #276 — see #302")]
+    // but compiled init still fails inside lodash's `getNative` helper
+    // ("object is not a function"). #302's original hypothesis (a value-form
+    // dispatch gap) was DISPROVEN while triaging: the true root cause (#307) is a
+    // closure bug — inner function declarations nested in an arrow/function-
+    // expression capture enclosing locals by snapshot (at hoist time) instead of
+    // by live reference, so `getValue` / `Object` / `symToStringTag` read back
+    // null (`typeof null === "object"` → "object is not a function"). Unskip when
+    // #307 lands.
+    [SkippableFact(Skip = "compiled lodash init fails in getNative ('object is not a function') — closure snapshot-vs-live-capture bug, see #307 (root cause of #302)")]
     public void Lodash_Compiled()
     {
         SkipIfNoNpm();
