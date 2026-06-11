@@ -171,9 +171,16 @@ public partial class AsyncMoveNextEmitter
                 var returnFnLocal = _il.DeclareLocal(_types.Object);
                 _il.Emit(OpCodes.Stloc, returnFnLocal);
 
-                // If no return method, skip cleanup
+                // If no return method, skip cleanup — iterator.return() is
+                // optional per the iterator protocol. GetProperty reports a
+                // missing member as either null or $Undefined, and
+                // InvokeMethodValue now throws TypeError for both (#260), so
+                // guard against both here.
                 _il.Emit(OpCodes.Ldloc, returnFnLocal);
                 _il.Emit(OpCodes.Brfalse, endLabel);
+                _il.Emit(OpCodes.Ldloc, returnFnLocal);
+                _il.Emit(OpCodes.Isinst, _ctx.Runtime.UndefinedType);
+                _il.Emit(OpCodes.Brtrue, endLabel);
 
                 // Call: InvokeMethodValue(asyncIterator, returnFn, [])
                 _il.Emit(OpCodes.Ldloc, asyncIteratorLocal);

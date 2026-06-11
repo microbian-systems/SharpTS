@@ -67,12 +67,26 @@ public class NamespaceGlobalBindingTests
             const rs = new ctor({ start(c: any) { c.enqueue(1); c.close(); } });
             console.log(rs instanceof (ReadableStream as any));
             console.log(typeof (WritableStream as any), typeof (TransformStream as any));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("function\ntrue\nfunction function\n", output);
+    }
+
+    // Compiled mode has no ReadableStream.from yet (#269) — before #260 the
+    // dispatch silently produced null and `typeof null === "object"` made this
+    // assertion pass for the wrong reason.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void WebStreamConstructors_From(ExecutionMode mode)
+    {
+        var source = """
             const fromStream = (ReadableStream as any).from(["a"]);
             console.log(typeof fromStream);
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("function\ntrue\nfunction function\nobject\n", output);
+        Assert.Equal("object\n", output);
     }
 
     [Theory]
