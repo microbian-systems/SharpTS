@@ -27,6 +27,35 @@ public sealed record ArrayTypeNode(TypeNode ElementType, int Line) : TypeNode(Li
 /// <summary>A union type: <c>A | B | C</c>.</summary>
 public sealed record UnionTypeNode(List<TypeNode> Members, int Line) : TypeNode(Line);
 
+/// <summary>An intersection type: <c>A &amp; B &amp; C</c>. Resolution merges members through the
+/// same <c>SimplifyIntersection</c> the string path uses, so member ordering and the
+/// primitive-conflict / object-merge rules are identical.</summary>
+public sealed record IntersectionTypeNode(List<TypeNode> Members, int Line) : TypeNode(Line);
+
+/// <summary>The <c>keyof T</c> index-query operator. Resolves to <c>TypeInfo.KeyOf</c>.</summary>
+public sealed record KeyofTypeNode(TypeNode Operand, int Line) : TypeNode(Line);
+
+/// <summary>An indexed-access type: <c>T[K]</c>, <c>T["key"]</c>. Resolves to
+/// <c>TypeInfo.IndexedAccess</c>. The array suffix <c>T[]</c> is an <see cref="ArrayTypeNode"/>,
+/// not this.</summary>
+public sealed record IndexedAccessTypeNode(TypeNode ObjectType, TypeNode IndexType, int Line) : TypeNode(Line);
+
+/// <summary>A conditional type: <c>Check extends Extends ? True : False</c>. Resolves to a
+/// deferred <c>TypeInfo.ConditionalType</c> (the same shape the string path builds);
+/// distribution and <c>infer</c> inference happen later in <c>EvaluateConditionalType</c>,
+/// path-independent.</summary>
+public sealed record ConditionalTypeNode(TypeNode CheckType, TypeNode ExtendsType, TypeNode TrueType, TypeNode FalseType, int Line) : TypeNode(Line);
+
+/// <summary>An <c>infer U</c> placeholder inside a conditional's extends clause. Resolves to
+/// <c>TypeInfo.InferredTypeParameter</c>. Constrained infer (<c>infer U extends C</c>) has no
+/// node yet and falls back to the string path.</summary>
+public sealed record InferTypeNode(string Name, int Line) : TypeNode(Line);
+
+/// <summary>A <c>typeof entity</c> query. The entity path is carried in its string-path spelling
+/// (<c>obj.prop</c>, <c>arr[0]</c>) and resolved by <c>EvaluateTypeOf</c> — the same evaluator the
+/// string path uses, so there is no behavioral difference beyond skipping the top-level scan.</summary>
+public sealed record TypeQueryNode(string EntityPath, int Line) : TypeNode(Line);
+
 /// <summary>A parameter inside a function or constructor type: <c>x: T</c>, <c>x?: T</c>,
 /// <c>...rest: T[]</c>. A bare name (<c>(x) =&gt; R</c>) gets an explicit <c>any</c> type node —
 /// the name is a label only, never resolved. Not itself a type.</summary>

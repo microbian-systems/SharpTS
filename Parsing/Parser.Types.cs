@@ -223,9 +223,11 @@ public partial class Parser
         int saved = _current;
         Advance(); // consume 'extends'
 
+        int conditionalLine = Previous().Line;
+
         // Parse the extends type (which may contain 'infer' keywords)
         string extendsType = ParseUnionType();
-        _lastTypeNode = null; // discard the lookahead's node
+        TypeNode? extendsNode = TakeTypeNode();
 
         // Must have '?' for this to be a conditional type
         if (!Check(TokenType.QUESTION))
@@ -240,13 +242,18 @@ public partial class Parser
 
         // Parse true branch (recursive - can contain nested conditionals)
         string trueType = ParseConditionalType();
+        TypeNode? trueNode = TakeTypeNode();
 
         Consume(TokenType.COLON, "Expect ':' in conditional type.");
 
         // Parse false branch (recursive - can contain nested conditionals)
         string falseType = ParseConditionalType();
+        TypeNode? falseNode = TakeTypeNode();
 
-        _lastTypeNode = null; // conditional types have no node form yet
+        _lastTypeNode = checkNode is not null && extendsNode is not null
+                        && trueNode is not null && falseNode is not null
+            ? new ConditionalTypeNode(checkNode, extendsNode, trueNode, falseNode, conditionalLine)
+            : null;
         return $"{checkType} extends {extendsType} ? {trueType} : {falseType}";
     }
 
@@ -291,18 +298,29 @@ public partial class Parser
         // is written on its own line):  type T = & A & B;
         Match(TokenType.AMPERSAND);
 
+        int startLine = Peek().Line;
         List<string> types = [ParsePrimaryType()];
-        TypeNode? singleNode = TakeTypeNode();
+        List<TypeNode>? memberNodes = TakeTypeNode() is { } firstNode ? [firstNode] : null;
 
         while (Match(TokenType.AMPERSAND))
         {
             types.Add(ParsePrimaryType());
-            TakeTypeNode(); // intersections have no node form yet
-            singleNode = null;
+            var node = TakeTypeNode();
+            if (memberNodes is not null && node is not null)
+                memberNodes.Add(node);
+            else
+                memberNodes = null; // any node-less member disables the intersection node
         }
 
-        _lastTypeNode = types.Count == 1 ? singleNode : null;
-        return types.Count == 1 ? types[0] : string.Join(" & ", types);
+        if (types.Count == 1)
+        {
+            _lastTypeNode = memberNodes is { Count: 1 } ? memberNodes[0] : null;
+            return types[0];
+        }
+        _lastTypeNode = memberNodes is { } all && all.Count == types.Count
+            ? new IntersectionTypeNode(all, startLine)
+            : null;
+        return string.Join(" & ", types);
     }
 
     private string ParsePrimaryType()
@@ -336,7 +354,7 @@ public partial class Parser
                 _lastTypeNode = null;
                 return $"infer {paramName.Lexeme} extends {constraint}";
             }
-            _lastTypeNode = null;
+            _lastTypeNode = new InferTypeNode(paramName.Lexeme, paramName.Line);
             return $"infer {paramName.Lexeme}";
         }
 
@@ -370,8 +388,9 @@ public partial class Parser
         // Handle keyof prefix operator: keyof T
         if (Match(TokenType.KEYOF))
         {
+            int keyofLine = Previous().Line;
             string innerType = ParsePrimaryType();
-            _lastTypeNode = null;
+            _lastTypeNode = TakeTypeNode() is { } innerNode ? new KeyofTypeNode(innerNode, keyofLine) : null;
             return $"keyof {innerType}";
         }
 
@@ -390,6 +409,7 @@ public partial class Parser
         // Handle typeof in type position: typeof someVariable, typeof obj.prop, typeof arr[0]
         if (Match(TokenType.TYPEOF))
         {
+            int typeofLine = Previous().Line;
             StringBuilder sb = new();
             sb.Append("typeof ");
 
@@ -445,7 +465,9 @@ public partial class Parser
                 }
             }
 
-            _lastTypeNode = null;
+            // The entity path is everything after the "typeof " prefix; the resolver hands it to
+            // the same EvaluateTypeOf the string path uses.
+            _lastTypeNode = new TypeQueryNode(sb.ToString()["typeof ".Length..], typeofLine);
             return sb.ToString();
         }
 
@@ -647,10 +669,14 @@ public partial class Parser
             else
             {
                 // Indexed access type: T[K] or T["key"]
+                int indexLine = Previous().Line;
                 string indexType = ParseTypeAnnotation();
+                TypeNode? indexNode = TakeTypeNode();
                 Consume(TokenType.RIGHT_BRACKET, "Expect ']' after indexed access type.");
+                typeNode = typeNode is { } objNode && indexNode is not null
+                    ? new IndexedAccessTypeNode(objNode, indexNode, indexLine)
+                    : null;
                 typeName = $"{typeName}[{indexType}]";
-                typeNode = null; // indexed access has no node form yet
             }
         }
 

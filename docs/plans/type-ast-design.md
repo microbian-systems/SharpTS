@@ -160,6 +160,19 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
    Wiring fixed en route: ambient `declare let/const` annotations and pre-registered
    (forward-referenced) alias definitions now carry their nodes; arrow-hoisting resolves
    annotations node-first so both resolutions of one annotation agree.
+5a. ✅ **Shipped: operator + conditional coverage (toward slice 6).** Nodes for the remaining
+   composite operators and conditionals, so they stop falling back to the string scanner:
+   `IntersectionTypeNode` (resolved through the same `SimplifyIntersection`), `KeyofTypeNode`,
+   `IndexedAccessTypeNode` (chained `T[K][J]` nests structurally), `ConditionalTypeNode` +
+   `InferTypeNode` (the deferred `ConditionalType` is built node-first; distribution and `infer`
+   inference still run path-independently in `EvaluateConditionalType`), and `TypeQueryNode`
+   (`typeof`, delegating to the same `EvaluateTypeOf`). Conditional alias definitions now carry
+   nodes, so generic conditional aliases expand through `TryExpandGenericAliasFromNode`. Corpus
+   coverage: 68.7% → **75.0%** (410 node / 137 fallback). No baseline movement — the conditional
+   Fails are `EvaluateConditionalType`/`infer`-inference semantic gaps, not string round-trip
+   damage (verified: node and string paths produce identical verdicts). Remaining fallback is
+   dominated by **mapped types** (and the template-literal `as`-clauses some need) plus generic
+   `<T>(…) => R` signatures — the last constructs before the scanner can go.
 6. Delete `TypeChecker.TypeParsing.cs` string scanning; `ToTypeInfo(string)` survives only
    for the REPL/embedding API surface, implemented as parse-to-node + convert.
 

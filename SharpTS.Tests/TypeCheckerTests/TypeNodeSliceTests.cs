@@ -265,4 +265,82 @@ public class TypeNodeSliceTests
             var a: any | never = null;
             """);
     }
+
+    [Fact]
+    public void NodePath_EngagesForIntersectionKeyofIndexedAndTypeof()
+    {
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            type A = { a: number };
+            type B = { b: string };
+            var ab: A & B = { a: 1, b: "x" };
+            var k: keyof A = "a";
+            var v: A["a"] = 1;
+            const origin = { n: 5 };
+            var t: typeof origin = origin;
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 4,
+            $"expected the node path for intersection/keyof/indexed/typeof, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_IntersectionMergesMembers()
+    {
+        // Both members' properties are required in the merged type.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type A = { a: number };
+            type B = { b: string };
+            var ab: A & B = { a: 1 };
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_KeyofEnforcesKeys()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type A = { a: number; b: string };
+            var k: keyof A = "c";
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_IndexedAccessEnforcesValueType()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type A = { a: number };
+            var v: A["a"] = "not a number";
+            """));
+    }
+
+    [Fact]
+    public void NodePath_EngagesForConditionalAliasWithInfer()
+    {
+        // The alias definition is now a ConditionalTypeNode carrying an InferTypeNode, so the
+        // reference expands through the node path (no string fallback).
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            type Elem<T> = T extends (infer U)[] ? U : never;
+            var e: Elem<number[]> = 1;
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 1,
+            $"expected the conditional/infer alias on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_ConditionalEvaluatesToSelectedBranch()
+    {
+        // IsNum<number> resolves to the true branch ("yes"), so "no" must be rejected — the same
+        // verdict the string path produces (EvaluateConditionalType is path-independent).
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type IsNum<T> = T extends number ? "yes" : "no";
+            var r: IsNum<number> = "no";
+            """));
+        // The false branch is selected for a non-number argument.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type IsNum<T> = T extends number ? "yes" : "no";
+            var r: IsNum<string> = "yes";
+            """));
+    }
 }

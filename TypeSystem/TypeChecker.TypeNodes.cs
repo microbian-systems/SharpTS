@@ -79,6 +79,51 @@ public partial class TypeChecker
                 return members.Aggregate(CreateUnion);
             }
 
+            case IntersectionTypeNode intersection:
+            {
+                List<TypeInfo> members = new(intersection.Members.Count);
+                foreach (var member in intersection.Members)
+                {
+                    if (TryToTypeInfo(member) is not { } resolved) return null;
+                    members.Add(resolved);
+                }
+                // Identical merge rules (primitive conflicts, object-member union, never/any
+                // absorption) as the string path's "A & B" split.
+                return SimplifyIntersection(members);
+            }
+
+            case KeyofTypeNode keyof:
+                return TryToTypeInfo(keyof.Operand) is { } operand ? new TypeInfo.KeyOf(operand) : null;
+
+            case IndexedAccessTypeNode indexed:
+            {
+                if (TryToTypeInfo(indexed.ObjectType) is not { } objectType) return null;
+                if (TryToTypeInfo(indexed.IndexType) is not { } indexType) return null;
+                // Chained T[K][J] is already nested structurally by the parser, so a single
+                // IndexedAccess per node mirrors the string path's iterative suffix consumption.
+                return new TypeInfo.IndexedAccess(objectType, indexType);
+            }
+
+            // Deferred form — distribution and `infer` inference run later in
+            // EvaluateConditionalType, exactly as for a string-built ConditionalType.
+            case ConditionalTypeNode conditional:
+            {
+                if (TryToTypeInfo(conditional.CheckType) is not { } checkType) return null;
+                if (TryToTypeInfo(conditional.ExtendsType) is not { } extendsType) return null;
+                if (TryToTypeInfo(conditional.TrueType) is not { } trueType) return null;
+                if (TryToTypeInfo(conditional.FalseType) is not { } falseType) return null;
+                return new TypeInfo.ConditionalType(checkType, extendsType, trueType, falseType);
+            }
+
+            case InferTypeNode infer:
+                return new TypeInfo.InferredTypeParameter(infer.Name);
+
+            // typeof resolves through the same evaluator as the string path; the node only spares
+            // the top-level scan that splits unions/intersections before `typeof` (the parser
+            // already separated them into sibling nodes).
+            case TypeQueryNode query:
+                return EvaluateTypeOf(query.EntityPath);
+
             case FunctionTypeNode fn:
             {
                 TypeInfo? thisType = null;
