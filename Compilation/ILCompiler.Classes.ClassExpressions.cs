@@ -155,9 +155,18 @@ public partial class ILCompiler
         _classes.InstanceFieldsField[className] = fieldsField;
 
         // Define typed instance properties
-        // Skip declare fields - they use _fields dictionary to support TypeScript null semantics
+        // Skip declare fields - they use _fields dictionary to support TypeScript null semantics.
+        // Skip generic-parameter-typed fields - a backing field of type `T` (an open generic
+        // parameter) cannot be widened to / narrowed from the object-typed $IHasFields slots
+        // without box/unbox of `T`, which yields unverifiable IL. Like class declarations
+        // (ILCompiler.Classes.cs), these fields live in the `_fields` dictionary instead (#291).
         foreach (var field in classExpr.Fields.Where(f => !f.IsStatic && !f.IsDeclare))
         {
+            bool isGenericField = classGenericParams != null &&
+                field.TypeAnnotation != null &&
+                classGenericParams.Any(p => p.Name == field.TypeAnnotation);
+            if (isGenericField)
+                continue;
             DefineClassExpressionProperty(typeBuilder, classExpr, field, classGenericParams);
         }
 

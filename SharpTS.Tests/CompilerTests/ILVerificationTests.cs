@@ -367,6 +367,30 @@ public class ILVerificationTests
     }
 
     [Fact]
+    public void GenericClassExpression_PassesILVerification()
+    {
+        // A generic class EXPRESSION emits a real open .NET generic type. Its $IHasFields
+        // bodies (get_Fields / GetProperty / SetProperty) widened a generic-parameter-typed
+        // backing field (`__Value : T`) into the object-typed dispatch slots without boxing,
+        // producing unverifiable IL (StackUnexpected). Generic-parameter fields now live in the
+        // `_fields` dictionary, matching generic class declarations, and the open generic is
+        // closed (via inference / explicit type args) before Newobj at the `new` site. (#291)
+        var source = """
+            const Box = class<T> {
+                constructor(private value: T) {}
+                get contents(): T { return this.value; }
+            };
+            console.log(new Box("hello").contents);
+            console.log(new Box<number>(42).contents);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("hello\n42\n", output);
+    }
+
+    [Fact]
     public void TryCatchFinally_PassesILVerification()
     {
         var source = """
