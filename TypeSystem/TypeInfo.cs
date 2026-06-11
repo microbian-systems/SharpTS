@@ -133,7 +133,7 @@ public abstract record TypeInfo
     /// ThisType specifies the expected type of 'this' within the function body.
     /// ParamNames stores parameter names for type predicate resolution.
     /// </summary>
-    public record Function(List<TypeInfo> ParamTypes, TypeInfo ReturnType, int RequiredParams = -1, bool HasRestParam = false, TypeInfo? ThisType = null, List<string>? ParamNames = null) : TypeInfo
+    public record Function(List<TypeInfo> ParamTypes, TypeInfo ReturnType, int RequiredParams = -1, bool HasRestParam = false, TypeInfo? ThisType = null, List<string>? ParamNames = null, FrozenSet<int>? InstantiatedTypeParamPositions = null) : TypeInfo
     {
         // RequiredParams defaults to -1 meaning all params are required (for backwards compat)
         public int MinArity => RequiredParams < 0 ? ParamTypes.Count : RequiredParams;
@@ -141,6 +141,26 @@ public abstract record TypeInfo
             ThisType != null
                 ? $"(this: {ThisType}, {RenderParams(ParamTypes, MinArity, HasRestParam)}) => {ReturnType}"
                 : $"({RenderParams(ParamTypes, MinArity, HasRestParam)}) => {ReturnType}";
+
+        /// <summary>
+        /// True when the parameter position's DECLARED type, before type-parameter substitution,
+        /// was a naked type parameter (tsc's <c>isInstantiatedGenericParameter</c>): the callback
+        /// comparison rule does not apply there — `set(value: T)` instantiated with a function
+        /// type stays bivariant (TypeScript #51620).
+        /// </summary>
+        public bool IsInstantiatedTypeParamPosition(int position)
+        {
+            if (InstantiatedTypeParamPositions is null) return false;
+            if (HasRestParam && position >= ParamTypes.Count) position = ParamTypes.Count - 1;
+            return InstantiatedTypeParamPositions.Contains(position);
+        }
+
+        // Substitution origin changes assignability (it gates the callback rule), so marked and
+        // unmarked renderings must not share compatibility-cache entries.
+        internal override string CacheKey() =>
+            InstantiatedTypeParamPositions is { Count: > 0 } marks
+                ? $"{ToString()}@itp{string.Join(",", marks.Order())}"
+                : base.CacheKey();
     }
 
     /// <summary>

@@ -90,7 +90,8 @@ public partial class TypeChecker
                 if (!TryResolveParameters(fn.Parameters, out var paramTypes, out int requiredParams, out bool hasRestParam))
                     return null;
                 if (TryToTypeInfo(fn.ReturnType) is not { } returnType) return null;
-                return new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRestParam, thisType);
+                return new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRestParam, thisType,
+                    InstantiatedTypeParamPositions: MarkInstantiatedParamPositions(fn.Parameters));
             }
 
             // `new (…) => R` models as an object type carrying a single construct signature —
@@ -331,6 +332,30 @@ public partial class TypeChecker
         {
             _typeAliasExpansionStack.Remove(aliasKey);
         }
+    }
+
+    /// <summary>
+    /// Parameter positions whose node is a bare type-parameter reference currently bound to a
+    /// CONCRETE type — i.e. the position is being instantiated right now (alias expansion binds
+    /// arguments via DefineTypeParameter). The structural equivalent of
+    /// <see cref="MarkInstantiatedParamPositions(TypeInfo.Function, Dictionary{string, TypeInfo})"/>
+    /// for node-path resolution, where substitution happens by scope binding instead of a
+    /// rewrite. In ordinary generic-declaration scopes the binding is itself a TypeParameter,
+    /// so nothing marks.
+    /// </summary>
+    private FrozenSet<int>? MarkInstantiatedParamPositions(List<ParameterTypeNode> parameters)
+    {
+        HashSet<int>? marks = null;
+        for (int i = 0; i < parameters.Count; i++)
+        {
+            if (parameters[i].Type is NamedTypeNode { TypeArguments: null } named &&
+                _environment.GetTypeParameter(named.Name) is { } bound &&
+                bound is not TypeInfo.TypeParameter)
+            {
+                (marks ??= []).Add(i);
+            }
+        }
+        return marks?.ToFrozenSet();
     }
 
     /// <summary>

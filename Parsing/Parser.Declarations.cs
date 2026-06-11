@@ -947,9 +947,11 @@ public partial class Parser
         Token name = ConsumeIdentifierName("Expect variable name.");
 
         string? typeAnnotation = null;
+        TypeNode? typeAnnotationNode = null;
         if (Match(TokenType.COLON))
         {
             typeAnnotation = ParseTypeAnnotation();
+            typeAnnotationNode = TakeTypeNode();
         }
 
         ConsumeSemicolon("Expect ';' after ambient variable declaration.");
@@ -958,9 +960,9 @@ public partial class Parser
         if (isConst)
         {
             // For ambient const, we use Var with no initializer (special case)
-            return new Stmt.Var(name, typeAnnotation, null);
+            return new Stmt.Var(name, typeAnnotation, null, TypeAnnotationNode: typeAnnotationNode);
         }
-        return new Stmt.Var(name, typeAnnotation, null);
+        return new Stmt.Var(name, typeAnnotation, null, TypeAnnotationNode: typeAnnotationNode);
     }
 
     /// <summary>

@@ -12,6 +12,26 @@ namespace SharpTS.TypeSystem;
 public partial class TypeChecker
 {
     /// <summary>
+    /// Parameter positions whose DECLARED type is a naked type parameter being substituted with
+    /// a concrete type — tsc's <c>isInstantiatedGenericParameter</c>, which gates the callback
+    /// comparison rule (TypeScript #51620). Alpha-renames (parameter → parameter) do not mark;
+    /// existing marks survive re-substitution.
+    /// </summary>
+    private static FrozenSet<int>? MarkInstantiatedParamPositions(TypeInfo.Function func, Dictionary<string, TypeInfo> substitutions)
+    {
+        HashSet<int>? marks = null;
+        for (int i = 0; i < func.ParamTypes.Count; i++)
+        {
+            bool marked = func.IsInstantiatedTypeParamPosition(i) ||
+                (func.ParamTypes[i] is TypeInfo.TypeParameter tp &&
+                 substitutions.TryGetValue(tp.Name, out var replacement) &&
+                 replacement is not TypeInfo.TypeParameter);
+            if (marked) (marks ??= []).Add(i);
+        }
+        return marks?.ToFrozenSet();
+    }
+
+    /// <summary>
     /// Substitutes type parameters with concrete types.
     /// </summary>
     private TypeInfo Substitute(TypeInfo type, Dictionary<string, TypeInfo> substitutions)
@@ -29,7 +49,10 @@ public partial class TypeChecker
                     func.ParamTypes.Select(p => Substitute(p, substitutions)).ToList(),
                     Substitute(func.ReturnType, substitutions),
                     func.RequiredParams,
-                    func.HasRestParam),
+                    func.HasRestParam,
+                    ThisType: null,
+                    ParamNames: null,
+                    InstantiatedTypeParamPositions: MarkInstantiatedParamPositions(func, substitutions)),
             TypeInfo.Tuple tuple =>
                 SubstituteTupleWithFlattening(tuple, substitutions),
             TypeInfo.SpreadType spread =>
