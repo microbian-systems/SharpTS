@@ -1973,9 +1973,35 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noBuiltInMatchLabel);
 
-            // No static member matched — fall through to class-instance handler, which
-            // on a Type returns Undefined (the intended absent-property signal).
-            il.Emit(OpCodes.Br, classInstanceLabel);
+            // #265: walk the constructor's superclass chain for inherited expando
+            // statics. In Node a class constructor inherits from its parent
+            // constructor (Object.getPrototypeOf(D) === C), so a string-keyed static
+            // set on a base (`Base.foo = 1`) is readable through a subclass `D.foo`.
+            // PDS keys descriptors by the Type identity per-class with no parent
+            // awareness, so probe each ancestor's store here — after the subclass's
+            // own descriptors and declared members, matching own-before-inherited.
+            var walkTypeLocal = il.DeclareLocal(_types.Type);
+            var baseDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Stloc, walkTypeLocal);
+            var baseWalkLoop = il.DefineLabel();
+            il.MarkLabel(baseWalkLoop);
+            // walkType = walkType.BaseType;  (null terminates the chain)
+            il.Emit(OpCodes.Ldloc, walkTypeLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "BaseType").GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, walkTypeLocal);
+            il.Emit(OpCodes.Ldloc, walkTypeLocal);
+            il.Emit(OpCodes.Brfalse, classInstanceLabel);
+            // desc = PDSGetPropertyDescriptor(walkType, name);
+            il.Emit(OpCodes.Ldloc, walkTypeLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, baseDescLocal);
+            il.Emit(OpCodes.Ldloc, baseDescLocal);
+            il.Emit(OpCodes.Brfalse, baseWalkLoop);
+            il.Emit(OpCodes.Ldloc, baseDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+            il.Emit(OpCodes.Ret);
         }
 
         // Callable wrapper handler: route .bind/.call/.apply/.length/.name through

@@ -232,6 +232,44 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notJsonSingletonTagLabel);
 
+        // #265: symbol-keyed expando statics set on a base class constructor are
+        // readable through subclasses (`Base[Symbol.x] = v` visible as `Sub[Symbol.x]`).
+        // The per-object symbol dict is keyed by Type identity per-class, so walk the
+        // constructor's .NET base-type chain (D.BaseType === C) until a dict carries
+        // the key, mirroring the string-keyed walk in GetProperty's Type handler.
+        {
+            var notTypeForSymbolLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, _types.Type);
+            il.Emit(OpCodes.Brfalse, notTypeForSymbolLabel);
+            var symWalkType = il.DeclareLocal(_types.Type);
+            var symWalkDict = il.DeclareLocal(_types.DictionaryObjectObject);
+            var symWalkVal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, _types.Type);
+            il.Emit(OpCodes.Stloc, symWalkType);
+            var symWalkLoop = il.DefineLabel();
+            il.MarkLabel(symWalkLoop);
+            // symWalkType = symWalkType.BaseType;  (null terminates the chain)
+            il.Emit(OpCodes.Ldloc, symWalkType);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "BaseType").GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, symWalkType);
+            il.Emit(OpCodes.Ldloc, symWalkType);
+            il.Emit(OpCodes.Brfalse, notTypeForSymbolLabel);
+            // if (GetSymbolDict(symWalkType).TryGetValue(index, out val)) return val;
+            il.Emit(OpCodes.Ldloc, symWalkType);
+            il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+            il.Emit(OpCodes.Stloc, symWalkDict);
+            il.Emit(OpCodes.Ldloc, symWalkDict);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloca, symWalkVal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+            il.Emit(OpCodes.Brfalse, symWalkLoop);
+            il.Emit(OpCodes.Ldloc, symWalkVal);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notTypeForSymbolLabel);
+        }
+
         // Return undefined for missing symbol properties (JavaScript semantics)
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
