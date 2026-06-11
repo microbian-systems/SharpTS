@@ -189,17 +189,18 @@ public partial class CompilationContext
 
     /// <summary>
     /// The current closure's own EXTRA ancestor-scope reference fields, keyed
-    /// by source arrow. Used to chain references into closures created inside
-    /// this body (type-matched against the new closure's reference fields).
+    /// by source callable node (arrow or inner function declaration). Used to
+    /// chain references into closures created inside this body (type-matched
+    /// against the new closure's reference fields).
     /// </summary>
-    public Dictionary<ArrowFunction, FieldBuilder>? CurrentArrowScopeDCExtraFields { get; set; }
+    public Dictionary<object, FieldBuilder>? CurrentArrowScopeDCExtraFields { get; set; }
 
     /// <summary>
     /// Global map of every arrow's EXTRA ancestor-scope reference fields
-    /// (closure arrow → source arrow → field). The creation-site emitter
-    /// populates these alongside the primary $arrowDC field.
+    /// (closure arrow → source callable node → field). The creation-site
+    /// emitter populates these alongside the primary $arrowDC field.
     /// </summary>
-    public Dictionary<ArrowFunction, Dictionary<ArrowFunction, FieldBuilder>>? ArrowScopeDCExtraFieldsByArrow { get; set; }
+    public Dictionary<ArrowFunction, Dictionary<object, FieldBuilder>>? ArrowScopeDCExtraFieldsByArrow { get; set; }
 
     // ============================================
     // Inner Function Support

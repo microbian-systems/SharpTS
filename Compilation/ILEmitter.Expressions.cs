@@ -373,6 +373,7 @@ public partial class ILEmitter
                 _ctx.TryGetParameter(a.Name.Lexeme, out var funcParamSync))
             {
                 IL.Emit(OpCodes.Ldloc, temp);
+                _ctx.EmitConvertForParamSlot(IL, a.Name.Lexeme);
                 IL.Emit(OpCodes.Starg, funcParamSync);
             }
             SetStackUnknown();
@@ -416,6 +417,7 @@ public partial class ILEmitter
                 _ctx.TryGetParameter(a.Name.Lexeme, out var arrowParamSync))
             {
                 IL.Emit(OpCodes.Ldloc, temp);
+                _ctx.EmitConvertForParamSlot(IL, a.Name.Lexeme);
                 IL.Emit(OpCodes.Starg, arrowParamSync);
             }
             SetStackUnknown();

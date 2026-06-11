@@ -249,6 +249,7 @@ public class LocalVariableResolver : IVariableResolver
                 if (_ctx.TryGetParameter(name, out var funcParamSync))
                 {
                     _il.Emit(OpCodes.Ldloc, temp);
+                    _ctx.EmitConvertForParamSlot(_il, name);
                     _il.Emit(OpCodes.Starg, funcParamSync);
                 }
                 return true;
@@ -311,6 +312,7 @@ public class LocalVariableResolver : IVariableResolver
             if (_ctx.TryGetParameter(name, out var arrowParamSync))
             {
                 _il.Emit(OpCodes.Ldloc, tempArrow);
+                _ctx.EmitConvertForParamSlot(_il, name);
                 _il.Emit(OpCodes.Starg, arrowParamSync);
             }
             return true;

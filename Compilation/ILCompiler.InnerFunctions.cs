@@ -30,25 +30,27 @@ public partial class ILCompiler
     // intermediate callables when the source arrow isn't the immediate parent.
     private readonly Dictionary<Stmt.Function, object> _innerFunctionParentCallable = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Stmt.Function, FieldBuilder> _innerFunctionArrowScopeDCFields = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<Stmt.Function, Expr.ArrowFunction> _innerFunctionArrowScopeDCSource = new(ReferenceEqualityComparer.Instance);
+    // Source values (and the set/dict elements below) are the scope-OWNING callable's
+    // AST node — Expr.ArrowFunction or Stmt.Function (#313).
+    private readonly Dictionary<Stmt.Function, object> _innerFunctionArrowScopeDCSource = new(ReferenceEqualityComparer.Instance);
 
     // EXTRA (non-primary) ancestor scope DC sources. A closure capturing from
-    // more than one ancestor arrow scope gets one reference field per source —
+    // more than one ancestor scope gets one reference field per source —
     // the single primary slot can't represent multi-source captures (lodash's
     // shortOut closure reads nativeNow from runInContext AND HOT_SPAN from the
     // outer IIFE). Sets are accumulated during threading; fields are defined
     // alongside the primary in the respective define passes.
-    private readonly Dictionary<Stmt.Function, HashSet<Expr.ArrowFunction>> _innerFunctionExtraScopeSources = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<Expr.ArrowFunction, HashSet<Expr.ArrowFunction>> _arrowExtraScopeSources = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<Stmt.Function, Dictionary<Expr.ArrowFunction, FieldBuilder>> _innerFunctionArrowScopeDCExtraFields = new(ReferenceEqualityComparer.Instance);
-    private readonly Dictionary<Expr.ArrowFunction, Dictionary<Expr.ArrowFunction, FieldBuilder>> _arrowScopeDCExtraFields = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Stmt.Function, HashSet<object>> _innerFunctionExtraScopeSources = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Expr.ArrowFunction, HashSet<object>> _arrowExtraScopeSources = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Stmt.Function, Dictionary<object, FieldBuilder>> _innerFunctionArrowScopeDCExtraFields = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Expr.ArrowFunction, Dictionary<object, FieldBuilder>> _arrowScopeDCExtraFields = new(ReferenceEqualityComparer.Instance);
 
-    private static void AddExtraScopeSource<TKey>(Dictionary<TKey, HashSet<Expr.ArrowFunction>> map, TKey key, Expr.ArrowFunction source)
+    private static void AddExtraScopeSource<TKey>(Dictionary<TKey, HashSet<object>> map, TKey key, object source)
         where TKey : notnull
     {
         if (!map.TryGetValue(key, out var set))
         {
-            set = new HashSet<Expr.ArrowFunction>(ReferenceEqualityComparer.Instance);
+            set = new HashSet<object>(ReferenceEqualityComparer.Instance);
             map[key] = set;
         }
         set.Add(source);
@@ -101,13 +103,13 @@ public partial class ILCompiler
         // resolved before any child threads a pass-through requirement onto it.
         foreach (var (func, captures, _) in _collectedInnerFunctions)
         {
-            // Candidate source arrows: the analyzer-recorded defining scope of each
-            // captured variable, when that scope is an arrow owning a scope DC with
-            // a matching field.
-            Dictionary<Expr.ArrowFunction, int>? candidates = null;
+            // Candidate source callables: the analyzer-recorded defining scope of
+            // each captured variable, when that scope owns a scope DC with a
+            // matching field (arrow or inner function declaration, #313).
+            Dictionary<object, int>? candidates = null;
             foreach (var c in captures)
             {
-                if (_closures.Analyzer.GetCaptureSource(func, c) is not Expr.ArrowFunction sa)
+                if (_closures.Analyzer.GetCaptureSource(func, c) is not { } sa)
                     continue;
                 if (!_closures.ArrowScopeDisplayClassFields.TryGetValue(sa, out var fields) ||
                     !fields.ContainsKey(c))
@@ -135,26 +137,28 @@ public partial class ILCompiler
     }
 
     /// <summary>
-    /// Orders candidate source arrows by proximity along the enclosing-callable
-    /// chain starting at <paramref name="start"/> — nearest ancestor first. The
-    /// single $arrowScopeDC/$arrowDC slot can only bind one source; the nearest
+    /// Orders candidate source callables (arrows or inner function declarations)
+    /// by proximity along the enclosing-callable chain starting at
+    /// <paramref name="start"/> — nearest ancestor first. The single
+    /// $arrowScopeDC/$arrowDC slot can only bind one source; the nearest
     /// scope is the one whose variables are assigned in the same bodies that
     /// hoist these closures, so it's the scope that NEEDS live reads (lodash's
     /// runInContext helpers). Farther scopes' variables are typically assigned
     /// before the closure is created, so their copy-field snapshots hold the
     /// right values when reachable.
     /// </summary>
-    private IEnumerable<Expr.ArrowFunction> OrderByAncestorProximity(
-        object? start, Dictionary<Expr.ArrowFunction, int> candidates)
+    private IEnumerable<object> OrderByAncestorProximity(
+        object? start, Dictionary<object, int> candidates)
     {
         var node = start;
         int guard = 0;
         while (node != null && ++guard <= 256)
         {
+            if (candidates.ContainsKey(node))
+                yield return node;
+
             if (node is Expr.ArrowFunction ia)
             {
-                if (candidates.ContainsKey(ia))
-                    yield return ia;
                 _arrowEnclosingCallable.TryGetValue(ia, out node);
             }
             else if (node is Stmt.Function pf)
@@ -176,7 +180,7 @@ public partial class ILCompiler
     /// source, otherwise an EXTRA reference field. Fails (committing nothing)
     /// when the chain is broken — async arrow or uncollected function boundary.
     /// </summary>
-    private bool TryThreadArrowScopeSource(object? start, Expr.ArrowFunction source, HashSet<Stmt.Function> collectedSet)
+    private bool TryThreadArrowScopeSource(object? start, object source, HashSet<Stmt.Function> collectedSet)
     {
         var arrowsToMark = new List<Expr.ArrowFunction>();
         var passThroughFuncs = new List<Stmt.Function>();
@@ -270,7 +274,7 @@ public partial class ILCompiler
             // hoist time (the copy would run before the arrow body assigns them).
             // The source was resolved by ResolveInnerFunctionArrowScopeSources —
             // it may also be a pass-through requirement from a nested function.
-            Expr.ArrowFunction? arrowScopeSource = null;
+            object? arrowScopeSource = null;
             Dictionary<string, FieldBuilder>? arrowScopeSourceFields = null;
             if (_innerFunctionArrowScopeDCSource.TryGetValue(func, out var resolvedSource) &&
                 _closures.ArrowScopeDisplayClassFields.TryGetValue(resolvedSource, out arrowScopeSourceFields))
@@ -326,7 +330,7 @@ public partial class ILCompiler
                     arrowScopeDCField = displayClass.DefineField("$arrowScopeDC", arrowScopeDC, FieldAttributes.Public);
                 }
 
-                Dictionary<Expr.ArrowFunction, FieldBuilder>? extraScopeDCFields = null;
+                Dictionary<object, FieldBuilder>? extraScopeDCFields = null;
                 if (extraScopeSources != null)
                 {
                     int extraIdx = 0;
@@ -361,7 +365,7 @@ public partial class ILCompiler
 
                     // Skip vars covered by an EXTRA ancestor scope DC reference
                     if (extraScopeDCFields != null &&
-                        _closures.Analyzer.GetCaptureSource(func, capturedVar) is Expr.ArrowFunction extraSrc &&
+                        _closures.Analyzer.GetCaptureSource(func, capturedVar) is { } extraSrc &&
                         extraScopeDCFields.ContainsKey(extraSrc) &&
                         _closures.ArrowScopeDisplayClassFields.TryGetValue(extraSrc, out var extraSrcFields) &&
                         extraSrcFields.ContainsKey(capturedVar))
@@ -577,10 +581,50 @@ public partial class ILCompiler
                 }
             }
 
+            // Create this function's own scope display class instance when its locals
+            // are captured by nested closures (#313) — the same per-invocation shared
+            // storage arrows get in EmitArrowBody. Reads/writes of those locals route
+            // through the DC; closures created in this body receive a live reference
+            // via the type-matched $arrowDC population at their creation sites.
+            if (_closures.ArrowScopeDisplayClasses.TryGetValue(func, out var ownScopeDCType) &&
+                _closures.ArrowScopeDisplayClassCtors.TryGetValue(func, out var ownScopeDCCtor))
+            {
+                var ownScopeDCLocal = il.DeclareLocal(ownScopeDCType);
+                il.Emit(OpCodes.Newobj, ownScopeDCCtor);
+                il.Emit(OpCodes.Stloc, ownScopeDCLocal);
+                ctx.ArrowScopeDisplayClassLocal = ownScopeDCLocal;
+                ctx.ArrowScopeDisplayClassFields = _closures.ArrowScopeDisplayClassFields[func];
+                ctx.CapturedArrowLocals = _closures.Analyzer.GetCapturedLocals(func);
+            }
+
             var emitter = new ILEmitter(ctx);
 
             // Emit default parameter checks
             emitter.EmitDefaultParameters(func.Parameters, hasDisplayClass, hasOwnThis: false);
+
+            // Initialize captured parameters into the scope display class (mirrors
+            // EmitArrowBody). Runs AFTER EmitDefaultParameters (which writes defaults
+            // via Starg) so the DC fields see defaulted values. Later reassignments
+            // dual-write DC + arg slot via LocalVariableResolver store path 1b.
+            if (ctx.ArrowScopeDisplayClassLocal != null)
+            {
+                int paramArgBase = hasDisplayClass ? 1 : 0;
+                for (int i = 0; i < func.Parameters.Count; i++)
+                {
+                    var paramName = func.Parameters[i].Name.Lexeme;
+                    if (ctx.CapturedArrowLocals!.Contains(paramName) &&
+                        ctx.ArrowScopeDisplayClassFields!.TryGetValue(paramName, out var scopeDCField))
+                    {
+                        il.Emit(OpCodes.Ldloc, ctx.ArrowScopeDisplayClassLocal);
+                        il.Emit(OpCodes.Ldarg, i + paramArgBase);
+                        var actualParamType = !func.Parameters[i].IsRest &&
+                            innerParamTypes != null && i < innerParamTypes.Length ? innerParamTypes[i] : null;
+                        if (actualParamType != null && actualParamType.IsValueType)
+                            il.Emit(OpCodes.Box, actualParamType);
+                        il.Emit(OpCodes.Stfld, scopeDCField);
+                    }
+                }
+            }
 
             // Emit function body
             if (func.Body != null)
@@ -863,12 +907,12 @@ public partial class ILCompiler
     /// their normal resolution.
     /// </summary>
     private Dictionary<string, CompilationContext.ExtraScopeBinding>? BuildExtraScopeBindings(
-        object closureNode, IEnumerable<string> captures, Dictionary<Expr.ArrowFunction, FieldBuilder> extraRefs)
+        object closureNode, IEnumerable<string> captures, Dictionary<object, FieldBuilder> extraRefs)
     {
         Dictionary<string, CompilationContext.ExtraScopeBinding>? bindings = null;
         foreach (var c in captures)
         {
-            if (_closures.Analyzer.GetCaptureSource(closureNode, c) is not Expr.ArrowFunction src)
+            if (_closures.Analyzer.GetCaptureSource(closureNode, c) is not { } src)
                 continue;
             if (!extraRefs.TryGetValue(src, out var refField))
                 continue;

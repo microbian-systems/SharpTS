@@ -189,23 +189,26 @@ public partial class ILCompiler
         public Dictionary<Expr.ArrowFunction, string> ArrowFunctionDCSource { get; } = new(ReferenceEqualityComparer.Instance);
 
         // ============================================
-        // Arrow scope display classes (for arrow-local vars captured by nested arrows)
+        // Scope display classes (for callable-local vars captured by nested closures).
+        // Keys are the OWNING callable's AST node: Expr.ArrowFunction, or Stmt.Function
+        // for inner function declarations (#313) — both kinds of callable can own
+        // mutable locals that sibling closures must share.
         // ============================================
 
-        // Maps parent arrow to its scope display class type
-        public Dictionary<Expr.ArrowFunction, TypeBuilder> ArrowScopeDisplayClasses { get; } = new(ReferenceEqualityComparer.Instance);
+        // Maps owning callable to its scope display class type
+        public Dictionary<object, TypeBuilder> ArrowScopeDisplayClasses { get; } = new(ReferenceEqualityComparer.Instance);
 
-        // Maps parent arrow to its scope display class constructor
-        public Dictionary<Expr.ArrowFunction, ConstructorBuilder> ArrowScopeDisplayClassCtors { get; } = new(ReferenceEqualityComparer.Instance);
+        // Maps owning callable to its scope display class constructor
+        public Dictionary<object, ConstructorBuilder> ArrowScopeDisplayClassCtors { get; } = new(ReferenceEqualityComparer.Instance);
 
-        // Maps parent arrow to its scope display class fields (variable name -> field)
-        public Dictionary<Expr.ArrowFunction, Dictionary<string, FieldBuilder>> ArrowScopeDisplayClassFields { get; } = new(ReferenceEqualityComparer.Instance);
+        // Maps owning callable to its scope display class fields (variable name -> field)
+        public Dictionary<object, Dictionary<string, FieldBuilder>> ArrowScopeDisplayClassFields { get; } = new(ReferenceEqualityComparer.Instance);
 
         // Maps child arrows to their $arrowDC field (if they capture arrow-scope vars)
         public Dictionary<Expr.ArrowFunction, FieldBuilder> ArrowScopeDCFields { get; } = new(ReferenceEqualityComparer.Instance);
 
-        // Maps child arrows to the parent arrow whose scope display class they need
-        public Dictionary<Expr.ArrowFunction, Expr.ArrowFunction> ArrowScopeDCSource { get; } = new(ReferenceEqualityComparer.Instance);
+        // Maps child arrows to the callable whose scope display class they need
+        public Dictionary<Expr.ArrowFunction, object> ArrowScopeDCSource { get; } = new(ReferenceEqualityComparer.Instance);
 
         // Maps arrow functions to their resolved parameter types (for typed parameter optimization)
         // When parameters have type annotations, this stores the resolved .NET types to avoid boxing
