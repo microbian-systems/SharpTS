@@ -203,7 +203,16 @@ public partial class ILCompiler
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode,
             // Registry services
-            ClassRegistry = GetClassRegistry()
+            ClassRegistry = GetClassRegistry(),
+            // Module-level / captured top-level variable access. Without these an
+            // accessor body that references a top-level binding (a captured `let`,
+            // a same-module export, an import) throws ReferenceError at runtime —
+            // every other body-emission context (methods, ctors, functions, …)
+            // sets them; the accessor path was the lone omission.
+            TopLevelStaticVars = BuildClassMethodTopLevelStaticVarsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
         };
 
         // Add class generic type parameters to context
