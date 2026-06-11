@@ -457,7 +457,7 @@ public abstract record Stmt
     // TS allows only 'any'/'unknown'; anything else is checker error TS1196.
     public record TryCatch(List<Stmt> TryBlock, Token? CatchParam, List<Stmt>? CatchBlock, List<Stmt>? FinallyBlock, string? CatchParamType = null) : Stmt;
     public record Throw(Token Keyword, Expr Value) : Stmt;
-    public record TypeAlias(Token Name, string TypeDefinition, List<TypeParam>? TypeParameters = null) : Stmt;
+    public record TypeAlias(Token Name, string TypeDefinition, List<TypeParam>? TypeParameters = null, TypeNode? TypeDefinitionNode = null) : Stmt;
     public record EnumMember(Token Name, Expr? Value);
     public record Enum(Token Name, List<EnumMember> Members, bool IsConst = false) : Stmt;
 

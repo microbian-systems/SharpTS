@@ -213,9 +213,10 @@ public partial class Parser
         // - Conditional types: T extends U ? X : Y
         // The disambiguation is done in ParsePrimaryType
         string typeDef = ParseTypeAnnotation();
+        TypeNode? typeDefNode = TakeTypeNode();
 
         ConsumeSemicolon("Expect ';' after type alias.");
-        return new Stmt.TypeAlias(name, typeDef, typeParams);
+        return new Stmt.TypeAlias(name, typeDef, typeParams, typeDefNode);
     }
 
     private string ParseFunctionTypeDefinition()

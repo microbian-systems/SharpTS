@@ -123,9 +123,17 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
      deliberately still fall back — their expansion is textual substitution of the
      ORIGINAL argument spellings, so node-resolved arguments could shift
      recursion/instantiation keys. Coverage: 65.3% → **68.7%**.
-   - 3b remaining: alias definitions stored as nodes, expansion via scoped node
-     resolution instead of `SubstituteTypeParamInString` (this is the part that buys
-     alias-instantiation identity). Mapped/conditional nodes ride with this.
+   - ✅ **3b shipped: alias definitions as nodes.** `Stmt.TypeAlias.TypeDefinitionNode` →
+     `TypeEnvironment` stores it beside the string; expansion binds the type parameters to
+     the resolved arguments in a child scope (`DefineTypeParameter` — consulted first by
+     name lookup) and resolves the definition node directly. No argument-string
+     substitution, no definition re-parse. Guards mirrored exactly: TS2314 arity,
+     open-type-variable deferral, TS2589 depth, recursion placeholder with the same key
+     derivation. Built-in generic names shadow aliases on both paths
+     (`IsBuiltInGenericName`). Aliases with mapped/conditional bodies naturally fall back
+     (those constructs have no nodes yet). Corpus coverage flat at 68.7% — the corpus's
+     aliases are mapped/conditional-heavy; the win is the mechanism (structural
+     instantiation), which is what slice 5's substitution-origin marking builds on.
 4. Declaration handles on `TypeInfo.Interface/Class` resolved via nodes (kills the
    `CacheKey()` workaround; fixes the cross-module diagnostic tests).
 5. Substitution-origin marking (unblocks #202's callback rule → `covariantCallbacks`).
