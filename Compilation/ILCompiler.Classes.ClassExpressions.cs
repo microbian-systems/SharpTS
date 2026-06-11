@@ -350,13 +350,15 @@ public partial class ILCompiler
         {
             foreach (var accessor in classExpr.Accessors)
             {
-                // Symbol-keyed accessors are supported on class *declarations* (#266)
-                // but not yet on class *expressions* (separate emission path with no
-                // .cctor registration hook) — tracked by #281.
+                // Symbol-keyed computed accessor (#281): define a synthetic
+                // $sym_get/set_N method recorded in _classes.SymbolAccessors keyed
+                // by this class's generated name. It is registered in the class-
+                // expression .cctor and dispatched through the $Runtime symbol-
+                // accessor registry, mirroring the class-declaration path (#266).
                 if (accessor.ComputedKey != null)
                 {
-                    throw new Diagnostics.Exceptions.CompileException(
-                        $"Symbol-keyed computed accessors (line {accessor.Name.Line}) are not yet supported on class expressions in compiled mode (#281).");
+                    DefineSymbolAccessorMethod(typeBuilder, accessor);
+                    continue;
                 }
                 string accessorName = accessor.Name.Lexeme;
                 string pascalName = NamingConventions.ToPascalCase(accessorName);
@@ -434,12 +436,17 @@ public partial class ILCompiler
         {
             foreach (var accessor in classExpr.Accessors)
             {
-                if (!accessor.IsAbstract)
+                // Symbol-keyed accessors are emitted below from _classes.SymbolAccessors
+                // (their synthetic methods aren't in _classExprs.Getters/Setters).
+                if (!accessor.IsAbstract && accessor.ComputedKey == null)
                 {
                     EmitClassExpressionAccessor(classExpr, typeBuilder, accessor, fieldsField);
                 }
             }
         }
+
+        // Emit symbol-keyed computed accessor bodies (#281)
+        EmitClassExpressionSymbolAccessors(classExpr, typeBuilder, fieldsField);
 
         // Emit $IHasFields interface method bodies (now that method builders are available)
         EmitHasFieldsInterfaceMethodBodies(className, classExpr);
@@ -530,8 +537,11 @@ public partial class ILCompiler
     {
         bool hasStaticFields = classExpr.Fields.Any(f => f.IsStatic && f.Initializer != null);
         bool hasStaticInitializers = classExpr.StaticInitializers?.Count > 0;
+        // Symbol-keyed computed accessors (#281) register in the .cctor, keyed by
+        // this class's generated name (mirrors the class-declaration path #266).
+        bool hasSymbolAccessors = _classes.SymbolAccessors.ContainsKey(typeBuilder.Name);
 
-        if (!hasStaticFields && !hasStaticInitializers) return;
+        if (!hasStaticFields && !hasStaticInitializers && !hasSymbolAccessors) return;
 
         var cctor = typeBuilder.DefineConstructor(
             MethodAttributes.Static | MethodAttributes.Private | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
@@ -578,6 +588,10 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Stsfld, staticField);
             }
         }
+
+        // Register symbol-keyed computed accessors (#281) in the runtime registry,
+        // keyed by this class's Type so dynamic bracket get/set can dispatch them.
+        EmitSymbolAccessorRegistrations(emitter, il, typeBuilder);
 
         il.Emit(OpCodes.Ret);
     }
@@ -872,6 +886,49 @@ public partial class ILCompiler
     /// <summary>
     /// Emits an accessor body for a class expression.
     /// </summary>
+    /// <summary>
+    /// Emits the bodies of the synthetic symbol-keyed accessor methods (#281)
+    /// recorded for a class expression by <see cref="DefineSymbolAccessorMethod"/>.
+    /// Uses the class-expression compilation context (so `this`, fields, and
+    /// top-level bindings resolve) rather than the class-declaration accessor path.
+    /// </summary>
+    private void EmitClassExpressionSymbolAccessors(
+        Expr.ClassExpr classExpr,
+        TypeBuilder typeBuilder,
+        FieldInfo fieldsField)
+    {
+        if (!_classes.SymbolAccessors.TryGetValue(typeBuilder.Name, out var list))
+            return;
+
+        foreach (var (accessor, methodBuilder) in list)
+        {
+            var il = methodBuilder.GetILGenerator();
+            var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, accessor.IsStatic ? null : fieldsField);
+            ctx.IsInstanceMethod = !accessor.IsStatic;
+
+            if (accessor.Kind.Type == TokenType.SET && accessor.SetterParam != null)
+            {
+                var accessorParams = methodBuilder.GetParameters();
+                Type? paramType = accessorParams.Length > 0 ? accessorParams[0].ParameterType : null;
+                // Instance setter: arg0 is `this`, value at index 1. Static: value at index 0.
+                int paramIndex = accessor.IsStatic ? 0 : 1;
+                ctx.DefineParameter(accessor.SetterParam.Name.Lexeme, paramIndex, paramType);
+            }
+
+            var emitter = new ILEmitter(ctx);
+            foreach (var stmt in accessor.Body)
+                emitter.EmitStatement(stmt);
+
+            if (emitter.HasDeferredReturns)
+                emitter.FinalizeReturns();
+            else
+            {
+                il.Emit(OpCodes.Ldnull);
+                il.Emit(OpCodes.Ret);
+            }
+        }
+    }
+
     private void EmitClassExpressionAccessor(
         Expr.ClassExpr classExpr,
         TypeBuilder typeBuilder,
