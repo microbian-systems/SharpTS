@@ -19,7 +19,7 @@ namespace SharpTS.TypeSystem;
 public class TypeEnvironment : ScopeChain<TypeInfo, TypeEnvironment>
 {
     private readonly Dictionary<string, string> _typeAliases = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, (string Definition, List<string> TypeParams)> _genericTypeAliases = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string Definition, List<string> TypeParams, TypeNode? DefinitionNode)> _genericTypeAliases = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypeInfo> _typeParameters = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypeInfo.Namespace> _namespaces = new(StringComparer.Ordinal);
     private readonly Dictionary<string, (TypeInfo Type, bool IsValue)> _importAliases = new(StringComparer.Ordinal);
@@ -99,17 +99,19 @@ public class TypeEnvironment : ScopeChain<TypeInfo, TypeEnvironment>
     }
 
     /// <summary>
-    /// Defines a generic type alias with type parameters.
+    /// Defines a generic type alias with type parameters. <paramref name="definitionNode"/> is
+    /// the structured form of the definition when the parser produced one (type-AST migration);
+    /// the string stays authoritative.
     /// </summary>
-    public void DefineGenericTypeAlias(string name, string definition, List<string> typeParams)
+    public void DefineGenericTypeAlias(string name, string definition, List<string> typeParams, TypeNode? definitionNode = null)
     {
-        _genericTypeAliases[name] = (definition, typeParams);
+        _genericTypeAliases[name] = (definition, typeParams, definitionNode);
     }
 
     /// <summary>
     /// Gets a generic type alias definition by name.
     /// </summary>
-    public (string Definition, List<string> TypeParams)? GetGenericTypeAlias(string name)
+    public (string Definition, List<string> TypeParams, TypeNode? DefinitionNode)? GetGenericTypeAlias(string name)
     {
         if (_genericTypeAliases.TryGetValue(name, out var alias))
             return alias;

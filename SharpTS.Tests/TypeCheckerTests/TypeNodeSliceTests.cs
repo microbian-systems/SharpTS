@@ -30,14 +30,60 @@ public class TypeNodeSliceTests
     [Fact]
     public void NodePath_FallsBackForUnsupportedConstructs()
     {
-        // Generic ALIAS references stay on the string path until alias definitions store nodes.
+        // Mapped-type alias bodies have no node form yet, so the reference falls back.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            type RO<T> = { [K in keyof T]: T[K] };
+            var r: RO<{ a: number }> = { a: 1 };
+            """);
+        Assert.True(TypeNodeStats.StringFallbacks >= 1,
+            $"expected the mapped-alias annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+    }
+
+    [Fact]
+    public void NodePath_EngagesForGenericAliasReferences()
+    {
         TypeNodeStats.Reset();
         TestHarness.RunInterpreted("""
             type Box<T> = { value: T };
+            type PairOf<A, B> = [A, B];
+            type Handler<T> = (item: T) => void;
             var b: Box<number> = { value: 1 };
+            var p: PairOf<string, number> = ["x", 1];
+            var h: Handler<string> = (s: string) => {};
             """);
-        Assert.True(TypeNodeStats.StringFallbacks >= 1,
-            $"expected the generic-alias annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+        Assert.True(TypeNodeStats.NodeHits >= 3,
+            $"expected the node path for all three alias annotations, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_GenericAliasEnforcesSubstitutedArguments()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type Box<T> = { value: T };
+            var b: Box<number> = { value: "no" };
+            """));
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type Handler<T> = (item: T) => void;
+            var h: Handler<string> = (n: number) => {};
+            """));
+        // Wrong arity carries the string path's TS2314.
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type Box<T> = { value: T };
+            var b: Box<number, string> = { value: 1 };
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_RecursiveAliasStillConverges()
+    {
+        // Self-referential alias: the recursion placeholder must fire on the node path the
+        // same way it does on the string path (no stack overflow, no spurious error).
+        TestHarness.RunInterpreted("""
+            type Tree<T> = { value: T; children: Tree<T>[] };
+            var t: Tree<number> = { value: 1, children: [{ value: 2, children: [] }] };
+            """);
     }
 
     [Fact]

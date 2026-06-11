@@ -94,7 +94,7 @@ public partial class TypeChecker
         {
             var typeParamNames = stmt.TypeParameters.Select(tp => tp.Name.Lexeme).ToList();
             ValidateTypeAliasSpreadConstraints(stmt);
-            _environment.DefineGenericTypeAlias(stmt.Name.Lexeme, stmt.TypeDefinition, typeParamNames);
+            _environment.DefineGenericTypeAlias(stmt.Name.Lexeme, stmt.TypeDefinition, typeParamNames, stmt.TypeDefinitionNode);
         }
         else
         {

@@ -32,18 +32,25 @@ public partial class TypeChecker
 
             // Generic references resolve their argument nodes and reuse the SAME instantiation
             // machinery as the string path (built-in generics, utility types, generic
-            // classes/interfaces/functions — including its TS2314 arity errors). Generic ALIASES
-            // still fall back: their expansion is textual substitution of the ORIGINAL argument
-            // spellings, and re-rendered argument strings could shift recursion/instantiation
-            // keys. Aliases move off strings when their definitions are stored as nodes.
+            // classes/interfaces/functions — including its TS2314 arity errors). Generic alias
+            // references expand from their stored definition NODE when one exists, binding the
+            // type parameters in a child scope instead of substituting argument strings.
             case NamedTypeNode { TypeArguments: { } argNodes } named:
             {
-                if (_environment.GetGenericTypeAlias(named.Name) != null) return null;
                 List<TypeInfo> typeArgs = new(argNodes.Count);
                 foreach (var argNode in argNodes)
                 {
                     if (TryToTypeInfo(argNode) is not { } arg) return null;
                     typeArgs.Add(arg);
+                }
+                // ResolveGenericType handles built-in names BEFORE its alias lookup — a user
+                // alias named e.g. `Partial` is shadowed. Mirror that precedence here.
+                if (!IsBuiltInGenericName(named.Name) &&
+                    _environment.GetGenericTypeAlias(named.Name) is { } alias)
+                {
+                    return alias.DefinitionNode is { } definitionNode
+                        ? TryExpandGenericAliasFromNode(named.Name, definitionNode, alias.TypeParams, typeArgs)
+                        : null;
                 }
                 return ResolveGenericType(named.Name, typeArgs);
             }
@@ -244,6 +251,86 @@ public partial class TypeChecker
         }
 
         return new TypeInfo.Tuple(elements, requiredCount, restType);
+    }
+
+    /// <summary>
+    /// The generic names <see cref="ResolveGenericType"/> handles ahead of its alias lookup —
+    /// kept in its branch order. A user alias with one of these names is shadowed by the
+    /// built-in on BOTH paths.
+    /// </summary>
+    private static bool IsBuiltInGenericName(string name) => name is
+        "Array" or "ReadonlyArray" or "Promise" or "Generator" or "AsyncGenerator" or
+        "Partial" or "Required" or "Readonly" or "Record" or "Pick" or "Omit" or
+        "ReturnType" or "Parameters" or "ConstructorParameters" or "InstanceType" or
+        "ThisType" or "Awaited" or "NonNullable" or "Extract" or "Exclude" or
+        "Uppercase" or "Lowercase" or "Capitalize" or "Uncapitalize";
+
+    /// <summary>
+    /// Expands a generic alias from its definition node: the type parameters are bound to the
+    /// (already-resolved) arguments in a child scope and the definition resolves node-first —
+    /// no argument-string substitution, no definition re-parse. Mirrors the string path's
+    /// guards exactly: TS2314 arity, open-type-variable deferral, the TS2589 depth limit, the
+    /// recursion placeholder (same instantiation key derivation), and the same post-expansion
+    /// passes. Null (component without node support) falls back to the string path.
+    /// </summary>
+    private TypeInfo? TryExpandGenericAliasFromNode(
+        string baseName, TypeNode definitionNode, List<string> typeParamNames, List<TypeInfo> typeArgs)
+    {
+        if (typeArgs.Count != typeParamNames.Count)
+        {
+            throw new TypeCheckException(
+                $" Type alias '{baseName}' requires {typeParamNames.Count} type argument(s), got {typeArgs.Count}.",
+                tsCode: "TS2314");
+        }
+
+        // Open type variables (a mapped-type parameter mid-parse) defer instantiation, exactly
+        // like the string path (#185).
+        if (typeArgs.Any(ContainsOpenTypeVariable))
+            return new TypeInfo.RecursiveTypeAlias(baseName, typeArgs);
+
+        var typeArgStrings = typeArgs.Select(TypeInfoToString).ToList();
+        string aliasKey = $"{baseName}<{string.Join(",", typeArgStrings)}>";
+        _typeAliasExpansionStack ??= new HashSet<string>(StringComparer.Ordinal);
+
+        if (_typeAliasExpansionStack.Count >= MaxTypeAliasExpansionDepth)
+        {
+            throw new TypeCheckException(
+                " Type instantiation is excessively deep and possibly infinite.",
+                tsCode: "TS2589");
+        }
+
+        if (_typeAliasExpansionStack.Contains(aliasKey))
+            return new TypeInfo.RecursiveTypeAlias(baseName, typeArgs);
+
+        _typeAliasExpansionStack.Add(aliasKey);
+        try
+        {
+            var aliasEnv = new TypeEnvironment(_environment);
+            for (int i = 0; i < typeParamNames.Count; i++)
+                aliasEnv.DefineTypeParameter(typeParamNames[i], typeArgs[i]);
+
+            TypeInfo? result;
+            using (new EnvironmentScope(this, aliasEnv))
+            {
+                result = TryToTypeInfo(definitionNode);
+            }
+            if (result is null) return null;
+
+            // A nested alias may have expanded via the string path and produced a deferred
+            // conditional/mapped form — apply the same post-expansion passes as the string path.
+            if (result is TypeInfo.ConditionalType condResult && !ContainsOpenTypeVariable(condResult))
+                result = EvaluateConditionalType(condResult);
+            if (result is TypeInfo.MappedType mappedResult && !ContainsOpenTypeVariable(mappedResult))
+                result = ExpandMappedType(mappedResult);
+
+            result = FlattenTupleSpreads(result);
+            ValidateSpreadConstraints(result);
+            return result;
+        }
+        finally
+        {
+            _typeAliasExpansionStack.Remove(aliasKey);
+        }
     }
 
     /// <summary>

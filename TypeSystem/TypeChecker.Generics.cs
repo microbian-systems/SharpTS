@@ -241,7 +241,7 @@ public partial class TypeChecker
             var genericAlias = _environment.GetGenericTypeAlias(baseName);
             if (genericAlias != null)
             {
-                var (definition, typeParamNames) = genericAlias.Value;
+                var (definition, typeParamNames, _) = genericAlias.Value;
                 if (typeArgs.Count != typeParamNames.Count)
                 {
                     throw new TypeCheckException($" Type alias '{baseName}' requires {typeParamNames.Count} type argument(s), got {typeArgs.Count}.", tsCode: "TS2314");
