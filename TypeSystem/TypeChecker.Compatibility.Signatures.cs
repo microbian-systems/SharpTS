@@ -358,13 +358,17 @@ public partial class TypeChecker
                 // A position absent on one side (and not covered by a rest param) is unconstrained.
                 if (fp1 is null || fp2 is null) continue;
 
-                // Callback rule (scoped to variance measurement): when both parameters are pure
-                // function types, relate them SWAPPED (target's callback as the source) with
-                // strict parameters inside — callbacks are output positions, so a type parameter
-                // used only in callback-parameter positions measures covariant (tsc's Promise
-                // rule, checker.ts compareSignaturesRelated).
-                if (_varianceMeasurementDepth > 0 && !inCallback &&
-                    fp1 is TypeInfo.Function targetCb && fp2 is TypeInfo.Function sourceCb)
+                // Callback rule: when both parameters are pure function types, relate them
+                // SWAPPED (target's callback as the source) with strict parameters inside —
+                // callbacks are output positions, so they relate covariantly even where plain
+                // parameters would be bivariant (tsc's Promise rule, checker.ts
+                // compareSignaturesRelated). Suppressed when either side's position was a NAKED
+                // type parameter before instantiation (tsc's isInstantiatedGenericParameter,
+                // #51620): `set(value: T)` instantiated with a function type stays bivariant —
+                // the function-ness came from the argument, not the declaration.
+                if (!inCallback &&
+                    fp1 is TypeInfo.Function targetCb && fp2 is TypeInfo.Function sourceCb &&
+                    !f1.IsInstantiatedTypeParamPosition(i) && !f2.IsInstantiatedTypeParamPosition(i))
                 {
                     bool related;
                     _inCallbackComparison = true;

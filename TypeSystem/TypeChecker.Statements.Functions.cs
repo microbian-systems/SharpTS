@@ -121,16 +121,16 @@ public partial class TypeChecker
             switch (stmt)
             {
                 case Stmt.Const constStmt when constStmt.Initializer is Expr.ArrowFunction arrow:
-                    HoistConstFunctionExpression(constStmt.Name, constStmt.TypeAnnotation, arrow);
+                    HoistConstFunctionExpression(constStmt.Name, constStmt.TypeAnnotation, arrow, constStmt.TypeAnnotationNode);
                     break;
 
                 case Stmt.Var varStmt when varStmt.Initializer is Expr.ArrowFunction arrow:
-                    HoistConstFunctionExpression(varStmt.Name, varStmt.TypeAnnotation, arrow);
+                    HoistConstFunctionExpression(varStmt.Name, varStmt.TypeAnnotation, arrow, varStmt.TypeAnnotationNode);
                     break;
 
                 case Stmt.Export export when export.Declaration is Stmt.Const exportedConst
                     && exportedConst.Initializer is Expr.ArrowFunction arrow:
-                    HoistConstFunctionExpression(exportedConst.Name, exportedConst.TypeAnnotation, arrow);
+                    HoistConstFunctionExpression(exportedConst.Name, exportedConst.TypeAnnotation, arrow, exportedConst.TypeAnnotationNode);
                     break;
             }
         }
@@ -139,17 +139,19 @@ public partial class TypeChecker
     /// <summary>
     /// Hoists a single const function expression by registering its type without checking the body.
     /// </summary>
-    private void HoistConstFunctionExpression(Token name, string? typeAnnotation, Expr.ArrowFunction arrow)
+    private void HoistConstFunctionExpression(Token name, string? typeAnnotation, Expr.ArrowFunction arrow, TypeNode? typeAnnotationNode = null)
     {
         // Skip if already defined
         if (_environment.IsDefinedLocally(name.Lexeme)) return;
 
         // An explicit annotation is authoritative — hoist with IT, not with the arrow's
         // inferred shape (which collapses unannotated params to any and then trips the TS2403
-        // redeclaration check when the real declaration is visited).
+        // redeclaration check when the real declaration is visited). Resolve node-first so the
+        // hoisted type matches VisitVar's resolution exactly (substitution-origin marks and all);
+        // a string/node split here re-trips TS2403 on identical renderings.
         if (typeAnnotation is not null)
         {
-            try { _environment.Define(name.Lexeme, ToTypeInfo(typeAnnotation)); }
+            try { _environment.Define(name.Lexeme, ResolveAnnotation(typeAnnotation, typeAnnotationNode)!); }
             catch { _environment.Define(name.Lexeme, new TypeInfo.Any()); }
             return;
         }

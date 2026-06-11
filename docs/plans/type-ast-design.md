@@ -148,7 +148,18 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
      leak and a name-keyed stale-true cache hit had been cancelling each other out).
      Interface declaration ids (replacing the `CacheKey()` structural fingerprint) remain —
      they need instantiation-aware keys, which ties into slice 5.
-5. Substitution-origin marking (unblocks #202's callback rule → `covariantCallbacks`).
+5. ✅ **Shipped: substitution-origin marking — `covariantCallbacks` passes (Pass 66 → 67), closing #202.**
+   `TypeInfo.Function.InstantiatedTypeParamPositions` records which parameter positions were
+   NAKED type parameters before instantiation (tsc's `isInstantiatedGenericParameter`),
+   set by `Substitute` (rewrite path) and by node-path alias expansion (where substitution
+   is a scope binding — the mark detects a bare type-parameter reference bound to a
+   concrete type). The callback comparison rule is now ALWAYS ON (was measurement-scoped),
+   gated off at marked positions: `set(value: T)` instantiated with a function type stays
+   bivariant (tsc #51620), while declared callback positions (`forEach(cb: (item: A) => void)`)
+   relate covariantly. Marks participate in `CacheKey()` (origin changes assignability).
+   Wiring fixed en route: ambient `declare let/const` annotations and pre-registered
+   (forward-referenced) alias definitions now carry their nodes; arrow-hoisting resolves
+   annotations node-first so both resolutions of one annotation agree.
 6. Delete `TypeChecker.TypeParsing.cs` string scanning; `ToTypeInfo(string)` survives only
    for the REPL/embedding API surface, implemented as parse-to-node + convert.
 
