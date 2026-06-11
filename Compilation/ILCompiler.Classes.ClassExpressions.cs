@@ -338,6 +338,7 @@ public partial class ILCompiler
         {
             foreach (var accessor in classExpr.Accessors)
             {
+                RejectComputedAccessor(accessor);
                 string accessorName = accessor.Name.Lexeme;
                 string pascalName = NamingConventions.ToPascalCase(accessorName);
                 string methodName = accessor.Kind.Type == TokenType.GET

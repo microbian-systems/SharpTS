@@ -279,6 +279,39 @@ public class SharpTSClass(
         return false;
     }
 
+    // Symbol-keyed declared accessors (`get [Symbol.toStringTag]() {...}`,
+    // `static get [Symbol.species]() {...}`). Computed accessor keys are
+    // evaluated at class-definition time; symbol-valued keys land here,
+    // string-valued keys go into the regular getter/setter dictionaries.
+    // Lazy — most classes declare none.
+    private Dictionary<SharpTSSymbol, SharpTSFunction>? _symbolGetters;
+    private Dictionary<SharpTSSymbol, SharpTSFunction>? _symbolSetters;
+    private Dictionary<SharpTSSymbol, SharpTSFunction>? _staticSymbolGetters;
+    private Dictionary<SharpTSSymbol, SharpTSFunction>? _staticSymbolSetters;
+
+    public void AddSymbolAccessor(SharpTSSymbol symbol, SharpTSFunction func, bool isStatic, bool isGetter)
+    {
+        switch (isStatic, isGetter)
+        {
+            case (true, true): (_staticSymbolGetters ??= [])[symbol] = func; break;
+            case (true, false): (_staticSymbolSetters ??= [])[symbol] = func; break;
+            case (false, true): (_symbolGetters ??= [])[symbol] = func; break;
+            case (false, false): (_symbolSetters ??= [])[symbol] = func; break;
+        }
+    }
+
+    public SharpTSFunction? FindSymbolGetter(SharpTSSymbol symbol)
+        => _symbolGetters?.GetValueOrDefault(symbol) ?? Superclass?.FindSymbolGetter(symbol);
+
+    public SharpTSFunction? FindSymbolSetter(SharpTSSymbol symbol)
+        => _symbolSetters?.GetValueOrDefault(symbol) ?? Superclass?.FindSymbolSetter(symbol);
+
+    public SharpTSFunction? FindStaticSymbolGetter(SharpTSSymbol symbol)
+        => _staticSymbolGetters?.GetValueOrDefault(symbol) ?? Superclass?.FindStaticSymbolGetter(symbol);
+
+    public SharpTSFunction? FindStaticSymbolSetter(SharpTSSymbol symbol)
+        => _staticSymbolSetters?.GetValueOrDefault(symbol) ?? Superclass?.FindStaticSymbolSetter(symbol);
+
     public SharpTSFunction? FindGetter(string name)
     {
         // Check cache first

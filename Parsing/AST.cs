@@ -366,7 +366,11 @@ public abstract record Stmt
     /// ComputedKey contains the expression and Name is a synthetic token.
     /// </summary>
     public record Field(Token Name, string? TypeAnnotation, Expr? Initializer, bool IsStatic = false, AccessModifier Access = AccessModifier.Public, bool IsReadonly = false, bool IsOptional = false, bool HasDefiniteAssignmentAssertion = false, List<Decorator>? Decorators = null, bool IsPrivate = false, bool IsDeclare = false, Expr? ComputedKey = null) : Stmt;
-    public record Accessor(Token Name, Token Kind, Parameter? SetterParam, List<Stmt> Body, string? ReturnType, AccessModifier Access = AccessModifier.Public, bool IsAbstract = false, bool IsOverride = false, List<Decorator>? Decorators = null, bool IsStatic = false) : Stmt;
+    /// <summary>
+    /// Getter/setter declaration. For computed accessor names (e.g., static get [Symbol.species]()),
+    /// ComputedKey contains the expression and Name is a synthetic token.
+    /// </summary>
+    public record Accessor(Token Name, Token Kind, Parameter? SetterParam, List<Stmt> Body, string? ReturnType, AccessModifier Access = AccessModifier.Public, bool IsAbstract = false, bool IsOverride = false, List<Decorator>? Decorators = null, bool IsStatic = false, Expr? ComputedKey = null) : Stmt;
     /// <summary>
     /// Auto-accessor field declaration (TypeScript 4.9+): accessor name: Type = initializer
     /// Automatically generates a private backing field with implicit getter/setter.

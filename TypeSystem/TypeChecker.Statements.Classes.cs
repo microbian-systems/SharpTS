@@ -303,6 +303,13 @@ public partial class TypeChecker
                     : DecoratorTarget.Setter;
                 CheckDecorators(accessor.Decorators, accessorTarget);
 
+                // Computed accessor names (get [Symbol.x]()) have no static member
+                // name to register; their bodies are still checked later.
+                if (accessor.ComputedKey != null)
+                {
+                    continue;
+                }
+
                 string propName = accessor.Name.Lexeme;
 
                 if (accessor.Kind.Type == TokenType.GET)
@@ -782,7 +789,11 @@ public partial class TypeChecker
                     TypeInfo accessorReturnType;
                     if (accessor.Kind.Type == TokenType.GET)
                     {
-                        accessorReturnType = classTypeForBody.Getters[accessor.Name.Lexeme];
+                        // Computed-name accessors aren't registered in Getters/Setters
+                        // (no static member name); derive types from the declaration.
+                        accessorReturnType = accessor.ComputedKey != null
+                            ? (accessor.ReturnType != null ? ToTypeInfo(accessor.ReturnType) : new TypeInfo.Any())
+                            : classTypeForBody.Getters[accessor.Name.Lexeme];
                     }
                     else
                     {
@@ -791,7 +802,9 @@ public partial class TypeChecker
                         // Add setter parameter to environment
                         if (accessor.SetterParam != null)
                         {
-                            TypeInfo setterParamType = classTypeForBody.Setters[accessor.Name.Lexeme];
+                            TypeInfo setterParamType = accessor.ComputedKey != null
+                                ? (accessor.SetterParam.Type != null ? ToTypeInfo(accessor.SetterParam.Type) : new TypeInfo.Any())
+                                : classTypeForBody.Setters[accessor.Name.Lexeme];
                             accessorEnv.Define(accessor.SetterParam.Name.Lexeme, setterParamType);
                         }
                     }
@@ -988,6 +1001,12 @@ public partial class TypeChecker
         {
             foreach (var accessor in classStmt.Accessors)
             {
+                // Computed accessor names have no static member name to register.
+                if (accessor.ComputedKey != null)
+                {
+                    continue;
+                }
+
                 TypeInfo accessorType = accessor.ReturnType != null
                     ? ToTypeInfo(accessor.ReturnType)
                     : new TypeInfo.Any();

@@ -198,7 +198,7 @@ public partial class Parser
                 }
 
                 Token kind = Advance(); // consume 'get' or 'set'
-                Token accessorName = Consume(TokenType.IDENTIFIER, "Expect property name after 'get'/'set'.");
+                (Token accessorName, Expr? accessorComputedKey) = ParseAccessorName();
                 Consume(TokenType.LEFT_PAREN, "Expect '(' after accessor name.");
 
                 Stmt.Parameter? setterParam = null;
@@ -235,7 +235,7 @@ public partial class Parser
                     body = Block();
                 }
 
-                accessors.Add(new Stmt.Accessor(accessorName, kind, setterParam, body, returnType, access, isMemberAbstract, isOverride, memberDecorators, isStatic));
+                accessors.Add(new Stmt.Accessor(accessorName, kind, setterParam, body, returnType, access, isMemberAbstract, isOverride, memberDecorators, isStatic, accessorComputedKey));
             }
             // Check for private field: #name...
             else if (Peek().Type == TokenType.PRIVATE_IDENTIFIER)
@@ -724,7 +724,7 @@ public partial class Parser
                 }
 
                 Token kind = Advance(); // consume 'get' or 'set'
-                Token accessorName = Consume(TokenType.IDENTIFIER, "Expect property name after 'get'/'set'.");
+                (Token accessorName, Expr? accessorComputedKey) = ParseAccessorName();
                 Consume(TokenType.LEFT_PAREN, "Expect '(' after accessor name.");
 
                 Stmt.Parameter? setterParam = null;
@@ -750,7 +750,7 @@ public partial class Parser
                 Consume(TokenType.LEFT_BRACE, "Expect '{' before accessor body.");
                 List<Stmt> body = Block();
 
-                accessors.Add(new Stmt.Accessor(accessorName, kind, setterParam, body, returnType, access, IsStatic: isStatic));
+                accessors.Add(new Stmt.Accessor(accessorName, kind, setterParam, body, returnType, access, IsStatic: isStatic, ComputedKey: accessorComputedKey));
             }
             // Check for private field/method: #name...
             else if (Peek().Type == TokenType.PRIVATE_IDENTIFIER)

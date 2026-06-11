@@ -439,12 +439,16 @@ public abstract class AstVisitorBase
 
     protected virtual void VisitField(Stmt.Field stmt)
     {
+        if (stmt.ComputedKey != null)
+            Visit(stmt.ComputedKey);
         if (stmt.Initializer != null)
             Visit(stmt.Initializer);
     }
 
     protected virtual void VisitAccessor(Stmt.Accessor stmt)
     {
+        if (stmt.ComputedKey != null)
+            Visit(stmt.ComputedKey);
         foreach (var s in stmt.Body)
             Visit(s);
     }

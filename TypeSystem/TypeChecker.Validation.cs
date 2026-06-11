@@ -279,6 +279,12 @@ public partial class TypeChecker
         {
             foreach (var accessor in classStmt.Accessors)
             {
+                // Computed accessor names can't be validated against parent members.
+                if (accessor.ComputedKey != null)
+                {
+                    continue;
+                }
+
                 if (accessor.IsOverride)
                 {
                     string propertyName = accessor.Name.Lexeme;
