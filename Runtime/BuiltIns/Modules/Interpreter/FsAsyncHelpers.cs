@@ -9,6 +9,18 @@ namespace SharpTS.Runtime.BuiltIns.Modules.Interpreter;
 public static class FsAsyncHelpers
 {
     /// <summary>
+    /// Test-only latency injection: when SHARPTS_TEST_FS_ASYNC_DELAY_MS is set, async fs
+    /// operations stall that long before doing real work. Deterministically reproduces the
+    /// slow-I/O timing of loaded CI machines (AV scans, cold disks) that exposed the
+    /// event-loop quiescence give-up on in-flight native tasks. Read per call so a test can
+    /// scope it with try/finally. Same env-var seam pattern as SHARPTS_DNS_SERVER (#225).
+    /// </summary>
+    private static Task InjectedTestLatency()
+        => int.TryParse(Environment.GetEnvironmentVariable("SHARPTS_TEST_FS_ASYNC_DELAY_MS"), out var ms) && ms > 0
+            ? Task.Delay(ms)
+            : Task.CompletedTask;
+
+    /// <summary>
     /// Asynchronously reads the entire contents of a file.
     /// </summary>
     /// <param name="path">The path to the file.</param>
@@ -16,6 +28,7 @@ public static class FsAsyncHelpers
     /// <returns>A string if encoding is provided, otherwise a SharpTSBuffer.</returns>
     public static async Task<object?> ReadFileAsync(string path, object? encoding)
     {
+        await InjectedTestLatency();
         if (encoding != null)
         {
             // Return as string
@@ -37,6 +50,7 @@ public static class FsAsyncHelpers
     /// <param name="options">Optional options (encoding, mode, flag).</param>
     public static async Task WriteFileAsync(string path, object? data, object? options)
     {
+        await InjectedTestLatency();
         if (data is SharpTSBuffer buffer)
         {
             await File.WriteAllBytesAsync(path, buffer.Data);
