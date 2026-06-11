@@ -30,9 +30,23 @@ public partial class TypeChecker
             case NamedTypeNode { TypeArguments: null } named:
                 return ToTypeInfo(named.Name);
 
-            // Generic references are slice 2 (alias expansion needs argument strings today).
-            case NamedTypeNode:
-                return null;
+            // Generic references resolve their argument nodes and reuse the SAME instantiation
+            // machinery as the string path (built-in generics, utility types, generic
+            // classes/interfaces/functions — including its TS2314 arity errors). Generic ALIASES
+            // still fall back: their expansion is textual substitution of the ORIGINAL argument
+            // spellings, and re-rendered argument strings could shift recursion/instantiation
+            // keys. Aliases move off strings when their definitions are stored as nodes.
+            case NamedTypeNode { TypeArguments: { } argNodes } named:
+            {
+                if (_environment.GetGenericTypeAlias(named.Name) != null) return null;
+                List<TypeInfo> typeArgs = new(argNodes.Count);
+                foreach (var argNode in argNodes)
+                {
+                    if (TryToTypeInfo(argNode) is not { } arg) return null;
+                    typeArgs.Add(arg);
+                }
+                return ResolveGenericType(named.Name, typeArgs);
+            }
 
             case LiteralTypeNode lit:
                 return lit.Value switch
