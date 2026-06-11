@@ -332,8 +332,41 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notSymbolTypeLabel);
 
-        // A built-in constructor Type without a call-form helper (e.g. the
-        // aliased `var f = Object; f(x)` pattern lodash uses). These ARE
+        // Object call form (`var f = Object; f(x)` — lodash's overArg ToObject
+        // coercion). ECMA-262 §20.1.1.1: undefined/null/missing → fresh plain
+        // object; everything else → ToObject. Objects pass through unchanged;
+        // primitives are returned as-is (this runtime treats primitives as
+        // their own object forms — same convention as the syntactic path).
+        var notObjectTypeLabel = il.DefineLabel();
+        var objectFreshLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.Type);
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle", [_types.RuntimeTypeHandle])!);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Brfalse, notObjectTypeLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Brfalse, objectFreshLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Brfalse, objectFreshLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, objectFreshLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(objectFreshLabel);
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notObjectTypeLabel);
+
+        // A built-in constructor Type without a call-form helper. These ARE
         // callable in JS, so the #260 throwing fallback must not fire here;
         // unwired ones keep returning null until their call forms are wired
         // in incrementally (#61).

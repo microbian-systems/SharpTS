@@ -1509,7 +1509,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, paramCountLocal);
         il.Emit(OpCodes.Bge, needsTrimming);
 
-        // Pad with nulls: result = new object[paramCount]; Array.Copy(args, result, argsLength)
+        // Pad missing args: result = new object[paramCount]; Array.Copy(args, result, argsLength)
         il.Emit(OpCodes.Ldloc, paramCountLocal);
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Stloc, resultLocal);
@@ -1517,6 +1517,35 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldloc, argsLengthLocal);
         il.Emit(OpCodes.Call, _types.ArrayType.GetMethod("Copy", [_types.ArrayType, _types.ArrayType, _types.Int32])!);
+
+        // Fill the padded tail with the $Undefined singleton, matching the
+        // direct-call emitter's missing-arg convention (see EmitDefaultParameters
+        // in ILEmitter.Helpers.cs). Null padding is observably different for
+        // callees that distinguish absent/undefined from explicit null — e.g.
+        // value-form Object.create(proto) threw "Cannot convert undefined or
+        // null to object" because the padded props slot read as JS null.
+        if (runtime.UndefinedInstance != null)
+        {
+            var padLoopStart = il.DefineLabel();
+            var padLoopEnd = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, argsLengthLocal);
+            il.Emit(OpCodes.Stloc, indexLocal);
+            il.MarkLabel(padLoopStart);
+            il.Emit(OpCodes.Ldloc, indexLocal);
+            il.Emit(OpCodes.Ldloc, paramCountLocal);
+            il.Emit(OpCodes.Bge, padLoopEnd);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, indexLocal);
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Ldloc, indexLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, indexLocal);
+            il.Emit(OpCodes.Br, padLoopStart);
+            il.MarkLabel(padLoopEnd);
+        }
+
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 

@@ -963,9 +963,6 @@ public partial class RuntimeEmitter
         // Number.prototype populate body — must come AFTER EmitNumberMethods so
         // NumberToFixed/etc. MethodBuilders are non-null.
         EmitNumberPrototypePopulate(typeBuilder, runtime);
-        // Fill in LookupBuiltInStaticMember's body now that IsArray, NumberIs*,
-        // StringFrom*, and TSFunctionCtor are all in place (#63).
-        EmitLookupBuiltInStaticMemberBody(runtime);
         // Fill in the symbol-keyed accessor registry helper bodies (#266).
         EmitSymbolAccessorRegistryBodies(runtime);
         // Microtask method (queueMicrotask) - must come before timer infrastructure so ProcessMicrotasks is available
@@ -975,6 +972,11 @@ public partial class RuntimeEmitter
         // Date methods
         if (_features.UsesDate)
             EmitDateMethods(typeBuilder, runtime);
+        // Fill in LookupBuiltInStaticMember's body now that IsArray, NumberIs*,
+        // StringFrom*, TSFunctionCtor (#63) and DateNow (value-form `Date.now`,
+        // gated on UsesDate) are all in place. Only the body is late — the
+        // MethodBuilder was defined early, so earlier emitters can call it.
+        EmitLookupBuiltInStaticMemberBody(runtime);
         // RegExp methods moved earlier — emitted before EmitStringPrototypePopulate.
         // Error methods
         EmitErrorMethods(typeBuilder, runtime);
