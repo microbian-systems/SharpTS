@@ -1064,4 +1064,31 @@ public class PromiseMethodTests
     }
 
     #endregion
+
+    #region Executor rejection reason
+
+    /// <summary>
+    /// The executor reject callback must hand the guest value through
+    /// unchanged — the compiled $PromiseRejectCallback used to re-wrap it as
+    /// new Exception(reason.ToString()), so catch handlers saw a host string
+    /// ("Error: nope") instead of the rejected error object (#232 family).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExecutorReject_PreservesGuestReason(ExecutionMode mode)
+    {
+        var source = """
+            async function main(): Promise<void> {
+                const p = new Promise<number>((resolve, reject) => { reject(new TypeError("raw")); });
+                const v = await p.catch((e: any) => (e instanceof TypeError) + ":" + e.message);
+                console.log(v);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true:raw\n", output);
+    }
+
+    #endregion
 }

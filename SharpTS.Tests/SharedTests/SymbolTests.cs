@@ -537,6 +537,117 @@ public class SymbolTests
 
     #endregion
 
+    #region Implicit Symbol-to-String Coercion Throws (#245)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_TemplateLiteralInterpolation_ThrowsTypeError(ExecutionMode mode)
+    {
+        // ECMA-262 §7.1.17 ToString: implicit coercion of a Symbol throws.
+        var source = """
+            const s = Symbol("d");
+            try {
+                const t = `value: ${s}`;
+                console.log("no throw", t);
+            } catch (e) {
+                console.log(e instanceof TypeError, e.message);
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true Cannot convert a Symbol value to a string\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_StringPlusConcat_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = """
+            const s = Symbol("d");
+            try {
+                const t = "x" + (s as any);
+                console.log("no throw", t);
+            } catch (e) {
+                console.log(e instanceof TypeError, e.message);
+            }
+            try {
+                const t = (s as any) + "x";
+                console.log("no throw", t);
+            } catch (e) {
+                console.log(e instanceof TypeError, e.message);
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal(
+            "true Cannot convert a Symbol value to a string\n" +
+            "true Cannot convert a Symbol value to a string\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_PlusEqualConcat_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = """
+            const s = Symbol("d");
+            let acc = "x";
+            try {
+                acc += (s as any);
+                console.log("no throw", acc);
+            } catch (e) {
+                console.log(e instanceof TypeError, e.message);
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true Cannot convert a Symbol value to a string\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_TemplateLiteralInAsyncFunction_ThrowsTypeError(ExecutionMode mode)
+    {
+        // The async/generator state-machine emitters build template literals
+        // through a separate path than the sync emitter — cover it explicitly.
+        var source = """
+            const s = Symbol("d");
+            async function f(): Promise<string> {
+                await Promise.resolve();
+                return `v: ${s}`;
+            }
+            async function main(): Promise<void> {
+                try {
+                    console.log(await f());
+                } catch (e) {
+                    console.log(e instanceof TypeError, e.message);
+                }
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true Cannot convert a Symbol value to a string\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_ExplicitForms_StillStringify(ExecutionMode mode)
+    {
+        // Only implicit coercion throws: String(sym), sym.toString(), and
+        // console.log(sym) formatting all keep returning "Symbol(d)".
+        var source = """
+            const s = Symbol("d");
+            console.log(String(s));
+            console.log(s.toString());
+            console.log(s);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Symbol(d)\nSymbol(d)\nSymbol(d)\n", output);
+    }
+
+    #endregion
+
     #region Symbol as First-Class Global (#234)
 
     [Theory]

@@ -1012,11 +1012,16 @@ public partial class Interpreter
         // String concatenation path
         if (op == TokenType.PLUS_EQUAL && left.IsString)
         {
+            // ECMA-262 §7.1.17: a Symbol operand cannot be coerced to a string.
+            ThrowIfSymbolStringCoercion(right.ToObject());
             return RuntimeValue.FromString(string.Concat(left.AsStringUnsafe(), Stringify(right.ToObject())));
         }
 
         // Fallback for mixed types
         object? l2 = left.ToObject(), r2 = right.ToObject();
+        // ECMA-262 §7.1.17: a string `+=` Symbol operand cannot coerce to string.
+        if (op == TokenType.PLUS_EQUAL && l2 is string)
+            ThrowIfSymbolStringCoercion(r2);
         return op switch
         {
             TokenType.PLUS_EQUAL => RuntimeValue.FromBoxed(
@@ -1098,6 +1103,9 @@ public partial class Interpreter
             result.Append(strings[i]);
             if (i < evaluatedExprs.Count)
             {
+                // ECMA-262 §7.1.17: template-literal interpolation is an
+                // implicit ToString coercion — a Symbol substitution throws.
+                ThrowIfSymbolStringCoercion(evaluatedExprs[i]);
                 result.Append(Stringify(evaluatedExprs[i]));
             }
         }

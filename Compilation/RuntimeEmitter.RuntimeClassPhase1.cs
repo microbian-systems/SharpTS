@@ -80,6 +80,17 @@ public partial class RuntimeEmitter
             _types.String,
             [_types.Object]);
 
+        // Reserve StringifyCoerce(object) → string — Stringify plus the
+        // ECMA-262 §7.1.17 Symbol guard (implicit ToString coercion throws
+        // TypeError for Symbol values). Reserved here because $Runtime.Add's
+        // string-concat arm (emitted before EmitToJsString) references it;
+        // EmitStringifyCoerce fills the body later.
+        runtime.StringifyCoerce = typeBuilder.DefineMethod(
+            "StringifyCoerce",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]);
+
         // Reserve JsToInt32(object) → int. ECMA-262 §7.1.6 ToInt32 chain
         // (ToNumber → ToPrimitive → valueOf). Forward-declared so $RegExp's
         // Symbol.match empty-match advance can read `lastIndex` and propagate

@@ -121,6 +121,8 @@ public class EmittedRuntime
     public MethodBuilder ToJsString { get; set; } = null!;
     /// <summary>$Runtime.StringFromValue(object) -> string — ECMA-262 §22.1.1.1 String(value) call form: Symbol → SymbolDescriptiveString (via $TSSymbol.ToString()); everything else → ToJsString. Only the String() constructor-call form is exempt from ToString's Symbol TypeError; implicit coercions (template literals, concat) must keep throwing.</summary>
     public MethodBuilder StringFromValueMethod { get; set; } = null!;
+    /// <summary>$Runtime.StringifyCoerce(object) -> string — Stringify with the ECMA-262 §7.1.17 Symbol guard: implicit ToString coercion sites (template-literal interpolation, string <c>+</c>/<c>+=</c> concatenation) throw TypeError for Symbol values. Console formatting and the String() call form must NOT route through this.</summary>
+    public MethodBuilder StringifyCoerce { get; set; } = null!;
     public MethodBuilder ToNumber { get; set; } = null!;
     public MethodBuilder ConvertToNumber { get; set; } = null!;
     public MethodBuilder JsToInt32 { get; set; } = null!;

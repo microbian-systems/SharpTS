@@ -46,12 +46,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, lengthLocal);
         il.Emit(OpCodes.Bge, loopEnd);
 
-        // sb.Append(Stringify(parts[index]))
+        // sb.Append(StringifyCoerce(parts[index])) — template-literal
+        // interpolation is an implicit ToString coercion, so Symbol parts
+        // throw TypeError (§7.1.17).
         il.Emit(OpCodes.Ldloc, sbLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldloc, indexLocal);
         il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.StringifyCoerce);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
         il.Emit(OpCodes.Pop); // discard StringBuilder return value
 
