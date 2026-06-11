@@ -43,6 +43,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
         il.Emit(OpCodes.Brtrue, symbolKeyLabel);
 
+        // globalThis/global sentinel (#271): `root[stringKey]` resolves through
+        // GlobalThisGetProperty (the index is coerced to a property-key string),
+        // mirroring the value-position GetProperty routing. Symbol keys are handled
+        // above by the per-object symbol-dict path.
+        var notGlobalThisIdxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+        il.Emit(OpCodes.Bne_Un, notGlobalThisIdxLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Call, runtime.GlobalThisGetProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notGlobalThisIdxLabel);
+
         // $Buffer (check before TypedArray — the emitted IsTypedArray helper
         // excludes $Buffer, and GetTypedArrayElement would throw for it).
         if (_features.UsesBuffer)
@@ -733,6 +747,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
         il.Emit(OpCodes.Brtrue, symbolKeyLabel);
+
+        // globalThis/global sentinel (#271): `root[stringKey] = v` stores into the
+        // shared global-properties dictionary. Symbol keys fall through to the
+        // per-object symbol-dict path above.
+        var notGlobalThisIdxSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+        il.Emit(OpCodes.Bne_Un, notGlobalThisIdxSetLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.GlobalThisSetProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notGlobalThisIdxSetLabel);
 
         // $Buffer (check before TypedArray — IsTypedArray excludes $Buffer).
         if (_features.UsesBuffer)

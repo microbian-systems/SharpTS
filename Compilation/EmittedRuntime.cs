@@ -389,6 +389,15 @@ public class EmittedRuntime
     // silently vanished.
     public FieldBuilder MathSingletonField { get; set; } = null!;
     /// <summary>
+    /// globalThis/global singleton — a sentinel object referenced from value
+    /// position (`var root = globalThis`) so root/context detection in packages
+    /// like lodash finds a real object instead of null (#271). Dynamic GetProperty/
+    /// GetIndex/SetProperty/SetIndex ref-test against this field and route to
+    /// GlobalThisGetProperty/GlobalThisSetProperty. The syntactic `globalThis.X`
+    /// path is still intercepted at compile time by GlobalThisStaticEmitter.
+    /// </summary>
+    public FieldBuilder GlobalThisSingletonField { get; set; } = null!;
+    /// <summary>
     /// Boolean.prototype singleton — a Dictionary&lt;string, object&gt; that surfaces
     /// when user code does <c>Boolean.prototype[0] = …</c> or
     /// <c>Boolean.prototype.length = …</c>. Read by GetProperty's Type-receiver

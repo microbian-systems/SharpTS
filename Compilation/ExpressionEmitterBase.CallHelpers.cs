@@ -815,10 +815,10 @@ public abstract partial class ExpressionEmitterBase
     /// lodash/core-js global-detection idiom: <c>Function('return this')()</c>.
     /// The Function constructor isn't supported in either mode, but this probe
     /// just means "give me globalThis". Compiled mode represents globalThis in
-    /// value position as null (see EmitVariable), so emit the same null —
-    /// packages probing via <c>freeGlobal || freeSelf || Function('return this')()</c>
-    /// keep their pre-#260 fallback behavior instead of hitting the
-    /// non-callable TypeError (the Function constructor result isn't callable).
+    /// value position as the runtime sentinel (#271, see EmitVariable), so emit
+    /// the same value — packages probing via
+    /// <c>freeGlobal || freeSelf || Function('return this')()</c> get a real
+    /// root object whose <c>.Object</c>/<c>.Math</c> resolve to real constructors.
     /// </summary>
     protected bool TryEmitFunctionReturnThisIdiom(Expr.Call c)
     {
@@ -829,7 +829,7 @@ public abstract partial class ExpressionEmitterBase
             && inner.Arguments[0] is Expr.Literal { Value: string body }
             && body.Trim() == "return this")
         {
-            IL.Emit(OpCodes.Ldnull);
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.GlobalThisSingletonField);
             SetStackUnknown();
             return true;
         }

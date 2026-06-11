@@ -1390,6 +1390,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
+        // globalThis/global sentinel (#271): a value-position globalThis reads
+        // properties through GlobalThisGetProperty (user props → built-in
+        // constructors/singletons), so `root.Object`/`root.Math` resolve to real
+        // values. Checked first so the bare-object sentinel never falls through to
+        // the class-instance handler (which would report every member undefined).
+        var notGlobalThisLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+        il.Emit(OpCodes.Bne_Un, notGlobalThisLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.GlobalThisGetProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notGlobalThisLabel);
+
         // __proto__ accessor (ECMA-262 Annex B.2.2.1): obj.__proto__ delegates
         // to Object.getPrototypeOf(obj). All object types support this — the
         // accessor lives on Object.prototype, but intercepting here avoids
@@ -3300,6 +3314,19 @@ public partial class RuntimeEmitter
         // null check
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // globalThis/global sentinel (#271): `root.foo = v` stores into the shared
+        // global-properties dictionary, visible to subsequent GlobalThisGetProperty
+        // reads. Mirrors the syntactic `globalThis.foo = v` path.
+        var notGlobalThisSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+        il.Emit(OpCodes.Bne_Un, notGlobalThisSetLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.GlobalThisSetProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notGlobalThisSetLabel);
 
         // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
         var notProxyLabel = il.DefineLabel();

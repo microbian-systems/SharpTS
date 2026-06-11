@@ -496,10 +496,14 @@ public class RealPackageSmokeTests
     // silently evaluated to null: global/globalThis compile to null in value
     // position, so runInContext ran with a null context and every native ref
     // was undefined (which is also why chunk/flatten returned wrong values).
-    // With the #260 TypeError, init fails honestly at lodash's
-    // `funcToString.call(Object)`. Unskip when #271 (globalThis value
-    // representation) lands.
-    [SkippableFact(Skip = "compiled lodash cannot initialize without a globalThis value representation — see #271")]
+    // With the #260 TypeError, init failed honestly at lodash's
+    // `funcToString.call(Object)`. #271 gave globalThis a real value
+    // representation, so root/context detection now resolves real constructors —
+    // init gets past `funcToString.call(Object)`. It still throws later because
+    // value-form built-in singleton methods (e.g. `context.Math.max`) are not
+    // populated in compiled mode (the Math/JSON singleton dicts hold no method
+    // wrappers). Tracked by #276; unskip when that lands.
+    [SkippableFact(Skip = "compiled lodash init reaches value-form Math.max, unpopulated in compiled mode — see #276")]
     public void Lodash_Compiled()
     {
         SkipIfNoNpm();

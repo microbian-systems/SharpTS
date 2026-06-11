@@ -102,18 +102,15 @@ public partial class ILEmitter
             return;
         }
 
-        if (name == "globalThis")
+        // globalThis / global (a Node alias) in value position resolve to the
+        // runtime sentinel (#271) so `var root = globalThis || global` is a real
+        // object whose dynamic GetProperty routes to GlobalThisGetProperty —
+        // lodash's runInContext reads `context.Object`/`context.Math` off it.
+        // The syntactic `globalThis.X` path is still intercepted at compile time.
+        if (name == "globalThis" || name == "global")
         {
-            EmitNullConstant(); // globalThis is handled specially in property access
-            return;
-        }
-
-        // `global` is a Node.js alias for globalThis. Mirror globalThis resolution so CJS
-        // packages (lodash) that sniff for `typeof global === 'object'` to find their
-        // ambient scope don't crash.
-        if (name == "global")
-        {
-            EmitNullConstant();
+            IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.GlobalThisSingletonField);
+            SetStackUnknown();
             return;
         }
 

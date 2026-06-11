@@ -66,12 +66,14 @@ public sealed class GlobalThisStaticEmitter : IStaticTypeEmitterStrategy
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Self-reference: globalThis.globalThis
-        if (propertyName == "globalThis")
+        // Self-reference: globalThis.globalThis (and the Node alias global).
+        // Emit the runtime sentinel so the leaf access matches bare `globalThis`
+        // in value position — `globalThis.globalThis === globalThis` (#271).
+        // Deeper chains (globalThis.globalThis.Math.PI) are intercepted earlier by
+        // TryEmitGlobalThisChainedProperty, so this only fires for the leaf.
+        if (propertyName == "globalThis" || propertyName == "global")
         {
-            // Push null as a marker - globalThis is handled specially in property access chains
-            // When we see globalThis.globalThis.Math, the outer globalThis gets the same treatment
-            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldsfld, ctx.Runtime!.GlobalThisSingletonField);
             return true;
         }
 
