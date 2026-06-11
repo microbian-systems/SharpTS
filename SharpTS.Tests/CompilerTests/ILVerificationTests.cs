@@ -232,6 +232,42 @@ public class ILVerificationTests
     }
 
     [Fact]
+    public void ClassGetPropertyWithTypedGetter_PassesILVerification()
+    {
+        // The compiler-generated GetProperty dispatch helper invokes a typed getter (e.g. the
+        // auto getter for a `public x: number` parameter property, or an explicit `get`) and
+        // returned its value-type result into GetProperty's object slot without boxing — the
+        // verifier reported StackUnexpected even though it ran. Generic-class getters returning a
+        // type parameter had the same gap. The getter result is now boxed. (#279)
+        var source = """
+            class Foo { constructor(public x: number) {} }
+            class Bar {
+                private _v: number = 10;
+                get doubled(): number { return this._v * 2; }
+                get label(): string { return "bar"; }
+                get flag(): boolean { return true; }
+            }
+            class Box<T> {
+                constructor(public item: T) {}
+                get value(): T { return this.item; }
+            }
+            function mkFoo(): Foo { return new Foo(7); }
+            const b = new Bar();
+            console.log(mkFoo().x);
+            console.log(b.doubled);
+            console.log(b.label);
+            console.log(b.flag);
+            console.log(new Box<number>(99).value);
+            console.log(new Box<string>("hi").value);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("7\n20\nbar\ntrue\n99\nhi\n", output);
+    }
+
+    [Fact]
     public void TryCatchFinally_PassesILVerification()
     {
         var source = """

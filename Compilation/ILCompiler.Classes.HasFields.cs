@@ -299,6 +299,13 @@ public partial class ILCompiler
                 // (instantiated form for generic classes — open MethodDef tokens are unloadable, #178)
                 il.Emit(OpCodes.Ldarg_0);
                 il.Emit(OpCodes.Callvirt, EmitterTypeHelpers.SelfMethodReference(getterMethod));
+                // GetProperty's return slot is object. A typed getter (e.g. `number` → double)
+                // returns a value type, and a generic-class getter returns a type parameter, so box
+                // the result to match the slot. Without this the verifier reports StackUnexpected —
+                // a value-type result reaching an object ret slot — even though it runs (the typed
+                // getter for a parameter property is reachable via the dynamic-dispatch path). (#279)
+                if (getterMethod.ReturnType.IsValueType || getterMethod.ReturnType.IsGenericParameter)
+                    il.Emit(OpCodes.Box, getterMethod.ReturnType);
                 il.Emit(OpCodes.Ret);
 
                 il.MarkLabel(nextLabel);
