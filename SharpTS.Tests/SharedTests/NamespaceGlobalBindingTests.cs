@@ -8,8 +8,8 @@ namespace SharpTS.Tests.SharedTests;
 /// AbortSignal, Intl, ReadableStream, WritableStream, TransformStream,
 /// MessageChannel. Interpreter bindings landed with #208; compiled-mode
 /// equivalents with #224 (namespace singletons + ConstructDynamicValue +
-/// the GetProperty abort-signal dict branch). MessageChannel stays
-/// interpreter-only until #222 gives compiled mode real port objects.
+/// the GetProperty abort-signal dict branch) and #222 (real emitted
+/// $MessageChannel/$MessagePort types).
 /// </summary>
 public class NamespaceGlobalBindingTests
 {
@@ -76,7 +76,7 @@ public class NamespaceGlobalBindingTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void MessageChannel_ValuePosition(ExecutionMode mode)
     {
         var source = """

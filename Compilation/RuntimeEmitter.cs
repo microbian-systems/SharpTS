@@ -397,6 +397,13 @@ public partial class RuntimeEmitter
         if (features.UsesBroadcastChannel)
             EmitBroadcastChannelClass(moduleBuilder, runtime);
 
+        // Emit $MessagePort/$MessageChannel — same constraints as
+        // $BroadcastChannel ($EventEmitter base, $EventLoop dispatch,
+        // $Runtime.StructuredClone for per-message cloning). Unconditional,
+        // matching the previous CreateMessageChannel helper (#222).
+        // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSMessagePort
+        EmitMessageChannelTypes(moduleBuilder, runtime);
+
         // Web Streams — gated on UsesWebStreams. The only external references are
         // user-code `new ReadableStream(...)`/`new WritableStream(...)`/`new TransformStream(...)`
         // in ExpressionEmitterBase.Constructors.cs, which only fire when the

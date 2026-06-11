@@ -1664,6 +1664,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             "ReadableStream" => Ctx.Runtime!.ReadableStreamType,
             "WritableStream" => Ctx.Runtime!.WritableStreamType,
             "TransformStream" => Ctx.Runtime!.TransformStreamType,
+            // Real emitted types since #222 (always emitted).
+            "MessageChannel" => Ctx.Runtime!.TSMessageChannelType,
+            "MessagePort" => Ctx.Runtime!.TSMessagePortType,
             _ => null
         };
         if (t == null) return false;
