@@ -232,6 +232,9 @@ public partial class Interpreter
         if (left is double l && right is double r) return l + r;
         if (left is string || right is string)
         {
+            // ECMA-262 §7.1.17: a Symbol operand cannot be coerced to a string.
+            ThrowIfSymbolStringCoercion(left);
+            ThrowIfSymbolStringCoercion(right);
             // Avoid calling Stringify on values that are already strings
             return string.Concat(
                 left as string ?? Stringify(left),
@@ -241,6 +244,8 @@ public partial class Interpreter
         // yields a string for arrays/plain objects, so `+` concatenates.
         if (IsObjectLike(left) || IsObjectLike(right))
         {
+            ThrowIfSymbolStringCoercion(left);
+            ThrowIfSymbolStringCoercion(right);
             return string.Concat(Stringify(left), Stringify(right));
         }
         // Both primitives, neither a string: numeric addition with ToNumber
@@ -254,6 +259,21 @@ public partial class Interpreter
     /// </summary>
     private static bool IsObjectLike(object? value) =>
         value is not (null or double or string or bool or SharpTSUndefined or SharpTSBigInt or SharpTSSymbol);
+
+    /// <summary>
+    /// ECMA-262 §7.1.17 ToString: Symbol values throw a TypeError when
+    /// implicitly coerced to a string (template-literal interpolation,
+    /// <c>+</c> concatenation). Only the explicit <c>String()</c> call form and
+    /// <c>Symbol.prototype.toString()</c> are exempt — those route through
+    /// dedicated paths, not this guard. <c>console.log</c> formatting also
+    /// bypasses this (it is not a language-level coercion).
+    /// </summary>
+    internal static void ThrowIfSymbolStringCoercion(object? value)
+    {
+        if (value is SharpTSSymbol)
+            throw new ThrowException(new SharpTSTypeError(
+                "Cannot convert a Symbol value to a string"));
+    }
 
     /// <summary>
     /// Evaluates a unary operator expression.

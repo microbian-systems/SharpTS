@@ -1864,6 +1864,33 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    // StringifyCoerce — Stringify behind the ECMA-262 §7.1.17 Symbol guard.
+    // Implicit ToString coercion sites (template-literal interpolation, string
+    // +/+= concatenation) must throw TypeError for Symbol operands; everything
+    // else keeps Stringify's display semantics. Signature forward-declared by
+    // DefineRuntimeClassPhase1 because $Runtime.Add's string-concat arm is
+    // emitted before this body is filled.
+    private void EmitStringifyCoerce(EmittedRuntime runtime)
+    {
+        var il = runtime.StringifyCoerce.GetILGenerator();
+
+        // if (value is $TSSymbol) throw TypeError
+        var notSymbolLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSSymbolType);
+        il.Emit(OpCodes.Brfalse, notSymbolLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot convert a Symbol value to a string");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(notSymbolLabel);
+
+        // return Stringify(value);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Ret);
+    }
+
     // ToJsString — ECMA-262 ToString protocol. For Dictionary/$Object receivers
     // with a user-defined "toString" function, invoke it and use the result.
     // Falls back to Stringify for primitives. Used by String.prototype methods
@@ -3987,12 +4014,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
 
-        // String concat - use Stringify for JS-compatible conversion (null->"null", bool->"true"/"false")
+        // String concat - StringifyCoerce: JS-compatible conversion (null->"null",
+        // bool->"true"/"false") that throws TypeError for Symbol operands (§7.1.17).
         il.MarkLabel(stringConcatLabel);
         il.Emit(OpCodes.Ldloc, leftLocal);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.StringifyCoerce);
         il.Emit(OpCodes.Ldloc, rightLocal);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.StringifyCoerce);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
         il.Emit(OpCodes.Ret);
     }

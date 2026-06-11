@@ -424,15 +424,21 @@ public partial class ILEmitter
         // Special case: string concatenation with +=
         if (ca.Operator.Type == TokenType.PLUS_EQUAL && IsStringExpression(ca.Value))
         {
-            // Load current value as object
+            // Load current value, StringifyCoerce'd: JS-compatible conversion
+            // (null → "null", undefined → "undefined") that throws TypeError
+            // for Symbol operands (§7.1.17) — String.Concat(object, object)
+            // did neither.
             EmitVariable(new Expr.Variable(ca.Name));
+            EmitBoxIfNeeded(new Expr.Variable(ca.Name));
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.StringifyCoerce);
 
-            // Load right side as object
+            // Load right side, StringifyCoerce'd
             EmitExpression(ca.Value);
             EmitBoxIfNeeded(ca.Value);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.StringifyCoerce);
 
             // String concatenation
-            IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.String, "Concat", _ctx.Types.Object, _ctx.Types.Object));
+            IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.String, "Concat", _ctx.Types.String, _ctx.Types.String));
             IL.Emit(OpCodes.Dup);
 
             // Store result
@@ -1395,10 +1401,15 @@ public partial class ILEmitter
 
         if (opType == TokenType.PLUS_EQUAL && IsStringExpression(value))
         {
-            // String concatenation - we know right side is a string at compile time
+            // String concatenation - we know right side is a string at compile time.
+            // StringifyCoerce both operands: JS-compatible conversion (null →
+            // "null", undefined → "undefined") that throws TypeError for Symbol
+            // operands (§7.1.17) — String.Concat(object, object) did neither.
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.StringifyCoerce);
             EmitExpression(value);
             EmitBoxIfNeeded(value);
-            IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.String, "Concat", _ctx.Types.Object, _ctx.Types.Object));
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.StringifyCoerce);
+            IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.String, "Concat", _ctx.Types.String, _ctx.Types.String));
             return;
         }
 
@@ -1699,7 +1710,9 @@ public partial class ILEmitter
             {
                 EmitExpression(part);
                 EmitBoxIfNeeded(part);
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.Stringify);
+                // StringifyCoerce: `+` concat is an implicit ToString coercion —
+                // Symbol operands throw TypeError (ECMA-262 §7.1.17).
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.StringifyCoerce);
             }
         }
 
@@ -1730,7 +1743,8 @@ public partial class ILEmitter
             {
                 EmitExpression(parts[i]);       // Value
                 EmitBoxIfNeeded(parts[i]);
-                IL.Emit(OpCodes.Call, _ctx.Runtime!.Stringify);
+                // StringifyCoerce: throws TypeError for Symbol operands (§7.1.17).
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.StringifyCoerce);
             }
 
             IL.Emit(OpCodes.Stelem_Ref);    // Store in array
