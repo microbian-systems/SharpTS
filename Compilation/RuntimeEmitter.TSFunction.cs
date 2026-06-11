@@ -1518,34 +1518,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, argsLengthLocal);
         il.Emit(OpCodes.Call, _types.ArrayType.GetMethod("Copy", [_types.ArrayType, _types.ArrayType, _types.Int32])!);
 
-        // Fill the padded tail with the $Undefined singleton, matching the
-        // direct-call emitter's missing-arg convention (see EmitDefaultParameters
-        // in ILEmitter.Helpers.cs). Null padding is observably different for
-        // callees that distinguish absent/undefined from explicit null — e.g.
-        // value-form Object.create(proto) threw "Cannot convert undefined or
-        // null to object" because the padded props slot read as JS null.
-        if (runtime.UndefinedInstance != null)
-        {
-            var padLoopStart = il.DefineLabel();
-            var padLoopEnd = il.DefineLabel();
-            il.Emit(OpCodes.Ldloc, argsLengthLocal);
-            il.Emit(OpCodes.Stloc, indexLocal);
-            il.MarkLabel(padLoopStart);
-            il.Emit(OpCodes.Ldloc, indexLocal);
-            il.Emit(OpCodes.Ldloc, paramCountLocal);
-            il.Emit(OpCodes.Bge, padLoopEnd);
-            il.Emit(OpCodes.Ldloc, resultLocal);
-            il.Emit(OpCodes.Ldloc, indexLocal);
-            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
-            il.Emit(OpCodes.Stelem_Ref);
-            il.Emit(OpCodes.Ldloc, indexLocal);
-            il.Emit(OpCodes.Ldc_I4_1);
-            il.Emit(OpCodes.Add);
-            il.Emit(OpCodes.Stloc, indexLocal);
-            il.Emit(OpCodes.Br, padLoopStart);
-            il.MarkLabel(padLoopEnd);
-        }
-
+        // Missing args pad as null. NOT the $Undefined singleton: emitted
+        // built-ins broadly use null-checks for optional-arg absence (stream
+        // write/end callbacks, encodings, ...), so sentinel padding makes them
+        // treat the slot as a real argument. The one built-in that must
+        // distinguish absent (skip) from explicit JS null (throw) — value-form
+        // Object.create's props — gets a dedicated wrapper instead
+        // (ObjectCreateValueForm in RuntimeEmitter.Objects.Prototype.cs).
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 

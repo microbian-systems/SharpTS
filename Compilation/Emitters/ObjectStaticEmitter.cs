@@ -323,7 +323,12 @@ public sealed class ObjectStaticEmitter : IStaticTypeEmitterStrategy
             "defineProperties"     => runtime.ObjectDefineProperties,
             "getOwnPropertyDescriptor"  => runtime.ObjectGetOwnPropertyDescriptor,
             "getOwnPropertyDescriptors" => runtime.ObjectGetOwnPropertyDescriptors,
-            "create"               => runtime.ObjectCreate,
+            // Value-form wrapper (NOT raw ObjectCreate): under-application via
+            // $TSFunction pads props with null, which the raw method must
+            // treat as the explicit-null TypeError. Must match the runtime
+            // LookupBuiltInStaticMember entry so wrapper identity holds across
+            // both access forms.
+            "create"               => runtime.ObjectCreateValueForm,
             "assign"               => runtime.ObjectAssign,
             "is"                   => runtime.ObjectIs,
             "hasOwn"               => runtime.ObjectHasOwn,
