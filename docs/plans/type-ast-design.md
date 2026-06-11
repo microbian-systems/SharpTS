@@ -196,9 +196,20 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
    `.Cooked` (both paths). Corpus coverage: 75.0% → **87.6%** (479 node / 68 fallback). No baseline
    movement. Generic *constructor* types (`new <T>(…) => R`) deliberately still fall back.
 
-   Remaining fallback before the scanner can go: generic constructor types, qualified names
-   (`Foo.Bar`), the `readonly` array/tuple modifier, and a handful of long-tail forms
-   (`asserts`/predicates, `unique symbol`, constrained `infer U extends C`).
+5d. ✅ **Shipped: long-tail constructs.** `ReadonlyTypeNode` (`readonly T[]` / `readonly [A,B]`
+   → marks the resolved array/tuple readonly), qualified names (the dotted name carries on
+   `NamedTypeNode`, handed to the same single-name / `ResolveGenericType` path), `TypePredicateNode`
+   + `AssertsNonNullTypeNode` (`x is T`, `asserts x is T`, `asserts x` — completes function types
+   with predicate returns), and constrained `infer U extends C` (the whole `U extends C` becomes the
+   inferred parameter's name, matching the string path's `InferredTypeParameter` quirk exactly).
+   Corpus annotation-site coverage flat at 87.6% (these forms live in alias defs / function returns,
+   not the three counted sites) — mechanism, not metric. No baseline movement; equivalence verified
+   (e.g. qualified namespace type-alias exports resolve permissively to `any` on BOTH paths).
+
+   Remaining fallback before the scanner can go: generic **constructor** types
+   (`new <T>(…) => R`), `unique symbol` (intentionally throws TS1331), bigint literal types
+   (`1n`), and whatever the remaining 68 corpus annotation-site fallbacks turn out to be (audit
+   next).
 6. Delete `TypeChecker.TypeParsing.cs` string scanning; `ToTypeInfo(string)` survives only
    for the REPL/embedding API surface, implemented as parse-to-node + convert.
 

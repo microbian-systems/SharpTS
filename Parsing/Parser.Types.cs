@@ -35,17 +35,20 @@ public partial class Parser
             if (Check(TokenType.IDENTIFIER))
             {
                 string paramName = Advance().Lexeme;
+                int assertsLine = Previous().Line;
                 if (Match(TokenType.IS))
                 {
                     // asserts x is T
                     string predicateType = ParseConditionalType();
-                    _lastTypeNode = null; // predicates have no node form yet
+                    _lastTypeNode = TakeTypeNode() is { } predNode
+                        ? new TypePredicateNode(paramName, predNode, IsAssertion: true, assertsLine)
+                        : null;
                     return $"asserts {paramName} is {predicateType}";
                 }
                 else
                 {
                     // asserts x (shorthand for asserting non-null/truthy)
-                    _lastTypeNode = null;
+                    _lastTypeNode = new AssertsNonNullTypeNode(paramName, assertsLine);
                     return $"asserts {paramName}";
                 }
             }
@@ -58,10 +61,13 @@ public partial class Parser
         // Check for "x is T" / "this is T" type predicate: an identifier (or `this`) followed by `is`.
         if ((Check(TokenType.IDENTIFIER) || Check(TokenType.THIS)) && PeekNext().Type == TokenType.IS)
         {
+            int predLine = Peek().Line;
             string paramName = Advance().Lexeme;
             Consume(TokenType.IS, "Expected 'is' after parameter name.");
             string predicateType = ParseConditionalType();
-            _lastTypeNode = null; // predicates have no node form yet
+            _lastTypeNode = TakeTypeNode() is { } predNode
+                ? new TypePredicateNode(paramName, predNode, IsAssertion: false, predLine)
+                : null;
             return $"{paramName} is {predicateType}";
         }
 
@@ -337,9 +343,10 @@ public partial class Parser
         // nested positions. ToTypeInfo marks the array/tuple readonly.
         if (Check(TokenType.READONLY))
         {
+            int readonlyLine = Peek().Line;
             Advance();
             string readonlyInner = ParsePrimaryType();
-            _lastTypeNode = null; // readonly modifier has no node form yet
+            _lastTypeNode = TakeTypeNode() is { } innerNode ? new ReadonlyTypeNode(innerNode, readonlyLine) : null;
             return "readonly " + readonlyInner;
         }
 
@@ -351,7 +358,10 @@ public partial class Parser
             {
                 // Constraint binds tighter than the enclosing conditional's `?`, so stop at union level.
                 string constraint = ParseUnionType();
-                _lastTypeNode = null;
+                TakeTypeNode(); // drain the constraint's side-channel node
+                // Mirror the string path exactly: the whole "U extends C" becomes the inferred
+                // parameter's name (the checker's InferredTypeParameter has no separate constraint).
+                _lastTypeNode = new InferTypeNode($"{paramName.Lexeme} extends {constraint}", paramName.Line);
                 return $"infer {paramName.Lexeme} extends {constraint}";
             }
             _lastTypeNode = new InferTypeNode(paramName.Lexeme, paramName.Line);
@@ -611,12 +621,15 @@ public partial class Parser
             typeNode = new NamedTypeNode(typeName, null, Previous().Line);
 
             // Qualified type name (namespace member): `Intl.CollatorOptions`, `NodeJS.Timer`.
+            // The dotted name carries on the NamedTypeNode; resolution hands the whole "Foo.Bar"
+            // to the same single-name path the string side uses (and ResolveGenericType for
+            // `Foo.Bar<T>`), so namespace lookup is identical.
             while (Check(TokenType.DOT) &&
                    (PeekNext().Type == TokenType.IDENTIFIER || IsContextualKeyword(PeekNext().Type)))
             {
                 Advance(); // consume '.'
                 typeName += "." + Advance().Lexeme;
-                typeNode = null; // qualified names have no node form yet
+                typeNode = new NamedTypeNode(typeName, null, Previous().Line);
             }
         }
         else

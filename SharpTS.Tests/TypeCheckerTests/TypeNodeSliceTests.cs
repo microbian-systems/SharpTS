@@ -30,13 +30,13 @@ public class TypeNodeSliceTests
     [Fact]
     public void NodePath_FallsBackForUnsupportedConstructs()
     {
-        // The `readonly` array/tuple modifier still has no node form, so it falls back.
+        // Generic constructor types (new <T>(…) => R) still have no node form, so they fall back.
         TypeNodeStats.Reset();
         TestHarness.RunInterpreted("""
-            var a: readonly number[] = [1];
+            let f: new <T>(x: T) => T;
             """);
         Assert.True(TypeNodeStats.StringFallbacks >= 1,
-            $"expected the readonly-modifier annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+            $"expected the generic-constructor-type annotation to fall back, got {TypeNodeStats.StringFallbacks}");
     }
 
     [Fact]
@@ -431,5 +431,56 @@ public class TypeNodeSliceTests
             type Dir = "left" | "right";
             var s: `padding-${Dir}` = "padding-up";
             """));
+    }
+
+    [Fact]
+    public void NodePath_EngagesForReadonlyAndQualifiedAndPredicate()
+    {
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            namespace N { export type Id = number; }
+            var ro: readonly number[] = [1, 2];
+            var rt: readonly [number, string] = [1, "x"];
+            var q: N.Id = 5;
+            var pred: (x: unknown) => x is string;
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 4,
+            $"expected readonly/qualified/predicate annotations on the node path, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_ReadonlyArrayStillEnforcesElementType()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var a: readonly number[] = ["x"];
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_QualifiedNameMatchesStringPath()
+    {
+        // The dotted name is handed to the same single-name resolution as the string path; the
+        // checker resolves namespace type-alias exports permissively (to any), so this assigns
+        // cleanly on BOTH paths — the node path introduces no divergence.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            namespace N { export type Id = number; }
+            var q: N.Id = 5;
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 1,
+            $"expected the qualified-name annotation on the node path, got {TypeNodeStats.NodeHits}");
+    }
+
+    [Fact]
+    public void NodePath_EngagesForConstrainedInferAlias()
+    {
+        // `infer U extends string` now carries a node, so the conditional alias expands node-first.
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            type StrElem<T> = T extends Array<infer U extends string> ? U : never;
+            var e: StrElem<string[]> = "x";
+            """);
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
     }
 }

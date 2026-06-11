@@ -21,6 +21,19 @@ public sealed record NamedTypeNode(string Name, List<TypeNode>? TypeArguments, i
 /// <summary>A literal type: <c>"ok"</c>, <c>42</c>, <c>true</c>.</summary>
 public sealed record LiteralTypeNode(object? Value, int Line) : TypeNode(Line);
 
+/// <summary>A <c>readonly</c> array/tuple modifier: <c>readonly T[]</c>, <c>readonly [A, B]</c>.
+/// Resolution marks the resolved array/tuple readonly (any other inner type ignores it), exactly
+/// like the string path's <c>readonly </c> prefix branch.</summary>
+public sealed record ReadonlyTypeNode(TypeNode Inner, int Line) : TypeNode(Line);
+
+/// <summary>A type predicate return type: <c>x is T</c> or <c>asserts x is T</c>. Resolves to
+/// <c>TypeInfo.TypePredicate</c>. The <c>asserts x</c> shorthand (non-null assertion) is a
+/// separate <see cref="AssertsNonNullTypeNode"/>.</summary>
+public sealed record TypePredicateNode(string ParameterName, TypeNode PredicateType, bool IsAssertion, int Line) : TypeNode(Line);
+
+/// <summary>The <c>asserts x</c> shorthand return type. Resolves to <c>TypeInfo.AssertsNonNull</c>.</summary>
+public sealed record AssertsNonNullTypeNode(string ParameterName, int Line) : TypeNode(Line);
+
 /// <summary>An array type via the suffix syntax: <c>T[]</c>.</summary>
 public sealed record ArrayTypeNode(TypeNode ElementType, int Line) : TypeNode(Line);
 

@@ -118,6 +118,25 @@ public partial class TypeChecker
             case InferTypeNode infer:
                 return new TypeInfo.InferredTypeParameter(infer.Name);
 
+            // `readonly T[]` / `readonly [A, B]` — mark the resolved array/tuple readonly; any other
+            // inner type ignores the modifier (mirrors ToTypeInfoCore's readonly branch).
+            case ReadonlyTypeNode ro:
+                return TryToTypeInfo(ro.Inner) switch
+                {
+                    null => null,
+                    TypeInfo.Array arr => arr with { IsReadonly = true },
+                    TypeInfo.Tuple tup => tup with { IsReadonly = true },
+                    { } inner => inner,
+                };
+
+            case TypePredicateNode predicate:
+                return TryToTypeInfo(predicate.PredicateType) is { } predType
+                    ? new TypeInfo.TypePredicate(predicate.ParameterName, predType, predicate.IsAssertion)
+                    : null;
+
+            case AssertsNonNullTypeNode asserts:
+                return new TypeInfo.AssertsNonNull(asserts.ParameterName);
+
             // typeof resolves through the same evaluator as the string path; the node only spares
             // the top-level scan that splits unions/intersections before `typeof` (the parser
             // already separated them into sibling nodes).
