@@ -271,6 +271,7 @@ public partial class AsyncMoveNextEmitter
 
         // Set context for await exception handling
         var previousExceptionLocal = _currentTryCatchExceptionLocal;
+        var previousSkipLabel = _currentTryCatchSkipLabel;
         var afterTryLabel = _il.DefineLabel();
         _currentTryCatchExceptionLocal = caughtExceptionLocal;
         _currentTryCatchSkipLabel = afterTryLabel;
@@ -325,9 +326,11 @@ public partial class AsyncMoveNextEmitter
 
         _il.MarkLabel(afterTryLabel);
 
-        // Restore context
+        // Restore context (the skip label must be restored alongside its
+        // exception local — nulling it left outer-try awaits after a nested
+        // try with no exit target).
         _currentTryCatchExceptionLocal = previousExceptionLocal;
-        _currentTryCatchSkipLabel = null;
+        _currentTryCatchSkipLabel = previousSkipLabel;
     }
 
     private void EmitSegmentInTry(List<Stmt> statements, LocalBuilder caughtExceptionLocal)

@@ -264,4 +264,92 @@ public class AsyncTryCatchTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("inner: original\nouter: wrapped: original\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncTryCatch_AwaitEmbeddedInCallArgument_RejectionSkipsStatement(ExecutionMode mode)
+    {
+        // Regression: when the await is embedded in a larger statement
+        // (not hoisted to `let x = await ...`), a rejection used to resume the
+        // statement with a null result — console.log printed "null" AND the
+        // catch ran. The rejected await must abandon the rest of the try body.
+        var source = """
+            async function throwError(): Promise<string> {
+                await Promise.resolve();
+                throw new TypeError("boom");
+            }
+            async function main(): Promise<void> {
+                try {
+                    console.log(await throwError());
+                } catch (e) {
+                    console.log("caught", e.message);
+                }
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("caught boom\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncTryCatch_AwaitEmbeddedInConcat_RejectionSkipsStatement(ExecutionMode mode)
+    {
+        // The await must be the FIRST operand: `"v:" + (await ...)` inside a
+        // try block trips a separate pre-existing emitter bug (await with IL
+        // operands already on the stack emits an invalid program — #253).
+        var source = """
+            async function throwError(): Promise<string> {
+                throw new TypeError("boom");
+            }
+            async function main(): Promise<void> {
+                try {
+                    const x = (await throwError()) + ":v";
+                    console.log(x);
+                } catch (e) {
+                    console.log("caught", e.message);
+                }
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("caught boom\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncTryCatch_AwaitAfterNestedTry_RejectionStillCaught(ExecutionMode mode)
+    {
+        // Regression: emitting a nested try-with-awaits cleared the outer
+        // try's await-exit label instead of restoring it, so a rejected await
+        // in the outer try AFTER the nested try lost its exit target.
+        // (Single-argument console.log calls only — multi-arg calls with an
+        // await argument hit the separate await-hoisting emitter bug, #253.)
+        var source = """
+            async function ok(): Promise<number> {
+                return 1;
+            }
+            async function throwError(): Promise<string> {
+                throw new TypeError("late");
+            }
+            async function main(): Promise<void> {
+                try {
+                    try {
+                        console.log(await ok());
+                    } catch (e) {
+                        console.log("inner caught");
+                    }
+                    console.log(await throwError());
+                } catch (e) {
+                    console.log("outer caught " + e.message);
+                }
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\nouter caught late\n", output);
+    }
 }

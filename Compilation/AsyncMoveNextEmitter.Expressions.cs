@@ -95,6 +95,7 @@ public partial class AsyncMoveNextEmitter
         if (_currentTryCatchExceptionLocal != null)
         {
             var getResultDoneLabel = _il.DefineLabel();
+            var exceptionCaughtLabel = _il.DefineLabel();
             _il.BeginExceptionBlock();
             _il.Emit(OpCodes.Ldarg_0);
             _il.Emit(OpCodes.Ldflda, awaiterField);
@@ -107,8 +108,21 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Stloc, _currentTryCatchExceptionLocal);
             _il.Emit(OpCodes.Ldnull);
             _il.Emit(OpCodes.Stloc, resultTemp);
-            _il.Emit(OpCodes.Leave, getResultDoneLabel);
+            _il.Emit(OpCodes.Leave, exceptionCaughtLabel);
             _il.EndExceptionBlock();
+
+            // A rejected awaitable must abandon the rest of the try body, not
+            // resume it with a null result (which ran BOTH the success path and
+            // the catch). Jump straight to the try-exit so the statement-level
+            // catch dispatch in EmitTryCatchWithAwaits sees the exception local.
+            _il.MarkLabel(exceptionCaughtLabel);
+            if (_currentTryCatchSkipLabel != null)
+            {
+                _il.Emit(OpCodes.Br, _currentTryCatchSkipLabel.Value);
+            }
+            // No skip target (shouldn't happen — the local and label are set
+            // together): fall through with the null result as before.
+
             _il.MarkLabel(getResultDoneLabel);
             _il.Emit(OpCodes.Ldloc, resultTemp);
         }
