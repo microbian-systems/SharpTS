@@ -802,7 +802,11 @@ public partial class TypeChecker
             char c = paramsStr[i];
             if (c == '(' || c == '<' || c == '[' || c == '{')
                 depth++;
-            else if (c == ')' || c == '>' || c == ']' || c == '}')
+            // The '>' of an arrow '=>' is not a bracket — without this guard a function-typed
+            // parameter drives the depth negative and the comma before the next parameter is
+            // missed, fusing the rest of the list into one unparseable parameter (same family
+            // as the guard in SplitObjectMembers).
+            else if (c == ')' || c == ']' || c == '}' || (c == '>' && (i == 0 || paramsStr[i - 1] != '=')))
                 depth--;
             else if (c == ',' && depth == 0)
             {

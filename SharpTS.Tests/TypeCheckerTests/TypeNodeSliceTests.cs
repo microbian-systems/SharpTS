@@ -32,10 +32,62 @@ public class TypeNodeSliceTests
     {
         TypeNodeStats.Reset();
         TestHarness.RunInterpreted("""
-            var f: (x: number) => string = (x) => "s";
+            var f: { a: number } = { a: 1 };
             """);
         Assert.True(TypeNodeStats.StringFallbacks >= 1,
-            $"expected the function-type annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+            $"expected the object-type annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+    }
+
+    [Fact]
+    public void NodePath_EngagesForFunctionTypes()
+    {
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            var f: (x: number) => string = (x) => "s";
+            var g: () => void = () => {};
+            var h: (x: number, y?: string, ...rest: boolean[]) => number = (x) => x;
+            const k: (cb: (n: number) => void) => void = (cb) => cb(1);
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 4,
+            $"expected the node path for all four function-type annotations, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_FunctionTypeEnforcesParamAndReturn()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var f: (x: number) => string = (x: string) => x;
+            """));
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var f: () => string = () => 1;
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_FunctionTypeArityHonorsOptionalAndRest()
+    {
+        // A two-required-param target rejects a source requiring three; optional/rest params
+        // must not count toward the node-built signature's required arity.
+        TestHarness.RunInterpreted("""
+            var f: (a: number, b: number, c?: number) => void = (a: number, b: number) => {};
+            """);
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var g: (a: number) => void = (a: number, b: number, c: number) => {};
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_ConstructorTypeIsConstructable()
+    {
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            class Widget { constructor(public id: number) {} }
+            var make: new (id: number) => Widget = Widget;
+            const w: Widget = new make(1);
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 1,
+            $"expected the constructor-type annotation on the node path, got {TypeNodeStats.NodeHits}");
     }
 
     [Fact]
