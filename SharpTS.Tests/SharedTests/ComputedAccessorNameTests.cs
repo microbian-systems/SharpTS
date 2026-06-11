@@ -7,8 +7,9 @@ namespace SharpTS.Tests.SharedTests;
 /// Tests for computed accessor names in class bodies (#261):
 /// get [Symbol.toStringTag]() / static get [Symbol.species]().
 /// Symbol-keyed accessors on class declarations run in both modes (compiled
-/// support added in #266); on class expressions they stay interpreted-only
-/// (#281). Literal computed keys fold to ordinary names in the parser.
+/// support added in #266; module-local Symbol keys confirmed by #282); on class
+/// expressions they stay interpreted-only (#281). Literal computed keys fold to
+/// ordinary names in the parser.
 /// </summary>
 public class ComputedAccessorNameTests
 {
@@ -101,6 +102,32 @@ public class ComputedAccessorNameTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("42\n7\n", output);
+    }
+
+    // Regression for #282: a MODULE-LOCAL Symbol key (not a well-known symbol)
+    // must register and dispatch in compiled mode. The key expression is
+    // evaluated in the lazily-run class .cctor, which executes after the
+    // top-level binding is assigned, so `key` resolves correctly. Getter and
+    // setter share one registry slot.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SymbolAccessor_ModuleLocalKey(ExecutionMode mode)
+    {
+        var source = """
+            const key = Symbol("k");
+            class Box {
+                _v: number = 10;
+                get [key]() { return this._v; }
+                set [key](x: number) { this._v = x; }
+            }
+            const b = new Box() as any;
+            console.log(b[key]);
+            b[key] = 42;
+            console.log(b[key]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10\n42\n", output);
     }
 
     [Theory]
