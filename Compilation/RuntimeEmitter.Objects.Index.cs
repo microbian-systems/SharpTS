@@ -43,6 +43,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
         il.Emit(OpCodes.Brtrue, symbolKeyLabel);
 
+        // globalThis/global sentinel (#271): `root[stringKey]` resolves through
+        // GlobalThisGetProperty (the index is coerced to a property-key string),
+        // mirroring the value-position GetProperty routing. Symbol keys are handled
+        // above by the per-object symbol-dict path.
+        var notGlobalThisIdxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+        il.Emit(OpCodes.Bne_Un, notGlobalThisIdxLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Call, runtime.GlobalThisGetProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notGlobalThisIdxLabel);
+
         // $Buffer (check before TypedArray — the emitted IsTypedArray helper
         // excludes $Buffer, and GetTypedArrayElement would throw for it).
         if (_features.UsesBuffer)
@@ -161,6 +175,30 @@ public partial class RuntimeEmitter
         var symbolFoundLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, symbolFoundLabel);
 
+        // #266: symbol-keyed class accessor (`get [Symbol.x]() {...}`). After an
+        // own symbol data property misses, consult the per-class accessor registry
+        // (walking the base chain). A found getter is a MethodInfo invoked with the
+        // receiver — instance getters bind `this`, static getters ignore it.
+        {
+            var noSymGetterLabel = il.DefineLabel();
+            var symGetterLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.FindSymbolGetter);
+            il.Emit(OpCodes.Stloc, symGetterLocal);
+            il.Emit(OpCodes.Ldloc, symGetterLocal);
+            il.Emit(OpCodes.Brfalse, noSymGetterLabel);
+            // return ((MethodBase)getter).Invoke(obj, Array.Empty<object>());
+            il.Emit(OpCodes.Ldloc, symGetterLocal);
+            il.Emit(OpCodes.Castclass, _types.MethodBase);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(noSymGetterLabel);
+        }
+
         // Not found in user-set symbol dict — fall back to prototype-keyed
         // well-known-symbol dispatch. Currently only RegExp.prototype carries
         // symbol-keyed methods (@@match/@@matchAll/@@replace/@@search/@@split,
@@ -231,6 +269,44 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "JSON");
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notJsonSingletonTagLabel);
+
+        // #265: symbol-keyed expando statics set on a base class constructor are
+        // readable through subclasses (`Base[Symbol.x] = v` visible as `Sub[Symbol.x]`).
+        // The per-object symbol dict is keyed by Type identity per-class, so walk the
+        // constructor's .NET base-type chain (D.BaseType === C) until a dict carries
+        // the key, mirroring the string-keyed walk in GetProperty's Type handler.
+        {
+            var notTypeForSymbolLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, _types.Type);
+            il.Emit(OpCodes.Brfalse, notTypeForSymbolLabel);
+            var symWalkType = il.DeclareLocal(_types.Type);
+            var symWalkDict = il.DeclareLocal(_types.DictionaryObjectObject);
+            var symWalkVal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, _types.Type);
+            il.Emit(OpCodes.Stloc, symWalkType);
+            var symWalkLoop = il.DefineLabel();
+            il.MarkLabel(symWalkLoop);
+            // symWalkType = symWalkType.BaseType;  (null terminates the chain)
+            il.Emit(OpCodes.Ldloc, symWalkType);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "BaseType").GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, symWalkType);
+            il.Emit(OpCodes.Ldloc, symWalkType);
+            il.Emit(OpCodes.Brfalse, notTypeForSymbolLabel);
+            // if (GetSymbolDict(symWalkType).TryGetValue(index, out val)) return val;
+            il.Emit(OpCodes.Ldloc, symWalkType);
+            il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+            il.Emit(OpCodes.Stloc, symWalkDict);
+            il.Emit(OpCodes.Ldloc, symWalkDict);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloca, symWalkVal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue"));
+            il.Emit(OpCodes.Brfalse, symWalkLoop);
+            il.Emit(OpCodes.Ldloc, symWalkVal);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notTypeForSymbolLabel);
+        }
 
         // Return undefined for missing symbol properties (JavaScript semantics)
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
@@ -696,6 +772,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
         il.Emit(OpCodes.Brtrue, symbolKeyLabel);
 
+        // globalThis/global sentinel (#271): `root[stringKey] = v` stores into the
+        // shared global-properties dictionary. Symbol keys fall through to the
+        // per-object symbol-dict path above.
+        var notGlobalThisIdxSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+        il.Emit(OpCodes.Bne_Un, notGlobalThisIdxSetLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.GlobalThisSetProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notGlobalThisIdxSetLabel);
+
         // $Buffer (check before TypedArray — IsTypedArray excludes $Buffer).
         if (_features.UsesBuffer)
         {
@@ -814,6 +904,33 @@ public partial class RuntimeEmitter
         // strict).
         il.MarkLabel(symbolKeyLabel);
         {
+            // #266: symbol-keyed class accessor setter (`set [Symbol.x](v) {...}`).
+            // A registered setter takes the write (accessor semantics) instead of
+            // storing a data property. Found setter is a MethodInfo invoked with the
+            // receiver + value — instance setters bind `this`, static ignore it.
+            var noSymSetterLabel = il.DefineLabel();
+            var symSetterLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.FindSymbolSetter);
+            il.Emit(OpCodes.Stloc, symSetterLocal);
+            il.Emit(OpCodes.Ldloc, symSetterLocal);
+            il.Emit(OpCodes.Brfalse, noSymSetterLabel);
+            // ((MethodBase)setter).Invoke(obj, new object[] { value }); return;
+            il.Emit(OpCodes.Ldloc, symSetterLocal);
+            il.Emit(OpCodes.Castclass, _types.MethodBase);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(noSymSetterLabel);
+
             var symDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);

@@ -54,17 +54,15 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitGlobalThisGetProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "GlobalThisGetProperty",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            [_types.String]
-        );
-        runtime.GlobalThisGetProperty = method;
+        // Signature forward-declared by DefineRuntimeClassPhase1 (#271) so the
+        // property/index dispatchers emitted earlier can call it.
+        var method = (MethodBuilder)runtime.GlobalThisGetProperty;
 
         var il = method.GetILGenerator();
 
         var selfRefLabel = il.DefineLabel();
+        var globalThisRefLabel = il.DefineLabel();
+        var nullMarkerLabel = il.DefineLabel();
         var undefinedPropLabel = il.DefineLabel();
         var nanLabel = il.DefineLabel();
         var infinityLabel = il.DefineLabel();
@@ -91,11 +89,18 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(checkBuiltInsLabel);
 
-        // Check for "globalThis" (self-reference)
+        // Check for "globalThis" / "global" (self-reference and Node alias) —
+        // value-form `globalThis.globalThis` / `globalThis.global` must return the
+        // sentinel so the identity `globalThis.globalThis === globalThis` holds and
+        // `freeSelf`-style probes keep a real object (#271).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "globalThis");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brtrue, selfRefLabel);
+        il.Emit(OpCodes.Brtrue, globalThisRefLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "global");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brtrue, globalThisRefLabel);
 
         // Check for "undefined"
         il.Emit(OpCodes.Ldarg_0);
@@ -210,28 +215,59 @@ public partial class RuntimeEmitter
         // GetProperty's Type branch.
         EmitTypeBranch("Symbol", runtime.TSSymbolType);
 
-        // Remaining named namespaces (Math, JSON, console, Error, Reflect,
-        // process) are represented as singletons in the runtime rather
-        // than .NET Type instances. Keep the null-marker behavior for those —
-        // compile-time static dispatch already routes through their dedicated
-        // namespace emitters.
-        string[] singletonNamespaces =
-        [
-            "Math", "JSON", "console", "Error", "Reflect", "process"
-        ];
-        foreach (var ns in singletonNamespaces)
+        // Error and the native-error subclasses are constructor functions; expose
+        // their .NET Type tokens so value-form `root.Error` / `root.TypeError`
+        // resolve to the real constructors (lodash's runInContext reads
+        // `context.Error` and `context.TypeError`). #271.
+        EmitTypeBranch("Error", runtime.TSErrorType);
+        EmitTypeBranch("TypeError", runtime.TSTypeErrorType);
+        EmitTypeBranch("RangeError", runtime.TSRangeErrorType);
+        EmitTypeBranch("ReferenceError", runtime.TSReferenceErrorType);
+        EmitTypeBranch("SyntaxError", runtime.TSSyntaxErrorType);
+        EmitTypeBranch("URIError", runtime.TSURIErrorType);
+        EmitTypeBranch("EvalError", runtime.TSEvalErrorType);
+        EmitTypeBranch("AggregateError", runtime.TSAggregateErrorType);
+
+        // Math / JSON are extensible singleton objects in the runtime — return the
+        // real Dictionary singletons so `root.Math`/`root.JSON` are usable values
+        // (un-degrades lodash's native Math bindings inside runInContext). #271.
+        void EmitSingletonBranch(string name, FieldBuilder field)
+        {
+            var notThisName = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Call, strEquals);
+            il.Emit(OpCodes.Brfalse, notThisName);
+            il.Emit(OpCodes.Ldsfld, field);
+            il.Emit(OpCodes.Br, returnLabel);
+            il.MarkLabel(notThisName);
+        }
+        EmitSingletonBranch("Math", runtime.MathSingletonField);
+        EmitSingletonBranch("JSON", runtime.JsonSingletonField);
+
+        // console / Reflect / process have no value-form singleton representation;
+        // keep the historical null marker so syntactic dispatch (which fires before
+        // this value-form path) stays authoritative for them.
+        string[] nullMarkerNamespaces = ["console", "Reflect", "process"];
+        foreach (var ns in nullMarkerNamespaces)
         {
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldstr, ns);
             il.Emit(OpCodes.Call, strEquals);
-            il.Emit(OpCodes.Brtrue, selfRefLabel); // null marker
+            il.Emit(OpCodes.Brtrue, nullMarkerLabel);
         }
 
         // Default: return undefined
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Br, returnLabel);
 
-        // Self-reference: return null (marker for globalThis in property access chains)
+        // globalThis / global self-reference → the runtime sentinel (#271).
+        il.MarkLabel(globalThisRefLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+        il.Emit(OpCodes.Br, returnLabel);
+
+        // Null marker for namespaces whose value-form access stays null (legacy).
+        il.MarkLabel(nullMarkerLabel);
         il.MarkLabel(selfRefLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Br, returnLabel);
@@ -323,13 +359,8 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitGlobalThisSetProperty(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
-            "GlobalThisSetProperty",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Void,
-            [_types.String, _types.Object]
-        );
-        runtime.GlobalThisSetProperty = method;
+        // Signature forward-declared by DefineRuntimeClassPhase1 (#271).
+        var method = (MethodBuilder)runtime.GlobalThisSetProperty;
 
         var il = method.GetILGenerator();
 

@@ -73,11 +73,11 @@ public class NamespaceGlobalBindingTests
         Assert.Equal("function\ntrue\nfunction function\n", output);
     }
 
-    // Compiled mode has no ReadableStream.from yet (#269) — before #260 the
-    // dispatch silently produced null and `typeof null === "object"` made this
-    // assertion pass for the wrong reason.
+    // ReadableStream.from(iterable) eagerly drains the iterable into a closed
+    // stream (#269). Both modes are covered now that compiled mode emits a
+    // $ReadableStream.from static (interp uses SharpTSWebStreamsConstructors).
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void WebStreamConstructors_From(ExecutionMode mode)
     {
         var source = """
@@ -87,6 +87,30 @@ public class NamespaceGlobalBindingTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("object\n", output);
+    }
+
+    // #269: the produced stream yields each element of the iterable followed by
+    // done — verified by draining it through a reader.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void WebStreamConstructors_From_DrainsIterable(ExecutionMode mode)
+    {
+        var source = """
+            async function main() {
+                const s = (ReadableStream as any).from(["a", "b"]);
+                const r = s.getReader();
+                const a = await r.read();
+                const b = await r.read();
+                const c = await r.read();
+                console.log(a.value, a.done);
+                console.log(b.value, b.done);
+                console.log(c.done);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("a false\nb false\ntrue\n", output);
     }
 
     [Theory]

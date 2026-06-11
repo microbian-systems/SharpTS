@@ -1390,6 +1390,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
+        // globalThis/global sentinel (#271): a value-position globalThis reads
+        // properties through GlobalThisGetProperty (user props → built-in
+        // constructors/singletons), so `root.Object`/`root.Math` resolve to real
+        // values. Checked first so the bare-object sentinel never falls through to
+        // the class-instance handler (which would report every member undefined).
+        var notGlobalThisLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+        il.Emit(OpCodes.Bne_Un, notGlobalThisLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.GlobalThisGetProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notGlobalThisLabel);
+
         // __proto__ accessor (ECMA-262 Annex B.2.2.1): obj.__proto__ delegates
         // to Object.getPrototypeOf(obj). All object types support this — the
         // accessor lives on Object.prototype, but intercepting here avoids
@@ -1973,9 +1987,35 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noBuiltInMatchLabel);
 
-            // No static member matched — fall through to class-instance handler, which
-            // on a Type returns Undefined (the intended absent-property signal).
-            il.Emit(OpCodes.Br, classInstanceLabel);
+            // #265: walk the constructor's superclass chain for inherited expando
+            // statics. In Node a class constructor inherits from its parent
+            // constructor (Object.getPrototypeOf(D) === C), so a string-keyed static
+            // set on a base (`Base.foo = 1`) is readable through a subclass `D.foo`.
+            // PDS keys descriptors by the Type identity per-class with no parent
+            // awareness, so probe each ancestor's store here — after the subclass's
+            // own descriptors and declared members, matching own-before-inherited.
+            var walkTypeLocal = il.DeclareLocal(_types.Type);
+            var baseDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Ldloc, typeLocal);
+            il.Emit(OpCodes.Stloc, walkTypeLocal);
+            var baseWalkLoop = il.DefineLabel();
+            il.MarkLabel(baseWalkLoop);
+            // walkType = walkType.BaseType;  (null terminates the chain)
+            il.Emit(OpCodes.Ldloc, walkTypeLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "BaseType").GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, walkTypeLocal);
+            il.Emit(OpCodes.Ldloc, walkTypeLocal);
+            il.Emit(OpCodes.Brfalse, classInstanceLabel);
+            // desc = PDSGetPropertyDescriptor(walkType, name);
+            il.Emit(OpCodes.Ldloc, walkTypeLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, baseDescLocal);
+            il.Emit(OpCodes.Ldloc, baseDescLocal);
+            il.Emit(OpCodes.Brfalse, baseWalkLoop);
+            il.Emit(OpCodes.Ldloc, baseDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+            il.Emit(OpCodes.Ret);
         }
 
         // Callable wrapper handler: route .bind/.call/.apply/.length/.name through
@@ -3274,6 +3314,19 @@ public partial class RuntimeEmitter
         // null check
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // globalThis/global sentinel (#271): `root.foo = v` stores into the shared
+        // global-properties dictionary, visible to subsequent GlobalThisGetProperty
+        // reads. Mirrors the syntactic `globalThis.foo = v` path.
+        var notGlobalThisSetLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+        il.Emit(OpCodes.Bne_Un, notGlobalThisSetLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.GlobalThisSetProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notGlobalThisSetLabel);
 
         // Proxy check: uses obj.GetType().FullName comparison (no SharpTS.dll dependency)
         var notProxyLabel = il.DefineLabel();

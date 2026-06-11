@@ -60,6 +60,27 @@ public partial class RuntimeEmitter
             _types.Void,
             [_types.Object, _types.String, _types.Object]);
 
+        // Reserve GlobalThisGetProperty(string) → object and
+        // GlobalThisSetProperty(string, object) → void. EmitGlobalThisMethods
+        // (run much later) fills the bodies, but GetProperty/GetIndex/SetProperty/
+        // SetIndex — emitted before it — route the value-position globalThis
+        // sentinel through these, so the signatures must exist now (#271).
+        runtime.GlobalThisGetProperty = typeBuilder.DefineMethod(
+            "GlobalThisGetProperty",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.String]);
+        runtime.GlobalThisSetProperty = typeBuilder.DefineMethod(
+            "GlobalThisSetProperty",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [_types.String, _types.Object]);
+
+        // Symbol-keyed class accessor registry (#266). GetIndex/SetIndex (emitted
+        // during EmitRuntimeClass) call FindSymbol{Getter,Setter}For, and class
+        // .cctors (emitted later still) call RegisterSymbolAccessor.
+        DefineSymbolAccessorRegistry(typeBuilder, runtime);
+
         // Reserve ToNumber(object) → double. Used by $RegExp's Symbol.split
         // to coerce `limit` per ECMA-262 §22.2.5.13 step 7 (and to throw
         // TypeError on Symbol limits). EmitToNumber later fills the body.

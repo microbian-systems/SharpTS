@@ -150,4 +150,84 @@ public class GlobalThisTests
             """, mode);
         Assert.Contains("42", result);
     }
+
+    // #271: globalThis used in VALUE position (assigned to a variable, then
+    // dereferenced) must be a real object, not null. Before the fix compiled
+    // mode emitted null, so root/context detection in lodash-style packages got
+    // a null root and could not initialize.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GlobalThis_ValuePosition_IsRealObject(ExecutionMode mode)
+    {
+        var result = TestHarness.Run("""
+            const root: any = globalThis;
+            console.log(typeof root === "object");
+            console.log(root !== null);
+            console.log(root.globalThis === root);
+            """, mode);
+        Assert.Equal("true\ntrue\ntrue\n", result);
+    }
+
+    // Cross-mode: typeof checks and Object identity hold in both modes.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GlobalThis_ValuePosition_ResolvesConstructorTypeofs(ExecutionMode mode)
+    {
+        var result = TestHarness.Run("""
+            const root: any = globalThis;
+            console.log(root.Object === Object);
+            console.log(typeof root.Array === "function");
+            console.log(typeof root.Function === "function");
+            console.log(typeof root.TypeError === "function");
+            console.log(typeof root.Math === "object");
+            """, mode);
+        Assert.Equal("true\ntrue\ntrue\ntrue\ntrue\n", result);
+    }
+
+    // Compiled-only: the runtime sentinel routes constructor reads to real .NET
+    // Type tokens, so `root.Error === Error` holds (#271). The interpreter's
+    // SharpTSGlobalThis returns a distinct Error representation for this identity,
+    // which is an independent pre-existing quirk outside this fix's scope.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void GlobalThis_ValuePosition_ResolvesErrorConstructorIdentity(ExecutionMode mode)
+    {
+        var result = TestHarness.Run("""
+            const root: any = globalThis;
+            console.log(root.Error === Error);
+            console.log(root.TypeError === TypeError);
+            """, mode);
+        Assert.Equal("true\ntrue\n", result);
+    }
+
+    // #271: writes through a value-position globalThis reference round-trip to
+    // subsequent reads (the lodash `root.foo = ...` pattern).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GlobalThis_ValuePosition_WriteRoundTrips(ExecutionMode mode)
+    {
+        var result = TestHarness.Run("""
+            const root: any = globalThis;
+            root.myProp = 42;
+            console.log(globalThis.myProp === 42);
+            root["dynKey"] = "hi";
+            console.log(globalThis.dynKey === "hi");
+            """, mode);
+        Assert.Equal("true\ntrue\n", result);
+    }
+
+    // #271: the lodash/core-js `Function('return this')()` global probe yields
+    // the same real globalThis value (compiled mode; the interpreter rejects the
+    // dynamic Function constructor, so this is compiled-only).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void GlobalThis_FunctionReturnThisProbe_IsGlobalThis(ExecutionMode mode)
+    {
+        var result = TestHarness.Run("""
+            const probe: any = Function('return this')();
+            console.log(probe === globalThis);
+            console.log(probe.Object === Object);
+            """, mode);
+        Assert.Equal("true\ntrue\n", result);
+    }
 }

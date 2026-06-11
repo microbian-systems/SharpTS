@@ -96,6 +96,15 @@ public partial class RuntimeEmitter
             FieldAttributes.Public | FieldAttributes.Static);
         runtime.MathSingletonField = mathSingletonField;
 
+        // globalThis/global sentinel (#271) — a plain object whose identity lets
+        // the dynamic property paths recognize a value-position globalThis and
+        // route reads/writes through GlobalThisGetProperty/GlobalThisSetProperty.
+        var globalThisSingletonField = typeBuilder.DefineField(
+            "_globalThisSingleton",
+            _types.Object,
+            FieldAttributes.Public | FieldAttributes.Static);
+        runtime.GlobalThisSingletonField = globalThisSingletonField;
+
         // Boolean / Number / String prototype singletons. Test262 patterns like
         //   Boolean.prototype[0] = true; Boolean.prototype.length = 1;
         //   Array.prototype.every.call(false, cb)
@@ -350,6 +359,13 @@ public partial class RuntimeEmitter
         // Initialize _mathSingleton = new Dictionary<string, object>()
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
         cctorIL.Emit(OpCodes.Stsfld, mathSingletonField);
+
+        // Initialize _globalThisSingleton = new object() (#271 sentinel identity)
+        cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.Object));
+        cctorIL.Emit(OpCodes.Stsfld, globalThisSingletonField);
+
+        // Initialize the symbol-keyed accessor registry (#266).
+        InitSymbolAccessorRegistry(cctorIL, runtime);
 
         // Boolean/Number/String prototype singletons (lazy-feeling but eagerly
         // initialized so Type→prototype lookups never hit a null).
@@ -937,6 +953,8 @@ public partial class RuntimeEmitter
         // Fill in LookupBuiltInStaticMember's body now that IsArray, NumberIs*,
         // StringFrom*, and TSFunctionCtor are all in place (#63).
         EmitLookupBuiltInStaticMemberBody(runtime);
+        // Fill in the symbol-keyed accessor registry helper bodies (#266).
+        EmitSymbolAccessorRegistryBodies(runtime);
         // Microtask method (queueMicrotask) - must come before timer infrastructure so ProcessMicrotasks is available
         EmitQueueMicrotaskMethod(typeBuilder, runtime);
         // Virtual timer infrastructure (must come before DateMethods which calls ProcessPendingTimers)

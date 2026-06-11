@@ -338,7 +338,14 @@ public partial class ILCompiler
         {
             foreach (var accessor in classExpr.Accessors)
             {
-                RejectComputedAccessor(accessor);
+                // Symbol-keyed accessors are supported on class *declarations* (#266)
+                // but not yet on class *expressions* (separate emission path with no
+                // .cctor registration hook) — tracked by #281.
+                if (accessor.ComputedKey != null)
+                {
+                    throw new Diagnostics.Exceptions.CompileException(
+                        $"Symbol-keyed computed accessors (line {accessor.Name.Line}) are not yet supported on class expressions in compiled mode (#281).");
+                }
                 string accessorName = accessor.Name.Lexeme;
                 string pascalName = NamingConventions.ToPascalCase(accessorName);
                 string methodName = accessor.Kind.Type == TokenType.GET

@@ -6,13 +6,14 @@ namespace SharpTS.Tests.SharedTests;
 /// <summary>
 /// Tests for computed accessor names in class bodies (#261):
 /// get [Symbol.toStringTag]() / static get [Symbol.species]().
-/// Symbol-keyed accessors run interpreted only (compiled support tracked by #266);
-/// literal computed keys fold to ordinary names in the parser and run in both modes.
+/// Symbol-keyed accessors on class declarations run in both modes (compiled
+/// support added in #266); on class expressions they stay interpreted-only
+/// (#281). Literal computed keys fold to ordinary names in the parser.
 /// </summary>
 public class ComputedAccessorNameTests
 {
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void StaticSymbolGetter_SpeciesPattern(ExecutionMode mode)
     {
         var source = """
@@ -27,7 +28,7 @@ public class ComputedAccessorNameTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void InstanceSymbolGetterAndSetter(ExecutionMode mode)
     {
         var source = """
@@ -47,7 +48,7 @@ public class ComputedAccessorNameTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void StaticSymbolGetter_InheritedThroughSubclassChain(ExecutionMode mode)
     {
         var source = """
@@ -62,6 +63,8 @@ public class ComputedAccessorNameTests
         Assert.Equal("true\n", output);
     }
 
+    // Class expressions use a separate emission path with no .cctor registration
+    // hook; compiled symbol-accessor support there is tracked by #281.
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void SymbolAccessor_InClassExpression(ExecutionMode mode)
@@ -75,6 +78,29 @@ public class ComputedAccessorNameTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("expr\n", output);
+    }
+
+    // A get and set accessor for the SAME symbol must coexist (they merge into one
+    // registry slot) and the .cctor registration must not disturb static field init.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SymbolGetterAndSetter_SameKey_WithStaticField(ExecutionMode mode)
+    {
+        var source = """
+            class Box {
+                static tag: number = 7;
+                value: any = 0;
+                get [Symbol.toPrimitive]() { return this.value; }
+                set [Symbol.toPrimitive](v: any) { this.value = v * 2; }
+            }
+            const b = new Box();
+            (b as any)[Symbol.toPrimitive] = 21;
+            console.log((b as any)[Symbol.toPrimitive]);
+            console.log(Box.tag);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n7\n", output);
     }
 
     [Theory]

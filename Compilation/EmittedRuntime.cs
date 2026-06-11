@@ -389,6 +389,15 @@ public class EmittedRuntime
     // silently vanished.
     public FieldBuilder MathSingletonField { get; set; } = null!;
     /// <summary>
+    /// globalThis/global singleton — a sentinel object referenced from value
+    /// position (`var root = globalThis`) so root/context detection in packages
+    /// like lodash finds a real object instead of null (#271). Dynamic GetProperty/
+    /// GetIndex/SetProperty/SetIndex ref-test against this field and route to
+    /// GlobalThisGetProperty/GlobalThisSetProperty. The syntactic `globalThis.X`
+    /// path is still intercepted at compile time by GlobalThisStaticEmitter.
+    /// </summary>
+    public FieldBuilder GlobalThisSingletonField { get; set; } = null!;
+    /// <summary>
     /// Boolean.prototype singleton — a Dictionary&lt;string, object&gt; that surfaces
     /// when user code does <c>Boolean.prototype[0] = …</c> or
     /// <c>Boolean.prototype.length = …</c>. Read by GetProperty's Type-receiver
@@ -1594,6 +1603,14 @@ public class EmittedRuntime
     // globalThis methods (ES2020)
     public MethodBuilder GlobalThisGetProperty { get; set; } = null!;
     public MethodBuilder GlobalThisSetProperty { get; set; } = null!;
+
+    // Symbol-keyed class accessor registry (#266). The field holds
+    // Dictionary<Type, Dictionary<object, object[]>>; each object[4] slot is
+    // {instanceGetter, instanceSetter, staticGetter, staticSetter} MethodInfos.
+    public FieldBuilder SymbolAccessorRegistryField { get; set; } = null!;
+    public MethodBuilder RegisterSymbolAccessor { get; set; } = null!;
+    public MethodBuilder FindSymbolGetter { get; set; } = null!;
+    public MethodBuilder FindSymbolSetter { get; set; } = null!;
     public FieldBuilder CachedFetchFunction { get; set; } = null!;
     public FieldBuilder CachedParseIntFunction { get; set; } = null!;
     public FieldBuilder CachedParseFloatFunction { get; set; } = null!;
@@ -2761,6 +2778,11 @@ public class EmittedRuntime
     public MethodBuilder ReadableStreamCloseStream { get; set; } = null!;
     public MethodBuilder ReadableStreamErrorStream { get; set; } = null!;
     public MethodBuilder ReadableStreamRead { get; set; } = null!;
+    /// <summary>
+    /// Static $ReadableStream.From(object iterable) → object (#269) — eagerly
+    /// drains a guest iterable into a closed readable stream.
+    /// </summary>
+    public MethodBuilder ReadableStreamFrom { get; set; } = null!;
     public TypeBuilder ReadableStreamDefaultControllerType { get; set; } = null!;
     public TypeBuilder ReadableStreamDefaultReaderType { get; set; } = null!;
     public ConstructorBuilder ReadableStreamDefaultReaderCtor { get; set; } = null!;

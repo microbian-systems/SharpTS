@@ -10,24 +10,53 @@ namespace SharpTS.Compilation;
 public partial class ILCompiler
 {
     /// <summary>
-    /// Computed accessor names with non-literal keys (e.g. <c>static get [Symbol.species]()</c>)
-    /// have no static .NET member name to emit. The interpreter supports them; compiled
-    /// mode does not yet (#266) — fail loudly rather than emitting a broken
-    /// property literally named "&lt;computed&gt;". Literal keys (<c>get ["foo"]()</c>)
-    /// are folded to ordinary names by the parser and never reach this check.
+    /// Pre-defines a synthetic method for a symbol-keyed computed accessor (#266),
+    /// e.g. <c>static get [Symbol.species]()</c>. The method has no spec-visible
+    /// name; it is invoked reflectively via the runtime symbol-accessor registry.
+    /// Recorded in <see cref="ClassState.SymbolAccessors"/> for body emission and
+    /// for registration in the class .cctor.
     /// </summary>
-    private static void RejectComputedAccessor(Stmt.Accessor accessor)
+    private void DefineSymbolAccessorMethod(TypeBuilder typeBuilder, Stmt.Accessor accessor)
     {
-        if (accessor.ComputedKey != null)
+        string className = typeBuilder.Name;
+        if (!_classes.SymbolAccessors.TryGetValue(className, out var list))
         {
-            throw new Diagnostics.Exceptions.CompileException(
-                $"Accessors with computed names (line {accessor.Name.Line}) are not supported in compiled mode yet.");
+            list = [];
+            _classes.SymbolAccessors[className] = list;
+        }
+
+        bool isGetter = accessor.Kind.Type == TokenType.GET;
+        // Non-virtual instance methods so MethodBase.Invoke targets exactly the
+        // registered method; inheritance is handled by the registry's base-chain walk.
+        MethodAttributes attrs = MethodAttributes.Public | MethodAttributes.HideBySig;
+        if (accessor.IsStatic) attrs |= MethodAttributes.Static;
+        Type[] paramTypes = isGetter ? [] : [typeof(object)];
+
+        var methodBuilder = typeBuilder.DefineMethod(
+            $"$sym_{(isGetter ? "get" : "set")}_{list.Count}",
+            attrs,
+            typeof(object),
+            paramTypes);
+
+        list.Add((accessor, methodBuilder));
+    }
+
+    /// <summary>
+    /// Emits bodies for the symbol-keyed accessors recorded by
+    /// <see cref="DefineSymbolAccessorMethod"/> for this class.
+    /// </summary>
+    private void EmitSymbolAccessors(TypeBuilder typeBuilder, FieldInfo fieldsField)
+    {
+        if (!_classes.SymbolAccessors.TryGetValue(typeBuilder.Name, out var list))
+            return;
+        foreach (var (accessor, methodBuilder) in list)
+        {
+            EmitAccessorBody(typeBuilder, accessor, methodBuilder, fieldsField);
         }
     }
 
     private void EmitAccessor(TypeBuilder typeBuilder, Stmt.Accessor accessor, FieldInfo fieldsField)
     {
-        RejectComputedAccessor(accessor);
         // Use PascalCase naming convention: get_<PascalPropertyName> or set_<PascalPropertyName>
         string pascalName = NamingConventions.ToPascalCase(accessor.Name.Lexeme);
         string methodName = accessor.Kind.Type == TokenType.GET
@@ -110,6 +139,18 @@ public partial class ILCompiler
                 }
             }
         }
+
+        EmitAccessorBody(typeBuilder, accessor, methodBuilder, fieldsField);
+    }
+
+    /// <summary>
+    /// Emits decorators (if any) and the IL body for a resolved accessor method.
+    /// Shared by the string-named accessor path (<see cref="EmitAccessor"/>) and the
+    /// symbol-keyed computed accessor path (<see cref="EmitSymbolAccessors"/>).
+    /// </summary>
+    private void EmitAccessorBody(TypeBuilder typeBuilder, Stmt.Accessor accessor, MethodBuilder methodBuilder, FieldInfo fieldsField)
+    {
+        string className = typeBuilder.Name;
 
         // Apply accessor-level decorators as .NET attributes
         if (_decoratorMode != DecoratorMode.None)
