@@ -874,6 +874,11 @@ public partial class TypeChecker
             foreach (var kvp in gi.Members)
                 substitutedMembers[kvp.Key] = Substitute(kvp.Value, subs);
 
+            // The instantiation's index signatures constrain the source too — `A<T>` with
+            // `[x: string]: T` only accepts sources whose index/members fit the substituted T
+            // (StringIndexOf/NumberIndexOf substitute the instantiation's arguments).
+            if (!IndexSignaturesSatisfied(expected, actual)) return false;
+
             return CheckStructuralCompatibility(substitutedMembers, actual, gi.OptionalMembers);
         }
 

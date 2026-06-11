@@ -218,6 +218,8 @@ public partial class TypeChecker
         TypeInfo.Instance inst => StringIndexOf(inst.ResolvedClassType),
         TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig =>
             gc.Core.StringIndexType is { } sit ? Substitute(sit, GenericClassSubs(gc, ig.TypeArguments)) : null,
+        TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericInterface gi } ig =>
+            gi.StringIndexType is { } sit ? Substitute(sit, GenericInterfaceSubs(gi, ig.TypeArguments)) : null,
         _ => null
     };
 
@@ -230,6 +232,8 @@ public partial class TypeChecker
         TypeInfo.Instance inst => NumberIndexOf(inst.ResolvedClassType),
         TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig =>
             gc.Core.NumberIndexType is { } nit ? Substitute(nit, GenericClassSubs(gc, ig.TypeArguments)) : null,
+        TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericInterface gi } ig =>
+            gi.NumberIndexType is { } nit ? Substitute(nit, GenericInterfaceSubs(gi, ig.TypeArguments)) : null,
         _ => null
     };
 
@@ -242,8 +246,19 @@ public partial class TypeChecker
         TypeInfo.Instance inst => NamedMemberTypesOf(inst.ResolvedClassType),
         TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig =>
             CollectGenericClassMembers(gc, ig.TypeArguments).Values,
+        TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericInterface gi } ig =>
+            gi.Members.Values.Select(m => Substitute(m, GenericInterfaceSubs(gi, ig.TypeArguments))),
         _ => []
     };
+
+    /// <summary>Type-parameter substitution map for a generic-interface instantiation.</summary>
+    private static Dictionary<string, TypeInfo> GenericInterfaceSubs(TypeInfo.GenericInterface gi, List<TypeInfo> args)
+    {
+        Dictionary<string, TypeInfo> subs = [];
+        for (int i = 0; i < gi.TypeParams.Count && i < args.Count; i++)
+            subs[gi.TypeParams[i].Name] = args[i];
+        return subs;
+    }
 
     /// <summary>
     /// True when <paramref name="actual"/> satisfies the index signatures of <paramref name="expected"/>
