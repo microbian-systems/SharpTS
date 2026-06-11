@@ -77,4 +77,20 @@ public class BuiltInSingletonValueFormTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("0\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Json_StaticMethodIdentityIsStable(ExecutionMode mode)
+    {
+        // #299: JSON.parse / JSON.stringify are single built-in function objects
+        // per ECMA-262 §25.5, so repeated access returns the SAME callable.
+        // Previously the interpreter synthesized a fresh wrapper per access while
+        // compiled mode was already stable — both now agree.
+        var source = @"
+            console.log(JSON.stringify === JSON.stringify);
+            console.log(JSON.parse === JSON.parse);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
 }

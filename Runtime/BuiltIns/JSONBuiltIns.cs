@@ -11,15 +11,18 @@ namespace SharpTS.Runtime.BuiltIns;
 /// </summary>
 public static class JSONBuiltIns
 {
-    public static object? GetStaticMethod(string name)
-    {
-        return name switch
-        {
-            "parse" => BuiltInMethod.CreateV2("parse", 1, 2, ParseJson),
-            "stringify" => BuiltInMethod.CreateV2("stringify", 1, 3, StringifyJson),
-            _ => null
-        };
-    }
+    // ECMA-262 25.5: JSON.parse / JSON.stringify are single built-in function
+    // objects, so repeated access must return the SAME callable (identity
+    // stability: `JSON.stringify === JSON.stringify`). Build the methods once
+    // into a cached lookup — mirroring MathBuiltIns — rather than synthesizing
+    // a fresh BuiltInMethod per access.
+    private static readonly BuiltInStaticMemberLookup _lookup =
+        BuiltInStaticBuilder.Create()
+            .MethodV2("parse", 1, 2, ParseJson)
+            .MethodV2("stringify", 1, 3, StringifyJson)
+            .Build();
+
+    public static object? GetStaticMethod(string name) => _lookup.GetMember(name);
 
     private static RuntimeValue ParseJson(Interpreter interp, RuntimeValue _, ReadOnlySpan<RuntimeValue> args)
     {
