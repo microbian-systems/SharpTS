@@ -1566,6 +1566,18 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             return true;
         }
 
+        // User class identifiers used as values: emit the class's Type token
+        // (the same representation ILEmitter's sync path produces) so
+        // `x instanceof MyClass` works inside state-machine bodies. Before
+        // the built-in arms so a user class shadowing a built-in name wins.
+        if (Ctx.Classes.TryGetValue(Ctx.ResolveClassName(name), out var userClassType))
+        {
+            IL.Emit(OpCodes.Ldtoken, userClassType);
+            IL.Emit(OpCodes.Call, Types.GetMethod(Types.Type, "GetTypeFromHandle", Types.RuntimeTypeHandle));
+            SetStackUnknown();
+            return true;
+        }
+
         // Built-in constructor identifiers used as values (#232): without these
         // arms, state-machine bodies (async/generator MoveNext emitters, which
         // don't run ILEmitter's EmitVariable) emit null for `Error`, `Date`,

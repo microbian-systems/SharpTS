@@ -594,4 +594,46 @@ public class ClassTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("any\ntrue\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InstanceofGenericClass_Works(ExecutionMode mode)
+    {
+        // Regression: compiled `b instanceof Box` emitted the OPEN generic
+        // definition while instances carry constructed types (Box<object>),
+        // so IsAssignableFrom never matched and the check was always false.
+        var source = """
+            class Box<T> { v: T; constructor(v: T) { this.v = v; } }
+            const b = new Box<number>(1);
+            console.log(b instanceof Box);
+            async function main() {
+                const b2 = new Box<string>("s");
+                console.log(b2 instanceof Box);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InstanceofUserClass_InsideAsyncFunction(ExecutionMode mode)
+    {
+        // Regression: state-machine emitters resolved user class identifiers
+        // to null inside async bodies, so `x instanceof MyClass` was always
+        // false there (built-ins were fixed in #232; user classes were not).
+        var source = """
+            class Plain { x: number = 1; }
+            async function main() {
+                const p = new Plain();
+                console.log(p instanceof Plain);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
 }
