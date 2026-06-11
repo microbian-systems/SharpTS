@@ -135,11 +135,8 @@ public partial class TypeChecker
         TypeInfo? preExistingType = stmt.IsVar && _environment.IsDefinedLocally(stmt.Name.Lexeme)
             ? _environment.Get(stmt.Name.Lexeme) : null;
 
-        TypeInfo? declaredType = null;
-        if (stmt.TypeAnnotation != null)
-        {
-            declaredType = ToTypeInfo(stmt.TypeAnnotation);
-        }
+        // Node-first annotation resolution (type-AST migration), string fallback.
+        TypeInfo? declaredType = ResolveAnnotation(stmt.TypeAnnotation, stmt.TypeAnnotationNode);
 
         if (stmt.HasDefiniteAssignmentAssertion)
         {
