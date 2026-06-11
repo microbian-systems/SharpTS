@@ -244,4 +244,22 @@ public class AbortControllerTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("1\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AbortSignal_InstanceOf_BrandChecks(ExecutionMode mode)
+    {
+        // #246: interpreter returned false for real signals (no brand linkage
+        // on the AbortSignal sentinel); compiled returned true for ANY plain
+        // object (Dictionary IsAssignableFrom fallback).
+        var source = @"
+            const s: any = AbortSignal.abort('x');
+            console.log(s instanceof (AbortSignal as any));
+            console.log(({} as any) instanceof (AbortSignal as any));
+            const c = new AbortController();
+            console.log(c.signal instanceof (AbortSignal as any));
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\ntrue\n", output);
+    }
 }

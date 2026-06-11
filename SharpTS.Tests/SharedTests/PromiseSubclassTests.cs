@@ -234,4 +234,26 @@ public class PromiseSubclassTests
         Assert.Equal("false\ntrue\n14\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExtendsPromise_ConstructorIdentity(ExecutionMode mode)
+    {
+        // ECMA-262 §27.2.5.1 / #221: subclass instances report the subclass
+        // as .constructor; plain promises report Promise.
+        var source = """
+            class MyPromise<T> extends Promise<T> {}
+            async function main() {
+                const p = MyPromise.resolve(1);
+                console.log(p.constructor === MyPromise);
+                console.log(p.constructor === Promise);
+                const q = Promise.resolve(1);
+                console.log(q.constructor === Promise);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\ntrue\n", output);
+    }
+
 }
