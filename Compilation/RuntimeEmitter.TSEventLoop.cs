@@ -103,6 +103,127 @@ public partial class RuntimeEmitter
         EmitEventLoopWaitForTask(typeBuilder, runtime);
 
         typeBuilder.CreateType();
+
+        // Emit the SynchronizationContext that routes await continuations back to
+        // this loop. Done after $EventLoop is finalized so it can reference
+        // GetInstance/Schedule.
+        EmitEventLoopSyncContext(moduleBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Emits <c>$EventLoopSyncContext</c>, a <see cref="SynchronizationContext"/>
+    /// whose <c>Post</c> enqueues the continuation onto <c>$EventLoop._queue</c>
+    /// (via <c>Schedule</c>) so async/await continuations resume on the
+    /// event-loop thread instead of a thread-pool thread. Without it, a
+    /// Task-backed promise (e.g. <c>fetch</c>) settles on a pool thread and its
+    /// continuation is dispatched back to the pool — invisible to the entry
+    /// point's WaitForTask busy-check, so under pool pressure the gap exceeds the
+    /// quiescence window and the still-settling top-level promise is abandoned.
+    /// Standalone-safe: references only BCL types and the emitted $EventLoop.
+    /// </summary>
+    private void EmitEventLoopSyncContext(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        // --- Closure: holds (SendOrPostCallback d, object state); Run() => d(state). ---
+        var closure = moduleBuilder.DefineType(
+            "$SyncContextClosure",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            _types.Object);
+        var dField = closure.DefineField("_d", typeof(SendOrPostCallback), FieldAttributes.Public);
+        var stateField = closure.DefineField("_state", _types.Object, FieldAttributes.Public);
+
+        var closureCtor = closure.DefineConstructor(
+            MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
+        {
+            var cil = closureCtor.GetILGenerator();
+            cil.Emit(OpCodes.Ldarg_0);
+            cil.Emit(OpCodes.Call, _types.GetDefaultConstructor(_types.Object));
+            cil.Emit(OpCodes.Ret);
+        }
+
+        var runMethod = closure.DefineMethod(
+            "Run", MethodAttributes.Public, typeof(void), Type.EmptyTypes);
+        {
+            var ril = runMethod.GetILGenerator();
+            // _d(_state)
+            ril.Emit(OpCodes.Ldarg_0);
+            ril.Emit(OpCodes.Ldfld, dField);
+            ril.Emit(OpCodes.Ldarg_0);
+            ril.Emit(OpCodes.Ldfld, stateField);
+            ril.Emit(OpCodes.Callvirt, typeof(SendOrPostCallback).GetMethod("Invoke")!);
+            ril.Emit(OpCodes.Ret);
+        }
+        closure.CreateType();
+
+        // --- $EventLoopSyncContext : SynchronizationContext ---
+        var sc = moduleBuilder.DefineType(
+            "$EventLoopSyncContext",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            typeof(SynchronizationContext));
+
+        var scCtor = sc.DefineConstructor(
+            MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
+        {
+            var cil = scCtor.GetILGenerator();
+            cil.Emit(OpCodes.Ldarg_0);
+            cil.Emit(OpCodes.Call, typeof(SynchronizationContext).GetConstructor(Type.EmptyTypes)!);
+            cil.Emit(OpCodes.Ret);
+        }
+        runtime.EventLoopSyncContextCtor = scCtor;
+
+        // public override void Post(SendOrPostCallback d, object state)
+        //   => $EventLoop.GetInstance().Schedule(new Action(new $SyncContextClosure{ _d=d, _state=state }.Run));
+        var post = sc.DefineMethod(
+            "Post",
+            MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig,
+            typeof(void), [typeof(SendOrPostCallback), _types.Object]);
+        {
+            var pil = post.GetILGenerator();
+            var c = pil.DeclareLocal(closure);
+            pil.Emit(OpCodes.Newobj, closureCtor);
+            pil.Emit(OpCodes.Stloc, c);
+            pil.Emit(OpCodes.Ldloc, c);
+            pil.Emit(OpCodes.Ldarg_1);
+            pil.Emit(OpCodes.Stfld, dField);
+            pil.Emit(OpCodes.Ldloc, c);
+            pil.Emit(OpCodes.Ldarg_2);
+            pil.Emit(OpCodes.Stfld, stateField);
+            pil.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+            pil.Emit(OpCodes.Ldloc, c);
+            pil.Emit(OpCodes.Ldftn, runMethod);
+            pil.Emit(OpCodes.Newobj, typeof(Action).GetConstructor([_types.Object, typeof(IntPtr)])!);
+            pil.Emit(OpCodes.Callvirt, runtime.EventLoopSchedule);
+            pil.Emit(OpCodes.Ret);
+        }
+        sc.DefineMethodOverride(post, typeof(SynchronizationContext).GetMethod("Post")!);
+
+        // public override void Send(SendOrPostCallback d, object state) => Post(d, state);
+        var send = sc.DefineMethod(
+            "Send",
+            MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig,
+            typeof(void), [typeof(SendOrPostCallback), _types.Object]);
+        {
+            var sil = send.GetILGenerator();
+            sil.Emit(OpCodes.Ldarg_0);
+            sil.Emit(OpCodes.Ldarg_1);
+            sil.Emit(OpCodes.Ldarg_2);
+            sil.Emit(OpCodes.Callvirt, post);
+            sil.Emit(OpCodes.Ret);
+        }
+        sc.DefineMethodOverride(send, typeof(SynchronizationContext).GetMethod("Send")!);
+
+        // public override SynchronizationContext CreateCopy() => this;
+        var copy = sc.DefineMethod(
+            "CreateCopy",
+            MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.HideBySig,
+            typeof(SynchronizationContext), Type.EmptyTypes);
+        {
+            var kil = copy.GetILGenerator();
+            kil.Emit(OpCodes.Ldarg_0);
+            kil.Emit(OpCodes.Ret);
+        }
+        sc.DefineMethodOverride(copy, typeof(SynchronizationContext).GetMethod("CreateCopy")!);
+
+        sc.CreateType();
     }
 
     private void EmitEventLoopGetInstance(TypeBuilder typeBuilder, EmittedRuntime runtime,
@@ -389,9 +510,12 @@ public partial class RuntimeEmitter
         // -1 while busy.
         var quiescentStartLocal = il.DeclareLocal(typeof(long));
         var waitMsLocal = il.DeclareLocal(_types.Int32);
+        var actionLocal = il.DeclareLocal(typeof(Action));
 
         var loopTop = il.DefineLabel();
         var notDone = il.DefineLabel();
+        var drainTop = il.DefineLabel();
+        var drainEnd = il.DefineLabel();
         var skipTimers = il.DefineLabel();
         var busyLabel = il.DefineLabel();
         var sleepLabel = il.DefineLabel();
@@ -418,6 +542,29 @@ public partial class RuntimeEmitter
         // ignored until process teardown.
         if (runtime.CheckCancellationMethod != null)
             il.Emit(OpCodes.Call, runtime.CheckCancellationMethod);
+
+        // Drain queued callbacks on THIS (event-loop) thread. async/await
+        // continuations are Posted here by $EventLoopSyncContext when their
+        // awaited Task settles on a thread-pool thread; running them may settle
+        // the task we're waiting on. Without this drain a Posted continuation
+        // would sit in the queue unexecuted — the awaited promise would never
+        // complete and would be misjudged as never-settling once the queue
+        // looked empty. Re-checks task completion after each callback.
+        il.MarkLabel(drainTop);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _eventLoopQueueField);
+        il.Emit(OpCodes.Ldloca, actionLocal);
+        il.Emit(OpCodes.Callvirt, typeof(ConcurrentQueue<Action>).GetMethod("TryDequeue", [typeof(Action).MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, drainEnd);
+        il.Emit(OpCodes.Ldloc, actionLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Action).GetMethod("Invoke")!);
+        // if (task.IsCompleted) return true; else keep draining
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, typeof(Task).GetProperty("IsCompleted")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, drainTop);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(drainEnd);
 
         // waitMs = -1; if (_timerProcessor != null) waitMs = _timerProcessor.Invoke();
         // Invoke fires due timers (their callbacks may settle the task) and

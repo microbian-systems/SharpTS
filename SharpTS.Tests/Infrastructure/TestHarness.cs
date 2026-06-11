@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using SharpTS.Compilation;
 using SharpTS.Execution;
 using SharpTS.Modules;
@@ -299,13 +300,21 @@ public static class TestHarness
         var task = Task.Run(() =>
         {
             using var capture = AsyncLocalConsoleRedirector.Capture();
+            // The compiled Main installs an event-loop SynchronizationContext on
+            // this thread; restore the previous one so it doesn't leak onto the
+            // recycled Task.Run pool thread and disturb a sibling test.
+            var prevCtx = System.Threading.SynchronizationContext.Current;
             try
             {
                 mainMethod.Invoke(null, null);
             }
             catch (TargetInvocationException tie) when (tie.InnerException is not null)
             {
-                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            }
+            finally
+            {
+                System.Threading.SynchronizationContext.SetSynchronizationContext(prevCtx);
             }
             return capture.GetOutput().Replace("\r\n", "\n");
         });
@@ -539,7 +548,9 @@ public static class TestHarness
         using var capture = AsyncLocalConsoleRedirector.Capture();
         var programType = assembly.GetType("$Program");
         var mainMethod = programType?.GetMethod("Main", BindingFlags.Public | BindingFlags.Static);
-        mainMethod?.Invoke(null, null);
+        var prevCtx = System.Threading.SynchronizationContext.Current;
+        try { mainMethod?.Invoke(null, null); }
+        finally { System.Threading.SynchronizationContext.SetSynchronizationContext(prevCtx); }
 
         return (assembly, capture.GetOutput().Replace("\r\n", "\n"));
     }
@@ -872,11 +883,13 @@ public static class TestHarness
             var task = Task.Run(() =>
             {
                 using var capture = AsyncLocalConsoleRedirector.Capture();
+                var prevCtx = System.Threading.SynchronizationContext.Current;
                 try { mainMethod.Invoke(null, null); }
                 catch (TargetInvocationException tie) when (tie.InnerException is not null)
                 {
-                    System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                    ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
                 }
+                finally { System.Threading.SynchronizationContext.SetSynchronizationContext(prevCtx); }
                 return capture.GetOutput().Replace("\r\n", "\n");
             });
 
