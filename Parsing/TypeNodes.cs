@@ -77,13 +77,38 @@ public sealed record TupleElementNode(string? Name, TypeNode Type, bool IsOption
 /// dumped by the checker when <c>SHARPTS_TYPENODE_STATS=1</c>. Coarse by design (spike
 /// instrumentation, not telemetry).
 /// </summary>
+/// <remarks>
+/// Backed by <see cref="AsyncLocal{T}"/> so each logical flow has its own counters. The test
+/// harness runs the checker inside <c>Task.Run</c>, so the increments land on a pool thread while
+/// the test reads the counters on its own thread — AsyncLocal flows the same holder across that
+/// boundary, and concurrent tests are sibling flows that never see each other's values. A plain
+/// static (or <c>[ThreadStatic]</c>) breaks one of those two requirements: a shared static lets
+/// xUnit's parallel collections corrupt the counter (a string fallback in one test fails an
+/// unrelated test's <c>Assert.Equal(0, StringFallbacks)</c>); [ThreadStatic] severs the checker's
+/// pool-thread writes from the test thread's reads. Call <see cref="Reset"/> before the checked
+/// run so the holder is established on the originating flow and flows down into the worker.
+/// </remarks>
 public static class TypeNodeStats
 {
+    private sealed class Counters { public long NodeHits; public long StringFallbacks; }
+
+    private static readonly AsyncLocal<Counters?> _current = new();
+
+    private static Counters Current => _current.Value ??= new Counters();
+
     /// <summary>Annotations resolved through the node path.</summary>
-    public static long NodeHits;
+    public static long NodeHits
+    {
+        get => Current.NodeHits;
+        set => Current.NodeHits = value;
+    }
 
     /// <summary>Annotations that had no node (unsupported construct) and used the string path.</summary>
-    public static long StringFallbacks;
+    public static long StringFallbacks
+    {
+        get => Current.StringFallbacks;
+        set => Current.StringFallbacks = value;
+    }
 
-    public static void Reset() { NodeHits = 0; StringFallbacks = 0; }
+    public static void Reset() => _current.Value = new Counters();
 }
