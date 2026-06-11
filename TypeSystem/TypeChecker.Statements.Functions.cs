@@ -144,6 +144,16 @@ public partial class TypeChecker
         // Skip if already defined
         if (_environment.IsDefinedLocally(name.Lexeme)) return;
 
+        // An explicit annotation is authoritative — hoist with IT, not with the arrow's
+        // inferred shape (which collapses unannotated params to any and then trips the TS2403
+        // redeclaration check when the real declaration is visited).
+        if (typeAnnotation is not null)
+        {
+            try { _environment.Define(name.Lexeme, ToTypeInfo(typeAnnotation)); }
+            catch { _environment.Define(name.Lexeme, new TypeInfo.Any()); }
+            return;
+        }
+
         try
         {
             // Build parameter types from the arrow function's parameter declarations

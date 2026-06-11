@@ -5,8 +5,27 @@ namespace SharpTS.Parsing;
 
 public partial class Parser
 {
+    /// <summary>
+    /// Side channel for the type-AST migration (docs/plans/type-ast-design.md): type-parsing
+    /// functions that support node construction publish the node for the string they just
+    /// returned here. Consumers read-and-clear via <see cref="TakeTypeNode"/> immediately after
+    /// the call. Functions without node support leave it null (cleared at each producer's entry),
+    /// so an unsupported construct anywhere inside a composite yields no node and the consumer
+    /// falls back to the authoritative string path.
+    /// </summary>
+    private TypeNode? _lastTypeNode;
+
+    /// <summary>Reads and clears the node for the most recent type-parse call.</summary>
+    private TypeNode? TakeTypeNode()
+    {
+        var node = _lastTypeNode;
+        _lastTypeNode = null;
+        return node;
+    }
+
     private string ParseTypeAnnotation()
     {
+        _lastTypeNode = null;
         // Handle type predicate return types: "asserts x is T", "asserts x", "x is T"
         // These only appear as function return types but are parsed as type annotations
 
@@ -20,11 +39,13 @@ public partial class Parser
                 {
                     // asserts x is T
                     string predicateType = ParseConditionalType();
+                    _lastTypeNode = null; // predicates have no node form yet
                     return $"asserts {paramName} is {predicateType}";
                 }
                 else
                 {
                     // asserts x (shorthand for asserting non-null/truthy)
+                    _lastTypeNode = null;
                     return $"asserts {paramName}";
                 }
             }
@@ -40,6 +61,7 @@ public partial class Parser
             string paramName = Advance().Lexeme;
             Consume(TokenType.IS, "Expected 'is' after parameter name.");
             string predicateType = ParseConditionalType();
+            _lastTypeNode = null; // predicates have no node form yet
             return $"{paramName} is {predicateType}";
         }
 
@@ -157,10 +179,14 @@ public partial class Parser
     private string ParseConditionalType()
     {
         string checkType = ParseUnionType();
+        TypeNode? checkNode = TakeTypeNode();
 
         // Check for "extends" keyword indicating a conditional type
         if (!Check(TokenType.EXTENDS))
+        {
+            _lastTypeNode = checkNode;
             return checkType;
+        }
 
         // This might be a constraint in generics - we need to look ahead
         // for the ternary operator to confirm this is a conditional type
@@ -169,12 +195,14 @@ public partial class Parser
 
         // Parse the extends type (which may contain 'infer' keywords)
         string extendsType = ParseUnionType();
+        _lastTypeNode = null; // discard the lookahead's node
 
         // Must have '?' for this to be a conditional type
         if (!Check(TokenType.QUESTION))
         {
             // Not a conditional type - backtrack
             _current = saved;
+            _lastTypeNode = checkNode;
             return checkType;
         }
 
@@ -188,6 +216,7 @@ public partial class Parser
         // Parse false branch (recursive - can contain nested conditionals)
         string falseType = ParseConditionalType();
 
+        _lastTypeNode = null; // conditional types have no node form yet
         return $"{checkType} extends {extendsType} ? {trueType} : {falseType}";
     }
 
@@ -199,13 +228,27 @@ public partial class Parser
 
         // Union has lower precedence than intersection, so parse intersection first
         List<string> types = [ParseIntersectionType()];
+        List<TypeNode>? memberNodes = TakeTypeNode() is { } firstNode ? [firstNode] : null;
 
         while (Match(TokenType.PIPE))
         {
             types.Add(ParseIntersectionType());
+            var node = TakeTypeNode();
+            if (memberNodes is not null && node is not null)
+                memberNodes.Add(node);
+            else
+                memberNodes = null; // any node-less member disables the union node
         }
 
-        return types.Count == 1 ? types[0] : string.Join(" | ", types);
+        if (types.Count == 1)
+        {
+            _lastTypeNode = memberNodes is { Count: 1 } ? memberNodes[0] : null;
+            return types[0];
+        }
+        _lastTypeNode = memberNodes is { } all && all.Count == types.Count
+            ? new UnionTypeNode(all, Peek().Line)
+            : null;
+        return string.Join(" | ", types);
     }
 
     /// <summary>
@@ -219,18 +262,27 @@ public partial class Parser
         Match(TokenType.AMPERSAND);
 
         List<string> types = [ParsePrimaryType()];
+        TypeNode? singleNode = TakeTypeNode();
 
         while (Match(TokenType.AMPERSAND))
         {
             types.Add(ParsePrimaryType());
+            TakeTypeNode(); // intersections have no node form yet
+            singleNode = null;
         }
 
+        _lastTypeNode = types.Count == 1 ? singleNode : null;
         return types.Count == 1 ? types[0] : string.Join(" & ", types);
     }
 
     private string ParsePrimaryType()
     {
         string typeName;
+        // Node under construction for this primary type (type-AST migration). Branches with node
+        // support assign it; the common tail publishes it. EARLY returns clear the side channel
+        // explicitly so nodes from nested sub-parses cannot leak onto unrelated strings.
+        TypeNode? typeNode = null;
+        _lastTypeNode = null;
 
         // `readonly` array/tuple modifier: `readonly T[]`, `readonly [A, B]` (lib.d.ts). Handled at
         // the primary-type level so it binds correctly inside unions (`readonly T[] | U`) and other
@@ -238,7 +290,9 @@ public partial class Parser
         if (Check(TokenType.READONLY))
         {
             Advance();
-            return "readonly " + ParsePrimaryType();
+            string readonlyInner = ParsePrimaryType();
+            _lastTypeNode = null; // readonly modifier has no node form yet
+            return "readonly " + readonlyInner;
         }
 
         // Handle infer keyword for conditional types: infer U, or constrained infer: infer U extends C
@@ -249,8 +303,10 @@ public partial class Parser
             {
                 // Constraint binds tighter than the enclosing conditional's `?`, so stop at union level.
                 string constraint = ParseUnionType();
+                _lastTypeNode = null;
                 return $"infer {paramName.Lexeme} extends {constraint}";
             }
+            _lastTypeNode = null;
             return $"infer {paramName.Lexeme}";
         }
 
@@ -273,6 +329,7 @@ public partial class Parser
             }
             Consume(TokenType.LEFT_PAREN, "Expect '(' in constructor type.");
             string ctorBody = ParseFunctionTypeBody(); // returns "(params) => ReturnType"
+            _lastTypeNode = null;
             return $"{{ new {genericPrefix}{ctorBody} }}";
         }
 
@@ -280,6 +337,7 @@ public partial class Parser
         if (Match(TokenType.KEYOF))
         {
             string innerType = ParsePrimaryType();
+            _lastTypeNode = null;
             return $"keyof {innerType}";
         }
 
@@ -288,6 +346,7 @@ public partial class Parser
         {
             if (Match(TokenType.TYPE_SYMBOL))
             {
+                _lastTypeNode = null;
                 return "unique symbol";
             }
             // If "unique" is not followed by "symbol", it's an error in type context
@@ -352,6 +411,7 @@ public partial class Parser
                 }
             }
 
+            _lastTypeNode = null;
             return sb.ToString();
         }
 
@@ -364,6 +424,7 @@ public partial class Parser
             Consume(TokenType.LEFT_PAREN, "Expect '(' after type parameters in function type.");
             string body = ParseFunctionTypeBody(); // returns "(params) => ReturnType"
             string genericPrefix = FormatTypeParams(typeParams);
+            _lastTypeNode = null;
             return $"{genericPrefix}{body}";
         }
 
@@ -428,6 +489,7 @@ public partial class Parser
                 // (T extends U ? X : Y). Use ParseConditionalType so the grouped body can contain
                 // `extends ? :` rather than stopping at `extends`.
                 typeName = "(" + ParseConditionalType() + ")";
+                typeNode = TakeTypeNode(); // parens are semantically transparent
                 Consume(TokenType.RIGHT_PAREN, "Expect ')' after grouped type.");
             }
         }
@@ -444,11 +506,13 @@ public partial class Parser
         else if (Match(TokenType.STRING))
         {
             typeName = "\"" + (string)Previous().Literal! + "\"";
+            typeNode = new LiteralTypeNode(Previous().Literal, Previous().Line);
         }
         // Handle number literal types: 0 | 1 | 2
         else if (Match(TokenType.NUMBER))
         {
             typeName = Previous().Literal!.ToString()!;
+            typeNode = new LiteralTypeNode(Previous().Literal, Previous().Line);
         }
         // Handle bigint literal types: 1n | 2n
         else if (Match(TokenType.BIGINT_LITERAL))
@@ -459,10 +523,12 @@ public partial class Parser
         else if (Match(TokenType.TRUE))
         {
             typeName = "true";
+            typeNode = new LiteralTypeNode(true, Previous().Line);
         }
         else if (Match(TokenType.FALSE))
         {
             typeName = "false";
+            typeNode = new LiteralTypeNode(false, Previous().Line);
         }
         else if (Check(TokenType.TYPE_STRING) || Check(TokenType.TYPE_NUMBER) ||
                  Check(TokenType.TYPE_BOOLEAN) || Check(TokenType.TYPE_SYMBOL) ||
@@ -474,6 +540,7 @@ public partial class Parser
                  Check(TokenType.NULL) || Check(TokenType.UNDEFINED) || Check(TokenType.UNKNOWN) || Check(TokenType.NEVER))
         {
             typeName = Advance().Lexeme;
+            typeNode = new NamedTypeNode(typeName, null, Previous().Line);
 
             // Qualified type name (namespace member): `Intl.CollatorOptions`, `NodeJS.Timer`.
             while (Check(TokenType.DOT) &&
@@ -481,6 +548,7 @@ public partial class Parser
             {
                 Advance(); // consume '.'
                 typeName += "." + Advance().Lexeme;
+                typeNode = null; // qualified names have no node form yet
             }
         }
         else
@@ -501,7 +569,10 @@ public partial class Parser
                 while (Match(TokenType.COMMA))
                     typeArgs.Add(ParseTypeAnnotation());
                 if (MatchGreaterInTypeContext())
+                {
                     typeName = $"{typeName}<{string.Join(", ", typeArgs)}>";
+                    typeNode = null; // generic references: slice 2 (alias-expansion parity)
+                }
                 else
                     _current = saved; // Backtrack if not a valid generic type
             }
@@ -522,6 +593,7 @@ public partial class Parser
                 // Array suffix: T[]
                 Advance(); // consume ]
                 typeName += "[]";
+                typeNode = typeNode is null ? null : new ArrayTypeNode(typeNode, Previous().Line);
             }
             else
             {
@@ -529,9 +601,11 @@ public partial class Parser
                 string indexType = ParseTypeAnnotation();
                 Consume(TokenType.RIGHT_BRACKET, "Expect ']' after indexed access type.");
                 typeName = $"{typeName}[{indexType}]";
+                typeNode = null; // indexed access has no node form yet
             }
         }
 
+        _lastTypeNode = typeNode;
         return typeName;
     }
 

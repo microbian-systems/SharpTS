@@ -722,9 +722,11 @@ public partial class Parser
         bool hasDefiniteAssignment = Match(TokenType.BANG);
 
         string? typeAnnotation = null;
+        TypeNode? typeAnnotationNode = null;
         if (Match(TokenType.COLON))
         {
             typeAnnotation = ParseTypeAnnotation();
+            typeAnnotationNode = TakeTypeNode();
         }
 
         if (hasDefiniteAssignment && typeAnnotation == null)
@@ -755,7 +757,7 @@ public partial class Parser
 
         if (isConst)
             return new Stmt.Const(name, typeAnnotation, initializer!);
-        return new Stmt.Var(name, typeAnnotation, initializer, hasDefiniteAssignment, isVar);
+        return new Stmt.Var(name, typeAnnotation, initializer, hasDefiniteAssignment, isVar, typeAnnotationNode);
     }
 
     /// <summary>

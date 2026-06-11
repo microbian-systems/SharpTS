@@ -343,7 +343,10 @@ public abstract record Stmt
     };
 
     public record Expression(Expr Expr) : Stmt;
-    public record Var(Token Name, string? TypeAnnotation, Expr? Initializer, bool HasDefiniteAssignmentAssertion = false, bool IsVar = false) : Stmt;
+    /// <param name="TypeAnnotationNode">Structured form of <c>TypeAnnotation</c> when the
+    /// construct has node support (type-AST migration); null otherwise — consumers fall back to
+    /// the string.</param>
+    public record Var(Token Name, string? TypeAnnotation, Expr? Initializer, bool HasDefiniteAssignmentAssertion = false, bool IsVar = false, TypeNode? TypeAnnotationNode = null) : Stmt;
     /// <summary>
     /// Const variable declaration. Separate from Var for cleaner const-specific handling (e.g., unique symbol).
     /// Initializer is non-nullable since const always requires initialization.
