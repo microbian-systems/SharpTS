@@ -1509,10 +1509,16 @@ public partial class Interpreter
     /// Evaluates a private field access expression (obj.#field).
     /// </summary>
     private RuntimeValue EvaluateGetPrivate(Expr.GetPrivate expr)
-    {
-        object? obj = Evaluate(expr.Object);
-        string fieldName = expr.Name.Lexeme;
+        => GetPrivateCore(Evaluate(expr.Object), expr.Name.Lexeme);
 
+    /// <summary>
+    /// Async variant — the object expression may contain await.
+    /// </summary>
+    private async Task<RuntimeValue> EvaluateGetPrivateAsync(Expr.GetPrivate expr)
+        => GetPrivateCore((await EvaluateAsync(expr.Object)).ToObject(), expr.Name.Lexeme);
+
+    private RuntimeValue GetPrivateCore(object? obj, string fieldName)
+    {
         // Handle static private field access on class
         if (obj is SharpTSClass klass)
         {
@@ -1542,11 +1548,22 @@ public partial class Interpreter
     /// Evaluates a private field assignment expression (obj.#field = value).
     /// </summary>
     private RuntimeValue EvaluateSetPrivate(Expr.SetPrivate expr)
-    {
-        object? obj = Evaluate(expr.Object);
-        RuntimeValue value = EvaluateRV(expr.Value);
-        string fieldName = expr.Name.Lexeme;
+        => SetPrivateCore(Evaluate(expr.Object), EvaluateRV(expr.Value), expr.Name.Lexeme);
 
+    /// <summary>
+    /// Async variant — the value (or object) expression may contain await,
+    /// which the sync evaluator rejects ("'await' can only be used inside
+    /// async functions") even when the enclosing method is async.
+    /// </summary>
+    private async Task<RuntimeValue> EvaluateSetPrivateAsync(Expr.SetPrivate expr)
+    {
+        object? obj = (await EvaluateAsync(expr.Object)).ToObject();
+        RuntimeValue value = await EvaluateAsync(expr.Value);
+        return SetPrivateCore(obj, value, expr.Name.Lexeme);
+    }
+
+    private RuntimeValue SetPrivateCore(object? obj, RuntimeValue value, string fieldName)
+    {
         // Handle static private field assignment on class
         if (obj is SharpTSClass klass)
         {
@@ -1580,15 +1597,34 @@ public partial class Interpreter
     private RuntimeValue EvaluateCallPrivate(Expr.CallPrivate expr)
     {
         object? obj = Evaluate(expr.Object);
-        string methodName = expr.Name.Lexeme;
 
-        // Evaluate arguments
         List<object?> arguments = [];
         foreach (var arg in expr.Arguments)
         {
             arguments.Add(Evaluate(arg));
         }
 
+        return CallPrivateCore(obj, arguments, expr.Name.Lexeme);
+    }
+
+    /// <summary>
+    /// Async variant — arguments (or the object) may contain await.
+    /// </summary>
+    private async Task<RuntimeValue> EvaluateCallPrivateAsync(Expr.CallPrivate expr)
+    {
+        object? obj = (await EvaluateAsync(expr.Object)).ToObject();
+
+        List<object?> arguments = [];
+        foreach (var arg in expr.Arguments)
+        {
+            arguments.Add((await EvaluateAsync(arg)).ToObject());
+        }
+
+        return CallPrivateCore(obj, arguments, expr.Name.Lexeme);
+    }
+
+    private RuntimeValue CallPrivateCore(object? obj, List<object?> arguments, string methodName)
+    {
         // Handle static private method call on class
         if (obj is SharpTSClass klass)
         {
