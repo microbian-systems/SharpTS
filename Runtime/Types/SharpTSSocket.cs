@@ -161,6 +161,13 @@ public class SharpTSSocket : SharpTSEventEmitter
         _connecting = true;
         _client = new TcpClient();
 
+        // An in-flight connect is an active handle (Node semantics): keep the event
+        // loop alive until the connect resolves, otherwise its 'connect'/'error'
+        // continuation can be dropped if the loop's other handles (e.g. the peer
+        // server) drain to zero first. Released exactly once when the connect
+        // settles, inside the scheduled callback so the handle outlives delivery.
+        interpreter.Ref();
+
         // Start async connect via Task.Run
         var capturedHost = host;
         var capturedPort = port;
@@ -175,6 +182,7 @@ public class SharpTSSocket : SharpTSEventEmitter
                 {
                     EmitEvent(interpreter, "connect", []);
                     StartReading(interpreter);
+                    interpreter.Unref();
                 }, isInterval: false);
             }
             catch (Exception ex)
@@ -184,6 +192,7 @@ public class SharpTSSocket : SharpTSEventEmitter
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
                     EmitEvent(interpreter, "error", [error]);
+                    interpreter.Unref();
                 }, isInterval: false);
             }
         });
@@ -204,6 +213,9 @@ public class SharpTSSocket : SharpTSEventEmitter
         _connecting = true;
         _isIpc = true;
         _pipePath = path;
+
+        // In-flight connect is an active handle until it settles — see Connect().
+        interpreter.Ref();
 
         _ = Task.Run(async () =>
         {
@@ -238,6 +250,7 @@ public class SharpTSSocket : SharpTSEventEmitter
                     StartReading(interpreter, readReady);
                     readReady.Wait(5000);
                     EmitEvent(interpreter, "connect", []);
+                    interpreter.Unref();
                 }, isInterval: false);
             }
             catch (Exception ex)
@@ -247,6 +260,7 @@ public class SharpTSSocket : SharpTSEventEmitter
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
                     EmitEvent(interpreter, "error", [error]);
+                    interpreter.Unref();
                 }, isInterval: false);
             }
         });
