@@ -511,7 +511,15 @@ public partial class ILCompiler
             VarToClassExpr = _classExprs.VarToClassExpr,
             IsStrictMode = _isStrictMode,
             // Registry services
-            ClassRegistry = GetClassRegistry()
+            ClassRegistry = GetClassRegistry(),
+            // Module-level / captured top-level variable access — without these a
+            // class-expression method or accessor body referencing a top-level
+            // binding throws ReferenceError at runtime (same omission #300 fixed
+            // for class-declaration accessor bodies).
+            TopLevelStaticVars = BuildClassMethodTopLevelStaticVarsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
         };
     }
 

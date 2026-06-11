@@ -358,5 +358,29 @@ public class ClassExpressionTests
         Assert.Equal("10\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_MethodBody_ResolvesCapturedTopLevelVariable(ExecutionMode mode)
+    {
+        // Regression for #300: a class-expression method or accessor body
+        // referencing a top-level binding (a captured `let` here) threw
+        // "ReferenceError: Undefined variable" in compiled mode —
+        // CreateClassExpressionContext omitted the top-level-variable-access
+        // wiring, the same gap #300 fixed for class-declaration accessors.
+        var source = """
+            let counter = 7;
+            const Box = class {
+                m(): string { return "m" + counter; }
+                get tag(): string { return "t" + counter; }
+            };
+            const b = new Box();
+            console.log(b.m());
+            console.log(b.tag);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("m7\nt7\n", output);
+    }
+
     #endregion
 }
