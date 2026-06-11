@@ -112,6 +112,244 @@ public partial class TypeChecker
     private static bool IsPublicMember(FrozenDictionary<string, AccessModifier> access, string name)
         => !access.TryGetValue(name, out var mod) || mod == AccessModifier.Public;
 
+    // ─── Member accessibility (TypeScript private/protected) ──────────────────────────────────
+    // TypeScript relates object types structurally, but a member declared `private` or `protected`
+    // is matched nominally: it is only compatible with the *identical* declaration (private) or a
+    // declaration in a derived class (protected). This is checked per shared member, in both
+    // directions, so it is independent of which whole-type "brand" short-circuits also fire.
+
+    /// <summary>Object-like types whose shared members participate in the accessibility relation.</summary>
+    private static bool IsObjectLikeForAccessibility(TypeInfo t) => t is
+        TypeInfo.Instance or TypeInfo.Class or TypeInfo.GenericClass or
+        TypeInfo.InstantiatedGeneric or TypeInfo.Interface or TypeInfo.Record;
+
+    /// <summary>Resolves an object-like type to its class-like form (or null) for hierarchy walking.</summary>
+    private static TypeInfo? ResolveToClassLike(TypeInfo? type) => type switch
+    {
+        TypeInfo.Instance inst => inst.ResolvedClassType,
+        TypeInfo.Class or TypeInfo.GenericClass or TypeInfo.InstantiatedGeneric => type,
+        _ => null,
+    };
+
+    /// <summary>Walks the class metadata cores of a class-like type from most-derived to base.</summary>
+    private static IEnumerable<ClassMetadataCore> EnumerateClassCores(TypeInfo? type)
+    {
+        TypeInfo? current = ResolveToClassLike(type);
+        for (int guard = 0; current is not null && guard < 256; guard++)
+        {
+            ClassMetadataCore? core = current switch
+            {
+                TypeInfo.Class c => c.Core,
+                TypeInfo.GenericClass gc => gc.Core,
+                TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass igc } => igc.Core,
+                _ => null,
+            };
+            if (core is null) yield break;
+            yield return core;
+            current = core.Superclass;
+        }
+    }
+
+    /// <summary>True when a class-like type declares a TypeScript <c>private</c>/<c>protected</c>
+    /// member anywhere in its hierarchy (ES <c>#private</c> fields are tracked separately).</summary>
+    private static bool HasTsAccessModifierMember(TypeInfo type)
+    {
+        foreach (var core in EnumerateClassCores(type))
+        {
+            foreach (var access in core.FieldAccess.Values)
+                if (access != AccessModifier.Public) return true;
+            foreach (var access in core.MethodAccess.Values)
+                if (access != AccessModifier.Public) return true;
+        }
+        return false;
+    }
+
+    /// <summary>True when the type carries any non-public member relevant to the accessibility relation.</summary>
+    private static bool HasAnyNonPublicMember(TypeInfo type) => type switch
+    {
+        TypeInfo.Interface itf => InterfaceHasNonPublicMember(itf),
+        TypeInfo.Record => false,
+        _ => HasTsAccessModifierMember(type),
+    };
+
+    /// <summary>An interface carries non-public members when it (or any base it extends — e.g. a class
+    /// it inherited private members from via <c>interface I extends SomeClass</c>) brands a member.</summary>
+    private static bool InterfaceHasNonPublicMember(TypeInfo.Interface itf)
+    {
+        if (itf.MemberBrands is { Count: > 0 }) return true;
+        if (itf.Extends is { } bases)
+            foreach (var b in bases)
+                if (InterfaceHasNonPublicMember(b)) return true;
+        return false;
+    }
+
+    /// <summary>The names of non-public (private/protected) members of an object-like type.</summary>
+    private static IEnumerable<string> NonPublicMemberNames(TypeInfo type)
+    {
+        if (type is TypeInfo.Interface itf)
+        {
+            foreach (var name in InterfaceNonPublicMemberNames(itf, [])) yield return name;
+            yield break;
+        }
+        if (type is TypeInfo.Record) yield break;
+        var seen = new HashSet<string>();
+        foreach (var core in EnumerateClassCores(type))
+        {
+            foreach (var (name, mod) in core.FieldAccess)
+                if (mod != AccessModifier.Public && seen.Add(name)) yield return name;
+            foreach (var (name, mod) in core.MethodAccess)
+                if (mod != AccessModifier.Public && seen.Add(name)) yield return name;
+        }
+    }
+
+    /// <summary>Non-public member names of an interface, including those inherited from extended bases.
+    /// Own members shadow base members of the same name.</summary>
+    private static IEnumerable<string> InterfaceNonPublicMemberNames(TypeInfo.Interface itf, HashSet<string> shadowed)
+    {
+        if (itf.MemberBrands is { } brands)
+            foreach (var name in brands.Keys)
+                if (!shadowed.Contains(name) && shadowed.Add(name)) yield return name;
+        if (itf.Extends is { } bases)
+        {
+            var own = itf.Members.Keys.ToHashSet();
+            foreach (var b in bases)
+                foreach (var name in InterfaceNonPublicMemberNames(b, shadowed))
+                    if (!own.Contains(name)) yield return name;
+        }
+    }
+
+    /// <summary>
+    /// Looks up a member's effective accessibility and declaring-class identity. Returns false when
+    /// the member is absent (a missing member is a structural concern, not an accessibility one).
+    /// Public members report <see cref="AccessModifier.Public"/> and a declaring id of 0.
+    /// </summary>
+    private static bool TryGetMemberAccessBrand(TypeInfo type, string name, out AccessModifier access, out int declaringId)
+    {
+        access = AccessModifier.Public;
+        declaringId = 0;
+        switch (type)
+        {
+            case TypeInfo.Record r:
+                return r.Fields.ContainsKey(name);
+            case TypeInfo.Interface itf:
+                return TryGetInterfaceMemberBrand(itf, name, out access, out declaringId);
+            default:
+                foreach (var core in EnumerateClassCores(type))
+                {
+                    if (core.FieldTypes.ContainsKey(name))
+                    {
+                        if (core.FieldAccess.TryGetValue(name, out var fa)) access = fa;
+                        declaringId = core.DeclarationId;
+                        return true;
+                    }
+                    if (name != "constructor" && core.Methods.ContainsKey(name))
+                    {
+                        if (core.MethodAccess.TryGetValue(name, out var ma)) access = ma;
+                        declaringId = core.DeclarationId;
+                        return true;
+                    }
+                    if (core.Getters.ContainsKey(name))
+                    {
+                        declaringId = core.DeclarationId;
+                        return true;
+                    }
+                }
+                return false;
+        }
+    }
+
+    /// <summary>Resolves a member's accessibility brand on an interface, consulting its own brands,
+    /// then own (public) members, then — for members inherited from an extended class — its bases.</summary>
+    private static bool TryGetInterfaceMemberBrand(TypeInfo.Interface itf, string name, out AccessModifier access, out int declaringId)
+    {
+        access = AccessModifier.Public;
+        declaringId = 0;
+        if (itf.MemberBrands is { } brands && brands.TryGetValue(name, out var brand))
+        {
+            access = brand.Access;
+            declaringId = brand.DeclaringClassId;
+            return true;
+        }
+        if (itf.Members.ContainsKey(name)) return true; // own interface member shadows bases (public)
+        if (itf.Extends is { } bases)
+            foreach (var b in bases)
+                if (TryGetInterfaceMemberBrand(b, name, out access, out declaringId)) return true;
+        access = AccessModifier.Public;
+        declaringId = 0;
+        return false;
+    }
+
+    /// <summary>True when <paramref name="source"/>'s class hierarchy includes the class identified by
+    /// <paramref name="declaringId"/> — the derivation rule that lets a derived class satisfy a
+    /// protected member of its base.</summary>
+    private static bool SourceDerivesFromDeclaration(TypeInfo source, int declaringId)
+    {
+        foreach (var core in EnumerateClassCores(source))
+            if (core.DeclarationId == declaringId) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// The TypeScript member-accessibility relation: assignability fails when a member shared by both
+    /// object types has conflicting accessibility origins. A public member cannot satisfy a
+    /// private/protected one (or vice versa); two private members must come from the same declaration;
+    /// a protected member additionally accepts a source declared in a derived class.
+    /// </summary>
+    private bool MembersAccessibilityCompatible(TypeInfo target, TypeInfo source)
+    {
+        if (!HasAnyNonPublicMember(target) && !HasAnyNonPublicMember(source))
+            return true; // fast path: nothing non-public, so no nominal constraints
+
+        var checkd = new HashSet<string>();
+        foreach (var name in NonPublicMemberNames(target).Concat(NonPublicMemberNames(source)))
+        {
+            if (!checkd.Add(name)) continue;
+            if (!TryGetMemberAccessBrand(target, name, out var tAccess, out var tDecl)) continue;
+            if (!TryGetMemberAccessBrand(source, name, out var sAccess, out var sDecl)) continue;
+            if (tAccess == AccessModifier.Public && sAccess == AccessModifier.Public) continue;
+            if (tAccess != sAccess) return false;       // public vs non-public, or private vs protected
+            if (tDecl == sDecl) continue;               // same declaration is always compatible
+            if (tAccess == AccessModifier.Protected && SourceDerivesFromDeclaration(source, tDecl)) continue;
+            return false;                               // private (or unrelated protected) needs identity
+        }
+        return true;
+    }
+
+    /// <summary>True when a class declares an ES <c>#private</c> field/method anywhere in its hierarchy.
+    /// Such classes stay strictly nominal — a <c>#</c>-member has no structural surface to relate.</summary>
+    private static bool HasEsPrivateBrand(TypeInfo.Class cls)
+    {
+        TypeInfo? current = cls;
+        while (current is TypeInfo.Class c)
+        {
+            if (c.Core.PrivateFieldTypes.Count > 0 || c.Core.PrivateMethodTypes.Count > 0) return true;
+            current = GetSuperclass(current);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Collects all instance members (public and TypeScript private/protected) of a class and its
+    /// superclasses. Used for a TypeScript-branded target whose private members must be structurally
+    /// provided by the source; accessibility itself is enforced separately by
+    /// <see cref="MembersAccessibilityCompatible"/>.
+    /// </summary>
+    private static Dictionary<string, TypeInfo> CollectAllInstanceMembers(TypeInfo.Class cls)
+    {
+        Dictionary<string, TypeInfo> members = [];
+        TypeInfo? current = cls;
+        while (current is TypeInfo.Class c)
+        {
+            var core = c.Core;
+            foreach (var (name, type) in core.FieldTypes) members.TryAdd(name, type);
+            foreach (var (name, type) in core.Methods)
+                if (name != "constructor") members.TryAdd(name, type);
+            foreach (var (name, type) in core.Getters) members.TryAdd(name, type);
+            current = GetSuperclass(current);
+        }
+        return members;
+    }
+
     /// <summary>The required (non-optional) member names of an object-like type.</summary>
     private IEnumerable<string> RequiredMemberNames(TypeInfo t)
     {
@@ -467,8 +705,15 @@ public partial class TypeChecker
         switch (targetResolved)
         {
             case TypeInfo.Class c:
-                if (HasNominalClassBrand(c)) return false;
-                members = CollectPublicInstanceMembers(c);
+                // ES #private fields keep the class strictly nominal (no structural surface to relate).
+                if (HasEsPrivateBrand(c)) return false;
+                // A TypeScript-branded (private/protected) target is matched structurally over ALL its
+                // members — accessibility is enforced by MembersAccessibilityCompatible before we get
+                // here, so reaching this point means a same-origin source (same class, a subclass, or
+                // an interface that extends the class). An unbranded target uses public members only.
+                members = HasTsAccessModifierMember(c)
+                    ? CollectAllInstanceMembers(c)
+                    : CollectPublicInstanceMembers(c);
                 hasIndex = c.Core.HasIndexSignature;
                 indexCarrier = c;
                 break;
