@@ -156,9 +156,13 @@ public partial class TypeChecker
         // a given type pair fails — its relation cache makes repeated failures of the same pair
         // report the plain headline (TS2322). unionTypesAssignability pins this: `d = e` is
         // TS2741 at its first occurrence and TS2322 when repeated later in the file.
+        // The pair is tracked by INSTANCE identity, mirroring tsc's per-type-id relation cache:
+        // structurally identical but separately declared/written types (two same-shape anonymous
+        // annotations, same-name interfaces in different modules) are distinct pairs and each get
+        // their first TS2741 (assignmentCompatWithObjectMembersOptionality2 pins this).
         if (MissingRequiredMember(target, source))
         {
-            _ts2741Reported ??= new(CompatibilityCacheKeyComparer.Instance);
+            _ts2741Reported ??= new(IdentityPairComparer.Instance);
             if (_ts2741Reported.Add((target, source)))
                 return "TS2741";
         }
@@ -167,6 +171,20 @@ public partial class TypeChecker
 
     /// <summary>Type pairs whose missing-property failure has already been reported as TS2741.</summary>
     private HashSet<(TypeInfo Expected, TypeInfo Actual)>? _ts2741Reported;
+
+    /// <summary>Reference-identity comparer for type pairs (tsc's relation caches key on type ids).</summary>
+    private sealed class IdentityPairComparer : IEqualityComparer<(TypeInfo Expected, TypeInfo Actual)>
+    {
+        public static readonly IdentityPairComparer Instance = new();
+
+        public bool Equals((TypeInfo Expected, TypeInfo Actual) x, (TypeInfo Expected, TypeInfo Actual) y) =>
+            ReferenceEquals(x.Expected, y.Expected) && ReferenceEquals(x.Actual, y.Actual);
+
+        public int GetHashCode((TypeInfo Expected, TypeInfo Actual) obj) =>
+            HashCode.Combine(
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj.Expected),
+                System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj.Actual));
+    }
 
     /// <summary>True when the object-like source lacks a member the target requires.</summary>
     private bool MissingRequiredMember(TypeInfo target, TypeInfo source)

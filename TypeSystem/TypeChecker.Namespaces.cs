@@ -53,6 +53,12 @@ public partial class TypeChecker
 
         using (new EnvironmentScope(this, namespaceEnv))
         {
+            // Pre-register type declarations in the NAMESPACE scope (mirrors the top-level
+            // pass): forward and self references (`interface S2 { foo: S2 }`) need the name
+            // bound before members resolve, and it must bind to THIS namespace's declaration,
+            // not a same-named one from an enclosing or earlier sibling scope.
+            PreRegisterTypeDeclarations(ns.Members);
+
             // Hoist var declarations (as `any`) before anything resolves, mirroring the top-level
             // pass: a member's own annotation/initializer may reference itself or a later var
             // (`var a: { foo: typeof a }`, `var a2 = { foo: a2 }`).
