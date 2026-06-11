@@ -50,6 +50,71 @@ public class DnsAsyncTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Resolve4_NestedInsideCallback_CallbackFires(ExecutionMode mode)
+    {
+        // #239: in compiled mode, dns.* calls inside another callback (or any
+        // function body) resolved the module member dynamically to null and
+        // silently dropped the callback.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as dns from 'dns';
+                dns.resolve4('localhost', (err: any, a: any) => {
+                    console.log('outer ' + (err === null));
+                    dns.resolve4('localhost', (err2: any, b: any) => {
+                        console.log('inner ' + (err2 === null));
+                    });
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("outer true\ninner true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Resolve4_InsideTimerCallback_CallbackFires(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as dns from 'dns';
+                setTimeout(() => {
+                    dns.resolve4('localhost', (err: any, a: any) => {
+                        console.log('dns-in-timer ' + (err === null));
+                    });
+                }, 20);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("dns-in-timer true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Resolve4_InsideFunctionBody_CallbackFires(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as dns from 'dns';
+                function go() {
+                    dns.resolve4('localhost', (err: any, a: any) => {
+                        console.log('fn ' + (err === null));
+                    });
+                }
+                go();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("fn true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Reverse_Loopback(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

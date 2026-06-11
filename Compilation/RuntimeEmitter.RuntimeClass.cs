@@ -566,6 +566,10 @@ public partial class RuntimeEmitter
         // Pre-define IsBoxedPrimitiveOfType shell so InstanceOf can reference
         // it. Body emitted later (after the prototype singletons are defined).
         DefineIsBoxedPrimitiveOfTypeShell(typeBuilder, runtime);
+        // Pre-define the AbortSignal/Intl namespace singleton fields so
+        // InstanceOf can brand-check the AbortSignal singleton (#246).
+        // Populate bodies are emitted later (EmitNamespaceSingletons).
+        DefineNamespaceSingletonFields(typeBuilder, runtime);
         // InstanceOf walks the prototype chain via GetFunctionMethod (for the
         // `F.prototype` fetch) — must be emitted AFTER GetFunctionMethod so
         // `runtime.GetFunctionMethod` is populated when InstanceOf references it.

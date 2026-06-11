@@ -3568,6 +3568,40 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, falseLabel);
 
+        // A plain Dictionary RHS is never a constructor — letting it reach the
+        // IsAssignableFrom fallback matched EVERY dict-shaped value (object
+        // literals, namespace singletons, module namespaces), so
+        // `{} instanceof AbortSignal` was true (#246). The AbortSignal
+        // namespace singleton brand-checks signal dicts via their
+        // "_reasonSet" slot; any other dict RHS is false.
+        var notDictRhsLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, notDictRhsLabel);
+
+        if (runtime.AbortSignalNamespaceField != null)
+        {
+            var lhsDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldsfld, runtime.AbortSignalNamespaceField);
+            il.Emit(OpCodes.Bne_Un, falseLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+            il.Emit(OpCodes.Stloc, lhsDictLocal);
+            il.Emit(OpCodes.Ldloc, lhsDictLocal);
+            il.Emit(OpCodes.Brfalse, falseLabel);
+            il.Emit(OpCodes.Ldloc, lhsDictLocal);
+            il.Emit(OpCodes.Ldstr, "_reasonSet");
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
+            il.Emit(OpCodes.Ret);
+        }
+        else
+        {
+            il.Emit(OpCodes.Br, falseLabel);
+        }
+
+        il.MarkLabel(notDictRhsLabel);
+
         // Per JS spec, `instance instanceof F` where F is a user function walks
         // instance's prototype chain looking for F.prototype. Compiled mode's
         // legacy InstanceOf used .NET IsAssignableFrom, which is type-system

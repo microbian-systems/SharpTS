@@ -2564,11 +2564,39 @@ public partial class RuntimeEmitter
         // (TryEmitBuiltInClassType / GlobalThisGetProperty), so return the
         // same Type token here for identity:
         // `Promise.resolve(1).constructor === Promise` (#221 increment).
+        // #242 subclass instances ($Promise-derived emitted classes) return
+        // their own class token instead, so `MyP.resolve(1).constructor === MyP`.
+        // Generic subclasses carry constructed types (MyP<object>) while bare
+        // `MyP` emits the open definition — return the definition (same gap
+        // InstanceOf's generic-definition walk handles).
         var notPromiseCtorLabel = il.DefineLabel();
+        var defaultPromiseCtorLabel = il.DefineLabel();
+        var nonGenericCtorLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldstr, "constructor");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
         il.Emit(OpCodes.Brfalse, notPromiseCtorLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+        il.Emit(OpCodes.Brfalse, defaultPromiseCtorLabel);
+        var ctorTypeLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
+        il.Emit(OpCodes.Stloc, ctorTypeLocal);
+        il.Emit(OpCodes.Ldloc, ctorTypeLocal);
+        il.Emit(OpCodes.Ldtoken, runtime.TSPromiseType);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Beq, defaultPromiseCtorLabel);
+        il.Emit(OpCodes.Ldloc, ctorTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.Type.GetProperty("IsGenericType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, nonGenericCtorLabel);
+        il.Emit(OpCodes.Ldloc, ctorTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition"));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(nonGenericCtorLabel);
+        il.Emit(OpCodes.Ldloc, ctorTypeLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(defaultPromiseCtorLabel);
         il.Emit(OpCodes.Ldtoken, _types.TaskOfObject);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
         il.Emit(OpCodes.Ret);

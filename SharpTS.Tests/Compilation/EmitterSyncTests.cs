@@ -51,7 +51,6 @@ public class EmitterSyncTests
             "EmitCallPrivate",      // Private method calls in async context
             "EmitGetPrivate",       // Private field access in async context
             "EmitSetPrivate",       // Private field assignment in async context
-            "EmitSet",              // Property set with await-safe temp storage
             "EmitNullishCoalescing", // Nullish coalescing with await-safe evaluation
             "EmitTemplateLiteral",  // Template literals with await-safe temp storage
             "EmitTaggedTemplateLiteral", // Tagged template literals in async context

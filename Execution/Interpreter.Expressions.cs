@@ -127,9 +127,9 @@ public partial class Interpreter
             case Expr.Call call: return await EvaluateCallAsync(call);
             case Expr.Get get: return await EvaluateGetAsync(get);
             case Expr.Set set: return await EvaluateSetAsync(set);
-            case Expr.GetPrivate gp: return EvaluateGetPrivate(gp);
-            case Expr.SetPrivate sp: return EvaluateSetPrivate(sp);
-            case Expr.CallPrivate cp: return EvaluateCallPrivate(cp);
+            case Expr.GetPrivate gp: return await EvaluateGetPrivateAsync(gp);
+            case Expr.SetPrivate sp: return await EvaluateSetPrivateAsync(sp);
+            case Expr.CallPrivate cp: return await EvaluateCallPrivateAsync(cp);
             case Expr.This thisExpr: return EvaluateThis(thisExpr);
             case Expr.New newExpr: return await EvaluateNewAsync(newExpr);
             case Expr.ArrayLiteral array: return await EvaluateArrayAsync(array);
