@@ -383,4 +383,47 @@ public class ClassExpressionTests
     }
 
     #endregion
+
+    #region Generic Class Expressions (#291)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GenericClassExpression_InferredConstructorArg(ExecutionMode mode)
+    {
+        // Regression for #291: a generic class EXPRESSION rejected constructor
+        // arguments whose type should be inferred for the class type parameter
+        // (the type checker never substituted T, so `new Box("hello")` failed
+        // type-checking). The identical generic class DECLARATION worked.
+        var source = """
+            const Box = class<T> {
+                constructor(private value: T) {}
+                get contents(): T { return this.value; }
+            };
+            const b = new Box("hello");
+            console.log(b.contents);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("hello\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GenericClassExpression_ExplicitTypeArg(ExecutionMode mode)
+    {
+        // Explicit type argument on a generic class expression (`new Box<number>(42)`).
+        var source = """
+            const Box = class<T> {
+                constructor(private value: T) {}
+                get contents(): T { return this.value; }
+            };
+            const b = new Box<number>(42);
+            console.log(b.contents);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    #endregion
 }

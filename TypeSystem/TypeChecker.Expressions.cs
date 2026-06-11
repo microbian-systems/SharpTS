@@ -1571,7 +1571,11 @@ public partial class TypeChecker
         // For body checking, always use the frozen MutableClass (which is a TypeInfo.Class)
         // This matches CheckClassDeclaration: generic classes store GenericClass externally but use
         // the frozen MutableClass for body checking since it has the same methods/fields structure.
+        // `classExprResultType` is the value the expression evaluates to (the binding's type): for a
+        // generic class expression that is the GenericClass, so `new <expr>(...)` runs the same
+        // type-argument inference as a generic class declaration (issue #291).
         TypeInfo.Class classTypeForBody;
+        TypeInfo classExprResultType;
         if (classTypeParams != null && classTypeParams.Count > 0)
         {
             var genericClassType = mutableClass.FreezeGeneric(classTypeParams);
@@ -1580,8 +1584,7 @@ public partial class TypeChecker
             classTypeForBody = mutableClass.Freeze();
             _typeMap.SetClassType(className, classTypeForBody);
             _typeMap.SetClassExprType(classExpr, classTypeForBody);
-            // Class expression returns the GenericClass type
-            _ = genericClassType; // Keep for potential future use (return type could be GenericClass)
+            classExprResultType = genericClassType;
         }
         else
         {
@@ -1589,6 +1592,7 @@ public partial class TypeChecker
             _typeMap.SetClassType(className, classType);
             _typeMap.SetClassExprType(classExpr, classType);
             classTypeForBody = classType;
+            classExprResultType = classType;
         }
 
         // Validate interface implementations (skip for generic - validated at instantiation)
@@ -1758,7 +1762,8 @@ public partial class TypeChecker
             _currentClass = prevClass;
         }
 
-        // Return the class type (not an instance)
-        return classTypeForBody;
+        // Return the class type (not an instance). For a generic class expression this is the
+        // GenericClass so callers (e.g. `new`) can instantiate/infer its type arguments (#291).
+        return classExprResultType;
     }
 }

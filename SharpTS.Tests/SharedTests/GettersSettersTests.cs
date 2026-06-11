@@ -291,6 +291,53 @@ public class GettersSettersTests
         Assert.Equal("v5\nv8\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GetterOnly_BracketWrite_IsNoOp(ExecutionMode mode)
+    {
+        // Regression for #293: in compiled mode, a bracket write to a getter-only
+        // property created a shadowing own data field in _fields, so subsequent
+        // reads returned that field instead of invoking the getter. The interpreter
+        // correctly no-ops the write (sloppy-mode JS semantics). Covers both class
+        // declarations and class expressions.
+        var source = """
+            class RO { get x(): number { return 99; } }
+            const r = new RO();
+            (r as any)["x"] = 1;
+            console.log((r as any)["x"]);
+
+            const ROExpr = class { get y(): number { return 7; } };
+            const r2 = new ROExpr();
+            (r2 as any)["y"] = 5;
+            console.log((r2 as any)["y"]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("99\n7\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GetterWithSetter_BracketWrite_InvokesSetter(ExecutionMode mode)
+    {
+        // Companion to GetterOnly_BracketWrite_IsNoOp: a property that DOES have a
+        // setter must still have the setter invoked on a bracket write (the no-op
+        // path must not over-block accessors that are writable).
+        var source = """
+            class RW {
+                private _v: number = 10;
+                get x(): number { return this._v; }
+                set x(val: number) { this._v = val; }
+            }
+            const o = new RW();
+            (o as any)["x"] = 50;
+            console.log(o.x);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("50\n", output);
+    }
+
     #endregion
 
     #region Top-level variable capture (#300)

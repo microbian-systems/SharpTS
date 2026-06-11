@@ -62,7 +62,7 @@ public partial class ILEmitter
             _ctx.ClassExprConstructors != null &&
             _ctx.ClassExprConstructors.TryGetValue(classExpr, out var classExprCtor))
         {
-            EmitTypedClassExprConstruction(classExprCtor, n);
+            EmitTypedClassExprConstruction(classExpr, classExprCtor, n);
             return;
         }
 
@@ -244,11 +244,44 @@ public partial class ILEmitter
     }
 
     /// <summary>
-    /// Emits class expression construction with typed parameter conversion.
+    /// Emits class expression construction with typed parameter conversion. Generic class
+    /// expressions (<c>const Box = class&lt;T&gt; {...}</c>) emit a real open .NET generic type, so
+    /// — exactly like generic class declarations (#274) — the open definition must be closed
+    /// (via inference or explicit type arguments) before <c>Newobj</c>; emitting against the open
+    /// TypeDef throws "the containing type is not fully instantiated" at load time (#291).
     /// </summary>
-    private void EmitTypedClassExprConstruction(ConstructorBuilder classExprCtor, Expr.New n)
+    private void EmitTypedClassExprConstruction(Expr.ClassExpr classExpr, ConstructorBuilder classExprCtor, Expr.New n)
     {
-        var ctorParams = classExprCtor.GetParameters();
+        var genericParams = _ctx.ClassExprGenericParams?.GetValueOrDefault(classExpr);
+        bool isGeneric = genericParams != null && genericParams.Length > 0;
+
+        if (isGeneric && _ctx.ClassExprBuilders != null
+            && _ctx.ClassExprBuilders.TryGetValue(classExpr, out var classExprTypeBuilder))
+        {
+            // Inferred type arguments (e.g. `new Box("hi")`): reuse the declaration-path inference.
+            if (n.TypeArgs == null || n.TypeArgs.Count == 0)
+            {
+                EmitInferredGenericClassConstruction(classExprTypeBuilder, classExprCtor, genericParams!, n);
+                return;
+            }
+
+            // Explicit type arguments (e.g. `new Box<number>(42)`): close the generic directly.
+            Type[] typeArgs = n.TypeArgs.Select(ResolveTypeArg).ToArray();
+            Type closedType = classExprTypeBuilder.MakeGenericType(typeArgs);
+            ConstructorInfo closedCtor = EmitterTypeHelpers.ResolveConstructor(closedType, classExprCtor);
+            EmitClassExprCtorCall(closedCtor, closedCtor.GetParameters(), n);
+            return;
+        }
+
+        EmitClassExprCtorCall(classExprCtor, classExprCtor.GetParameters(), n);
+    }
+
+    /// <summary>
+    /// Emits argument conversion, default-fill, and the <c>Newobj</c> for a (possibly closed)
+    /// class-expression constructor.
+    /// </summary>
+    private void EmitClassExprCtorCall(ConstructorInfo ctor, ParameterInfo[] ctorParams, Expr.New n)
+    {
         int expectedParamCount = ctorParams.Length;
 
         for (int i = 0; i < n.Arguments.Count; i++)
@@ -263,7 +296,7 @@ public partial class ILEmitter
         for (int i = n.Arguments.Count; i < expectedParamCount; i++)
             EmitDefaultForType(ctorParams[i].ParameterType);
 
-        IL.Emit(OpCodes.Newobj, classExprCtor);
+        IL.Emit(OpCodes.Newobj, ctor);
         SetStackUnknown();
     }
 
