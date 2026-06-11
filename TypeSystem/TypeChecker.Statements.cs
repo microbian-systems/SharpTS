@@ -189,7 +189,7 @@ public partial class TypeChecker
                 }
                 else
                 {
-                    initializerType = CheckExpr(initializer);
+                    initializerType = CheckExprWithContext(initializer, declaredType);
                 }
 
                 if (declaredType != null)
@@ -289,7 +289,7 @@ public partial class TypeChecker
         {
             constDeclaredType = ResolveAnnotation(stmt.TypeAnnotation, stmt.TypeAnnotationNode)!;
             _environment.Define(stmt.Name.Lexeme, constDeclaredType);
-            var initType = CheckExpr(stmt.Initializer);
+            var initType = CheckExprWithContext(stmt.Initializer, constDeclaredType);
             if (!IsCompatible(constDeclaredType, initType))
             {
                 throw new TypeMismatchException(constDeclaredType, initType, stmt.Name.Line, tsCode: AssignmentDiagnosticCode(constDeclaredType, initType));
@@ -345,15 +345,15 @@ public partial class TypeChecker
             }
             else
             {
-                TypeInfo actualReturnType = stmt.Value != null
-                    ? CheckExpr(stmt.Value)
-                    : new TypeInfo.Void();
-
                 TypeInfo expectedReturnType = _currentFunctionReturnType;
                 if (_inAsyncFunction && expectedReturnType is TypeInfo.Promise promiseType)
                 {
                     expectedReturnType = promiseType.ValueType;
                 }
+
+                TypeInfo actualReturnType = stmt.Value != null
+                    ? CheckExprWithContext(stmt.Value, expectedReturnType)
+                    : new TypeInfo.Void();
 
                 if (_inGeneratorFunction && expectedReturnType is TypeInfo.Void)
                 {

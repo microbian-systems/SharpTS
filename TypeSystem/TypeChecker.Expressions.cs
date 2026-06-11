@@ -29,6 +29,92 @@ public partial class TypeChecker
         return result;
     }
 
+    /// <summary>
+    /// Type-checks an expression under a contextual type (a narrow slice of tsc's
+    /// checkExpressionWithContextualType). The context is consumed only by the node
+    /// kinds that use it: array literals against a tuple (or tuple-containing union)
+    /// context infer a tuple instead of an array, ternaries propagate the context
+    /// into their branches, and groupings unwrap. Everything else — including a null
+    /// context — falls through to plain <see cref="CheckExpr"/>.
+    /// </summary>
+    private TypeInfo CheckExprWithContext(Expr expr, TypeInfo? contextualType)
+    {
+        if (contextualType is null) return CheckExpr(expr);
+
+        switch (expr)
+        {
+            case Expr.Grouping grouping:
+            {
+                TypeInfo inner = CheckExprWithContext(grouping.Expression, contextualType);
+                _typeMap.Set(expr, inner);
+                return inner;
+            }
+            case Expr.Ternary ternary:
+            {
+                TypeInfo result = CheckTernary(ternary, contextualType);
+                _typeMap.Set(expr, result);
+                return result;
+            }
+            case Expr.ArrayLiteral arrayLit when TryCheckArrayLiteralAsTuple(arrayLit, contextualType, out var tupleType):
+            {
+                _typeMap.Set(expr, tupleType);
+                return tupleType;
+            }
+            default:
+                return CheckExpr(expr);
+        }
+    }
+
+    /// <summary>
+    /// Contextually types an array literal as a tuple when the context contains tuple
+    /// constituents whose arity the literal can satisfy. Element expressions are checked
+    /// under the union of the candidates' types at that position, so nested literals and
+    /// ternaries keep contextual typing. Returns false (no tuple inference) when the
+    /// context has no arity-compatible tuple constituent or the literal uses spreads.
+    /// </summary>
+    private bool TryCheckArrayLiteralAsTuple(Expr.ArrayLiteral array, TypeInfo contextualType, out TypeInfo result)
+    {
+        result = null!;
+        if (array.Elements.Any(e => e is Expr.Spread)) return false;
+
+        IEnumerable<TypeInfo.Tuple> tupleConstituents = contextualType switch
+        {
+            TypeInfo.Tuple tuple => [tuple],
+            TypeInfo.Union union => union.FlattenedTypes.OfType<TypeInfo.Tuple>(),
+            _ => []
+        };
+
+        var candidates = tupleConstituents
+            .Where(t => !t.HasSpread
+                && array.Elements.Count >= t.RequiredCount
+                && (t.RestElementType != null || array.Elements.Count <= t.Elements.Count))
+            .ToList();
+        if (candidates.Count == 0) return false;
+
+        var elements = new List<TypeInfo.TupleElement>(array.Elements.Count);
+        for (int i = 0; i < array.Elements.Count; i++)
+        {
+            var positionContexts = new List<TypeInfo>();
+            foreach (var candidate in candidates)
+            {
+                TypeInfo? at = i < candidate.Elements.Count
+                    ? candidate.Elements[i].Type
+                    : candidate.RestElementType;
+                if (at != null && !positionContexts.Any(p => TypeInfoEqualityComparer.Instance.Equals(p, at)))
+                    positionContexts.Add(at);
+            }
+            TypeInfo? elementContext = positionContexts.Count == 0 ? null :
+                positionContexts.Count == 1 ? positionContexts[0] :
+                new TypeInfo.Union(positionContexts);
+
+            TypeInfo elementType = CheckExprWithContext(array.Elements[i], elementContext);
+            elements.Add(new TypeInfo.TupleElement(elementType, TupleElementKind.Required));
+        }
+
+        result = new TypeInfo.Tuple(elements, elements.Count);
+        return true;
+    }
+
     // Expression handlers - called by the registry
     // Simple expressions are implemented inline, complex ones delegate to Check* methods
 

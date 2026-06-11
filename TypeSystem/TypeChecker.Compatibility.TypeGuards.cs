@@ -102,6 +102,28 @@ public partial class TypeChecker
             return AnalyzeNullCheck(v7.Name.Lexeme, checkingForNull: false, negated: true);
         }
 
+        // Pattern 7b: x === <literal> / x !== <literal> (string/number/boolean literal equality).
+        // null/undefined literals are handled by Patterns 4-7 above; LiteralTypeFor
+        // returns null for them so this pattern never double-handles.
+        if (condition is Expr.Binary binLit &&
+            binLit.Operator.Type is TokenType.EQUAL_EQUAL or TokenType.EQUAL_EQUAL_EQUAL
+                or TokenType.BANG_EQUAL or TokenType.BANG_EQUAL_EQUAL)
+        {
+            bool negatedLit = binLit.Operator.Type is TokenType.BANG_EQUAL or TokenType.BANG_EQUAL_EQUAL;
+            if (binLit.Left is Expr.Variable vLit &&
+                binLit.Right is Expr.Literal { Value: var litVal } &&
+                LiteralTypeFor(litVal) is TypeInfo litType)
+            {
+                return AnalyzeLiteralEqualityGuard(vLit.Name.Lexeme, litType, negatedLit);
+            }
+            if (binLit.Right is Expr.Variable vLitR &&
+                binLit.Left is Expr.Literal { Value: var litValR } &&
+                LiteralTypeFor(litValR) is TypeInfo litTypeR)
+            {
+                return AnalyzeLiteralEqualityGuard(vLitR.Name.Lexeme, litTypeR, negatedLit);
+            }
+        }
+
         // Pattern 8: "prop" in x (in operator narrowing)
         if (condition is Expr.Binary bin8 &&
             bin8.Operator.Type == TokenType.IN &&
@@ -482,6 +504,102 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Maps a literal AST value to its literal type for equality narrowing.
+    /// Returns null for values that don't participate (null/undefined have their
+    /// own guard patterns; bigint literals don't form literal types here).
+    /// </summary>
+    private static TypeInfo? LiteralTypeFor(object? value) => value switch
+    {
+        string s => new TypeInfo.StringLiteral(s),
+        int i => new TypeInfo.NumberLiteral(i),
+        double d => new TypeInfo.NumberLiteral(d),
+        bool b => new TypeInfo.BooleanLiteral(b),
+        _ => null
+    };
+
+    /// <summary>
+    /// Analyzes literal equality guards like `x === "a"` (tsc's narrowTypeByLiteralExpression).
+    /// For a union, the true branch keeps the matching literal constituent (a general
+    /// primitive constituent narrows to the literal itself); the false branch drops only
+    /// the exactly-equal literal constituent — a general `string` stays, since other
+    /// string values still inhabit it.
+    /// </summary>
+    private (string? VarName, TypeInfo? NarrowedType, TypeInfo? ExcludedType) AnalyzeLiteralEqualityGuard(
+        string varName, TypeInfo literalType, bool negated)
+    {
+        var currentType = _environment.Get(varName);
+        if (currentType == null) return (null, null, null);
+
+        static bool LiteralInhabits(TypeInfo general, TypeInfo literal) => general switch
+        {
+            TypeInfo.String => literal is TypeInfo.StringLiteral,
+            TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER } => literal is TypeInfo.NumberLiteral,
+            TypeInfo.Primitive { Type: TokenType.TYPE_BOOLEAN } => literal is TypeInfo.BooleanLiteral,
+            _ => false
+        };
+
+        if (currentType is TypeInfo.Union union)
+        {
+            var matching = new List<TypeInfo>();
+            var rest = new List<TypeInfo>();
+            foreach (var t in union.FlattenedTypes)
+            {
+                if (TypeInfoEqualityComparer.Instance.Equals(t, literalType))
+                {
+                    matching.Add(t);
+                }
+                else
+                {
+                    if (LiteralInhabits(t, literalType) &&
+                        !matching.Any(m => TypeInfoEqualityComparer.Instance.Equals(m, literalType)))
+                    {
+                        matching.Add(literalType);
+                    }
+                    rest.Add(t);
+                }
+            }
+
+            TypeInfo narrowed = matching.Count == 0 ? new TypeInfo.Never() :
+                matching.Count == 1 ? matching[0] : new TypeInfo.Union(matching);
+            TypeInfo excluded = rest.Count == 0 ? new TypeInfo.Never() :
+                rest.Count == 1 ? rest[0] : new TypeInfo.Union(rest);
+
+            if (negated)
+                return (varName, excluded, narrowed);
+            return (varName, narrowed, excluded);
+        }
+
+        // Exactly the literal already.
+        if (TypeInfoEqualityComparer.Instance.Equals(currentType, literalType))
+        {
+            if (negated)
+                return (varName, new TypeInfo.Never(), currentType);
+            return (varName, currentType, new TypeInfo.Never());
+        }
+
+        // A different literal of the same kind can never equal it.
+        if (currentType is TypeInfo.StringLiteral && literalType is TypeInfo.StringLiteral ||
+            currentType is TypeInfo.NumberLiteral && literalType is TypeInfo.NumberLiteral ||
+            currentType is TypeInfo.BooleanLiteral && literalType is TypeInfo.BooleanLiteral)
+        {
+            if (negated)
+                return (varName, currentType, new TypeInfo.Never());
+            return (varName, new TypeInfo.Never(), currentType);
+        }
+
+        // General primitive narrows to the literal in the true branch; the false
+        // branch can't shrink a general primitive.
+        if (LiteralInhabits(currentType, literalType))
+        {
+            if (negated)
+                return (varName, currentType, literalType);
+            return (varName, literalType, currentType);
+        }
+
+        return (null, null, null);
+    }
+
+    /// <summary>
     /// Analyzes property null checks like `obj.prop !== null`.
     /// Returns property narrowing info (object name, property name, narrowed type, excluded type).
     /// </summary>
@@ -687,6 +805,60 @@ public partial class TypeChecker
                 return;
             }
 
+            // For ||, a path narrows in the TRUE branch only when BOTH disjuncts
+            // narrow it — to the union of the two narrowings (`x === "a" || x === "b"`
+            // gives x: "a" | "b"). The right disjunct is analyzed under the left's
+            // excluded types (it's only evaluated when the left was false), so its
+            // excluded type already subtracts both disjuncts — use it as the merged
+            // exclusion for the else branch (De Morgan). Paths guarded on only one
+            // side contribute nothing: the other disjunct may have been the true one.
+            if (expr is Expr.Logical orLogical && orLogical.Operator.Type == TokenType.OR_OR)
+            {
+                var leftGuards = AnalyzeCompoundTypeGuards(orLogical.Left);
+
+                List<(Narrowing.NarrowingPath Path, TypeInfo NarrowedType, TypeInfo ExcludedType)> rightGuards;
+                if (leftGuards.Count > 0)
+                {
+                    var narrowedEnv = new TypeEnvironment(_environment);
+                    var narrowedCtx = Narrowing.NarrowingContext.Empty;
+                    foreach (var (path, _, excludedType) in leftGuards)
+                    {
+                        if (path is Narrowing.NarrowingPath.Variable v)
+                            narrowedEnv.Define(v.Name, excludedType);
+                        else
+                            narrowedCtx = narrowedCtx.WithNarrowing(path, excludedType);
+                    }
+
+                    using (new EnvironmentScope(this, narrowedEnv))
+                    {
+                        bool pushed = !narrowedCtx.IsEmpty;
+                        if (pushed) PushNarrowingContext(narrowedCtx);
+                        try
+                        {
+                            rightGuards = AnalyzeCompoundTypeGuards(orLogical.Right);
+                        }
+                        finally
+                        {
+                            if (pushed) PopNarrowingContext();
+                        }
+                    }
+                }
+                else
+                {
+                    rightGuards = AnalyzeCompoundTypeGuards(orLogical.Right);
+                }
+
+                foreach (var left in leftGuards)
+                {
+                    var right = rightGuards.FirstOrDefault(r => r.Path.Equals(left.Path));
+                    if (right.Path is null) continue;
+                    narrowings.Add((left.Path,
+                        UnionOfNarrowedTypes(left.NarrowedType, right.NarrowedType),
+                        right.ExcludedType));
+                }
+                return;
+            }
+
             // Try to get a single type guard from this expression
             var guard = AnalyzePathTypeGuard(expr);
             if (guard.Path != null && guard.NarrowedType != null && guard.ExcludedType != null)
@@ -707,6 +879,29 @@ public partial class TypeChecker
 
         CollectNarrowings(condition);
         return narrowings;
+    }
+
+    /// <summary>
+    /// Unions two narrowed types, flattening nested unions and deduplicating.
+    /// Never contributes nothing (it's the empty union).
+    /// </summary>
+    private static TypeInfo UnionOfNarrowedTypes(TypeInfo a, TypeInfo b)
+    {
+        var parts = new List<TypeInfo>();
+        void Add(TypeInfo t)
+        {
+            if (t is TypeInfo.Never) return;
+            IEnumerable<TypeInfo> flat = t is TypeInfo.Union u ? u.FlattenedTypes : [t];
+            foreach (var f in flat)
+            {
+                if (!parts.Any(p => TypeInfoEqualityComparer.Instance.Equals(p, f)))
+                    parts.Add(f);
+            }
+        }
+        Add(a);
+        Add(b);
+        return parts.Count == 0 ? new TypeInfo.Never() :
+               parts.Count == 1 ? parts[0] : new TypeInfo.Union(parts);
     }
 
     /// <summary>
