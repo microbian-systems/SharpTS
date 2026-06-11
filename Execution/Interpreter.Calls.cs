@@ -763,6 +763,10 @@ public partial class Interpreter
                 "TextDecoder" => left is SharpTSTextDecoder,
                 "Promise" => left is SharpTSPromise || left is System.Threading.Tasks.Task,
                 "Buffer" => left is SharpTSBuffer,
+                // The AbortSignal global is a namespace-style sentinel (no public
+                // constructor) — brand-check the runtime instance type (#246).
+                "AbortSignal" => left is SharpTSAbortSignal,
+                "AbortController" => left is SharpTSAbortController,
                 _ => false
             };
         }

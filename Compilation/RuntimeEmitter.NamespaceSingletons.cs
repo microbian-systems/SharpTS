@@ -22,12 +22,32 @@ public partial class RuntimeEmitter
     /// Lazily populated: the populate shell is called before each bare-
     /// reference load; the field doubles as the populated flag.
     /// </summary>
+    /// <summary>
+    /// Pre-defines the namespace singleton fields so earlier $Runtime methods
+    /// can reference them — InstanceOf brand-checks the AbortSignal singleton
+    /// (#246) and is emitted before the populate bodies (which need the
+    /// AbortSignal*/CreateIntl* helpers emitted later in EmitRuntimeClass).
+    /// </summary>
+    private void DefineNamespaceSingletonFields(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        if (_features.UsesAbortController)
+            runtime.AbortSignalNamespaceField = DefineNamespaceSingletonField(typeBuilder, "AbortSignal");
+        if (_features.UsesIntl)
+            runtime.IntlNamespaceField = DefineNamespaceSingletonField(typeBuilder, "Intl");
+    }
+
+    private FieldBuilder DefineNamespaceSingletonField(TypeBuilder typeBuilder, string namespaceName) =>
+        typeBuilder.DefineField(
+            $"_{namespaceName}Namespace",
+            _types.DictionaryStringObject,
+            FieldAttributes.Public | FieldAttributes.Static);
+
     private void EmitNamespaceSingletons(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         if (_features.UsesAbortController)
         {
-            (runtime.AbortSignalNamespaceField, runtime.AbortSignalNamespacePopulate) =
-                EmitNamespaceSingleton(typeBuilder, runtime, "AbortSignal",
+            runtime.AbortSignalNamespacePopulate =
+                EmitNamespaceSingleton(typeBuilder, runtime, "AbortSignal", runtime.AbortSignalNamespaceField!,
                 [
                     ("abort", runtime.AbortSignalAbort, 1),
                     ("timeout", runtime.AbortSignalTimeout, 1),
@@ -37,8 +57,8 @@ public partial class RuntimeEmitter
 
         if (_features.UsesIntl)
         {
-            (runtime.IntlNamespaceField, runtime.IntlNamespacePopulate) =
-                EmitNamespaceSingleton(typeBuilder, runtime, "Intl",
+            runtime.IntlNamespacePopulate =
+                EmitNamespaceSingleton(typeBuilder, runtime, "Intl", runtime.IntlNamespaceField!,
                 [
                     ("NumberFormat", runtime.CreateIntlNumberFormat, 2),
                     ("DateTimeFormat", runtime.CreateIntlDateTimeFormat, 2),
@@ -52,17 +72,13 @@ public partial class RuntimeEmitter
         }
     }
 
-    private (FieldBuilder Field, MethodBuilder Populate) EmitNamespaceSingleton(
+    private MethodBuilder EmitNamespaceSingleton(
         TypeBuilder typeBuilder,
         EmittedRuntime runtime,
         string namespaceName,
+        FieldBuilder field,
         (string JsName, MethodBuilder Helper, int JsLength)[] members)
     {
-        var field = typeBuilder.DefineField(
-            $"_{namespaceName}Namespace",
-            _types.DictionaryStringObject,
-            FieldAttributes.Public | FieldAttributes.Static);
-
         var method = typeBuilder.DefineMethod(
             $"_{namespaceName}NamespacePopulate",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -105,6 +121,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stsfld, field);
         il.Emit(OpCodes.Ret);
 
-        return (field, method);
+        return method;
     }
 }
