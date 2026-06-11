@@ -140,6 +140,17 @@ public static class ParameterTypeResolver
             {
                 baseType = typeof(object);
             }
+
+            // Typed array/map/set returns map to List<T>/Dictionary<,>/HashSet<> (the strict
+            // collection types), but their runtime representation is a dynamic $Array/TSMap/TSSet
+            // carried as object — not CLR-assignable to the declared collection slot. Returning
+            // that value into a List<T> slot raises ILVerify StackUnexpected (and a castclass to
+            // the collection would throw InvalidCastException at runtime). Fall back to object so
+            // the dynamic value is returned directly. (#278)
+            if (typeMapper.IsDynamicRuntimeCollection(baseType))
+            {
+                baseType = typeof(object);
+            }
         }
 
         // Wrap async return types in Task<T>

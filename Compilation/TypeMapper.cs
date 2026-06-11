@@ -295,6 +295,23 @@ public class TypeMapper
         return _types.MakeGenericType(_types.HashSetOpen, elementType);
     }
 
+    /// <summary>
+    /// Reports whether <paramref name="mappedType"/> is one of the CLR collection types that
+    /// <see cref="MapTypeInfoStrict"/> produces for a typed array/map/set
+    /// (<c>List&lt;T&gt;</c>, <c>Dictionary&lt;,&gt;</c>, <c>HashSet&lt;T&gt;</c>). The runtime
+    /// representation of those TypeScript values is a dynamic <c>$Array</c>/<c>TSMap</c>/<c>TSSet</c>
+    /// carried as <see cref="object"/>, not an instance of the declared collection. A declared slot
+    /// of this CLR type (e.g. a method return) is therefore not assignable from the runtime value,
+    /// so callers must fall back to <see cref="object"/>. (#278)
+    /// </summary>
+    public bool IsDynamicRuntimeCollection(Type mappedType)
+    {
+        if (!mappedType.IsGenericType)
+            return false;
+        Type def = mappedType.GetGenericTypeDefinition();
+        return def == _types.ListOpen || def == _types.DictionaryOpen || def == _types.HashSetOpen;
+    }
+
     private Type MapPromiseTypeStrict(TypeInfo.Promise promise)
     {
         Type innerType = MapTypeInfoStrict(promise.ValueType);

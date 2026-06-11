@@ -205,6 +205,33 @@ public class ILVerificationTests
     }
 
     [Fact]
+    public void FunctionReturningTypedCollection_PassesILVerification()
+    {
+        // A function declared `: number[]` (or Map/Set, or async Promise<T[]>) maps its return
+        // slot to List<T>/Dictionary<,>/HashSet<>, but the runtime value is a dynamic
+        // $Array/TSMap/TSSet carried as object — not CLR-assignable to the declared collection.
+        // That left an object on the stack where the verifier expected the collection, raising
+        // StackUnexpected even though it ran correctly. The return type now falls back to object. (#278)
+        var source = """
+            function nums(): number[] { return [1, 2, 3]; }
+            function strs(): string[] { return ["a", "b"]; }
+            function mkMap(): Map<string, number> { const m = new Map<string, number>(); m.set("x", 1); return m; }
+            function mkSet(): Set<number> { const s = new Set<number>(); s.add(5); return s; }
+            class Box { getNums(): number[] { return [7, 8]; } }
+            console.log(nums().length);
+            console.log(strs().join(","));
+            console.log(mkMap().get("x"));
+            console.log(mkSet().has(5));
+            console.log(new Box().getNums().length);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("3\na,b\n1\ntrue\n2\n", output);
+    }
+
+    [Fact]
     public void TryCatchFinally_PassesILVerification()
     {
         var source = """
