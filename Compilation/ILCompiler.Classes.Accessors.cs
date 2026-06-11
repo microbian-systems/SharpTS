@@ -203,7 +203,17 @@ public partial class ILCompiler
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode,
             // Registry services
-            ClassRegistry = GetClassRegistry()
+            ClassRegistry = GetClassRegistry(),
+            // Top-level variable access. Accessor bodies are body-emission
+            // contexts like methods/constructors/static-blocks and must set the
+            // same four properties, or a bare top-level identifier (captured
+            // let/const, same-module ESM export, or import) falls through to the
+            // dynamic runtime lookup and throws ReferenceError. Use the
+            // class-method builder so same-module ESM exports resolve too. (#300)
+            TopLevelStaticVars = BuildClassMethodTopLevelStaticVarsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
         };
 
         // Add class generic type parameters to context
