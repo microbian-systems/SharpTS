@@ -197,6 +197,14 @@ static void RunModuleFile(string absolutePath, DecoratorMode decoratorMode, bool
         }
 
         interpreter.InterpretModules(allModules, resolver, typeMap);
+
+        // Node default: an unhandled promise rejection makes the process
+        // exit nonzero. The rejection itself was already reported to stderr
+        // by the interpreter when it was observed (#228).
+        if (interpreter.HadUnhandledRejection)
+        {
+            Environment.Exit(1);
+        }
     }
     catch (SharpTS.Runtime.Exceptions.ThrowException tex)
     {
@@ -274,6 +282,13 @@ static void Run(string source, DecoratorMode decoratorMode, bool emitDecoratorMe
 
         // Interpretation Phase
         interpreter.Interpret(parseResult.Statements, typeMap);
+
+        // Node default: an unhandled promise rejection makes the process
+        // exit nonzero (#228).
+        if (interpreter.HadUnhandledRejection)
+        {
+            Environment.Exit(1);
+        }
     }
     catch (SharpTSException ex)
     {

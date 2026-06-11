@@ -29,8 +29,9 @@ public partial class RuntimeEmitter
             EmitAtomicsHelpersPure(runtimeType, runtime);
         }
 
-        // MessageChannel constructor helper
-        EmitMessageChannelHelper(runtimeType, runtime);
+        // MessageChannel/MessagePort moved to RuntimeEmitter.MessageChannel.cs —
+        // emitted after EmitRuntimeClass because $MessagePort.PostMessage calls
+        // $Runtime.StructuredClone (#222).
 
         // Worker constructor helper
         EmitWorkerHelper(runtimeType, runtime);
@@ -1212,55 +1213,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         runtime.TSTypedArraySet = method;
-    }
-
-    /// <summary>
-    /// Emits MessageChannel constructor helper.
-    /// Uses direct constructor invocation.
-    /// </summary>
-    private void EmitMessageChannelHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
-    {
-        var method = runtimeType.DefineMethod(
-            "CreateMessageChannel",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object,
-            Type.EmptyTypes
-        );
-
-        var il = method.GetILGenerator();
-        var channelLocal = il.DeclareLocal(_types.DictionaryStringObject);
-        var port1Local = il.DeclareLocal(_types.Object);
-        var port2Local = il.DeclareLocal(_types.Object);
-
-        // channel = new Dictionary<string, object>()
-        il.Emit(OpCodes.Newobj, _types.DictionaryStringObjectCtor);
-        il.Emit(OpCodes.Stloc, channelLocal);
-
-        // port1 = new object()
-        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.Object));
-        il.Emit(OpCodes.Stloc, port1Local);
-
-        // port2 = new object()
-        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.Object));
-        il.Emit(OpCodes.Stloc, port2Local);
-
-        // channel["port1"] = port1
-        il.Emit(OpCodes.Ldloc, channelLocal);
-        il.Emit(OpCodes.Ldstr, "port1");
-        il.Emit(OpCodes.Ldloc, port1Local);
-        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObjectSetItem);
-
-        // channel["port2"] = port2
-        il.Emit(OpCodes.Ldloc, channelLocal);
-        il.Emit(OpCodes.Ldstr, "port2");
-        il.Emit(OpCodes.Ldloc, port2Local);
-        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObjectSetItem);
-
-        il.Emit(OpCodes.Ldloc, channelLocal);
-        il.Emit(OpCodes.Ret);
-
-        runtime.TSMessageChannelType = _types.DictionaryStringObject;
-        runtime.TSMessageChannelCtor = method;
     }
 
     /// <summary>

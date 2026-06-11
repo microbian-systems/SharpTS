@@ -694,8 +694,14 @@ public static class CryptoModuleInterpreter
     {
         interpreter.ScheduleTimer(0, 0, () =>
         {
-            callback.Call(interpreter, [error, result]);
-            interpreter.Unref();
+            try
+            {
+                interpreter.InvokeGuestCallback(callback, [error, result]);
+            }
+            finally
+            {
+                interpreter.Unref();
+            }
         }, isInterval: false);
     }
 

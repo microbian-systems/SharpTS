@@ -633,4 +633,65 @@ public class StreamsWebSemanticTests
     }
 
     #endregion
+
+    #region Promise-object surfaces (#223: reader/writer promises must support .then)
+
+    /// <summary>
+    /// #223: <c>reader.read()</c>/<c>reader.closed</c>/<c>reader.cancel()</c>
+    /// must return Promise objects usable with <c>.then()</c>/<c>.catch()</c>,
+    /// not raw Tasks whose property access throws.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void ReadableStreamReader_ReadAndClosed_AreThenable(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { ReadableStream as RS } from "stream/web";
+                const rs = new (RS as any)({ start(c: any) { c.enqueue("z"); c.close(); } });
+                const reader = rs.getReader();
+                reader.closed.then(() => console.log("closed-resolved"));
+                reader.read().then((r: any) => console.log("read:", r.value, r.done));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("read: z false", output);
+        Assert.Contains("closed-resolved", output);
+    }
+
+    /// <summary>
+    /// #223 audit follow-through: writer <c>write()</c>/<c>close()</c>/<c>ready</c>/
+    /// <c>closed</c> must be thenable Promise objects as well.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void WritableStreamWriter_WriteReadyClosed_AreThenable(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                const chunks: string[] = [];
+                const ws = new WritableStream({
+                    write(chunk) { chunks.push(chunk as string); }
+                });
+                const writer = (ws as any).getWriter();
+                writer.ready.then(() => console.log("ready"));
+                writer.write("a").then(() => {
+                    console.log("wrote:", chunks.join(","));
+                    writer.close().then(() => console.log("close-resolved"));
+                    writer.closed.then(() => console.log("closed-resolved"));
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("ready", output);
+        Assert.Contains("wrote: a", output);
+        Assert.Contains("close-resolved", output);
+        Assert.Contains("closed-resolved", output);
+    }
+
+    #endregion
 }

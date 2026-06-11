@@ -2533,6 +2533,21 @@ public partial class RuntimeEmitter
         EmitPromiseProtoLookup("catch");
         EmitPromiseProtoLookup("finally");
 
+        // ECMA-262 §27.2.5.1: Promise.prototype.constructor is %Promise%.
+        // Bare `Promise` resolves to typeof(Task<object?>) in compiled mode
+        // (TryEmitBuiltInClassType / GlobalThisGetProperty), so return the
+        // same Type token here for identity:
+        // `Promise.resolve(1).constructor === Promise` (#221 increment).
+        var notPromiseCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notPromiseCtorLabel);
+        il.Emit(OpCodes.Ldtoken, _types.TaskOfObject);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notPromiseCtorLabel);
+
         // Unknown promise property - return null
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
@@ -2607,6 +2622,62 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue"));
         var foundLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, foundLabel);
+
+        // $AbortSignal dict surface (#224): "aborted"/"reason"/"onabort" on a
+        // dynamically-typed signal receiver. The typed path intercepts at
+        // compile time (AbortSignalEmitter); an `any` receiver lands here.
+        // Signals are identified by their "_reasonSet" internal slot — the
+        // public keys are computed from the CancellationToken, so they are
+        // never own dict entries and always reach this miss path. Name screen
+        // runs first to keep ordinary dict misses cheap.
+        if (_features.UsesAbortController)
+        {
+            var notSignalPropLabel = il.DefineLabel();
+            var signalNameMatchLabel = il.DefineLabel();
+            var strEq = _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String);
+
+            foreach (var signalProp in new[] { "aborted", "reason", "onabort" })
+            {
+                il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldstr, signalProp);
+                il.Emit(OpCodes.Call, strEq);
+                il.Emit(OpCodes.Brtrue, signalNameMatchLabel);
+            }
+            il.Emit(OpCodes.Br, notSignalPropLabel);
+
+            il.MarkLabel(signalNameMatchLabel);
+            il.Emit(OpCodes.Ldloc, dictLocal);
+            il.Emit(OpCodes.Ldstr, "_reasonSet");
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
+            il.Emit(OpCodes.Brfalse, notSignalPropLabel);
+
+            var notSignalAbortedLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "aborted");
+            il.Emit(OpCodes.Call, strEq);
+            il.Emit(OpCodes.Brfalse, notSignalAbortedLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.AbortSignalGetAborted);
+            il.Emit(OpCodes.Box, _types.Boolean);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notSignalAbortedLabel);
+
+            var notSignalReasonLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "reason");
+            il.Emit(OpCodes.Call, strEq);
+            il.Emit(OpCodes.Brfalse, notSignalReasonLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.AbortSignalGetReason);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notSignalReasonLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.AbortSignalGetOnAbort);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(notSignalPropLabel);
+        }
 
         // Property not found on object - check prototype chain
         // Get prototype: $PropertyDescriptorStore.GetPrototype(obj)

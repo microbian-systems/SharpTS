@@ -428,7 +428,7 @@ public class SharpTSReadableStream : ITypeCategorized
             "cancel" => BuiltInMethod.CreateV2("cancel", 1, (_, _, args) =>
             {
                 var reason = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
-                return RuntimeValue.FromObject(CancelInternal(reason).Task);
+                return RuntimeValue.FromObject(CancelInternal(reason));
             }),
             "pipeTo" => BuiltInMethod.CreateV2("pipeTo", 1, 2, (interp, _, args) =>
             {
@@ -436,7 +436,7 @@ public class SharpTSReadableStream : ITypeCategorized
                 var opts = args.Length > 1 ? args[1].ToObject() : null;
                 // PipeToAny accepts both interpreter SharpTSWritableStream and
                 // pure-IL emitted $WritableStream destinations.
-                return RuntimeValue.FromObject(WebStreamsHelpers.PipeToAny(interp, this, dest, opts).Task);
+                return RuntimeValue.FromObject(WebStreamsHelpers.PipeToAny(interp, this, dest, opts));
             }),
             "pipeThrough" => BuiltInMethod.CreateV2("pipeThrough", 1, 2, (interp, recv, args) =>
             {
@@ -515,6 +515,8 @@ public class SharpTSReadableStreamDefaultReader : ITypeCategorized
     internal readonly TaskCompletionSource<object?> ClosedTcs =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    private SharpTSPromise? _closedPromise;
+
     internal SharpTSReadableStreamDefaultReader(SharpTSReadableStream stream)
     {
         _stream = stream;
@@ -526,16 +528,14 @@ public class SharpTSReadableStreamDefaultReader : ITypeCategorized
     {
         return name switch
         {
-            "closed" => ClosedTcs.Task,
+            "closed" => _closedPromise ??= new SharpTSPromise(ClosedTcs.Task),
             "read" => BuiltInMethod.CreateV2("read", 0, (_, _, _) =>
             {
                 if (_stream.Reader != this)
                 {
-                    var tcs = new TaskCompletionSource<object?>();
-                    tcs.SetException(new SharpTSPromiseRejectedException("TypeError: Reader is no longer attached to its stream"));
-                    return RuntimeValue.FromObject(tcs.Task);
+                    return RuntimeValue.FromObject(SharpTSPromise.Reject("TypeError: Reader is no longer attached to its stream"));
                 }
-                return RuntimeValue.FromBoxed(_stream.ReadInternal());
+                return RuntimeValue.FromObject(new SharpTSPromise(_stream.ReadInternal()));
             }),
             "releaseLock" => BuiltInMethod.CreateV2("releaseLock", 0, (_, _, _) =>
             {
@@ -551,12 +551,10 @@ public class SharpTSReadableStreamDefaultReader : ITypeCategorized
             {
                 if (_stream.Reader != this)
                 {
-                    var tcs = new TaskCompletionSource<object?>();
-                    tcs.SetException(new SharpTSPromiseRejectedException("TypeError: Reader is no longer attached to its stream"));
-                    return RuntimeValue.FromObject(tcs.Task);
+                    return RuntimeValue.FromObject(SharpTSPromise.Reject("TypeError: Reader is no longer attached to its stream"));
                 }
                 var reason = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
-                return RuntimeValue.FromObject(_stream.CancelInternal(reason).Task);
+                return RuntimeValue.FromObject(_stream.CancelInternal(reason));
             }),
             _ => null,
         };

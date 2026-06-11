@@ -1036,4 +1036,32 @@ public class PromiseMethodTests
     }
 
     #endregion
+
+    #region promise.constructor (#221 SpeciesConstructor increment)
+
+    /// <summary>
+    /// ECMA-262 §27.2.5.1: Promise.prototype.constructor is %Promise%, so
+    /// <c>promise.constructor === Promise</c> must hold by identity. This is
+    /// the observable subset of #221's SpeciesConstructor work — species
+    /// dispatch itself stays unobservable until guest classes can subclass
+    /// Promise (#233) and Symbol is a first-class value (#234).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PromiseConstructorProperty_IsPromiseGlobal(ExecutionMode mode)
+    {
+        var source = """
+            const p = Promise.resolve(1);
+            console.log((p as any).constructor === Promise);
+            console.log(typeof (p as any).constructor);
+            async function f(): Promise<number> { return 2; }
+            const q: any = f();
+            console.log(q.constructor === Promise);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfunction\ntrue\n", output);
+    }
+
+    #endregion
 }

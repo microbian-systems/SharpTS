@@ -485,7 +485,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, notRuntimeLabel);
 
         il.MarkLabel(declaringTypeIsRuntimeLabel);
-        // declaring type is an emitted-runtime helper class → not constructable
+        // Declaring type is an emitted-runtime helper class. One exception
+        // (#224): the Intl factory helpers (CreateIntlNumberFormat etc.) ARE
+        // constructors per ECMA-402 — `new Intl.NumberFormat(...)` through a
+        // value-position alias routes them into NewOnFunction, whose
+        // IsConstructor gate would otherwise reject them.
+        il.Emit(OpCodes.Ldloc, miLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(typeof(System.Reflection.MemberInfo), "Name").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "CreateIntl");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.String, "StartsWith", _types.String));
+        il.Emit(OpCodes.Brtrue, notRuntimeLabel);
+        // → not constructable
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notRuntimeLabel);

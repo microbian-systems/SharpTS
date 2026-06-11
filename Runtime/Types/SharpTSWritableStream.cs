@@ -376,11 +376,11 @@ public class SharpTSWritableStream : ITypeCategorized
             "abort" => BuiltInMethod.CreateV2("abort", 1, (_, _, args) =>
             {
                 var reason = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
-                return RuntimeValue.FromBoxed(AbortInternal(reason));
+                return RuntimeValue.FromObject(new SharpTSPromise(AbortInternal(reason)));
             }),
             "close" => BuiltInMethod.CreateV2("close", 0, (_, _, _) =>
             {
-                return RuntimeValue.FromBoxed(CloseAsyncInternal());
+                return RuntimeValue.FromObject(new SharpTSPromise(CloseAsyncInternal()));
             }),
             _ => null,
         };
@@ -429,9 +429,13 @@ public class SharpTSWritableStreamDefaultWriter : ITypeCategorized
     private TaskCompletionSource<object?> _readyTcs =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+    private SharpTSPromise? _readyPromise;
+
     // closed resolves when the stream closes cleanly, rejects on error.
     private readonly TaskCompletionSource<object?> _closedTcs =
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    private SharpTSPromise? _closedPromise;
 
     internal SharpTSWritableStreamDefaultWriter(SharpTSWritableStream stream)
     {
@@ -467,8 +471,8 @@ public class SharpTSWritableStreamDefaultWriter : ITypeCategorized
         return name switch
         {
             "desiredSize" => (object)_stream.DesiredSize,
-            "closed" => _closedTcs.Task,
-            "ready" => _readyTcs.Task,
+            "closed" => _closedPromise ??= new SharpTSPromise(_closedTcs.Task),
+            "ready" => GetReadyPromise(),
             "write" => BuiltInMethod.CreateV2("write", 1, (_, _, args) =>
             {
                 var chunk = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
@@ -478,16 +482,16 @@ public class SharpTSWritableStreamDefaultWriter : ITypeCategorized
                 {
                     _readyTcs = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
                 }
-                return RuntimeValue.FromBoxed(task);
+                return RuntimeValue.FromObject(new SharpTSPromise(task));
             }),
             "close" => BuiltInMethod.CreateV2("close", 0, (_, _, _) =>
             {
-                return RuntimeValue.FromBoxed(_stream.CloseAsyncInternal());
+                return RuntimeValue.FromObject(new SharpTSPromise(_stream.CloseAsyncInternal()));
             }),
             "abort" => BuiltInMethod.CreateV2("abort", 1, (_, _, args) =>
             {
                 var reason = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
-                return RuntimeValue.FromBoxed(_stream.AbortInternal(reason));
+                return RuntimeValue.FromObject(new SharpTSPromise(_stream.AbortInternal(reason)));
             }),
             "releaseLock" => BuiltInMethod.CreateV2("releaseLock", 0, (_, _, _) =>
             {
@@ -499,6 +503,17 @@ public class SharpTSWritableStreamDefaultWriter : ITypeCategorized
             }),
             _ => null,
         };
+    }
+
+    private SharpTSPromise GetReadyPromise()
+    {
+        // _readyTcs is replaced when the queue saturates, so the cached
+        // promise is only valid while it still wraps the current tcs.
+        if (_readyPromise == null || _readyPromise.Task != _readyTcs.Task)
+        {
+            _readyPromise = new SharpTSPromise(_readyTcs.Task);
+        }
+        return _readyPromise;
     }
 
     public override string ToString() => "WritableStreamDefaultWriter {}";

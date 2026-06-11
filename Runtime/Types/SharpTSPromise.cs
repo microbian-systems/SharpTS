@@ -141,13 +141,18 @@ public class SharpTSPromiseRejectedException : Exception
     public string? RejectionStack { get; }
 
     public SharpTSPromiseRejectedException(object? reason)
-        : base(FormatMessage(reason))
+        : base(FormatReason(reason))
     {
         Reason = reason;
         RejectionStack = CaptureStack(reason);
     }
 
-    private static string FormatMessage(object? reason)
+    /// <summary>
+    /// Formats a rejection reason for host-side display ("Error: message" for
+    /// error values, ToString otherwise). Also used by unhandled-rejection
+    /// reporting so the reason renders the same way everywhere.
+    /// </summary>
+    internal static string FormatReason(object? reason)
     {
         if (reason is SharpTSError error)
             return $"{error.Name}: {error.Message}";

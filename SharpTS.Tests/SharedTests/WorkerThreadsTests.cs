@@ -293,16 +293,15 @@ public class WorkerThreadsTests
         Assert.Equal("true\ntrue\ntrue\n", output);
     }
 
-    // Interpreter-only: the compiled-mode MessageChannel drops messages
-    // entirely (listener never fires) — tracked separately from #209.
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void MessageChannel_PortOnMessage_ReceivesPostedValue(ExecutionMode mode)
     {
-        // #209: port.on() must dispatch through the port's own member table
-        // (postMessage/start/close reachable), a 'message' listener implicitly
-        // starts the port, and the listener receives the cloned value directly
-        // per Node worker_threads semantics.
+        // #209 (interpreter) / #222 (compiled $MessagePort): port.on() must
+        // dispatch through the port's own member table (postMessage/start/
+        // close reachable), a 'message' listener implicitly starts the port,
+        // and the listener receives the cloned value directly per Node
+        // worker_threads semantics.
         var source = @"
             let channel: any = new MessageChannel();
             channel.port2.on('message', (value: any) => {
@@ -314,6 +313,29 @@ public class WorkerThreadsTests
         ";
         var output = TestHarness.Run(source, mode);
         Assert.Contains("received: hello", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void MessageChannel_MessagesPostedBeforeListener_DeliveredInOrderAfterImplicitStart(ExecutionMode mode)
+    {
+        // #222: messages posted before any listener exists must queue and be
+        // delivered (in order) once a 'message' listener implicitly starts
+        // the port.
+        var source = @"
+            let channel: any = new MessageChannel();
+            channel.port1.postMessage('first');
+            channel.port1.postMessage('second');
+            channel.port2.on('message', (value: any) => {
+                console.log('got: ' + value);
+                if (value === 'second') {
+                    channel.port1.close();
+                    channel.port2.close();
+                }
+            });
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Contains("got: first\ngot: second", output);
     }
 
     #endregion

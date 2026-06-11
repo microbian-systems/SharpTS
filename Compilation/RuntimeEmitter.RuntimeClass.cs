@@ -616,6 +616,16 @@ public partial class RuntimeEmitter
         EmitPromiseMethods(typeBuilder, runtime);
         // TypedArray detection helpers must come before GetProperty (which uses IsTypedArrayMethod)
         EmitTypedArrayDetectionHelpers(typeBuilder, runtime);
+        // AbortController/AbortSignal methods must come before GetProperty,
+        // whose dict-receiver branch dispatches "aborted"/"reason"/"onabort"
+        // to the signal getters (#224). FireAbortEvent must precede
+        // EmitAbortControllerMethods (which references it). Gated on
+        // UsesAbortController, also implied by UsesWebStreams/fetch/http.
+        if (_features.UsesAbortController)
+        {
+            EmitFireAbortEvent(typeBuilder, runtime);
+            EmitAbortControllerMethods(typeBuilder, runtime);
+        }
         // String/Number/Boolean populate shells already defined above
         // (before cctor) so the cctor can call them eagerly.
         EmitGetProperty(typeBuilder, runtime);
@@ -983,14 +993,9 @@ public partial class RuntimeEmitter
             runtime.RequireSharpTSRuntime("Proxy");
             EmitProxyMethods(typeBuilder, runtime);
         }
-        // AbortController/AbortSignal methods (FireAbortEvent must be emitted
-        // before AbortController methods). Gated on UsesAbortController, also
-        // implied by UsesWebStreams (ReadableStream pipeTo checks abort state).
-        if (_features.UsesAbortController)
-        {
-            EmitFireAbortEvent(typeBuilder, runtime);
-            EmitAbortControllerMethods(typeBuilder, runtime);
-        }
+        // AbortController/AbortSignal methods were moved earlier (above
+        // EmitGetProperty) — its dict-receiver branch dispatches to the
+        // signal getters (#224).
         // Dynamic import support. Module registry + WrapTaskAsPromise stay
         // unconditional (used by multi-module bundling and dns/fs/http/timer
         // promise wrappers). The actual `import(specifier)` impl is gated
