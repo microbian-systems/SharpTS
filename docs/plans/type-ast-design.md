@@ -107,7 +107,13 @@ an equivalence test that converts both ways and asserts identical `TypeInfo` ren
    `SplitFunctionParams` fused both parameters into one — previously masked because both
    sides of the comparison were equally mangled. The string path got the same arrow guard
    `SplitObjectMembers` already had.
-2. Object-type / tuple / conditional / mapped nodes — the big checker-scanner retirement.
+2. ✅ **Shipped (object + tuple).** `ObjectTypeNode` (properties with optional/method
+   markers, computed names in their `@@` spelling, index signatures, call/construct
+   signatures) and `TupleTypeNode` (named/optional/spread elements, trailing-rest rule,
+   TS1257 ordering). `ParseMethodSignature` became a node producer alongside
+   `ParseFunctionTypeBody`. Coverage: 46.4% → **65.3%** (357 node / 190 fallback).
+   Conditional and mapped types remain string-path — they tie into generic/alias
+   resolution, so they ride with slice 3.
 3. Type aliases store nodes (kills alias string substitution; enables alias-instantiation
    identity for #202's variance cases).
 4. Declaration handles on `TypeInfo.Interface/Class` resolved via nodes (kills the

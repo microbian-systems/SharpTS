@@ -32,10 +32,66 @@ public class TypeNodeSliceTests
     {
         TypeNodeStats.Reset();
         TestHarness.RunInterpreted("""
-            var f: { a: number } = { a: 1 };
+            var xs: Array<number> = [1];
             """);
         Assert.True(TypeNodeStats.StringFallbacks >= 1,
-            $"expected the object-type annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+            $"expected the generic-reference annotation to fall back, got {TypeNodeStats.StringFallbacks}");
+    }
+
+    [Fact]
+    public void NodePath_EngagesForObjectAndTupleTypes()
+    {
+        TypeNodeStats.Reset();
+        TestHarness.RunInterpreted("""
+            var o: { name: string; age?: number } = { name: "x" };
+            var m: { greet(x: number): string } = { greet: (x: number) => "hi" };
+            var ix: { [k: string]: number } = { a: 1 };
+            var t: [string, number?] = ["x"];
+            var nt: [first: string, rest: number] = ["x", 1];
+            """);
+        Assert.True(TypeNodeStats.NodeHits >= 5,
+            $"expected the node path for all five annotations, got {TypeNodeStats.NodeHits}");
+        Assert.Equal(0, TypeNodeStats.StringFallbacks);
+    }
+
+    [Fact]
+    public void NodeResolved_ObjectTypeEnforcesMembers()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var o: { name: string } = { name: 1 };
+            """));
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var o: { name: string } = {};
+            """));
+        // Optional members may be absent but not mistyped.
+        TestHarness.RunInterpreted("""
+            var o: { name: string; age?: number } = { name: "x" };
+            """);
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var o: { name: string; age?: number } = { name: "x", age: "old" };
+            """));
+    }
+
+    [Fact]
+    public void NodeResolved_TupleEnforcesArityAndElementTypes()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var t: [string, number] = ["x"];
+            """));
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var t: [string, number] = [1, "x"];
+            """));
+        TestHarness.RunInterpreted("""
+            var t: [string, ...number[]] = ["x", 1, 2, 3];
+            """);
+    }
+
+    [Fact]
+    public void NodeResolved_IndexSignatureEnforcesValueType()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            var ix: { [k: string]: number } = { a: "not a number" };
+            """));
     }
 
     [Fact]

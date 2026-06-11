@@ -614,8 +614,13 @@ public partial class Parser
         }
 
         Consume(TokenType.LEFT_PAREN, "Expect '(' for method parameters.");
+        int startLine = Previous().Line;
         string? thisType = null;
+        TypeNode? thisTypeNode = null;
         List<string> paramTypes = [];
+        List<ParameterTypeNode> paramNodes = [];
+        // Generic signatures await type-parameter scoping (slice 3) — no node for those.
+        bool nodeComplete = genericPrefix.Length == 0;
 
         // Check for 'this' parameter in interface method
         if (Check(TokenType.THIS))
@@ -623,6 +628,8 @@ public partial class Parser
             Advance(); // consume 'this'
             Consume(TokenType.COLON, "Expect ':' after 'this' in this parameter.");
             thisType = ParseTypeAnnotation();
+            thisTypeNode = TakeTypeNode();
+            if (thisTypeNode is null) nodeComplete = false;
             if (Check(TokenType.COMMA))
             {
                 Advance(); // consume ','
@@ -634,10 +641,14 @@ public partial class Parser
             do
             {
                 bool isRest = Match(TokenType.DOT_DOT_DOT);
-                ConsumeIdentifierName("Expect parameter name.");
+                string paramName = ConsumeIdentifierName("Expect parameter name.").Lexeme;
                 bool isOptional = Match(TokenType.QUESTION);
                 Consume(TokenType.COLON, "Expect ':' after parameter name.");
                 string paramType = ParseTypeAnnotation();
+                if (TakeTypeNode() is { } paramTypeNode)
+                    paramNodes.Add(new ParameterTypeNode(paramName, paramTypeNode, isOptional, isRest, paramTypeNode.Line));
+                else
+                    nodeComplete = false;
                 // Encode rest/optional the same way ParseFunctionTypeBody does so the signature
                 // resolver models arity correctly.
                 if (isRest) paramType = "..." + paramType;
@@ -649,6 +660,12 @@ public partial class Parser
         Consume(TokenType.RIGHT_PAREN, "Expect ')' after parameters.");
         Consume(TokenType.COLON, "Expect ':' before return type.");
         string returnType = ParseTypeAnnotation();
+        TypeNode? returnTypeNode = TakeTypeNode();
+
+        // Publish the structured form (or explicitly clear, so no nested node leaks out).
+        _lastTypeNode = nodeComplete && returnTypeNode is not null
+            ? new FunctionTypeNode(thisTypeNode, paramNodes, returnTypeNode, startLine)
+            : null;
 
         if (thisType != null)
         {
