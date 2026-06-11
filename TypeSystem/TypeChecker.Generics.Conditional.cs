@@ -78,6 +78,20 @@ public partial class TypeChecker
             // Apply substitutions to the extends type
             TypeInfo extendsType = SubstituteWithoutConditionalEval(conditional.ExtendsType, substitutions);
 
+            // tsc: `any extends X ? A : B` yields A | B — an `any` check type matches BOTH
+            // branches. Infer placeholders bind from the wildcard match, so
+            // `any extends infer U ? U : never` is `any | never` = `any`.
+            if (checkType is TypeInfo.Any)
+            {
+                var (_, anyInferred) = CheckExtendsWithInfer(checkType, extendsType);
+                var trueSubs = new Dictionary<string, TypeInfo>(substitutions);
+                foreach (var (name, type) in anyInferred)
+                    trueSubs[name] = type;
+                return CreateUnion(
+                    Substitute(conditional.TrueType, trueSubs),
+                    Substitute(conditional.FalseType, substitutions));
+            }
+
             // Perform the extends check with infer pattern matching
             var (matches, inferredTypes) = CheckExtendsWithInfer(checkType, extendsType);
 

@@ -115,6 +115,11 @@ public partial class Parser
                 if (_isStrictMode && (variable.Name.Lexeme == "eval" || variable.Name.Lexeme == "arguments"))
                     throw new Exception("SyntaxError: Unexpected eval or arguments in strict mode");
                 return onVariable(variable.Name, value);
+            // `undefined = v` must PARSE (it's an identifier-shaped target) and fail in the
+            // CHECKER with TS2539 ("Cannot assign to 'undefined' because it is not a variable")
+            // — tsc treats this as a semantic error, not a parse error.
+            case Expr.Literal lit when lit.Value is SharpTS.Runtime.Types.SharpTSUndefined:
+                return onVariable(new Token(TokenType.IDENTIFIER, "undefined", null, Previous().Line), value);
             case Expr.Get get:
                 return onGet(get, value);
             case Expr.GetPrivate getPrivate when onGetPrivate != null:

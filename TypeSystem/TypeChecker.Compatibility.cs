@@ -380,6 +380,18 @@ public partial class TypeChecker
             return expected is TypeInfo.Object or TypeInfo.Any or TypeInfo.Unknown;
         }
 
+        // Conditional types must expand before the null/undefined/primitive rules below decide —
+        // `const a: Weird = null` where `type Weird = any extends infer U ? U : never` needs the
+        // conditional collapsed to `any` first, or the null rule rejects it sight unseen.
+        if (expected is TypeInfo.ConditionalType expectedCondEarly)
+        {
+            return IsCompatible(EvaluateConditionalType(expectedCondEarly), actual);
+        }
+        if (actual is TypeInfo.ConditionalType actualCondEarly)
+        {
+            return IsCompatible(expected, EvaluateConditionalType(actualCondEarly));
+        }
+
         // Null compatibility (strictNullChecks: on — the off case is handled early in IsCompatibleCore)
         if (actual is TypeInfo.Null)
         {

@@ -170,6 +170,14 @@ public partial class TypeChecker
         else
             members.Add(b);
 
+        // tsc union normalization: `any` absorbs everything (any | X = any) and `never`
+        // disappears (never | X = X).
+        if (members.Any(m => m is TypeInfo.Any))
+            return new TypeInfo.Any();
+        members.RemoveAll(m => m is TypeInfo.Never);
+        if (members.Count == 0)
+            return new TypeInfo.Never();
+
         // Deduplicate (simple reference equality for now)
         var unique = members.Distinct().ToList();
         return unique.Count == 1 ? unique[0] : new TypeInfo.Union(unique);

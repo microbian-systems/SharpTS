@@ -2,8 +2,8 @@
 tests/cases/conformance/types/conditional/conditionalTypes1.ts Fail
 tests/cases/conformance/types/conditional/conditionalTypes2.ts Fail
 tests/cases/conformance/types/conditional/conditionalTypesExcessProperties.ts Fail
-tests/cases/conformance/types/conditional/inferTypes1.ts ParseError
-tests/cases/conformance/types/conditional/inferTypes2.ts ParseError
+tests/cases/conformance/types/conditional/inferTypes1.ts Fail
+tests/cases/conformance/types/conditional/inferTypes2.ts Pass
 tests/cases/conformance/types/conditional/inferTypesInvalidExtendsDeclaration.ts Skipped:lib-drift
 tests/cases/conformance/types/conditional/inferTypesWithExtends1.ts ParseError
 tests/cases/conformance/types/conditional/inferTypesWithExtends2.ts Fail
@@ -70,7 +70,7 @@ tests/cases/conformance/types/typeRelationships/assignmentCompatibility/everyTyp
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/genericCallWithObjectTypeArgsAndInitializers.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/intersectionIncludingPropFromGlobalAugmentation.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/nullAssignableToEveryType.ts Pass
-tests/cases/conformance/types/typeRelationships/assignmentCompatibility/nullAssignedToUndefined.ts ParseError
+tests/cases/conformance/types/typeRelationships/assignmentCompatibility/nullAssignedToUndefined.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/numberAssignableToEnum.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/optionalPropertyAssignableToStringIndexSignature.ts Pass
 tests/cases/conformance/types/typeRelationships/assignmentCompatibility/typeParameterAssignability.ts Pass

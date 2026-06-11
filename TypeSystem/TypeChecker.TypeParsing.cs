@@ -179,6 +179,12 @@ public partial class TypeChecker
             if (parts.Count > 1)  // Only create union if we actually split at top level
             {
                 var types = parts.Select(ToTypeInfo).ToList();
+                // tsc union normalization: `any` absorbs everything; `never` disappears.
+                if (types.Any(t => t is TypeInfo.Any))
+                    return new TypeInfo.Any();
+                types.RemoveAll(t => t is TypeInfo.Never);
+                if (types.Count == 0) return new TypeInfo.Never();
+                if (types.Count == 1) return types[0];
                 return new TypeInfo.Union(types);
             }
         }
@@ -1716,6 +1722,9 @@ public partial class TypeChecker
 
         // Look up first identifier in environment
         string firstName = accessors[0].Name;
+        // `typeof undefined` — the global undefined has no environment binding.
+        if (firstName == "undefined" && accessors.Count == 1)
+            return new TypeInfo.Undefined();
         TypeInfo? currentType = _environment.Get(firstName);
 
         if (currentType == null)
