@@ -95,6 +95,13 @@ public partial class TypeChecker
             // Perform the extends check with infer pattern matching
             var (matches, inferredTypes) = CheckExtendsWithInfer(checkType, extendsType);
 
+            // `infer U extends C`: the final inferred type (after all candidate sites unioned)
+            // must satisfy the constraint, or the conditional resolves to its false branch.
+            // Checked after matching, not per binding site, so `{ a: infer U extends string,
+            // b: infer U }` applies the constraint to the merged inference (tsc semantics).
+            if (matches)
+                matches = InferConstraintsSatisfied(extendsType, inferredTypes);
+
             // Merge inferred types into substitutions
             var newSubstitutions = new Dictionary<string, TypeInfo>(substitutions);
             foreach (var (name, type) in inferredTypes)
@@ -161,7 +168,11 @@ public partial class TypeChecker
                     SubstituteWithoutConditionalEval(cond.TrueType, substitutions),
                     SubstituteWithoutConditionalEval(cond.FalseType, substitutions)),
             TypeInfo.InferredTypeParameter infer =>
-                substitutions.TryGetValue(infer.Name, out var inferSub) ? inferSub : type,
+                substitutions.TryGetValue(infer.Name, out var inferSub)
+                    ? inferSub
+                    : infer.Constraint is { } inferConstraint
+                        ? infer with { Constraint = SubstituteWithoutConditionalEval(inferConstraint, substitutions) }
+                        : type,
             _ => type
         };
     }
@@ -293,6 +304,77 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Verifies every constrained <c>infer</c> declaration in an extends clause against its final
+    /// inferred binding. Unbound infers are not failures (the structural match decides those).
+    /// </summary>
+    private bool InferConstraintsSatisfied(TypeInfo extendsType, Dictionary<string, TypeInfo> inferredTypes)
+    {
+        List<TypeInfo.InferredTypeParameter>? constrained = null;
+        CollectConstrainedInfers(extendsType, ref constrained);
+        if (constrained is null) return true;
+        foreach (var infer in constrained)
+        {
+            if (inferredTypes.TryGetValue(infer.Name, out var bound) && !IsCompatible(infer.Constraint!, bound))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Walks the extends-clause type for constrained infer declarations. Mirrors the shapes
+    /// <see cref="CheckExtendsRecursive"/> descends into; nested conditional types are their own
+    /// inference scope, so descent stops there (their constraints are checked when they evaluate).
+    /// </summary>
+    private static void CollectConstrainedInfers(TypeInfo type, ref List<TypeInfo.InferredTypeParameter>? result)
+    {
+        switch (type)
+        {
+            case TypeInfo.InferredTypeParameter { Constraint: not null } infer:
+                (result ??= []).Add(infer);
+                break;
+            case TypeInfo.Array arr:
+                CollectConstrainedInfers(arr.ElementType, ref result);
+                break;
+            case TypeInfo.Promise promise:
+                CollectConstrainedInfers(promise.ValueType, ref result);
+                break;
+            case TypeInfo.Function func:
+                foreach (var p in func.ParamTypes) CollectConstrainedInfers(p, ref result);
+                CollectConstrainedInfers(func.ReturnType, ref result);
+                break;
+            case TypeInfo.Tuple tuple:
+                foreach (var elem in tuple.Elements) CollectConstrainedInfers(elem.Type, ref result);
+                if (tuple.RestElementType is { } rest) CollectConstrainedInfers(rest, ref result);
+                break;
+            case TypeInfo.Union union:
+                foreach (var t in union.Types) CollectConstrainedInfers(t, ref result);
+                break;
+            case TypeInfo.Intersection intersection:
+                foreach (var t in intersection.Types) CollectConstrainedInfers(t, ref result);
+                break;
+            case TypeInfo.Record rec:
+                foreach (var (_, t) in rec.Fields) CollectConstrainedInfers(t, ref result);
+                break;
+            case TypeInfo.Interface itf:
+                foreach (var (_, t) in itf.Members) CollectConstrainedInfers(t, ref result);
+                break;
+            case TypeInfo.InstantiatedGeneric ig:
+                foreach (var t in ig.TypeArguments) CollectConstrainedInfers(t, ref result);
+                break;
+            case TypeInfo.KeyOf keyOf:
+                CollectConstrainedInfers(keyOf.SourceType, ref result);
+                break;
+            case TypeInfo.IndexedAccess ia:
+                CollectConstrainedInfers(ia.ObjectType, ref result);
+                CollectConstrainedInfers(ia.IndexType, ref result);
+                break;
+            case TypeInfo.TemplateLiteralType tl:
+                foreach (var t in tl.InterpolatedTypes) CollectConstrainedInfers(t, ref result);
+                break;
+        }
+    }
+
+    /// <summary>
     /// Recursively checks the extends relationship, extracting infer bindings.
     /// </summary>
     private bool CheckExtendsRecursive(
@@ -305,8 +387,11 @@ public partial class TypeChecker
         {
             if (inferredTypes.TryGetValue(inferParam.Name, out var existing))
             {
-                // Already inferred - check consistency
-                return IsCompatible(existing, checkType) || IsCompatible(checkType, existing);
+                // Multiple declarations of the same infer name accumulate a union (tsc unions
+                // covariant inference candidates: `{ a: infer U, b: infer U }` infers a | b).
+                // Constraint satisfaction is checked against the final union after the match.
+                inferredTypes[inferParam.Name] = CreateUnion(existing, checkType);
+                return true;
             }
             inferredTypes[inferParam.Name] = checkType;
             return true;

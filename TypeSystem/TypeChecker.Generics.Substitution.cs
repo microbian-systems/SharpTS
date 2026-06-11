@@ -86,9 +86,14 @@ public partial class TypeChecker
             // Conditional types: evaluate with current substitutions
             TypeInfo.ConditionalType cond =>
                 EvaluateConditionalType(cond, substitutions),
-            // Inferred type parameters: substitute if bound, else keep as-is
+            // Inferred type parameters: substitute if bound, else keep as-is (substituting any
+            // outer type parameters referenced by the constraint)
             TypeInfo.InferredTypeParameter infer =>
-                substitutions.TryGetValue(infer.Name, out var inferSub) ? inferSub : type,
+                substitutions.TryGetValue(infer.Name, out var inferSub)
+                    ? inferSub
+                    : infer.Constraint is { } inferConstraint
+                        ? infer with { Constraint = Substitute(inferConstraint, substitutions) }
+                        : type,
             // Recursive type alias: substitute type arguments if present
             TypeInfo.RecursiveTypeAlias rta =>
                 rta.TypeArguments is { Count: > 0 }

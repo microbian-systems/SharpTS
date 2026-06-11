@@ -1473,9 +1473,14 @@ public abstract record TypeInfo
     /// Used for pattern matching: T extends Array&lt;infer U&gt; ? U : T
     /// </summary>
     /// <param name="Name">The name of the inferred type parameter (e.g., "U")</param>
-    public record InferredTypeParameter(string Name) : TypeInfo
+    /// <param name="Constraint">Optional constraint (<c>infer U extends C</c>): after a structural
+    /// match, the inferred type must satisfy it or the conditional takes its false branch.</param>
+    public record InferredTypeParameter(string Name, TypeInfo? Constraint = null) : TypeInfo
     {
-        public override string ToString() => $"infer {Name}";
+        // Constraint must participate in ToString: CacheKey/TypeInfoEqualityComparer compare via
+        // ToString, and `infer U extends string` vs `infer U extends number` must not collide.
+        public override string ToString() =>
+            Constraint is null ? $"infer {Name}" : $"infer {Name} extends {Constraint}";
     }
 
     /// <summary>

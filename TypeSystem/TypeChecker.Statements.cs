@@ -100,6 +100,10 @@ public partial class TypeChecker
         {
             _environment.DefineTypeAlias(stmt.Name.Lexeme, stmt.TypeDefinition);
         }
+        // After defining (so the alias stays usable even when a clause is malformed): validate
+        // the infer declarations of every conditional type in the alias body.
+        var outerTypeParams = stmt.TypeParameters?.Select(tp => tp.Name.Lexeme).ToHashSet(StringComparer.Ordinal);
+        ValidateInferDeclarations(stmt.TypeDefinitionNode, outerTypeParams);
         return VoidResult.Instance;
     }
 
@@ -1000,6 +1004,178 @@ public partial class TypeChecker
                          ifStmt.ElseBranch != null && AlwaysTerminates(ifStmt.ElseBranch),
         _ => false
     };
+
+    /// <summary>
+    /// Validates the <c>infer</c> declarations of every conditional type in a type node tree:
+    /// all declarations of one infer name within an extends clause must have identical constraints
+    /// (TS2838; declarations without a constraint are exempt), and an infer constraint cannot
+    /// reference other infer parameters declared in the same extends clause (TS2304 — they are not
+    /// in scope there). No-op when the annotation has no node (string fallback).
+    /// </summary>
+    private void ValidateInferDeclarations(TypeNode? node, HashSet<string>? outerTypeParams)
+    {
+        if (node is null) return;
+        if (node is ConditionalTypeNode conditional)
+            ValidateInferClauseOf(conditional, outerTypeParams);
+        foreach (var child in TypeNodeChildren(node))
+            ValidateInferDeclarations(child, outerTypeParams);
+    }
+
+    private void ValidateInferClauseOf(ConditionalTypeNode conditional, HashSet<string>? outerTypeParams)
+    {
+        List<InferTypeNode>? infers = null;
+        CollectClauseInfers(conditional.ExtendsType, ref infers);
+        if (infers is null) return;
+
+        // TS2838: among same-named declarations, every *constrained* one must agree.
+        foreach (var group in infers.GroupBy(i => i.Name))
+        {
+            TypeInfo? first = null;
+            foreach (var decl in group)
+            {
+                if (decl.Constraint is null) continue;
+                var constraint = TryToTypeInfo(decl.Constraint);
+                if (constraint is null) continue; // unresolvable constraint — don't guess
+                if (first is null)
+                {
+                    first = constraint;
+                }
+                else if (!TypeInfoEqualityComparer.Instance.Equals(first, constraint))
+                {
+                    throw new TypeCheckException(
+                        $"All declarations of '{group.Key}' must have identical constraints.",
+                        decl.Line, tsCode: "TS2838");
+                }
+            }
+        }
+
+        // TS2304: sibling infer parameters are not in scope inside a constraint. A name that is
+        // also an outer type parameter resolves to the outer declaration instead — no error.
+        var clauseNames = infers.Select(i => i.Name).ToHashSet(StringComparer.Ordinal);
+        if (outerTypeParams is not null)
+            clauseNames.ExceptWith(outerTypeParams);
+        foreach (var decl in infers)
+        {
+            if (decl.Constraint is { } constraintNode &&
+                FindReferenceTo(constraintNode, clauseNames) is { } reference)
+            {
+                throw new TypeCheckException(
+                    $"Cannot find name '{reference.Name}'.", reference.Line, tsCode: "TS2304");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Collects the infer declarations belonging to one extends clause. Nested conditional types
+    /// are their own inference scope, so descent stops at them.
+    /// </summary>
+    private static void CollectClauseInfers(TypeNode node, ref List<InferTypeNode>? result)
+    {
+        if (node is ConditionalTypeNode) return;
+        if (node is InferTypeNode infer)
+            (result ??= []).Add(infer);
+        foreach (var child in TypeNodeChildren(node))
+            CollectClauseInfers(child, ref result);
+    }
+
+    /// <summary>
+    /// Finds the first bare type reference to one of <paramref name="names"/> inside a constraint
+    /// (stopping at nested conditional scopes), or null.
+    /// </summary>
+    private static NamedTypeNode? FindReferenceTo(TypeNode node, HashSet<string> names)
+    {
+        if (node is ConditionalTypeNode) return null;
+        if (node is NamedTypeNode named && named.TypeArguments is null && names.Contains(named.Name))
+            return named;
+        foreach (var child in TypeNodeChildren(node))
+        {
+            if (FindReferenceTo(child, names) is { } found)
+                return found;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Enumerates the direct child type nodes of a node, across every node shape.
+    /// </summary>
+    private static IEnumerable<TypeNode> TypeNodeChildren(TypeNode node)
+    {
+        switch (node)
+        {
+            case NamedTypeNode { TypeArguments: { } args }:
+                foreach (var a in args) yield return a;
+                break;
+            case ReadonlyTypeNode r:
+                yield return r.Inner;
+                break;
+            case TypePredicateNode p:
+                yield return p.PredicateType;
+                break;
+            case ArrayTypeNode a:
+                yield return a.ElementType;
+                break;
+            case UnionTypeNode u:
+                foreach (var m in u.Members) yield return m;
+                break;
+            case IntersectionTypeNode i:
+                foreach (var m in i.Members) yield return m;
+                break;
+            case KeyofTypeNode k:
+                yield return k.Operand;
+                break;
+            case IndexedAccessTypeNode ia:
+                yield return ia.ObjectType;
+                yield return ia.IndexType;
+                break;
+            case ConditionalTypeNode c:
+                yield return c.CheckType;
+                yield return c.ExtendsType;
+                yield return c.TrueType;
+                yield return c.FalseType;
+                break;
+            case InferTypeNode { Constraint: { } constraint }:
+                yield return constraint;
+                break;
+            case FunctionTypeNode f:
+                if (f.ThisType is { } thisType) yield return thisType;
+                foreach (var param in f.Parameters) yield return param.Type;
+                yield return f.ReturnType;
+                break;
+            case ConstructorTypeNode ct:
+                foreach (var param in ct.Parameters) yield return param.Type;
+                yield return ct.ReturnType;
+                break;
+            case GenericConstructorTypeNode gc:
+                yield return gc.Body;
+                break;
+            case GenericFunctionTypeNode gf:
+                yield return gf.Body;
+                break;
+            case TemplateLiteralTypeNode tl:
+                foreach (var t in tl.InterpolatedTypes) yield return t;
+                break;
+            case ObjectTypeNode o:
+                foreach (var member in o.Members)
+                {
+                    switch (member)
+                    {
+                        case PropertyMemberNode prop: yield return prop.Type; break;
+                        case IndexSignatureNode idx: yield return idx.ValueType; break;
+                        case CallSignatureMemberNode call: yield return call.Signature; break;
+                        case ConstructSignatureMemberNode ctor: yield return ctor.Signature; break;
+                    }
+                }
+                break;
+            case MappedTypeNode m:
+                yield return m.Constraint;
+                yield return m.ValueType;
+                if (m.AsClause is { } asClause) yield return asClause;
+                break;
+            case TupleTypeNode tu:
+                foreach (var elem in tu.Elements) yield return elem.Type;
+                break;
+        }
+    }
 
     /// <summary>
     /// Validates that any spread elements in a type alias definition reference type parameters
