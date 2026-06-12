@@ -458,4 +458,34 @@ public class BigIntTests
     }
 
     #endregion
+
+    #region Instanceof Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BigInt_InstanceOf_Object_IsFalse(ExecutionMode mode)
+    {
+        // bigint is a primitive; instanceof must return false, not throw a
+        // compile error. Compiled mode previously rejected INSTANCEOF in the
+        // bigint-arithmetic path (#361).
+        var source = """
+            console.log((10n) instanceof Object);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BigInt_InstanceOf_UserClass_IsFalse(ExecutionMode mode)
+    {
+        var source = """
+            class Foo {}
+            console.log((42n) instanceof Foo);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\n", output);
+    }
+
+    #endregion
 }

@@ -17,8 +17,9 @@ public partial class ILEmitter
         if (TryEmitConstantFolded(b))
             return;
 
-        // Check for bigint operations first
-        if (IsBigIntOperation(b))
+        // instanceof/in are valid with any operand type — bypass bigint-arithmetic path
+        // so a bigint LHS gets boxed and flows through the normal InstanceOf/HasIn runtime call.
+        if (IsBigIntOperation(b) && b.Operator.Type is not (TokenType.IN or TokenType.INSTANCEOF))
         {
             EmitBigIntBinary(b);
             return;
