@@ -287,4 +287,130 @@ public class StaticMembersTests
     }
 
     #endregion
+
+    #region Inherited Static Members (#332)
+
+    // Static members declared on a base user class are inherited by subclasses. In compiled mode the
+    // .NET token references the *declaring* class, so resolution walks the superclass chain (#332).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_Method(ExecutionMode mode)
+    {
+        var source = """
+            class Base {
+                static greet(): string { return "hi"; }
+            }
+            class Sub extends Base {}
+            console.log(Sub.greet());
+            """;
+
+        Assert.Equal("hi\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_Field(ExecutionMode mode)
+    {
+        var source = """
+            class Base {
+                static count: number = 5;
+            }
+            class Sub extends Base {}
+            console.log(Sub.count);
+            """;
+
+        Assert.Equal("5\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_Getter(ExecutionMode mode)
+    {
+        var source = """
+            class Base {
+                static get label(): string { return "L"; }
+            }
+            class Sub extends Base {}
+            console.log(Sub.label);
+            """;
+
+        Assert.Equal("L\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_MultiLevelChain(ExecutionMode mode)
+    {
+        var source = """
+            class A {
+                static who(): string { return "A"; }
+                static tag: string = "a";
+            }
+            class B extends A {}
+            class C extends B {}
+            console.log(C.who());
+            console.log(C.tag);
+            """;
+
+        Assert.Equal("A\na\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_SubclassShadowWins(ExecutionMode mode)
+    {
+        var source = """
+            class Parent {
+                static who(): string { return "Parent"; }
+            }
+            class Child extends Parent {
+                static who(): string { return "Child"; }
+            }
+            console.log(Child.who());
+            console.log(Parent.who());
+            """;
+
+        Assert.Equal("Child\nParent\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_FromGenericBase(ExecutionMode mode)
+    {
+        var source = """
+            class Box<T> {
+                static kind: string = "box";
+                static make(): string { return "made"; }
+                static get tag(): string { return "T"; }
+            }
+            class IntBox extends Box<number> {}
+            console.log(IntBox.make());
+            console.log(IntBox.kind);
+            console.log(IntBox.tag);
+            """;
+
+        Assert.Equal("made\nbox\nT\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_FieldWriteDoesNotCorruptBase(ExecutionMode mode)
+    {
+        // A static-field write through the subclass must not mutate the base's storage.
+        // (Creating the JS own-shadow on the subclass is a separate gap in compiled mode; here we
+        // pin the invariant that the base value is preserved in both modes.)
+        var source = """
+            class Base {
+                static n: number = 1;
+            }
+            class Sub extends Base {}
+            Sub.n = 42;
+            console.log(Base.n);
+            """;
+
+        Assert.Equal("1\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
 }

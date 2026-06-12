@@ -657,10 +657,10 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
         // Handle static field assignment: Class.field = value
         if (s.Object is Expr.Variable classVar &&
-            Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out _))
+            Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out var staticSetClassBuilder))
         {
             string resolvedClassName = Ctx.ResolveClassName(classVar.Name.Lexeme);
-            if (Ctx.ClassRegistry!.TryGetStaticField(resolvedClassName, s.Name.Lexeme, out var staticField))
+            if (Ctx.ClassRegistry!.TryGetOwnCallableStaticField(resolvedClassName, s.Name.Lexeme, staticSetClassBuilder, out var staticField))
             {
                 EmitExpression(s.Value);
                 EnsureBoxed();
@@ -1762,10 +1762,10 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     protected virtual bool TryEmitStaticFieldAccess(Expr.Get g)
     {
         if (g.Object is Expr.Variable classVar &&
-            Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out _))
+            Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out var staticFieldClassBuilder))
         {
             string resolvedClassName = Ctx.ResolveClassName(classVar.Name.Lexeme);
-            if (Ctx.ClassRegistry!.TryGetStaticField(resolvedClassName, g.Name.Lexeme, out var staticField))
+            if (Ctx.ClassRegistry!.TryGetCallableStaticField(resolvedClassName, g.Name.Lexeme, staticFieldClassBuilder, out var staticField))
             {
                 IL.Emit(OpCodes.Ldsfld, staticField!);
                 SetStackUnknown();
