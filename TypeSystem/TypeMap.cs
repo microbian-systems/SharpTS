@@ -18,6 +18,7 @@ public class TypeMap
     private readonly Dictionary<string, TypeInfo.Function> _functionTypes = new(StringComparer.Ordinal);
     private readonly Dictionary<Expr.ClassExpr, TypeInfo.Class> _classExprTypes = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr> _undefinedReachableReturns = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<object> _undefinedReachableNumericLocals = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// Associates an expression with its resolved type.
@@ -70,6 +71,26 @@ public class TypeMap
     /// <see cref="MarkUndefinedReachableReturn"/>.
     /// </summary>
     public bool IsUndefinedReachableReturn(Expr returnValue) => _undefinedReachableReturns.Contains(returnValue);
+
+    /// <summary>
+    /// Flags a <c>number</c>-typed local variable declaration whose value may be the runtime
+    /// <c>undefined</c> sentinel because an <c>any</c>/<c>undefined</c> value was (transitively)
+    /// assigned to it (#367). Without this the IL compiler would give the local an unboxed
+    /// <c>double</c> slot, coercing the sentinel to <c>NaN</c> at the store — so it must use an
+    /// object slot instead. Keyed by reference, by either the declaration <see cref="Stmt"/> node
+    /// or its initializer <see cref="Expr"/> (the compiler synthesizes a fresh <c>Stmt.Var</c> for
+    /// <c>const</c> but reuses the original initializer expression, so both are recorded). Purely a
+    /// compiler hint — caller-side type checking still sees the clean <c>number</c> type.
+    /// </summary>
+    public void MarkUndefinedReachableNumericLocal(object declOrInitializer) =>
+        _undefinedReachableNumericLocals.Add(declOrInitializer);
+
+    /// <summary>
+    /// True if <paramref name="declOrInitializer"/> was flagged by
+    /// <see cref="MarkUndefinedReachableNumericLocal"/>.
+    /// </summary>
+    public bool IsUndefinedReachableNumericLocal(object declOrInitializer) =>
+        _undefinedReachableNumericLocals.Contains(declOrInitializer);
 
     /// <summary>
     /// Gets the resolved type for an expression, or null if not found.
