@@ -485,13 +485,18 @@ public partial class Interpreter
     /// </summary>
     private RuntimeValue EvaluateBinaryOperationRV(Token op, RuntimeValue leftRV, RuntimeValue rightRV)
     {
-        // Check for BigInt (Kind == BigInt, not Object)
-        System.Numerics.BigInteger? leftBigInt = leftRV.IsBigInt ? leftRV.AsBigInt().Value : null;
-        System.Numerics.BigInteger? rightBigInt = rightRV.IsBigInt ? rightRV.AsBigInt().Value : null;
-
-        if (leftBigInt.HasValue || rightBigInt.HasValue)
+        // instanceof/in are valid with any operand — fall through to the normal path below
+        // so a bigint operand gets unboxed to object and reaches EvaluateInstanceof/EvaluateIn.
+        if (op.Type is not (TokenType.INSTANCEOF or TokenType.IN))
         {
-            return EvaluateBigIntBinaryRV(op.Type, leftRV, rightRV, leftBigInt, rightBigInt);
+            // Check for BigInt (Kind == BigInt, not Object)
+            System.Numerics.BigInteger? leftBigInt = leftRV.IsBigInt ? leftRV.AsBigInt().Value : null;
+            System.Numerics.BigInteger? rightBigInt = rightRV.IsBigInt ? rightRV.AsBigInt().Value : null;
+
+            if (leftBigInt.HasValue || rightBigInt.HasValue)
+            {
+                return EvaluateBigIntBinaryRV(op.Type, leftRV, rightRV, leftBigInt, rightBigInt);
+            }
         }
 
         object? left = leftRV.ToObject();
