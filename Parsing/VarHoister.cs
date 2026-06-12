@@ -99,7 +99,7 @@ public static class VarHoister
                     changed = true;
                     if (v.Initializer == null)
                     {
-                        return new Stmt.Expression(new Expr.Literal(null));
+                        return RewriteAnnotationOnlyDuplicate(v);
                     }
                     return new Stmt.Expression(new Expr.Assign(v.Name, v.Initializer, IsVarRedeclaration: true));
                 }
@@ -112,7 +112,7 @@ public static class VarHoister
                 if (v.Initializer == null)
                 {
                     // `var x;` → no-op (the synthetic declaration handles binding creation)
-                    return new Stmt.Expression(new Expr.Literal(null));
+                    return RewriteAnnotationOnlyDuplicate(v);
                 }
                 // `var x = expr` → `x = expr;`
                 return new Stmt.Expression(new Expr.Assign(v.Name, v.Initializer, IsVarRedeclaration: true));
@@ -288,6 +288,27 @@ public static class VarHoister
             default:
                 return stmt;
         }
+    }
+
+    /// <summary>
+    /// Rewrites a duplicate annotation-only <c>var</c> (<c>var x: T;</c> with no initializer) whose
+    /// binding already exists. Without a type annotation there is nothing to verify, so it collapses
+    /// to a no-op. With an annotation, it becomes a synthesized self-assignment <c>x = x</c> carrying
+    /// the annotation: a runtime no-op that preserves the existing value, but a checkable node the
+    /// type checker uses to report TS2403 when the annotation differs from the established type.
+    /// </summary>
+    private static Stmt RewriteAnnotationOnlyDuplicate(Stmt.Var v)
+    {
+        if (v.TypeAnnotation == null && v.TypeAnnotationNode == null)
+        {
+            return new Stmt.Expression(new Expr.Literal(null));
+        }
+        return new Stmt.Expression(new Expr.Assign(
+            v.Name,
+            new Expr.Variable(v.Name),
+            IsVarRedeclaration: true,
+            RedeclarationTypeAnnotation: v.TypeAnnotation,
+            RedeclarationTypeAnnotationNode: v.TypeAnnotationNode));
     }
 
     /// <summary>

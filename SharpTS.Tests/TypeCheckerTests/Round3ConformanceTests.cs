@@ -90,6 +90,58 @@ public class Round3ConformanceTests
     }
 
     [Fact]
+    public void VarRedeclaration_AnnotationOnly_DifferentType_IsTs2403Error()
+    {
+        // Issue #336: an annotation-only duplicate (`var z: T;` with no initializer) was dropped
+        // by VarHoister to a bare no-op, losing the annotation, so TS2403 never fired.
+        var source = """
+            function h() {
+                var z: string;
+                var z: number;
+            }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2403", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void VarRedeclaration_AnnotationOnly_SameType_IsAccepted()
+    {
+        var source = """
+            function h() {
+                var z: string;
+                var z: string;
+            }
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void VarRedeclaration_AnnotationOnly_AtTopLevel_IsTs2403Error()
+    {
+        var source = """
+            var z: string;
+            var z: number;
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2403", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void VarRedeclaration_AnnotationOnly_AfterInitializer_IsTs2403Error()
+    {
+        // First declaration carries the type via inference; annotation-only duplicate still checks.
+        var source = """
+            function h() {
+                var z = "hi";
+                var z: number;
+            }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2403", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
     public void VarShadowing_InNestedFunction_IsNotRedeclaration()
     {
         var source = """

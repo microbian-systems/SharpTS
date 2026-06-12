@@ -110,7 +110,18 @@ public abstract record Expr
     /// <param name="IsVarRedeclaration">True when this assignment was synthesized by
     /// <see cref="VarHoister"/> from a duplicate <c>var</c> declaration — an incompatible value
     /// then reports TS2403 (subsequent declarations must have the same type), not TS2322.</param>
-    public record Assign(Token Name, Expr Value, bool IsVarRedeclaration = false) : Expr;
+    /// <param name="RedeclarationTypeAnnotation">Set (with <see cref="RedeclarationTypeAnnotationNode"/>)
+    /// when <see cref="VarHoister"/> synthesizes a self-assignment (<c>z = z</c>) for an
+    /// annotation-only duplicate <c>var</c> (<c>var z: T;</c> with no initializer). The type checker
+    /// compares THIS annotation — not the value's type — against the established declared type using
+    /// structural identity for TS2403. The self-assignment is a runtime no-op that preserves the
+    /// existing binding's value.</param>
+    public record Assign(
+        Token Name,
+        Expr Value,
+        bool IsVarRedeclaration = false,
+        string? RedeclarationTypeAnnotation = null,
+        TypeNode? RedeclarationTypeAnnotationNode = null) : Expr;
     public record Call(Expr Callee, Token Paren, List<string>? TypeArgs, List<Expr> Arguments, bool Optional = false) : Expr;
     public record Get(Expr Object, Token Name, bool Optional = false) : Expr;
     public record Set(Expr Object, Token Name, Expr Value) : Expr;

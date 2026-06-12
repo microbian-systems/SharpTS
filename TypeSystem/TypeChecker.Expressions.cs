@@ -1314,6 +1314,26 @@ public partial class TypeChecker
             throw new TypeCheckException($" Undefined variable '{assign.Name.Lexeme}'.", tsCode: "TS2304");
         }
 
+        // VarHoister synthesizes a self-assignment (`z = z`) carrying an explicit annotation when a
+        // later `var` re-declares an existing name with only a type annotation (no initializer).
+        // tsc's TS2403 requires subsequent declarations to have the SAME type — structural identity,
+        // not mere assignability — so compare the established declared type against the re-declared
+        // annotation with TypeInfoEqualityComparer, mirroring CheckVarRedeclaration. The synthesized
+        // value (`z`) is irrelevant to the check and is not type-checked.
+        if (assign.RedeclarationTypeAnnotation is not null || assign.RedeclarationTypeAnnotationNode is not null)
+        {
+            // `Any` covers the var-hoisting placeholder and explicit any-typed vars — neither participates.
+            if (declaredType is TypeInfo.Any) return declaredType;
+            var redeclaredType = ResolveAnnotation(assign.RedeclarationTypeAnnotation, assign.RedeclarationTypeAnnotationNode) ?? new TypeInfo.Any();
+            if (!TypeInfoEqualityComparer.Instance.Equals(declaredType, redeclaredType))
+            {
+                throw new TypeCheckException(
+                    $" Subsequent variable declarations must have the same type. Variable '{assign.Name.Lexeme}' must be of type '{declaredType}', but here has type '{redeclaredType}'.",
+                    line: assign.Name.Line, tsCode: "TS2403");
+            }
+            return declaredType;
+        }
+
         TypeInfo valueType = CheckExpr(assign.Value);
 
         if (!IsCompatible(declaredType, valueType))
