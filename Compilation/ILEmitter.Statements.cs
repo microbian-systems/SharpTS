@@ -1159,22 +1159,11 @@ public partial class ILEmitter
                     }
                 }
             }
-            else if (returnType == _ctx.Types.String && _stackType != StackType.String)
-            {
-                // Runtime helpers (string concat `a + b`, member get `obj.name`) leave their
-                // result statically typed `object` on the stack even when the value is a string.
-                // A method declared `: string` then has an `object` where the verifier expects a
-                // string, raising StackUnexpected — it still runs because the value really is a
-                // string. Insert a castclass so the stack type matches the return slot; the cast
-                // is a no-op at runtime for an actual string (and passes null through). (#275)
-                //
-                // Other narrow reference return types (typed arrays/maps, classes mapped via
-                // MapTypeInfoStrict) are deliberately NOT cast here: their runtime representations
-                // are dynamic ($Array, TSObject, ...) that are not CLR-assignable to the declared
-                // type, so a castclass there would throw InvalidCastException at runtime.
-                IL.Emit(OpCodes.Castclass, _ctx.Types.String);
-            }
-            // For other types, the value should already be correct
+            // Note: `string` return types are never emitted as a narrow `string` slot —
+            // ParameterTypeResolver.ResolveReturnType maps them to object because a string
+            // slot cannot carry the `$Undefined` sentinel an inferred-string body can
+            // produce (see #318, which removed the #275 castclass that lived here).
+            // For other narrow types (double/bool handled above), the value is already correct.
         }
         else
         {

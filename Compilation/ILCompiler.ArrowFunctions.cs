@@ -1351,12 +1351,12 @@ public partial class ILCompiler
                 // Return type is bool - ensure unboxed bool on stack
                 emitter.EnsureBoolean();
             }
-            // For string and other reference types, no conversion needed.
-            // NOTE: a `: string` return slot with a statically-object value on the
-            // stack fails IL verification here (same family as #275), but a
-            // castclass is NOT safe — inferred-string expressions can produce
-            // $Undefined at runtime (e.g. `(n: any) => cond ? "x" : undefined`),
-            // which no string-typed slot can carry. See #318.
+            // For reference-typed returns, no conversion needed. Note that `string`
+            // return types never reach here as a narrow `string` slot:
+            // ParameterTypeResolver.ResolveReturnType maps them to object, because an
+            // inferred-string arrow body can produce $Undefined at runtime
+            // (e.g. `(n: any) => cond ? "x" : undefined`), which no string-typed slot
+            // can carry. See #318.
 
             il.Emit(OpCodes.Ret);
         }
