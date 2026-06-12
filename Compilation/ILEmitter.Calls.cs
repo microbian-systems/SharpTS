@@ -201,6 +201,19 @@ public partial class ILEmitter
                     SetStackUnknown();
                     return;
                 }
+
+                // Promise subclasses (#242/#309) inherit the Promise static side:
+                // MyP.resolve / MyP.reject / MyP.all etc. are not user-declared
+                // statics (so TryGetCallableStaticMethod above misses them) — emit
+                // the base Promise static and wrap the result in the subclass.
+                // Mirrors TryEmitGetCalleeViaBaseClass; the inline ILEmitter path
+                // had drifted and omitted this block, so MyP.resolve(1) threw.
+                if (methodGet.Name.Lexeme is "resolve" or "reject" or "all" or "race" or "allSettled" or "any" or "withResolvers"
+                    && _ctx.ClassRegistry.IsPromiseSubclass(resolvedClassName)
+                    && TryEmitDerivedPromiseStatic(resolvedClassName, classBuilder, methodGet.Name.Lexeme, c.Arguments))
+                {
+                    return;
+                }
             }
 
             // Instance method dispatch (Array/String/Map/Promise/etc.)
