@@ -110,16 +110,19 @@ internal sealed class StringPrototypeMethodWrapper : ISharpTSCallable
     /// <summary>
     /// ECMA-262 ToString abstract operation — mapped to the receiver types
     /// our interpreter actually hands to string methods. Symbols throw
-    /// TypeError per spec (ToString(Symbol) is an abrupt completion). Wrapper
-    /// objects (<c>new Number(1)</c>, <c>new Boolean(true)</c>) aren't yet
-    /// wrappers here, so non-primitive/non-Symbol receivers fall through to
-    /// <c>Object.prototype.toString</c> (lossy but adequate for Test262).
+    /// TypeError per spec (ToString(Symbol) is an abrupt completion).
     /// </summary>
     private static string CoerceToString(object? receiver)
     {
         if (receiver is SharpTSSymbol)
             throw new ThrowException(new SharpTSTypeError(
                 "Cannot convert a Symbol value to a string"));
+        // Unwrap boxed String wrapper: `new String("x")` stores the primitive
+        // in __primitiveValue so String.prototype methods work on the wrapper.
+        if (receiver is SharpTSObject obj
+            && obj.GetProperty("__primitiveType") is string pt && pt == "String"
+            && obj.GetProperty("__primitiveValue") is string sv)
+            return sv;
         return receiver switch
         {
             string s => s,
@@ -208,9 +211,8 @@ public sealed class SharpTSNumberPrototype
 /// <summary>
 /// Adapter around a Number <see cref="BuiltInMethod"/>. Throws TypeError on
 /// non-number receivers per ECMA-262 (Number.prototype.toString and friends
-/// require <c>thisNumberValue</c>); plain numbers and bool/null aren't valid
-/// either. Wrapper objects (<c>new Number(1)</c>) aren't real wrappers in
-/// this interpreter, so this stays strict.
+/// require <c>thisNumberValue</c>). Accepts boxed Number wrappers produced by
+/// <c>new Number(x)</c> by extracting their <c>__primitiveValue</c>.
 /// </summary>
 internal sealed class NumberPrototypeMethodWrapper : ISharpTSCallable
 {
@@ -240,12 +242,23 @@ internal sealed class NumberPrototypeMethodWrapper : ISharpTSCallable
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
-        if (!_hasReceiver || _receiver is not double d)
+        if (!_hasReceiver)
         {
             throw new ThrowException(new SharpTSTypeError(
                 $"Number.prototype.{_name} requires that 'this' be a Number"));
         }
-
+        // Unwrap boxed Number wrapper produced by `new Number(x)`.
+        var numValue = _receiver is SharpTSObject obj
+            && obj.GetProperty("__primitiveType") is string pt && pt == "Number"
+            && obj.GetProperty("__primitiveValue") is double wv
+            ? (double?)wv : null;
+        if (numValue is not null)
+            return _inner.Bind(numValue.Value).Call(interpreter, arguments);
+        if (_receiver is not double d)
+        {
+            throw new ThrowException(new SharpTSTypeError(
+                $"Number.prototype.{_name} requires that 'this' be a Number"));
+        }
         return _inner.Bind(d).Call(interpreter, arguments);
     }
 
@@ -339,12 +352,23 @@ internal sealed class BooleanPrototypeMethodWrapper : ISharpTSCallable
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
-        if (!_hasReceiver || _receiver is not bool b)
+        if (!_hasReceiver)
         {
             throw new ThrowException(new SharpTSTypeError(
                 $"Boolean.prototype.{_name} requires that 'this' be a Boolean"));
         }
-        return _isToString ? (b ? "true" : "false") : (object)b;
+        // Unwrap boxed Boolean wrapper produced by `new Boolean(x)`.
+        bool boolValue;
+        if (_receiver is SharpTSObject obj
+            && obj.GetProperty("__primitiveType") is string pt && pt == "Boolean"
+            && obj.GetProperty("__primitiveValue") is bool wv)
+            boolValue = wv;
+        else if (_receiver is bool b)
+            boolValue = b;
+        else
+            throw new ThrowException(new SharpTSTypeError(
+                $"Boolean.prototype.{_name} requires that 'this' be a Boolean"));
+        return _isToString ? (boolValue ? "true" : "false") : (object)boolValue;
     }
 
     public override string ToString() => $"function {_name}() {{ [native code] }}";

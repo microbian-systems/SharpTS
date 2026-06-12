@@ -766,6 +766,12 @@ public partial class Interpreter
         _ => true,
     };
 
+    private static bool IsBoxedPrimitiveOfType(object? value, string typeTag) =>
+        value is SharpTSObject obj
+        && obj.HasProperty("__primitiveType")
+        && obj.GetProperty("__primitiveType") is string pt
+        && pt == typeTag;
+
     private object EvaluateInstanceof(object? left, object? right)
     {
         // `x instanceof Object` — the `Object` global resolves to the namespace
@@ -775,6 +781,17 @@ public partial class Interpreter
         // ordinary object's prototype chain (#334).
         if (right is SharpTSObjectNamespace)
             return IsJsObject(left);
+
+        // `x instanceof Number/String/Boolean` — the RHS resolves to the namespace
+        // singleton. A boxed wrapper produced by `new Number/String/Boolean` has
+        // a __primitiveType marker; primitive values (bare doubles, strings, bools)
+        // are NOT instances per ECMA-262 §20.3.3.3 / §21.1.3 / §22.1.3.
+        if (right is SharpTSNumberNamespace)
+            return IsBoxedPrimitiveOfType(left, "Number");
+        if (right is SharpTSStringNamespace)
+            return IsBoxedPrimitiveOfType(left, "String");
+        if (right is SharpTSBooleanNamespace)
+            return IsBoxedPrimitiveOfType(left, "Boolean");
 
         // Bare-value constructors for the built-in binary types (ArrayBuffer,
         // SharedArrayBuffer, DataView, typed arrays) are plain ISharpTSCallables,
