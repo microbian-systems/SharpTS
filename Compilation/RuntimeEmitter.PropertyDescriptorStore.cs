@@ -288,6 +288,7 @@ public partial class RuntimeEmitter
         EmitPDSDefineProperty(typeBuilder, runtime, descriptorsField, descriptorsGetOrCreate, descriptorsDictType, descriptorsDictSetItem);
         EmitPDSDeleteProperty(typeBuilder, runtime, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictContainsKey);
         EmitPDSGetPropertyDescriptor(typeBuilder, runtime, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue);
+        EmitPDSGetStaticShadow(typeBuilder, runtime);
         EmitPDSGetEnumerableExtraKeys(typeBuilder, runtime, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue);
         EmitPDSGetAllExtraKeys(typeBuilder, runtime, descriptorsField, descriptorsTryGet, descriptorsDictType, descriptorsDictTryGetValue);
 
@@ -1007,6 +1008,67 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         // return null
+        il.MarkLabel(returnNullLabel);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static $CompiledPropertyDescriptor? GetStaticShadow(object typeObj, string propertyKey)
+    /// Walks the constructor Type chain (typeObj and each <c>BaseType</c>) probing each class's PDS
+    /// store, returning the nearest own-shadow descriptor or null. A subclass static-field write
+    /// (<c>Sub.field = v</c>) stores a per-subclass shadow keyed by the subclass Type (the SetProperty
+    /// System.Type arm); inherited static-field reads consult this before falling back to the declaring
+    /// base's field so JS own-shadow semantics hold in compiled mode (issue #339). Mirrors the inline
+    /// ancestor walk already used by the dynamic type-property reader (#265).
+    /// </summary>
+    private void EmitPDSGetStaticShadow(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetStaticShadow",
+            MethodAttributes.Public | MethodAttributes.Static,
+            runtime.CompiledPropertyDescriptorType,
+            [_types.Object, _types.String]
+        );
+        runtime.PDSGetStaticShadow = method;
+
+        var il = method.GetILGenerator();
+        var walkTypeLocal = il.DeclareLocal(_types.Type);
+        var descLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+
+        // Type walkType = typeObj as Type;  (null when the receiver isn't a constructor → return null)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Stloc, walkTypeLocal);
+
+        var loopLabel = il.DefineLabel();
+        var returnNullLabel = il.DefineLabel();
+        il.MarkLabel(loopLabel);
+
+        // if (walkType == null) return null;
+        il.Emit(OpCodes.Ldloc, walkTypeLocal);
+        il.Emit(OpCodes.Brfalse, returnNullLabel);
+
+        // desc = GetPropertyDescriptor(walkType, propertyKey);
+        il.Emit(OpCodes.Ldloc, walkTypeLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descLocal);
+
+        // if (desc != null) return desc;
+        il.Emit(OpCodes.Ldloc, descLocal);
+        var nextLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, nextLabel);
+        il.Emit(OpCodes.Ldloc, descLocal);
+        il.Emit(OpCodes.Ret);
+
+        // walkType = walkType.BaseType; continue;
+        il.MarkLabel(nextLabel);
+        il.Emit(OpCodes.Ldloc, walkTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "BaseType").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, walkTypeLocal);
+        il.Emit(OpCodes.Br, loopLabel);
+
         il.MarkLabel(returnNullLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);

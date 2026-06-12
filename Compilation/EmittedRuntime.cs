@@ -2665,6 +2665,7 @@ public class EmittedRuntime
     public MethodBuilder PDSDefineProperty { get; set; } = null!;
     public MethodBuilder PDSDeleteProperty { get; set; } = null!;
     public MethodBuilder PDSGetPropertyDescriptor { get; set; } = null!;
+    public MethodBuilder PDSGetStaticShadow { get; set; } = null!;
 
     // cluster module — emitted types (no reflection to SharpTS.dll)
     // $ClusterContext: static class with [ThreadStatic] fields for worker detection

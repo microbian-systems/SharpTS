@@ -313,6 +313,35 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return;
             }
+
+            // Inherited static data field: read the current value (shadow-or-base), compute, then
+            // write the result as a per-subclass own shadow via SetProperty's Type arm (→ PDS) rather
+            // than mutating the base field. Matches JS own-shadow semantics and the plain-write path (#339).
+            if (Ctx.ClassRegistry!.TryGetCallableStaticField(resolvedClassName, cs.Name.Lexeme, compoundClassBuilder, out var inheritedField))
+            {
+                EmitStaticFieldLoadWithShadow(resolvedClassName, compoundClassBuilder, cs.Name.Lexeme, inheritedField!);
+                var inheritedCurrentTemp = IL.DeclareLocal(typeof(object));
+                IL.Emit(OpCodes.Stloc, inheritedCurrentTemp);
+
+                // Spill the RHS so an await inside it suspends with an empty stack.
+                var inheritedRhsTemp = SpillBoxed(cs.Value);
+
+                IL.Emit(OpCodes.Ldloc, inheritedCurrentTemp);
+                IL.Emit(OpCodes.Ldloc, inheritedRhsTemp);
+                EmitCompoundOperation(cs.Operator.Type);
+                var inheritedResultTemp = IL.DeclareLocal(typeof(object));
+                IL.Emit(OpCodes.Stloc, inheritedResultTemp);
+
+                IL.Emit(OpCodes.Ldtoken, compoundClassBuilder);
+                IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
+                IL.Emit(OpCodes.Ldstr, cs.Name.Lexeme);
+                IL.Emit(OpCodes.Ldloc, inheritedResultTemp);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.SetProperty);
+
+                IL.Emit(OpCodes.Ldloc, inheritedResultTemp);
+                SetStackUnknown();
+                return;
+            }
         }
 
         // Dynamic property compound assignment

@@ -991,6 +991,11 @@ public partial class ILEmitter
                 return;
             }
 
+            // Static data field via `Class.field` (own or inherited) — bind to the field / PDS shadow
+            // so the increment lands on the same storage the static-typed read consults (#339).
+            if (TryEmitStaticFieldIncrement(get, pi.Operator.Type == TokenType.PLUS_PLUS, isPrefix: true))
+                return;
+
             // Prefix increment on property: ++obj.prop
             // Get current value
             EmitExpression(get.Object);
@@ -1267,6 +1272,11 @@ public partial class ILEmitter
                 return;
             }
 
+            // Static data field via `Class.field` (own or inherited) — bind to the field / PDS shadow
+            // so the increment lands on the same storage the static-typed read consults (#339).
+            if (TryEmitStaticFieldIncrement(get, pi.Operator.Type == TokenType.PLUS_PLUS, isPrefix: false))
+                return;
+
             // Postfix increment on property: obj.prop++
             // Get current value
             EmitExpression(get.Object);
@@ -1350,6 +1360,79 @@ public partial class ILEmitter
         }
     }
 
+    /// <summary>
+    /// Emits <c>++</c>/<c>--</c> on a class's static data field accessed as <c>Class.field</c>
+    /// (member access). Returns false (emitting nothing) when <paramref name="get"/> is not a known
+    /// class's static field, so callers fall through to the generic property path. An own field is
+    /// read and written directly (mirroring plain assignment); an inherited field is read shadow-or-base
+    /// and the result written as a per-subclass own shadow via SetProperty's Type arm (→ PDS), matching
+    /// JS own-shadow semantics (#339). The dynamic GetProperty/SetProperty path used otherwise desyncs
+    /// with the Ldsfld-based static read (write lands in PDS, read sees the field), so binding here keeps
+    /// read and write on the same storage. <paramref name="isPrefix"/> selects the result (new vs old).
+    /// </summary>
+    private bool TryEmitStaticFieldIncrement(Expr.Get get, bool isIncrement, bool isPrefix)
+    {
+        if (get.Object is not Expr.Variable classVar)
+            return false;
+        string resolvedClassName = _ctx.ResolveClassName(classVar.Name.Lexeme);
+        if (!_ctx.Classes.TryGetValue(resolvedClassName, out var classBuilder))
+            return false;
+
+        bool own = _ctx.ClassRegistry!.TryGetOwnCallableStaticField(resolvedClassName, get.Name.Lexeme, classBuilder, out var ownField);
+        System.Reflection.FieldInfo? inheritedField = null;
+        if (!own && !_ctx.ClassRegistry!.TryGetCallableStaticField(resolvedClassName, get.Name.Lexeme, classBuilder, out inheritedField))
+            return false;
+
+        // Load current value and coerce to double (ToNumber semantics).
+        if (own)
+            IL.Emit(OpCodes.Ldsfld, ownField!);
+        else
+            EmitStaticFieldLoadWithShadow(resolvedClassName, classBuilder, get.Name.Lexeme, inheritedField!);
+        EmitUnboxToDouble();
+
+        // Postfix returns the original value — stash it before incrementing.
+        System.Reflection.Emit.LocalBuilder? oldValue = null;
+        if (!isPrefix)
+        {
+            oldValue = IL.DeclareLocal(_ctx.Types.Double);
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Stloc, oldValue);
+        }
+
+        IL.Emit(OpCodes.Ldc_R8, 1.0);
+        IL.Emit(isIncrement ? OpCodes.Add : OpCodes.Sub);
+        IL.Emit(OpCodes.Box, _ctx.Types.Double);
+        var newValue = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, newValue);
+
+        // Write back to the same storage the matching read consults.
+        if (own)
+        {
+            IL.Emit(OpCodes.Ldloc, newValue);
+            IL.Emit(OpCodes.Stsfld, ownField!);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldtoken, classBuilder);
+            IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
+            IL.Emit(OpCodes.Ldstr, get.Name.Lexeme);
+            IL.Emit(OpCodes.Ldloc, newValue);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.SetProperty);
+        }
+
+        if (isPrefix)
+        {
+            IL.Emit(OpCodes.Ldloc, newValue);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldloc, oldValue!);
+            IL.Emit(OpCodes.Box, _ctx.Types.Double);
+        }
+        SetStackUnknown();
+        return true;
+    }
+
     protected override void EmitCompoundSet(Expr.CompoundSet cs)
     {
         // Static field fast path: this.staticField op= value inside a static method/block
@@ -1365,6 +1448,47 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Ldloc, csResult);
             SetStackUnknown();
             return;
+        }
+
+        // Compound assignment on a class's static data field: `Class.field op= x`. The generic
+        // dynamic path below routes the write through SetProperty (→ PDS) while the static-typed
+        // read uses Ldsfld, so they desync. Bind own/inherited static fields explicitly here:
+        //   * own field   → read+write the field directly (mirror the plain-assignment path);
+        //   * inherited    → read shadow-or-base, then write a per-subclass own shadow via
+        //                    SetProperty's Type arm (→ PDS), matching JS own-shadow semantics (#339).
+        if (cs.Object is Expr.Variable classVarCS &&
+            _ctx.Classes.TryGetValue(_ctx.ResolveClassName(classVarCS.Name.Lexeme), out var classBuilderCS))
+        {
+            string resolvedClassNameCS = _ctx.ResolveClassName(classVarCS.Name.Lexeme);
+            if (_ctx.ClassRegistry!.TryGetOwnCallableStaticField(resolvedClassNameCS, cs.Name.Lexeme, classBuilderCS, out var ownFieldCS))
+            {
+                IL.Emit(OpCodes.Ldsfld, ownFieldCS!);
+                EmitCompoundOperation(cs.Operator.Type, cs.Value);
+                var ownResultCS = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Stloc, ownResultCS);
+                IL.Emit(OpCodes.Ldloc, ownResultCS);
+                IL.Emit(OpCodes.Stsfld, ownFieldCS!);
+                IL.Emit(OpCodes.Ldloc, ownResultCS);
+                SetStackUnknown();
+                return;
+            }
+            if (_ctx.ClassRegistry!.TryGetCallableStaticField(resolvedClassNameCS, cs.Name.Lexeme, classBuilderCS, out var inheritedFieldCS))
+            {
+                EmitStaticFieldLoadWithShadow(resolvedClassNameCS, classBuilderCS, cs.Name.Lexeme, inheritedFieldCS!);
+                EmitCompoundOperation(cs.Operator.Type, cs.Value);
+                var inheritedResultCS = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Stloc, inheritedResultCS);
+
+                IL.Emit(OpCodes.Ldtoken, classBuilderCS);
+                IL.Emit(OpCodes.Call, _ctx.Types.TypeGetTypeFromHandle);
+                IL.Emit(OpCodes.Ldstr, cs.Name.Lexeme);
+                IL.Emit(OpCodes.Ldloc, inheritedResultCS);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.SetProperty);
+
+                IL.Emit(OpCodes.Ldloc, inheritedResultCS);
+                SetStackUnknown();
+                return;
+            }
         }
 
         // Compound assignment on object property: obj.prop += x

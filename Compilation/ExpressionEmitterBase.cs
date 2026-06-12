@@ -1788,12 +1788,54 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             string resolvedClassName = Ctx.ResolveClassName(classVar.Name.Lexeme);
             if (Ctx.ClassRegistry!.TryGetCallableStaticField(resolvedClassName, g.Name.Lexeme, staticFieldClassBuilder, out var staticField))
             {
-                IL.Emit(OpCodes.Ldsfld, staticField!);
-                SetStackUnknown();
+                EmitStaticFieldLoadWithShadow(resolvedClassName, staticFieldClassBuilder, g.Name.Lexeme, staticField!);
                 return true;
             }
         }
         return false;
+    }
+
+    /// <summary>
+    /// Loads a static data field read through <paramref name="resolvedClassName"/>. For a field the
+    /// class declares itself this is a plain <c>Ldsfld</c>. For an <em>inherited</em> static field
+    /// (declared on a base, resolved via the superclass walk) a subclass write creates a per-subclass
+    /// own shadow in $PropertyDescriptorStore keyed by the subclass Type — so the read first consults
+    /// that store (walking the Type chain) and only falls back to the declaring base's field when no
+    /// shadow exists. This matches interpreter / JS own-shadow semantics (issue #339). The shadow probe
+    /// is emitted only on the inherited path, leaving own-field reads a single load.
+    /// </summary>
+    protected void EmitStaticFieldLoadWithShadow(string resolvedClassName, System.Reflection.Emit.TypeBuilder classBuilder, string fieldName, System.Reflection.FieldInfo resolvedField)
+    {
+        // Own field: no subclass shadow can exist, emit a direct load.
+        if (Ctx.ClassRegistry!.TryGetOwnStaticField(resolvedClassName, fieldName, out _))
+        {
+            IL.Emit(OpCodes.Ldsfld, resolvedField);
+            SetStackUnknown();
+            return;
+        }
+
+        // Inherited field: probe for a runtime own-shadow on the subclass (or a nearer ancestor) first.
+        var shadowLocal = IL.DeclareLocal(Ctx.Runtime!.CompiledPropertyDescriptorType);
+        var noShadowLabel = IL.DefineLabel();
+        var doneLabel = IL.DefineLabel();
+
+        IL.Emit(OpCodes.Ldtoken, classBuilder);
+        IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
+        IL.Emit(OpCodes.Ldstr, fieldName);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.PDSGetStaticShadow);
+        IL.Emit(OpCodes.Stloc, shadowLocal);
+
+        IL.Emit(OpCodes.Ldloc, shadowLocal);
+        IL.Emit(OpCodes.Brfalse, noShadowLabel);
+        IL.Emit(OpCodes.Ldloc, shadowLocal);
+        IL.Emit(OpCodes.Callvirt, Ctx.Runtime!.CompiledPropertyDescriptorValue.GetGetMethod()!);
+        IL.Emit(OpCodes.Br, doneLabel);
+
+        IL.MarkLabel(noShadowLabel);
+        IL.Emit(OpCodes.Ldsfld, resolvedField);
+
+        IL.MarkLabel(doneLabel);
+        SetStackUnknown();
     }
 
     #endregion
