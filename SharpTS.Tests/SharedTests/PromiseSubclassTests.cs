@@ -500,13 +500,14 @@ public class PromiseSubclassTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    public void Species_ExpandoOverride_Interpreted(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_ExpandoOverrideRedirectsToPlainPromise(ExecutionMode mode)
     {
         // A dynamically-assigned static @@species ((C as any)[Symbol.species] =
-        // Promise, #262) is consulted by then in the interpreter. Compiled mode
-        // only reads the declared-accessor registry, so the expando is not yet
-        // consulted there — tracked by #349.
+        // Promise, #262) — with no declared `static get [Symbol.species]()` — is
+        // consulted by then in BOTH modes (#349). Compiled mode previously read
+        // only the declared-accessor registry; it now also consults the per-Type
+        // symbol-expando dict.
         var source = """
             class MyP extends Promise<number> {}
             (MyP as any)[Symbol.species] = Promise;
@@ -514,12 +515,87 @@ public class PromiseSubclassTests
                 const q = MyP.resolve(1).then(v => v);
                 console.log(q instanceof MyP);
                 console.log(q instanceof Promise);
+                console.log(await q);
             }
             main();
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("false\ntrue\n", output);
+        Assert.Equal("false\ntrue\n1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_ExpandoOverrideRedirectsToOtherSubclass(ExecutionMode mode)
+    {
+        // The expando @@species may name another Promise subclass; then must
+        // construct its result through it, exactly as a declared getter would.
+        var source = """
+            class Other extends Promise<number> {}
+            class MyP extends Promise<number> {}
+            (MyP as any)[Symbol.species] = Other;
+            async function main() {
+                const q = MyP.resolve(1).then(v => v);
+                console.log(q instanceof Other);
+                console.log(q instanceof MyP);
+                console.log(await q);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\n1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_ExpandoOverrideInheritedThroughSubclass(ExecutionMode mode)
+    {
+        // An expando @@species set on a base class is visible on a subclass
+        // receiver (#265 base-chain walk): Sub.resolve(...).then(...) follows the
+        // base's @@species. Here Base's expando → Promise, so Sub's then result
+        // is a plain promise, not a Sub/Base instance.
+        var source = """
+            class Base extends Promise<number> {}
+            (Base as any)[Symbol.species] = Promise;
+            class Sub extends Base {}
+            async function main() {
+                const q = Sub.resolve(1).then(v => v);
+                console.log(q instanceof Sub);
+                console.log(q instanceof Base);
+                console.log(q instanceof Promise);
+                console.log(await q);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\nfalse\ntrue\n1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_ExpandoOverrideOnGenericSubclass(ExecutionMode mode)
+    {
+        // An expando @@species on a GENERIC subclass: the assignment keys the
+        // open generic definition (MyP`1) while the then-receiver's runtime type
+        // is closed (MyP<object>). Compiled mode reconciles the two via
+        // SymbolRegistryKey (the same open-vs-closed bridge the declared-accessor
+        // path uses, #351) so the expando is found in both modes (#349).
+        var source = """
+            class MyP<T> extends Promise<T> {}
+            (MyP as any)[Symbol.species] = Promise;
+            async function main() {
+                const q = MyP.resolve(1).then(v => v);
+                console.log(q instanceof MyP);
+                console.log(q instanceof Promise);
+                console.log(await q);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\ntrue\n1\n", output);
     }
 
     #endregion
