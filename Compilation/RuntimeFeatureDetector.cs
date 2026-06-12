@@ -69,6 +69,7 @@ public sealed class RuntimeFeatureDetector
             UsesTty = false,
             UsesPerf = false,
             UsesAbortController = false,
+            UsesAbortSignalAny = false,
             UsesProxy = false,
             UsesDynamicImport = false,
             UsesAsyncGenerator = false,
@@ -144,6 +145,13 @@ public sealed class RuntimeFeatureDetector
         // fetch's request handler honours AbortSignal cancellation. Imply
         // UsesAbortController so AbortSignalGetAborted/GetReason exist.
         if (_set.UsesWebStreams || _set.UsesFetch || _set.UsesHttp)
+        {
+            _set.UsesAbortController = true;
+        }
+        // AbortSignal.any is emitted as part of the AbortController method cluster
+        // and registered on the AbortSignal namespace singleton, so it needs the
+        // base AbortController machinery present.
+        if (_set.UsesAbortSignalAny)
         {
             _set.UsesAbortController = true;
         }
@@ -500,6 +508,14 @@ public sealed class RuntimeFeatureDetector
         if (memberName == "isTTY")
         {
             _set.UsesTty = true;
+        }
+        // `AbortSignal.any([...])` late-binds to RuntimeTypes.AbortSignalAnyCompiled via
+        // reflection on its normal path, so a program that actually calls it needs SharpTS.dll
+        // co-located at runtime. This precise flag drives RequireSharpTSRuntime("AbortSignal.any")
+        // without penalising the common, pure-IL AbortController + fetch case (#116).
+        if (objectName == "AbortSignal" && memberName == "any")
+        {
+            _set.UsesAbortSignalAny = true;
         }
     }
 
