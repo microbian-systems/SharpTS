@@ -74,6 +74,14 @@ public class SharpTSFetchResponse : ITypeCategorized
             "redirected" => _redirected,
             "type" => "basic",
             "headers" => GetHeadersObject(),
+            // Body readers don't opt into refsEventLoopWhileInFlight (the #320 native-I/O
+            // liveness audit): fetch uses the default HttpCompletionOption.ResponseContentRead,
+            // so the body is already fully buffered by the time fetch()'s promise resolves
+            // (the in-flight network leg is Ref'd inside FetchBuiltIns). These reads drain that
+            // in-memory buffer and complete synchronously, so a Ref here would never fire. If
+            // fetch ever switches to ResponseHeadersRead / streamed bodies, these three must
+            // opt in (the read would then be real in-flight I/O that can outrun the 250ms
+            // quiescence window). See FetchBuiltIns.FetchImpl and BuiltInAsyncMethod.
             "json" => new BuiltInAsyncMethod("json", 0, JsonImpl).Bind(this),
             "text" => new BuiltInAsyncMethod("text", 0, TextImpl).Bind(this),
             "arrayBuffer" => new BuiltInAsyncMethod("arrayBuffer", 0, ArrayBufferImpl).Bind(this),
