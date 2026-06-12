@@ -1,3 +1,5 @@
+using System.Globalization;
+using SharpTS.Compilation;
 using SharpTS.Execution;
 using SharpTS.Runtime.Types;
 
@@ -80,7 +82,8 @@ public static class BuiltInConstructorFactory
         name == BuiltInNames.BroadcastChannel ||
         name == BuiltInNames.ReadableStream ||
         name == BuiltInNames.WritableStream ||
-        name == BuiltInNames.TransformStream;
+        name == BuiltInNames.TransformStream ||
+        name == "Number" || name == "String" || name == "Boolean";
         // Note: Error types are NOT handled here — they go through SharpTSErrorClass
         // registered in Interpreter.CreateGlobalsLookup()
 
@@ -107,6 +110,13 @@ public static class BuiltInConstructorFactory
         {
             return RegExpBuiltIns.ConstructRegExp(interpreter, args, isCallForm: false);
         }
+
+        // Primitive wrapper constructors: `new Number(x)`, `new String(x)`, `new Boolean(x)`
+        // return boxed SharpTSObjects with __primitiveType / __primitiveValue markers,
+        // matching compiled-mode behaviour so typeof is "object" and instanceof works.
+        if (name == "Number") return CreateBoxedNumber(args);
+        if (name == "String") return CreateBoxedString(args);
+        if (name == "Boolean") return CreateBoxedBoolean(args);
 
         // Check simple constructors first
         if (_simpleConstructors.TryGetValue(name, out var handler))
@@ -302,6 +312,87 @@ public static class BuiltInConstructorFactory
         var body = args.Count > 0 ? args[0] : null;
         var init = args.Count > 1 ? args[1] as SharpTSObject : null;
         return new SharpTSResponse(body, init);
+    }
+
+    // ── Boxed primitive wrapper constructors ─────────────────────────────────
+
+    /// <summary>
+    /// <c>new Number(x)</c>: ECMA-262 §21.1.2. Returns a <c>SharpTSObject</c>
+    /// wrapper with <c>__primitiveType="Number"</c> and <c>__primitiveValue</c>
+    /// holding the ToNumber-coerced argument.
+    /// </summary>
+    private static SharpTSObject CreateBoxedNumber(IReadOnlyList<object?> args)
+    {
+        var arg = args.Count > 0 ? args[0] : null;
+        double value = arg switch
+        {
+            double d => d,
+            null => 0.0,
+            SharpTSUndefined => double.NaN,
+            bool b => b ? 1.0 : 0.0,
+            string s => ParseNumberFromString(s),
+            _ => double.NaN,
+        };
+        return new SharpTSObject(new Dictionary<string, object?>
+        {
+            ["__primitiveType"] = "Number",
+            ["__primitiveValue"] = value,
+        });
+    }
+
+    /// <summary>
+    /// <c>new String(x)</c>: ECMA-262 §22.1.2. Returns a <c>SharpTSObject</c>
+    /// String exotic wrapper with <c>__primitiveType="String"</c>,
+    /// <c>__primitiveValue</c>, a <c>length</c> slot, and indexed character slots.
+    /// </summary>
+    private static SharpTSObject CreateBoxedString(IReadOnlyList<object?> args)
+    {
+        var arg = args.Count > 0 ? args[0] : null;
+        string value = arg switch
+        {
+            null => "null",
+            SharpTSUndefined => "undefined",
+            bool b => b ? "true" : "false",
+            double d => RuntimeTypes.Stringify(d),
+            string s => s,
+            SharpTSArray arr => arr.ToString()!,
+            _ => arg.ToString() ?? "",
+        };
+        var dict = new Dictionary<string, object?>
+        {
+            ["__primitiveType"] = "String",
+            ["__primitiveValue"] = value,
+            ["length"] = (double)value.Length,
+        };
+        for (int i = 0; i < value.Length; i++)
+            dict[i.ToString()] = value[i].ToString();
+        return new SharpTSObject(dict);
+    }
+
+    /// <summary>
+    /// <c>new Boolean(x)</c>: ECMA-262 §20.4.2. Returns a <c>SharpTSObject</c>
+    /// wrapper with <c>__primitiveType="Boolean"</c> and the ToBoolean-coerced value.
+    /// </summary>
+    private static SharpTSObject CreateBoxedBoolean(IReadOnlyList<object?> args)
+    {
+        var arg = args.Count > 0 ? args[0] : null;
+        bool value = RuntimeTypes.IsTruthy(arg);
+        return new SharpTSObject(new Dictionary<string, object?>
+        {
+            ["__primitiveType"] = "Boolean",
+            ["__primitiveValue"] = value,
+        });
+    }
+
+    private static double ParseNumberFromString(string s)
+    {
+        s = s.Trim();
+        if (s.Length == 0) return 0.0;
+        if (s == "Infinity" || s == "+Infinity") return double.PositiveInfinity;
+        if (s == "-Infinity") return double.NegativeInfinity;
+        if (s.Contains("infinity", StringComparison.OrdinalIgnoreCase)) return double.NaN;
+        if (double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out double d)) return d;
+        return double.NaN;
     }
 
     #endregion

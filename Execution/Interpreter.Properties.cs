@@ -865,6 +865,20 @@ public partial class Interpreter
             current = next;
         }
 
+        // Boxed primitive method dispatch: `(new Number(5)).toFixed(2)` etc.
+        // Delegate through to the underlying primitive value's built-in methods.
+        if (simpleObj.HasProperty("__primitiveType")
+            && simpleObj.GetProperty("__primitiveType") is string _
+            && simpleObj.HasProperty("__primitiveValue"))
+        {
+            var pv = simpleObj.GetProperty("__primitiveValue");
+            if (pv != null)
+            {
+                var dispatched = BuiltInRegistry.Instance.GetInstanceMember(pv, memberName);
+                if (dispatched != null) return dispatched;
+            }
+        }
+
         // Final fallback: inherited Object.prototype methods (see the RV
         // overload for rationale). Excluded for null-prototype objects.
         if (!simpleObj.IsNullPrototype
@@ -940,6 +954,20 @@ public partial class Interpreter
                 break;
             }
             break;
+        }
+
+        // Boxed primitive method dispatch: `(new Number(5)).toFixed(2)` etc.
+        // Delegate through to the underlying primitive value's built-in methods.
+        if (simpleObj.HasProperty("__primitiveType")
+            && simpleObj.GetProperty("__primitiveType") is string _
+            && simpleObj.HasProperty("__primitiveValue"))
+        {
+            var pv = simpleObj.GetProperty("__primitiveValue");
+            if (pv != null)
+            {
+                var dispatched = BuiltInRegistry.Instance.GetInstanceMember(pv, memberName);
+                if (dispatched != null) return RuntimeValue.FromBoxed(dispatched);
+            }
         }
 
         // ECMA-262: every ORDINARY object inherits Object.prototype's methods
