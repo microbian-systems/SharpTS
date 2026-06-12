@@ -236,6 +236,40 @@ public class PromiseSubclassTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExtendsPromise_TopLevelStaticThen(ExecutionMode mode)
+    {
+        // #309: the exact repro — inherited static + derived `then` dispatched
+        // from the top-level (synchronous) program body, NOT inside an async
+        // function. The async-body path (state machine) already worked; the
+        // main ILEmitter.EmitCall path had drifted and omitted the derived
+        // Promise-static block, so `MyP.resolve(1)` threw
+        // "TypeError: undefined is not a function" in compiled mode.
+        var source = """
+            class MyP extends Promise<number> {}
+            MyP.resolve(1).then(v => console.log("got", v));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("got 1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExtendsPromise_TopLevelRejectCatch(ExecutionMode mode)
+    {
+        // #309 sibling: reject/catch on a non-generic subclass from the
+        // top-level body.
+        var source = """
+            class MyP extends Promise<number> {}
+            MyP.reject("boom").catch(e => console.log("caught", e));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("caught boom\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ExtendsPromise_ConstructorIdentity(ExecutionMode mode)
     {
         // ECMA-262 §27.2.5.1 / #221: subclass instances report the subclass

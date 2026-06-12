@@ -1355,7 +1355,7 @@ public abstract partial class ExpressionEmitterBase
     /// task in place of an executor). Returns false (emitting nothing) when
     /// the subclass constructor can't accept the task as its first argument.
     /// </summary>
-    private bool TryEmitDerivedPromiseStatic(string resolvedClassName, Type classBuilder, string methodName, List<Expr> arguments)
+    protected bool TryEmitDerivedPromiseStatic(string resolvedClassName, Type classBuilder, string methodName, List<Expr> arguments)
     {
         if (Ctx.TypeEmitterRegistry?.GetStaticStrategy("Promise") is not { } promiseStatics)
             return false;
