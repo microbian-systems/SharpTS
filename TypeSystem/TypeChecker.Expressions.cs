@@ -1384,6 +1384,13 @@ public partial class TypeChecker
             if (name.Lexeme == "module" || name.Lexeme == "exports" || name.Lexeme == "global")
                 return new TypeInfo.Any();
         }
+        // Worker-scoped globals — only valid inside a worker_threads worker script,
+        // where SharpTSWorker.SetupWorkerGlobals binds them at runtime. Gated on
+        // worker context so they stay undefined (TS2304) on the main thread, matching
+        // Node (these are not main-thread globals).
+        if (_isWorkerContext && name.Lexeme is "parentPort" or "postMessage"
+            or "workerData" or "threadId" or "isMainThread")
+            return new TypeInfo.Any();
         // Worker Threads globals
         if (name.Lexeme == "structuredClone") return new TypeInfo.Any(); // structuredClone() global function
         if (name.Lexeme == "SharedArrayBuffer") return new TypeInfo.Any(); // SharedArrayBuffer constructor

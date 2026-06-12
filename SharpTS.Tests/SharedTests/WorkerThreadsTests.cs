@@ -488,4 +488,79 @@ public class WorkerThreadsTests
     }
 
     #endregion
+
+    #region Running-Worker event-loop liveness (#329)
+
+    /// <summary>
+    /// Regression for #329: a running worker must keep the parent event loop alive
+    /// by default (Node semantics). The worker posts a message back ~400ms after
+    /// spawn — past the parent loop's 250ms quiescence window — and the parent's
+    /// only pending work is the <c>'message'</c> listener. Before the fix nothing
+    /// Ref'd the parent for the worker's running lifetime, so the parent abandoned
+    /// the wait at 250ms and exited without ever printing the message.
+    /// </summary>
+    /// <remarks>
+    /// InterpretedOnly: the keep-alive Ref is against the interpreter event loop;
+    /// compiled mode has no parent interpreter. <c>__dirname</c> routes the harness
+    /// through the real-disk path so the worker can load its script. The assertion
+    /// is positive and load-independent — under load the worker simply posts later
+    /// and the running-Ref keeps the parent alive until it does, so the test cannot
+    /// flake the way a wall-clock window would.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Worker_RunningWorker_KeepsParentLoopAliveUntilMessage(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_delayed.ts"] = """
+                // Post back after >250ms, holding the worker's own loop open via the
+                // pending timer until it fires. The worker then exits naturally.
+                setTimeout(() => { postMessage("from-worker"); }, 400);
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_delayed.ts");
+                // The 'message' listener is the parent's ONLY pending work — the
+                // running worker must keep the loop alive long enough to deliver.
+                w.on("message", (e: any) => {
+                    console.log("received:" + e.data);
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("received:from-worker", output);
+    }
+
+    /// <summary>
+    /// <c>worker.ref()</c> / <c>worker.unref()</c> are callable, chainable, and a
+    /// <c>ref()</c> after an <c>unref()</c> restores the keep-alive so a later
+    /// delayed message is still delivered (positive, load-independent assertion).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Worker_UnrefThenRef_RestoresKeepAlive(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_delayed.ts"] = """
+                setTimeout(() => { postMessage("again"); }, 400);
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_delayed.ts");
+                w.on("message", (e: any) => {
+                    console.log("received:" + e.data);
+                });
+                w.unref(); // opt out of keep-alive...
+                w.ref();   // ...then opt back in — message must still arrive.
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("received:again", output);
+    }
+
+    #endregion
 }

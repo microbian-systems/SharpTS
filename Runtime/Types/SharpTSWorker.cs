@@ -39,6 +39,17 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     private Exception? _workerError;
     private Interpreter? _parentInterpreter;
 
+    // Event-loop keep-alive accounting against the parent interpreter. Node keeps
+    // the parent process alive for a running Worker's lifetime by default;
+    // worker.unref() opts out and worker.ref() opts back in. Without this, a
+    // parent whose only pending work is a worker's 'message' listener can hit the
+    // 250ms quiescence give-up and exit before the worker posts (#329 — same
+    // native-I/O liveness class as #319/#320/#324). Guarded by _refLock so the
+    // parent (ref/unref) and the worker thread (exit) can't race the count.
+    private readonly object _refLock = new();
+    private bool _refed;             // currently holding one parent-loop Ref for the running worker
+    private bool _refReleased;       // worker exited/terminated — ref/unref are permanent no-ops
+
     // For compiled code support - enables Worker communication without interpreter
     private readonly SynchronizationContext? _syncContext;
     private readonly ConcurrentQueue<Action> _pendingCallbacks = new();
@@ -103,7 +114,41 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         };
 
         _isRunning = true;
+
+        // Default-on Node semantics: a running worker keeps the parent loop alive.
+        // Establish the Ref before starting the thread so the worker can never exit
+        // (and Unref) before we've counted it.
+        lock (_refLock)
+        {
+            if (_parentInterpreter != null)
+            {
+                _refed = true;
+                _parentInterpreter.Ref();
+            }
+        }
+
         _thread.Start();
+    }
+
+    /// <summary>
+    /// Drops the running-worker keep-alive Ref against the parent loop and marks it
+    /// permanently released, so a later <see cref="Ref"/>/<see cref="Unref"/> from
+    /// guest code becomes a no-op. Idempotent and safe to call from either the parent
+    /// thread (terminate) or the worker thread (exit).
+    /// </summary>
+    private void ReleaseRunningRef()
+    {
+        lock (_refLock)
+        {
+            if (_refReleased)
+                return;
+            _refReleased = true;
+            if (_refed)
+            {
+                _refed = false;
+                _parentInterpreter?.Unref();
+            }
+        }
     }
 
     /// <summary>
@@ -126,6 +171,12 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             _isRunning = false;
             _parentToWorkerQueue.CompleteAdding();
             _workerToParentQueue.CompleteAdding();
+
+            // Worker is done — stop keeping the parent loop alive (Node unrefs an
+            // exited worker). Released before the exit event is enqueued so the
+            // parent's only remaining work is that event's delivery timer, which
+            // Refs the loop itself for its in-flight window.
+            ReleaseRunningRef();
 
             // Notify parent that worker has exited
             EnqueueExitToParent(0);
@@ -163,8 +214,10 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             throw new Exception($"Worker script parse error: {parseResult.Diagnostics.FirstOrDefault()?.Message ?? "Unknown error"}");
         }
 
-        // Type check
-        var typeChecker = new TypeChecker();
+        // Type check. AsWorkerContext lets the worker-scoped globals (parentPort,
+        // postMessage, workerData, threadId, isMainThread) resolve instead of
+        // failing as undefined — they're bound below by SetupWorkerGlobals.
+        var typeChecker = new TypeChecker().AsWorkerContext();
         var typeMap = typeChecker.Check(parseResult.Statements);
 
         // Set up message handling loop
@@ -394,6 +447,12 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         _cts.Cancel();
         _parentToWorkerQueue.CompleteAdding();
 
+        // The worker is being torn down — drop its running keep-alive Ref now
+        // rather than waiting for the worker thread's finally, so the only loop
+        // keep-alive from here is the bounded join Ref below. Idempotent with the
+        // worker-thread finally's ReleaseRunningRef.
+        ReleaseRunningRef();
+
         // The thread join is real, always-completing work bounded at 5s. Ref the
         // parent event loop for its duration so the interpreter's quiescence
         // heuristic does not abandon a program whose only remaining work is
@@ -416,19 +475,39 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     }
 
     /// <summary>
-    /// Gets a reference to the worker.
+    /// Opts the worker back into keeping the parent event loop alive (Node's
+    /// <c>worker.ref()</c>). No-op once the worker has exited or been terminated,
+    /// or in compiled mode (no parent interpreter).
     /// </summary>
     public SharpTSWorker Ref()
     {
+        lock (_refLock)
+        {
+            if (!_refReleased && !_refed && _parentInterpreter != null)
+            {
+                _refed = true;
+                _parentInterpreter.Ref();
+            }
+        }
         return this;
     }
 
     /// <summary>
-    /// Releases the worker reference.
+    /// Opts the worker out of keeping the parent event loop alive (Node's
+    /// <c>worker.unref()</c>). The worker keeps running; the parent is just free to
+    /// exit if the worker is its only remaining work. No-op once the worker has
+    /// exited/terminated, or in compiled mode (no parent interpreter).
     /// </summary>
     public void Unref()
     {
-        // In our implementation, this is a no-op since we don't track refs
+        lock (_refLock)
+        {
+            if (_refed)
+            {
+                _refed = false;
+                _parentInterpreter?.Unref();
+            }
+        }
     }
 
     /// <summary>
