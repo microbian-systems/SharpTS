@@ -122,8 +122,7 @@ public partial class ILEmitter
         // Try to find static field using stored FieldBuilders
         if (_ctx.ClassRegistry!.TryGetCallableStaticField(className, propertyName, classBuilder, out var staticField))
         {
-            IL.Emit(OpCodes.Ldsfld, staticField!);
-            SetStackUnknown();
+            EmitStaticFieldLoadWithShadow(className, classBuilder, propertyName, staticField!);
             return true;
         }
 

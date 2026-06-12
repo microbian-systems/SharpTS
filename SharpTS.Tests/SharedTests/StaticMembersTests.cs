@@ -398,8 +398,6 @@ public class StaticMembersTests
     public void InheritedStatic_FieldWriteDoesNotCorruptBase(ExecutionMode mode)
     {
         // A static-field write through the subclass must not mutate the base's storage.
-        // (Creating the JS own-shadow on the subclass is a separate gap in compiled mode; here we
-        // pin the invariant that the base value is preserved in both modes.)
         var source = """
             class Base {
                 static n: number = 1;
@@ -410,6 +408,144 @@ public class StaticMembersTests
             """;
 
         Assert.Equal("1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_FieldWriteCreatesOwnShadow(ExecutionMode mode)
+    {
+        // Writing an inherited static field through a subclass creates a per-subclass own shadow:
+        // the subclass reads the new value while the base keeps its own (#339).
+        var source = """
+            class Base { static n: number = 1; }
+            class Sub extends Base {}
+            Sub.n = 42;
+            console.log(Base.n);
+            console.log(Sub.n);
+            """;
+
+        Assert.Equal("1\n42\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_ShadowReadBeforeWriteSeesBase(ExecutionMode mode)
+    {
+        // Before a subclass write, an inherited-field read resolves the live base value; after the
+        // write it resolves the subclass's own shadow, leaving the base untouched (#339).
+        var source = """
+            class Base { static n: number = 1; }
+            class Sub extends Base {}
+            console.log(Sub.n);
+            Base.n = 7;
+            console.log(Sub.n);
+            Sub.n = 42;
+            console.log(Sub.n);
+            Base.n = 9;
+            console.log(Sub.n);
+            console.log(Base.n);
+            """;
+
+        Assert.Equal("1\n7\n42\n42\n9\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_ShadowNearestAncestorWins(ExecutionMode mode)
+    {
+        // A shadow on an intermediate ancestor is visible to a deeper subclass until that subclass
+        // installs its own shadow (proto-chain order), without disturbing the base field (#339).
+        var source = """
+            class A { static tag: string = "a"; }
+            class B extends A {}
+            class C extends B {}
+            B.tag = "b";
+            console.log(C.tag);
+            C.tag = "c";
+            console.log(C.tag);
+            console.log(B.tag);
+            console.log(A.tag);
+            """;
+
+        Assert.Equal("b\nc\nb\na\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_ShadowSiblingsAreIsolated(ExecutionMode mode)
+    {
+        // Each subclass owns its shadow; a write through one sibling is invisible to the other and
+        // to the base (#339).
+        var source = """
+            class P { static v: number = 0; }
+            class X extends P {}
+            class Y extends P {}
+            X.v = 1;
+            console.log(X.v);
+            console.log(Y.v);
+            console.log(P.v);
+            """;
+
+        Assert.Equal("1\n0\n0\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_ShadowFromGenericBase(ExecutionMode mode)
+    {
+        // Writing an inherited static declared on a generic base creates the subclass shadow without
+        // touching the (type-erased) base storage (#339).
+        var source = """
+            class Box<T> { static kind: string = "box"; }
+            class IntBox extends Box<number> {}
+            IntBox.kind = "intbox";
+            console.log(IntBox.kind);
+            console.log(Box.kind);
+            """;
+
+        Assert.Equal("intbox\nbox\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticField_OwnCompoundAndIncrementViaClassName(ExecutionMode mode)
+    {
+        // Read-modify-write of an own static field accessed as `Class.field` must land on the field
+        // that `Class.field` reads back (compound and ++/--), not a divergent dynamic store.
+        var source = """
+            class Counter { static count: number = 10; }
+            Counter.count += 3;
+            console.log(Counter.count);
+            Counter.count++;
+            console.log(Counter.count);
+            console.log(Counter.count++);
+            console.log(Counter.count);
+            console.log(--Counter.count);
+            """;
+
+        Assert.Equal("13\n14\n14\n15\n14\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStatic_CompoundAndIncrementCreateShadow(ExecutionMode mode)
+    {
+        // Read-modify-write through a subclass reads the inherited value, then writes the result to
+        // the subclass's own shadow, leaving the base untouched (#339).
+        var source = """
+            class P { static c: number = 100; }
+            class S extends P {}
+            S.c += 5;
+            console.log(S.c);
+            console.log(P.c);
+            S.c++;
+            console.log(S.c);
+            console.log(P.c);
+            console.log(S.c++);
+            console.log(S.c);
+            """;
+
+        Assert.Equal("105\n100\n106\n100\n106\n107\n", TestHarness.Run(source, mode));
     }
 
     #endregion

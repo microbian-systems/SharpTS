@@ -193,8 +193,7 @@ public partial class ILEmitter
                 // Use TryGetCallableStaticField to handle generic classes properly
                 if (_ctx.ClassRegistry!.TryGetCallableStaticField(resolvedClassName, g.Name.Lexeme, classBuilder, out var callableStaticField))
                 {
-                    IL.Emit(OpCodes.Ldsfld, callableStaticField!);
-                    SetStackUnknown();
+                    EmitStaticFieldLoadWithShadow(resolvedClassName, classBuilder, g.Name.Lexeme, callableStaticField!);
                     return;
                 }
 
@@ -219,8 +218,7 @@ public partial class ILEmitter
             // Try static field
             if (_ctx.ClassRegistry!.TryGetCallableStaticField(importedQualifiedClassName, g.Name.Lexeme, importedClassBuilder, out var importedStaticField))
             {
-                IL.Emit(OpCodes.Ldsfld, importedStaticField!);
-                SetStackUnknown();
+                EmitStaticFieldLoadWithShadow(importedQualifiedClassName, importedClassBuilder, g.Name.Lexeme, importedStaticField!);
                 return;
             }
         }
