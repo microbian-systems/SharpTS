@@ -111,11 +111,28 @@ public static class WorkerBuiltIns
 }
 
 /// <summary>
+/// Implemented by the bare-value constructors for built-in binary types
+/// (ArrayBuffer, SharedArrayBuffer, DataView, the typed arrays). These are
+/// plain <see cref="ISharpTSCallable"/>s — not <see cref="SharpTSBuiltInConstructor"/>
+/// or <see cref="SharpTSClass"/> — so the interpreter's <c>instanceof</c>
+/// evaluation can't brand-check their instances structurally. This predicate
+/// gives it a single hook to recognize the instance produced by each
+/// constructor value (#334).
+/// </summary>
+internal interface IBuiltInTypeConstructor
+{
+    /// <summary>Returns true if <paramref name="value"/> is an instance this constructor produces.</summary>
+    bool IsInstance(object? value);
+}
+
+/// <summary>
 /// SharedArrayBuffer constructor implementation.
 /// </summary>
-internal class SharedArrayBufferConstructorImpl : ISharpTSCallable
+internal class SharedArrayBufferConstructorImpl : ISharpTSCallable, IBuiltInTypeConstructor
 {
     public int Arity() => 1;
+
+    public bool IsInstance(object? value) => value is SharpTSSharedArrayBuffer;
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
@@ -138,9 +155,11 @@ internal class SharedArrayBufferConstructorImpl : ISharpTSCallable
 /// <summary>
 /// ArrayBuffer constructor implementation.
 /// </summary>
-internal class ArrayBufferConstructorImpl : ISharpTSCallable
+internal class ArrayBufferConstructorImpl : ISharpTSCallable, IBuiltInTypeConstructor
 {
     public int Arity() => 1;
+
+    public bool IsInstance(object? value) => value is SharpTSArrayBuffer;
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
@@ -167,11 +186,16 @@ internal class ArrayBufferConstructorImpl : ISharpTSCallable
 /// <summary>
 /// Generic TypedArray constructor implementation.
 /// </summary>
-internal class TypedArrayConstructorImpl<T> : ISharpTSCallable where T : SharpTSTypedArray
+internal class TypedArrayConstructorImpl<T> : ISharpTSCallable, IBuiltInTypeConstructor where T : SharpTSTypedArray
 {
     private readonly Func<int, T> _createFromLength;
     private readonly Func<SharpTSSharedArrayBuffer, int, int?, T> _createFromSharedBuffer;
     private readonly Func<SharpTSArrayBuffer, int, int?, T> _createFromArrayBuffer;
+
+    // Exact-type match: `new Int8Array(4) instanceof Uint8Array` is false in JS —
+    // each typed array directly extends the abstract %TypedArray% (not each other),
+    // so `value is T` brands against this constructor's concrete element type only.
+    public bool IsInstance(object? value) => value is T;
 
     public TypedArrayConstructorImpl(
         Func<int, T> createFromLength,
@@ -268,9 +292,11 @@ public class AtomicsSingleton
 /// <summary>
 /// DataView constructor implementation.
 /// </summary>
-internal class DataViewConstructorImpl : ISharpTSCallable
+internal class DataViewConstructorImpl : ISharpTSCallable, IBuiltInTypeConstructor
 {
     public int Arity() => 1;
+
+    public bool IsInstance(object? value) => value is SharpTSDataView;
 
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {

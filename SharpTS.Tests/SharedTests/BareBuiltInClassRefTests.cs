@@ -165,23 +165,55 @@ public class BareBuiltInClassRefTests
         Assert.Equal(string.Concat(System.Linq.Enumerable.Repeat(expectedLine, 14)), output);
     }
 
+    // ── #334: typed-array / buffer instances recognised by `instanceof` ───
+    // Compiled routes through the emitted Type token's IsAssignableFrom;
+    // interp brand-checks each constructor value's instance predicate
+    // (IBuiltInTypeConstructor). Both must agree with Node.
+
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
-    public void TypedArrayCtors_BareValue_InstanceOf_Compiled(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedArrayCtors_InstanceOf_OwnConstructor(ExecutionMode mode)
     {
-        // With the constructor resolvable as a value, compiled `instanceof`
-        // routes through the emitted Type token's IsAssignableFrom and matches
-        // instances produced by `new`. (The interpreter does not yet recognise
-        // typed-array instances in `instanceof` at all — even against Object —
-        // tracked separately in #334.)
         var source = """
             console.log(new Int8Array(4) instanceof Int8Array);
             console.log(new Float64Array(2) instanceof Float64Array);
             console.log(new ArrayBuffer(8) instanceof ArrayBuffer);
+            console.log(new SharedArrayBuffer(8) instanceof SharedArrayBuffer);
             console.log(new DataView(new ArrayBuffer(8)) instanceof DataView);
             console.log(({} as any) instanceof Int8Array);
             """;
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("true\ntrue\ntrue\ntrue\nfalse\n", output);
+        Assert.Equal("true\ntrue\ntrue\ntrue\ntrue\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedArrayCtors_InstanceOf_DistinctElementTypesDoNotMatch(ExecutionMode mode)
+    {
+        // Each typed array directly extends the abstract %TypedArray%, not each
+        // other — so cross-element-type `instanceof` is false (matches Node).
+        var source = """
+            console.log(new Int8Array(4) instanceof Uint8Array);
+            console.log(new Float32Array(2) instanceof Float64Array);
+            console.log(new ArrayBuffer(8) instanceof SharedArrayBuffer);
+            console.log(new Int8Array(4) instanceof ArrayBuffer);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\nfalse\nfalse\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BinaryTypes_InstanceOf_Object(ExecutionMode mode)
+    {
+        // Every typed-array / buffer / view instance is also an Object (#334).
+        var source = """
+            console.log(new Int8Array(4) instanceof Object);
+            console.log(new ArrayBuffer(8) instanceof Object);
+            console.log(new SharedArrayBuffer(8) instanceof Object);
+            console.log(new DataView(new ArrayBuffer(8)) instanceof Object);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\ntrue\ntrue\n", output);
     }
 }

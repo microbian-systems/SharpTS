@@ -746,8 +746,37 @@ public partial class Interpreter
         return false;
     }
 
+    /// <summary>
+    /// True when <paramref name="value"/> is a guest Object (non-primitive) —
+    /// the test underlying <c>x instanceof Object</c>. The primitives (undefined,
+    /// null, boolean, number, string, symbol, bigint) are the only values that
+    /// are NOT objects; callables/arrays/typed-arrays/namespaces are all objects.
+    /// </summary>
+    private static bool IsJsObject(object? value) => value switch
+    {
+        null => false,                                   // `null instanceof Object` === false
+        SharpTSUndefined => false,
+        bool or double or string => false,
+        SharpTSSymbol or SharpTSBigInt or System.Numerics.BigInteger => false,
+        _ => true,
+    };
+
     private object EvaluateInstanceof(object? left, object? right)
     {
+        // `x instanceof Object` — the `Object` global resolves to the namespace
+        // singleton (no SharpTSClass on the RHS), so brand-check structurally:
+        // every non-primitive guest value is an Object. Mirrors ECMA-262
+        // OrdinaryHasInstance reaching %Object.prototype% at the top of every
+        // ordinary object's prototype chain (#334).
+        if (right is SharpTSObjectNamespace)
+            return IsJsObject(left);
+
+        // Bare-value constructors for the built-in binary types (ArrayBuffer,
+        // SharedArrayBuffer, DataView, typed arrays) are plain ISharpTSCallables,
+        // so they carry their own instance predicate (#334).
+        if (right is IBuiltInTypeConstructor binaryCtor)
+            return binaryCtor.IsInstance(left);
+
         // Built-in constructor instanceof: val instanceof Map, val instanceof Set, etc.
         if (right is SharpTSBuiltInConstructor ctor)
         {
