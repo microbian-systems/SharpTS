@@ -125,6 +125,20 @@ public static class ParameterTypeResolver
                 baseType = typeof(object);
             }
 
+            // String return slots are unsound. TS inference admits `undefined` in a
+            // `string`-typed expression (e.g. `cond ? "x" : undefined` infers `string`;
+            // an explicit `: string` annotation is rejected for `return undefined`, so
+            // inference is the reachable path), but a .NET `string` slot cannot carry the
+            // `$Undefined` sentinel. A castclass at the return site throws
+            // InvalidCastException at runtime, and isinst/coercion corrupts `undefined`
+            // into null/"undefined" (observable through Map keys, typeof, ===). Unlike
+            // `double`/`bool` slots there is no boxing to avoid — strings are reference
+            // types — so a `string` slot buys nothing. Fall back to object. (#318)
+            if (baseType == typeof(string))
+            {
+                baseType = typeof(object);
+            }
+
             // Nullable value types (like number | null -> double?) need to stay as object
             // because the emitter doesn't have special handling for Nullable<T>
             if (Nullable.GetUnderlyingType(baseType) != null)

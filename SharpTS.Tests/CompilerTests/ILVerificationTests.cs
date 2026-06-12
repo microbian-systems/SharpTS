@@ -412,4 +412,92 @@ public class ILVerificationTests
         Assert.Empty(errors);
         Assert.Equal("finally\ncaught\n", output);
     }
+
+    // #318: a `string`-inferred function body can legitimately return `$Undefined`
+    // (the checker infers `string` for `cond ? "x" : undefined`). A narrow `string`
+    // return slot cannot carry that sentinel — the prior #275 castclass crashed at
+    // runtime with InvalidCastException. ResolveReturnType now maps string->object.
+    [Fact]
+    public void InferredStringReturn_WithUndefinedBranch_BlockBody_DoesNotCrash()
+    {
+        var source = """
+            function pick(n: any) {
+                return n > 2 ? "big" : undefined;
+            }
+            console.log(pick(3));
+            console.log(pick(1));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("big\nundefined\n", output);
+    }
+
+    // #318: expression-body arrow whose `string` return loads a captured variable
+    // through a display class leaves a statically-object value against the slot,
+    // which previously failed IL verification (StackUnexpected). No castclass is
+    // safe here (it would crash on $Undefined), so the slot is dropped to object.
+    // Verified separately from run: reference-assembly compilation (used by
+    // CompileVerifyAndRun) trips a distinct, pre-existing $TSFunction.ctor reflection
+    // bug for this captured-var arrow shape — see #343.
+    [Fact]
+    public void InferredStringReturn_CapturedVarArrow_PassesILVerification()
+    {
+        var source = """
+            const outer = () => {
+                let v = "a";
+                const setB = () => { v = v + "b"; };
+                const readV = () => v;
+                setB();
+                return readV();
+            };
+            console.log(outer());
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+        Assert.Empty(errors);
+
+        var output = TestHarness.RunCompiled(source);
+        Assert.Equal("ab\n", output);
+    }
+
+    // #318 guard: an undefined string-keyed group must stay `undefined` (not be
+    // coerced to null or "undefined"), which an isinst/Convert.ToString coercion
+    // at the return site would have corrupted — observable through Map keys.
+    [Fact]
+    public void InferredStringReturn_UndefinedMapKey_PreservedDoesNotCoerce()
+    {
+        var source = """
+            const items = [1, 2, 3, 4];
+            const g = Map.groupBy(items, (n: any) => n > 2 ? "big" : undefined);
+            console.log(g.get("big"));
+            console.log(g.get(undefined));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("[3, 4]\n[1, 2]\n", output);
+    }
+
+    // #318 guard: a genuinely string-typed function (no undefined in its value
+    // domain) still verifies and returns the right string after the slot change.
+    [Fact]
+    public void TypedStringReturn_StillWorks()
+    {
+        var source = """
+            function greet(name: string): string {
+                return "hello " + name;
+            }
+            const up = (s: string): string => s.toUpperCase();
+            console.log(greet("world"));
+            console.log(up("abc"));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("hello world\nABC\n", output);
+    }
 }
