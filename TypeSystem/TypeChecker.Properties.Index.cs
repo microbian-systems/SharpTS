@@ -558,6 +558,25 @@ public partial class TypeChecker
         // Handle number index
         if (IsNumber(indexType) || indexType is TypeInfo.NumberLiteral)
         {
+            // Tuple indexing — mirrors the main CheckGetIndex path so that a union of
+            // tuples (e.g. `["a", number] | ["c", string]`) distributes `m[0]` over each
+            // constituent and unions the element types. A literal index yields the exact
+            // element; a dynamic index yields the union of all element types.
+            if (objType is TypeInfo.Tuple tupleType)
+            {
+                if (getIndex.Index is Expr.Literal { Value: double idx })
+                {
+                    int i = (int)idx;
+                    if (i >= 0 && i < tupleType.ElementTypes.Count)
+                        return tupleType.ElementTypes[i];
+                    if (tupleType.RestElementType != null && i >= tupleType.ElementTypes.Count)
+                        return tupleType.RestElementType;
+                    // Out of bounds for this constituent — signal failure so the union
+                    // path reports the index as invalid across the whole union.
+                    return null;
+                }
+                return ComputeTupleElementUnion(tupleType);
+            }
             if (objType is TypeInfo.Array arrayType)
                 return arrayType.ElementType;
             // TypedArray index access returns number
@@ -566,6 +585,9 @@ public partial class TypeChecker
             // Buffer index access returns number (Buffer is a Uint8Array subclass)
             if (objType is TypeInfo.Buffer)
                 return new TypeInfo.Primitive(Parsing.TokenType.TYPE_NUMBER);
+            // String indexed by number yields a single-character string.
+            if (objType is TypeInfo.String or TypeInfo.StringLiteral)
+                return new TypeInfo.String();
             if (objType is TypeInfo.Interface itf3 && itf3.NumberIndexType != null)
                 return itf3.NumberIndexType;
             if (objType is TypeInfo.Record rec3 && rec3.NumberIndexType != null)
