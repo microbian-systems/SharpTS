@@ -167,8 +167,13 @@ public partial class ILCompiler
             var arrowTypeInfo = _typeMap?.Get(arrow);
             if (arrowTypeInfo is TypeSystem.TypeInfo.Function funcTypeInfo)
             {
+                // Widen a number/boolean slot to object if the checker flagged an undefined-reachable
+                // return (e.g. `(): number => undefined as any`) — the unboxed slot would coerce it (#344).
+                bool returnMayBeUndefined = arrow.ExpressionBody != null
+                    ? ReturnSlotAnalysis.ExpressionReturnMayBeUndefined(arrow.ExpressionBody, _typeMap)
+                    : ReturnSlotAnalysis.BlockReturnsMayBeUndefined(arrow.BlockBody, _typeMap);
                 var logicalReturnType = ParameterTypeResolver.ResolveReturnType(
-                    funcTypeInfo.ReturnType, isAsync: false, _typeMapper);
+                    funcTypeInfo.ReturnType, isAsync: false, _typeMapper, returnMayBeUndefined);
 
                 // Use typed return if:
                 // 1. Return type is not void (void methods need special handling)

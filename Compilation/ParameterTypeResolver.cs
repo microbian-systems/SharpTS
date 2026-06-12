@@ -96,11 +96,19 @@ public static class ParameterTypeResolver
     /// <param name="returnTypeInfo">Return type from TypeMap (may be null)</param>
     /// <param name="isAsync">Whether this is an async function</param>
     /// <param name="typeMapper">TypeMapper for conversion</param>
+    /// <param name="returnMayBeUndefined">
+    /// True when the type checker found a return value of static type <c>any</c>/<c>unknown</c>
+    /// flowing into this <c>number</c>/<c>boolean</c> return (e.g. <c>return undefined as any</c>).
+    /// An unboxed <c>double</c>/<c>bool</c> slot cannot carry the runtime <c>undefined</c> sentinel,
+    /// so it is widened to <c>object</c> for just those functions to avoid silently coercing
+    /// <c>undefined</c> to <c>NaN</c>/<c>false</c>. (#344)
+    /// </param>
     /// <returns>.NET type for the return value</returns>
     public static Type ResolveReturnType(
         TSTypeInfo? returnTypeInfo,
         bool isAsync,
-        TypeMapper typeMapper)
+        TypeMapper typeMapper,
+        bool returnMayBeUndefined = false)
     {
         Type baseType;
 
@@ -111,6 +119,15 @@ public static class ParameterTypeResolver
         else
         {
             baseType = typeMapper.MapTypeInfoStrict(returnTypeInfo);
+
+            // A `number`/`boolean` return reached by an `undefined`-admitting value (any/unknown)
+            // must use an object slot — the unboxed double/bool slot would coerce the runtime
+            // `undefined` sentinel to NaN/false. Only the genuinely-undefined-reachable functions
+            // pay this; the common sound numeric/boolean return keeps its unboxed slot. (#344)
+            if (returnMayBeUndefined && (baseType == typeof(double) || baseType == typeof(bool)))
+            {
+                baseType = typeof(object);
+            }
 
             // BigInteger returns need to stay as object because BigInt operations
             // in the emitter expect boxed values
