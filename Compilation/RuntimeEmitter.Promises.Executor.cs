@@ -160,9 +160,11 @@ public partial class RuntimeEmitter
     /// the then/catch/finally result construction through
     /// SpeciesConstructor(receiver, %Promise%) (ECMA-262 §27.2.5.4, §7.3.22).
     /// When the receiver is a $Promise SUBCLASS instance (#242), reads
-    /// <c>receiver.constructor[Symbol.species]</c> — i.e. the subclass's static
-    /// <c>@@species</c> getter, defaulting to the subclass itself when not
-    /// overridden — and constructs the result through it: <c>%Promise%</c> (or a
+    /// <c>receiver.constructor[Symbol.species]</c> — the subclass's static
+    /// <c>@@species</c> getter, or, absent that, the expando assigned via
+    /// <c>(C as any)[Symbol.species] = …</c> (#262/#349), defaulting to the
+    /// subclass itself when neither is present — and constructs the result
+    /// through it: <c>%Promise%</c> (or a
     /// <c>@@species</c> yielding <c>Promise</c>/<c>undefined</c>/<c>null</c>)
     /// returns the raw task, any other guest Promise class is built by invoking
     /// its single-object (executor) constructor reflectively (PromiseFromExecutor
@@ -190,6 +192,7 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var returnResultLabel = il.DefineLabel();
         var haveSpeciesLabel = il.DefineLabel();
+        var expandoLookupLabel = il.DefineLabel();
         var typeLocal = il.DeclareLocal(_types.Type);          // receiver's runtime type (= C)
         var speciesTypeLocal = il.DeclareLocal(_types.Type);   // resolved SpeciesConstructor
         var getterLocal = il.DeclareLocal(_types.Object);
@@ -219,9 +222,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldsfld, runtime.SymbolSpecies);
         il.Emit(OpCodes.Call, runtime.FindSymbolGetter);
         il.Emit(OpCodes.Stloc, getterLocal);
-        // if (getter == null) use default species (= recvType).
+        // if (getter == null) consult the dynamically-assigned static @@species
+        // expando before defaulting (#349).
         il.Emit(OpCodes.Ldloc, getterLocal);
-        il.Emit(OpCodes.Brfalse, haveSpeciesLabel);
+        il.Emit(OpCodes.Brfalse, expandoLookupLabel);
 
         // var speciesVal = ((MethodBase)getter).Invoke(recvType, Array.Empty<object>());
         il.Emit(OpCodes.Ldloc, getterLocal);
@@ -236,6 +240,61 @@ public partial class RuntimeEmitter
         // if (speciesType == null) return result;  // undefined/null/non-Type species → %Promise%
         il.Emit(OpCodes.Ldloc, speciesTypeLocal);
         il.Emit(OpCodes.Brfalse, returnResultLabel);
+        il.Emit(OpCodes.Br, haveSpeciesLabel);  // declared accessor resolved → skip expando
+
+        // #349: no declared static @@species accessor — consult the expando
+        // assigned via `(C as any)[Symbol.species] = …` (#262), which the
+        // interpreter (ResolveSpeciesConstructor → TryGetStaticBySymbol) reads but
+        // compiled mode previously ignored. The expando is stored in the per-Type
+        // symbol dict (GetSymbolDict), so walk the receiver's runtime type and its
+        // base-type chain (inherited expando statics are visible on subclasses,
+        // #265), keying each level through SymbolRegistryKey so a generic
+        // subclass's closed runtime type (MyP&lt;object&gt;) reaches the expando
+        // stored under its open generic definition (MyP`1, #351). A found value
+        // has the same representation as a getter's return
+        // (a Type token; `Promise` → typeof(Task<object?>)), so it flows through
+        // the shared tail below. None found → the default species (= recvType,
+        // already in speciesType) — the inherited Promise[@@species] returns `this`.
+        il.MarkLabel(expandoLookupLabel);
+        var expandoOwnerLocal = il.DeclareLocal(_types.Type);
+        var expandoDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        var expandoValLocal = il.DeclareLocal(_types.Object);
+        var expandoLoopLabel = il.DefineLabel();
+        var haveExpandoLabel = il.DefineLabel();
+        var getBaseType = _types.GetProperty(_types.Type, "BaseType").GetGetMethod()!;
+        var dictTryGetValue = _types.GetMethod(_types.DictionaryObjectObject, "TryGetValue");
+
+        // owner = recvType;
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Stloc, expandoOwnerLocal);
+        il.MarkLabel(expandoLoopLabel);
+        // if (owner == null) goto haveSpecies;  // none found → default species
+        il.Emit(OpCodes.Ldloc, expandoOwnerLocal);
+        il.Emit(OpCodes.Brfalse, haveSpeciesLabel);
+        // if (GetSymbolDict(SymbolRegistryKey(owner)).TryGetValue(Symbol.species, out expandoVal)) goto haveExpando;
+        il.Emit(OpCodes.Ldloc, expandoOwnerLocal);
+        il.Emit(OpCodes.Call, runtime.SymbolRegistryKey);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Stloc, expandoDictLocal);
+        il.Emit(OpCodes.Ldloc, expandoDictLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolSpecies);
+        il.Emit(OpCodes.Ldloca, expandoValLocal);
+        il.Emit(OpCodes.Callvirt, dictTryGetValue);
+        il.Emit(OpCodes.Brtrue, haveExpandoLabel);
+        // owner = owner.BaseType; continue;
+        il.Emit(OpCodes.Ldloc, expandoOwnerLocal);
+        il.Emit(OpCodes.Callvirt, getBaseType);
+        il.Emit(OpCodes.Stloc, expandoOwnerLocal);
+        il.Emit(OpCodes.Br, expandoLoopLabel);
+
+        il.MarkLabel(haveExpandoLabel);
+        // speciesType = expandoVal as Type;  // undefined/null/non-Type → %Promise%
+        il.Emit(OpCodes.Ldloc, expandoValLocal);
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Stloc, speciesTypeLocal);
+        il.Emit(OpCodes.Ldloc, speciesTypeLocal);
+        il.Emit(OpCodes.Brfalse, returnResultLabel);
+        // fall through to the shared SpeciesConstructor tail.
 
         il.MarkLabel(haveSpeciesLabel);
         // #351: a species naming a generic Promise subclass resolves to the OPEN
