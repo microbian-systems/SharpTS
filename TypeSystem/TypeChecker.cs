@@ -99,6 +99,12 @@ public partial class TypeChecker
     /// </summary>
     private bool _inCallbackComparison;
 
+    /// <summary>
+    /// True when checking a worker_threads worker script — enables the worker-scoped
+    /// globals in <see cref="LookupVariable"/>. Set via <see cref="AsWorkerContext"/>.
+    /// </summary>
+    private bool _isWorkerContext;
+
     /// <summary>Creates a type checker. <paramref name="strictNullChecks"/> defaults to true.</summary>
     public TypeChecker(bool strictNullChecks = true, int maxErrors = 10, bool strictFunctionTypes = false)
     {
@@ -493,6 +499,19 @@ public partial class TypeChecker
     public TypeChecker WithFilePath(string? filePath)
     {
         _filePath = filePath;
+        return this;
+    }
+
+    /// <summary>
+    /// Marks this checker as running a worker_threads worker script, so the
+    /// worker-scoped globals (<c>parentPort</c>, <c>postMessage</c>, <c>workerData</c>,
+    /// <c>threadId</c>, <c>isMainThread</c>) resolve as <c>any</c> instead of TS2304.
+    /// These are bound at runtime by <see cref="SharpTS.Runtime.Types.SharpTSWorker"/>'s
+    /// SetupWorkerGlobals and are not visible on the main thread, mirroring Node.
+    /// </summary>
+    public TypeChecker AsWorkerContext()
+    {
+        _isWorkerContext = true;
         return this;
     }
 
