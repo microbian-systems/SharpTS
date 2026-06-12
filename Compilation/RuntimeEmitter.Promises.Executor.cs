@@ -157,15 +157,26 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits WrapDerivedPromiseResult(Task&lt;object?&gt; result, object receiver) -> object:
-    /// when the receiver is a $Promise SUBCLASS instance (#242), constructs a
-    /// receiver-typed promise around the result task by invoking the
-    /// subclass's single-object (executor) constructor reflectively —
-    /// PromiseFromExecutor adopts a raw task, so the new instance wraps
-    /// `result`. Plain $Promise / Task receivers (and subclasses without a
-    /// matching constructor) return the task unchanged. This is the
-    /// species-lite step giving subclass-typed then/catch/finally results;
-    /// full SpeciesConstructor semantics remain tracked by #221.
+    /// the then/catch/finally result construction through
+    /// SpeciesConstructor(receiver, %Promise%) (ECMA-262 §27.2.5.4, §7.3.22).
+    /// When the receiver is a $Promise SUBCLASS instance (#242), reads
+    /// <c>receiver.constructor[Symbol.species]</c> — i.e. the subclass's static
+    /// <c>@@species</c> getter, defaulting to the subclass itself when not
+    /// overridden — and constructs the result through it: <c>%Promise%</c> (or a
+    /// <c>@@species</c> yielding <c>Promise</c>/<c>undefined</c>/<c>null</c>)
+    /// returns the raw task, any other guest Promise class is built by invoking
+    /// its single-object (executor) constructor reflectively (PromiseFromExecutor
+    /// adopts a raw task, so the new instance wraps <c>result</c>).
     /// </summary>
+    /// <remarks>
+    /// Limitation: a <em>generic</em> Promise subclass with a <c>@@species</c>
+    /// override does not resolve the override — its static accessor is registered
+    /// under the open generic type definition while the receiver's runtime type
+    /// is closed, so the registry lookup misses and the result falls back to the
+    /// receiver's own class (the pre-existing #266 generic-class gap, tracked by
+    /// #351). A species that yields a non-Promise constructor (general
+    /// NewPromiseCapability) falls back to <c>%Promise%</c> — tracked by #349.
+    /// </remarks>
     private void EmitWrapDerivedPromiseResultMethod(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
         var method = runtimeType.DefineMethod(
@@ -178,31 +189,69 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var returnResultLabel = il.DefineLabel();
-        var typeLocal = il.DeclareLocal(_types.Type);
+        var haveSpeciesLabel = il.DefineLabel();
+        var typeLocal = il.DeclareLocal(_types.Type);          // receiver's runtime type (= C)
+        var speciesTypeLocal = il.DeclareLocal(_types.Type);   // resolved SpeciesConstructor
+        var getterLocal = il.DeclareLocal(_types.Object);
         var ctorLocal = il.DeclareLocal(typeof(ConstructorInfo));
+        var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
 
         // if (receiver is not $Promise) return result;
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
         il.Emit(OpCodes.Brfalse, returnResultLabel);
 
-        // if (receiver.GetType() == typeof($Promise)) return result;
+        // var recvType = receiver.GetType();
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
         il.Emit(OpCodes.Stloc, typeLocal);
+        // if (recvType == typeof($Promise)) return result;
         il.Emit(OpCodes.Ldloc, typeLocal);
         il.Emit(OpCodes.Ldtoken, runtime.TSPromiseType);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Call, getTypeFromHandle);
         il.Emit(OpCodes.Beq, returnResultLabel);
 
-        // var ctor = receiverType.GetConstructor(new[] { typeof(object) });
+        // SpeciesConstructor(receiver, %Promise%): C = recvType; species default = C.
         il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Stloc, speciesTypeLocal); // speciesType = recvType (default)
+        // var getter = FindSymbolGetter(recvType, Symbol.species);  // static-slot lookup
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolSpecies);
+        il.Emit(OpCodes.Call, runtime.FindSymbolGetter);
+        il.Emit(OpCodes.Stloc, getterLocal);
+        // if (getter == null) use default species (= recvType).
+        il.Emit(OpCodes.Ldloc, getterLocal);
+        il.Emit(OpCodes.Brfalse, haveSpeciesLabel);
+
+        // var speciesVal = ((MethodBase)getter).Invoke(recvType, Array.Empty<object>());
+        il.Emit(OpCodes.Ldloc, getterLocal);
+        il.Emit(OpCodes.Castclass, _types.MethodBase);
+        il.Emit(OpCodes.Ldloc, typeLocal);  // receiver arg (ignored for a static getter)
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+        // speciesType = speciesVal as Type;
+        il.Emit(OpCodes.Isinst, _types.Type);
+        il.Emit(OpCodes.Stloc, speciesTypeLocal);
+        // if (speciesType == null) return result;  // undefined/null/non-Type species → %Promise%
+        il.Emit(OpCodes.Ldloc, speciesTypeLocal);
+        il.Emit(OpCodes.Brfalse, returnResultLabel);
+
+        il.MarkLabel(haveSpeciesLabel);
+        // if (speciesType == typeof(Task<object?>)) return result;  // %Promise%
+        il.Emit(OpCodes.Ldloc, speciesTypeLocal);
+        il.Emit(OpCodes.Ldtoken, _types.TaskOfObject);
+        il.Emit(OpCodes.Call, getTypeFromHandle);
+        il.Emit(OpCodes.Beq, returnResultLabel);
+
+        // var ctor = speciesType.GetConstructor(new[] { typeof(object) });
+        il.Emit(OpCodes.Ldloc, speciesTypeLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Newarr, _types.Type);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldtoken, _types.Object);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Call, getTypeFromHandle);
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Callvirt, _types.Type.GetMethod("GetConstructor", [typeof(Type[])])!);
         il.Emit(OpCodes.Stloc, ctorLocal);

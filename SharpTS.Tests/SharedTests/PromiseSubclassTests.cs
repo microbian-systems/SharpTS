@@ -290,4 +290,194 @@ public class PromiseSubclassTests
         Assert.Equal("true\nfalse\ntrue\n", output);
     }
 
+    #region SpeciesConstructor (#221) — then/catch/finally consult @@species
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_ThenRedirectsToPlainPromise(ExecutionMode mode)
+    {
+        // ECMA-262 §27.2.5.4 / §7.3.22: then builds its result through
+        // SpeciesConstructor(promise, %Promise%) = promise.constructor[@@species].
+        // A subclass whose @@species returns Promise gets a PLAIN promise from
+        // then — not an instance of the subclass.
+        var source = """
+            class MyP extends Promise<number> {
+                static get [Symbol.species]() { return Promise; }
+            }
+            async function main() {
+                const q = MyP.resolve(1).then(v => v + 1);
+                console.log(q instanceof MyP);
+                console.log(q instanceof Promise);
+                console.log(await q);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\ntrue\n2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_DefaultIsReceiverClass(ExecutionMode mode)
+    {
+        // No @@species override: the inherited Promise[@@species] returns the
+        // constructor itself, so then stays subclass-typed.
+        var source = """
+            class MyP extends Promise<number> {}
+            async function main() {
+                const q = MyP.resolve(1).then(v => v + 1);
+                console.log(q instanceof MyP);
+                console.log(await q);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_ThenRedirectsToOtherSubclass(ExecutionMode mode)
+    {
+        // @@species may name a different Promise subclass; then constructs
+        // through it.
+        var source = """
+            class Other extends Promise<number> {}
+            class MyP extends Promise<number> {
+                static get [Symbol.species]() { return Other; }
+            }
+            async function main() {
+                const q = MyP.resolve(1).then(v => v);
+                console.log(q instanceof Other);
+                console.log(q instanceof MyP);
+                console.log(await q);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\n1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_UndefinedFallsBackToPromise(ExecutionMode mode)
+    {
+        // SpeciesConstructor: an @@species of undefined/null defaults to
+        // %Promise% (ECMA-262 §7.3.22 step 3-4).
+        var source = """
+            class MyP extends Promise<number> {
+                static get [Symbol.species]() { return undefined as any; }
+            }
+            async function main() {
+                const q = MyP.resolve(1).then(v => v);
+                console.log(q instanceof MyP);
+                console.log(q instanceof Promise);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_CatchAndFinallyFollowSpecies(ExecutionMode mode)
+    {
+        // catch (= then(undefined, onRejected)) and finally also route their
+        // result through SpeciesConstructor.
+        var source = """
+            class MyP extends Promise<number> {
+                static get [Symbol.species]() { return Promise; }
+            }
+            async function main() {
+                const c = MyP.reject("x").catch(e => 0);
+                console.log(c instanceof MyP);
+                const f = MyP.resolve(1).finally(() => {});
+                console.log(f instanceof MyP);
+                console.log(await f);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\nfalse\n1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_CombinatorsUseReceiverConstructorDirectly(ExecutionMode mode)
+    {
+        // Static methods (resolve/all/race) build through the receiver
+        // constructor C directly (e.g. §27.2.4.1 NewPromiseCapability(C)), NOT
+        // C[@@species] — so even with @@species → Promise they stay subclass-typed.
+        var source = """
+            class MyP extends Promise<number> {
+                static get [Symbol.species]() { return Promise; }
+            }
+            async function main() {
+                console.log(MyP.resolve(1) instanceof MyP);
+                console.log(MyP.all([1, 2]) instanceof MyP);
+                console.log(MyP.race([1, 2]) instanceof MyP);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Species_GenericSubclassOverride_Interpreted(ExecutionMode mode)
+    {
+        // A GENERIC Promise subclass with a @@species override resolves
+        // correctly in the interpreter. Compiled mode currently falls back to
+        // the receiver class (its static accessor is registered under the open
+        // generic type while the receiver's runtime type is closed) — the
+        // pre-existing #266 generic-class gap, tracked by #351.
+        var source = """
+            class MyP<T> extends Promise<T> {
+                static get [Symbol.species]() { return Promise; }
+            }
+            async function main() {
+                const q = MyP.resolve(1).then(v => v);
+                console.log(q instanceof MyP);
+                console.log(q instanceof Promise);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Species_ExpandoOverride_Interpreted(ExecutionMode mode)
+    {
+        // A dynamically-assigned static @@species ((C as any)[Symbol.species] =
+        // Promise, #262) is consulted by then in the interpreter. Compiled mode
+        // only reads the declared-accessor registry, so the expando is not yet
+        // consulted there — tracked by #349.
+        var source = """
+            class MyP extends Promise<number> {}
+            (MyP as any)[Symbol.species] = Promise;
+            async function main() {
+                const q = MyP.resolve(1).then(v => v);
+                console.log(q instanceof MyP);
+                console.log(q instanceof Promise);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\ntrue\n", output);
+    }
+
+    #endregion
+
 }

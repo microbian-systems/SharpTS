@@ -16,13 +16,15 @@ public static class PromiseBuiltIns
     /// </summary>
     /// <remarks>
     /// For Promise subclass instances (#242), then/catch/finally construct
-    /// their result promise via the receiver's guest class ("species-lite" —
-    /// the receiver's own class stands in for the spec's
-    /// SpeciesConstructor(promise.constructor) lookup, which #221 tracks).
+    /// their result promise through SpeciesConstructor(promise, %Promise%)
+    /// (ECMA-262 §27.2.5.4 step 3, §7.3.22) — i.e. the value of
+    /// <c>promise.constructor[Symbol.species]</c>, defaulting to the receiver's
+    /// own class when not overridden and to <c>%Promise%</c> when the override
+    /// yields <c>undefined</c>/<c>null</c> or <c>Promise</c> itself (#221).
     /// </remarks>
     public static object? GetMember(SharpTSPromise receiver, string name)
     {
-        var factory = DerivedPromiseFactory(receiver);
+        var factory = SpeciesPromiseFactory(receiver);
         return name switch
         {
             "then" => new BuiltInAsyncMethod("then", 1, 2, (interp, recv, args) =>
@@ -35,10 +37,9 @@ public static class PromiseBuiltIns
                 FinallyImpl((SharpTSPromise)recv!, args, interp), factory).Bind(receiver),
 
             // ECMA-262 §27.2.5.1: Promise.prototype.constructor is %Promise%.
-            // First SpeciesConstructor increment for #221 — then/catch/finally
-            // result construction still always uses %Promise%; species dispatch
-            // stays unobservable until guest classes can subclass Promise (#233)
-            // and Symbol is a first-class value (#234).
+            // (Subclass instances report their own class — see
+            // Interpreter.Properties.cs. then/catch/finally now consult
+            // SpeciesConstructor via SpeciesPromiseFactory, #221.)
             "constructor" => Interpreter.PromiseGlobalValue,
 
             _ => null
@@ -88,9 +89,15 @@ public static class PromiseBuiltIns
     }
 
     /// <summary>
-    /// Returns the derived-promise factory for a Promise subclass receiver or
-    /// subclass constructor, or null for plain promises (which keeps the
-    /// default <see cref="SharpTSPromise"/> wrapping).
+    /// Returns the derived-promise factory for a Promise subclass static-side
+    /// constructor, or null for the base Promise (which keeps the default
+    /// <see cref="SharpTSPromise"/> wrapping). Used by the static methods
+    /// (<c>resolve</c>/<c>reject</c>/<c>all</c>/<c>race</c>/<c>allSettled</c>/
+    /// <c>any</c>/<c>withResolvers</c>), which per ECMA-262 build their result
+    /// through the receiver constructor <c>C</c> <em>directly</em> (e.g.
+    /// §27.2.4.1 <c>Promise.all</c> step 2 <c>NewPromiseCapability(C)</c>) — no
+    /// <c>@@species</c> indirection (that applies only to the prototype methods;
+    /// see <see cref="SpeciesPromiseFactory"/>).
     /// </summary>
     private static Func<Interpreter, Task<object?>, SharpTSPromise>? DerivedPromiseFactory(object? receiverOrClass)
     {
@@ -105,6 +112,73 @@ public static class PromiseBuiltIns
         if (klass == null || ReferenceEquals(klass, SharpTSPromiseClass.PromiseBase))
             return null;
         return (interp, task) => klass.ConstructDerived(interp, task);
+    }
+
+    /// <summary>
+    /// Returns the result-promise factory for the prototype methods
+    /// (<c>then</c>/<c>catch</c>/<c>finally</c>), which per ECMA-262 §27.2.5.4
+    /// construct their result through <c>SpeciesConstructor(promise, %Promise%)</c>.
+    /// Plain promises (always <c>%Promise%</c>) keep the default wrapping
+    /// (null factory). For a subclass receiver the species lookup is performed
+    /// lazily, when the factory runs (i.e. when the method is invoked), so a
+    /// throwing <c>@@species</c> getter surfaces synchronously from the call and
+    /// the default — inherited <c>Promise[@@species]</c> returns the constructor
+    /// itself — yields the receiver's own class.
+    /// </summary>
+    private static Func<Interpreter, Task<object?>, SharpTSPromise>? SpeciesPromiseFactory(SharpTSPromise receiver)
+    {
+        if (receiver is not SharpTSPromiseSubclassInstance sub)
+            return null;
+        var klass = sub.Klass;
+        return (interp, task) =>
+        {
+            var species = ResolveSpeciesConstructor(klass, interp);
+            return species == null
+                ? new SharpTSPromise(task)              // %Promise%
+                : species.ConstructDerived(interp, task);
+        };
+    }
+
+    /// <summary>
+    /// Computes SpeciesConstructor(promise, %Promise%) (ECMA-262 §7.3.22) for a
+    /// Promise subclass receiver, returning the guest Promise class to construct
+    /// the result through, or <c>null</c> to mean <c>%Promise%</c> (the plain
+    /// built-in). Reads <c>C[@@species]</c> where <c>C</c> is the receiver's
+    /// class: a declared <c>static get [Symbol.species]()</c> or an expando
+    /// <c>(C as any)[Symbol.species]</c> (#262) override wins; absent either,
+    /// the inherited <c>Promise[@@species]</c> (which returns <c>this</c>) makes
+    /// the species the receiver's own class. An override that yields
+    /// <c>undefined</c>/<c>null</c> or <c>Promise</c> itself resolves to
+    /// <c>%Promise%</c>.
+    /// </summary>
+    /// <remarks>
+    /// A species override that returns a non-Promise constructor (the general
+    /// NewPromiseCapability path) is not yet supported and falls back to
+    /// <c>%Promise%</c> — tracked by #349. A poisoned <c>constructor</c> getter
+    /// (own accessor on the instance, <c>then/ctor-poisoned.js</c>) is likewise
+    /// out of scope — tracked by #350.
+    /// </remarks>
+    private static SharpTSPromiseClass? ResolveSpeciesConstructor(SharpTSPromiseClass klass, Interpreter interp)
+    {
+        object? species;
+        if (klass.FindStaticSymbolGetter(SharpTSSymbol.Species) is { } getter)
+            species = getter.BindStatic(klass).Call(interp, []);
+        else if (klass.TryGetStaticBySymbol(SharpTSSymbol.Species, out var expando))
+            species = expando;
+        else
+            // No own @@species: inherited Promise[@@species] returns `this`.
+            return klass;
+
+        return species switch
+        {
+            null or SharpTSUndefined => null,                                  // → %Promise%
+            SharpTSBuiltInConstructor { Name: BuiltInNames.Promise } => null,  // `return Promise`
+            SharpTSPromiseClass sc when ReferenceEquals(sc, SharpTSPromiseClass.PromiseBase) => null,
+            SharpTSPromiseClass sc => sc,
+            // Non-Promise species constructor: general NewPromiseCapability not
+            // yet supported (#349) — fall back to %Promise%.
+            _ => null
+        };
     }
 
     #region Instance Methods

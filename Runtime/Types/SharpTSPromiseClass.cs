@@ -58,11 +58,12 @@ public sealed class SharpTSPromiseSubclassInstance : SharpTSPromise
 /// methods/getters/fields, instanceof both ways, static-side inheritance of
 /// the Promise built-ins (<c>MyPromise.resolve</c> etc. construct
 /// subclass-typed results via <see cref="ConstructDerived"/>), and
-/// subclass-typed results from <c>then</c>/<c>catch</c>/<c>finally</c>.
-/// Derived-promise creation uses the receiver's own class directly
-/// ("species-lite") — the full SpeciesConstructor/NewPromiseCapability spec
-/// surface (constructor/@@species lookups, poisoned-getter synchronous
-/// throws) remains tracked by #221.
+/// SpeciesConstructor-aware results from <c>then</c>/<c>catch</c>/<c>finally</c>
+/// (#221 — see <see cref="Runtime.BuiltIns.PromiseBuiltIns"/>
+/// <c>ResolveSpeciesConstructor</c>; the static methods build through the
+/// receiver constructor <c>C</c> directly per spec). Remaining spec surface:
+/// a non-Promise species constructor (general NewPromiseCapability, #349) and
+/// poisoned <c>constructor</c>/@@species getters (#350).
 /// </remarks>
 public class SharpTSPromiseClass : SharpTSClass
 {
