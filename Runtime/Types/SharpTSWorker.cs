@@ -394,11 +394,24 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         _cts.Cancel();
         _parentToWorkerQueue.CompleteAdding();
 
+        // The thread join is real, always-completing work bounded at 5s. Ref the
+        // parent event loop for its duration so the interpreter's quiescence
+        // heuristic does not abandon a program whose only remaining work is
+        // `await worker.terminate()` when the worker takes >250ms to wind down
+        // (the #319/#320 native-I/O liveness class; #324). Unref once the join
+        // settles. The Ref is opt-in on having a parent interpreter — the
+        // compiled path (no _parentInterpreter) is unaffected.
+        var interp = _parentInterpreter;
+        interp?.Ref();
         var task = Task.Run<object?>(() =>
         {
             _thread.Join(5000); // Wait up to 5 seconds
             return (double)0;
         });
+        if (interp != null)
+        {
+            task.ContinueWith(_ => interp.Unref(), TaskScheduler.Default);
+        }
         return new SharpTSPromise(task);
     }
 

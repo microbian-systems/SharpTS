@@ -164,12 +164,27 @@ internal static class WebStreamsHelpers
 
         async Task<object?> PumpAsync()
         {
+            // Scope a Ref to the abort/cancel/reject teardown so the source
+            // cancel() callback cannot be dropped by event-loop quiescence —
+            // same liveness fix as PipeTo (#325/#320 doctrine). The steady-state
+            // pipe stays un-Ref'd so an infinite source can never-settle.
+            bool teardownRefed = false;
+            void RefTeardown()
+            {
+                if (!teardownRefed)
+                {
+                    interp?.Ref();
+                    teardownRefed = true;
+                }
+            }
+
             try
             {
                 while (true)
                 {
                     if (signal != null && signal.Aborted)
                     {
+                        RefTeardown();
                         if (!preventAbort) await CallAbort(signal.Reason).ConfigureAwait(false);
                         if (!preventCancel) await source.CancelInternal(signal.Reason).Task.ConfigureAwait(false);
                         throw new SharpTSPromiseRejectedException(signal.Reason);
@@ -191,6 +206,7 @@ internal static class WebStreamsHelpers
             }
             catch (Exception ex)
             {
+                RefTeardown();
                 var reason = ex is SharpTSPromiseRejectedException pre ? pre.Reason : ex;
                 if (!preventAbort)
                 {
@@ -202,6 +218,10 @@ internal static class WebStreamsHelpers
                 }
                 if (source.Reader == reader) source.Reader = null;
                 throw;
+            }
+            finally
+            {
+                if (teardownRefed) interp?.Unref();
             }
         }
 
@@ -237,6 +257,26 @@ internal static class WebStreamsHelpers
 
         async Task<object?> PumpAsync()
         {
+            // The pipe promise itself is deliberately NOT Ref'd — an infinite
+            // source must be allowed to never settle, so a blanket Ref would
+            // hang the process (#319/#320 doctrine). But the abort/cancel/reject
+            // *teardown* sequence is real, bounded work that must fully drain:
+            // once an abort has been observed, the un-Ref'd continuation chain
+            // (abort dest → cancel source → reject) can take >250ms under load,
+            // and the quiescence give-up could let the process exit after
+            // "dest-aborted"/"pipe-rejected" but before the source cancel()
+            // callback flushes (the #325 flake). Scope a Ref to just the
+            // teardown so the loop stays alive until it completes, then Unref.
+            bool teardownRefed = false;
+            void RefTeardown()
+            {
+                if (!teardownRefed)
+                {
+                    interp?.Ref();
+                    teardownRefed = true;
+                }
+            }
+
             try
             {
                 while (true)
@@ -251,6 +291,7 @@ internal static class WebStreamsHelpers
 
                     if (signal != null && signal.Aborted)
                     {
+                        RefTeardown();
                         if (!preventAbort) await dest.AbortInternal(signal.Reason).ConfigureAwait(false);
                         if (!preventCancel) await source.CancelInternal(signal.Reason).Task.ConfigureAwait(false);
                         throw new SharpTSPromiseRejectedException(signal.Reason);
@@ -276,6 +317,10 @@ internal static class WebStreamsHelpers
             }
             catch (Exception ex)
             {
+                // Keep the loop alive across this teardown too (read/write error
+                // path, or the rethrow from the mid-pipe abort above, which has
+                // already Ref'd). Ref before the first teardown await.
+                RefTeardown();
                 var reason = ex is SharpTSPromiseRejectedException pre ? pre.Reason : ex;
                 if (!preventAbort && dest.State == SharpTSWritableStream.WritableState.Writable)
                 {
@@ -288,6 +333,10 @@ internal static class WebStreamsHelpers
                 if (source.Reader == reader) source.Reader = null;
                 if (dest.Writer == writer) dest.Writer = null;
                 throw;
+            }
+            finally
+            {
+                if (teardownRefed) interp?.Unref();
             }
         }
 
