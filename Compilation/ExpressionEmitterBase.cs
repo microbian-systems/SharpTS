@@ -1712,6 +1712,27 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             // Real emitted types since #222 (always emitted).
             "MessageChannel" => Ctx.Runtime!.TSMessageChannelType,
             "MessagePort" => Ctx.Runtime!.TSMessagePortType,
+            // Typed-array / buffer constructors in value position (#331) — the
+            // bare-identifier form (`var x = Int8Array`, `typeof Uint8Array`,
+            // `x instanceof ArrayBuffer`). `new Int8Array(...)` is intercepted
+            // earlier as a New expression; these tokens only serve value uses.
+            // Null (feature off) falls through to ThrowUndefinedVariable, exactly
+            // like the web-streams entries above — and the same bare identifier
+            // that reaches here flags HasAnyTypedArray, so the type is emitted.
+            "ArrayBuffer" => Ctx.Runtime!.ArrayBufferType,
+            "SharedArrayBuffer" => Ctx.Runtime!.SharedArrayBufferType,
+            "DataView" => Ctx.Runtime!.DataViewType,
+            "Int8Array" => Ctx.Runtime!.Int8ArrayType,
+            "Uint8Array" => Ctx.Runtime!.Uint8ArrayType,
+            "Uint8ClampedArray" => Ctx.Runtime!.Uint8ClampedArrayType,
+            "Int16Array" => Ctx.Runtime!.Int16ArrayType,
+            "Uint16Array" => Ctx.Runtime!.Uint16ArrayType,
+            "Int32Array" => Ctx.Runtime!.Int32ArrayType,
+            "Uint32Array" => Ctx.Runtime!.Uint32ArrayType,
+            "Float32Array" => Ctx.Runtime!.Float32ArrayType,
+            "Float64Array" => Ctx.Runtime!.Float64ArrayType,
+            "BigInt64Array" => Ctx.Runtime!.BigInt64ArrayType,
+            "BigUint64Array" => Ctx.Runtime!.BigUint64ArrayType,
             _ => null
         };
         if (t == null) return false;
@@ -1922,6 +1943,12 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             or "WeakMap" or "WeakSet" or "Promise" or "Buffer" or "Function"
             or "Object" or "String" or "Number" or "Boolean"
             or "TextEncoder" or "TextDecoder") return true;
+        // Typed-array / buffer constructors as values (#331) — without this,
+        // `typeof Int8Array` is "undefined" though TryEmitBuiltInClassType
+        // resolves them. The same identifier flags HasAnyTypedArray, so the
+        // backing type is emitted.
+        if (name is "ArrayBuffer" or "SharedArrayBuffer" or "DataView"
+            || Runtime.BuiltIns.BuiltInNames.IsTypedArrayName(name)) return true;
         // CJS magic names visible in CJS bodies: `module` is registered in TopLevelStaticVars
         // so the earlier check catches it; `exports` and `require` are handled by special
         // emitter paths (TryEmitCjsVariable, TryEmitCjsRequireCall) — without this,

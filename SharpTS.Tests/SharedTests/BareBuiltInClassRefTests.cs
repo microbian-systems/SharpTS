@@ -135,4 +135,53 @@ public class BareBuiltInClassRefTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("false\nfalse\nfalse\nfalse\n", output);
     }
+
+    // ── #331: typed-array / buffer constructors as bare values ────────────
+    // `new Int8Array(...)` was intercepted as a New expression, but the
+    // bare-identifier form (`var x = Int8Array`, `typeof Uint8Array`,
+    // `x instanceof ArrayBuffer`) threw `Undefined variable` in compiled mode.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedArrayCtors_BareValue_TypeofAndTag(ExecutionMode mode)
+    {
+        // One representative per element width/signedness/kind plus the three
+        // buffer/view constructors — every value must report typeof "function"
+        // and brand "[object Function]" (the #314 tag rule applied to the
+        // System.Type tokens these resolve to).
+        var source = """
+            var ctors: any[] = [
+                Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array,
+                Int32Array, Uint32Array, Float32Array, Float64Array,
+                BigInt64Array, BigUint64Array,
+                ArrayBuffer, SharedArrayBuffer, DataView,
+            ];
+            for (var i = 0; i < ctors.length; i++) {
+                console.log(typeof ctors[i], Object.prototype.toString.call(ctors[i]));
+            }
+            """;
+        var output = TestHarness.Run(source, mode);
+        var expectedLine = "function [object Function]\n";
+        Assert.Equal(string.Concat(System.Linq.Enumerable.Repeat(expectedLine, 14)), output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void TypedArrayCtors_BareValue_InstanceOf_Compiled(ExecutionMode mode)
+    {
+        // With the constructor resolvable as a value, compiled `instanceof`
+        // routes through the emitted Type token's IsAssignableFrom and matches
+        // instances produced by `new`. (The interpreter does not yet recognise
+        // typed-array instances in `instanceof` at all — even against Object —
+        // tracked separately in #334.)
+        var source = """
+            console.log(new Int8Array(4) instanceof Int8Array);
+            console.log(new Float64Array(2) instanceof Float64Array);
+            console.log(new ArrayBuffer(8) instanceof ArrayBuffer);
+            console.log(new DataView(new ArrayBuffer(8)) instanceof DataView);
+            console.log(({} as any) instanceof Int8Array);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\ntrue\ntrue\nfalse\n", output);
+    }
 }
