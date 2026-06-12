@@ -40,6 +40,15 @@ public partial class TypeChecker
             return new TypeInfo.Any();
         }
 
+        // A non-recursive instantiated generic interface flattens so its numeric index signature
+        // (substituted) is reachable. Recursive aliases (DeepReadonly<Part[]>) are intentionally
+        // NOT force-expanded here — that re-enters the self-referential mapped/conditional chain
+        // and trips the instantiation-depth guard; resolving them lazily is tracked as follow-up.
+        if (objType is TypeInfo.InstantiatedGeneric igObj && !ContainsOpenTypeVariable(igObj)
+            && FlattenInstantiatedInterface(igObj) is { } flatObj
+            && flatObj.NumberIndexType is not (null or TypeInfo.RecursiveTypeAlias))
+            objType = flatObj;
+
         // A deferred conditional is indexed through its constraint — `x[0]` where
         // `x: T extends (infer U)[] ? U[] : never` reads through `unknown[]`
         // (conditionalTypes1 f22/f23). Evaluate first: a concrete check resolves to a branch.
@@ -377,6 +386,23 @@ public partial class TypeChecker
         if (objType is TypeInfo.Any)
         {
             return valueType;
+        }
+
+        // Flatten a non-recursive instantiated generic interface so its (substituted) numeric
+        // index signature — including its read-only flag — drives the checks below. Recursive
+        // aliases are left deferred (see the matching note in CheckGetIndex).
+        if (objType is TypeInfo.InstantiatedGeneric igSet && !ContainsOpenTypeVariable(igSet)
+            && FlattenInstantiatedInterface(igSet) is { } flatSet
+            && flatSet.NumberIndexType is not (null or TypeInfo.RecursiveTypeAlias))
+            objType = flatSet;
+
+        // Writing through a read-only numeric index signature (an interface that extends
+        // ReadonlyArray<…>) is rejected — #337 item 2 (TS2542).
+        if ((IsNumber(indexType) || indexType is TypeInfo.NumberLiteral) &&
+            objType is TypeInfo.Interface { ReadonlyNumberIndex: true })
+        {
+            throw new TypeCheckException(
+                $" Index signature in type '{objType}' only permits reading.", tsCode: "TS2542");
         }
 
         // Handle Union types - verify assignment is valid for all union members

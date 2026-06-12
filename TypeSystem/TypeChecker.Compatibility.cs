@@ -165,6 +165,83 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Resolves a mapped type's key domain (its <c>in</c> constraint) the same way
+    /// <see cref="ExpandMappedType"/> does — evaluating <c>keyof</c> and resolving a key-filter
+    /// indexed access — but without enumerating it into fields. Used to decide whether the
+    /// domain is concrete (enumerable) or deferred.
+    /// </summary>
+    private TypeInfo ResolveMappedKeyDomain(TypeInfo.MappedType mapped)
+    {
+        TypeInfo domain = mapped.Constraint;
+        if (domain is TypeInfo.KeyOf keyOf)
+            domain = EvaluateKeyOf(keyOf.SourceType);
+        if (domain is TypeInfo.IndexedAccess indexed)
+            domain = ResolveIndexedAccess(indexed, new Dictionary<string, TypeInfo>());
+        return domain;
+    }
+
+    /// <summary>
+    /// True when a mapped type's key domain can't be enumerated to concrete keys — it stays a
+    /// deferred conditional (the key-filter idiom) or a generic <c>keyof T</c> / bare type
+    /// parameter. Concrete key sets (string literals, unions of them) are NOT deferred.
+    /// </summary>
+    private static bool IsDeferredKeyDomain(TypeInfo domain) => domain switch
+    {
+        TypeInfo.ConditionalType => true,
+        TypeInfo.KeyOf { SourceType: TypeInfo.TypeParameter } => true,
+        TypeInfo.TypeParameter => true,
+        _ => false
+    };
+
+    /// <summary>
+    /// Structural relation for a target mapped type whose key domain is DEFERRED, where ordinary
+    /// expansion would yield an empty object (so distinct key-filters compare equal and a
+    /// homomorphic projection of <c>T</c> fails against <c>T</c>). Mirrors tsc:
+    /// <list type="bullet">
+    /// <item>source is another mapped type <c>{ [P in K2]: V2 }</c>: relate iff the target's keys
+    /// are a subset of the source's (<c>K1 ⊆ K2</c>, contravariant) and the source value relates
+    /// to the target value (covariant);</item>
+    /// <item>source is the projected object itself for a homomorphic <c>{ [P in K]: X[P] }</c>:
+    /// relate iff <c>K ⊆ keyof X</c> (every filtered key is a real key of the source).</item>
+    /// </list>
+    /// Returns false (deferring to ordinary expansion) for enumerable domains or shapes it does
+    /// not recognise. See #337 item 1 (f7: FunctionProperties / NonFunctionProperties).
+    /// </summary>
+    private bool TryRelateDeferredMappedType(TypeInfo.MappedType target, TypeInfo source, out bool result)
+    {
+        result = false;
+        TypeInfo domain = ResolveMappedKeyDomain(target);
+        if (!IsDeferredKeyDomain(domain)) return false;  // enumerable — ordinary expansion handles it
+
+        if (source is TypeInfo.MappedType sourceMapped)
+        {
+            TypeInfo sourceDomain = ResolveMappedKeyDomain(sourceMapped);
+            // keys(target) ⊆ keys(source)  ⟺  the target domain is assignable to the source domain.
+            bool keysSubset = IsCompatible(sourceDomain, domain);
+            // Align the two mapped parameters, then require source value → target value.
+            var align = new Dictionary<string, TypeInfo>
+            {
+                [sourceMapped.ParameterName] = new TypeInfo.TypeParameter(target.ParameterName)
+            };
+            bool valuesRelate = IsCompatible(target.ValueType, Substitute(sourceMapped.ValueType, align));
+            result = keysSubset && valuesRelate;
+            return true;
+        }
+
+        // Homomorphic projection `{ [P in K]: X[P] }` assigned from a source equal to X: the
+        // source already has every property the projection names as long as K ⊆ keyof X.
+        if (target.ValueType is TypeInfo.IndexedAccess { ObjectType: var projected, IndexType: TypeInfo.TypeParameter indexParam } &&
+            indexParam.Name == target.ParameterName &&
+            TypeInfoEqualityComparer.Instance.Equals(projected, source))
+        {
+            result = IsCompatible(new TypeInfo.KeyOf(source), domain);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Expands a recursive type alias placeholder to its full type.
     /// Used for lazy expansion during compatibility checks.
     /// Uses _expandedTypeAliasCache to ensure the same TypeInfo object is reused,
@@ -291,6 +368,33 @@ public partial class TypeChecker
         if (actual is TypeInfo.RecursiveTypeAlias actualRTA)
         {
             return IsCompatible(expected, ExpandRecursiveTypeAlias(actualRTA));
+        }
+
+        // A key-filter indexed access over a homomorphic mapped type with a generic key domain
+        // (`{ [K in keyof T]: F(K) }[keyof T]`, e.g. FunctionPropertyNames<T>) resolves to a
+        // deferred conditional. Surface that BEFORE the keyof/type-parameter rules below, which
+        // would otherwise reject the raw IndexedAccess outright and never reach the deferred-
+        // conditional relation logic (#337 item 1). Scoped to the conditional result so ordinary
+        // `T[K]` accesses keep their existing (later) handling.
+        if (expected is TypeInfo.IndexedAccess expectedIaPre &&
+            ResolveIndexedAccess(expectedIaPre, new Dictionary<string, TypeInfo>()) is TypeInfo.ConditionalType expectedIaCond)
+        {
+            expected = expectedIaCond;
+        }
+        if (actual is TypeInfo.IndexedAccess actualIaPre &&
+            ResolveIndexedAccess(actualIaPre, new Dictionary<string, TypeInfo>()) is TypeInfo.ConditionalType actualIaCond)
+        {
+            actual = actualIaCond;
+        }
+
+        // A target mapped type over a deferred key domain (Pick<T, FunctionPropertyNames<T>>, …)
+        // is related structurally, BEFORE the type-parameter rules below — those would otherwise
+        // reject a homomorphic projection `Pick<T, K> ← T` (source is a bare type parameter) and
+        // never reach the mapped-type logic (#337 item 1, f7).
+        if (expected is TypeInfo.MappedType earlyMapped &&
+            TryRelateDeferredMappedType(earlyMapped, actual, out var earlyMappedRelated))
+        {
+            return earlyMappedRelated;
         }
 
         // Conditional types resolve or defer before anything else decides (null rules, the
@@ -566,7 +670,8 @@ public partial class TypeChecker
             return IsCompatible(expected, expandedActual);
         }
 
-        // Mapped type compatibility - expand lazily then compare
+        // Mapped type compatibility - expand lazily then compare. (Deferred-key-domain mapped
+        // targets are related structurally earlier, before the type-parameter rules.)
         if (expected is TypeInfo.MappedType expectedMapped)
         {
             TypeInfo expandedExpected = ExpandMappedType(expectedMapped);

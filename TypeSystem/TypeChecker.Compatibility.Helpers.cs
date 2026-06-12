@@ -87,6 +87,34 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// The concrete base type an assigned value contributes when narrowing a reference whose
+    /// declared type is a bare type parameter — tsc's narrow-by-assignment over the constraint
+    /// domain. Only a deferred distributive conditional (e.g. <c>NonNullable&lt;T&gt;</c>,
+    /// <c>Extract&lt;T, …&gt;</c>) whose check parameter is constrained yields a base type: the
+    /// type it evaluates to when that parameter is instantiated with its constraint (so
+    /// <c>NonNullable&lt;T&gt;</c> with <c>T extends string | undefined</c> → <c>string</c>).
+    ///
+    /// A bare type parameter assigned value (e.g. <c>u = t</c> with <c>t: T</c>) is deliberately
+    /// NOT reduced to its constraint: collapsing it to the constraint would make a later
+    /// in-chain assignment (<c>v = u</c> with <c>V</c> the constraint) spuriously fail. Returns
+    /// null in every case where no concrete base can be derived — the caller then leaves the
+    /// reference at its declared type rather than installing a vacuous (or harmful) narrowing.
+    /// </summary>
+    private TypeInfo? AssignmentNarrowedBaseType(TypeInfo value)
+    {
+        if (value is TypeInfo.ConditionalType cond &&
+            cond.IsDistributive && cond.CheckType is TypeInfo.TypeParameter checkTp &&
+            ApparentTypeOf(checkTp) is { } checkConstraint)
+        {
+            var instantiated = EvaluateConditionalType(
+                cond, new Dictionary<string, TypeInfo> { [checkTp.Name] = checkConstraint });
+            if (instantiated is not (TypeInfo.ConditionalType or TypeInfo.Never or TypeInfo.Any or TypeInfo.Unknown))
+                return instantiated;
+        }
+        return null;
+    }
+
+    /// <summary>
     /// True when <paramref name="cls"/> (or any class in its hierarchy) carries a nominal brand,
     /// i.e. declares a private or protected member. TypeScript compares classes structurally for
     /// assignment except when the target type is so branded, in which case it requires the source

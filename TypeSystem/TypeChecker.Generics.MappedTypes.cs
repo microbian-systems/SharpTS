@@ -240,6 +240,8 @@ public partial class TypeChecker
         // Build the resulting object type
         Dictionary<string, TypeInfo> fields = [];
         HashSet<string> optionalFields = [];
+        HashSet<string> readonlyFields = [];
+        bool addsReadonly = mapped.Modifiers.HasFlag(MappedTypeModifiers.AddReadonly);
 
         foreach (var key in keys)
         {
@@ -261,15 +263,27 @@ public partial class TypeChecker
                 finalKeyName = remappedKey;
             }
 
-            // Substitute K with the current key in the value type
+            // Substitute K with the current key in the value type. The key-filter idiom
+            // `{ [K in keyof T]: T[K] extends Function ? K : never }` carries a conditional in the
+            // value position whose check is itself a `T[K]` indexed access. Substituting with eager
+            // conditional evaluation collapses it on an UNRESOLVED check (the access still reads
+            // `Part[K]`), so the extends-test against `Function` fails and every key survives. So
+            // substitute WITHOUT conditional eval, resolve the indexed accesses (including the one
+            // in the check), then evaluate — the `never` arms now drop the filtered keys (#337 item 2).
             var localSubs = new Dictionary<string, TypeInfo>(outerSubstitutions)
             {
                 [mapped.ParameterName] = key
             };
-            TypeInfo valueType = Substitute(mapped.ValueType, localSubs);
+            TypeInfo valueType = SubstituteWithoutConditionalEval(mapped.ValueType, localSubs);
 
             // Handle indexed access in value type (e.g., T[K])
             valueType = ResolveIndexedAccessTypes(valueType, localSubs);
+
+            if (valueType is TypeInfo.ConditionalType valueCond && !ContainsOpenTypeVariable(valueCond))
+            {
+                var resolvedCheck = ResolveIndexedAccessTypes(valueCond.CheckType, localSubs);
+                valueType = EvaluateConditionalType(valueCond with { CheckType = resolvedCheck });
+            }
 
             fields[finalKeyName] = valueType;
 
@@ -279,11 +293,16 @@ public partial class TypeChecker
                 optionalFields.Add(finalKeyName);
             }
             // For -?, we don't add to optionalFields (making it required)
+            if (addsReadonly)
+            {
+                readonlyFields.Add(finalKeyName);
+            }
         }
 
-        // Return as Interface to preserve optional info
-        return optionalFields.Count > 0
-            ? new TypeInfo.Interface("", fields.ToFrozenDictionary(), optionalFields.ToFrozenSet())
+        // Return as Interface to preserve optional / readonly info (a Record can carry neither).
+        return optionalFields.Count > 0 || readonlyFields.Count > 0
+            ? new TypeInfo.Interface("", fields.ToFrozenDictionary(), optionalFields.ToFrozenSet(),
+                ReadonlyMembers: readonlyFields.Count > 0 ? readonlyFields.ToFrozenSet() : null)
             : new TypeInfo.Record(fields.ToFrozenDictionary());
     }
 
@@ -381,6 +400,27 @@ public partial class TypeChecker
         {
             indexType = EvaluateKeyOf(Substitute(kof.SourceType, subs));
         }
+
+        // Indexing a homomorphic mapped type by a generic key domain that can't be enumerated
+        // to concrete keys — `{ [K in keyof T]: F(K) }[keyof T]` with T still a bare type
+        // parameter. EvaluateKeyOf leaves the index as `keyof T`, so expanding the mapped type
+        // would produce an empty object (no concrete fields) and the access would collapse to
+        // `any`, making the key-filter aliases FunctionPropertyNames<T> / NonFunctionPropertyNames<T>
+        // compare vacuously. tsc instead substitutes the mapped parameter K with the index
+        // domain into the value template, so the access resolves to the deferred
+        // `T[keyof T] extends Function ? keyof T : never`, which the deferred-conditional
+        // relation rules then compare structurally (#337 item 1). The remaining concrete cases
+        // fall through to enumeration/expansion below.
+        if (objectType is TypeInfo.MappedType genMapped &&
+            indexType is TypeInfo.KeyOf or TypeInfo.TypeParameter)
+        {
+            var valueSubs = new Dictionary<string, TypeInfo>(subs)
+            {
+                [genMapped.ParameterName] = indexType
+            };
+            return ResolveIndexedAccessTypes(Substitute(genMapped.ValueType, valueSubs), valueSubs);
+        }
+
         if (objectType is TypeInfo.MappedType objMapped && !ContainsOpenTypeVariable(objMapped))
         {
             objectType = ExpandMappedType(objMapped, subs);

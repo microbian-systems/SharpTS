@@ -1359,6 +1359,22 @@ public partial class TypeChecker
         // This ensures subsequent uses of the variable see the correct (un-narrowed) type.
         _environment.Define(assign.Name.Lexeme, declaredType);
 
+        // tsc narrows a reference whose declared type is a bare type parameter by assignment:
+        // the constraint is the narrowing domain, so after `x = y` the reference reads as the
+        // assigned value's base (apparent) type. This is what makes
+        //   function f2<T extends string | undefined>(x: T, y: NonNullable<T>) {
+        //       x = y; let s: string = x;  // ok — x reads as `string` here
+        //   }
+        // type-check, while leaving an *unconstrained* `T` (no derivable base type) at `T` so its
+        // assignments still error. Only install when a concrete narrower type can be derived.
+        if (declaredType is TypeInfo.TypeParameter &&
+            AssignmentNarrowedBaseType(valueType) is { } narrowed &&
+            narrowed is not (TypeInfo.Any or TypeInfo.Unknown) &&
+            !TypeInfoEqualityComparer.Instance.Equals(narrowed, declaredType))
+        {
+            AddNarrowing(assignedPath, narrowed);
+        }
+
         return valueType;
     }
 

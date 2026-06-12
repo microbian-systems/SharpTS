@@ -450,7 +450,8 @@ public abstract record TypeInfo
         List<ConstructorSignature>? ConstructorSignatures = null,
         FrozenSet<string>? ReadonlyMembers = null,
         FrozenSet<string>? MethodMembers = null,
-        FrozenDictionary<string, MemberAccessBrand>? MemberBrands = null
+        FrozenDictionary<string, MemberAccessBrand>? MemberBrands = null,
+        bool ReadonlyNumberIndex = false
     ) : TypeInfo
     {
         /// <summary>True when the member (own or inherited) was declared with method syntax —
@@ -1355,7 +1356,8 @@ public abstract record TypeInfo
         List<CallSignature>? CallSignatures = null,
         List<ConstructorSignature>? ConstructorSignatures = null,
         FrozenSet<string>? ReadonlyMembers = null,
-        FrozenSet<string>? MethodMembers = null
+        FrozenSet<string>? MethodMembers = null,
+        bool ReadonlyNumberIndex = false
     ) : TypeInfo
     {
         public bool HasIndexSignature => StringIndexType != null || NumberIndexType != null || SymbolIndexType != null;
