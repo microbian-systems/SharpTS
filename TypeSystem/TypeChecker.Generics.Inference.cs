@@ -19,9 +19,29 @@ public partial class TypeChecker
         Dictionary<string, TypeInfo> inferred = [];
 
         // Try to infer each type parameter from the corresponding argument
-        for (int i = 0; i < gf.ParamTypes.Count && i < argTypes.Count; i++)
+        int regularParams = gf.HasRestParam ? gf.ParamTypes.Count - 1 : gf.ParamTypes.Count;
+        for (int i = 0; i < regularParams && i < argTypes.Count; i++)
         {
             InferFromType(gf.ParamTypes[i], argTypes[i], inferred);
+        }
+
+        // Rest parameter: `...args: T[]` infers the element from every remaining argument;
+        // `...args: A` where A is itself a type parameter (A extends any[]) infers A as the
+        // TUPLE of the remaining argument types — pairing A with a single argument type would
+        // produce a non-array inference that trips A's constraint (inferTypes1 invoker).
+        if (gf.HasRestParam && gf.ParamTypes.Count > 0)
+        {
+            var restDeclared = gf.ParamTypes[^1];
+            var restArgs = argTypes.Skip(regularParams).ToList();
+            if (restDeclared is TypeInfo.Array restArr)
+            {
+                foreach (var restArg in restArgs)
+                    InferFromType(restArr.ElementType, restArg, inferred);
+            }
+            else if (restDeclared is TypeInfo.TypeParameter && restArgs.Count > 0)
+            {
+                InferFromType(restDeclared, TypeInfo.Tuple.FromTypes(restArgs, restArgs.Count), inferred);
+            }
         }
 
         // Build result list in order of type parameters

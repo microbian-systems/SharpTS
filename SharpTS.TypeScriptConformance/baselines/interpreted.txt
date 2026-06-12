@@ -1,8 +1,8 @@
 # TS conformance baseline — do not hand-edit. Regenerate with SHARPTS_TSCONFORMANCE_UPDATE_BASELINE=1.
 tests/cases/conformance/types/conditional/conditionalTypes1.ts Fail
-tests/cases/conformance/types/conditional/conditionalTypes2.ts Fail
+tests/cases/conformance/types/conditional/conditionalTypes2.ts Pass
 tests/cases/conformance/types/conditional/conditionalTypesExcessProperties.ts Pass
-tests/cases/conformance/types/conditional/inferTypes1.ts Fail
+tests/cases/conformance/types/conditional/inferTypes1.ts Pass
 tests/cases/conformance/types/conditional/inferTypes2.ts Pass
 tests/cases/conformance/types/conditional/inferTypesInvalidExtendsDeclaration.ts Skipped:lib-drift
 tests/cases/conformance/types/conditional/inferTypesWithExtends1.ts Pass

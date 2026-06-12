@@ -310,6 +310,17 @@ public partial class TypeChecker
                     // Parse the expanded definition
                     result = ToTypeInfo(expanded);
 
+                    // The string pipeline substitutes arguments BEFORE parsing, so a distributive
+                    // alias (`type Check<T> = T extends ...` — naked-param check) instantiated
+                    // with a union parses as a union-checked conditional and would lose its
+                    // distributivity. Recover the flag from the DECLARED definition's check side.
+                    if (result is TypeInfo.ConditionalType parsedCond && !parsedCond.IsDistributive)
+                    {
+                        int declExtendsIdx = FindTopLevelKeyword(definition, " extends ");
+                        if (declExtendsIdx > 0 && typeParamNames.Contains(definition[..declExtendsIdx].Trim()))
+                            result = parsedCond with { IsDistributive = true };
+                    }
+
                     // An instantiation whose arguments are fully concrete can apply its result
                     // now — downstream consumers (property access in particular) operate on
                     // the resolved type, not on a raw ConditionalType/MappedType node (#185).

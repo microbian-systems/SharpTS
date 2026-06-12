@@ -44,13 +44,16 @@ public partial class TypeChecker
     {
         foreach (var stmt in statements)
         {
-            // Handle top-level functions
-            if (stmt is Stmt.Function funcStmt && funcStmt.Body != null)
+            // Handle top-level functions. Body-less declarations (ambient `declare function`,
+            // overload signatures) hoist too — tsc resolves calls that precede the declaration.
+            // For an overload group only the first signature lands here; the visit pass installs
+            // the full OverloadedFunction when it reaches the group.
+            if (stmt is Stmt.Function funcStmt)
             {
                 HoistSingleFunction(funcStmt);
             }
             // Handle exported functions
-            else if (stmt is Stmt.Export export && export.Declaration is Stmt.Function exportedFunc && exportedFunc.Body != null)
+            else if (stmt is Stmt.Export export && export.Declaration is Stmt.Function exportedFunc)
             {
                 HoistSingleFunction(exportedFunc);
             }

@@ -15,6 +15,21 @@ namespace SharpTS.TypeSystem;
 public partial class TypeChecker
 {
     /// <summary>
+    /// True when a type's shape can't be inspected yet — a type variable or a construct whose
+    /// resolution depends on one (a deferred conditional, T[K], keyof T). The conditional-shaped
+    /// utility expanders (Extract, Exclude, NonNullable, ReturnType, ...) must DEFER for these
+    /// instead of eagerly evaluating: `Extract&lt;Extract&lt;T, Foo&gt;, Bar&gt;` collapses to never if the
+    /// inner deferred conditional is fed through the eager path.
+    /// </summary>
+    private static bool IsAbstractTypeReference(TypeInfo type) => type switch
+    {
+        TypeInfo.TypeParameter or TypeInfo.InferredTypeParameter or TypeInfo.ConditionalType
+            or TypeInfo.IndexedAccess or TypeInfo.KeyOf or TypeInfo.MappedType => true,
+        TypeInfo.Intersection i => i.Types.Any(IsAbstractTypeReference),
+        _ => false
+    };
+
+    /// <summary>
     /// Expands Partial&lt;T&gt; to an interface where all properties are optional.
     /// Equivalent to: { [K in keyof T]?: T[K] }
     /// </summary>
@@ -361,8 +376,8 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo ExpandReturnType(TypeInfo functionType)
     {
-        // Handle type parameters - defer evaluation
-        if (functionType is TypeInfo.TypeParameter)
+        // Defer for type variables and constructs that depend on them
+        if (IsAbstractTypeReference(functionType))
         {
             // Return a conditional type for lazy evaluation
             return new TypeInfo.ConditionalType(
@@ -370,7 +385,7 @@ public partial class TypeChecker
                 new TypeInfo.Function([new TypeInfo.Any()], new TypeInfo.Any(), HasRestParam: true),
                 new TypeInfo.InferredTypeParameter("R"),
                 new TypeInfo.Never()
-            );
+            ) { IsDistributive = true };
         }
 
         // Handle unions - distribute over union members
@@ -411,15 +426,15 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo ExpandParameters(TypeInfo functionType)
     {
-        // Handle type parameters - defer evaluation
-        if (functionType is TypeInfo.TypeParameter)
+        // Defer for type variables and constructs that depend on them
+        if (IsAbstractTypeReference(functionType))
         {
             return new TypeInfo.ConditionalType(
                 functionType,
                 new TypeInfo.Function([new TypeInfo.Any()], new TypeInfo.Any(), HasRestParam: true),
                 new TypeInfo.InferredTypeParameter("P"),
                 new TypeInfo.Never()
-            );
+            ) { IsDistributive = true };
         }
 
         // Handle unions - distribute over union members
@@ -457,15 +472,15 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo ExpandConstructorParameters(TypeInfo classType)
     {
-        // Handle type parameters - defer evaluation
-        if (classType is TypeInfo.TypeParameter)
+        // Defer for type variables and constructs that depend on them
+        if (IsAbstractTypeReference(classType))
         {
             return new TypeInfo.ConditionalType(
                 classType,
                 new TypeInfo.Any(), // Represents constructor type
                 new TypeInfo.InferredTypeParameter("P"),
                 new TypeInfo.Never()
-            );
+            ) { IsDistributive = true };
         }
 
         // Handle unions - distribute
@@ -551,15 +566,15 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo ExpandInstanceType(TypeInfo classType)
     {
-        // Handle type parameters - defer evaluation
-        if (classType is TypeInfo.TypeParameter)
+        // Defer for type variables and constructs that depend on them
+        if (IsAbstractTypeReference(classType))
         {
             return new TypeInfo.ConditionalType(
                 classType,
                 new TypeInfo.Any(),
                 new TypeInfo.InferredTypeParameter("R"),
                 new TypeInfo.Never()
-            );
+            ) { IsDistributive = true };
         }
 
         // Handle unions - distribute
@@ -596,15 +611,15 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo ExpandAwaited(TypeInfo type)
     {
-        // Handle type parameters - defer evaluation
-        if (type is TypeInfo.TypeParameter)
+        // Defer for type variables and constructs that depend on them
+        if (IsAbstractTypeReference(type))
         {
             return new TypeInfo.ConditionalType(
                 type,
                 new TypeInfo.Promise(new TypeInfo.Any()),
                 new TypeInfo.InferredTypeParameter("U"),
                 type
-            );
+            ) { IsDistributive = true };
         }
 
         // Handle unions - distribute
@@ -637,15 +652,15 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo ExpandNonNullable(TypeInfo type)
     {
-        // Handle type parameters - defer evaluation
-        if (type is TypeInfo.TypeParameter)
+        // Defer for type variables and constructs that depend on them
+        if (IsAbstractTypeReference(type))
         {
             return new TypeInfo.ConditionalType(
                 type,
                 new TypeInfo.Union([new TypeInfo.Null(), new TypeInfo.Undefined()]),
                 new TypeInfo.Never(),
                 type
-            );
+            ) { IsDistributive = true };
         }
 
         // Handle unions - filter out null and undefined
@@ -678,15 +693,15 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo ExpandExtract(TypeInfo type, TypeInfo constraint)
     {
-        // Handle type parameters - defer evaluation
-        if (type is TypeInfo.TypeParameter)
+        // Defer for type variables and constructs that depend on them
+        if (IsAbstractTypeReference(type))
         {
             return new TypeInfo.ConditionalType(
                 type,
                 constraint,
                 type,
                 new TypeInfo.Never()
-            );
+            ) { IsDistributive = true };
         }
 
         // Handle unions - filter members assignable to constraint
@@ -714,15 +729,15 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo ExpandExclude(TypeInfo type, TypeInfo constraint)
     {
-        // Handle type parameters - defer evaluation
-        if (type is TypeInfo.TypeParameter)
+        // Defer for type variables and constructs that depend on them
+        if (IsAbstractTypeReference(type))
         {
             return new TypeInfo.ConditionalType(
                 type,
                 constraint,
                 new TypeInfo.Never(),
                 type
-            );
+            ) { IsDistributive = true };
         }
 
         // Handle unions - filter out members assignable to constraint

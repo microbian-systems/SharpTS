@@ -1464,8 +1464,23 @@ public abstract record TypeInfo
         TypeInfo FalseType
     ) : TypeInfo
     {
+        /// <summary>
+        /// Whether the conditional distributes over unions. Fixed at the DECLARATION (true iff the
+        /// declared check type is a naked type parameter) and preserved across substitution:
+        /// <c>Foo&lt;T &amp; U&gt;</c> where <c>type Foo&lt;X&gt; = X extends string ? ... </c> stays
+        /// distributive even though the instantiated check type is an intersection, while a
+        /// textually identical inline <c>T &amp; U extends string ? ...</c> is not. tsc treats the
+        /// two as DIFFERENT types (conditionalTypes1 f32), so the flag participates in CacheKey.
+        /// </summary>
+        public bool IsDistributive { get; init; } = CheckType is TypeParameter;
+
         public override string ToString() =>
             $"{CheckType} extends {ExtendsType} ? {TrueType} : {FalseType}";
+
+        // Only mark the key when the flag diverges from what the rendering implies, so
+        // pre-existing cache keys stay stable for the common case.
+        internal override string CacheKey() =>
+            IsDistributive == (CheckType is TypeParameter) ? ToString() : $"{ToString()}@nondist";
     }
 
     /// <summary>

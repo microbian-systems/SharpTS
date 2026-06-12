@@ -319,6 +319,29 @@ public partial class TypeChecker
         TypeInfo.InstantiatedGeneric expectedIG,
         TypeInfo.InstantiatedGeneric actualIG)
     {
+        // Conditional-typed members can't be variance-measured with the concrete marker records:
+        // substituting a marker into `T extends string ? T : number` EVALUATES the conditional
+        // (marker isn't a string → both sides collapse to `number` → everything measures
+        // bivariant). Relate the two instantiations member-wise instead — the deferred
+        // conditionals then compare through the conditional relation rules, which see the real
+        // type arguments (conditionalTypes2 Covariant/Contravariant/Invariant).
+        if (gi.Members.Values.Any(ContainsConditionalType))
+        {
+            Dictionary<string, TypeInfo> expSubs = [], actSubs = [];
+            for (int i = 0; i < gi.TypeParams.Count && i < expectedIG.TypeArguments.Count; i++)
+            {
+                expSubs[gi.TypeParams[i].Name] = expectedIG.TypeArguments[i];
+                actSubs[gi.TypeParams[i].Name] = actualIG.TypeArguments[i];
+            }
+            foreach (var (name, memberType) in gi.Members)
+            {
+                bool isMethod = gi.MethodMembers?.Contains(name) == true;
+                if (!IsMemberCompatible(Substitute(memberType, expSubs), Substitute(memberType, actSubs), isMethod))
+                    return false;
+            }
+            return true;
+        }
+
         var measured = GetMeasuredVariances(gi);
         for (int i = 0; i < expectedIG.TypeArguments.Count; i++)
         {
@@ -335,6 +358,28 @@ public partial class TypeChecker
         }
         return true;
     }
+
+    /// <summary>
+    /// True when a type contains a conditional type anywhere a member comparison could reach —
+    /// gates the member-wise fallback in <see cref="SameGenericInstantiationsStructurallyCompatible"/>.
+    /// </summary>
+    private static bool ContainsConditionalType(TypeInfo type) => type switch
+    {
+        TypeInfo.ConditionalType => true,
+        TypeInfo.Array arr => ContainsConditionalType(arr.ElementType),
+        TypeInfo.Promise p => ContainsConditionalType(p.ValueType),
+        TypeInfo.Function f => f.ParamTypes.Any(ContainsConditionalType) || ContainsConditionalType(f.ReturnType),
+        TypeInfo.Tuple t => t.Elements.Any(e => ContainsConditionalType(e.Type))
+            || (t.RestElementType is { } rest && ContainsConditionalType(rest)),
+        TypeInfo.Union u => u.Types.Any(ContainsConditionalType),
+        TypeInfo.Intersection i => i.Types.Any(ContainsConditionalType),
+        TypeInfo.Record r => r.Fields.Values.Any(ContainsConditionalType),
+        TypeInfo.InstantiatedGeneric ig => ig.TypeArguments.Any(ContainsConditionalType),
+        TypeInfo.KeyOf k => ContainsConditionalType(k.SourceType),
+        TypeInfo.IndexedAccess ia => ContainsConditionalType(ia.ObjectType) || ContainsConditionalType(ia.IndexType),
+        TypeInfo.MappedType m => ContainsConditionalType(m.Constraint) || ContainsConditionalType(m.ValueType),
+        _ => false
+    };
 
     /// <summary>Marker types for variance measurement: Sub is structurally assignable to Super
     /// but not conversely (extra member).</summary>

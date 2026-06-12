@@ -40,6 +40,24 @@ public partial class TypeChecker
             return new TypeInfo.Any();
         }
 
+        // A deferred conditional is indexed through its constraint — `x[0]` where
+        // `x: T extends (infer U)[] ? U[] : never` reads through `unknown[]`
+        // (conditionalTypes1 f22/f23). Evaluate first: a concrete check resolves to a branch.
+        if (objType is TypeInfo.ConditionalType condObj)
+        {
+            var evaluated = EvaluateConditionalType(condObj);
+            if (evaluated is TypeInfo.ConditionalType stillDeferred)
+            {
+                foreach (var constraint in GetConditionalConstraints(stillDeferred))
+                {
+                    if (CheckGetIndexOnType(constraint, indexType, getIndex) is { } viaConstraint)
+                        return viaConstraint;
+                }
+                return new TypeInfo.Any();
+            }
+            return CheckGetIndexOnType(evaluated, indexType, getIndex);
+        }
+
         // Optional bracket access: strip null/undefined from object type
         if (getIndex.Optional && objType is TypeInfo.Union optUnion)
         {
@@ -120,6 +138,16 @@ public partial class TypeChecker
                 return new TypeInfo.Any();
             }
 
+            // A generic key whose constraint is key-like (K extends string | number | symbol)
+            // indexes a generic object the same way a plain string key does — T[K] can only be
+            // judged at instantiation (inferTypes1 invoker: obj[key] with obj: T, key: K).
+            if (indexType is TypeInfo.TypeParameter genericKeyForTp &&
+                ApparentTypeOf(genericKeyForTp) is { } keyLikeApparent &&
+                IsCompatible(KeyLikeUnion, keyLikeApparent))
+            {
+                return new TypeInfo.Any();
+            }
+
             // Unconstrained type parameter can't be indexed with arbitrary types
             throw new TypeCheckException($" Cannot index type parameter '{objTp.Name}' with type '{indexType}'.", tsCode: "TS7053");
         }
@@ -145,6 +173,16 @@ public partial class TypeChecker
         if (indexType is TypeInfo.Any)
         {
             return new TypeInfo.Any();
+        }
+
+        // A generic key (K extends string | number | symbol) reaching an object with an index
+        // signature resolves to the signature's value type — `obj[key]` where
+        // `obj: Record<K, V>` is V (inferTypes1 invoker).
+        if (indexType is TypeInfo.TypeParameter genericKey &&
+            ApparentTypeOf(genericKey) is { } keyApparent && IsCompatible(KeyLikeUnion, keyApparent))
+        {
+            if (objType is TypeInfo.Record { StringIndexType: { } recIdxType }) return recIdxType;
+            if (objType is TypeInfo.Interface { StringIndexType: { } itfIdxType }) return itfIdxType;
         }
 
         // Handle string index on objects/interfaces
