@@ -431,14 +431,13 @@ public class PromiseSubclassTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    public void Species_GenericSubclassOverride_Interpreted(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_GenericSubclassOverride(ExecutionMode mode)
     {
-        // A GENERIC Promise subclass with a @@species override resolves
-        // correctly in the interpreter. Compiled mode currently falls back to
-        // the receiver class (its static accessor is registered under the open
-        // generic type while the receiver's runtime type is closed) — the
-        // pre-existing #266 generic-class gap, tracked by #351.
+        // A GENERIC Promise subclass with a @@species override resolves in both
+        // modes. The static accessor is registered under the open generic
+        // definition (MyP`1) while the receiver's runtime type is closed
+        // (MyP<object>); compiled mode reconciles the two (#351).
         var source = """
             class MyP<T> extends Promise<T> {
                 static get [Symbol.species]() { return Promise; }
@@ -453,6 +452,51 @@ public class PromiseSubclassTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("false\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_GenericSubclassRedirectsToOtherGenericSubclass(ExecutionMode mode)
+    {
+        // A generic subclass whose @@species names ANOTHER generic Promise
+        // subclass: then must construct through that (also generic) species. In
+        // compiled mode the species value is the open generic definition
+        // (Other`1) and is closed before construction (#351).
+        var source = """
+            class Other<T> extends Promise<T> {}
+            class MyP<T> extends Promise<T> {
+                static get [Symbol.species]() { return Other; }
+            }
+            async function main() {
+                const q = MyP.resolve(1).then(v => v);
+                console.log(q instanceof Other);
+                console.log(q instanceof MyP);
+                console.log(await q);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\n1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_GenericSubclassStaticReadResolvesOverride(ExecutionMode mode)
+    {
+        // The guest-visible static read `(MyP as any)[Symbol.species]` of a
+        // generic subclass: the class reference is the open generic definition
+        // (MyP`1), and reading the static @@species getter must close it before
+        // reflective Invoke rather than crashing / returning undefined (#351).
+        var source = """
+            class MyP<T> extends Promise<T> {
+                static get [Symbol.species]() { return Promise; }
+            }
+            console.log((MyP as any)[Symbol.species] === Promise);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
     }
 
     [Theory]

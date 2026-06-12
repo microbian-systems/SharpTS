@@ -1629,6 +1629,13 @@ public class EmittedRuntime
     public MethodBuilder RegisterSymbolAccessor { get; set; } = null!;
     public MethodBuilder FindSymbolGetter { get; set; } = null!;
     public MethodBuilder FindSymbolSetter { get; set; } = null!;
+    // #351 generic-class support helpers: map a (possibly generic) owner type to
+    // its registry key (the open generic definition) and to a closed type usable
+    // for cctor + reflective Invoke, and close an accessor MethodInfo declared on
+    // an open generic definition onto that closed type.
+    public MethodBuilder SymbolRegistryKey { get; set; } = null!;
+    public MethodBuilder SymbolClosedOwner { get; set; } = null!;
+    public MethodBuilder CloseSymbolAccessor { get; set; } = null!;
     public FieldBuilder CachedFetchFunction { get; set; } = null!;
     public FieldBuilder CachedParseIntFunction { get; set; } = null!;
     public FieldBuilder CachedParseFloatFunction { get; set; } = null!;

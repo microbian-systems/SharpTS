@@ -43,6 +43,26 @@ public partial class RuntimeEmitter
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Object,
             [_types.Object, _types.Object]);
+
+        // #351 generic-class helpers (forward-declared; bodies filled alongside
+        // the Find* bodies). FindSymbol* calls them in its base-chain walk.
+        runtime.SymbolRegistryKey = typeBuilder.DefineMethod(
+            "SymbolRegistryKey",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Type,
+            [_types.Type]);
+
+        runtime.SymbolClosedOwner = typeBuilder.DefineMethod(
+            "SymbolClosedOwner",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Type,
+            [_types.Type]);
+
+        runtime.CloseSymbolAccessor = typeBuilder.DefineMethod(
+            "CloseSymbolAccessor",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Type]);
     }
 
     /// <summary>Emits the registry field initialization into the $Runtime cctor.</summary>
@@ -67,10 +87,149 @@ public partial class RuntimeEmitter
         var getType = _types.GetMethod(_types.Object, "GetType");
 
         EmitRegisterSymbolAccessorBody(runtime, inner, outerTryGetValue, outerSetItem, innerTryGetValue, innerSetItem);
-        EmitFindSymbolAccessorBody(runtime.FindSymbolGetter, field, inner,
+        EmitSymbolGenericHelperBodies(runtime);
+        EmitFindSymbolAccessorBody(runtime, runtime.FindSymbolGetter, field, inner,
             SymGetterInstanceSlot, SymGetterStaticSlot, outerTryGetValue, innerTryGetValue, getBaseType, getType);
-        EmitFindSymbolAccessorBody(runtime.FindSymbolSetter, field, inner,
+        EmitFindSymbolAccessorBody(runtime, runtime.FindSymbolSetter, field, inner,
             SymSetterInstanceSlot, SymSetterStaticSlot, outerTryGetValue, innerTryGetValue, getBaseType, getType);
+    }
+
+    /// <summary>
+    /// Emits the #351 generic-class helper bodies: SymbolRegistryKey,
+    /// SymbolClosedOwner, and CloseSymbolAccessor. The registry is keyed by the
+    /// open generic type definition (a class .cctor registers via
+    /// <c>typeof(ThisClass)</c>, which for a generic class is the open
+    /// definition), while receiver runtime types are closed (e.g. MyP&lt;object&gt;)
+    /// and a static class reference is the open definition. These reconcile the
+    /// two so the base-chain walk both finds the slot and produces an invokable
+    /// (closed) accessor MethodInfo.
+    /// </summary>
+    private void EmitSymbolGenericHelperBodies(EmittedRuntime runtime)
+    {
+        var isConstructedGeneric = _types.Type.GetProperty("IsConstructedGenericType")!.GetGetMethod()!;
+        var isGenericTypeDef = _types.Type.GetProperty("IsGenericTypeDefinition")!.GetGetMethod()!;
+        var getGenericTypeDef = _types.GetMethodNoParams(_types.Type, "GetGenericTypeDefinition");
+        var getGenericArgs = _types.GetMethodNoParams(_types.Type, "GetGenericArguments");
+        var makeGenericType = _types.GetMethod(_types.Type, "MakeGenericType", _types.MakeArrayType(_types.Type));
+        var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
+        var getTypeHandle = _types.GetProperty(_types.Type, "TypeHandle").GetGetMethod()!;
+        var getMethodHandle = _types.GetProperty(_types.MethodBase, "MethodHandle").GetGetMethod()!;
+        var getDeclaringType = _types.GetProperty(typeof(System.Reflection.MemberInfo), "DeclaringType").GetGetMethod()!;
+        var containsGenericParams = _types.Type.GetProperty("ContainsGenericParameters")!.GetGetMethod()!;
+        var getMethodFromHandle = _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+            _types.RuntimeMethodHandle, _types.RuntimeTypeHandle);
+
+        // ---- SymbolRegistryKey(Type owner) ----
+        // return owner.IsConstructedGenericType ? owner.GetGenericTypeDefinition() : owner;
+        {
+            var il = runtime.SymbolRegistryKey.GetILGenerator();
+            var notConstructed = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, isConstructedGeneric);
+            il.Emit(OpCodes.Brfalse, notConstructed);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, getGenericTypeDef);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notConstructed);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // ---- SymbolClosedOwner(Type owner) ----
+        // An open generic definition (a bare generic class reference, e.g. MyP`1)
+        // has no instantiation; close it on `object` for each type parameter so it
+        // can drive cctor execution and reflective Invoke. Closed/non-generic
+        // owners pass through.
+        {
+            var il = runtime.SymbolClosedOwner.GetILGenerator();
+            var notOpenDef = il.DefineLabel();
+            var argsLocal = il.DeclareLocal(_types.MakeArrayType(_types.Type));
+            var iLocal = il.DeclareLocal(_types.Int32);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, isGenericTypeDef);
+            il.Emit(OpCodes.Brfalse, notOpenDef);
+
+            // var args = owner.GetGenericArguments();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, getGenericArgs);
+            il.Emit(OpCodes.Stloc, argsLocal);
+
+            // for (i = 0; i < args.Length; i++) args[i] = typeof(object);
+            var loopTop = il.DefineLabel();
+            var loopCheck = il.DefineLabel();
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, iLocal);
+            il.Emit(OpCodes.Br, loopCheck);
+            il.MarkLabel(loopTop);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Ldloc, iLocal);
+            il.Emit(OpCodes.Ldtoken, _types.Object);
+            il.Emit(OpCodes.Call, getTypeFromHandle);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Ldloc, iLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, iLocal);
+            il.MarkLabel(loopCheck);
+            il.Emit(OpCodes.Ldloc, iLocal);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Blt, loopTop);
+
+            // return owner.MakeGenericType(args);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Callvirt, makeGenericType);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(notOpenDef);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // ---- CloseSymbolAccessor(object mi, Type closedOwner) ----
+        // var m = mi as MethodInfo;
+        // if (m != null && m.DeclaringType != null && m.DeclaringType.ContainsGenericParameters)
+        //     return MethodBase.GetMethodFromHandle(m.MethodHandle, closedOwner.TypeHandle);
+        // return mi;
+        {
+            var il = runtime.CloseSymbolAccessor.GetILGenerator();
+            var passThrough = il.DefineLabel();
+            var mLocal = il.DeclareLocal(_types.MethodInfo);
+            var dtLocal = il.DeclareLocal(_types.Type);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, _types.MethodInfo);
+            il.Emit(OpCodes.Stloc, mLocal);
+            il.Emit(OpCodes.Ldloc, mLocal);
+            il.Emit(OpCodes.Brfalse, passThrough);
+
+            // dt = m.DeclaringType;
+            il.Emit(OpCodes.Ldloc, mLocal);
+            il.Emit(OpCodes.Callvirt, getDeclaringType);
+            il.Emit(OpCodes.Stloc, dtLocal);
+            il.Emit(OpCodes.Ldloc, dtLocal);
+            il.Emit(OpCodes.Brfalse, passThrough);
+
+            // if (!dt.ContainsGenericParameters) pass through
+            il.Emit(OpCodes.Ldloc, dtLocal);
+            il.Emit(OpCodes.Callvirt, containsGenericParams);
+            il.Emit(OpCodes.Brfalse, passThrough);
+
+            // return GetMethodFromHandle(m.MethodHandle, closedOwner.TypeHandle);
+            il.Emit(OpCodes.Ldloc, mLocal);
+            il.Emit(OpCodes.Callvirt, getMethodHandle);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, getTypeHandle);
+            il.Emit(OpCodes.Call, getMethodFromHandle);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(passThrough);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ret);
+        }
     }
 
     private void EmitRegisterSymbolAccessorBody(
@@ -158,16 +317,22 @@ public partial class RuntimeEmitter
 
     // object FindSymbol{Getter,Setter}For(object obj, object symbol):
     //   owner = obj is Type t ? t : obj.GetType();  idx = obj is Type ? staticSlot : instanceSlot;
-    //   for (; owner != null; owner = owner.BaseType)
-    //     if (reg.TryGetValue(owner, out inner) && inner.TryGetValue(symbol, out slot) && slot[idx] != null) return slot[idx];
+    //   for (; owner != null; owner = owner.BaseType) {
+    //     closed = SymbolClosedOwner(owner);           // #351: a closed type to drive cctor + Invoke
+    //     key = SymbolRegistryKey(owner);              // #351: registry is keyed by the open generic def
+    //     if (reg.TryGetValue(key, out inner) && inner.TryGetValue(symbol, out slot) && slot[idx] != null)
+    //       return CloseSymbolAccessor(slot[idx], closed);  // #351: close a generic-def accessor before Invoke
+    //   }
     //   return null;
     private void EmitFindSymbolAccessorBody(
+        EmittedRuntime runtime,
         MethodBuilder method, FieldBuilder field, Type inner,
         int instanceSlot, int staticSlot,
         MethodInfo outerTryGetValue, MethodInfo innerTryGetValue, MethodInfo getBaseType, MethodInfo getType)
     {
         var il = method.GetILGenerator();
         var ownerLocal = il.DeclareLocal(_types.Type);
+        var closedOwnerLocal = il.DeclareLocal(_types.Type);
         var idxLocal = il.DeclareLocal(_types.Int32);
         var innerLocal = il.DeclareLocal(inner);
         var slotLocal = il.DeclareLocal(_types.ObjectArray);
@@ -211,23 +376,33 @@ public partial class RuntimeEmitter
         il.MarkLabel(loopTop);
         il.Emit(OpCodes.Ldloc, ownerLocal);
         il.Emit(OpCodes.Brfalse, retNull);
+        // #351: closed = SymbolClosedOwner(owner) — for an open generic-class
+        // reference (MyP`1) this is a fully-closed instantiation that can drive
+        // both cctor execution and reflective Invoke; closed/non-generic owners
+        // pass through unchanged.
+        il.Emit(OpCodes.Ldloc, ownerLocal);
+        il.Emit(OpCodes.Call, runtime.SymbolClosedOwner);
+        il.Emit(OpCodes.Stloc, closedOwnerLocal);
         // Static-side accessors are registered in the owner class's .cctor, which
         // the CLR runs lazily — merely using the class as a Type value (typeof) does
         // not trigger it. Force it so a static `Class[Symbol.x]` access sees the
         // registration. Idempotent and cheap after the first run. (Instance-side
         // accessors are already registered by the time an instance exists.)
+        // Run the cctor on the CLOSED owner: an open generic definition has no
+        // runnable static initializer (#351).
         {
             var skipCctor = il.DefineLabel();
             il.Emit(OpCodes.Ldloc, asTypeLocal);
             il.Emit(OpCodes.Brfalse, skipCctor);
-            il.Emit(OpCodes.Ldloc, ownerLocal);
+            il.Emit(OpCodes.Ldloc, closedOwnerLocal);
             il.Emit(OpCodes.Callvirt, getTypeHandle);
             il.Emit(OpCodes.Call, runClassCtor);
             il.MarkLabel(skipCctor);
         }
-        // if (!reg.TryGetValue(owner, out inner)) goto nextBase;
+        // if (!reg.TryGetValue(SymbolRegistryKey(owner), out inner)) goto nextBase;
         il.Emit(OpCodes.Ldsfld, field);
         il.Emit(OpCodes.Ldloc, ownerLocal);
+        il.Emit(OpCodes.Call, runtime.SymbolRegistryKey);
         il.Emit(OpCodes.Ldloca, innerLocal);
         il.Emit(OpCodes.Callvirt, outerTryGetValue);
         il.Emit(OpCodes.Brfalse, nextBase);
@@ -237,7 +412,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, slotLocal);
         il.Emit(OpCodes.Callvirt, innerTryGetValue);
         il.Emit(OpCodes.Brfalse, nextBase);
-        // v = slot[idx]; if (v != null) return v;
+        // v = slot[idx]; if (v != null) return CloseSymbolAccessor(v, closed);
         il.Emit(OpCodes.Ldloc, slotLocal);
         il.Emit(OpCodes.Ldloc, idxLocal);
         il.Emit(OpCodes.Ldelem_Ref);
@@ -251,6 +426,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loopTop);
 
         il.MarkLabel(retIt);
+        // stack: [v]  →  CloseSymbolAccessor(v, closed)
+        il.Emit(OpCodes.Ldloc, closedOwnerLocal);
+        il.Emit(OpCodes.Call, runtime.CloseSymbolAccessor);
         il.Emit(OpCodes.Ret);
         il.MarkLabel(retNull);
         il.Emit(OpCodes.Ldnull);

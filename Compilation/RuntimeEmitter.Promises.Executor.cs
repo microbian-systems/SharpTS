@@ -169,12 +169,12 @@ public partial class RuntimeEmitter
     /// adopts a raw task, so the new instance wraps <c>result</c>).
     /// </summary>
     /// <remarks>
-    /// Limitation: a <em>generic</em> Promise subclass with a <c>@@species</c>
-    /// override does not resolve the override — its static accessor is registered
-    /// under the open generic type definition while the receiver's runtime type
-    /// is closed, so the registry lookup misses and the result falls back to the
-    /// receiver's own class (the pre-existing #266 generic-class gap, tracked by
-    /// #351). A species that yields a non-Promise constructor (general
+    /// Generic Promise subclasses (#351): the static <c>@@species</c> accessor is
+    /// registered under the open generic definition (MyP`1) while the receiver's
+    /// runtime type is closed (MyP&lt;object&gt;); FindSymbolGetterFor reconciles
+    /// the two (SymbolRegistryKey/CloseSymbolAccessor) and a species naming a
+    /// generic subclass is closed via SymbolClosedOwner before construction.
+    /// A species that yields a non-Promise constructor (general
     /// NewPromiseCapability) falls back to <c>%Promise%</c> — tracked by #349.
     /// </remarks>
     private void EmitWrapDerivedPromiseResultMethod(TypeBuilder runtimeType, EmittedRuntime runtime)
@@ -238,6 +238,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brfalse, returnResultLabel);
 
         il.MarkLabel(haveSpeciesLabel);
+        // #351: a species naming a generic Promise subclass resolves to the OPEN
+        // generic definition (MyP`1) — uninstantiable. Close it on `object` so the
+        // GetConstructor/Invoke below target a constructable type. Closed and
+        // non-generic species (incl. the default species = receiver's closed type)
+        // pass through unchanged.
+        il.Emit(OpCodes.Ldloc, speciesTypeLocal);
+        il.Emit(OpCodes.Call, runtime.SymbolClosedOwner);
+        il.Emit(OpCodes.Stloc, speciesTypeLocal);
         // if (speciesType == typeof(Task<object?>)) return result;  // %Promise%
         il.Emit(OpCodes.Ldloc, speciesTypeLocal);
         il.Emit(OpCodes.Ldtoken, _types.TaskOfObject);
