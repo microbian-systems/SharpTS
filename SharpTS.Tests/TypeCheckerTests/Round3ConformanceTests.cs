@@ -141,6 +141,65 @@ public class Round3ConformanceTests
         Assert.Equal("TS2403", ex.Diagnostic.TsCode);
     }
 
+    // ── Issue #363: nested-first var declaration loses annotation to hoisting ──────────────────────
+
+    [Fact]
+    public void VarRedeclaration_NestedFirstAnnotation_DifferentType_IsTs2403Error()
+    {
+        // Issue #363: when the FIRST var declaration is inside a nested block, VarHoister
+        // previously dropped its annotation when synthesizing the hoisted `var name;`, making
+        // the baseline type `any` and silencing TS2403 for any top-level redeclaration.
+        var source = """
+            function h() {
+                if (true) { var z: string; }
+                var z: number;
+            }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2403", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void VarRedeclaration_NestedFirstAnnotation_SameType_IsAccepted()
+    {
+        var source = """
+            function h() {
+                if (true) { var z: string; }
+                var z: string;
+            }
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void VarRedeclaration_NestedFirstWithInitializer_DifferentTopLevelType_IsTs2403Error()
+    {
+        // The annotation on the first nested declaration is carried to the synthetic hoisted var,
+        // so a top-level re-declaration with an incompatible initializer type still fires TS2403.
+        var source = """
+            function h() {
+                if (true) { var z: string = "hello"; }
+                var z: number;
+            }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2403", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void VarRedeclaration_MultipleNestedAnnotations_SecondDiffers_IsTs2403Error()
+    {
+        // Two nested declarations conflict with each other; the second nested one fires TS2403.
+        var source = """
+            function h() {
+                if (true) { var z: string; }
+                if (false) { var z: number; }
+            }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2403", ex.Diagnostic.TsCode);
+    }
+
     [Fact]
     public void VarShadowing_InNestedFunction_IsNotRedeclaration()
     {
