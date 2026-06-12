@@ -109,8 +109,39 @@ public partial class TypeChecker
             case ConditionalTypeNode conditional:
             {
                 if (TryToTypeInfo(conditional.CheckType) is not { } checkType) return null;
-                if (TryToTypeInfo(conditional.ExtendsType) is not { } extendsType) return null;
-                if (TryToTypeInfo(conditional.TrueType) is not { } trueType) return null;
+
+                // Infer variables declared in the extends clause are in scope for the TRUE branch
+                // only (tsc). Bind each name to the inferred-type-parameter it denotes so a
+                // reference like the `U` in `T extends ... infer U ? U : ...` resolves to that
+                // placeholder — EvaluateConditionalType then substitutes it with the matched type.
+                // Without this the reference falls back to `any`, silently collapsing the true
+                // branch to `any` (#316). Binding to an InferredTypeParameter (not a plain type
+                // parameter) keeps the established leniency when matching fails to bind it: an
+                // unresolved infer placeholder stays uncomparable rather than surfacing as a stray
+                // type parameter. The extends clause is resolved in the same scope, harmlessly:
+                // `infer U` itself resolves via InferTypeNode, not this name binding.
+                List<InferTypeNode>? clauseInfers = null;
+                CollectClauseInfers(conditional.ExtendsType, ref clauseInfers);
+
+                TypeInfo? extendsType, trueType;
+                if (clauseInfers is { Count: > 0 })
+                {
+                    var inferEnv = new TypeEnvironment(_environment);
+                    foreach (var inf in clauseInfers)
+                        inferEnv.DefineTypeParameter(inf.Name, new TypeInfo.InferredTypeParameter(inf.Name));
+                    using (new EnvironmentScope(this, inferEnv))
+                    {
+                        extendsType = TryToTypeInfo(conditional.ExtendsType);
+                        trueType = TryToTypeInfo(conditional.TrueType);
+                    }
+                }
+                else
+                {
+                    extendsType = TryToTypeInfo(conditional.ExtendsType);
+                    trueType = TryToTypeInfo(conditional.TrueType);
+                }
+
+                if (extendsType is null || trueType is null) return null;
                 if (TryToTypeInfo(conditional.FalseType) is not { } falseType) return null;
                 // Distributivity comes from the DECLARED check node: a bare name that refers to
                 // a type parameter, whether still unbound (resolves to TypeParameter) or already

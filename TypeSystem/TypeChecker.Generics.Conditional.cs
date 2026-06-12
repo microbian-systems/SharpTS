@@ -80,12 +80,16 @@ public partial class TypeChecker
             TypeInfo extendsType = SubstituteWithoutConditionalEval(conditional.ExtendsType, substitutions);
 
             // tsc: `any extends X ? A : B` yields A | B — an `any` check type matches BOTH
-            // branches. Infer placeholders bind from the wildcard match, so
-            // `any extends infer U ? U : never` is `any | never` = `any`.
+            // branches, and every infer placeholder in the extends clause resolves to `any`. So
+            // `any extends Foo<infer U> ? U : never` is `any | never` = `any`. Seed every true-branch
+            // infer reference with `any` first (the structural match against `any` cannot bind them,
+            // and the extends clause may even have collapsed to `any` upstream), then overlay any
+            // more-specific bindings the wildcard match did produce.
             if (checkType is TypeInfo.Any)
             {
                 var (_, anyInferred) = CheckExtendsWithInfer(checkType, extendsType);
                 var trueSubs = new Dictionary<string, TypeInfo>(substitutions);
+                CollectReferencedInferNames(conditional.TrueType, name => trueSubs[name] = new TypeInfo.Any());
                 foreach (var (name, type) in anyInferred)
                     trueSubs[name] = type;
                 return CreateUnion(
@@ -147,10 +151,7 @@ public partial class TypeChecker
             TypeInfo.Union union =>
                 new TypeInfo.Union(union.Types.Select(t => SubstituteWithoutConditionalEval(t, substitutions)).ToList()),
             TypeInfo.Record rec =>
-                new TypeInfo.Record(
-                    rec.Fields.ToDictionary(
-                        kvp => kvp.Key,
-                        kvp => SubstituteWithoutConditionalEval(kvp.Value, substitutions)).ToFrozenDictionary()),
+                SubstituteRecordMembers(rec, t => SubstituteWithoutConditionalEval(t, substitutions)),
             TypeInfo.InstantiatedGeneric ig =>
                 new TypeInfo.InstantiatedGeneric(
                     ig.GenericDefinition,
@@ -377,6 +378,58 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Invokes <paramref name="visit"/> with the name of every <see cref="TypeInfo.InferredTypeParameter"/>
+    /// referenced within <paramref name="type"/>. Used by the <c>any extends …</c> branch to resolve
+    /// the true branch's infer placeholders to <c>any</c>.
+    /// </summary>
+    private static void CollectReferencedInferNames(TypeInfo type, Action<string> visit)
+    {
+        switch (type)
+        {
+            case TypeInfo.InferredTypeParameter infer:
+                visit(infer.Name);
+                if (infer.Constraint is { } c) CollectReferencedInferNames(c, visit);
+                break;
+            case TypeInfo.Array arr:
+                CollectReferencedInferNames(arr.ElementType, visit);
+                break;
+            case TypeInfo.Promise promise:
+                CollectReferencedInferNames(promise.ValueType, visit);
+                break;
+            case TypeInfo.Function func:
+                foreach (var p in func.ParamTypes) CollectReferencedInferNames(p, visit);
+                CollectReferencedInferNames(func.ReturnType, visit);
+                break;
+            case TypeInfo.Tuple tuple:
+                foreach (var elem in tuple.Elements) CollectReferencedInferNames(elem.Type, visit);
+                if (tuple.RestElementType is { } rest) CollectReferencedInferNames(rest, visit);
+                break;
+            case TypeInfo.Union union:
+                foreach (var t in union.Types) CollectReferencedInferNames(t, visit);
+                break;
+            case TypeInfo.Intersection intersection:
+                foreach (var t in intersection.Types) CollectReferencedInferNames(t, visit);
+                break;
+            case TypeInfo.Record rec:
+                foreach (var (_, t) in rec.Fields) CollectReferencedInferNames(t, visit);
+                break;
+            case TypeInfo.InstantiatedGeneric ig:
+                foreach (var t in ig.TypeArguments) CollectReferencedInferNames(t, visit);
+                break;
+            case TypeInfo.KeyOf keyOf:
+                CollectReferencedInferNames(keyOf.SourceType, visit);
+                break;
+            case TypeInfo.IndexedAccess ia:
+                CollectReferencedInferNames(ia.ObjectType, visit);
+                CollectReferencedInferNames(ia.IndexType, visit);
+                break;
+            case TypeInfo.TemplateLiteralType tl:
+                foreach (var t in tl.InterpolatedTypes) CollectReferencedInferNames(t, visit);
+                break;
+        }
+    }
+
+    /// <summary>
     /// Recursively checks the extends relationship, extracting infer bindings.
     /// </summary>
     private bool CheckExtendsRecursive(
@@ -447,26 +500,7 @@ public partial class TypeChecker
         if (extendsType is TypeInfo.Function extendsFunc)
         {
             if (checkType is TypeInfo.Function checkFunc)
-            {
-                // Function assignability is contravariant in parameters, covariant in return
-                // For infer in parameters, we infer from the check function's params
-                // For infer in return, we infer from the check function's return
-
-                // Match parameters (check function should have at least as many params)
-                for (int i = 0; i < extendsFunc.ParamTypes.Count; i++)
-                {
-                    TypeInfo extendsParam = extendsFunc.ParamTypes[i];
-                    TypeInfo checkParam = i < checkFunc.ParamTypes.Count
-                        ? checkFunc.ParamTypes[i]
-                        : new TypeInfo.Any();
-
-                    if (!CheckExtendsRecursive(checkParam, extendsParam, inferredTypes))
-                        return false;
-                }
-
-                // Match return type (covariant)
-                return CheckExtendsRecursive(checkFunc.ReturnType, extendsFunc.ReturnType, inferredTypes);
-            }
+                return MatchSignatureWithInfer(checkFunc, extendsFunc, inferredTypes);
             return false;
         }
 
@@ -516,6 +550,19 @@ public partial class TypeChecker
         // Record/object type matching
         if (extendsType is TypeInfo.Record extendsRec)
         {
+            // `new (...) => infer U` / `(...) => infer U` model as object types carrying construct or
+            // call signatures (see TypeChecker.TypeNodes.cs). Match those structurally so infer
+            // placeholders in parameter/return positions bind — the field loop alone vacuously
+            // succeeds and leaves U dangling (#316).
+            if (extendsRec.ConstructorSignatures is { Count: > 0 } recCtorSigs
+                && !MatchSignaturesWithInfer(GetCheckConstructorSignatures(checkType),
+                    recCtorSigs.Select(ConstructorSignatureToFunction).ToList(), inferredTypes))
+                return false;
+            if (extendsRec.CallSignatures is { Count: > 0 } recCallSigs
+                && !MatchSignaturesWithInfer(GetCheckCallSignatures(checkType),
+                    recCallSigs.Select(CallSignatureToFunction).ToList(), inferredTypes))
+                return false;
+
             var checkProps = ExtractPropertiesWithTypes(checkType);
             foreach (var (key, extendsFieldType) in extendsRec.Fields)
             {
@@ -530,6 +577,15 @@ public partial class TypeChecker
         // Interface matching
         if (extendsType is TypeInfo.Interface extendsItf)
         {
+            if (extendsItf.ConstructorSignatures is { Count: > 0 } itfCtorSigs
+                && !MatchSignaturesWithInfer(GetCheckConstructorSignatures(checkType),
+                    itfCtorSigs.Select(ConstructorSignatureToFunction).ToList(), inferredTypes))
+                return false;
+            if (extendsItf.CallSignatures is { Count: > 0 } itfCallSigs
+                && !MatchSignaturesWithInfer(GetCheckCallSignatures(checkType),
+                    itfCallSigs.Select(CallSignatureToFunction).ToList(), inferredTypes))
+                return false;
+
             var checkProps = ExtractPropertiesWithTypes(checkType);
             foreach (var (key, extendsFieldType) in extendsItf.Members)
             {
@@ -710,6 +766,78 @@ public partial class TypeChecker
                 foreach (var it in tl.InterpolatedTypes) CollectInferSubstitutions(it, subs);
                 break;
         }
+    }
+
+    /// <summary>
+    /// Matches a single function-shaped signature (plain function, or the function denoted by a call
+    /// or construct signature) extracting infer bindings. Parameters are inference positions
+    /// (covariant capture, like tsc), the return type is covariant. Shared by the Function branch and
+    /// the call/construct-signature branches of <see cref="CheckExtendsRecursive"/>.
+    /// </summary>
+    private bool MatchSignatureWithInfer(
+        TypeInfo.Function checkFunc,
+        TypeInfo.Function extendsFunc,
+        Dictionary<string, TypeInfo> inferredTypes)
+    {
+        // Match parameters (check function should have at least as many params; missing ones bind to any)
+        for (int i = 0; i < extendsFunc.ParamTypes.Count; i++)
+        {
+            TypeInfo extendsParam = extendsFunc.ParamTypes[i];
+            TypeInfo checkParam = i < checkFunc.ParamTypes.Count
+                ? checkFunc.ParamTypes[i]
+                : new TypeInfo.Any();
+
+            if (!CheckExtendsRecursive(checkParam, extendsParam, inferredTypes))
+                return false;
+        }
+
+        // Match return type (covariant)
+        return CheckExtendsRecursive(checkFunc.ReturnType, extendsFunc.ReturnType, inferredTypes);
+    }
+
+    /// <summary>
+    /// Matches each extends-side signature against some check-side signature, extracting infer
+    /// bindings. Returns false when the check side carries no compatible signatures (e.g. a
+    /// non-constructable type against a construct-signature pattern), which steers the conditional
+    /// to its false branch instead of vacuously succeeding.
+    /// </summary>
+    private bool MatchSignaturesWithInfer(
+        List<TypeInfo.Function>? checkSigs,
+        List<TypeInfo.Function> extendsSigs,
+        Dictionary<string, TypeInfo> inferredTypes)
+    {
+        if (checkSigs is not { Count: > 0 })
+            return false;
+        foreach (var extendsSig in extendsSigs)
+        {
+            if (!checkSigs.Any(cs => MatchSignatureWithInfer(cs, extendsSig, inferredTypes)))
+                return false;
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Construct signatures carried by the check side of an extends clause, viewed as the constructor
+    /// functions they denote. Returns null when the type carries no construct signature. (A class
+    /// value — <c>typeof C</c> — reaches infer matching through <see cref="ExpandInstanceType"/>'s
+    /// dedicated path, not here.)
+    /// </summary>
+    private static List<TypeInfo.Function>? GetCheckConstructorSignatures(TypeInfo type) =>
+        GetConstructorSignatures(type) is { Count: > 0 } sigs
+            ? sigs.Select(ConstructorSignatureToFunction).ToList()
+            : null;
+
+    /// <summary>
+    /// Call signatures carried by the check side of an extends clause, viewed as the functions they
+    /// denote (a plain function is its own call signature). Returns null when the type is not callable.
+    /// </summary>
+    private static List<TypeInfo.Function>? GetCheckCallSignatures(TypeInfo type)
+    {
+        if (type is TypeInfo.Function f)
+            return [f];
+        return GetCallSignatures(type) is { Count: > 0 } sigs
+            ? sigs.Select(CallSignatureToFunction).ToList()
+            : null;
     }
 
     /// <summary>
