@@ -32,6 +32,14 @@
     <None Include="README.md" Pack="true" PackagePath="" />
   </ItemGroup>
 
+  <!-- White-box test access: a handful of regression tests drive internal
+       runtime seams directly (e.g. WebStreamsHelpers.PipeTo + the event-loop
+       Ref counter) to assert behavior that cannot be observed through guest
+       TypeScript alone. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="SharpTS.Tests" />
+  </ItemGroup>
+
   <!-- Embed TypeScript standard library sources. Loaded by EmbeddedStdlibProvider
        at user-compile time; see docs/plans/embedded-stdlib.md. -->
   <ItemGroup>

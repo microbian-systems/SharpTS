@@ -1,3 +1,8 @@
+using System.Diagnostics;
+using SharpTS.Execution;
+using SharpTS.Runtime;
+using SharpTS.Runtime.BuiltIns;
+using SharpTS.Runtime.Types;
 using SharpTS.Tests.Infrastructure;
 using Xunit;
 
@@ -346,8 +351,16 @@ public class StreamsWebSemanticTests
     /// flushed "source-canceled". Fixed in #325 — the pump now Refs the event
     /// loop for the duration of the teardown sequence (see
     /// <c>WebStreamsHelpers.PipeTo</c>), then Unrefs. Compiled-mode
-    /// <c>$ReadableStream.PipeTo</c> doesn't extract the signal from opts at all
-    /// (not implemented), so this stays InterpretedOnly.
+    /// <c>$ReadableStream.PipeTo</c> does extract the signal and check
+    /// <c>aborted</c> per iteration, but its pump sync-awaits each read on the
+    /// calling thread, so an event-loop-driven mid-pipe abort (the
+    /// <c>setTimeout(() => ac.abort())</c> here) never gets a chance to fire —
+    /// the abort is only observed for signals already aborted when a read is
+    /// reached (#355). So this stays InterpretedOnly.
+    ///
+    /// This guest-level test asserts the end-to-end behavior but only flakes
+    /// under load; the deterministic regression guard for the fix itself is
+    /// <see cref="PipeTo_MidPipeAbort_RefsEventLoopAcrossTeardown"/>.
     /// </remarks>
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
@@ -386,6 +399,105 @@ public class StreamsWebSemanticTests
         Assert.Contains("source-canceled", output);
         Assert.Contains("pipe-rejected", output);
         Assert.DoesNotContain("pipe-completed-normally", output);
+    }
+
+    /// <remarks>
+    /// White-box regression for #325, the product fix behind the (load-flaky)
+    /// guest-level test above. The pipeTo pump runs its abort/cancel/reject
+    /// teardown as un-Ref'd thread-pool continuations; before the fix, a program
+    /// whose only remaining work was that teardown could hit the interpreter's
+    /// 250ms quiescence give-up after <c>dest.abort()</c> but before the source
+    /// <c>cancel()</c> callback flushed "source-canceled". The fix
+    /// (<c>WebStreamsHelpers.PipeTo</c>) scopes an event-loop Ref to the whole
+    /// teardown sequence.
+    ///
+    /// A guest-level test can't pin this deterministically: every guest async
+    /// delay is either a scheduled virtual timer (which
+    /// <c>HasPendingEventLoopWork</c> already counts as pending work) or an
+    /// active handle, so none reproduces the invisible thread-pool continuation
+    /// window the fix closes. So this drives <c>PipeTo</c> directly and gates the
+    /// dest <c>abort()</c> on a TaskCompletionSource, freezing the pump in the
+    /// middle of the teardown. That lets us assert the event loop stays Ref'd for
+    /// the entire abort→cancel→reject sequence with no wall-clock window — the
+    /// assertion fails deterministically if the teardown Ref is removed, and is
+    /// load-independent (the gate, not a timer, drives ordering).
+    /// </remarks>
+    [Fact]
+    public void PipeTo_MidPipeAbort_RefsEventLoopAcrossTeardown()
+    {
+        var interp = new Interpreter(TextWriter.Null, TextWriter.Null);
+
+        // dest.abort() returns a promise we hold open, freezing the pump inside
+        // the teardown right after it takes the Ref and before it reaches
+        // source.cancel().
+        var abortGate = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var abortInvoked = new ManualResetEventSlim(false);
+        using var cancelInvoked = new ManualResetEventSlim(false);
+
+        var destSink = new Dictionary<string, object?>
+        {
+            ["write"] = BuiltInMethod.CreateV2("write", 1, static (_, _, _) => RuntimeValue.Undefined),
+            ["abort"] = BuiltInMethod.CreateV2("abort", 1, (_, _, _) =>
+            {
+                abortInvoked.Set();
+                return RuntimeValue.FromObject(new SharpTSPromise(abortGate.Task));
+            }),
+        };
+        var dest = new SharpTSWritableStream(interp, destSink, strategy: null);
+
+        var sourceSink = new Dictionary<string, object?>
+        {
+            ["cancel"] = BuiltInMethod.CreateV2("cancel", 1, (_, _, _) =>
+            {
+                cancelInvoked.Set();
+                return RuntimeValue.Undefined;
+            }),
+        };
+        var source = new SharpTSReadableStream(interp, sourceSink, strategy: null);
+
+        // Already-aborted signal → the pump goes straight to the teardown branch
+        // on its first iteration without needing any real reads.
+        var signal = new SharpTSAbortSignal(new CancellationToken(canceled: true));
+        var opts = new Dictionary<string, object?> { ["signal"] = signal };
+
+        Assert.False(interp.HasActiveHandles, "no active handles before piping starts");
+
+        // The pump's first `await Task.Yield()` captures the ambient
+        // SynchronizationContext; null it so the pump runs free on the thread
+        // pool rather than on any xUnit-installed context that this synchronous
+        // test thread would never pump.
+        SharpTSPromise pipe;
+        var prevContext = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(null);
+        try
+        {
+            pipe = WebStreamsHelpers.PipeTo(interp, source, dest, opts);
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(prevContext);
+        }
+
+        // The pump reached dest.abort() and parked on our gate. The teardown Ref
+        // is taken before the abort await, so the handle is already active here.
+        // Without the #325 fix this stays false and the next assert fails.
+        Assert.True(abortInvoked.Wait(TimeSpan.FromSeconds(5)), "pump never reached the abort teardown");
+        Assert.True(interp.HasActiveHandles, "teardown must keep the event loop Ref'd (#325)");
+        Assert.False(cancelInvoked.IsSet, "source cancel() must not run until dest.abort() resolves");
+
+        // Release the gate: the pump runs source.cancel(), then rejects.
+        abortGate.SetResult(null);
+
+        Assert.True(cancelInvoked.Wait(TimeSpan.FromSeconds(5)), "source cancel() was dropped");
+
+        // The pipe promise rejects with the abort reason once the pump unwinds.
+        var fault = Assert.Throws<AggregateException>(() => pipe.Task.Wait(TimeSpan.FromSeconds(5)));
+        Assert.IsType<SharpTSPromiseRejectedException>(fault.InnerException);
+
+        // The teardown Ref is released exactly once, so the loop can quiesce.
+        var sw = Stopwatch.StartNew();
+        while (interp.HasActiveHandles && sw.Elapsed < TimeSpan.FromSeconds(5)) Thread.Sleep(5);
+        Assert.False(interp.HasActiveHandles, "teardown Ref must be released after the pump settles");
     }
 
     #endregion
