@@ -417,6 +417,44 @@ public class CliVarTests
     }
 
     [Fact]
+    public void Interpreted_VarRedeclarationAnnotationOnly_PreservesValue()
+    {
+        // Issue #336: an annotation-only duplicate of a matching type compiles to a self-assign
+        // (`z = z`) — a runtime no-op that must NOT reset the existing binding to undefined.
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var script = tempDir.CreateFile("redecl-anno.ts", """
+            var y: string = "hello";
+            console.log(y);
+            var y: string;
+            console.log(y);
+            """);
+
+        var result = CliTestHelper.RunCli($"\"{script}\"", tempDir.Path);
+        Assert.Equal(0, result.ExitCode);
+        var lines = result.StandardOutput.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("hello", lines[0].Trim());
+        Assert.Equal("hello", lines[1].Trim());
+    }
+
+    [Fact]
+    public void Compiled_VarRedeclarationAnnotationOnly_PreservesValue()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        var entry = tempDir.CreateFile("redecl-anno.ts", """
+            var y: string = "hello";
+            console.log(y);
+            var y: string;
+            console.log(y);
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        var lines = output.Trim().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("hello", lines[0].Trim());
+        Assert.Equal("hello", lines[1].Trim());
+    }
+
+    [Fact]
     public void Interpreted_VarRedeclarationMixedTopAndNested()
     {
         using var tempDir = CliTestHelper.CreateTempDirectory();
