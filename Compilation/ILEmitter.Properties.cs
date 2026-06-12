@@ -151,7 +151,7 @@ public partial class ILEmitter
             if (_ctx.Classes.TryGetValue(resolvedClassName, out var classBuilder))
             {
                 // Try static getter first (for auto-accessors and explicit static accessors)
-                if (_ctx.ClassRegistry!.TryGetStaticGetter(resolvedClassName, g.Name.Lexeme, out var staticGetter))
+                if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(resolvedClassName, g.Name.Lexeme, classBuilder, out var staticGetter))
                 {
                     IL.Emit(OpCodes.Call, staticGetter!);
 
@@ -209,7 +209,7 @@ public partial class ILEmitter
             _ctx.Classes.TryGetValue(importedQualifiedClassName, out var importedClassBuilder))
         {
             // Try static getter first
-            if (_ctx.ClassRegistry!.TryGetStaticGetter(importedQualifiedClassName, g.Name.Lexeme, out var importedStaticGetter))
+            if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(importedQualifiedClassName, g.Name.Lexeme, importedClassBuilder, out var importedStaticGetter))
             {
                 IL.Emit(OpCodes.Call, importedStaticGetter!);
                 SetStackUnknown();

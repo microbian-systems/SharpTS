@@ -331,9 +331,82 @@ public sealed class ClassRegistry
     #region Static Member Lookups
 
     /// <summary>
-    /// Tries to get a static field for a class.
+    /// Walks the superclass chain (starting at <paramref name="qualifiedClassName"/>) looking for the
+    /// nearest class that declares the named member in <paramref name="table"/>. Static members are
+    /// inherited by subclasses in TS/JS, but the underlying .NET token references the *declaring* class,
+    /// so callers need both the member and the class that owns it. The walk starts at the requested
+    /// class so a subclass redeclaration (shadowing) wins over an inherited member.
+    /// </summary>
+    private bool TryResolveStaticMember<T>(
+        Dictionary<string, Dictionary<string, T>> table,
+        string qualifiedClassName,
+        string memberName,
+        out string declaringClass,
+        out T member)
+    {
+        string? current = qualifiedClassName;
+        for (int depth = 0; current != null && depth < 64; depth++)
+        {
+            if (table.TryGetValue(current, out var members) && members.TryGetValue(memberName, out var m))
+            {
+                declaringClass = current;
+                member = m;
+                return true;
+            }
+            current = _superclass.GetValueOrDefault(current);
+        }
+
+        declaringClass = null!;
+        member = default!;
+        return false;
+    }
+
+    /// <summary>
+    /// When <paramref name="declaringClass"/> is generic, returns its TypeBuilder closed over
+    /// <c>object</c> for every type parameter (matching the type-erased instantiation used everywhere
+    /// else for class statics), so the resolved member token targets a concrete type. Returns null for
+    /// non-generic declaring classes, in which case the raw builder/token is already concrete.
+    /// </summary>
+    private Type? GetClosedGenericDeclaringType(string declaringClass, string requestedClass, TypeBuilder requestedBuilder)
+    {
+        if (!_genericParams.TryGetValue(declaringClass, out var gps) || gps.Length == 0)
+            return null;
+
+        // For the requested (own) class the caller already handed us the builder; otherwise look up
+        // the declaring base's builder. Both are entries in the same _builders dictionary.
+        var declaringBuilder = declaringClass == requestedClass
+            ? requestedBuilder
+            : _builders.GetValueOrDefault(declaringClass);
+        if (declaringBuilder == null)
+            return null;
+
+        var typeArgs = new Type[gps.Length];
+        for (int i = 0; i < gps.Length; i++)
+            typeArgs[i] = typeof(object);
+        return declaringBuilder.MakeGenericType(typeArgs);
+    }
+
+    /// <summary>
+    /// Tries to get a static field for a class, walking the superclass chain so inherited
+    /// statics resolve (the FieldBuilder references the declaring class's token).
     /// </summary>
     public bool TryGetStaticField(string qualifiedClassName, string fieldName, out FieldBuilder? field)
+    {
+        if (TryResolveStaticMember(_staticFields, qualifiedClassName, fieldName, out _, out var f))
+        {
+            field = f;
+            return true;
+        }
+
+        field = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Tries to get a static field declared directly on the class (no superclass walk). Used by
+    /// write/read-modify-write sites that must bind only to a field the class itself declares.
+    /// </summary>
+    public bool TryGetOwnStaticField(string qualifiedClassName, string fieldName, out FieldBuilder? field)
     {
         if (_staticFields.TryGetValue(qualifiedClassName, out var classFields) &&
             classFields.TryGetValue(fieldName, out var f))
@@ -347,12 +420,12 @@ public sealed class ClassRegistry
     }
 
     /// <summary>
-    /// Tries to get a static method for a class.
+    /// Tries to get a static method for a class, walking the superclass chain so inherited
+    /// statics resolve (the MethodBuilder references the declaring class's token).
     /// </summary>
     public bool TryGetStaticMethod(string qualifiedClassName, string methodName, out MethodBuilder? method)
     {
-        if (_staticMethods.TryGetValue(qualifiedClassName, out var classMethods) &&
-            classMethods.TryGetValue(methodName, out var m))
+        if (TryResolveStaticMember(_staticMethods, qualifiedClassName, methodName, out _, out var m))
         {
             method = m;
             return true;
@@ -387,8 +460,7 @@ public sealed class ClassRegistry
     /// </summary>
     public bool TryGetStaticGetter(string qualifiedClassName, string propertyName, out MethodBuilder? getter)
     {
-        if (_staticGetters.TryGetValue(qualifiedClassName, out var classGetters) &&
-            classGetters.TryGetValue(propertyName, out var g))
+        if (TryResolveStaticMember(_staticGetters, qualifiedClassName, propertyName, out _, out var g))
         {
             getter = g;
             return true;
@@ -399,12 +471,11 @@ public sealed class ClassRegistry
     }
 
     /// <summary>
-    /// Tries to get a static setter for a class.
+    /// Tries to get a static setter for a class, walking the superclass chain.
     /// </summary>
     public bool TryGetStaticSetter(string qualifiedClassName, string propertyName, out MethodBuilder? setter)
     {
-        if (_staticSetters.TryGetValue(qualifiedClassName, out var classSetters) &&
-            classSetters.TryGetValue(propertyName, out var s))
+        if (TryResolveStaticMember(_staticSetters, qualifiedClassName, propertyName, out _, out var s))
         {
             setter = s;
             return true;
@@ -523,26 +594,81 @@ public sealed class ClassRegistry
     /// </summary>
     public bool TryGetCallableStaticMethod(string qualifiedClassName, string methodName, TypeBuilder classBuilder, out System.Reflection.MethodInfo? method)
     {
-        if (!TryGetStaticMethod(qualifiedClassName, methodName, out var methodBuilder))
+        if (!TryResolveStaticMember(_staticMethods, qualifiedClassName, methodName, out var declaringClass, out var methodBuilder))
         {
             method = null;
             return false;
         }
 
-        // For generic classes, we need to call the method on a closed generic type
-        if (_genericParams.TryGetValue(qualifiedClassName, out var gps) && gps.Length > 0)
-        {
-            // Create a closed generic type using object for all type parameters
-            var typeArgs = new Type[gps.Length];
-            for (int i = 0; i < gps.Length; i++)
-                typeArgs[i] = typeof(object);
+        // When the method is declared on (or inherited from) a generic class, call it on a closed
+        // generic type — the declaring class's, not the requested subclass's.
+        var closedType = GetClosedGenericDeclaringType(declaringClass, qualifiedClassName, classBuilder);
+        method = closedType != null
+            ? EmitterTypeHelpers.ResolveMethod(closedType, methodBuilder!)
+            : methodBuilder;
+        return true;
+    }
 
-            var closedType = classBuilder.MakeGenericType(typeArgs);
-            method = EmitterTypeHelpers.ResolveMethod(closedType, methodBuilder!);
-            return true;
+    /// <summary>
+    /// Gets a static getter that can be called, walking the superclass chain and handling generic
+    /// declaring classes by resolving against a closed generic type. For non-generic classes returns
+    /// the MethodBuilder directly (its token already references the declaring class).
+    /// </summary>
+    public bool TryGetCallableStaticGetter(string qualifiedClassName, string propertyName, TypeBuilder classBuilder, out System.Reflection.MethodInfo? getter)
+    {
+        if (!TryResolveStaticMember(_staticGetters, qualifiedClassName, propertyName, out var declaringClass, out var getterBuilder))
+        {
+            getter = null;
+            return false;
         }
 
-        method = methodBuilder;
+        var closedType = GetClosedGenericDeclaringType(declaringClass, qualifiedClassName, classBuilder);
+        getter = closedType != null
+            ? EmitterTypeHelpers.ResolveMethod(closedType, getterBuilder!)
+            : getterBuilder;
+        return true;
+    }
+
+    /// <summary>
+    /// Gets a static *data field* declared directly on the class (no superclass walk), resolving
+    /// against a closed generic type for generic classes. Used by assignment sites: per JS semantics
+    /// a write through a subclass (<c>Sub.field = v</c>) creates an own shadow on the subclass and must
+    /// NOT mutate the base's storage, so writes only bind to a field the class itself declares.
+    /// (Inherited-static-field writes through a subclass would need runtime shadow storage — see #332
+    /// follow-up; reads, getters, setters and methods are inherited and use the chain-walking lookups.)
+    /// </summary>
+    public bool TryGetOwnCallableStaticField(string qualifiedClassName, string fieldName, TypeBuilder classBuilder, out System.Reflection.FieldInfo? field)
+    {
+        if (!_staticFields.TryGetValue(qualifiedClassName, out var classFields) ||
+            !classFields.TryGetValue(fieldName, out var fieldBuilder))
+        {
+            field = null;
+            return false;
+        }
+
+        var closedType = GetClosedGenericDeclaringType(qualifiedClassName, qualifiedClassName, classBuilder);
+        field = closedType != null
+            ? EmitterTypeHelpers.ResolveField(closedType, fieldBuilder)
+            : fieldBuilder;
+        return true;
+    }
+
+    /// <summary>
+    /// Gets a static setter that can be called, walking the superclass chain and handling generic
+    /// declaring classes by resolving against a closed generic type.
+    /// </summary>
+    public bool TryGetCallableStaticSetter(string qualifiedClassName, string propertyName, TypeBuilder classBuilder, out System.Reflection.MethodInfo? setter)
+    {
+        if (!TryResolveStaticMember(_staticSetters, qualifiedClassName, propertyName, out var declaringClass, out var setterBuilder))
+        {
+            setter = null;
+            return false;
+        }
+
+        var closedType = GetClosedGenericDeclaringType(declaringClass, qualifiedClassName, classBuilder);
+        setter = closedType != null
+            ? EmitterTypeHelpers.ResolveMethod(closedType, setterBuilder!)
+            : setterBuilder;
         return true;
     }
 
@@ -553,25 +679,18 @@ public sealed class ClassRegistry
     /// </summary>
     public bool TryGetCallableStaticField(string qualifiedClassName, string fieldName, TypeBuilder classBuilder, out System.Reflection.FieldInfo? field)
     {
-        if (!TryGetStaticField(qualifiedClassName, fieldName, out var fieldBuilder))
+        if (!TryResolveStaticMember(_staticFields, qualifiedClassName, fieldName, out var declaringClass, out var fieldBuilder))
         {
             field = null;
             return false;
         }
 
-        // For generic classes, we need to access the field on a closed generic type
-        if (_genericParams.TryGetValue(qualifiedClassName, out var gps) && gps.Length > 0)
-        {
-            var typeArgs = new Type[gps.Length];
-            for (int i = 0; i < gps.Length; i++)
-                typeArgs[i] = typeof(object);
-
-            var closedType = classBuilder.MakeGenericType(typeArgs);
-            field = EmitterTypeHelpers.ResolveField(closedType, fieldBuilder!);
-            return true;
-        }
-
-        field = fieldBuilder;
+        // When the field is declared on (or inherited from) a generic class, access it on a closed
+        // generic type — the declaring class's, not the requested subclass's.
+        var closedType = GetClosedGenericDeclaringType(declaringClass, qualifiedClassName, classBuilder);
+        field = closedType != null
+            ? EmitterTypeHelpers.ResolveField(closedType, fieldBuilder!)
+            : fieldBuilder;
         return true;
     }
 

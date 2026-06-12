@@ -69,7 +69,9 @@ public partial class ILEmitter
         if (_ctx.IsInstanceMethod || _ctx.CurrentClassBuilder == null) return false;
         var name = _ctx.CurrentClassName;
         if (name == null) return false;
-        if (!_ctx.ClassRegistry!.TryGetStaticField(name, get.Name.Lexeme, out var fb) || fb == null)
+        // Own-only: this resolver feeds read-modify-write operator paths (postfix/prefix/compound),
+        // which must bind to a field the class itself declares (inherited-field writes create a shadow).
+        if (!_ctx.ClassRegistry!.TryGetOwnStaticField(name, get.Name.Lexeme, out var fb) || fb == null)
             return false;
         className = name;
         field = fb;
@@ -83,7 +85,7 @@ public partial class ILEmitter
     private bool EmitStaticMemberAccess(string className, System.Reflection.Emit.TypeBuilder classBuilder, string propertyName)
     {
         // Try static getter first (for auto-accessors and explicit static accessors)
-        if (_ctx.ClassRegistry!.TryGetStaticGetter(className, propertyName, out var staticGetter))
+        if (_ctx.ClassRegistry!.TryGetCallableStaticGetter(className, propertyName, classBuilder, out var staticGetter))
         {
             IL.Emit(OpCodes.Call, staticGetter!);
 
@@ -118,7 +120,7 @@ public partial class ILEmitter
         }
 
         // Try to find static field using stored FieldBuilders
-        if (_ctx.ClassRegistry!.TryGetStaticField(className, propertyName, out var staticField))
+        if (_ctx.ClassRegistry!.TryGetCallableStaticField(className, propertyName, classBuilder, out var staticField))
         {
             IL.Emit(OpCodes.Ldsfld, staticField!);
             SetStackUnknown();
@@ -144,7 +146,7 @@ public partial class ILEmitter
     private bool EmitStaticMemberSet(string className, System.Reflection.Emit.TypeBuilder classBuilder, string propertyName, Expr value)
     {
         // Try static setter first (for auto-accessors and explicit static accessors)
-        if (_ctx.ClassRegistry!.TryGetStaticSetter(className, propertyName, out var staticSetter))
+        if (_ctx.ClassRegistry!.TryGetCallableStaticSetter(className, propertyName, classBuilder, out var staticSetter))
         {
             // The setter's parameter type is authoritative — auto-accessors use typed params
             // (Double/Boolean/String), explicit accessors use Object. Either way this matches
@@ -179,8 +181,9 @@ public partial class ILEmitter
             return true;
         }
 
-        // Try static fields - use TryGetCallableStaticField to handle generic classes properly
-        if (_ctx.ClassRegistry!.TryGetCallableStaticField(className, propertyName, classBuilder, out var callableStaticField))
+        // Try static fields own-only — a data-field write through a subclass creates an own shadow,
+        // it must not mutate the base's storage (see TryGetOwnCallableStaticField).
+        if (_ctx.ClassRegistry!.TryGetOwnCallableStaticField(className, propertyName, classBuilder, out var callableStaticField))
         {
             EmitExpression(value);
             EmitBoxIfNeeded(value);

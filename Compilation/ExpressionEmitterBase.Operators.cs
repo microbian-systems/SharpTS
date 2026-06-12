@@ -294,10 +294,11 @@ public abstract partial class ExpressionEmitterBase
     {
         // Handle static field compound assignment: Class.field += x
         if (cs.Object is Expr.Variable classVar &&
-            Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out _))
+            Ctx.Classes.TryGetValue(Ctx.ResolveClassName(classVar.Name.Lexeme), out var compoundClassBuilder))
         {
             string resolvedClassName = Ctx.ResolveClassName(classVar.Name.Lexeme);
-            if (Ctx.ClassRegistry!.TryGetStaticField(resolvedClassName, cs.Name.Lexeme, out var staticField))
+            // Compound assignment binds the data field own-only (write side); see TryGetOwnCallableStaticField.
+            if (Ctx.ClassRegistry!.TryGetOwnCallableStaticField(resolvedClassName, cs.Name.Lexeme, compoundClassBuilder, out var staticField))
             {
                 EmitExpression(cs.Value);
                 EnsureBoxed();
