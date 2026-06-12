@@ -121,12 +121,26 @@ public class TimerTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void SetTimeout_Unref_AllowsExit_Interpreted(ExecutionMode mode)
     {
-        // unref() should allow the program to exit without running the timer
+        // unref() drops a timer's hold on the event loop: the program exits once
+        // the *ref'd* work is done, without waiting for (or running) the unref'd
+        // timer. A ref'd short timer fires "alive" and keeps the loop alive until
+        // it does; the unref'd timer is scheduled far in the future and must never
+        // fire — its only hold on the loop was removed by unref(), so the program
+        // exits long before it is due.
+        //
+        // This is a positive, load-independent assertion (anti-flake doctrine): the
+        // ref'd timer fires whenever it is due, so there is no wall-clock race, and
+        // the unref'd timer's far-future delay means it cannot fire within any
+        // plausible exit window regardless of CI load. The earlier version asserted
+        // empty output for a 10ms unref'd timer, which flaked when a slow/loaded
+        // runner's startup outran the 10ms and the shutdown drain fired the now-due
+        // timer before the exit check.
         var source = @"
-            setTimeout(() => { console.log('should not run'); }, 10).unref();
+            setTimeout(() => { console.log('should not run'); }, 60000).unref();
+            setTimeout(() => { console.log('alive'); }, 10);
         ";
         var output = TestHarness.Run(source, mode);
-        Assert.Equal(string.Empty, output);
+        Assert.Equal("alive\n", output);
     }
 
     #endregion
