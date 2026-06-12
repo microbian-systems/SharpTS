@@ -243,4 +243,66 @@ public class InnerFunctionArrowCaptureTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("function\ntrue\n", output);
     }
+
+    // #321: ++/-- on a parameter captured into a scope display class must
+    // dual-write the arg slot, not just the DC field. Same-body reads resolve
+    // the arg slot before the DC, so a DC-only store leaves the direct read
+    // seeing the stale original argument while the closure read sees the new
+    // value. Mirrors the assignment-path dual-write from #307/#313.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CapturedParam_PostfixIncrement_SyncsArgSlotAndDC(ExecutionMode mode)
+    {
+        var source = """
+            const outer = () => {
+              function counter2(n: number) {
+                n++;
+                const read = () => n;
+                return n * 1000 + read();   // direct (arg slot) + closure (DC)
+              }
+              return counter2(7);
+            };
+            console.log(outer());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("8008\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CapturedParam_PrefixDecrement_SyncsArgSlotAndDC(ExecutionMode mode)
+    {
+        // Prefix form + decrement + arrow parameter (arrow scope DC branch).
+        var source = """
+            const a1 = (n: number) => {
+              --n;
+              const read = () => n;
+              return n * 1000 + read();
+            };
+            console.log(a1(7));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("6006\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CapturedUntypedParam_PostfixIncrement_SyncsArgSlotAndDC(ExecutionMode mode)
+    {
+        // Untyped (any) parameter: arg slot is object, so the dual-write must
+        // not emit an unbox/castclass conversion (EmitConvertForParamSlot no-op).
+        var source = """
+            function g1(n) {
+              n++;
+              const read = () => n;
+              return n * 1000 + read();
+            }
+            console.log(g1(7));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("8008\n", output);
+    }
 }

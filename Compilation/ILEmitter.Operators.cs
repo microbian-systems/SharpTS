@@ -842,6 +842,16 @@ public partial class ILEmitter
                 }
                 IL.Emit(OpCodes.Ldloc, temp);
                 IL.Emit(OpCodes.Stfld, funcDCField);
+                // Captured PARAMETER of this function: also sync the arg slot —
+                // reads resolve parameters before the DC, so a DC-only store
+                // leaves later same-body reads seeing the stale argument (#321).
+                if (_ctx.FunctionDisplayClassLocal != null &&
+                    _ctx.TryGetParameter(v.Name.Lexeme, out var funcParamSync))
+                {
+                    IL.Emit(OpCodes.Ldloc, temp);
+                    _ctx.EmitConvertForParamSlot(IL, v.Name.Lexeme);
+                    IL.Emit(OpCodes.Starg, funcParamSync);
+                }
                 // Box result if needed
                 if (isTypedDouble)
                 {
@@ -873,6 +883,14 @@ public partial class ILEmitter
                 }
                 IL.Emit(OpCodes.Ldloc, temp);
                 IL.Emit(OpCodes.Stfld, arrowDCField);
+                // Captured PARAMETER of this arrow: also sync the arg slot (#321).
+                if (_ctx.ArrowScopeDisplayClassLocal != null &&
+                    _ctx.TryGetParameter(v.Name.Lexeme, out var arrowParamSync))
+                {
+                    IL.Emit(OpCodes.Ldloc, temp);
+                    _ctx.EmitConvertForParamSlot(IL, v.Name.Lexeme);
+                    IL.Emit(OpCodes.Starg, arrowParamSync);
+                }
                 // Box result if needed
                 if (isTypedDouble)
                 {
@@ -1101,6 +1119,16 @@ public partial class ILEmitter
                 }
                 IL.Emit(OpCodes.Ldloc, temp);
                 IL.Emit(OpCodes.Stfld, funcDCField);
+                // Captured PARAMETER of this function: also sync the arg slot —
+                // reads resolve parameters before the DC, so a DC-only store
+                // leaves later same-body reads seeing the stale argument (#321).
+                if (_ctx.FunctionDisplayClassLocal != null &&
+                    _ctx.TryGetParameter(v.Name.Lexeme, out var funcParamSync))
+                {
+                    IL.Emit(OpCodes.Ldloc, temp);
+                    _ctx.EmitConvertForParamSlot(IL, v.Name.Lexeme);
+                    IL.Emit(OpCodes.Starg, funcParamSync);
+                }
 
                 // Original value is still on stack, box it
                 IL.Emit(OpCodes.Box, _ctx.Types.Double);
@@ -1131,6 +1159,14 @@ public partial class ILEmitter
                 }
                 IL.Emit(OpCodes.Ldloc, temp);
                 IL.Emit(OpCodes.Stfld, arrowDCField);
+                // Captured PARAMETER of this arrow: also sync the arg slot (#321).
+                if (_ctx.ArrowScopeDisplayClassLocal != null &&
+                    _ctx.TryGetParameter(v.Name.Lexeme, out var arrowParamSync))
+                {
+                    IL.Emit(OpCodes.Ldloc, temp);
+                    _ctx.EmitConvertForParamSlot(IL, v.Name.Lexeme);
+                    IL.Emit(OpCodes.Starg, arrowParamSync);
+                }
 
                 // Original value is still on stack, box it
                 IL.Emit(OpCodes.Box, _ctx.Types.Double);
