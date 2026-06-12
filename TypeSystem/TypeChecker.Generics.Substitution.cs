@@ -59,6 +59,10 @@ public partial class TypeChecker
                 new TypeInfo.SpreadType(Substitute(spread.Inner, substitutions)),
             TypeInfo.Union union =>
                 new TypeInfo.Union(union.Types.Select(t => Substitute(t, substitutions)).ToList()),
+            // NOTE: fields only. Preserving call/construct signatures here would feed generic
+            // construct-signature *assignment* relating (which erases/instantiates via Substitute)
+            // types it does not yet compare correctly, regressing assignmentCompatWithConstructSignatures.
+            // The conditional-type path that #316 needs preserves them in SubstituteWithoutConditionalEval.
             TypeInfo.Record rec =>
                 new TypeInfo.Record(
                     rec.Fields.ToDictionary(
@@ -105,6 +109,35 @@ public partial class TypeChecker
             _ => type
         };
     }
+
+    /// <summary>
+    /// Rebuilds a record applying <paramref name="sub"/> to every type-carrying member — fields,
+    /// index signatures, and the parameter/return types of call and construct signatures — while
+    /// preserving structural metadata (optional/readonly/getter-only/method flags). Used by
+    /// <see cref="SubstituteWithoutConditionalEval"/>: the naive "copy Fields only" rebuild silently
+    /// dropped construct/call signatures and index types, leaving <c>T extends new (...) =&gt; infer
+    /// U</c> with an empty object on both sides so U never bound (#316).
+    /// </summary>
+    private static TypeInfo.Record SubstituteRecordMembers(TypeInfo.Record rec, Func<TypeInfo, TypeInfo> sub) =>
+        new(
+            rec.Fields.ToDictionary(kvp => kvp.Key, kvp => sub(kvp.Value)).ToFrozenDictionary(),
+            rec.StringIndexType is { } sit ? sub(sit) : null,
+            rec.NumberIndexType is { } nit ? sub(nit) : null,
+            rec.SymbolIndexType is { } yit ? sub(yit) : null,
+            rec.OptionalFields,
+            rec.IsReadonly,
+            rec.GetterOnlyFields,
+            rec.CallSignatures?.Select(cs => cs with
+            {
+                ParamTypes = cs.ParamTypes.Select(sub).ToList(),
+                ReturnType = sub(cs.ReturnType)
+            }).ToList(),
+            rec.ConstructorSignatures?.Select(cs => cs with
+            {
+                ParamTypes = cs.ParamTypes.Select(sub).ToList(),
+                ReturnType = sub(cs.ReturnType)
+            }).ToList(),
+            rec.MethodMembers);
 
     /// <summary>
     /// Substitutes type parameters in a tuple with flattening of spread elements.
