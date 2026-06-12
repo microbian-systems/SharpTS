@@ -216,4 +216,44 @@ public class BareBuiltInClassRefTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("true\ntrue\ntrue\ntrue\n", output);
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Primitives_InstanceOf_Object_AreFalse(ExecutionMode mode)
+    {
+        // Per ECMA-262 OrdinaryHasInstance, a primitive (or undefined) operand
+        // short-circuits to false — only non-primitive objects satisfy
+        // `instanceof Object`. Compiled mode previously matched System.Object
+        // via IsAssignableFrom, which is true for every boxed primitive and the
+        // undefined sentinel (#342); interp already excluded them (#334).
+        var source = """
+            console.log((5) instanceof Object);
+            console.log("s" instanceof Object);
+            console.log(true instanceof Object);
+            console.log(null instanceof Object);
+            console.log(undefined instanceof Object);
+            console.log(Symbol("x") instanceof Object);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("false\nfalse\nfalse\nfalse\nfalse\nfalse\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Objects_InstanceOf_Object_AreTrue(ExecutionMode mode)
+    {
+        // Every non-primitive guest value — object/array literals, functions,
+        // and built-in instances — is an Object (#342). (Boxed-primitive
+        // wrappers like `new Number(5)` are also objects, but interp currently
+        // produces a bare primitive for those — see #360 — so they're excluded
+        // from this cross-mode test.)
+        var source = """
+            console.log(({}) instanceof Object);
+            console.log(([]) instanceof Object);
+            console.log((() => 1) instanceof Object);
+            console.log(new Map() instanceof Object);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\ntrue\ntrue\n", output);
+    }
 }

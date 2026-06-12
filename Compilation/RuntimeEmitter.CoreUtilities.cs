@@ -3674,6 +3674,36 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, _types.Type);
         il.Emit(OpCodes.Stloc, classTypeLocal);
 
+        // `x instanceof Object` — the bare `Object` identifier resolves to the
+        // System.Object Type token (see RuntimeEmitter.GlobalThis.cs), so apply
+        // JS Object semantics rather than the IsAssignableFrom fallback below:
+        // every .NET type is assignable to System.Object, so that fallback would
+        // wrongly say true for boxed primitives (double/bool/string), BigInteger,
+        // $TSSymbol, and the undefined sentinel. Per ECMA-262 OrdinaryHasInstance
+        // a primitive O short-circuits to false — so a guest value is an Object
+        // iff it is non-primitive (mirrors interp's IsJsObject, #342). Boxed
+        // primitive wrappers (`new Number(5)`) are $Object instances, not boxed
+        // doubles, so they correctly fall through to true.
+        var notObjectClassLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, classTypeLocal);
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Bne_Un, notObjectClassLabel);
+        void PrimitiveToFalse(Type primType)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, primType);
+            il.Emit(OpCodes.Brtrue, falseLabel);
+        }
+        PrimitiveToFalse(_types.Boolean);
+        PrimitiveToFalse(_types.Double);
+        PrimitiveToFalse(_types.String);
+        PrimitiveToFalse(_types.BigInteger);
+        PrimitiveToFalse(runtime.TSSymbolType);
+        PrimitiveToFalse(runtime.UndefinedType);
+        il.Emit(OpCodes.Br, trueLabel);
+        il.MarkLabel(notObjectClassLabel);
+
         void CheckBoxed(Type primType, string typeTag)
         {
             var skip = il.DefineLabel();
