@@ -693,6 +693,15 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitAbortSignalStaticAny(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // The body below late-binds to RuntimeTypes.AbortSignalAnyCompiled via
+        // Type.GetType("…, SharpTS"); its normal execution needs SharpTS.dll present.
+        // Record the runtime dependency only when the program actually references
+        // AbortSignal.any — the coarse UsesAbortController flag (set by ordinary
+        // AbortController / fetch-with-signal usage that is pure IL) would otherwise
+        // force an unnecessary SharpTS.dll copy for the common case (#116).
+        if (_features.UsesAbortSignalAny)
+            runtime.RequireSharpTSRuntime("AbortSignal.any");
+
         var method = typeBuilder.DefineMethod(
             "AbortSignalAny",
             MethodAttributes.Public | MethodAttributes.Static,

@@ -70,4 +70,31 @@ public class RuntimeDependencySignalTests
         Assert.DoesNotContain("Intl", reasons);
         Assert.DoesNotContain("vm module", reasons);
     }
+
+    [Fact]
+    public void AbortSignalAny_RequiresRuntime()
+    {
+        var reasons = ReasonsFor("""
+            const c1 = new AbortController();
+            const c2 = new AbortController();
+            const combined = AbortSignal.any([c1.signal, c2.signal]);
+            console.log(combined.aborted);
+            """);
+        Assert.Contains("AbortSignal.any", reasons);
+    }
+
+    [Fact]
+    public void AbortControllerWithoutAny_StaysStandalone()
+    {
+        // Plain AbortController usage (incl. fetch-with-signal) compiles to pure IL —
+        // it must NOT drag in a SharpTS.dll copy (#116).
+        var reasons = ReasonsFor("""
+            const c = new AbortController();
+            c.signal.addEventListener("abort", () => console.log("aborted"));
+            c.abort();
+            console.log(c.signal.aborted);
+            """);
+        Assert.DoesNotContain("AbortSignal.any", reasons);
+        Assert.Empty(reasons);
+    }
 }
