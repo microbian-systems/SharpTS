@@ -585,4 +585,120 @@ public class ILVerificationTests
         Assert.Equal("5\n13\nfalse\ntrue\n", output);
         Assert.Equal(output, TestHarness.RunInterpreted(source));
     }
+
+    // #367: a `: number` LOCAL unsoundly assigned `undefined as any` and then returned. The
+    // return expression is statically `number`, so the #344 detection (which keys on the return
+    // value's own type) cannot see it. The taint pass object-slots the local so the unboxed
+    // double slot does not coerce the sentinel to NaN, matching the interpreter (`undefined`).
+    [Fact]
+    public void TypedNumberLocal_HoldingUndefined_ReturnedStaysUndefined()
+    {
+        var source = """
+            function h(n: any): number {
+                let x: number = undefined as any;
+                if (n > 2) x = 42;
+                return x;
+            }
+            console.log(h(1));
+            console.log(h(5));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("undefined\n42\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #367: taint reaches the returned local transitively (`z = y` where `y` holds the sentinel).
+    // The numeric-typed initializer of `z` would otherwise give it an unboxed double slot that
+    // coerces `undefined` to NaN at the store, before the return is even reached.
+    [Fact]
+    public void TypedNumberLocal_TransitiveTaint_StaysUndefined()
+    {
+        var source = """
+            function trans(): number {
+                let y: number = undefined as any;
+                let z: number = y;
+                return z;
+            }
+            console.log(trans());
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("undefined\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #367: the taint assignment is lexically AFTER the return that observes it, reachable only
+    // via a loop back-edge. The whole-body taint pass is order-independent, so the earlier return
+    // is still flagged and the local object-slotted.
+    [Fact]
+    public void TypedNumberLocal_LoopBackEdgeTaint_StaysUndefined()
+    {
+        var source = """
+            function loop(n: number): number {
+                let x: number = 0;
+                for (let i = 0; i < n; i++) {
+                    if (i > 0) return x;
+                    x = undefined as any;
+                }
+                return 7;
+            }
+            console.log(loop(2));
+            console.log(loop(0));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("undefined\n7\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #367: the same local-slot corruption inside a class method and getter (their `return`
+    // already uses an object slot, but the unboxed local would coerce the sentinel first).
+    [Fact]
+    public void TypedNumberLocal_InMethodAndGetter_StaysUndefined()
+    {
+        var source = """
+            class C {
+                m(): number { let x: number = 0; x = undefined as any; return x; }
+                get g(): number { let y: number = 1; y = undefined as any; return y; }
+            }
+            const c = new C();
+            console.log(c.m());
+            console.log(c.g);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("undefined\nundefined\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #367 guard: a `: number` local that never receives an `any`/`undefined` value keeps its
+    // sound unboxed double slot and computes correctly — the taint pass must not over-widen.
+    [Fact]
+    public void TypedNumberLocal_SoundBody_StillUsesNumericValue()
+    {
+        var source = """
+            function clean(n: number): number {
+                let x: number = 5;
+                if (n > 2) x = 42;
+                return x + 1;
+            }
+            console.log(clean(1));
+            console.log(clean(10));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("6\n43\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
 }

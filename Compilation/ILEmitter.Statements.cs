@@ -207,6 +207,15 @@ public partial class ILEmitter
     /// </summary>
     private bool CanUseUnboxedLocal(Stmt.Var v)
     {
+        // #367: a number-typed local that an `any`/`undefined` value may have (transitively) been
+        // assigned must use an object slot — an unboxed double slot would coerce the runtime
+        // `undefined` sentinel to NaN at the store. The type checker flags such declarations (and,
+        // for `const`, the reused initializer expression) in the TypeMap.
+        if (_ctx.TypeMap != null &&
+            (_ctx.TypeMap.IsUndefinedReachableNumericLocal(v) ||
+             (v.Initializer != null && _ctx.TypeMap.IsUndefinedReachableNumericLocal(v.Initializer))))
+            return false;
+
         // Check if this is an optimized for loop counter
         if (_optimizedLoopCounterName != null && v.Name.Lexeme == _optimizedLoopCounterName)
             return true;

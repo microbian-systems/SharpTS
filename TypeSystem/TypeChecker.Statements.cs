@@ -405,6 +405,9 @@ public partial class TypeChecker
             _typeMap.MarkUndefinedReachableReturn(value);
     }
 
+    private bool ReturnValueMayBeUndefinedSentinel(Expr value) =>
+        ValueMayBeUndefinedSentinel(value, taintedLocals: null);
+
     /// <summary>
     /// True if <paramref name="value"/> can evaluate to a runtime value of static type
     /// <c>any</c>/<c>unknown</c> (which therefore can be the <c>undefined</c> sentinel). Recurses
@@ -414,14 +417,25 @@ public partial class TypeChecker
     /// the <see cref="TypeMap"/>, which has every sub-expression recorded by the time a return is
     /// checked. Over-approximates (both ternary branches), which is sound: at worst a function that
     /// could never produce <c>undefined</c> keeps an object slot.
+    /// <para>
+    /// When <paramref name="taintedLocals"/> is supplied (#367), a leaf reference to one of those
+    /// locals also counts: a <c>number</c>/<c>boolean</c>-typed local statically reports its narrow
+    /// type at a <c>return</c>, hiding that an earlier <c>any</c>/<c>undefined</c> assignment left it
+    /// holding the sentinel. The same predicate grows the taint set (transitive assignments) and
+    /// flags the returns, so both stay in lock-step.
+    /// </para>
     /// </summary>
-    private bool ReturnValueMayBeUndefinedSentinel(Expr value) => value switch
+    private bool ValueMayBeUndefinedSentinel(Expr value, HashSet<string>? taintedLocals) => value switch
     {
-        Expr.Grouping g => ReturnValueMayBeUndefinedSentinel(g.Expression),
-        Expr.Ternary t => ReturnValueMayBeUndefinedSentinel(t.ThenBranch)
-                       || ReturnValueMayBeUndefinedSentinel(t.ElseBranch),
-        Expr.Logical l => ReturnValueMayBeUndefinedSentinel(l.Left)
-                       || ReturnValueMayBeUndefinedSentinel(l.Right),
+        Expr.Grouping g => ValueMayBeUndefinedSentinel(g.Expression, taintedLocals),
+        Expr.Ternary t => ValueMayBeUndefinedSentinel(t.ThenBranch, taintedLocals)
+                       || ValueMayBeUndefinedSentinel(t.ElseBranch, taintedLocals),
+        Expr.Logical l => ValueMayBeUndefinedSentinel(l.Left, taintedLocals)
+                       || ValueMayBeUndefinedSentinel(l.Right, taintedLocals),
+        Expr.NullishCoalescing n => ValueMayBeUndefinedSentinel(n.Left, taintedLocals)
+                                 || ValueMayBeUndefinedSentinel(n.Right, taintedLocals),
+        Expr.Assign a => ValueMayBeUndefinedSentinel(a.Value, taintedLocals),
+        Expr.Variable v when taintedLocals != null && taintedLocals.Contains(v.Name.Lexeme) => true,
         _ => TypeAdmitsUndefinedSentinel(_typeMap.Get(value))
     };
 
@@ -431,6 +445,68 @@ public partial class TypeChecker
         TypeInfo.Union u => u.Types.Any(TypeAdmitsUndefinedSentinel),
         _ => false
     };
+
+    /// <summary>
+    /// #367 residual of #344: a <c>number</c>/<c>boolean</c>-typed <em>local</em> can be unsoundly
+    /// assigned an <c>any</c>/<c>undefined</c> value (e.g. <c>let x: number = undefined as any</c>)
+    /// and so hold the runtime <c>undefined</c> sentinel — yet <c>return x</c> has static type
+    /// <c>number</c>/<c>boolean</c>, so the per-return #344 detection (which keys on the return
+    /// value's own type being <c>any</c>/<c>unknown</c>) never fires and the compiler's unboxed
+    /// slot coerces it to <c>NaN</c>/<c>false</c>. Run a whole-body taint pass <em>after</em> the
+    /// body is type-checked (every sub-expression's type is then in the <see cref="TypeMap"/>):
+    /// compute the set of locals that may hold the sentinel to a fixpoint — seeded by direct
+    /// <c>any</c>/<c>undefined</c> assignments and grown transitively through other tainted locals —
+    /// then flag any <c>return</c> of such a local so the compiler widens the slot back to object.
+    /// Order-independent, so a taint reaching an earlier return via a loop back-edge is still
+    /// caught. Over-approximates (no narrowing): at worst a needless object slot, never a wrong
+    /// value. Only meaningful when the declared return is <c>number</c>/<c>boolean</c> — methods,
+    /// async, and inferred-return functions already use an object slot, so they cannot corrupt.
+    /// </summary>
+    private void MarkUndefinedReachableLocalReturns(IReadOnlyList<Stmt> body)
+    {
+        TypeInfo? declared = _currentFunctionReturnType;
+        if (_inAsyncFunction && declared is TypeInfo.Promise promised) declared = promised.ValueType;
+        if (declared is not TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER or TokenType.TYPE_BOOLEAN })
+            return;
+
+        var collected = ReturnLocalTaintCollector.Collect(body);
+        if (collected.Returns.Count == 0 || collected.Assignments.Count == 0) return;
+
+        var tainted = new HashSet<string>();
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var (name, assignedValue) in collected.Assignments)
+            {
+                if (tainted.Contains(name)) continue;
+                if (ValueMayBeUndefinedSentinel(assignedValue, tainted))
+                {
+                    tainted.Add(name);
+                    changed = true;
+                }
+            }
+        }
+        if (tainted.Count == 0) return;
+
+        // Local slot: object-slot every tainted number-typed local so its declaration does not get
+        // an unboxed double slot that would coerce the sentinel to NaN at the store (e.g. the
+        // intermediate `z` in `let y = undefined as any; let z = y; return z`). Both the declaration
+        // node and its initializer are flagged — `const` is recompiled through a fresh Stmt.Var that
+        // reuses the original initializer expression.
+        foreach (var (name, node, initializer) in collected.Declarations)
+        {
+            if (!tainted.Contains(name)) continue;
+            _typeMap.MarkUndefinedReachableNumericLocal(node);
+            if (initializer != null) _typeMap.MarkUndefinedReachableNumericLocal(initializer);
+        }
+
+        // Return slot: flag returns of a tainted local so the compiler widens the otherwise-unboxed
+        // double/bool return slot back to object.
+        foreach (var ret in collected.Returns)
+            if (ValueMayBeUndefinedSentinel(ret, tainted))
+                _typeMap.MarkUndefinedReachableReturn(ret);
+    }
 
     internal VoidResult VisitExpression(Stmt.Expression stmt)
     {

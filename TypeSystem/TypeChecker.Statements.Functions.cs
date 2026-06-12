@@ -548,6 +548,11 @@ public partial class TypeChecker
 
             CheckStmtList(funcStmt.Body);
 
+            // #367: flag returns of a number/boolean-typed local that an `any`/`undefined`
+            // assignment may have left holding the undefined sentinel (no-op unless the declared
+            // return is number/boolean). Runs after the body so every sub-expression type is known.
+            MarkUndefinedReachableLocalReturns(funcStmt.Body);
+
             // Resolve inferred return type from collected return expressions
             if (inferringReturnType)
             {
