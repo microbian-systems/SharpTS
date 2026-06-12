@@ -361,6 +361,8 @@ public partial class TypeChecker
                     ? CheckExprWithContext(stmt.Value, expectedReturnType)
                     : new TypeInfo.Void();
 
+                MarkIfUndefinedReachableNumericReturn(stmt.Value, actualReturnType);
+
                 if (_inGeneratorFunction && expectedReturnType is TypeInfo.Void)
                 {
                     // Allow any return value in generators with no explicit return type
@@ -377,6 +379,58 @@ public partial class TypeChecker
         }
         return VoidResult.Instance;
     }
+
+    /// <summary>
+    /// When a return value whose runtime value can be the <c>undefined</c> sentinel (i.e. a
+    /// statically <c>any</c>/<c>unknown</c> value, e.g. <c>return undefined as any</c>) flows into
+    /// a declared <c>number</c>/<c>boolean</c> return type, the IL compiler would give the function
+    /// an unboxed <c>double</c>/<c>bool</c> return slot. That slot cannot carry <c>undefined</c>, so
+    /// it is silently coerced to <c>NaN</c>/<c>false</c> (#344). Record the value expression so the
+    /// compiler widens that one function's slot back to <c>object</c>. <c>any</c>/<c>unknown</c> are
+    /// the only statically-checked types whose runtime value can be <c>undefined</c> while still
+    /// satisfying a <c>number</c>/<c>boolean</c> annotation (an exact annotation otherwise rejects
+    /// <c>undefined</c>; an inferred return that admits it widens to a union → object slot).
+    /// Compiler hint only — caller-side checking still sees the clean <c>number</c>/<c>boolean</c>.
+    /// </summary>
+    private void MarkIfUndefinedReachableNumericReturn(Expr? value, TypeInfo actualType)
+    {
+        if (value == null) return;
+
+        TypeInfo declared = _currentFunctionReturnType ?? actualType;
+        if (_inAsyncFunction && declared is TypeInfo.Promise promised) declared = promised.ValueType;
+        if (declared is not TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER or TokenType.TYPE_BOOLEAN })
+            return;
+
+        if (ReturnValueMayBeUndefinedSentinel(value))
+            _typeMap.MarkUndefinedReachableReturn(value);
+    }
+
+    /// <summary>
+    /// True if <paramref name="value"/> can evaluate to a runtime value of static type
+    /// <c>any</c>/<c>unknown</c> (which therefore can be the <c>undefined</c> sentinel). Recurses
+    /// through "pass-through" forms whose result is one of their operands — groupings, ternaries,
+    /// and <c>||</c>/<c>&amp;&amp;</c>/<c>??</c> — because those collapse a mixed branch type (e.g.
+    /// <c>42 | any</c> → <c>42</c>) and hide the <c>any</c> at the top level. Leaf types come from
+    /// the <see cref="TypeMap"/>, which has every sub-expression recorded by the time a return is
+    /// checked. Over-approximates (both ternary branches), which is sound: at worst a function that
+    /// could never produce <c>undefined</c> keeps an object slot.
+    /// </summary>
+    private bool ReturnValueMayBeUndefinedSentinel(Expr value) => value switch
+    {
+        Expr.Grouping g => ReturnValueMayBeUndefinedSentinel(g.Expression),
+        Expr.Ternary t => ReturnValueMayBeUndefinedSentinel(t.ThenBranch)
+                       || ReturnValueMayBeUndefinedSentinel(t.ElseBranch),
+        Expr.Logical l => ReturnValueMayBeUndefinedSentinel(l.Left)
+                       || ReturnValueMayBeUndefinedSentinel(l.Right),
+        _ => TypeAdmitsUndefinedSentinel(_typeMap.Get(value))
+    };
+
+    private static bool TypeAdmitsUndefinedSentinel(TypeInfo? type) => type switch
+    {
+        TypeInfo.Any or TypeInfo.Unknown or TypeInfo.Undefined => true,
+        TypeInfo.Union u => u.Types.Any(TypeAdmitsUndefinedSentinel),
+        _ => false
+    };
 
     internal VoidResult VisitExpression(Stmt.Expression stmt)
     {

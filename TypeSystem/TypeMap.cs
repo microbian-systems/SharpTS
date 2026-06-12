@@ -17,6 +17,7 @@ public class TypeMap
     private readonly Dictionary<string, TypeInfo.Class> _classTypes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, TypeInfo.Function> _functionTypes = new(StringComparer.Ordinal);
     private readonly Dictionary<Expr.ClassExpr, TypeInfo.Class> _classExprTypes = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Expr> _undefinedReachableReturns = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// Associates an expression with its resolved type.
@@ -52,6 +53,23 @@ public class TypeMap
     /// Gets the function type by name, or null if not found.
     /// </summary>
     public TypeInfo.Function? GetFunctionType(string functionName) => _functionTypes.GetValueOrDefault(functionName);
+
+    /// <summary>
+    /// Marks a return value expression as one that flows into a <c>number</c>/<c>boolean</c>
+    /// declared return type but whose static type (<c>any</c>/<c>unknown</c>) does not exclude
+    /// the runtime <c>undefined</c> sentinel (e.g. <c>return undefined as any</c>). The IL
+    /// compiler consults this to widen the otherwise-unboxed <c>double</c>/<c>bool</c> return
+    /// slot back to <c>object</c> for just those functions, so a legitimate <c>undefined</c>
+    /// is not silently coerced to <c>NaN</c>/<c>false</c>. Purely a compiler hint — caller-side
+    /// type checking still sees the clean <c>number</c>/<c>boolean</c> return type. (#344)
+    /// </summary>
+    public void MarkUndefinedReachableReturn(Expr returnValue) => _undefinedReachableReturns.Add(returnValue);
+
+    /// <summary>
+    /// True if <paramref name="returnValue"/> was flagged by
+    /// <see cref="MarkUndefinedReachableReturn"/>.
+    /// </summary>
+    public bool IsUndefinedReachableReturn(Expr returnValue) => _undefinedReachableReturns.Contains(returnValue);
 
     /// <summary>
     /// Gets the resolved type for an expression, or null if not found.

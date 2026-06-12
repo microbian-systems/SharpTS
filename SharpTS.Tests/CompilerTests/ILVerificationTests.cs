@@ -500,4 +500,89 @@ public class ILVerificationTests
         Assert.Empty(errors);
         Assert.Equal("hello world\nABC\n", output);
     }
+
+    // #344: a `: number` function whose body returns `undefined as any` would, with an
+    // unboxed `double` return slot, coerce the `undefined` sentinel to `NaN`. The checker
+    // flags the undefined-reachable return so the compiler widens the slot to object,
+    // matching the interpreter (`undefined`).
+    [Fact]
+    public void TypedNumberReturn_UndefinedAsAny_StaysUndefined()
+    {
+        var source = """
+            function f(n: any): number {
+                if (n > 2) return 42;
+                return undefined as any;
+            }
+            console.log(f(3));
+            console.log(f(1));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("42\nundefined\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #344: the boolean analogue — an unboxed `bool` slot would coerce `undefined` to `false`.
+    [Fact]
+    public void TypedBooleanReturn_UndefinedAsAny_StaysUndefined()
+    {
+        var source = """
+            function g(n: any): boolean {
+                if (n > 2) return true;
+                return undefined as any;
+            }
+            console.log(g(3));
+            console.log(g(1));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("true\nundefined\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #344: an expression-bodied arrow with a `: number` return whose ternary hides the
+    // `undefined` in a branch (`42 | any` collapses to `42` at the top level). The value-flow
+    // check recurses into ternary branches so the slot is still widened.
+    [Fact]
+    public void TypedNumberArrow_TernaryUndefinedBranch_StaysUndefined()
+    {
+        var source = """
+            const af = (n: any): number => (n > 2 ? 42 : (undefined as any));
+            console.log(af(3));
+            console.log(af(1));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("42\nundefined\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #344 guard: a genuinely numeric/boolean function (no undefined in its value domain)
+    // keeps its sound unboxed slot — it must still verify and compute correctly. `area(2)+1`
+    // consumes the return numerically, exercising the unboxed double path.
+    [Fact]
+    public void TypedNumericReturn_SoundBody_StillWorks()
+    {
+        var source = """
+            function add(a: number, b: number): number { return a + b; }
+            function area(r: number): number { return r * r * 3; }
+            function isBig(n: number): boolean { return n > 10; }
+            console.log(add(2, 3));
+            console.log(area(2) + 1);
+            console.log(isBig(5));
+            console.log(isBig(20));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("5\n13\nfalse\ntrue\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
 }

@@ -64,9 +64,12 @@ public partial class ILCompiler
         var paramTypes = ParameterTypeResolver.ResolveParameters(
             funcStmt.Parameters, _typeMapper, funcType);
 
-        // Resolve typed return type (optimization: avoid boxing for : number returns)
+        // Resolve typed return type (optimization: avoid boxing for : number returns).
+        // Widen a number/boolean slot to object if the checker flagged an undefined-reachable
+        // return (e.g. `return undefined as any`) — the unboxed slot would coerce it (#344).
+        bool returnMayBeUndefined = ReturnSlotAnalysis.BlockReturnsMayBeUndefined(funcStmt.Body, _typeMap);
         Type returnType = ParameterTypeResolver.ResolveReturnType(
-            funcType?.ReturnType, isAsync: false, _typeMapper);
+            funcType?.ReturnType, isAsync: false, _typeMapper, returnMayBeUndefined);
 
         var methodBuilder = _programType.DefineMethod(
             qualifiedFunctionName,
