@@ -113,16 +113,56 @@ public class ContextualTupleTypingTests
     [Fact]
     public void TupleValueFlowsAtRuntime()
     {
-        // Indexing the union directly (m[0]) hits a separate CheckGetIndex gap (#311),
-        // so the runtime shape is observed via JSON.stringify instead.
+        // Indexing the union directly (m[0]/m[1]) distributes over the constituents
+        // (#311). The discriminant and payload flow through to runtime.
         var result = TestHarness.RunInterpreted("""
             type A = ["a", number] | ["c", string];
             function make(cond: boolean): A {
                 return cond ? ["a", 1] : ["c", "z"];
             }
-            console.log(JSON.stringify(make(true)));
-            console.log(JSON.stringify(make(false)));
+            const m = make(true);
+            console.log(m[0]);
+            console.log(m[1]);
+            console.log(make(false)[0]);
+            console.log(make(false)[1]);
             """);
-        Assert.Equal("[\"a\",1]\n[\"c\",\"z\"]\n", result);
+        Assert.Equal("a\n1\nc\nz\n", result);
+    }
+
+    [Fact]
+    public void IndexingUnionOfTuples_DistributesOverConstituents()
+    {
+        // tsc accepts numeric indexing of a union of tuples when every constituent
+        // supports the index, unioning the element types: m[0]: "a" | "c",
+        // m[1]: number | string. The annotated slots pin the inferred element types.
+        var result = TestHarness.RunInterpreted("""
+            type A = ["a", number] | ["c", string];
+            const m: A = ["c", "z"];
+            const d: "a" | "c" = m[0];
+            const v: number | string = m[1];
+            console.log(d, v);
+            """);
+        Assert.Equal("c z\n", result);
+    }
+
+    [Fact]
+    public void IndexingUnionOfTuples_DynamicIndex_UnionsAllElements()
+    {
+        TestHarness.RunInterpreted("""
+            type A = ["a", number] | ["c", string];
+            const m: A = ["a", 1];
+            const i: number = 0;
+            const v: string | number = m[i];
+            """);
+    }
+
+    [Fact]
+    public void IndexingUnionOfTuples_OutOfBounds_StillRejected()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted("""
+            type A = ["a", number] | ["c", string];
+            declare const m: A;
+            const v = m[5];
+            """));
     }
 }
