@@ -337,12 +337,17 @@ public class StreamsWebSemanticTests
     #region pipeTo with AbortSignal
 
     /// <remarks>
-    /// Same event-loop interaction problem as <see cref="ReadableStream_PendingReadResolvedByLaterEnqueue"/>
-    /// — the <c>setTimeout</c>-driven abort never wakes up the pump loop's
-    /// awaiting read. Interpreter pipeTo WILL honour the signal if it's
-    /// already aborted when pipeTo starts; the mid-pipe abort path is what
-    /// hangs. Compiled-mode $ReadableStream.PipeTo doesn't extract the signal
-    /// from opts at all (not implemented). Both deferred.
+    /// Mid-pipe abort: a <c>setTimeout</c>-driven <c>ac.abort()</c> fires while
+    /// the pump is parked, the pump's per-iteration <c>Task.Yield</c> lets it
+    /// observe the signal, and it runs the abort/cancel/reject teardown.
+    /// Previously flaky under CI load: the teardown awaits ran as un-Ref'd
+    /// thread-pool continuations after the abort timer had Unref'd the loop, so
+    /// the 250ms quiescence give-up could exit before <c>source.cancel()</c>
+    /// flushed "source-canceled". Fixed in #325 — the pump now Refs the event
+    /// loop for the duration of the teardown sequence (see
+    /// <c>WebStreamsHelpers.PipeTo</c>), then Unrefs. Compiled-mode
+    /// <c>$ReadableStream.PipeTo</c> doesn't extract the signal from opts at all
+    /// (not implemented), so this stays InterpretedOnly.
     /// </remarks>
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]

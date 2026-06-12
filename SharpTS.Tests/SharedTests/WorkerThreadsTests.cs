@@ -439,4 +439,53 @@ public class WorkerThreadsTests
     }
 
     #endregion
+
+    #region Worker.terminate() event-loop liveness (#324)
+
+    /// <summary>
+    /// Regression for #324: when <c>await worker.terminate()</c> is the only
+    /// remaining top-level work and the worker takes longer than the event
+    /// loop's 250ms quiescence window to wind down, the parent must stay alive
+    /// until the terminate promise settles.
+    /// </summary>
+    /// <remarks>
+    /// The worker keeps its own event loop alive ~500ms via a pending timer, so
+    /// the parent's <c>_thread.Join</c> (inside <c>SharpTSWorker.Terminate</c>)
+    /// blocks well past the 250ms give-up. That join task is invisible to
+    /// <c>HasPendingEventLoopWork</c>; before the fix the parent abandoned the
+    /// terminate promise and exited without printing "terminated". The fix Refs
+    /// the parent loop for the join's duration. InterpretedOnly because the fix
+    /// targets the interpreter event loop; <c>__dirname</c> routes the harness
+    /// through the real-disk path so the spawned worker can load its script.
+    /// The assertion is positive (output present) and load-independent — under
+    /// load the join simply takes longer and the Ref keeps the loop alive for
+    /// it, so the test cannot flake the way a wall-clock window would.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Worker_Terminate_KeepsEventLoopAliveUntilSettled(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_slow.ts"] = """
+                // Hold the worker's event loop open ~500ms so the parent's
+                // terminate() thread-join outlasts the 250ms quiescence window.
+                setTimeout(() => {}, 500);
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_slow.ts");
+                async function run() {
+                    await w.terminate();
+                    console.log("terminated");
+                }
+                run();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("terminated", output);
+    }
+
+    #endregion
 }
