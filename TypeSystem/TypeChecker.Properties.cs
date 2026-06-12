@@ -579,6 +579,12 @@ public partial class TypeChecker
             {
                 if (member.Key == set.Name.Lexeme)
                 {
+                    // readonly members (incl. those produced by a `readonly [P in K]` mapped type,
+                    // e.g. DeepReadonlyObject<T>) reject assignment — #337 item 2.
+                    if (itf.IsMemberReadonly(set.Name.Lexeme))
+                    {
+                        throw new TypeCheckException($" Cannot assign to '{set.Name.Lexeme}' because it is a read-only property.", tsCode: "TS2540");
+                    }
                     TypeInfo valueType = CheckExpr(set.Value);
                     if (!IsCompatible(member.Value, valueType))
                     {

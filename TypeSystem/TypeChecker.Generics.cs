@@ -90,12 +90,13 @@ public partial class TypeChecker
         {
             // Array<T> is the generic spelling of T[] — without this it would fall through the
             // user-generics lookup to `any`, making every Array<T>-typed position vacuously
-            // compatible. ReadonlyArray<T> is modeled as T[] (readonlyness isn't tracked yet).
+            // compatible. ReadonlyArray<T> carries the readonly flag so an interface extending it
+            // (DeepReadonlyArray) gets a read-only numeric index signature (#337 item 2).
             if (typeArgs.Count != 1)
             {
                 throw new TypeCheckException($" {baseName} requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             }
-            result = new TypeInfo.Array(typeArgs[0]);
+            result = new TypeInfo.Array(typeArgs[0], IsReadonly: baseName == "ReadonlyArray");
         }
         else if (baseName == "Promise")
         {
@@ -330,7 +331,13 @@ public partial class TypeChecker
                     {
                         result = EvaluateConditionalType(condResult);
                     }
-                    if (result is TypeInfo.MappedType mappedResult && !ContainsOpenTypeVariable(mappedResult))
+                    // A mapped type over a DEFERRED key domain (a generic key-filter such as
+                    // Pick<T, FunctionPropertyNames<T>>) must stay a MappedType node: enumerating
+                    // it now would yield an empty object and lose the key filter, so it has to
+                    // reach the relation rules deferred (#337 item 1, mirrors the conditional case
+                    // just above). Concrete domains still expand eagerly for downstream consumers.
+                    if (result is TypeInfo.MappedType mappedResult && !ContainsOpenTypeVariable(mappedResult)
+                        && !IsDeferredKeyDomain(ResolveMappedKeyDomain(mappedResult)))
                     {
                         result = ExpandMappedType(mappedResult);
                     }

@@ -55,6 +55,17 @@ public partial class TypeChecker
             // Apply current substitutions to the check type
             TypeInfo checkType = SubstituteWithoutConditionalEval(conditional.CheckType, substitutions);
 
+            // A check type that is an indexed access over a CONCRETE object (e.g. `Part["updatePart"]`
+            // in the key-filter idiom) must be resolved to the member type before the extends-test,
+            // or the structural match against `Function` fails and the filter picks the wrong branch
+            // (#337 item 2). Generic accesses (`T[K]`) stay unresolved so the deferral below fires.
+            if (checkType is TypeInfo.IndexedAccess checkIndexed && !IsGenericTypeShape(checkIndexed))
+            {
+                var resolvedCheck = ResolveIndexedAccess(checkIndexed, substitutions);
+                if (resolvedCheck is not (TypeInfo.IndexedAccess or TypeInfo.Any))
+                    checkType = resolvedCheck;
+            }
+
             // Distribution happens only for DISTRIBUTIVE conditionals (declared with a naked
             // type-parameter check). A literal `string | number extends string ? A : B` does not
             // distribute in tsc — the union is checked as a whole.
@@ -500,7 +511,18 @@ public partial class TypeChecker
         if (extendsType is TypeInfo.Function extendsFunc)
         {
             if (checkType is TypeInfo.Function checkFunc)
-                return MatchSignatureWithInfer(checkFunc, extendsFunc, inferredTypes);
+            {
+                // Without infer placeholders to bind, `check extends F` is the ordinary
+                // assignability question — `(s: string) => void` IS a `Function` (modelled as
+                // `(...args: any[]) => any`). Strict signature unification wrongly rejects it,
+                // which broke the `T[K] extends Function` key-filter (#337 item 2). Reserve
+                // MatchSignatureWithInfer for targets that actually carry infers.
+                bool hasInfer = false;
+                CollectReferencedInferNames(extendsFunc, _ => hasInfer = true);
+                return hasInfer
+                    ? MatchSignatureWithInfer(checkFunc, extendsFunc, inferredTypes)
+                    : IsCompatible(extendsType, checkType);
+            }
             return false;
         }
 

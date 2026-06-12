@@ -222,6 +222,7 @@ public partial class TypeChecker
         TypeInfo? stringIndexType = null;
         TypeInfo? numberIndexType = null;
         TypeInfo? symbolIndexType = null;
+        bool readonlyNumberIndex = false;
 
         using (new EnvironmentScope(this, interfaceTypeEnv))
         {
@@ -351,6 +352,16 @@ public partial class TypeChecker
                     // position resolves to its Instance type, so unwrap that first.)
                     extendsList.Add(ClassAsInterfaceBase(extendClass));
                 }
+                else if (extendType is TypeInfo.Array extendArray)
+                {
+                    // `interface I<T> extends ReadonlyArray<E>` (or Array<E>): model the array base
+                    // as a numeric index signature of its element type, read-only for ReadonlyArray.
+                    // This is what lets DeepReadonlyArray index-access resolve and reject writes
+                    // (#337 item 2). The element type carries the interface's own type parameters
+                    // and is substituted at instantiation by FlattenInstantiatedInterface.
+                    numberIndexType = extendArray.ElementType;
+                    if (extendArray.IsReadonly) readonlyNumberIndex = true;
+                }
                 else
                 {
                     throw new TypeCheckException($" Interface '{interfaceStmt.Name.Lexeme}' can only extend other interfaces, but '{extendTypeName}' is not an interface.", tsCode: "TS2312");
@@ -418,7 +429,8 @@ public partial class TypeChecker
                 callSignatures,
                 constructorSignatures,
                 readonlyMembers.Count > 0 ? readonlyMembers.ToFrozenSet() : null,
-                methodMembers.Count > 0 ? methodMembers.ToFrozenSet() : null
+                methodMembers.Count > 0 ? methodMembers.ToFrozenSet() : null,
+                readonlyNumberIndex
             );
             _environment.Define(interfaceStmt.Name.Lexeme, genericItfType);
         }
@@ -435,7 +447,8 @@ public partial class TypeChecker
                 callSignatures,
                 constructorSignatures,
                 readonlyMembers.Count > 0 ? readonlyMembers.ToFrozenSet() : null,
-                methodMembers.Count > 0 ? methodMembers.ToFrozenSet() : null
+                methodMembers.Count > 0 ? methodMembers.ToFrozenSet() : null,
+                ReadonlyNumberIndex: readonlyNumberIndex
             );
             _environment.Define(interfaceStmt.Name.Lexeme, itfType);
         }
@@ -563,7 +576,8 @@ public partial class TypeChecker
             gi.CallSignatures,
             gi.ConstructorSignatures,
             gi.ReadonlyMembers,
-            gi.MethodMembers);
+            gi.MethodMembers,
+            ReadonlyNumberIndex: gi.ReadonlyNumberIndex);
     }
 
     /// <summary>
