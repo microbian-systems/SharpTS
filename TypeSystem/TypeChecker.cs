@@ -967,6 +967,7 @@ public partial class TypeChecker
         {
             _environment.DefineTypeAlias(typeAlias.Name.Lexeme, typeAlias.TypeDefinition);
         }
+        RecordAliasParamConstraints(typeAlias);
     }
 
     /// <summary>

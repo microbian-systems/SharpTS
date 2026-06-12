@@ -447,6 +447,12 @@ public partial class TypeChecker
         if (types.Count == 0) return new TypeInfo.Unknown();
         if (types.Count == 1) return types[0];
 
+        // Flatten nested intersections so their object constituents participate in the member
+        // merge below — `(T & { foo }) & { bar }` must merge the two records, not hide the first
+        // inside an opaque inner intersection.
+        if (types.Any(t => t is TypeInfo.Intersection))
+            types = types.SelectMany(t => t is TypeInfo.Intersection nested ? nested.FlattenedTypes : [t]).ToList();
+
         // Check for never (absorbs everything)
         if (types.Any(t => t is TypeInfo.Never))
             return new TypeInfo.Never();
@@ -1511,8 +1517,11 @@ public partial class TypeChecker
         string extendsTypeStr = remainder[..questionIndex].Trim();
         string afterQuestion = remainder[(questionIndex + 1)..].Trim();
 
-        // Find the ':' at the top level
-        int colonIndex = FindTopLevelChar(afterQuestion, ':');
+        // Find the ':' belonging to THIS conditional. A nested conditional in the true branch
+        // (`T extends U ? A extends B ? X : Y : Z`) contributes its own '?'/':' pair, so the scan
+        // must be ternary-depth aware — taking the first top-level ':' would split inside the
+        // nested conditional and silently mangle both branches.
+        int colonIndex = FindConditionalElseColon(afterQuestion);
         if (colonIndex < 0) return null;
 
         string trueTypeStr = afterQuestion[..colonIndex].Trim();
@@ -1542,6 +1551,30 @@ public partial class TypeChecker
             else if (depth == 0 && str.Substring(i, keyword.Length) == keyword)
             {
                 return i;
+            }
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// Finds the ':' that closes the current conditional's true branch, skipping ':'s that
+    /// belong to nested conditionals (each top-level '?' opens one). Bracketed regions are
+    /// opaque as in <see cref="FindTopLevelChar"/>.
+    /// </summary>
+    private static int FindConditionalElseColon(string str)
+    {
+        int depth = 0;
+        int ternaryDepth = 0;
+        for (int i = 0; i < str.Length; i++)
+        {
+            char c = str[i];
+            if (c == '<' || c == '(' || c == '[' || c == '{') depth++;
+            else if (c == '>' || c == ')' || c == ']' || c == '}') depth--;
+            else if (depth == 0 && c == '?') ternaryDepth++;
+            else if (depth == 0 && c == ':')
+            {
+                if (ternaryDepth == 0) return i;
+                ternaryDepth--;
             }
         }
         return -1;

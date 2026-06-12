@@ -104,6 +104,8 @@ public partial class TypeChecker
         // the infer declarations of every conditional type in the alias body.
         var outerTypeParams = stmt.TypeParameters?.Select(tp => tp.Name.Lexeme).ToHashSet(StringComparer.Ordinal);
         ValidateInferDeclarations(stmt.TypeDefinitionNode, outerTypeParams);
+        RecordAliasParamConstraints(stmt);
+        ValidateAliasBody(stmt);
         return VoidResult.Instance;
     }
 

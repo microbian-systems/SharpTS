@@ -112,7 +112,15 @@ public partial class TypeChecker
                 if (TryToTypeInfo(conditional.ExtendsType) is not { } extendsType) return null;
                 if (TryToTypeInfo(conditional.TrueType) is not { } trueType) return null;
                 if (TryToTypeInfo(conditional.FalseType) is not { } falseType) return null;
-                return new TypeInfo.ConditionalType(checkType, extendsType, trueType, falseType);
+                // Distributivity comes from the DECLARED check node: a bare name that refers to
+                // a type parameter, whether still unbound (resolves to TypeParameter) or already
+                // bound to its argument by an alias instantiation scope. A bare name referring
+                // to a concrete alias (`type Y = Letters extends "a" ? ...`) does NOT distribute.
+                bool distributive = checkType is TypeInfo.TypeParameter ||
+                    (conditional.CheckType is NamedTypeNode { TypeArguments: null } checkRef &&
+                     _environment.GetTypeParameter(checkRef.Name) is not null);
+                return new TypeInfo.ConditionalType(checkType, extendsType, trueType, falseType)
+                    { IsDistributive = distributive };
             }
 
             case InferTypeNode infer:

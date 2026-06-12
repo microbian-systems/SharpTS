@@ -55,24 +55,25 @@ public partial class TypeChecker
             // Apply current substitutions to the check type
             TypeInfo checkType = SubstituteWithoutConditionalEval(conditional.CheckType, substitutions);
 
-            // If check type is still a naked type parameter (not substituted), defer evaluation
-            if (checkType is TypeInfo.TypeParameter)
+            // Distribution happens only for DISTRIBUTIVE conditionals (declared with a naked
+            // type-parameter check). A literal `string | number extends string ? A : B` does not
+            // distribute in tsc — the union is checked as a whole.
+            if (conditional.IsDistributive && checkType is TypeInfo.Union union)
             {
-                // Return unevaluated conditional with substitutions applied
+                return DistributeConditionalOverUnion(conditional, union, substitutions);
+            }
+
+            // A check type that still contains type variables (naked parameter, parameter inside
+            // an array/function/intersection, a nested deferred conditional, ...) can't be decided
+            // yet — defer, preserving the declaration's distributivity (tsc isGenericType deferral).
+            if (IsGenericTypeShape(checkType))
+            {
                 return new TypeInfo.ConditionalType(
                     checkType,
                     SubstituteWithoutConditionalEval(conditional.ExtendsType, substitutions),
                     SubstituteWithoutConditionalEval(conditional.TrueType, substitutions),
                     SubstituteWithoutConditionalEval(conditional.FalseType, substitutions)
-                );
-            }
-
-            // Distribution: if check type is a union (either from substitution or directly), distribute
-            // This handles both: T extends U ? X : Y where T substitutes to union,
-            // and directly expanded types like: string | number extends U ? X : Y
-            if (checkType is TypeInfo.Union union)
-            {
-                return DistributeConditionalOverUnion(conditional, union, substitutions);
+                ) { IsDistributive = conditional.IsDistributive };
             }
 
             // Apply substitutions to the extends type
@@ -166,7 +167,8 @@ public partial class TypeChecker
                     SubstituteWithoutConditionalEval(cond.CheckType, substitutions),
                     SubstituteWithoutConditionalEval(cond.ExtendsType, substitutions),
                     SubstituteWithoutConditionalEval(cond.TrueType, substitutions),
-                    SubstituteWithoutConditionalEval(cond.FalseType, substitutions)),
+                    SubstituteWithoutConditionalEval(cond.FalseType, substitutions))
+                { IsDistributive = cond.IsDistributive },
             TypeInfo.InferredTypeParameter infer =>
                 substitutions.TryGetValue(infer.Name, out var inferSub)
                     ? inferSub
@@ -551,6 +553,163 @@ public partial class TypeChecker
 
         // Fall back to standard compatibility check (no infer patterns)
         return IsCompatible(extendsType, checkType);
+    }
+
+    /// <summary>
+    /// True when the type still contains type variables (type parameters, infer placeholders,
+    /// deferred conditionals) anywhere instantiation could reach — tsc's isGenericType, used to
+    /// decide whether a conditional's check type can be decided now or must defer.
+    /// </summary>
+    private static bool IsGenericTypeShape(TypeInfo type) => type switch
+    {
+        TypeInfo.TypeParameter or TypeInfo.InferredTypeParameter => true,
+        // A conditional that reaches this point is deferred (concrete ones evaluate away).
+        TypeInfo.ConditionalType => true,
+        TypeInfo.KeyOf k => IsGenericTypeShape(k.SourceType),
+        TypeInfo.IndexedAccess ia => IsGenericTypeShape(ia.ObjectType) || IsGenericTypeShape(ia.IndexType),
+        TypeInfo.Intersection i => i.Types.Any(IsGenericTypeShape),
+        TypeInfo.Union u => u.Types.Any(IsGenericTypeShape),
+        TypeInfo.Array arr => IsGenericTypeShape(arr.ElementType),
+        TypeInfo.Promise p => IsGenericTypeShape(p.ValueType),
+        TypeInfo.Tuple t => t.Elements.Any(e => IsGenericTypeShape(e.Type))
+            || (t.RestElementType is { } rest && IsGenericTypeShape(rest)),
+        TypeInfo.Function f => f.ParamTypes.Any(IsGenericTypeShape) || IsGenericTypeShape(f.ReturnType),
+        TypeInfo.InstantiatedGeneric ig => ig.TypeArguments.Any(IsGenericTypeShape),
+        TypeInfo.RecursiveTypeAlias rta => rta.TypeArguments is { } args && args.Any(IsGenericTypeShape),
+        TypeInfo.Record r => r.Fields.Values.Any(IsGenericTypeShape),
+        TypeInfo.MappedType => true,
+        TypeInfo.IntrinsicStringType ist => IsGenericTypeShape(ist.Inner),
+        TypeInfo.TemplateLiteralType tl => tl.InterpolatedTypes.Any(IsGenericTypeShape),
+        _ => false
+    };
+
+    /// <summary>
+    /// In-progress guard for <see cref="GetConditionalConstraint"/> — self-referential
+    /// constraints (e.g. <c>T76&lt;T extends T[]&gt;</c>) would otherwise recurse forever.
+    /// </summary>
+    [ThreadStatic]
+    private static HashSet<string>? _conditionalConstraintInProgress;
+
+    /// <summary>
+    /// The assignability constraint of a DEFERRED conditional type, mirroring tsc's two-step
+    /// rule for relating a conditional source to a non-conditional target:
+    /// 1. Distributive constraint: for a distributive conditional whose check type is a
+    ///    constrained type parameter, the conditional applied to that constraint
+    ///    (<c>ZeroOf&lt;T extends number|string&gt;</c> ⇒ <c>0 | ""</c>).
+    /// 2. Default constraint: union of the true branch instantiated with
+    ///    <c>check ∩ extends</c> for the check parameter (tsc's substitution-type narrowing —
+    ///    <c>Extract&lt;T, Foo&gt;</c> constrains to <c>T &amp; Foo</c>) and the false branch.
+    /// Infer placeholders are erased to their declared constraint (or unknown).
+    /// Returns null when no useful constraint can be computed.
+    /// </summary>
+    private List<TypeInfo> GetConditionalConstraints(TypeInfo.ConditionalType cond)
+    {
+        var key = cond.CacheKey();
+        _conditionalConstraintInProgress ??= new(StringComparer.Ordinal);
+        if (!_conditionalConstraintInProgress.Add(key)) return [];
+        try
+        {
+            List<TypeInfo> constraints = [];
+
+            // Step 1: distributive constraint over the check parameter's own constraint.
+            if (cond.IsDistributive && cond.CheckType is TypeInfo.TypeParameter tp &&
+                ApparentTypeOf(tp) is { } tpConstraint)
+            {
+                var instantiated = EvaluateConditionalType(cond, new() { [tp.Name] = tpConstraint });
+                if (instantiated is not (TypeInfo.Never or TypeInfo.ConditionalType))
+                    constraints.Add(instantiated);
+            }
+
+            // Step 2: default constraint — true branch under check ∩ extends, unioned with false.
+            Dictionary<string, TypeInfo> subs = [];
+            CollectInferSubstitutions(cond.ExtendsType, subs);
+            var erasedExtends = subs.Count > 0
+                ? SubstituteWithoutConditionalEval(cond.ExtendsType, subs)
+                : cond.ExtendsType;
+            TypeInfo trueConstraint;
+            if (cond.CheckType is TypeInfo.TypeParameter checkTp)
+            {
+                subs[checkTp.Name] = SimplifyIntersection([checkTp, erasedExtends]);
+                trueConstraint = Substitute(cond.TrueType, subs);
+            }
+            else if (TypeInfoEqualityComparer.Instance.Equals(cond.TrueType, cond.CheckType))
+            {
+                // tsc narrows true-branch occurrences of the check type via substitution types
+                // even when the check is itself a composite (`Extract<Extract<T, Foo>, Bar>`:
+                // the outer true branch is the inner conditional narrowed by ∩ Bar). We have no
+                // substitution-type node, but the Extract/Exclude shape — true branch IS the
+                // check type — covers the cases that reach here. A conditional check resolves to
+                // its own constraint first so the intersection's object members can merge.
+                var checkUpperBound = cond.CheckType is TypeInfo.ConditionalType innerCond &&
+                    GetConditionalConstraints(innerCond) is { Count: > 0 } innerConstraints
+                        ? innerConstraints[^1]
+                        : cond.CheckType;
+                trueConstraint = SimplifyIntersection([checkUpperBound, erasedExtends]);
+            }
+            else
+            {
+                trueConstraint = subs.Count > 0 ? Substitute(cond.TrueType, subs) : cond.TrueType;
+            }
+            constraints.Add(CreateUnion(trueConstraint, cond.FalseType));
+            return constraints;
+        }
+        catch (TypeCheckException)
+        {
+            // Constraint computation is best-effort: a depth/circularity failure here must not
+            // surface as a checker diagnostic — callers fall back to stricter rules.
+            return [];
+        }
+        finally
+        {
+            _conditionalConstraintInProgress.Remove(key);
+        }
+    }
+
+    /// <summary>
+    /// Maps every <c>infer</c> placeholder in an extends clause to its declared constraint (or
+    /// unknown), so branch types referencing them can be used as a constraint approximation.
+    /// </summary>
+    private static void CollectInferSubstitutions(TypeInfo extendsType, Dictionary<string, TypeInfo> subs)
+    {
+        switch (extendsType)
+        {
+            case TypeInfo.InferredTypeParameter infer:
+                subs.TryAdd(infer.Name, infer.Constraint ?? new TypeInfo.Unknown());
+                break;
+            case TypeInfo.Array arr: CollectInferSubstitutions(arr.ElementType, subs); break;
+            case TypeInfo.Promise p: CollectInferSubstitutions(p.ValueType, subs); break;
+            case TypeInfo.Function f:
+                foreach (var pt in f.ParamTypes) CollectInferSubstitutions(pt, subs);
+                CollectInferSubstitutions(f.ReturnType, subs);
+                break;
+            case TypeInfo.Tuple t:
+                foreach (var e in t.Elements) CollectInferSubstitutions(e.Type, subs);
+                if (t.RestElementType is { } rest) CollectInferSubstitutions(rest, subs);
+                break;
+            case TypeInfo.Union u:
+                foreach (var m in u.Types) CollectInferSubstitutions(m, subs);
+                break;
+            case TypeInfo.Intersection i:
+                foreach (var m in i.Types) CollectInferSubstitutions(m, subs);
+                break;
+            case TypeInfo.Record r:
+                foreach (var (_, v) in r.Fields) CollectInferSubstitutions(v, subs);
+                break;
+            case TypeInfo.Interface itf:
+                foreach (var (_, v) in itf.Members) CollectInferSubstitutions(v, subs);
+                break;
+            case TypeInfo.InstantiatedGeneric ig:
+                foreach (var a in ig.TypeArguments) CollectInferSubstitutions(a, subs);
+                break;
+            case TypeInfo.KeyOf k: CollectInferSubstitutions(k.SourceType, subs); break;
+            case TypeInfo.IndexedAccess ia:
+                CollectInferSubstitutions(ia.ObjectType, subs);
+                CollectInferSubstitutions(ia.IndexType, subs);
+                break;
+            case TypeInfo.TemplateLiteralType tl:
+                foreach (var it in tl.InterpolatedTypes) CollectInferSubstitutions(it, subs);
+                break;
+        }
     }
 
     /// <summary>

@@ -293,6 +293,53 @@ public partial class TypeChecker
             return IsCompatible(expected, ExpandRecursiveTypeAlias(actualRTA));
         }
 
+        // Conditional types resolve or defer before anything else decides (null rules, the
+        // type-parameter rules, primitives). A conditional that evaluates to a concrete type
+        // restarts the comparison with the result; one that stays deferred goes through tsc's
+        // relation rules for deferred conditionals below.
+        if (expected is TypeInfo.ConditionalType expectedCondRaw)
+        {
+            var evaluated = EvaluateConditionalType(expectedCondRaw);
+            if (evaluated is not TypeInfo.ConditionalType) return IsCompatible(evaluated, actual);
+            expected = evaluated;
+        }
+        if (actual is TypeInfo.ConditionalType actualCondRaw)
+        {
+            var evaluated = EvaluateConditionalType(actualCondRaw);
+            if (evaluated is not TypeInfo.ConditionalType) return IsCompatible(expected, evaluated);
+            actual = evaluated;
+        }
+        if (expected is TypeInfo.ConditionalType || actual is TypeInfo.ConditionalType)
+        {
+            // Two deferred conditionals relate pairwise when their extends types are identical
+            // and their check types relate in either direction: then true branch must relate to
+            // true branch and false to false (checker.ts: conditional-to-conditional rule).
+            // `Covariant<B> → Covariant<A>` (B extends A) relates this way without variance
+            // machinery. On failure, fall through to the one-sided rules.
+            if (expected is TypeInfo.ConditionalType expPair && actual is TypeInfo.ConditionalType actPair &&
+                TypeInfoEqualityComparer.Instance.Equals(expPair.ExtendsType, actPair.ExtendsType) &&
+                (IsCompatible(expPair.CheckType, actPair.CheckType) || IsCompatible(actPair.CheckType, expPair.CheckType)) &&
+                IsCompatible(expPair.TrueType, actPair.TrueType) &&
+                IsCompatible(expPair.FalseType, actPair.FalseType))
+            {
+                return true;
+            }
+
+            // Assigning FROM a deferred conditional: it is assignable wherever one of its
+            // constraints is (distributive constraint, then the default true∩extends | false
+            // union — see GetConditionalConstraints).
+            if (actual is TypeInfo.ConditionalType sourceCond)
+            {
+                return GetConditionalConstraints(sourceCond).Any(c => IsCompatible(expected, c));
+            }
+
+            // Assigning TO a deferred conditional is sound only when the source satisfies BOTH
+            // branches — the conditional could resolve to either at instantiation time.
+            var targetCond = (TypeInfo.ConditionalType)expected;
+            return IsCompatible(targetCond.TrueType, actual)
+                && IsCompatible(targetCond.FalseType, actual);
+        }
+
         // Type predicate compatibility:
         // - Regular type predicate (x is T): expects boolean return
         // - Assertion type predicate (asserts x is T): expects void return (function throws if assertion fails)
@@ -326,11 +373,14 @@ public partial class TypeChecker
         }
 
         // Expected is a bare type parameter and the source is some other type. An arbitrary concrete
-        // type is NOT assignable to a type parameter — only `never`. (any / inferred and, under
-        // non-strict, null / undefined are already accepted earlier in IsCompatibleCore; a source type
-        // parameter is handled by the case above.) This is the strict TypeScript rule.
+        // type is NOT assignable to a type parameter — only `never`, or an intersection one of whose
+        // constituents is (T & Function → T). (any / inferred and, under non-strict, null / undefined
+        // are already accepted earlier in IsCompatibleCore; a source type parameter is handled by the
+        // case above.) This is the strict TypeScript rule.
         if (expected is TypeInfo.TypeParameter)
         {
+            if (actual is TypeInfo.Intersection actIntForTp)
+                return actIntForTp.FlattenedTypes.Any(t => IsCompatible(expected, t));
             return actual is TypeInfo.Never;
         }
 
@@ -378,32 +428,6 @@ public partial class TypeChecker
         if (actual is TypeInfo.Object)
         {
             return expected is TypeInfo.Object or TypeInfo.Any or TypeInfo.Unknown;
-        }
-
-        // Conditional types must expand before the null/undefined/primitive rules below decide —
-        // `const a: Weird = null` where `type Weird = any extends infer U ? U : never` needs the
-        // conditional collapsed to `any` first, or the null rule rejects it sight unseen.
-        if (expected is TypeInfo.ConditionalType expectedCondEarly)
-        {
-            var evaluated = EvaluateConditionalType(expectedCondEarly);
-            // A conditional whose check type is still a naked type parameter can't be
-            // resolved to a branch (tsc defers it). Assigning *to* a deferred conditional
-            // is sound only when the source satisfies BOTH branches — the conditional could
-            // resolve to either at instantiation time. (checker.ts relateConditionalTypes.)
-            if (evaluated is TypeInfo.ConditionalType stillDeferred)
-                return IsCompatible(stillDeferred.TrueType, actual)
-                    && IsCompatible(stillDeferred.FalseType, actual);
-            return IsCompatible(evaluated, actual);
-        }
-        if (actual is TypeInfo.ConditionalType actualCondEarly)
-        {
-            var evaluated = EvaluateConditionalType(actualCondEarly);
-            // Assigning *from* a deferred conditional: both possible results must satisfy
-            // the target (the conditional's constraint is the union of its branches).
-            if (evaluated is TypeInfo.ConditionalType stillDeferred)
-                return IsCompatible(expected, stillDeferred.TrueType)
-                    && IsCompatible(expected, stillDeferred.FalseType);
-            return IsCompatible(expected, evaluated);
         }
 
         // Null compatibility (strictNullChecks: on — the off case is handled early in IsCompatibleCore)
@@ -502,6 +526,17 @@ public partial class TypeChecker
             return actTypes.Any(t => IsCompatible(expected, t));
         }
 
+        // keyof X ← keyof Y with generic operands compares the OPERANDS, contravariantly:
+        // Y's keys include X's exactly when X is assignable to Y (keyof B accepts keyof A
+        // when B extends A — B has at least A's keys). Expansion can't decide this (generic
+        // operands have no concrete key set).
+        if (expected is TypeInfo.KeyOf expKoPair && actual is TypeInfo.KeyOf actKoPair &&
+            (IsGenericTypeShape(expKoPair.SourceType) || IsGenericTypeShape(actKoPair.SourceType)))
+        {
+            return TypeInfoEqualityComparer.Instance.Equals(expKoPair.SourceType, actKoPair.SourceType)
+                || IsCompatible(actKoPair.SourceType, expKoPair.SourceType);
+        }
+
         // KeyOf type compatibility - must evaluate to compare
         // Special handling for keyof T where T is a type parameter - don't try to expand
         if (expected is TypeInfo.KeyOf expectedKeyOf)
@@ -552,18 +587,6 @@ public partial class TypeChecker
         if (actual is TypeInfo.IndexedAccess actualIA)
         {
             TypeInfo expandedActual = ResolveIndexedAccess(actualIA, new Dictionary<string, TypeInfo>());
-            return IsCompatible(expected, expandedActual);
-        }
-
-        // Conditional type compatibility - evaluate then compare
-        if (expected is TypeInfo.ConditionalType expectedCond)
-        {
-            TypeInfo expandedExpected = EvaluateConditionalType(expectedCond);
-            return IsCompatible(expandedExpected, actual);
-        }
-        if (actual is TypeInfo.ConditionalType actualCond)
-        {
-            TypeInfo expandedActual = EvaluateConditionalType(actualCond);
             return IsCompatible(expected, expandedActual);
         }
 

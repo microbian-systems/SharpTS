@@ -230,6 +230,27 @@ public partial class TypeChecker
                 TypeInfo? currentType = _environment.Get(varName);
 
                 TypeInfo narrowedType = pred.PredicateType;
+
+                // A generic predicate (`isFunction<T>(value: T): value is Extract<T, Function>`)
+                // narrows by the predicate type INSTANTIATED at this call site — the declaration
+                // form references the callee's own type parameters, which mean nothing here.
+                // `isFunction(x)` with `x: string | (() => string)` must narrow to `() => string`
+                // (the conditional distributes over the inferred union), not to a dangling
+                // `T extends Function ? T : never`.
+                if (calleeType is TypeInfo.GenericFunction predGf && predGf.TypeParams.Count > 0)
+                {
+                    var argTypes = call.Arguments
+                        .Select(a => a is Expr.Variable v
+                            ? _environment.Get(v.Name.Lexeme) ?? new TypeInfo.Any()
+                            : CheckExpr(a))
+                        .ToList();
+                    var typeArgs = InferTypeArguments(predGf, argTypes);
+                    var subs = new Dictionary<string, TypeInfo>();
+                    for (int i = 0; i < predGf.TypeParams.Count && i < typeArgs.Count; i++)
+                        subs[predGf.TypeParams[i].Name] = typeArgs[i];
+                    narrowedType = Substitute(narrowedType, subs);
+                }
+
                 TypeInfo? excludedType = currentType != null
                     ? ExcludeTypeFromUnion(currentType, narrowedType)
                     : null;
