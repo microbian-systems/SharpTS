@@ -20,8 +20,10 @@ public partial class ILCompiler
         var hasAsyncArrows = analysis.AsyncArrows.Count > 0;
         smBuilder.DefineStateMachine(funcStmt.Name.Lexeme, analysis, _types.Object, false, hasAsyncArrows);
 
-        // Define stub method (returns Task<object>)
-        var paramTypes = funcStmt.Parameters.Select(_ => _types.Object).ToArray();
+        // Define stub method (returns Task<object>).
+        // A trailing rest parameter is typed List<object> so the indirect
+        // ($TSFunction.Invoke) call path packs trailing args into it (#426).
+        var paramTypes = BuildStateMachineStubParamTypes(funcStmt);
         var stubMethod = _programType.DefineMethod(
             funcStmt.Name.Lexeme,
             MethodAttributes.Public | MethodAttributes.Static,

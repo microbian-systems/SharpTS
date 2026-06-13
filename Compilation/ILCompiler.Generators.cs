@@ -28,8 +28,10 @@ public partial class ILCompiler
         _generators.StateMachines[funcName] = smBuilder;
         _generators.Functions[funcName] = funcStmt;
 
-        // Define the stub method that creates and returns the state machine
-        var paramTypes = funcStmt.Parameters.Select(_ => _types.Object).ToArray();
+        // Define the stub method that creates and returns the state machine.
+        // A trailing rest parameter is typed List<object> so the indirect
+        // ($TSFunction.Invoke) call path packs trailing args into it (#426).
+        var paramTypes = BuildStateMachineStubParamTypes(funcStmt);
         var methodBuilder = _programType.DefineMethod(
             funcName,
             MethodAttributes.Public | MethodAttributes.Static,
