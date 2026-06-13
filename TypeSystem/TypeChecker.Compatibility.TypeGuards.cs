@@ -765,7 +765,58 @@ public partial class TypeChecker
             }
         }
 
+        // Pattern: truthiness guard — `if (path)`, `if (obj.prop)`, `if (!path)`, etc.
+        // Placed last so the explicit `=== null` / `!== null` forms above keep their precise
+        // (literal-preserving) handling; truthiness is the general fallback.
+        var truthiness = AnalyzePathTruthinessGuard(condition);
+        if (truthiness.Path != null)
+        {
+            return truthiness;
+        }
+
         return (null, null, null);
+    }
+
+    /// <summary>
+    /// Analyzes a truthiness guard on a narrowable path: <c>if (x)</c>, <c>if (obj.prop)</c>,
+    /// <c>if (!x)</c>, and groupings/double-negations thereof. The truthy branch keeps the
+    /// constituents that can be truthy (always-falsy ones removed); the falsy branch keeps the
+    /// constituents that can be falsy (always-truthy ones removed). A leading <c>!</c> swaps the
+    /// two branches. Returns no narrowing when the expression is not a stable path or when
+    /// neither branch refines the type.
+    /// </summary>
+    private (Narrowing.NarrowingPath? Path, TypeInfo? NarrowedType, TypeInfo? ExcludedType) AnalyzePathTruthinessGuard(Expr condition)
+    {
+        bool negated = false;
+        Expr expr = condition;
+
+        // Peel parentheses and logical-not so `!x`, `!!x`, and `(x)` resolve to the underlying
+        // path with the correct branch polarity.
+        while (true)
+        {
+            if (expr is Expr.Grouping g) { expr = g.Expression; continue; }
+            if (expr is Expr.Unary { Operator.Type: TokenType.BANG } notExpr)
+            {
+                negated = !negated;
+                expr = notExpr.Right;
+                continue;
+            }
+            break;
+        }
+
+        var path = Narrowing.NarrowingPathExtractor.TryExtract(expr);
+        if (path == null || !Narrowing.NarrowingPathExtractor.IsWithinDepthLimit(path))
+        {
+            return (null, null, null);
+        }
+
+        var (truthy, falsy) = ComputeTruthinessNarrowing(CheckExpr(expr));
+        if (truthy == null || falsy == null)
+        {
+            return (null, null, null);
+        }
+
+        return negated ? (path, falsy, truthy) : (path, truthy, falsy);
     }
 
     /// <summary>
@@ -1196,6 +1247,100 @@ public partial class TypeChecker
 
         return (null, null, null);
     }
+
+    /// <summary>
+    /// Splits a type into its truthy and falsy projections for truthiness narrowing
+    /// (<c>if (x)</c>), mirroring tsc's <c>getTypeWithFacts(TypeFacts.Truthy / .Falsy)</c>: the
+    /// truthy projection drops constituents that are always falsy; the falsy projection drops
+    /// constituents that are always truthy. An emptied projection becomes <c>never</c>.
+    /// Returns <c>(null, null)</c> when neither branch refines the type — e.g. a lone
+    /// <c>string</c>/<c>number</c>/<c>boolean</c>, or <c>any</c>/<c>unknown</c>, whose values
+    /// straddle both branches — so callers can skip applying a no-op guard.
+    /// </summary>
+    private static (TypeInfo? Truthy, TypeInfo? Falsy) ComputeTruthinessNarrowing(TypeInfo currentType)
+    {
+        // any/unknown straddle both branches: tsc keeps `any` as-is, and member access on
+        // `unknown` still requires a further guard, so leave both untouched here.
+        if (currentType is TypeInfo.Any or TypeInfo.Unknown)
+        {
+            return (null, null);
+        }
+
+        IEnumerable<TypeInfo> constituents =
+            currentType is TypeInfo.Union union ? union.FlattenedTypes : [currentType];
+
+        var truthy = new List<TypeInfo>();
+        var falsy = new List<TypeInfo>();
+        foreach (var t in constituents)
+        {
+            if (t is TypeInfo.Never) continue;       // bottom type inhabits neither branch
+            if (!IsAlwaysFalsy(t)) truthy.Add(t);    // can be truthy → keep in the truthy branch
+            if (!IsAlwaysTruthy(t)) falsy.Add(t);    // can be falsy  → keep in the falsy branch
+        }
+
+        static TypeInfo Build(List<TypeInfo> parts) =>
+            parts.Count == 0 ? new TypeInfo.Never() :
+            parts.Count == 1 ? parts[0] :
+            new TypeInfo.Union(parts);
+
+        TypeInfo truthyType = Build(truthy);
+        TypeInfo falsyType = Build(falsy);
+
+        // No-op when neither branch refines the type (e.g. a lone `string`): both projections
+        // equal the original, so report "no narrowing" rather than redefining to itself.
+        if (TypeInfoEqualityComparer.Instance.Equals(truthyType, currentType) &&
+            TypeInfoEqualityComparer.Instance.Equals(falsyType, currentType))
+        {
+            return (null, null);
+        }
+
+        return (truthyType, falsyType);
+    }
+
+    /// <summary>
+    /// True when every value of the type is falsy in JS: <c>null</c>, <c>undefined</c>,
+    /// <c>void</c>, and the falsy literal types (<c>false</c>, <c>0</c>, <c>""</c>).
+    /// Deliberately conservative — a false positive would wrongly drop a constituent from the
+    /// truthy branch (a soundness bug), so only definite cases qualify.
+    /// </summary>
+    private static bool IsAlwaysFalsy(TypeInfo type) => type switch
+    {
+        TypeInfo.Null or TypeInfo.Undefined or TypeInfo.Void => true,
+        TypeInfo.BooleanLiteral { Value: false } => true,
+        TypeInfo.NumberLiteral n => n.Value == 0,            // 0 and -0 (NaN literals don't occur)
+        TypeInfo.StringLiteral s => s.Value.Length == 0,
+        _ => false
+    };
+
+    /// <summary>
+    /// True when every value of the type is truthy in JS: object-like types (objects, arrays,
+    /// functions, class instances, symbols, built-in references) and the non-falsy literal
+    /// types. Deliberately conservative — under-approximating only costs precision in the falsy
+    /// branch (never correctness), so ambiguous/unmodeled types (general <c>string</c>/
+    /// <c>number</c>/<c>boolean</c>/<c>bigint</c>, <c>enum</c>, type parameters, intersections,
+    /// template-literal types) return false.
+    /// </summary>
+    private static bool IsAlwaysTruthy(TypeInfo type) => type switch
+    {
+        TypeInfo.BooleanLiteral { Value: true } => true,
+        TypeInfo.NumberLiteral n => n.Value != 0 && !double.IsNaN(n.Value),
+        TypeInfo.StringLiteral s => s.Value.Length > 0,
+        // Object-like types are truthy regardless of contents (even empty arrays/objects/`{}`).
+        TypeInfo.Object or TypeInfo.Record or TypeInfo.Array or TypeInfo.Tuple or
+        TypeInfo.Instance or TypeInfo.Class or TypeInfo.MutableClass or TypeInfo.Interface or
+        TypeInfo.Function or TypeInfo.GenericFunction or TypeInfo.OverloadedFunction or
+        TypeInfo.GenericOverloadedFunction or TypeInfo.Symbol or TypeInfo.UniqueSymbol or
+        TypeInfo.Map or TypeInfo.Set or TypeInfo.WeakMap or TypeInfo.WeakSet or
+        TypeInfo.WeakRef or TypeInfo.FinalizationRegistry or TypeInfo.Iterator or
+        TypeInfo.Generator or TypeInfo.AsyncGenerator or TypeInfo.AsyncIterable or
+        TypeInfo.Date or TypeInfo.RegExp or TypeInfo.Error or TypeInfo.Promise or
+        TypeInfo.Buffer or TypeInfo.EventEmitter or TypeInfo.AbortController or
+        TypeInfo.AbortSignal or TypeInfo.Worker or TypeInfo.MessagePort or
+        TypeInfo.MessageChannel or TypeInfo.SharedArrayBuffer or TypeInfo.ArrayBuffer or
+        TypeInfo.DataView or TypeInfo.TypedArray or TypeInfo.Timeout or
+        TypeInfo.Namespace or TypeInfo.Module => true,
+        _ => false
+    };
 
     private bool TypeMatchesTypeof(TypeInfo type, string typeofResult) => typeofResult switch
     {
