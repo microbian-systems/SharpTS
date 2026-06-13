@@ -414,12 +414,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stfld, _netSocketConnectingField);
 
         // An in-flight connect is an active handle (Node semantics): keep the event
-        // loop alive until the connect settles, otherwise its 'connect'/'error'
+        // loop alive until the connect resolves, otherwise its 'connect'/'error'
         // continuation can be dropped if the loop's other handles (e.g. the peer
-        // server) drain to zero first. Released exactly once when the connect
-        // settles, inside $SocketConnectOkClosure / $SocketConnectErrClosure (both
-        // the TCP and IPC workers route through those two closures). Mirrors the
-        // interpreter's SharpTSSocket.Connect (Runtime/Types/SharpTSSocket.cs).
+        // server) drain to zero before the thread-pool connect worker schedules its
+        // closure. Mirrors SharpTSSocket.Connect's interpreter.Ref()/Unref() pair —
+        // the emitted socket previously omitted it, leaving net.connect flaky under
+        // load (the connect closure could miss the $EventLoop quiescence window).
+        // Released exactly once inside the scheduled OK/ERR closure so the handle
+        // outlives delivery. One Ref here balances exactly one closure (TCP and IPC
+        // workers each schedule exactly one of OK/ERR).
         il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
         il.Emit(OpCodes.Call, runtime.EventLoopRef);
 

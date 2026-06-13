@@ -96,7 +96,7 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     /// emitted <c>$EventLoop.Schedule</c>). Used to deliver worker events to the
     /// parent without relying on an ambient <see cref="SynchronizationContext"/>.
     /// </param>
-    public SharpTSWorker(string filename, SharpTSObject? options, Interpreter? parentInterpreter,
+    public SharpTSWorker(string filename, object? options, Interpreter? parentInterpreter,
         Action? eventLoopRef = null, Action? eventLoopUnref = null, Action<Action>? eventLoopSchedule = null)
     {
         _loopSchedule = eventLoopSchedule;
@@ -133,10 +133,17 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         //     for which the .NET runtime exposes no per-thread equivalent.
         // They are not read here (rather than read-and-ignored) so the dead fields can't
         // masquerade as support. See issue #407.
+        //
+        // The bag is a SharpTSObject in interpreter mode and a Dictionary<string, object?>
+        // (a compiled object literal) in compiled mode; ReadOption reads through both so
+        // workerData/transferList are honored either way (#380). transferList stays typed
+        // as SharpTSArray: a compiled List<object?> transferList yields null here (so
+        // workerData still clones), and cross-boundary MessagePort transfer in compiled
+        // mode is a separate gap (#406).
         if (options != null)
         {
-            _workerData = options.GetProperty("workerData");
-            _transferList = options.GetProperty("transferList") as SharpTSArray;
+            _workerData = ReadOption(options, "workerData");
+            _transferList = ReadOption(options, "transferList") as SharpTSArray;
         }
 
         // Clone workerData for transfer to worker
@@ -177,6 +184,20 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     }
 
     /// <summary>
+    /// Reads a named property from a worker options bag regardless of how the bag is
+    /// represented: a <see cref="SharpTSObject"/> in interpreter mode, or a
+    /// <see cref="Dictionary{TKey,TValue}"/> (a compiled object literal) in compiled
+    /// mode (#380). Returns null when the property is absent or the bag is an
+    /// unsupported shape (e.g. a compiled options literal that uses accessors).
+    /// </summary>
+    private static object? ReadOption(object? options, string name) => options switch
+    {
+        SharpTSObject obj => obj.GetProperty(name),
+        IDictionary<string, object?> dict => dict.TryGetValue(name, out var v) ? v : null,
+        _ => null,
+    };
+
+    /// <summary>
     /// Factory used by compiled output to construct a worker whose running-lifetime
     /// keep-alive is accounted against the emitted <c>$EventLoop</c> singleton rather
     /// than an <see cref="Interpreter"/> (which does not exist at runtime in compiled
@@ -186,9 +207,9 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     /// </summary>
     /// <param name="filename">Path to the TypeScript file to execute.</param>
     /// <param name="options">
-    /// Worker options. Only <see cref="SharpTSObject"/> option bags are honored today;
-    /// a compiled object literal is currently ignored (see issue for workerData/
-    /// transferList marshaling in compiled mode).
+    /// Worker options bag — a compiled object literal (<c>Dictionary&lt;string, object?&gt;</c>).
+    /// Passed through to the constructor, which reads <c>workerData</c>/<c>transferList</c>
+    /// via <see cref="ReadOption"/> regardless of representation (#380).
     /// </param>
     /// <param name="eventLoopRef">The emitted <c>$EventLoop</c> instance's <c>Ref</c>.</param>
     /// <param name="eventLoopUnref">The emitted <c>$EventLoop</c> instance's <c>Unref</c>.</param>
@@ -196,7 +217,7 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         string filename, object? options, Action eventLoopRef, Action eventLoopUnref,
         Action<Action> eventLoopSchedule)
     {
-        return new SharpTSWorker(filename, options as SharpTSObject, parentInterpreter: null,
+        return new SharpTSWorker(filename, options, parentInterpreter: null,
             eventLoopRef, eventLoopUnref, eventLoopSchedule);
     }
 

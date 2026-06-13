@@ -550,10 +550,9 @@ public partial class RuntimeEmitter
 
             il.MarkLabel(done);
 
-            // Release the in-flight-connect keep-alive Ref taken in $NetSocket.Connect.
-            // Both IPC and TCP success paths merge at 'done', so a single Unref here is
-            // balanced 1:1 with that Ref. The connect has been delivered ('connect'
-            // emitted); StartReading holds its own independent Ref for the read phase.
+            // Release the in-flight-connect Ref taken in $TSNetSocket.Connect, after
+            // the 'connect' event has been delivered (and reading started), so the
+            // handle outlives delivery. Mirrors SharpTSSocket's interpreter.Unref().
             il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
             il.Emit(OpCodes.Call, runtime.EventLoopUnref);
 
@@ -650,9 +649,9 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
             il.Emit(OpCodes.Pop);
 
-            // Release the in-flight-connect keep-alive Ref taken in $NetSocket.Connect.
-            // The connect has settled (errored); balanced 1:1 with that Ref. Both the
-            // TCP and IPC connect workers schedule this closure on failure.
+            // Release the in-flight-connect Ref taken in $TSNetSocket.Connect, after
+            // the 'error' event has been delivered. Mirrors SharpTSSocket's
+            // interpreter.Unref() on the failure path.
             il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
             il.Emit(OpCodes.Call, runtime.EventLoopUnref);
 
