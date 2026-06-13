@@ -3704,6 +3704,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, trueLabel);
         il.MarkLabel(notObjectClassLabel);
 
+        // When classType is one of the primitive wrapper types (Number/String/
+        // Boolean, which lower to the System.Double/String/Boolean Type tokens),
+        // the decision is TERMINAL: per ECMA-262 OrdinaryHasInstance only a boxed
+        // wrapper object (`new Number(5)`) is an instance — a bare primitive is
+        // NOT. Branch to true iff `instance` carries the matching __primitiveType
+        // marker, else to false. Falling through to the IsAssignableFrom fallback
+        // below would wrongly match a bare boxed double/string/bool, since e.g.
+        // IsAssignableFrom(double, double) is true (#375). Mirrors the terminal
+        // `Object` branch above.
         void CheckBoxed(Type primType, string typeTag)
         {
             var skip = il.DefineLabel();
@@ -3711,11 +3720,12 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldtoken, primType);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
             il.Emit(OpCodes.Bne_Un, skip);
-            // classType is the primitive type — check marker
+            // classType is the primitive wrapper type — true iff boxed marker matches.
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldstr, typeTag);
             il.Emit(OpCodes.Call, runtime.IsBoxedPrimitiveOfTypeMethod);
             il.Emit(OpCodes.Brtrue, trueLabel);
+            il.Emit(OpCodes.Br, falseLabel);
             il.MarkLabel(skip);
         }
         CheckBoxed(_types.Boolean, "Boolean");
