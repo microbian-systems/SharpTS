@@ -132,13 +132,16 @@ public class GeneratorUndefinedValueTests
         Assert.Equal("got:RET\n", TestHarness.Run(source, mode));
     }
 
-    // ---- Direct `.next().value` completion value ----
-    // These assert spec-correct behavior in COMPILED mode. The interpreter still reports `null`
-    // here (a separate, pre-existing gap tracked by #480), so they are compiled-only for now.
+    // ---- Direct `.next().value` completion value (#480) ----
+    // A generator that completes without an explicit `return <expr>` has completion value
+    // `undefined` (ECMA-262 27.5.1.x): both falling off the end and a bare `return;`. Both modes
+    // are now spec-correct — the interpreter previously reported `null` for the bare-`return;` case
+    // (#480), fixed by making a bare `return;` produce the `undefined` sentinel at its source
+    // (VisitReturn) rather than C# null, while preserving `return null;` as null (see below).
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
-    public void OffEndCompletionValue_IsUndefined_Compiled(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OffEndCompletionValue_IsUndefined(ExecutionMode mode)
     {
         var source = """
             function* g() { yield 1; }
@@ -150,8 +153,8 @@ public class GeneratorUndefinedValueTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
-    public void BareReturnCompletionValue_IsUndefined_Compiled(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BareReturnCompletionValue_IsUndefined(ExecutionMode mode)
     {
         var source = """
             function* g() { yield 1; return; }
@@ -160,6 +163,21 @@ public class GeneratorUndefinedValueTests
             console.log("b:" + it.next().value);
             """;
         Assert.Equal("a:1\nb:undefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ReturnNullCompletionValue_IsNull(ExecutionMode mode)
+    {
+        // `return null;` is distinct from a bare `return;`: the completion value is JS null, not
+        // undefined. Guards against the #480 fix conflating "no return value" with "returned null".
+        var source = """
+            function* g() { yield 1; return null; }
+            const it = g();
+            console.log("a:" + it.next().value);
+            console.log("b:" + it.next().value);
+            """;
+        Assert.Equal("a:1\nb:null\n", TestHarness.Run(source, mode));
     }
 
     // ---- #499: `next()` on an already-completed generator yields undefined ----
