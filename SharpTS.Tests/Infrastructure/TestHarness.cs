@@ -946,6 +946,10 @@ public static class TestHarness
             var task = Task.Run(() =>
             {
                 using var capture = AsyncLocalConsoleRedirector.Capture();
+                // The compiled Main installs an event-loop SynchronizationContext on
+                // this thread; restore the previous one so it doesn't leak onto the
+                // recycled Task.Run pool thread and disturb a sibling test.
+                var prevCtx = System.Threading.SynchronizationContext.Current;
                 try
                 {
                     mainMethod.Invoke(null, null);
@@ -953,6 +957,10 @@ public static class TestHarness
                 catch (TargetInvocationException tie) when (tie.InnerException is not null)
                 {
                     System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                }
+                finally
+                {
+                    System.Threading.SynchronizationContext.SetSynchronizationContext(prevCtx);
                 }
                 return capture.GetOutput().Replace("\r\n", "\n");
             });

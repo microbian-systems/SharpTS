@@ -1003,71 +1003,13 @@ public partial class ILCompiler
                 continue;
             }
 
-            // Special handling for expression statements to wait for top-level async calls
+            // Special handling for expression statements to wait for top-level async
+            // calls — "top-level await" behavior. Shared with the module/script init
+            // bodies so every entry point pumps the loop the same way (see the remarks
+            // on EmitExpressionWithAsyncWait for why this must pump, not block).
             if (stmt is Stmt.Expression exprStmt)
             {
-                emitter.EmitExpression(exprStmt.Expr);
-
-                // Check if the result is a Task<object> or $Promise and wait for it
-                // This provides "top-level await" behavior for compiled code
-                // Box value types first (e.g., delete returns boolean)
-                emitter.Helpers.EnsureBoxed();
-                var exprResult = il.DeclareLocal(_types.Object);
-                il.Emit(OpCodes.Stloc, exprResult);
-
-                var notTaskLabel = il.DefineLabel();
-                var waitForTaskLabel = il.DefineLabel();
-                var isTaskLabel = il.DefineLabel();
-
-                // Check for Task<object> first
-                il.Emit(OpCodes.Ldloc, exprResult);
-                il.Emit(OpCodes.Isinst, _types.TaskOfObject);
-                il.Emit(OpCodes.Brtrue, isTaskLabel);
-
-                // Check for $Promise (async function return type)
-                il.Emit(OpCodes.Ldloc, exprResult);
-                il.Emit(OpCodes.Isinst, _runtime.TSPromiseType);
-                il.Emit(OpCodes.Brfalse, notTaskLabel);
-
-                // It's a $Promise - extract its underlying Task
-                il.Emit(OpCodes.Ldloc, exprResult);
-                il.Emit(OpCodes.Castclass, _runtime.TSPromiseType);
-                il.Emit(OpCodes.Callvirt, _runtime.TSPromiseTaskGetter);
-                il.Emit(OpCodes.Br, waitForTaskLabel);
-
-                // It's a Task<object> directly
-                il.MarkLabel(isTaskLabel);
-                il.Emit(OpCodes.Ldloc, exprResult);
-                il.Emit(OpCodes.Castclass, _types.TaskOfObject);
-
-                // Wait for the task via $EventLoop.WaitForTask: blocks while the
-                // event loop has work that could settle it (timers fire as part
-                // of the wait), checks cancellation each iteration, and returns
-                // false once the process is provably quiescent — a never-settling
-                // promise (`new Promise(() => {})`) must not block exit (matches
-                // Node). On false we skip GetResult and move on.
-                il.MarkLabel(waitForTaskLabel);
-                var taskLocal = il.DeclareLocal(_types.TaskOfObject);
-                il.Emit(OpCodes.Stloc, taskLocal);
-
-                il.Emit(OpCodes.Call, _runtime.EventLoopGetInstance);
-                il.Emit(OpCodes.Ldloc, taskLocal);
-                il.Emit(OpCodes.Callvirt, _runtime.EventLoopWaitForTask);
-                il.Emit(OpCodes.Brfalse, notTaskLabel);
-
-                // Task is complete — GetResult() to rethrow if faulted
-                il.Emit(OpCodes.Ldloc, taskLocal);
-                var getAwaiter = _types.GetMethodNoParams(_types.TaskOfObject, "GetAwaiter");
-                il.Emit(OpCodes.Call, getAwaiter);
-                var awaiterLocal = il.DeclareLocal(_types.TaskAwaiterOfObject);
-                il.Emit(OpCodes.Stloc, awaiterLocal);
-                il.Emit(OpCodes.Ldloca, awaiterLocal);
-                var getResult = _types.GetMethodNoParams(_types.TaskAwaiterOfObject, "GetResult");
-                il.Emit(OpCodes.Call, getResult);
-                il.Emit(OpCodes.Pop);  // Discard the result
-
-                il.MarkLabel(notTaskLabel);
-                // No pop needed - value is in local
+                EmitExpressionWithAsyncWait(il, emitter, exprStmt);
             }
             else
             {
