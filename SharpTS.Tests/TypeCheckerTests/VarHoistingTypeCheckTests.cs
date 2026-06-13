@@ -79,24 +79,46 @@ public class VarHoistingTypeCheckTests
         Assert.Equal("2", output.Trim());
     }
 
+    // #533: a function declared BEFORE a let/const may reference that binding in its body — the
+    // body only runs once the binding is initialized, so TypeScript (which collects every lexical
+    // binding in a scope before checking bodies) accepts it. SharpTS now hoists let/const the same
+    // way it hoists var and class. (A *direct* use-before-declaration is still rejected — at runtime
+    // — because the binding isn't created until its statement executes; see the StillFails tests.)
     [Fact]
-    public void ForwardLetReference_InFunctionBody_StillFails()
+    public void ForwardLetReference_InFunctionBody_Succeeds()
     {
         var source = """
             function f() { return y; }
             let y = 1;
+            console.log(f());
             """;
 
-        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
-        Assert.Contains("Undefined variable", ex.Message);
+        var output = TestHarness.RunInterpreted(source);
+        Assert.Equal("1", output.Trim());
     }
 
     [Fact]
-    public void ForwardConstReference_InFunctionBody_StillFails()
+    public void ForwardConstReference_InFunctionBody_Succeeds()
     {
         var source = """
             function f() { return z; }
-            const z = 1;
+            const z = 5;
+            console.log(f());
+            """;
+
+        var output = TestHarness.RunInterpreted(source);
+        Assert.Equal("5", output.Trim());
+    }
+
+    [Fact]
+    public void DirectLetReference_BeforeDeclaration_StillFailsAtRuntime()
+    {
+        // Not deferred behind a function: the read executes before `let x` runs, so the binding
+        // does not exist yet. This stays an error (now surfaced at runtime, matching how a forward
+        // class reference behaves), never silently producing undefined.
+        var source = """
+            console.log(x);
+            let x = 1;
             """;
 
         var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));

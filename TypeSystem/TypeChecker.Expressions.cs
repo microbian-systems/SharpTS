@@ -1436,6 +1436,10 @@ public partial class TypeChecker
                 // resolve. Matches the behavior in CheckFunctionDeclaration.
                 HoistFunctionDeclarations(arrow.BlockBody);
 
+                // Likewise hoist the body's own let/const (as `any`) so an inner function declared
+                // before a later block-scoped binding in the same body can forward-reference it (#533).
+                HoistLexicalDeclarations(arrow.BlockBody);
+
                 // Block body - check statements
                 CheckStmtList(arrow.BlockBody);
 

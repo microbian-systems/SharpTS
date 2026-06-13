@@ -802,6 +802,10 @@ public partial class TypeChecker
         // Hoist var declarations (pre-define as any for forward reference support)
         HoistVarDeclarations(statements);
 
+        // Hoist let/const declarations (pre-define as any so an earlier function body can
+        // forward-reference a later block-scoped binding — #533)
+        HoistLexicalDeclarations(statements);
+
         foreach (Stmt statement in statements)
         {
             CheckStmt(statement);
@@ -843,6 +847,10 @@ public partial class TypeChecker
 
         // Hoist var declarations (pre-define as any for forward reference support)
         HoistVarDeclarations(statements);
+
+        // Hoist let/const declarations (pre-define as any so an earlier function body can
+        // forward-reference a later block-scoped binding — #533)
+        HoistLexicalDeclarations(statements);
 
         foreach (Stmt statement in statements)
         {
@@ -1149,6 +1157,9 @@ public partial class TypeChecker
                     // Hoist var declarations (pre-define as any for forward reference support)
                     HoistVarDeclarations(module.Statements);
 
+                    // Hoist let/const declarations (pre-define as any for forward reference support — #533)
+                    HoistLexicalDeclarations(module.Statements);
+
                     // Check all statements with error recovery
                     foreach (var stmt in module.Statements)
                     {
@@ -1194,6 +1205,9 @@ public partial class TypeChecker
                     // Hoist var declarations (pre-define as any for forward reference support)
                     HoistVarDeclarations(module.Statements);
 
+                    // Hoist let/const declarations (pre-define as any for forward reference support — #533)
+                    HoistLexicalDeclarations(module.Statements);
+
                     // Third pass: check all statements with error recovery
                     foreach (var stmt in module.Statements)
                     {
@@ -1233,6 +1247,9 @@ public partial class TypeChecker
 
             // Hoist var declarations (pre-define as any for forward reference support)
             HoistVarDeclarations(script.Statements);
+
+            // Hoist let/const declarations (pre-define as any for forward reference support — #533)
+            HoistLexicalDeclarations(script.Statements);
 
             // Process all declarations to populate the environment
             foreach (var stmt in script.Statements)
@@ -1290,6 +1307,9 @@ public partial class TypeChecker
 
             // Hoist var declarations (pre-define as any for forward reference support)
             HoistVarDeclarations(module.Statements);
+
+            // Hoist let/const declarations (pre-define as any for forward reference support — #533)
+            HoistLexicalDeclarations(module.Statements);
 
             // Then, process all declarations to populate the environment
             foreach (var stmt in module.Statements)
