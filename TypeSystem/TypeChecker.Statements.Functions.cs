@@ -42,7 +42,11 @@ public partial class TypeChecker
     /// </summary>
     private void HoistFunctionDeclarations(IEnumerable<Stmt> statements)
     {
-        foreach (var stmt in statements)
+        // Materialized once: the two passes below each iterate the statements.
+        var stmtList = statements as IReadOnlyList<Stmt> ?? statements.ToList();
+
+        // Pass 1: register each declaration's signature (un-annotated return types as `any`).
+        foreach (var stmt in stmtList)
         {
             // Handle top-level functions. Body-less declarations (ambient `declare function`,
             // overload signatures) hoist too — tsc resolves calls that precede the declaration.
@@ -61,7 +65,59 @@ public partial class TypeChecker
 
         // Hoist const/let/var declarations with function expressions
         // This enables mutual recursion like: const isEven = function(n) { return isOdd(n-1); };
-        HoistConstFunctionExpressions(statements);
+        HoistConstFunctionExpressions(stmtList);
+
+        // Pass 2: now that every sibling signature is registered, speculatively infer the return
+        // type of un-annotated functions so calls appearing earlier in the same scope type
+        // precisely instead of as `any` (#383). Done as a separate pass so sibling references
+        // resolve regardless of declaration order.
+        foreach (var stmt in stmtList)
+        {
+            if (stmt is Stmt.Function f2)
+                RefineHoistedFunctionReturnType(f2);
+            else if (stmt is Stmt.Export { Declaration: Stmt.Function ef2 })
+                RefineHoistedFunctionReturnType(ef2);
+        }
+    }
+
+    /// <summary>
+    /// Second hoisting pass for a single un-annotated <c>function</c> declaration: speculatively
+    /// infers its return type and registers the refined signature, so a call that textually
+    /// precedes the declaration in the same scope sees a concrete return type rather than
+    /// <c>any</c> (issue #383). The inferred type is memoized in <see cref="_hoistInferredReturnTypes"/>
+    /// and re-registered into each fresh scope on later passes without re-checking the body.
+    /// </summary>
+    private void RefineHoistedFunctionReturnType(Stmt.Function funcStmt)
+    {
+        // Only plain, implemented, non-generic, non-overloaded functions without a return
+        // annotation are eligible. Generics defer to the real pass; overload groups drive call
+        // sites from their explicit signatures, not the implementation's inferred return.
+        if (funcStmt.ReturnType != null || funcStmt.Body == null) return;
+        if (funcStmt.TypeParams is { Count: > 0 }) return;
+        string funcName = funcStmt.Name.Lexeme;
+        if (_pendingOverloadSignatures.ContainsKey(funcName)) return;
+        if (!_environment.IsDefinedLocally(funcName)) return;
+        if (_environment.Get(funcName) is not TypeInfo.Function hoisted || hoisted.ReturnType is not TypeInfo.Any)
+            return; // not our hoisted `any` placeholder (annotated, redefined, or already refined)
+
+        if (_hoistInferredReturnTypes.TryGetValue(funcStmt, out var cached))
+        {
+            // Re-register a previously inferred type into this (fresh) scope. A null value marks an
+            // in-progress (mutual recursion) or failed inference — leave the placeholder in place.
+            if (cached != null)
+                _environment.Define(funcName, new TypeInfo.Function(
+                    hoisted.ParamTypes, cached, hoisted.RequiredParams, hoisted.HasRestParam,
+                    hoisted.ThisType, hoisted.ParamNames));
+            return;
+        }
+
+        // Mark in-progress before inferring so mutual recursion terminates against the placeholder.
+        _hoistInferredReturnTypes[funcStmt] = null;
+        var funcEnv = new TypeEnvironment(_environment);
+        CheckFunctionBodyAndInferReturn(
+            funcStmt, funcEnv, hoisted.ParamTypes, hoisted.RequiredParams, hoisted.HasRestParam,
+            hoisted.ParamNames ?? new List<string>(), hoisted.ThisType, typeParams: null,
+            returnType: new TypeInfo.Inferred(), inferringReturnType: true, funcName, suppress: true);
     }
 
     /// <summary>
@@ -484,6 +540,36 @@ public partial class TypeChecker
             _typeMap.SetFunctionType(funcName, new TypeInfo.Function(gf.ParamTypes, gf.ReturnType, gf.RequiredParams, gf.HasRestParam, gf.ThisType));
         }
 
+        // Check the body and (when un-annotated) resolve & register the inferred return type.
+        CheckFunctionBodyAndInferReturn(
+            funcStmt, funcEnv, paramTypes, requiredParams, hasRest, paramNames,
+            thisType, typeParams, returnType, inferringReturnType, funcName, suppress: false);
+    }
+
+    /// <summary>
+    /// Binds parameters and checks a function body, resolving and registering the inferred return
+    /// type when the declaration carries no explicit return annotation. Shared by the normal
+    /// declaration pass (<paramref name="suppress"/> = false) and by hoisting's speculative
+    /// pre-resolution (<paramref name="suppress"/> = true, issue #383).
+    ///
+    /// In suppressed mode diagnostics are swallowed and the body is checked in recovery mode so
+    /// every <c>return</c> is seen; any failure degrades to leaving the hoisted <c>any</c>
+    /// placeholder. The real declaration pass re-checks the same body and reports diagnostics at
+    /// their proper locations, so suppressed checking never produces a duplicate or final error.
+    /// </summary>
+    private void CheckFunctionBodyAndInferReturn(
+        Stmt.Function funcStmt, TypeEnvironment funcEnv,
+        List<TypeInfo> paramTypes, int requiredParams, bool hasRest, List<string> paramNames,
+        TypeInfo? thisType, List<TypeInfo.TypeParameter>? typeParams,
+        TypeInfo returnType, bool inferringReturnType, string funcName, bool suppress)
+    {
+        // Both callers guarantee a body: CheckFunctionDeclaration returns early for body-less
+        // overload/ambient signatures, and RefineHoistedFunctionReturnType filters them out.
+        List<Stmt> body = funcStmt.Body!;
+
+        // The enclosing environment, where the (possibly refined) function type is registered.
+        TypeEnvironment previousEnv = _environment;
+
         // Add parameters to function environment and check body
         for (int i = 0; i < funcStmt.Parameters.Count; i++)
         {
@@ -491,7 +577,6 @@ public partial class TypeChecker
         }
 
         // Save and set context - function bodies are isolated from outer loop/switch/label context
-        TypeEnvironment previousEnv = _environment;
         TypeInfo? previousReturn = _currentFunctionReturnType;
         TypeInfo? previousThisType = _currentFunctionThisType;
         bool previousInAsync = _inAsyncFunction;
@@ -499,6 +584,7 @@ public partial class TypeChecker
         int previousLoopDepth = _loopDepth;
         int previousSwitchDepth = _switchDepth;
         var previousActiveLabels = new Dictionary<string, bool>(_activeLabels);
+        bool previousRecoveryMode = _recoveryMode;
 
         var previousInferredReturnTypes = _inferredReturnTypes;
 
@@ -518,6 +604,12 @@ public partial class TypeChecker
         _loopDepth = 0;
         _switchDepth = 0;
         _activeLabels.Clear();
+        if (suppress)
+        {
+            // Collect-and-discard: continue past errors to observe every `return`, record nothing.
+            _recoveryMode = true;
+            _suppressDiagnostics++;
+        }
 
         // Push a new scope for declared variable types and record parameter types
         PushDeclaredVariableScope();
@@ -540,24 +632,34 @@ public partial class TypeChecker
 
         try
         {
-            // Hoist inner function declarations so forward references resolve.
-            // JS spec hoists all `function` decls to the top of the containing
-            // scope before any statement executes; the TypeChecker needs to
-            // mirror that to accept well-formed mutually-recursive inner fns.
-            HoistFunctionDeclarations(funcStmt.Body);
+            bool bodyFailed = false;
+            try
+            {
+                // Hoist inner function declarations so forward references resolve.
+                // JS spec hoists all `function` decls to the top of the containing
+                // scope before any statement executes; the TypeChecker needs to
+                // mirror that to accept well-formed mutually-recursive inner fns.
+                HoistFunctionDeclarations(body);
 
-            CheckStmtList(funcStmt.Body);
+                CheckStmtList(body);
 
-            // #367: flag returns of a number/boolean-typed local that an `any`/`undefined`
-            // assignment may have left holding the undefined sentinel (no-op unless the declared
-            // return is number/boolean). Runs after the body so every sub-expression type is known.
-            MarkUndefinedReachableLocalReturns(funcStmt.Body);
+                // #367: flag returns of a number/boolean-typed local that an `any`/`undefined`
+                // assignment may have left holding the undefined sentinel (no-op unless the declared
+                // return is number/boolean). Runs after the body so every sub-expression type is known.
+                // Skipped while speculating — it only matters for the emitted output of the real pass.
+                if (!suppress)
+                    MarkUndefinedReachableLocalReturns(body);
+            }
+            catch (Exception) when (suppress)
+            {
+                // Speculative inference is best-effort: degrade to the `any` placeholder on any failure.
+                bodyFailed = true;
+            }
 
             // Resolve inferred return type from collected return expressions
-            if (inferringReturnType)
+            if (inferringReturnType && !bodyFailed)
             {
                 var collected = _inferredReturnTypes!;
-                _inferredReturnTypes = null;
 
                 TypeInfo inferredReturn;
                 if (collected.Count == 0)
@@ -588,10 +690,18 @@ public partial class TypeChecker
                     ? (TypeInfo)new TypeInfo.GenericFunction(typeParams, paramTypes, inferredReturn, requiredParams, hasRest, thisType, paramNames)
                     : new TypeInfo.Function(paramTypes, inferredReturn, requiredParams, hasRest, thisType, paramNames);
                 previousEnv.Define(funcName, updatedFuncType);
-                if (updatedFuncType is TypeInfo.Function uf)
-                    _typeMap.SetFunctionType(funcName, uf);
-                else if (updatedFuncType is TypeInfo.GenericFunction gf2)
-                    _typeMap.SetFunctionType(funcName, new TypeInfo.Function(gf2.ParamTypes, gf2.ReturnType, gf2.RequiredParams, gf2.HasRestParam, gf2.ThisType));
+                if (suppress)
+                {
+                    // Memoize so later passes re-register without re-checking the body.
+                    _hoistInferredReturnTypes[funcStmt] = inferredReturn;
+                }
+                else
+                {
+                    if (updatedFuncType is TypeInfo.Function uf)
+                        _typeMap.SetFunctionType(funcName, uf);
+                    else if (updatedFuncType is TypeInfo.GenericFunction gf2)
+                        _typeMap.SetFunctionType(funcName, new TypeInfo.Function(gf2.ParamTypes, gf2.ReturnType, gf2.RequiredParams, gf2.HasRestParam, gf2.ThisType));
+                }
             }
 
             // Validate that non-void functions return a value on all code paths
@@ -606,7 +716,7 @@ public partial class TypeChecker
                 !funcStmt.IsGenerator &&
                 !funcStmt.IsAsync)
             {
-                if (!DoesBlockDefinitelyReturn(funcStmt.Body))
+                if (!DoesBlockDefinitelyReturn(body))
                 {
                     throw new TypeCheckException($" Function '{funcStmt.Name.Lexeme}' must return a value of type '{returnType}'.", tsCode: "TS2366");
                 }
@@ -633,6 +743,11 @@ public partial class TypeChecker
             _activeLabels.Clear();
             foreach (var kvp in previousActiveLabels)
                 _activeLabels[kvp.Key] = kvp.Value;
+            if (suppress)
+            {
+                _recoveryMode = previousRecoveryMode;
+                _suppressDiagnostics--;
+            }
         }
     }
 
