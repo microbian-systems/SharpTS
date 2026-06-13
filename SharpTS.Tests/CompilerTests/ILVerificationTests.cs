@@ -193,6 +193,84 @@ public class ILVerificationTests
         Assert.Equal("12 101 100\n", output);
     }
 
+    // #457: an increment/decrement whose operand's RECEIVER or INDEX contains an `await` —
+    // (await getObj()).n++, --(await getArr())[0], arr[await idx()]++ — emitted invalid IL.
+    // The await inside the receiver/index allocates an async resume label (and a state-dispatch
+    // jump-table entry); the increment must still emit that await so the label is marked. Before
+    // #357's Get/GetIndex arms the base emitter skipped the operand entirely, so the label was
+    // defined and branched to but never marked ("Label N has not been marked") at Save time — a
+    // distinct symptom of the same gap that produced #357's StackUnderflow for a plain receiver.
+    // These pin all three await positions across the async function, async arrow, and async
+    // generator state-machine emitters; SpillBoxed emits the await (suspending with an empty stack)
+    // and stores the result before the read-modify-write.
+
+    [Fact]
+    public void AsyncFunctionAwaitInReceiverIncrement_PassesILVerification()
+    {
+        var source = """
+            let capO: { n: number } = { n: 0 };
+            let capA: number[] = [];
+            async function mkO(): Promise<{ n: number }> { capO = { n: 1 }; return capO; }
+            async function mkA(): Promise<number[]> { capA = [10, 20]; return capA; }
+            async function idx(): Promise<number> { return 0; }
+            async function go(): Promise<void> {
+                (await mkO()).n++;        // await in Get receiver:   capO.n -> 2
+                --(await mkA())[1];       // await in GetIndex recv:  capA[1] -> 19
+                const arr = [5, 6];
+                arr[await idx()]++;       // await in index position: arr[0] -> 6
+                console.log(capO.n, capA[1], arr[0]);
+            }
+            go();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("2 19 6\n", output);
+    }
+
+    [Fact]
+    public void AsyncArrowAwaitInReceiverIncrement_PassesILVerification()
+    {
+        var source = """
+            let cap: { c: number } = { c: 0 };
+            async function mk(): Promise<{ c: number }> { cap = { c: 41 }; return cap; }
+            const run = async (): Promise<void> => {
+                ++(await mk()).c;         // cap.c -> 42
+                console.log(cap.c);
+            };
+            run();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("42\n", output);
+    }
+
+    [Fact]
+    public void AsyncGeneratorAwaitInReceiverIncrement_PassesILVerification()
+    {
+        var source = """
+            let cap: number[] = [];
+            async function mk(): Promise<number[]> { cap = [100]; return cap; }
+            async function* agen(): AsyncGenerator<number> {
+                (await mk())[0]++;        // cap[0] -> 101
+                yield cap[0];
+            }
+            async function main(): Promise<void> {
+                const ag = agen();
+                console.log((await ag.next()).value);
+            }
+            main();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("101\n", output);
+    }
+
     // ---- #414: async-arrow / generator spill across a suspension ----
 
     [Fact]
