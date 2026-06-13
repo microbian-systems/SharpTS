@@ -356,25 +356,54 @@ public static class BuiltInTypes
             "getMilliseconds" => new TypeInfo.Function([], NumberType),
             "getTimezoneOffset" => new TypeInfo.Function([], NumberType),
 
-            // Setters - all return number (the new timestamp)
+            // UTC getters - all return number
+            "getUTCFullYear" => new TypeInfo.Function([], NumberType),
+            "getUTCMonth" => new TypeInfo.Function([], NumberType),
+            "getUTCDate" => new TypeInfo.Function([], NumberType),
+            "getUTCDay" => new TypeInfo.Function([], NumberType),
+            "getUTCHours" => new TypeInfo.Function([], NumberType),
+            "getUTCMinutes" => new TypeInfo.Function([], NumberType),
+            "getUTCSeconds" => new TypeInfo.Function([], NumberType),
+            "getUTCMilliseconds" => new TypeInfo.Function([], NumberType),
+
+            // Setters - all return number (the new timestamp). Trailing components
+            // are optional per lib.es5 (e.g. setFullYear(year, month?, date?)).
             "setTime" => new TypeInfo.Function([NumberType], NumberType),
-            "setFullYear" => new TypeInfo.Function([NumberType], NumberType),  // month, date optional
-            "setMonth" => new TypeInfo.Function([NumberType], NumberType),     // date optional
+            "setFullYear" => new TypeInfo.Function([NumberType, NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setMonth" => new TypeInfo.Function([NumberType, NumberType], NumberType, RequiredParams: 1),
             "setDate" => new TypeInfo.Function([NumberType], NumberType),
-            "setHours" => new TypeInfo.Function([NumberType], NumberType),     // min, sec, ms optional
-            "setMinutes" => new TypeInfo.Function([NumberType], NumberType),   // sec, ms optional
-            "setSeconds" => new TypeInfo.Function([NumberType], NumberType),   // ms optional
+            "setHours" => new TypeInfo.Function([NumberType, NumberType, NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setMinutes" => new TypeInfo.Function([NumberType, NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setSeconds" => new TypeInfo.Function([NumberType, NumberType], NumberType, RequiredParams: 1),
             "setMilliseconds" => new TypeInfo.Function([NumberType], NumberType),
+
+            // UTC setters - mirror the local setters' optional-trailing-component shape
+            "setUTCFullYear" => new TypeInfo.Function([NumberType, NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setUTCMonth" => new TypeInfo.Function([NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setUTCDate" => new TypeInfo.Function([NumberType], NumberType),
+            "setUTCHours" => new TypeInfo.Function([NumberType, NumberType, NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setUTCMinutes" => new TypeInfo.Function([NumberType, NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setUTCSeconds" => new TypeInfo.Function([NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setUTCMilliseconds" => new TypeInfo.Function([NumberType], NumberType),
 
             // Conversion methods
             "toString" => new TypeInfo.Function([], StringType),
             "toISOString" => new TypeInfo.Function([], StringType),
             "toDateString" => new TypeInfo.Function([], StringType),
             "toTimeString" => new TypeInfo.Function([], StringType),
+            "toUTCString" => new TypeInfo.Function([], StringType),
+            // toLocale* accept optional (locales?, options?) per lib.es2020.date.
+            "toLocaleDateString" => new TypeInfo.Function([AnyType, AnyType], StringType, RequiredParams: 0),
+            "toLocaleTimeString" => new TypeInfo.Function([AnyType, AnyType], StringType, RequiredParams: 0),
+            "toLocaleString" => new TypeInfo.Function([AnyType, AnyType], StringType, RequiredParams: 0),
             // lib.es5: `toJSON(key?: any): string` (used by JSON.stringify and matched by
             // `T extends { toJSON(): infer R }`, see #491). Runtime impl in DateBuiltIns.
             "toJSON" => new TypeInfo.Function([], StringType),
             "valueOf" => new TypeInfo.Function([], NumberType),
+
+            // Legacy methods (ECMA-262 Annex B), declared on Date in lib.es5.
+            "getYear" => new TypeInfo.Function([], NumberType),
+            "setYear" => new TypeInfo.Function([NumberType], NumberType),
 
             _ => null
         };
