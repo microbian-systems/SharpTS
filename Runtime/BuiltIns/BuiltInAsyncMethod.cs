@@ -32,6 +32,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
     private readonly int _maxArity;
     private readonly Func<Interpreter, object?, List<object?>, Task<object?>> _implementation;
     private readonly Func<Interpreter, Task<object?>, SharpTSPromise>? _promiseFactory;
+    private readonly Func<Interpreter, object?, Func<Interpreter, Task<object?>, SharpTSPromise>?>? _speciesResolver;
     private readonly bool _refsEventLoopWhileInFlight;
     private object? _receiver;
 
@@ -58,13 +59,24 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
     /// legitimately never settle (reader.closed, pipeline of an unfinished stream, then-
     /// chaining) — those would otherwise hold the loop open forever.
     /// </param>
+    /// <param name="speciesResolver">
+    /// Optional synchronous pre-step run at call time, BEFORE the rejected-promise
+    /// try below, that returns the result-promise <paramref name="promiseFactory"/>
+    /// to use for this invocation. Takes precedence over <paramref name="promiseFactory"/>.
+    /// Promise.prototype.then/catch/finally pass one so they can read
+    /// <c>SpeciesConstructor(promise, %Promise%)</c> (ECMA-262 §27.2.5.4 step 3 —
+    /// a ReturnIfAbrupt before PerformPromiseThen): a poisoned <c>constructor</c>/
+    /// <c>@@species</c> getter throws SYNCHRONOUSLY out of the call rather than
+    /// rejecting the result promise (test262 then/ctor-poisoned, #350).
+    /// </param>
     public BuiltInAsyncMethod(
         string name,
         int minArity,
         int maxArity,
         Func<Interpreter, object?, List<object?>, Task<object?>> implementation,
         Func<Interpreter, Task<object?>, SharpTSPromise>? promiseFactory = null,
-        bool refsEventLoopWhileInFlight = false)
+        bool refsEventLoopWhileInFlight = false,
+        Func<Interpreter, object?, Func<Interpreter, Task<object?>, SharpTSPromise>?>? speciesResolver = null)
     {
         _name = name;
         _minArity = minArity;
@@ -72,6 +84,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         _implementation = implementation;
         _promiseFactory = promiseFactory;
         _refsEventLoopWhileInFlight = refsEventLoopWhileInFlight;
+        _speciesResolver = speciesResolver;
     }
 
     // Private constructor for creating bound instances
@@ -82,6 +95,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         Func<Interpreter, object?, List<object?>, Task<object?>> implementation,
         Func<Interpreter, Task<object?>, SharpTSPromise>? promiseFactory,
         bool refsEventLoopWhileInFlight,
+        Func<Interpreter, object?, Func<Interpreter, Task<object?>, SharpTSPromise>?>? speciesResolver,
         object? receiver)
     {
         _name = name;
@@ -90,6 +104,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         _implementation = implementation;
         _promiseFactory = promiseFactory;
         _refsEventLoopWhileInFlight = refsEventLoopWhileInFlight;
+        _speciesResolver = speciesResolver;
         _receiver = receiver;
     }
 
@@ -100,13 +115,13 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         // Null receivers don't need caching
         if (receiver == null)
         {
-            return new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, _refsEventLoopWhileInFlight, null);
+            return new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, _refsEventLoopWhileInFlight, _speciesResolver, null);
         }
 
         // Value types can't be cached efficiently
         if (receiver.GetType().IsValueType)
         {
-            return new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, _refsEventLoopWhileInFlight, receiver);
+            return new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, _refsEventLoopWhileInFlight, _speciesResolver, receiver);
         }
 
         // Initialize cache lazily
@@ -119,7 +134,7 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         }
 
         // Create new bound method and cache it
-        var bound = new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, _refsEventLoopWhileInFlight, receiver);
+        var bound = new BuiltInAsyncMethod(_name, _minArity, _maxArity, _implementation, _promiseFactory, _refsEventLoopWhileInFlight, _speciesResolver, receiver);
         _boundMethodCache.AddOrUpdate(receiver, bound);
         return bound;
     }
@@ -130,11 +145,22 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
     public object? Call(Interpreter interpreter, List<object?> arguments)
     {
         ValidateArguments(arguments);
+
+        // Resolve the result-promise factory SYNCHRONOUSLY before entering the
+        // try below. For then/catch/finally this performs the SpeciesConstructor
+        // read (§27.2.5.4 step 3), so a poisoned constructor/@@species getter
+        // throws synchronously out of this call instead of being swallowed into
+        // a rejected promise by the catch (#350). Absent a resolver, the static
+        // factory (subclass-typed inherited statics, #242) is used.
+        var factory = _speciesResolver != null
+            ? _speciesResolver(interpreter, _receiver)
+            : _promiseFactory;
+
         try
         {
             var task = _implementation(interpreter, _receiver, arguments);
             KeepEventLoopAliveUntilComplete(interpreter, task);
-            return WrapResult(interpreter, task);
+            return WrapResult(interpreter, factory, task);
         }
         catch (Exception ex)
         {
@@ -145,16 +171,19 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
                 SharpTSPromiseRejectedException rex => rex.Reason,
                 _ => ex.Message
             };
-            if (_promiseFactory == null)
+            if (factory == null)
                 return SharpTSPromise.Reject(errorValue);
             var tcs = new TaskCompletionSource<object?>();
             tcs.SetException(new SharpTSPromiseRejectedException(errorValue));
-            return WrapResult(interpreter, tcs.Task);
+            return WrapResult(interpreter, factory, tcs.Task);
         }
     }
 
-    private SharpTSPromise WrapResult(Interpreter interpreter, Task<object?> task)
-        => _promiseFactory != null ? _promiseFactory(interpreter, task) : new SharpTSPromise(task);
+    private static SharpTSPromise WrapResult(
+        Interpreter interpreter,
+        Func<Interpreter, Task<object?>, SharpTSPromise>? factory,
+        Task<object?> task)
+        => factory != null ? factory(interpreter, task) : new SharpTSPromise(task);
 
     /// <summary>
     /// Async call - awaits the implementation directly.

@@ -580,6 +580,24 @@ public static class ObjectBuiltIns
                 }
                 success = true;
                 break;
+            case SharpTSPromise promise:
+                // Promise instances are objects; user code may install own
+                // accessor or data properties — notably a poisoned `constructor`
+                // getter that must fire when then/catch/finally resolve
+                // SpeciesConstructor (test262 then/ctor-poisoned, #350). Storage
+                // lives on the base SharpTSPromise so plain and subclass promises
+                // both accept defineProperty. Attribute-only descriptors preserve
+                // the existing value per ECMA-262 §10.1.6.3.
+                if (descriptor.Get != null || descriptor.Set != null)
+                {
+                    promise.DefineAccessor(propertyKey, descriptor.Get, descriptor.Set);
+                }
+                else if (DescriptorHasValueOrAccessor(descriptorArg))
+                {
+                    promise.SetOwnProperty(propertyKey, descriptor.Value);
+                }
+                success = true;
+                break;
             default:
                 throw new Exception("TypeError: Object.defineProperty called on non-object");
         }

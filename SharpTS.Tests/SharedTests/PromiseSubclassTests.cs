@@ -600,4 +600,131 @@ public class PromiseSubclassTests
 
     #endregion
 
+    #region Poisoned constructor getter (#350) — then/catch/finally throw synchronously
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PoisonedConstructor_ThenThrowsSynchronously(ExecutionMode mode)
+    {
+        // ECMA-262 §27.2.5.4 step 3 resolves SpeciesConstructor(promise, %Promise%)
+        // via §7.3.22 step 1 = Get(promise, "constructor") BEFORE PerformPromiseThen
+        // (a ReturnIfAbrupt). An own `constructor` getter installed via
+        // Object.defineProperty that throws must therefore make `then` throw
+        // SYNCHRONOUSLY — not return a rejected promise. test262
+        // built-ins/Promise/prototype/then/ctor-poisoned.js.
+        var source = """
+            const p = new Promise<number>(function () {});
+            Object.defineProperty(p, "constructor", {
+                get() { throw new Error("poisoned"); }
+            });
+            let threw = false;
+            try {
+                p.then(v => v);
+            } catch (e) {
+                threw = true;
+                console.log((e as Error).message);
+            }
+            console.log(threw);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("poisoned\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PoisonedConstructor_CatchThrowsSynchronously(ExecutionMode mode)
+    {
+        // catch delegates to then, so the same synchronous SpeciesConstructor
+        // read applies.
+        var source = """
+            const p = new Promise<number>(function () {});
+            Object.defineProperty(p, "constructor", {
+                get() { throw new Error("poisoned-catch"); }
+            });
+            let threw = false;
+            try {
+                p.catch(() => 0);
+            } catch (e) {
+                threw = true;
+                console.log((e as Error).message);
+            }
+            console.log(threw);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("poisoned-catch\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PoisonedConstructor_FinallyThrowsSynchronously(ExecutionMode mode)
+    {
+        // finally also resolves SpeciesConstructor for its result promise.
+        var source = """
+            const p = new Promise<number>(function () {});
+            Object.defineProperty(p, "constructor", {
+                get() { throw new Error("poisoned-finally"); }
+            });
+            let threw = false;
+            try {
+                p.finally(() => {});
+            } catch (e) {
+                threw = true;
+                console.log((e as Error).message);
+            }
+            console.log(threw);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("poisoned-finally\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PoisonedConstructor_DoesNotAffectNormalThen(ExecutionMode mode)
+    {
+        // Regression guard: a promise WITHOUT a poisoned `constructor` accessor
+        // still resolves through %Promise% and `then` works normally.
+        var source = """
+            async function main() {
+                const r = await Promise.resolve(1).then(v => v + 10);
+                console.log(r);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("11\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PoisonedConstructor_OwnAccessorWinsOverSubclassConstructor(ExecutionMode mode)
+    {
+        // An own `constructor` accessor on a Promise SUBCLASS instance shadows the
+        // synthetic `constructor` (which otherwise reports the subclass), so its
+        // poisoned getter still fires from then.
+        var source = """
+            class MyP extends Promise<number> {}
+            const p = new MyP((resolve) => resolve(1));
+            Object.defineProperty(p, "constructor", {
+                get() { throw new Error("poisoned-sub"); }
+            });
+            let threw = false;
+            try {
+                p.then(v => v);
+            } catch (e) {
+                threw = true;
+                console.log((e as Error).message);
+            }
+            console.log(threw);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("poisoned-sub\ntrue\n", output);
+    }
+
+    #endregion
+
 }

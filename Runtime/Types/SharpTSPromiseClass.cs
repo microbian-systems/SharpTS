@@ -14,8 +14,6 @@ namespace SharpTS.Runtime.Types;
 /// <seealso cref="SharpTSPromiseClass"/>
 public sealed class SharpTSPromiseSubclassInstance : SharpTSPromise
 {
-    private Dictionary<string, object?>? _ownProperties;
-
     /// <summary>The guest class this promise was constructed by.</summary>
     public SharpTSPromiseClass Klass { get; }
 
@@ -32,17 +30,6 @@ public sealed class SharpTSPromiseSubclassInstance : SharpTSPromise
         Klass = klass;
         Capability = capability;
     }
-
-    public bool TryGetOwnProperty(string name, out object? value)
-    {
-        if (_ownProperties != null && _ownProperties.TryGetValue(name, out value))
-            return true;
-        value = null;
-        return false;
-    }
-
-    public void SetOwnProperty(string name, object? value)
-        => (_ownProperties ??= [])[name] = value;
 }
 
 /// <summary>
@@ -61,9 +48,11 @@ public sealed class SharpTSPromiseSubclassInstance : SharpTSPromise
 /// SpeciesConstructor-aware results from <c>then</c>/<c>catch</c>/<c>finally</c>
 /// (#221 — see <see cref="Runtime.BuiltIns.PromiseBuiltIns"/>
 /// <c>ResolveSpeciesConstructor</c>; the static methods build through the
-/// receiver constructor <c>C</c> directly per spec). Remaining spec surface:
-/// a non-Promise species constructor (general NewPromiseCapability, #349) and
-/// poisoned <c>constructor</c>/@@species getters (#350).
+/// receiver constructor <c>C</c> directly per spec). A poisoned own
+/// <c>constructor</c> getter makes then/catch/finally throw synchronously (#350,
+/// via <c>PromiseBuiltIns.ResolveResultPromiseFactory</c>). Remaining spec
+/// surface: a non-Promise species constructor (general NewPromiseCapability,
+/// #349).
 /// </remarks>
 public class SharpTSPromiseClass : SharpTSClass
 {
