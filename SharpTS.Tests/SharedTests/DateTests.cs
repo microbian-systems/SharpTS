@@ -476,20 +476,118 @@ public class DateTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    public void Date_UTCSetters_OptionalArgs_Interpreted(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_MultiArgSetters_HonorOptionalArgs(ExecutionMode mode)
     {
-        // The interpreter honors the optional trailing arguments of the multi-argument UTC
-        // setters. (Compiled mode currently honors only the primary argument — tracked separately.)
+        // #536: both modes honor the optional trailing arguments of the multi-argument setters
+        // (compiled previously applied only the primary argument). UTC get/set is timezone-
+        // independent; local setHours followed by local getters round-trips regardless of zone.
         var source = @"
             let d = new Date(0);
             d.setUTCFullYear(2020, 5, 15);
             d.setUTCHours(13, 30, 45, 500);
             console.log(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
             console.log(d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds());
+            let m = new Date(2024, 0, 1, 10, 20, 30, 40);
+            m.setHours(8, 15, 5);
+            console.log(m.getHours(), m.getMinutes(), m.getSeconds(), m.getMilliseconds());
         ";
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("2020 5 15\n13 30 45 500\n", output);
+        Assert.Equal("2020 5 15\n13 30 45 500\n8 15 5 40\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_MultiArgSetters_OverflowRollsOverAllAtOnce(ExecutionMode mode)
+    {
+        // setUTCFullYear(2020, 1, 31) = Feb 31 2020 -> Mar 2 (leap year), computed all-at-once,
+        // identically in both modes.
+        var source = @"
+            let d = new Date(0);
+            d.setUTCFullYear(2020, 1, 31);
+            console.log(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2020 2 2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_UTC_ReturnsUTCTimestamp(ExecutionMode mode)
+    {
+        // #538: Date.UTC builds a UTC timestamp; month defaults 0, date 1; 2-digit years map to
+        // 1900s; overflow rolls over; a non-finite component yields NaN.
+        var source = @"
+            console.log(Date.UTC(2024, 0, 1));
+            console.log(Date.UTC(2024, 5, 15, 13, 30, 45, 500));
+            console.log(Date.UTC(2024));
+            console.log(Date.UTC(70, 0, 1));
+            console.log(Number.isNaN(Date.UTC(2024, NaN)));
+            console.log(new Date(Date.UTC(2000, 0, 1)).toISOString());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1704067200000\n1718458245500\n1704067200000\n0\ntrue\n2000-01-01T00:00:00.000Z\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_Parse_ReturnsTimestampOrNaN(ExecutionMode mode)
+    {
+        // #538: Date.parse returns the timestamp for a parseable string (NaN otherwise), and is
+        // consistent with the string constructor.
+        var source = @"
+            console.log(Date.parse('2024-01-15T10:30:00Z'));
+            console.log(Number.isNaN(Date.parse('not a date')));
+            console.log(Date.parse('2024-01-15T10:30:00Z') === new Date('2024-01-15T10:30:00Z').getTime());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1705314600000\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_UTCAndParse_ValueForm(ExecutionMode mode)
+    {
+        // #538: the statics are also usable in value form (e.g. const f = Date.UTC).
+        var source = @"
+            const u = Date.UTC;
+            const p = Date.parse;
+            console.log(u(2024, 0, 1));
+            console.log(p('2024-01-15T10:30:00Z'));
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1704067200000\n1705314600000\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_ToLocale_HonorsLocaleAndOptions(ExecutionMode mode)
+    {
+        // #539: locale and options are honored. timeZone:'UTC' makes the assertion independent of
+        // the host time zone; an explicit locale makes it independent of the host culture.
+        var source = @"
+            let d = new Date(Date.UTC(2024, 0, 15, 12, 0, 0));
+            console.log(d.toLocaleDateString('en-US', { dateStyle: 'full', timeZone: 'UTC' }));
+            console.log(d.toLocaleDateString('de-DE', { dateStyle: 'full', timeZone: 'UTC' }));
+            console.log(d.toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'medium', timeZone: 'UTC' }));
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Monday, January 15, 2024\nMontag, 15. Januar 2024\n1/15/2024 12:00:00 PM\n", output);
+    }
+
+    [Fact]
+    public void Date_ToLocale_NoArgs_RunsStandalone()
+    {
+        // #539: argument-less toLocale* must stay fully standalone (no SharpTS.dll dependency) —
+        // only calls that pass locale/options opt into the soft runtime dependency.
+        var source = @"
+            let d = new Date(0);
+            console.log(typeof d.toLocaleDateString(), d.toLocaleDateString().length > 0);
+            console.log(typeof d.toLocaleTimeString(), d.toLocaleTimeString().length > 0);
+            console.log(typeof d.toLocaleString(), d.toLocaleString().length > 0);
+        ";
+        var output = TestHarness.RunCompiledStandalone(source);
+        Assert.Equal("string true\nstring true\nstring true\n", output);
     }
 
     #endregion
