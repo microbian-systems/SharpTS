@@ -40,13 +40,22 @@ public partial class TypeChecker
             return new TypeInfo.Any();
         }
 
-        // A non-recursive instantiated generic interface flattens so its numeric index signature
-        // (substituted) is reachable. Recursive aliases (DeepReadonly<Part[]>) are intentionally
-        // NOT force-expanded here — that re-enters the self-referential mapped/conditional chain
-        // and trips the instantiation-depth guard; resolving them lazily is tracked as follow-up.
+        // A deferred recursive alias (`part.subparts: DeepReadonly<Part[]>`) is resolved one
+        // level so the array shape underneath it becomes indexable. ExpandRecursiveTypeAlias is
+        // identity-cached, so re-entering the self-referential `DeepReadonly → DeepReadonlyObject
+        // → DeepReadonly<Part[]> → …` chain reuses the cached node instead of recursing forever;
+        // the resulting element type stays a deferred alias and only expands when a member of
+        // `part.subparts[0]` is actually touched (#365).
+        if (objType is TypeInfo.RecursiveTypeAlias rtaObj)
+            objType = ExpandRecursiveTypeAlias(rtaObj);
+
+        // An instantiated generic interface flattens so its numeric index signature (substituted)
+        // is reachable. The element type may itself be a still-deferred recursive alias (the
+        // `DeepReadonly<Part>` element of `DeepReadonlyArray<Part>`) — that is intentionally kept
+        // deferred and surfaced as the index result, not force-expanded here.
         if (objType is TypeInfo.InstantiatedGeneric igObj && !ContainsOpenTypeVariable(igObj)
             && FlattenInstantiatedInterface(igObj) is { } flatObj
-            && flatObj.NumberIndexType is not (null or TypeInfo.RecursiveTypeAlias))
+            && flatObj.NumberIndexType is not null)
             objType = flatObj;
 
         // A deferred conditional is indexed through its constraint — `x[0]` where
@@ -388,12 +397,15 @@ public partial class TypeChecker
             return valueType;
         }
 
-        // Flatten a non-recursive instantiated generic interface so its (substituted) numeric
-        // index signature — including its read-only flag — drives the checks below. Recursive
-        // aliases are left deferred (see the matching note in CheckGetIndex).
+        // Resolve a deferred recursive alias one level (see the matching note in CheckGetIndex),
+        // then flatten an instantiated generic interface so its (substituted) numeric index
+        // signature — including its read-only flag — drives the checks below.
+        if (objType is TypeInfo.RecursiveTypeAlias rtaSet)
+            objType = ExpandRecursiveTypeAlias(rtaSet);
+
         if (objType is TypeInfo.InstantiatedGeneric igSet && !ContainsOpenTypeVariable(igSet)
             && FlattenInstantiatedInterface(igSet) is { } flatSet
-            && flatSet.NumberIndexType is not (null or TypeInfo.RecursiveTypeAlias))
+            && flatSet.NumberIndexType is not null)
             objType = flatSet;
 
         // Writing through a read-only numeric index signature (an interface that extends

@@ -1562,6 +1562,12 @@ public partial class TypeChecker
         Expr.CompoundSet cs => cs.Name.Line,
         Expr.Call c => TryGetExprLine(c.Callee),
         Expr.New n => TryGetExprLine(n.Callee),
+        // Index forms carry no token of their own — attribute to their object's line so a write
+        // through a bracket (`part.subparts[0] = …` → TS2542) lands on its own statement rather
+        // than falling back to the enclosing declaration (#365).
+        Expr.SetIndex si => TryGetExprLine(si.Object),
+        Expr.GetIndex gi => TryGetExprLine(gi.Object),
+        Expr.CompoundSetIndex csi => TryGetExprLine(csi.Object),
         _ => null,
     };
 }

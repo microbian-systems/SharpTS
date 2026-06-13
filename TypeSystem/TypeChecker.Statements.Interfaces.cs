@@ -325,9 +325,13 @@ public partial class TypeChecker
         }
         }
 
-        // Resolve extended interfaces
+        // Resolve extended interfaces. The interface's own type parameters must be in scope here:
+        // a base reference like `extends ReadonlyArray<DeepReadonly<T>>` mentions T, and resolving
+        // it outside the scope collapses T to `any`, so the inherited numeric index element type
+        // is lost (it becomes `any` instead of the substitutable `DeepReadonly<T>`) (#365).
         FrozenSet<TypeInfo.Interface>? extends = null;
         if (interfaceStmt.Extends != null && interfaceStmt.Extends.Count > 0)
+        using (new EnvironmentScope(this, interfaceTypeEnv))
         {
             var extendsList = new HashSet<TypeInfo.Interface>();
             foreach (var extendTypeName in interfaceStmt.Extends)
