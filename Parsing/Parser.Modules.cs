@@ -325,7 +325,11 @@ public partial class Parser
             }
             else
             {
-                decl = VarDeclaration();
+                // Pass isConst:true so `export const x = 5` produces a Stmt.Const, matching
+                // the bare-`const` path (Parser.Declarations.cs). Without it the declaration
+                // was a mutable Stmt.Var — reassignment went unflagged and the literal type was
+                // widened (`export const x = 5` inferred `number` instead of `5`). See #428.
+                decl = VarDeclaration(isConst: true);
             }
         }
         else if (Match(TokenType.LET))

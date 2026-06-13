@@ -404,6 +404,49 @@ public class StatementParsingTests
         Assert.Null(varStmt.Initializer);
     }
 
+    // ---- #428: `export const` must parse as Stmt.Const, matching the bare-`const` path ----
+    // Before #428 the export dispatcher called VarDeclaration() without isConst:true, so
+    // `export const x = 5` produced a mutable Stmt.Var — reassignment went unflagged and the
+    // literal type was widened (`number` instead of `5`).
+
+    [Fact]
+    public void ExportConst_ParsesAsConst()
+    {
+        var statements = Parse("export const x = 5;");
+        var export = Assert.IsType<Stmt.Export>(statements[0]);
+        var constStmt = Assert.IsType<Stmt.Const>(export.Declaration);
+        Assert.Equal("x", constStmt.Name.Lexeme);
+        Assert.NotNull(constStmt.Initializer);
+    }
+
+    [Fact]
+    public void ExportLet_StaysMutableVar()
+    {
+        // Regression guard: `let` is mutable, so it must remain a Stmt.Var.
+        var statements = Parse("export let x = 5;");
+        var export = Assert.IsType<Stmt.Export>(statements[0]);
+        var varStmt = Assert.IsType<Stmt.Var>(export.Declaration);
+        Assert.Equal("x", varStmt.Name.Lexeme);
+    }
+
+    [Fact]
+    public void ExportVar_StaysMutableVar()
+    {
+        var statements = Parse("export var x = 5;");
+        var export = Assert.IsType<Stmt.Export>(statements[0]);
+        var varStmt = Assert.IsType<Stmt.Var>(export.Declaration);
+        Assert.True(varStmt.IsVar);
+    }
+
+    [Fact]
+    public void ExportConst_NoInitializer_IsParseError()
+    {
+        // `export const x;` (non-ambient) is a parse error, consistent with bare `const x;`
+        // and matching tsc's TS1155 "'const' declarations must be initialized." Before #428
+        // this was silently accepted as a mutable Stmt.Var.
+        Assert.ThrowsAny<System.Exception>(() => Parse("export const x;"));
+    }
+
     #endregion
 
     #region Expression Statements

@@ -231,6 +231,84 @@ public class ModuleTests
         Assert.Equal("3\n", TestHarness.Run(source, mode));
     }
 
+    // ---- #428: `export const` keeps const-ness (was parsed as a mutable Stmt.Var) ----
+    // The parser dispatched `export const` through VarDeclaration() with the default
+    // isConst:false, so it became a mutable Stmt.Var: reassignment went unflagged and the
+    // literal type was widened. After #428 it is a Stmt.Const, matching bare `const`. The
+    // type-checker/interpreter export helpers (GetDeclarationName / GetDeclaredType /
+    // GetDeclaredName / GetDeclaredValue) gained the Stmt.Const arm they previously lacked.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExportConst_Reassignment_IsTypeError(ExecutionMode mode)
+    {
+        // The canonical #428 repro: reassigning an `export const` must be rejected, just like
+        // bare `const`. The narrowed literal type ('5') surfaces in the diagnostic.
+        var source = """
+            export const y = 5;
+            y = 6;
+            """;
+
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.Run(source, mode));
+        Assert.Contains("'y'", ex.Message);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExportConst_LiteralTypeNarrowed(ExecutionMode mode)
+    {
+        // `export const x = 5` must infer the literal type `5`, not the widened `number`.
+        // Assigning it into a `5`-typed binding only type-checks when the narrowing happened.
+        var source = """
+            export const x = 5;
+            const exact: 5 = x;
+            console.log(exact);
+            """;
+
+        Assert.Equal("5\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExportConst_NarrowedType_FlowsCrossModule(ExecutionMode mode)
+    {
+        // The narrowed literal type of an exported const must survive import into another
+        // module (exercises the GetDeclarationName/GetDeclaredType export-table helpers).
+        var files = new Dictionary<string, string>
+        {
+            ["./values.ts"] = """
+                export const MAX = 100;
+                """,
+            ["./main.ts"] = """
+                import { MAX } from './values';
+                const exact: 100 = MAX;
+                console.log(exact);
+                """
+        };
+
+        Assert.Equal("100\n", TestHarness.RunModules(files, "./main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExportConst_CrossModule_Runs(ExecutionMode mode)
+    {
+        // A plain exported const imported and used across modules still binds and runs
+        // (guards the Stmt.Const arm added to the interpreter's GetDeclaredName/Value).
+        var files = new Dictionary<string, string>
+        {
+            ["./config.ts"] = """
+                export const greeting = "hello";
+                """,
+            ["./main.ts"] = """
+                import { greeting } from './config';
+                console.log(greeting);
+                """
+        };
+
+        Assert.Equal("hello\n", TestHarness.RunModules(files, "./main.ts", mode));
+    }
+
     // ---- #395: exported async / generator / async-generator functions callable across modules ----
     // The single-file tests above exercise script (non-module) mode via TestHarness.Run; since
     // #417 they run in both modes (the compiled script path now binds exported declarations).
