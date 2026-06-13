@@ -602,26 +602,13 @@ public partial class ILCompiler
     /// </summary>
     private void Phase4_DefineDeclarations(List<Stmt> statements)
     {
-        // Define all declarations
+        // Define all declarations. Delegates to the shared per-statement helper so
+        // single-file (script) mode unwraps `export`-wrapped declarations exactly like
+        // the module path does — without it, `export function f() {}` never defines its
+        // MethodBuilder and call sites can't resolve `f` (issue #417).
         foreach (var stmt in statements)
         {
-            if (stmt is Stmt.Class classStmt)
-            {
-                DefineClass(classStmt);
-            }
-            else if (stmt is Stmt.Function funcStmt)
-            {
-                if (funcStmt.Body == null) continue; // Skip overload signatures
-                DefineFunction(funcStmt);
-            }
-            else if (stmt is Stmt.Enum enumStmt)
-            {
-                DefineEnum(enumStmt);
-            }
-            else if (stmt is Stmt.Namespace nsStmt)
-            {
-                DefineNamespaceFields(nsStmt);
-            }
+            DefineDeclarationFromStatement(stmt);
         }
 
         // Define static fields for top-level variables captured by async functions
@@ -675,22 +662,13 @@ public partial class ILCompiler
     /// </summary>
     private void Phase7_EmitMethodBodies(List<Stmt> statements)
     {
+        // Delegates to the shared per-statement helper so single-file (script) mode
+        // unwraps `export`-wrapped declarations like the module path does — otherwise an
+        // exported function's body is never emitted and its call site can't resolve the
+        // name (issue #417).
         foreach (var stmt in statements)
         {
-            if (stmt is Stmt.Class classStmt)
-            {
-                EmitClassMethods(classStmt);
-            }
-            else if (stmt is Stmt.Function funcStmt)
-            {
-                if (funcStmt.Body == null) continue; // Skip overload signatures
-                EmitFunctionBody(funcStmt);
-                EmitFunctionOverloads(funcStmt);
-            }
-            else if (stmt is Stmt.Namespace nsStmt)
-            {
-                EmitNamespaceMemberBodies(nsStmt);
-            }
+            EmitMethodBodyFromStatement(stmt);
         }
 
         EmitClassExpressionBodies();
@@ -1094,6 +1072,12 @@ public partial class ILCompiler
             case Stmt.Function funcStmt when funcStmt.Body != null:
                 EmitFunctionBody(funcStmt);
                 EmitFunctionOverloads(funcStmt);
+                break;
+            case Stmt.Namespace nsStmt:
+                // Mirrors the Stmt.Namespace arm in DefineDeclarationFromStatement so the
+                // define/emit helpers stay symmetric. EmitNamespaceMemberBodies internally
+                // unwraps exported members, so an `export namespace` reaches its members.
+                EmitNamespaceMemberBodies(nsStmt);
                 break;
             case Stmt.Export { Declaration: not null } export:
                 EmitMethodBodyFromStatement(export.Declaration);
