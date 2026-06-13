@@ -225,4 +225,45 @@ public class InheritedInferMatchTests
             """;
         TestHarness.RunInterpreted(source);
     }
+
+    // ---- method shapes (params; interface parity) — the broader #461 surface ----
+
+    [Fact]
+    public void OwnMethod_ParameterInfer_IsTypeError()
+    {
+        // infer in PARAMETER position: P binds to the method's parameter type (number).
+        var source = """
+            class C { m(a: number): void {} }
+            type Arg<T> = T extends { m(a: infer P): void } ? P : "no";
+            let z: Arg<C> = "str";
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void InterfaceMethod_StillMatches()
+    {
+        // Interface members already carried methods; lock that the shared path keeps working
+        // (R binds to "correct", so the false-branch literal "no" is rejected).
+        var source = """
+            interface I { toJSON(): "correct"; }
+            type J<T> = T extends { toJSON(): infer R } ? R : "no";
+            let z: J<I> = "no";
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void DeclareClass_OwnMethod_Matches()
+    {
+        // An OWN method on a `declare class` matches — own members are unaffected by the separate
+        // declare-class-superclass-drop bug (#505); only inheritance is. This is the exact repro
+        // form from #461 / PR #498.
+        var source = """
+            declare class MyClass { toJSON(): "correct"; }
+            type J<T> = T extends { toJSON(): infer R } ? R : "no";
+            const z: J<MyClass> = "correct";
+            """;
+        TestHarness.RunInterpreted(source);
+    }
 }
