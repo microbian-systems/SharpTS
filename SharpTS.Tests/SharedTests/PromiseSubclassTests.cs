@@ -749,6 +749,108 @@ public class PromiseSubclassTests
 
     #endregion
 
+    #region SpeciesConstructor IsConstructor (#390) — non-constructor throws, function species constructs
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_NonConstructor_ThrowsTypeErrorSynchronously(ExecutionMode mode)
+    {
+        // ECMA-262 §7.3.22 SpeciesConstructor step 5: if C[@@species] is neither
+        // undefined/null nor a constructor (IsConstructor is false), throw
+        // TypeError. The read happens in the SpeciesConstructor pre-step of
+        // then/catch/finally, so the throw is SYNCHRONOUS out of the call (#390).
+        var source = """
+            class MyPromise extends Promise<number> {
+                static get [Symbol.species]() { return 42 as any; }
+            }
+            const p = MyPromise.resolve(1);
+            let threw = false;
+            try {
+                p.then(x => x);
+            } catch (e) {
+                threw = true;
+                console.log(e instanceof TypeError);
+            }
+            console.log(threw);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_ExpandoNonConstructor_ThrowsTypeError(ExecutionMode mode)
+    {
+        // The IsConstructor check applies to an expando @@species
+        // ((C as any)[Symbol.species] = nonCtor, #262) just as to a declared
+        // getter: a string is not a constructor → TypeError (#390).
+        var source = """
+            class MyPromise extends Promise<number> {}
+            (MyPromise as any)[Symbol.species] = "not a constructor";
+            let threw = false;
+            try {
+                MyPromise.resolve(1).then(x => x);
+            } catch (e) {
+                threw = true;
+                console.log(e instanceof TypeError);
+            }
+            console.log(threw);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_PlainFunctionConstructor_BuildsThroughNewProtocol(ExecutionMode mode)
+    {
+        // A @@species that resolves to a plain FUNCTION (constructible via the
+        // `new` protocol rather than a class) is a valid constructor: then builds
+        // the result through `new S(executor)` and adopts the captured capability,
+        // exactly like a class species (#390). The result is an instance of S.
+        // The thenable defers an unsettled callback (storing it for the capability
+        // to drive on settlement) so the observed value is independent of the
+        // microtask/macrotask boundary the two modes settle on (the benign #390
+        // timing note). The executor's resolve closes over a local `self`, not
+        // `this` — arrows inside a function constructed via the dynamic `new`
+        // protocol mis-capture `this` in compiled mode (a pre-existing bug
+        // unrelated to species resolution, filed separately).
+        var source = """
+            function Cap(this: any, executor: (res: any, rej: any) => void) {
+                const self: any = this;
+                self.tag = "cap";
+                self.value = undefined;
+                self.settled = false;
+                self.cb = undefined;
+                executor(
+                    (v: any) => { self.value = v; self.settled = true; if (self.cb) self.cb(v); },
+                    (_e: any) => {});
+            }
+            (Cap as any).prototype.then = function (onF: any) {
+                if (this.settled) onF(this.value); else this.cb = onF;
+            };
+            class P extends Promise<number> {
+                static get [Symbol.species]() { return Cap as any; }
+            }
+            async function main() {
+                const r: any = P.resolve(5).then((x: number) => x * 2);
+                console.log(r instanceof Cap);
+                console.log(r.tag);
+                console.log(r instanceof Promise);
+                const v = await r;
+                console.log(v);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ncap\nfalse\n10\n", output);
+    }
+
+    #endregion
+
     #region Poisoned constructor getter (#350) — then/catch/finally throw synchronously
 
     [Theory]
