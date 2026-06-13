@@ -161,4 +161,61 @@ public class GeneratorUndefinedValueTests
             """;
         Assert.Equal("a:1\nb:undefined\n", TestHarness.Run(source, mode));
     }
+
+    // ---- #499: `next()` on an already-completed generator yields undefined ----
+    // After a generator completes, every subsequent `.next()` must report
+    // `{ value: undefined, done: true }` (ECMA-262 27.5.1.2). The compiled state machine
+    // previously left a stale value in its Current field on the already-completed re-entry path
+    // (state == -2 → `_returnFalseLabel`), so `.next()` re-surfaced the last `return`ed or yielded
+    // value. The interpreter is already correct for these cases, so they assert cross-mode parity.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NextAfterExplicitReturn_IsUndefined(ExecutionMode mode)
+    {
+        // `return 42` is surfaced exactly once; the next `.next()` reports undefined, not 42.
+        var source = """
+            function* g() { yield 1; return 42; }
+            const it = g();
+            console.log("a:" + it.next().value);
+            console.log("b:" + it.next().value);
+            console.log("c:" + it.next().value);
+            console.log("d:" + it.next().value);
+            """;
+        Assert.Equal("a:1\nb:42\nc:undefined\nd:undefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NextAfterReturnMethod_IsUndefined(ExecutionMode mode)
+    {
+        // `gen.return(99)` closes the generator with 99; the next `.next()` reports undefined,
+        // not the stale last-yielded value (1) that the compiler previously leaked.
+        var source = """
+            function* g() { yield 1; yield 2; }
+            const it = g();
+            it.next();
+            const r = it.return(99);
+            console.log("ret:" + r.value + "," + r.done);
+            console.log("after:" + it.next().value);
+            """;
+        Assert.Equal("ret:99,true\nafter:undefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NextAfterOffEndCompletion_StaysUndefined(ExecutionMode mode)
+    {
+        // Repeated `.next()` past a no-return completion keeps reporting undefined (never the
+        // last yielded value). This is the issue's literal repro, extended past the first done.
+        var source = """
+            function* g() { yield 1; yield 11; }
+            const it = g();
+            it.next();
+            it.next();
+            console.log("a:" + it.next().value);
+            console.log("b:" + it.next().value);
+            """;
+        Assert.Equal("a:undefined\nb:undefined\n", TestHarness.Run(source, mode));
+    }
 }

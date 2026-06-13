@@ -44,22 +44,25 @@ public partial class GeneratorMoveNextEmitter
             _il.Emit(OpCodes.Stfld, _builder.CurrentField);
         }
 
-        // Generator return - set state to completed.
+        // Generator return - set state to completed (the fast path below rets immediately; a routed
+        // return re-asserts this at its terminal, since a yielding finally would overwrite it).
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, -2);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
 
-        // Inside a flag-based try/finally, the finally must run before the generator actually
-        // completes. Record a pending return and branch to the cleanup point instead of `ret`
-        // (which is also illegal here — this return statement is emitted outside the protected
-        // segment, but the finally is emitted after it). See EmitTryCatchWithYields.
-        if (_returnCleanupLabel != null)
+        // Inside a flag-based try/finally, the enclosing finally(s) must run before the generator
+        // actually completes. Route the return through them instead of `ret` (which is also illegal
+        // here — this return is emitted outside the protected segment, but a finally is emitted after
+        // it). See the exit-routing machinery in GeneratorMoveNextEmitter.Statements.TryCatch.cs.
+        if (_protectedRegionDepth == 0)
         {
-            _il.Emit(OpCodes.Ldarg_0);
-            _il.Emit(OpCodes.Ldc_I4_1);
-            _il.Emit(OpCodes.Stfld, GetPendingReturnField());
-            _il.Emit(OpCodes.Br, _returnCleanupLabel.Value);
-            return;
+            var chain = ActiveFinallyFrames();
+            if (chain.Count > 0)
+            {
+                RegisterReturnTerminal();
+                RouteThroughFinallys(chain, ExitCodeReturn);
+                return;
+            }
         }
 
         _il.Emit(OpCodes.Ldc_I4_0);
@@ -216,6 +219,10 @@ public partial class GeneratorMoveNextEmitter
     // - EmitStatement (dispatch)
     // - EmitIf, EmitWhile, EmitDoWhile (control flow)
     // - EmitForIn (loops with DeclareLoopVariable/EmitStoreLoopVariable overrides)
-    // - EmitBlock, EmitBreak, EmitContinue, EmitLabeledStatement
-    // - EmitSwitch, EmitThrow, EmitPrint
+    // - EmitBlock, EmitLabeledStatement, EmitSwitch, EmitPrint
+    //
+    // EmitBreak, EmitContinue and EmitThrow are overridden in
+    // GeneratorMoveNextEmitter.Statements.TryCatch.cs so a non-local exit runs any enclosing
+    // flag-based finally before transferring control (#500); the loop-scope methods
+    // (EnterLoop/ExitLoop/CurrentLoop/FindLabeledLoop) are overridden there for the same reason.
 }

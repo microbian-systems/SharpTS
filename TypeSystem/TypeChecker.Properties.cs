@@ -272,6 +272,7 @@ public partial class TypeChecker
         TypeCategory.AbortController => "AbortController",
         TypeCategory.AbortSignal => "AbortSignal",
         TypeCategory.Iterator => "Iterator",
+        TypeCategory.Iterable => "Iterable",
         TypeCategory.Generator => "Generator",
         TypeCategory.AsyncGenerator => "AsyncGenerator",
         TypeCategory.Promise => "Promise",

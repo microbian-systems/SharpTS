@@ -100,6 +100,23 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
     }
 
     /// <summary>
+    /// Rejects a re-entrant resume. ECMA-262 §27.5.3.3 (GeneratorValidate) requires
+    /// <c>next</c>/<c>return</c>/<c>throw</c> on a generator whose state is <c>executing</c> to
+    /// throw a <c>TypeError</c>. The only way a guest call observes <see cref="State.Running"/>
+    /// is re-entrancy — the body advancing itself — because a non-re-entrant caller is blocked in
+    /// <see cref="AwaitWorker"/> for the whole running window. Without this guard the re-entrant
+    /// call (which runs on the worker thread) would signal the worker to resume itself and then
+    /// wait on the same worker-ready event, deadlocking both threads (#515). Checked before the
+    /// started/completed branches, matching the spec (executing is rejected before completed is
+    /// observed).
+    /// </summary>
+    private void ThrowIfExecuting()
+    {
+        if (_state == State.Running)
+            throw new ThrowException(new SharpTSTypeError("Generator is already running"));
+    }
+
+    /// <summary>
     /// Advances the generator to the next yield point, resuming the suspended
     /// <c>yield</c> with <c>undefined</c> (the implicit value for for...of,
     /// yield* delegation, and a bare <c>next()</c>).
@@ -116,6 +133,8 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
     /// </param>
     public SharpTSIteratorResult Next(object? sentValue)
     {
+        ThrowIfExecuting();
+
         // A finished or disposed generator yields nothing more. The completion value is
         // delivered exactly once (when the body finishes); later next() calls report
         // undefined (ECMA-262 §27.5.3.3 → CreateIterResultObject(undefined, true)).
@@ -153,6 +172,8 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
     /// </summary>
     public SharpTSIteratorResult Return(object? value = null)
     {
+        ThrowIfExecuting();
+
         // Never started: close without running the body — there is no finally to run.
         if (_state == State.NotStarted)
         {
@@ -183,6 +204,8 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
     /// </summary>
     public SharpTSIteratorResult Throw(object? error = null)
     {
+        ThrowIfExecuting();
+
         // Never started or already finished/disposed: nothing to resume — just throw.
         if (_state == State.NotStarted || _closed || _state == State.Completed)
         {
@@ -497,6 +520,17 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
         _interpreter = interpreter;
     }
 
+    /// <summary>
+    /// Rejects a re-entrant resume with a <c>TypeError</c> (ECMA-262 §27.5.3.3). See
+    /// <see cref="SharpTSGenerator.ThrowIfExecuting"/> — observing <see cref="State.Running"/>
+    /// from a guest call means the body is advancing itself, which would otherwise deadlock (#515).
+    /// </summary>
+    private void ThrowIfExecuting()
+    {
+        if (_state == State.Running)
+            throw new ThrowException(new SharpTSTypeError("Generator is already running"));
+    }
+
     public SharpTSIteratorResult Next() => Next(SharpTSUndefined.Instance);
 
     /// <summary>
@@ -505,6 +539,8 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
     /// </summary>
     public SharpTSIteratorResult Next(object? sentValue)
     {
+        ThrowIfExecuting();
+
         // A finished/disposed generator delivers undefined; the completion value is reported
         // only once, when the body finishes (ECMA-262 §27.5.3.3).
         if (_closed || _state == State.Completed)
@@ -535,6 +571,8 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
     /// </summary>
     public SharpTSIteratorResult Return(object? value = null)
     {
+        ThrowIfExecuting();
+
         if (_state == State.NotStarted)
         {
             _state = State.Completed;
@@ -559,6 +597,8 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
     /// </summary>
     public SharpTSIteratorResult Throw(object? error = null)
     {
+        ThrowIfExecuting();
+
         if (_state == State.NotStarted || _closed || _state == State.Completed)
         {
             _state = State.Completed;

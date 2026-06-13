@@ -38,9 +38,13 @@ public class GeneratorStateAnalyzer : AstVisitorBase
     private readonly HashSet<string> _variablesUsedAfterYield = [];
     private readonly HashSet<string> _variablesDeclaredBeforeYield = [];
     private readonly HashSet<string> _capturedVariables = [];  // Variables from outer scopes
-    private readonly List<Stmt.ForOf> _forOfLoopsWithYield = [];  // for...of loops containing yields
-    private readonly Stack<Stmt.ForOf> _forOfStack = new();  // Track nested for...of loops
-    private readonly Dictionary<Stmt.ForOf, HashSet<string>> _variablesUsedInLoopBody = new();  // Variables used in each for...of body
+    private readonly List<Stmt.ForOf> _forOfLoopsWithYield = [];  // for...of loops containing yields (enumerator hoisting)
+    // Loop bodies currently being analyzed (innermost on top). A loop whose body contains a
+    // yield re-executes after the yield resumes, so every local used anywhere in it is live
+    // across the suspension and must be hoisted to a state-machine field — otherwise the IL
+    // local is wiped on MoveNext re-entry and reads back as its default. This applies to every
+    // loop form (while/do-while/for/for-in/for-of), not just for...of (#497).
+    private readonly Stack<LoopScope> _loopStack = new();
     private int _yieldCounter = 0;
     private bool _seenYield = false;
     private bool _usesThis = false;
@@ -102,12 +106,38 @@ public class GeneratorStateAnalyzer : AstVisitorBase
         _variablesDeclaredBeforeYield.Clear();
         _capturedVariables.Clear();
         _forOfLoopsWithYield.Clear();
-        _forOfStack.Clear();
-        _variablesUsedInLoopBody.Clear();
+        _loopStack.Clear();
         _yieldCounter = 0;
         _seenYield = false;
         _usesThis = false;
         _hasYieldStar = false;
+    }
+
+    /// <summary>
+    /// Tracks one enclosing loop body during analysis: the variables it touches and whether a
+    /// yield occurs anywhere inside it. <see cref="ForOf"/> is non-null only for for...of loops,
+    /// which additionally need their enumerator hoisted to a field.
+    /// </summary>
+    private sealed class LoopScope(Stmt.ForOf? forOf)
+    {
+        public readonly HashSet<string> UsedVariables = [];
+        public bool ContainsYield;
+        public readonly Stmt.ForOf? ForOf = forOf;
+    }
+
+    private void EnterLoop(Stmt.ForOf? forOf = null) => _loopStack.Push(new LoopScope(forOf));
+
+    // On leaving a loop body that contained a yield, hoist every local it used: the body
+    // re-executes after the yield resumes, so those values must survive the suspension (#497).
+    private void ExitLoop()
+    {
+        var scope = _loopStack.Pop();
+        if (!scope.ContainsYield) return;
+        foreach (var name in scope.UsedVariables)
+        {
+            if (_declaredVariables.Contains(name))
+                _variablesUsedAfterYield.Add(name);
+        }
     }
 
     #region Statement Visitor Overrides
@@ -128,28 +158,30 @@ public class GeneratorStateAnalyzer : AstVisitorBase
         base.VisitConst(stmt);
     }
 
+    protected override void VisitWhile(Stmt.While stmt)
+    {
+        EnterLoop();
+        base.VisitWhile(stmt);  // condition + body
+        ExitLoop();
+    }
+
+    protected override void VisitDoWhile(Stmt.DoWhile stmt)
+    {
+        EnterLoop();
+        base.VisitDoWhile(stmt);  // body + condition
+        ExitLoop();
+    }
+
     protected override void VisitForOf(Stmt.ForOf stmt)
     {
         _declaredVariables.Add(stmt.Variable.Lexeme);
         if (!_seenYield)
             _variablesDeclaredBeforeYield.Add(stmt.Variable.Lexeme);
 
-        // Track for...of loops to detect yields inside them
-        _forOfStack.Push(stmt);
-        _variablesUsedInLoopBody[stmt] = [];
-        base.VisitForOf(stmt);
-        _forOfStack.Pop();
-
-        // If this loop contains a yield, all variables used in its body need hoisting
-        // because the loop body will re-execute after yield resumes
-        if (_forOfLoopsWithYield.Contains(stmt))
-        {
-            foreach (var varName in _variablesUsedInLoopBody[stmt])
-            {
-                if (_declaredVariables.Contains(varName))
-                    _variablesUsedAfterYield.Add(varName);
-            }
-        }
+        // Pass the loop node so a yield inside also records it for enumerator hoisting.
+        EnterLoop(stmt);
+        base.VisitForOf(stmt);  // iterable + body
+        ExitLoop();
     }
 
     protected override void VisitForIn(Stmt.ForIn stmt)
@@ -157,32 +189,26 @@ public class GeneratorStateAnalyzer : AstVisitorBase
         _declaredVariables.Add(stmt.Variable.Lexeme);
         if (!_seenYield)
             _variablesDeclaredBeforeYield.Add(stmt.Variable.Lexeme);
-        base.VisitForIn(stmt);
+        EnterLoop();
+        base.VisitForIn(stmt);  // object + body
+        ExitLoop();
     }
 
     protected override void VisitFor(Stmt.For stmt)
     {
-        // Visit initializer first (may declare loop variable)
+        // The initializer runs once before the loop, so it stays outside the loop scope; the
+        // loop variable it declares is still tracked through its uses in condition/body/increment.
         if (stmt.Initializer != null)
             Visit(stmt.Initializer);
 
-        // Track variables used in condition and increment
+        // Condition, body, and increment all re-execute each iteration.
+        EnterLoop();
         if (stmt.Condition != null)
             Visit(stmt.Condition);
-
-        // Track the for loop body for yield detection
-        bool hadYieldBefore = _seenYield;
         Visit(stmt.Body);
-
-        // If body contains yield, variables declared in initializer need hoisting
-        if (_seenYield && !hadYieldBefore)
-        {
-            // The loop will re-execute, so any variable used in condition/increment/body
-            // that was declared before the loop needs to be hoisted
-        }
-
         if (stmt.Increment != null)
             Visit(stmt.Increment);
+        ExitLoop();
     }
 
     protected override void VisitTryCatch(Stmt.TryCatch stmt)
@@ -234,11 +260,13 @@ public class GeneratorStateAnalyzer : AstVisitorBase
         if (expr.IsDelegating)
             _hasYieldStar = true;
 
-        // Record all for...of loops we're currently inside - they need enumerator hoisting
-        foreach (var forOf in _forOfStack)
+        // Mark every enclosing loop as containing a yield so its body's locals get hoisted
+        // (ExitLoop), and record any enclosing for...of loop for enumerator hoisting.
+        foreach (var scope in _loopStack)
         {
-            if (!_forOfLoopsWithYield.Contains(forOf))
-                _forOfLoopsWithYield.Add(forOf);
+            scope.ContainsYield = true;
+            if (scope.ForOf != null && !_forOfLoopsWithYield.Contains(scope.ForOf))
+                _forOfLoopsWithYield.Add(scope.ForOf);
         }
     }
 
@@ -252,12 +280,9 @@ public class GeneratorStateAnalyzer : AstVisitorBase
             _capturedVariables.Add(name);
         }
 
-        // Track variables used in for...of loop bodies (for hoisting when loop contains yield)
-        foreach (var loop in _forOfStack)
-        {
-            if (_variablesUsedInLoopBody.TryGetValue(loop, out var vars))
-                vars.Add(name);
-        }
+        // Track variables used in any enclosing loop body (hoisted when the loop contains a yield).
+        foreach (var scope in _loopStack)
+            scope.UsedVariables.Add(name);
 
         if (_seenYield && _declaredVariables.Contains(name))
             _variablesUsedAfterYield.Add(name);

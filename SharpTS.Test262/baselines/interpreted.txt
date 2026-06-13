@@ -3335,7 +3335,7 @@ test/built-ins/JSON/stringify/value-bigint-tojson-receiver.js Fail
 test/built-ins/JSON/stringify/value-bigint-tojson.js RuntimeError
 test/built-ins/JSON/stringify/value-bigint.js Fail
 test/built-ins/JSON/stringify/value-boolean-object.js Pass
-test/built-ins/JSON/stringify/value-function.js Fail
+test/built-ins/JSON/stringify/value-function.js Pass
 test/built-ins/JSON/stringify/value-number-negative-zero.js Pass
 test/built-ins/JSON/stringify/value-number-non-finite.js Pass
 test/built-ins/JSON/stringify/value-number-object.js RuntimeError
@@ -3343,11 +3343,11 @@ test/built-ins/JSON/stringify/value-object-abrupt.js Fail
 test/built-ins/JSON/stringify/value-object-circular.js Fail
 test/built-ins/JSON/stringify/value-object-proxy-revoked.js Fail
 test/built-ins/JSON/stringify/value-object-proxy.js Fail
-test/built-ins/JSON/stringify/value-primitive-top-level.js Fail
+test/built-ins/JSON/stringify/value-primitive-top-level.js Pass
 test/built-ins/JSON/stringify/value-string-escape-ascii.js Fail
 test/built-ins/JSON/stringify/value-string-escape-unicode.js Fail
 test/built-ins/JSON/stringify/value-string-object.js RuntimeError
-test/built-ins/JSON/stringify/value-symbol.js Fail
+test/built-ins/JSON/stringify/value-symbol.js Pass
 test/built-ins/JSON/stringify/value-tojson-abrupt.js Fail
 test/built-ins/JSON/stringify/value-tojson-arguments.js Fail
 test/built-ins/JSON/stringify/value-tojson-array-circular.js Fail

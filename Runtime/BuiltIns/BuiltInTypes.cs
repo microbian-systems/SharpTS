@@ -1013,6 +1013,20 @@ public static class BuiltInTypes
     /// <summary>
     /// Type signatures for instance members on Iterator objects (ES2025 Iterator Helpers).
     /// </summary>
+    /// <summary>
+    /// Members of the sync <c>Iterable&lt;T&gt;</c> interface — only <c>[Symbol.iterator](): Iterator&lt;T&gt;</c>.
+    /// Deliberately narrower than <see cref="GetIteratorMemberType"/>: an Iterable is not itself an iterator,
+    /// so it exposes no <c>next</c>/<c>return</c>/<c>throw</c> (#485).
+    /// </summary>
+    public static TypeInfo? GetIterableMemberType(string name, TypeInfo elementType)
+    {
+        return name switch
+        {
+            "@@iterator" => new TypeInfo.Function([], new TypeInfo.Iterator(elementType)),
+            _ => null
+        };
+    }
+
     public static TypeInfo? GetIteratorMemberType(string name, TypeInfo elementType)
     {
         return name switch
@@ -1065,4 +1079,105 @@ public static class BuiltInTypes
             _ => null
         };
     }
+
+    // ==================== APPARENT MEMBERS OF DECOMPOSABLE BUILT-INS (#512) ====================
+    //
+    // The dedicated built-in object types (Date, RegExp, Map, Set, the weak/iterator variants,
+    // Promise, …) model their instance members through the name-keyed GetXxxMemberType switches
+    // above. Those switches alone are not enumerable, so keyof, structural assignability, and
+    // conditional infer-matching could not treat these types structurally (a Date was not a
+    // `keyof`-able / `{ getTime(): number }`-assignable shape). The two methods below project a
+    // built-in TypeInfo onto its apparent members — a name list for keyof and a per-name type
+    // resolver for assignability/infer-matching — so all three consumers share one source of truth.
+    //
+    // The XxxMemberNames lists must stay in sync with the corresponding GetXxxMemberType switch:
+    // every listed name must resolve there (BuiltInApparentMembersTests asserts this), and a member
+    // added to a switch should be added to its list so keyof keeps seeing it.
+
+    private static readonly string[] DateInstanceMemberNames =
+    [
+        "getTime", "getFullYear", "getMonth", "getDate", "getDay", "getHours", "getMinutes",
+        "getSeconds", "getMilliseconds", "getTimezoneOffset",
+        "setTime", "setFullYear", "setMonth", "setDate", "setHours", "setMinutes", "setSeconds",
+        "setMilliseconds",
+        "toString", "toISOString", "toDateString", "toTimeString", "toJSON", "valueOf",
+    ];
+
+    private static readonly string[] RegExpMemberNames =
+    [
+        "source", "flags", "global", "ignoreCase", "multiline", "dotAll", "sticky", "unicode",
+        "unicodeSets", "hasIndices", "lastIndex", "test", "exec", "toString",
+    ];
+
+    private static readonly string[] MapMemberNames =
+        ["size", "get", "set", "has", "delete", "clear", "keys", "values", "entries", "forEach"];
+
+    private static readonly string[] SetMemberNames =
+    [
+        "size", "add", "has", "delete", "clear", "keys", "values", "entries", "forEach",
+        "union", "intersection", "difference", "symmetricDifference",
+        "isSubsetOf", "isSupersetOf", "isDisjointFrom",
+    ];
+
+    private static readonly string[] WeakMapMemberNames = ["get", "set", "has", "delete"];
+
+    private static readonly string[] WeakSetMemberNames = ["add", "has", "delete"];
+
+    private static readonly string[] WeakRefMemberNames = ["deref"];
+
+    private static readonly string[] FinalizationRegistryMemberNames = ["register", "unregister"];
+
+    private static readonly string[] PromiseMemberNames = ["then", "catch", "finally"];
+
+    private static readonly string[] IteratorMemberNames =
+    [
+        "next", "return", "throw", "map", "filter", "take", "drop", "flatMap", "reduce",
+        "toArray", "forEach", "some", "every", "find",
+    ];
+
+    /// <summary>
+    /// Resolves the type of a single instance member on a structurally-decomposable built-in object
+    /// type (Date/RegExp/Map/Set/Promise and the weak/iterator variants), or null when
+    /// <paramref name="type"/> is not such a type or the member is absent. Delegates to the same
+    /// per-type GetXxxMemberType resolvers that <c>value.member</c> reads use, so member access,
+    /// structural assignability, and conditional infer-matching agree on one model. The set of
+    /// handled types matches <see cref="GetInstanceMemberNames"/>.
+    /// </summary>
+    public static TypeInfo? GetInstanceMemberType(TypeInfo type, string name) => type switch
+    {
+        TypeInfo.Date => GetDateInstanceMemberType(name),
+        TypeInfo.RegExp => GetRegExpMemberType(name),
+        TypeInfo.Map m => GetMapMemberType(name, m.KeyType, m.ValueType),
+        TypeInfo.Set s => GetSetMemberType(name, s.ElementType),
+        TypeInfo.WeakMap wm => GetWeakMapMemberType(name, wm.KeyType, wm.ValueType),
+        TypeInfo.WeakSet ws => GetWeakSetMemberType(name, ws.ElementType),
+        TypeInfo.WeakRef wr => GetWeakRefMemberType(name, wr.TargetType),
+        TypeInfo.FinalizationRegistry fr => GetFinalizationRegistryMemberType(name, fr.TargetType),
+        TypeInfo.Promise p => GetPromiseMemberType(name, p.ValueType),
+        TypeInfo.Iterator it => GetIteratorMemberType(name, it.ElementType),
+        TypeInfo.Generator g => GetIteratorMemberType(name, g.YieldType),
+        TypeInfo.AsyncGenerator ag => GetIteratorMemberType(name, ag.YieldType),
+        _ => null
+    };
+
+    /// <summary>
+    /// Returns the apparent instance member names of a structurally-decomposable built-in object type
+    /// (the same set <see cref="GetInstanceMemberType"/> resolves), or null when <paramref name="type"/>
+    /// is not such a type. Used by keyof to surface a built-in's members as a key union. The names are
+    /// type-argument independent, so a single list serves every instantiation of a generic built-in.
+    /// </summary>
+    public static IReadOnlyList<string>? GetInstanceMemberNames(TypeInfo type) => type switch
+    {
+        TypeInfo.Date => DateInstanceMemberNames,
+        TypeInfo.RegExp => RegExpMemberNames,
+        TypeInfo.Map => MapMemberNames,
+        TypeInfo.Set => SetMemberNames,
+        TypeInfo.WeakMap => WeakMapMemberNames,
+        TypeInfo.WeakSet => WeakSetMemberNames,
+        TypeInfo.WeakRef => WeakRefMemberNames,
+        TypeInfo.FinalizationRegistry => FinalizationRegistryMemberNames,
+        TypeInfo.Promise => PromiseMemberNames,
+        TypeInfo.Iterator or TypeInfo.Generator or TypeInfo.AsyncGenerator => IteratorMemberNames,
+        _ => null
+    };
 }
