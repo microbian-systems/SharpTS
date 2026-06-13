@@ -375,6 +375,9 @@ public partial class TypeChecker
             case TypeInfo.InstantiatedGeneric ig:
                 foreach (var t in ig.TypeArguments) CollectConstrainedInfers(t, ref result);
                 break;
+            case TypeInfo.Instance inst:
+                CollectConstrainedInfers(inst.ResolvedClassType, ref result);
+                break;
             case TypeInfo.KeyOf keyOf:
                 CollectConstrainedInfers(keyOf.SourceType, ref result);
                 break;
@@ -384,6 +387,11 @@ public partial class TypeChecker
                 break;
             case TypeInfo.TemplateLiteralType tl:
                 foreach (var t in tl.InterpolatedTypes) CollectConstrainedInfers(t, ref result);
+                break;
+            // Built-in containers (Map<…, infer V extends C>, …): descend into their arguments (#347).
+            default:
+                if (DecomposeBuiltInContainer(type) is { } containerArgs)
+                    foreach (var t in containerArgs) CollectConstrainedInfers(t, ref result);
                 break;
         }
     }
@@ -427,6 +435,9 @@ public partial class TypeChecker
             case TypeInfo.InstantiatedGeneric ig:
                 foreach (var t in ig.TypeArguments) CollectReferencedInferNames(t, visit);
                 break;
+            case TypeInfo.Instance inst:
+                CollectReferencedInferNames(inst.ResolvedClassType, visit);
+                break;
             case TypeInfo.KeyOf keyOf:
                 CollectReferencedInferNames(keyOf.SourceType, visit);
                 break;
@@ -436,6 +447,11 @@ public partial class TypeChecker
                 break;
             case TypeInfo.TemplateLiteralType tl:
                 foreach (var t in tl.InterpolatedTypes) CollectReferencedInferNames(t, visit);
+                break;
+            // Built-in containers (Map<…, infer V>, Set<infer T>, …): descend into their arguments (#347).
+            default:
+                if (DecomposeBuiltInContainer(type) is { } containerArgs)
+                    foreach (var t in containerArgs) CollectReferencedInferNames(t, visit);
                 break;
         }
     }
@@ -546,10 +562,14 @@ public partial class TypeChecker
             return false;
         }
 
-        // InstantiatedGeneric matching (e.g., Box<infer T>)
-        if (extendsType is TypeInfo.InstantiatedGeneric extendsGeneric)
+        // InstantiatedGeneric matching (e.g., Box<infer T>, user-defined generic class/interface).
+        // A generic CLASS instance arrives wrapped in TypeInfo.Instance (Box<number> =>
+        // Instance(InstantiatedGeneric)); unwrap both sides so the type-argument match reaches the
+        // infer placeholders instead of falling through to a structural IsCompatible that cannot
+        // bind them (#347). UnwrapToInstantiatedGeneric is a no-op for an already-bare generic.
+        if (UnwrapToInstantiatedGeneric(extendsType) is { } extendsGeneric)
         {
-            if (checkType is TypeInfo.InstantiatedGeneric checkGeneric)
+            if (UnwrapToInstantiatedGeneric(checkType) is { } checkGeneric)
             {
                 // Must be same generic base
                 if (!IsSameGenericDefinition(checkGeneric.GenericDefinition, extendsGeneric.GenericDefinition))
@@ -562,6 +582,26 @@ public partial class TypeChecker
                 for (int i = 0; i < extendsGeneric.TypeArguments.Count; i++)
                 {
                     if (!CheckExtendsRecursive(checkGeneric.TypeArguments[i], extendsGeneric.TypeArguments[i], inferredTypes))
+                        return false;
+                }
+                return true;
+            }
+            return false;
+        }
+
+        // Built-in container matching (Map<…, infer V>, Set<infer T>, the weak variants, iterators,
+        // generators). These carry bespoke TypeInfo records rather than InstantiatedGeneric, so
+        // without this they fall through to a structural IsCompatible that cannot bind infers (#347).
+        // Same record kind (same runtime type) and arity → recurse over type arguments pairwise.
+        if (DecomposeBuiltInContainer(extendsType) is { } extendsArgs)
+        {
+            if (checkType.GetType() == extendsType.GetType()
+                && DecomposeBuiltInContainer(checkType) is { } checkArgs
+                && checkArgs.Count == extendsArgs.Count)
+            {
+                for (int i = 0; i < extendsArgs.Count; i++)
+                {
+                    if (!CheckExtendsRecursive(checkArgs[i], extendsArgs[i], inferredTypes))
                         return false;
                 }
                 return true;
@@ -653,12 +693,17 @@ public partial class TypeChecker
             || (t.RestElementType is { } rest && IsGenericTypeShape(rest)),
         TypeInfo.Function f => f.ParamTypes.Any(IsGenericTypeShape) || IsGenericTypeShape(f.ReturnType),
         TypeInfo.InstantiatedGeneric ig => ig.TypeArguments.Any(IsGenericTypeShape),
+        // A generic class instance (Box<infer V>) is wrapped in Instance; look through it so a
+        // type variable inside its arguments still defers the conditional / blocks eager resolution (#347).
+        TypeInfo.Instance inst => IsGenericTypeShape(inst.ResolvedClassType),
         TypeInfo.RecursiveTypeAlias rta => rta.TypeArguments is { } args && args.Any(IsGenericTypeShape),
         TypeInfo.Record r => r.Fields.Values.Any(IsGenericTypeShape),
         TypeInfo.MappedType => true,
         TypeInfo.IntrinsicStringType ist => IsGenericTypeShape(ist.Inner),
         TypeInfo.TemplateLiteralType tl => tl.InterpolatedTypes.Any(IsGenericTypeShape),
-        _ => false
+        // Built-in containers (Map/Set/weak variants/iterators/generators) carry type variables in
+        // their arguments just like a generic instantiation (#347).
+        _ => DecomposeBuiltInContainer(type) is { } containerArgs && containerArgs.Any(IsGenericTypeShape)
     };
 
     /// <summary>
@@ -861,6 +906,38 @@ public partial class TypeChecker
             ? sigs.Select(CallSignatureToFunction).ToList()
             : null;
     }
+
+    /// <summary>
+    /// Views a type as an <see cref="TypeInfo.InstantiatedGeneric"/>, transparently looking through the
+    /// <see cref="TypeInfo.Instance"/> wrapper that a generic class instance carries. Returns null when
+    /// the type denotes neither (so the caller falls through to other matching rules).
+    /// </summary>
+    private static TypeInfo.InstantiatedGeneric? UnwrapToInstantiatedGeneric(TypeInfo type) => type switch
+    {
+        TypeInfo.InstantiatedGeneric ig => ig,
+        TypeInfo.Instance { ResolvedClassType: TypeInfo.InstantiatedGeneric ig } => ig,
+        _ => null
+    };
+
+    /// <summary>
+    /// Decomposes a dedicated built-in container type (Map, Set, the weak variants, generators) into
+    /// its type arguments, so the conditional-type machinery can treat <c>Map&lt;…, infer V&gt;</c>
+    /// like a generic instantiation. These carry bespoke TypeInfo records rather than
+    /// <see cref="TypeInfo.InstantiatedGeneric"/>. The set mirrors exactly the container names that
+    /// <see cref="ResolveGenericType"/> resolves from a type reference — so an extends clause can
+    /// actually denote one of them; Array/Promise/Tuple keep their own dedicated match branches and
+    /// are excluded. Returns null for any other type (#347).
+    /// </summary>
+    private static IReadOnlyList<TypeInfo>? DecomposeBuiltInContainer(TypeInfo type) => type switch
+    {
+        TypeInfo.Map m => [m.KeyType, m.ValueType],
+        TypeInfo.WeakMap m => [m.KeyType, m.ValueType],
+        TypeInfo.Set s => [s.ElementType],
+        TypeInfo.WeakSet s => [s.ElementType],
+        TypeInfo.Generator g => [g.YieldType],
+        TypeInfo.AsyncGenerator g => [g.YieldType],
+        _ => null
+    };
 
     /// <summary>
     /// Checks if two generic definitions refer to the same generic type.

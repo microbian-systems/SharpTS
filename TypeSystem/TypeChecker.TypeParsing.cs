@@ -1559,7 +1559,29 @@ public partial class TypeChecker
             return ToTypeInfo(matches ? trueTypeStr : falseTypeStr);
         }
 
-        TypeInfo trueType = ToTypeInfo(trueTypeStr);
+        // Infer names declared in the extends clause are in scope for the TRUE branch only (tsc).
+        // Bind each to the InferredTypeParameter it denotes so a reference like the `V` in
+        // `... extends Box<infer V> ? V : ...` resolves to that placeholder for
+        // EvaluateConditionalType to substitute — otherwise the string parser resolves a bare `V`
+        // to `any` and silently collapses the true branch (#347, mirroring the AST node path's #316
+        // fix in TypeChecker.TypeNodes.cs). The false branch never sees the infer names.
+        List<string>? inferNames = null;
+        CollectReferencedInferNames(extendsType, name => (inferNames ??= []).Add(name));
+
+        TypeInfo trueType;
+        if (inferNames is { Count: > 0 })
+        {
+            var inferEnv = new TypeEnvironment(_environment);
+            foreach (var name in inferNames)
+                inferEnv.DefineTypeParameter(name, new TypeInfo.InferredTypeParameter(name));
+            using (new EnvironmentScope(this, inferEnv))
+                trueType = ToTypeInfo(trueTypeStr);
+        }
+        else
+        {
+            trueType = ToTypeInfo(trueTypeStr);
+        }
+
         TypeInfo falseType = ToTypeInfo(falseTypeStr);
 
         return new TypeInfo.ConditionalType(checkType, extendsType, trueType, falseType);

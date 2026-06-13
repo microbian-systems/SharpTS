@@ -128,6 +128,34 @@ public partial class TypeChecker
             }
             result = new TypeInfo.AsyncGenerator(typeArgs[0]);
         }
+        // The built-in collections carry dedicated TypeInfo records (with IsCompatible + member-type
+        // support) but were previously only constructed from `new Map()`/`new Set()` expressions — a
+        // type REFERENCE `Map<K, V>` fell through to the `any` fallback below, so annotations and
+        // conditional-type check sides lost their element types (#347, the `Map<…, infer V>` example).
+        else if (baseName == "Map")
+        {
+            if (typeArgs.Count != 2)
+                throw new TypeCheckException($" Map requires exactly 2 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
+            result = new TypeInfo.Map(typeArgs[0], typeArgs[1]);
+        }
+        else if (baseName == "Set")
+        {
+            if (typeArgs.Count != 1)
+                throw new TypeCheckException($" Set requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
+            result = new TypeInfo.Set(typeArgs[0]);
+        }
+        else if (baseName == "WeakMap")
+        {
+            if (typeArgs.Count != 2)
+                throw new TypeCheckException($" WeakMap requires exactly 2 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
+            result = new TypeInfo.WeakMap(typeArgs[0], typeArgs[1]);
+        }
+        else if (baseName == "WeakSet")
+        {
+            if (typeArgs.Count != 1)
+                throw new TypeCheckException($" WeakSet requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
+            result = new TypeInfo.WeakSet(typeArgs[0]);
+        }
         // Handle built-in utility types
         else if (baseName == "Partial")
         {
