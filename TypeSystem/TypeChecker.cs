@@ -444,6 +444,24 @@ public partial class TypeChecker
     private readonly DiagnosticCollector _diagnostics = new();
 
     /// <summary>
+    /// When &gt; 0, <see cref="RecordTypeError(TypeCheckException)"/> and its overload are no-ops.
+    /// Set during speculative hoist-time return-type inference (#383), which checks a function body
+    /// purely to learn its inferred return type and must not surface (duplicate) diagnostics — the
+    /// real declaration pass reports them at their proper locations.
+    /// </summary>
+    private int _suppressDiagnostics = 0;
+
+    /// <summary>
+    /// Memoizes the hoist-time speculatively-inferred return type of an un-annotated, forward-
+    /// referenced local <c>function</c> (#383), keyed by declaration identity (reference equality).
+    /// A null value marks an in-progress or failed inference: don't re-attempt, leave the hoisted
+    /// <c>any</c> placeholder in place. Non-null values are re-registered into each fresh function
+    /// scope on subsequent hoisting passes without re-checking the body.
+    /// </summary>
+    private readonly Dictionary<Stmt.Function, TypeInfo?> _hoistInferredReturnTypes =
+        new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
     /// Gets any diagnostics collected during module type checking.
     /// </summary>
     public IReadOnlyList<Diagnostic> GetDiagnostics() => _diagnostics.Diagnostics;
@@ -863,6 +881,8 @@ public partial class TypeChecker
     /// </summary>
     private void RecordTypeError(TypeCheckException ex)
     {
+        if (_suppressDiagnostics > 0) return;
+
         // Extract the core message by removing the "Type Error: " or "Type Error at line X: " prefix
         string message = ex.Message;
         if (message.StartsWith("Type Error at line"))
@@ -909,6 +929,8 @@ public partial class TypeChecker
     /// </summary>
     private void RecordTypeError(string message, int? line = null)
     {
+        if (_suppressDiagnostics > 0) return;
+
         SourceLocation? location = line.HasValue
             ? new SourceLocation(_filePath, line.Value)
             : null;
