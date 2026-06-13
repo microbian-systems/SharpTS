@@ -417,18 +417,24 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Converts an array literal to a tuple type with literal element types.
+    /// Converts an array literal to a readonly tuple type with literal element types.
+    /// The tuple is marked <see cref="TypeInfo.Tuple.IsReadonly"/> because <c>as const</c> produces
+    /// readonly literal-typed elements; this both rejects element writes and protects the literal
+    /// element types from <c>const</c>-initializer widening (#493 — see <see cref="WidenLiteralType"/>).
     /// </summary>
     private TypeInfo InferConstArrayType(Expr.ArrayLiteral arr)
     {
         var elementTypes = arr.Elements
             .Select(e => InferConstType(e, CheckExpr(e)))
             .ToList();
-        return TypeInfo.Tuple.FromTypes(elementTypes, elementTypes.Count);
+        return TypeInfo.Tuple.FromTypes(elementTypes, elementTypes.Count, isReadonly: true);
     }
 
     /// <summary>
-    /// Converts an object literal to a record type with literal property types.
+    /// Converts an object literal to a readonly record type with literal property types.
+    /// The record is marked <see cref="TypeInfo.Record.IsReadonly"/> because <c>as const</c> produces
+    /// readonly literal-typed members; this both rejects member writes with TS2540 and protects the
+    /// literal member types from <c>const</c>-initializer widening (#493 — see <see cref="WidenLiteralType"/>).
     /// </summary>
     private TypeInfo InferConstObjectType(Expr.ObjectLiteral obj)
     {
@@ -480,6 +486,7 @@ public partial class TypeChecker
         // Properties with a getter but no setter are getter-only
         var getterOnly = getters.Except(setters).ToFrozenSet();
         return new TypeInfo.Record(fields.ToFrozenDictionary(),
+            IsReadonly: true,
             GetterOnlyFields: getterOnly.Count > 0 ? getterOnly : null);
     }
 
@@ -806,6 +813,13 @@ public partial class TypeChecker
             TypeInfo.StringLiteral => new TypeInfo.String(),
             TypeInfo.BooleanLiteral => new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN),
             TypeInfo.Union u => new TypeInfo.Union(u.FlattenedTypes.Select(WidenLiteralType).ToList()),
+            // `as const` (and other readonly) arrays/tuples/records keep their literal element/member
+            // types — readonly literal types are never widened (#493). Without this, an `as const`
+            // sitting as an array *element* or a spread *member* (positions where `const`-initializer
+            // widening recurses through a fresh literal) would be widened away.
+            TypeInfo.Array { IsReadonly: true } => type,
+            TypeInfo.Tuple { IsReadonly: true } => type,
+            TypeInfo.Record { IsReadonly: true } => type,
             TypeInfo.Array arr => new TypeInfo.Array(WidenLiteralType(arr.ElementType)),
             TypeInfo.Record rec => new TypeInfo.Record(
                 rec.Fields.ToDictionary(kv => kv.Key, kv => WidenLiteralType(kv.Value)).ToFrozenDictionary(),
@@ -824,10 +838,11 @@ public partial class TypeChecker
     /// types widened to their base types (<c>const o = { n: 1 }</c> ⇒ <c>{ n: number }</c>), which
     /// keeps a later <c>o.n = 9</c> legal. A bare primitive literal keeps its literal type
     /// (<c>const x = 1</c> ⇒ <c>1</c>), and <c>as const</c> assertions keep their readonly literal
-    /// types — including a <c>as const</c> nested inside a plain object literal. Non-literal
-    /// initializers (variables, calls, …) are not "fresh" and pass through unchanged.
+    /// types — including an <c>as const</c> nested inside a plain object literal, sitting as an array
+    /// element, or spread into a plain object literal (#493). Non-literal initializers (variables,
+    /// calls, …) are not "fresh" and pass through unchanged.
     /// </summary>
-    private static TypeInfo WidenConstInitializerType(Expr initializer, TypeInfo inferredType)
+    private TypeInfo WidenConstInitializerType(Expr initializer, TypeInfo inferredType)
         => WidenFreshLiteralsForConst(initializer, inferredType, topLevel: true);
 
     /// <summary>
@@ -837,17 +852,11 @@ public partial class TypeChecker
     /// (<c>const x = 1</c> ⇒ <c>1</c>); inside an object literal it is widened
     /// (<c>{ a: 1 }</c> ⇒ <c>{ a: number }</c>), mirroring the <c>let</c> path.
     /// </summary>
-    private static TypeInfo WidenFreshLiteralsForConst(Expr expr, TypeInfo type, bool topLevel)
+    private TypeInfo WidenFreshLiteralsForConst(Expr expr, TypeInfo type, bool topLevel)
     {
         // `satisfies` and parentheses are transparent to widening:
         // `const o = ({ n: 1 }) satisfies T` widens exactly like `const o = { n: 1 }`.
-        Expr inner = expr;
-        while (true)
-        {
-            if (inner is Expr.Satisfies sat) { inner = sat.Expression; continue; }
-            if (inner is Expr.Grouping grp) { inner = grp.Expression; continue; }
-            break;
-        }
+        Expr inner = UnwrapTransparentForWidening(expr);
 
         switch (inner)
         {
@@ -855,13 +864,13 @@ public partial class TypeChecker
             case Expr.TypeAssertion { TargetType: "const" }:
                 return type;
 
-            // A fresh object literal widens each member; a member that is itself `as const` (or a
-            // non-fresh reference) is preserved by recursing on its value expression.
+            // A fresh object literal widens each member; a member that is itself `as const`, or a
+            // spread of a non-fresh source, is preserved per-member (see WidenConstObjectLiteralFields).
             case Expr.ObjectLiteral obj when type is TypeInfo.Record rec:
                 return WidenConstObjectLiteralFields(obj, rec);
 
-            // A fresh array literal widens its element type. Element expressions are collapsed into
-            // a single element type during inference, so an `as const` *element* is not kept.
+            // A fresh array literal widens its element type. An `as const` *element* produced a
+            // readonly record/tuple, which WidenLiteralType leaves intact, so it survives (#493).
             case Expr.ArrayLiteral when type is TypeInfo.Array arr:
                 return new TypeInfo.Array(WidenLiteralType(arr.ElementType));
 
@@ -877,33 +886,56 @@ public partial class TypeChecker
 
     /// <summary>
     /// Widens the fields of a fresh object-literal <see cref="TypeInfo.Record"/> for a <c>const</c>
-    /// binding. Direct (<c>name: value</c>) members recurse so a nested <c>as const</c> member keeps
-    /// its literal types; spread/computed/accessor members widen conservatively. Other record
-    /// metadata (optional/getter-only/index signatures, …) is preserved.
+    /// binding, mirroring TypeScript's freshness rules. A direct <c>name: value</c> member is fresh:
+    /// its value expression is widened (recursing so a nested <c>as const</c> survives). A spread
+    /// member contributes its source's fields: spreading a <em>fresh</em> inline object literal
+    /// widens them (recursively), while spreading a <em>non-fresh</em> source (an <c>as const</c>, a
+    /// variable, a call) preserves their already-fixed literal types verbatim — this is what keeps
+    /// <c>const o = { ...({ a: 1 } as const) }</c> at <c>{ a: 1 }</c> (#493). Members are processed in
+    /// source order so a later member overrides an earlier one (JS spread/override order). A field not
+    /// resolved to any member (a computed key, or a non-enumerable spread source) widens
+    /// conservatively, and other record metadata (optional/getter-only/index signatures, …) is preserved.
     /// </summary>
-    private static TypeInfo WidenConstObjectLiteralFields(Expr.ObjectLiteral obj, TypeInfo.Record rec)
+    private TypeInfo WidenConstObjectLiteralFields(Expr.ObjectLiteral obj, TypeInfo.Record rec)
     {
-        // Map each statically-named, non-spread `name: value` member to its value expression.
-        var valueExprByName = new Dictionary<string, Expr>();
+        // Resolve, per final field name, the widened member type by walking members in source order
+        // so the last writer for a name wins — matching how `rec` itself was merged during inference.
+        var resolved = new Dictionary<string, TypeInfo>();
         foreach (var prop in obj.Properties)
         {
-            if (prop.IsSpread || prop.Kind != Expr.ObjectPropertyKind.Value) continue;
-            string? name = prop.Key switch
+            if (prop.IsSpread)
             {
-                Expr.IdentifierKey ik => ik.Name.Lexeme,
-                Expr.LiteralKey { Literal.Literal: string s } => s,
-                _ => null,
-            };
-            if (name != null) valueExprByName[name] = prop.Value;
+                Expr source = UnwrapTransparentForWidening(prop.Value);
+                // The spread source was already type-checked while inferring this object literal;
+                // re-checking an r-value here is idempotent and surfaces no new diagnostics.
+                TypeInfo sourceType = CheckExpr(prop.Value);
+                if (source is Expr.ObjectLiteral innerObj && sourceType is TypeInfo.Record innerRec)
+                {
+                    // Fresh inline object-literal spread: widen its members recursively.
+                    var widenedInner = (TypeInfo.Record)WidenConstObjectLiteralFields(innerObj, innerRec);
+                    foreach (var (k, v) in widenedInner.Fields)
+                        resolved[k] = v;
+                }
+                else
+                {
+                    // Non-fresh spread (`as const`, a variable, a call, …): preserve the source's
+                    // already-fixed field types verbatim, so spread `as const` literals survive.
+                    foreach (var k in EnumerateRecordLikeFieldNames(sourceType))
+                        if (rec.Fields.TryGetValue(k, out var preserved))
+                            resolved[k] = preserved;
+                }
+            }
+            else if (prop.Kind == Expr.ObjectPropertyKind.Value &&
+                     TryGetStaticFieldNameForWidening(prop.Key, out var name) &&
+                     rec.Fields.TryGetValue(name, out var directType))
+            {
+                resolved[name] = WidenFreshLiteralsForConst(prop.Value, directType, topLevel: false);
+            }
         }
 
         var widenedFields = new Dictionary<string, TypeInfo>(rec.Fields.Count);
         foreach (var (name, fieldType) in rec.Fields)
-        {
-            widenedFields[name] = valueExprByName.TryGetValue(name, out var valueExpr)
-                ? WidenFreshLiteralsForConst(valueExpr, fieldType, topLevel: false)
-                : WidenLiteralType(fieldType);
-        }
+            widenedFields[name] = resolved.TryGetValue(name, out var w) ? w : WidenLiteralType(fieldType);
 
         return rec with
         {
@@ -912,6 +944,40 @@ public partial class TypeChecker
             NumberIndexType = rec.NumberIndexType != null ? WidenLiteralType(rec.NumberIndexType) : null,
             SymbolIndexType = rec.SymbolIndexType != null ? WidenLiteralType(rec.SymbolIndexType) : null,
         };
+    }
+
+    /// <summary>
+    /// Unwraps the widening-transparent wrappers (<c>satisfies</c> and parentheses) so widening sees
+    /// the underlying literal/assertion shape.
+    /// </summary>
+    private static Expr UnwrapTransparentForWidening(Expr expr)
+    {
+        while (true)
+        {
+            if (expr is Expr.Satisfies sat) { expr = sat.Expression; continue; }
+            if (expr is Expr.Grouping grp) { expr = grp.Expression; continue; }
+            return expr;
+        }
+    }
+
+    /// <summary>Enumerates the statically known field names a spread source contributes.</summary>
+    private static IEnumerable<string> EnumerateRecordLikeFieldNames(TypeInfo sourceType) => sourceType switch
+    {
+        TypeInfo.Record rec => rec.Fields.Keys,
+        TypeInfo.Interface iface => iface.GetAllMembers().Select(m => m.Key),
+        _ => [],
+    };
+
+    /// <summary>Resolves the static field name of a <c>name: value</c> object-literal member key.</summary>
+    private static bool TryGetStaticFieldNameForWidening(Expr.PropertyKey? key, out string name)
+    {
+        name = key switch
+        {
+            Expr.IdentifierKey ik => ik.Name.Lexeme,
+            Expr.LiteralKey { Literal.Literal: string s } => s,
+            _ => null!,
+        };
+        return name != null;
     }
 
     private TypeInfo CheckArray(Expr.ArrayLiteral array)
