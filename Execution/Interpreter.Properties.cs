@@ -612,22 +612,30 @@ public partial class Interpreter
                 return RuntimeValue.FromBoxed(RegExpConstructorObject);
         }
 
-        // Promise subclass instances (#242): own fields, class getters, and
-        // methods resolve before the built-in Promise members so user
-        // overrides win; then/catch/finally fall through to the category
-        // dispatch (PromiseBuiltIns wraps their results in the subclass).
-        if (obj is SharpTSPromiseSubclassInstance promiseSub)
+        // Promise instances: own accessor/data properties installed via
+        // Object.defineProperty resolve first, so a poisoned `constructor`
+        // getter fires and propagates (test262 then/ctor-poisoned, #350). For
+        // subclass instances (#242), declared fields/class getters/methods then
+        // resolve before the built-in Promise members so user overrides win;
+        // then/catch/finally fall through to the category dispatch
+        // (PromiseBuiltIns wraps their results per SpeciesConstructor).
+        if (obj is SharpTSPromise promise)
         {
-            if (memberName == "constructor")
-                return RuntimeValue.FromObject(promiseSub.Klass);
-            if (promiseSub.TryGetOwnProperty(memberName, out var ownProp))
+            if (promise.TryGetAccessor(memberName, out var ownGetter, out _) && ownGetter != null)
+                return RuntimeValue.FromBoxed(ownGetter.Call(this, []));
+            if (promise.TryGetOwnProperty(memberName, out var ownProp))
                 return RuntimeValue.FromBoxed(ownProp);
-            var promiseGetter = promiseSub.Klass.FindGetter(memberName);
-            if (promiseGetter != null)
-                return RuntimeValue.FromBoxed(promiseGetter.BindThis(promiseSub).Call(this, []));
-            var promiseMethod = promiseSub.Klass.FindMethod(memberName);
-            if (promiseMethod != null)
-                return RuntimeValue.FromObject(SharpTSClass.BindMethodToReceiver(promiseMethod, promiseSub));
+            if (promise is SharpTSPromiseSubclassInstance promiseSub)
+            {
+                if (memberName == "constructor")
+                    return RuntimeValue.FromObject(promiseSub.Klass);
+                var promiseGetter = promiseSub.Klass.FindGetter(memberName);
+                if (promiseGetter != null)
+                    return RuntimeValue.FromBoxed(promiseGetter.BindThis(promiseSub).Call(this, []));
+                var promiseMethod = promiseSub.Klass.FindMethod(memberName);
+                if (promiseMethod != null)
+                    return RuntimeValue.FromObject(SharpTSClass.BindMethodToReceiver(promiseMethod, promiseSub));
+            }
         }
 
         var member = BuiltInRegistry.Instance.GetMemberByCategory(category, obj, memberName);
@@ -1140,20 +1148,26 @@ public partial class Interpreter
                 return SharpTSClass.BindMethodToReceiver(classMethod, subclassArray);
         }
 
-        // Promise subclass instances (#242): mirror the RV-path arm — own
-        // fields, class getters, and methods before built-in Promise members.
-        if (obj is SharpTSPromiseSubclassInstance promiseSub)
+        // Promise instances: mirror the RV-path arm — own accessor/data
+        // properties (poisoned `constructor` getter, #350) before subclass
+        // fields/getters/methods, all before the built-in Promise members.
+        if (obj is SharpTSPromise promise)
         {
-            if (memberName == "constructor")
-                return promiseSub.Klass;
-            if (promiseSub.TryGetOwnProperty(memberName, out var promiseOwnProp))
+            if (promise.TryGetAccessor(memberName, out var ownGetter, out _) && ownGetter != null)
+                return ownGetter.Call(this, []);
+            if (promise.TryGetOwnProperty(memberName, out var promiseOwnProp))
                 return promiseOwnProp;
-            var promiseGetter = promiseSub.Klass.FindGetter(memberName);
-            if (promiseGetter != null)
-                return promiseGetter.BindThis(promiseSub).Call(this, []);
-            var promiseMethod = promiseSub.Klass.FindMethod(memberName);
-            if (promiseMethod != null)
-                return SharpTSClass.BindMethodToReceiver(promiseMethod, promiseSub);
+            if (promise is SharpTSPromiseSubclassInstance promiseSub)
+            {
+                if (memberName == "constructor")
+                    return promiseSub.Klass;
+                var promiseGetter = promiseSub.Klass.FindGetter(memberName);
+                if (promiseGetter != null)
+                    return promiseGetter.BindThis(promiseSub).Call(this, []);
+                var promiseMethod = promiseSub.Klass.FindMethod(memberName);
+                if (promiseMethod != null)
+                    return SharpTSClass.BindMethodToReceiver(promiseMethod, promiseSub);
+            }
         }
 
         // Handle built-in instance members: strings, arrays, Math, Promise

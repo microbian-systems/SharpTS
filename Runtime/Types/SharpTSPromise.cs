@@ -22,6 +22,56 @@ public class SharpTSPromise : ITypeCategorized
 
     private readonly Task<object?> _task;
 
+    // Own properties installed on a promise instance via Object.defineProperty
+    // (and, for subclass instances, declared fields). Base promises have none
+    // until user code adds one — a poisoned `constructor` getter
+    // (Object.defineProperty(p, "constructor", { get() { throw … } }), test262
+    // then/ctor-poisoned, #350) is the motivating case. Both dictionaries are
+    // lazily allocated so plain promises stay allocation-free.
+    private Dictionary<string, object?>? _ownProperties;
+    private Dictionary<string, (ISharpTSCallable? Getter, ISharpTSCallable? Setter)>? _accessors;
+
+    /// <summary>
+    /// Reads an own data property installed on this promise instance.
+    /// </summary>
+    public bool TryGetOwnProperty(string name, out object? value)
+    {
+        if (_ownProperties != null && _ownProperties.TryGetValue(name, out value))
+            return true;
+        value = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Stores an own data property on this promise instance.
+    /// </summary>
+    public void SetOwnProperty(string name, object? value)
+        => (_ownProperties ??= [])[name] = value;
+
+    /// <summary>
+    /// Registers an own accessor pair from <c>Object.defineProperty</c>. Either
+    /// half may be null (one-sided accessor); a later definition on the same key
+    /// replaces the previous one.
+    /// </summary>
+    public void DefineAccessor(string name, ISharpTSCallable? getter, ISharpTSCallable? setter)
+        => (_accessors ??= [])[name] = (getter, setter);
+
+    /// <summary>
+    /// Looks up an own accessor for <paramref name="name"/>. Returns true and
+    /// the (getter, setter) pair when one is registered.
+    /// </summary>
+    public bool TryGetAccessor(string name, out ISharpTSCallable? getter, out ISharpTSCallable? setter)
+    {
+        if (_accessors != null && _accessors.TryGetValue(name, out var pair))
+        {
+            (getter, setter) = pair;
+            return true;
+        }
+        getter = null;
+        setter = null;
+        return false;
+    }
+
     /// <summary>
     /// Creates a Promise wrapping an existing Task.
     /// </summary>
