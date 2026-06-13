@@ -258,6 +258,14 @@ public partial class Interpreter
                 }
             }
         }
+        catch (GeneratorReturnException grex)
+        {
+            // A generator.return(v) abrupt completion injected at a yield point reached this
+            // block with no enclosing try. Settle it as a Return so resources are still
+            // disposed and the value flows out to the generator body (ECMA-262 §27.5.3.4).
+            // It is not a guest throw, so leave pendingError null.
+            blockResult = ExecutionResult.Return(RuntimeValue.FromBoxed(grex.Value));
+        }
         catch (Exception ex)
         {
             // Capture host exceptions as pending errors
@@ -575,6 +583,13 @@ public partial class Interpreter
                 }
             }
         }
+        catch (GeneratorReturnException grex)
+        {
+            // A generator.return(v) abrupt completion injected at a yield point inside this
+            // try. A return is not catchable, so bypass the catch clause and record a Return;
+            // the finally block below still runs (ECMA-262 §27.5.3.4).
+            pendingResult = ExecutionResult.Return(RuntimeValue.FromBoxed(grex.Value));
+        }
         catch (Exception ex)
         {
             // Treat host exceptions as guest throws
@@ -630,6 +645,13 @@ public partial class Interpreter
                         }
                     }
                     return (true, ExecutionResult.Success());
+                }
+                catch (GeneratorReturnException grex)
+                {
+                    // generator.return(v) injected at a yield inside this catch block:
+                    // propagate as a Return (which runs the enclosing finally) rather than
+                    // re-throwing it as a guest error (ECMA-262 §27.5.3.4).
+                    return (true, ExecutionResult.Return(RuntimeValue.FromBoxed(grex.Value)));
                 }
                 catch (Exception ex)
                 {

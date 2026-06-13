@@ -33,7 +33,8 @@ public static class GeneratorBuiltIns
             {
                 if (receiver.ToObject() is SharpTSGenerator gen)
                 {
-                    object? value = args.Length > 0 ? args[0].ToObject() : null;
+                    // A bare return() resumes with the value undefined (ECMA-262 §27.5.3.4).
+                    object? value = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
                     return RuntimeValue.FromObject(gen.Return(value));
                 }
                 throw new Exception("Runtime Error: return() called on non-generator.");
@@ -42,7 +43,8 @@ public static class GeneratorBuiltIns
             {
                 if (receiver.ToObject() is SharpTSGenerator gen)
                 {
-                    object? error = args.Length > 0 ? args[0].ToObject() : null;
+                    // A bare throw() throws undefined (ECMA-262 §27.5.3.4).
+                    object? error = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
                     return RuntimeValue.FromObject(gen.Throw(error));
                 }
                 throw new Exception("Runtime Error: throw() called on non-generator.");

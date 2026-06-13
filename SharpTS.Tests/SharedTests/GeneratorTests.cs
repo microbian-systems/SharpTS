@@ -485,4 +485,292 @@ public class GeneratorTests
     }
 
     #endregion
+
+    #region return()/throw() resume suspended generator (ECMA-262 §27.5.3.4) — issue #478
+
+    // These are interpreter-only: a try/finally combined with yield currently emits invalid
+    // IL in compiled mode (tracked in issue #477), so the compiled path can't be observed yet.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_Return_RunsFinally_AndReportsValue(ExecutionMode mode)
+    {
+        // The repro from issue #478: return(v) on a suspended generator resumes it as an
+        // abrupt completion, running the active finally block, then settles { value, done }.
+        var source = """
+            function* g() {
+                try {
+                    yield 1;
+                    yield 2;
+                } finally {
+                    console.log("finally ran");
+                }
+            }
+            const it = g();
+            const a = it.next();
+            console.log(a.value, a.done);
+            const b = it.return(99);
+            console.log(b.value, b.done);
+            const c = it.next();
+            console.log(c.value, c.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        // Node: 1 false / finally ran / 99 true / undefined true
+        Assert.Equal("1 false\nfinally ran\n99 true\nundefined true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_Throw_CaughtByTryCatch_Continues(ExecutionMode mode)
+    {
+        // throw(e) injects the error at the yield point; an enclosing catch handles it and
+        // the generator keeps running (and may yield again).
+        var source = """
+            function* g() {
+                try {
+                    yield 1;
+                    yield 2;
+                } catch (e) {
+                    console.log("caught " + e);
+                    yield 99;
+                }
+            }
+            const it = g();
+            console.log(it.next().value);
+            const r = it.throw("boom");
+            console.log(r.value, r.done);
+            const done = it.next();
+            console.log(done.value, done.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\ncaught boom\n99 false\nundefined true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_Throw_RunsFinally_ThenPropagates(ExecutionMode mode)
+    {
+        // throw(e) with only a finally (no catch): the finally runs, then the error propagates
+        // to the throw() caller.
+        var source = """
+            function* g() {
+                try {
+                    yield 1;
+                } finally {
+                    console.log("finally C");
+                }
+            }
+            const it = g();
+            it.next();
+            try {
+                it.throw("boomC");
+            } catch (e) {
+                console.log("outer caught " + e);
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("finally C\nouter caught boomC\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_Return_RunsNestedFinallyInnerToOuter(ExecutionMode mode)
+    {
+        var source = """
+            function* g() {
+                try {
+                    try {
+                        yield 1;
+                    } finally {
+                        console.log("inner");
+                    }
+                } finally {
+                    console.log("outer");
+                }
+            }
+            const it = g();
+            it.next();
+            const r = it.return(5);
+            console.log(r.value, r.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("inner\nouter\n5 true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_Return_FinallyThatYields_DefersCompletion(ExecutionMode mode)
+    {
+        // A finally that yields suspends the pending return; the return value is delivered
+        // only once the finally completes on a later next().
+        var source = """
+            function* g() {
+                try {
+                    yield 1;
+                } finally {
+                    yield 99;
+                }
+            }
+            const it = g();
+            it.next();
+            const a = it.return(5);
+            console.log(a.value, a.done);
+            const b = it.next();
+            console.log(b.value, b.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("99 false\n5 true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_Return_FinallyReturnOverridesValue(ExecutionMode mode)
+    {
+        // A finally that returns its own value overrides the value passed to return().
+        var source = """
+            function* g() {
+                try {
+                    yield 1;
+                } finally {
+                    return 7;
+                }
+            }
+            const it = g();
+            it.next();
+            const r = it.return(99);
+            console.log(r.value, r.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("7 true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_Return_FinallyThrowOverridesReturn(ExecutionMode mode)
+    {
+        // A finally that throws overrides the pending return with the thrown error.
+        var source = """
+            function* g() {
+                try {
+                    yield 1;
+                } finally {
+                    throw "finally-err";
+                }
+            }
+            const it = g();
+            it.next();
+            try {
+                it.return(5);
+            } catch (e) {
+                console.log("caught " + e);
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("caught finally-err\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_ReturnAndThrow_OnNotStarted_DoNotRunBody(ExecutionMode mode)
+    {
+        // return()/throw() on a generator that hasn't started close it without running the
+        // body, so the finally never runs (ECMA-262 §27.5.3.4).
+        var source = """
+            function* g() {
+                try {
+                    yield 1;
+                } finally {
+                    console.log("should NOT run");
+                }
+            }
+            const a = g();
+            const r = a.return(8);
+            console.log(r.value, r.done);
+            const b = g();
+            try {
+                b.throw("x");
+            } catch (e) {
+                console.log("threw " + e);
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("8 true\nthrew x\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_NextAfterCompletion_ReportsUndefined(ExecutionMode mode)
+    {
+        // Once a generator finishes, its completion value is delivered exactly once; further
+        // next() calls report { value: undefined, done: true }.
+        var source = """
+            function* g() {
+                yield 1;
+                return 42;
+            }
+            const it = g();
+            it.next();
+            const done = it.next();
+            console.log(done.value, done.done);
+            const after = it.next();
+            console.log(after.value, after.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42 true\nundefined true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_UncaughtThrowInBody_PropagatesToNext(ExecutionMode mode)
+    {
+        // An uncaught throw inside the body surfaces to the next() caller rather than being
+        // swallowed (regression guard for the worker's abnormal-completion handling).
+        var source = """
+            function* g() {
+                yield 1;
+                throw "bodyboom";
+            }
+            const it = g();
+            it.next();
+            try {
+                it.next();
+            } catch (e) {
+                console.log("caught " + e);
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("caught bodyboom\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_BareReturn_ReportsUndefinedValue(ExecutionMode mode)
+    {
+        // A no-argument return() resumes with undefined.
+        var source = """
+            function* g() {
+                yield 1;
+                yield 2;
+            }
+            const it = g();
+            it.next();
+            const r = it.return();
+            console.log(r.value, r.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("undefined true\n", output);
+    }
+
+    #endregion
 }
