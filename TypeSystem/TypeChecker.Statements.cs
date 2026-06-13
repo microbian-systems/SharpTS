@@ -337,7 +337,7 @@ public partial class TypeChecker
         else
         {
             _environment.Define(stmt.Name.Lexeme, new TypeInfo.Any());
-            constDeclaredType = CheckExpr(stmt.Initializer);
+            constDeclaredType = WidenConstInitializerType(stmt.Initializer, CheckExpr(stmt.Initializer));
             _environment.Define(stmt.Name.Lexeme, constDeclaredType);
         }
 
