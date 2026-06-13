@@ -104,7 +104,14 @@ public partial class TypeChecker
         // can legitimately differ between the two contexts, so bivariant-context results must not
         // be cached or served from cache. Variance measurement likewise compares with the callback
         // rule enabled, which ordinary comparisons don't.
-        bool uncacheable = (_strictFunctionTypes && _methodBivarianceDepth > 0) || _varianceMeasurementDepth > 0;
+        //
+        // Speculative hoist-time inference (#383/#388, _suppressDiagnostics > 0) runs in recovery
+        // mode and may carry a different open-type-variable scope than the real pass — e.g. a naked
+        // type parameter that is in scope during real checking but not during speculation relates
+        // differently (naked vs its constraint). Its verdicts are therefore non-authoritative and
+        // must neither be written to nor served from the shared cache, or they poison the real pass.
+        bool uncacheable = (_strictFunctionTypes && _methodBivarianceDepth > 0)
+            || _varianceMeasurementDepth > 0 || _suppressDiagnostics > 0;
 
         // Level 1: Fast identity-based cache (reference equality)
         _identityCompatibilityCache ??= new(IdentityCacheKeyComparer.Instance);
