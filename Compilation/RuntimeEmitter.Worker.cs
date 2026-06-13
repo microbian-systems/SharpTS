@@ -1221,7 +1221,15 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitWorkerHelper(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
-        // CreateWorker(string filename, object? options, Interpreter? parentInterpreter)
+        // CreateWorker(string filename, object? options, object? parentInterpreter)
+        //
+        // Constructs a SharpTSWorker via reflection (keeping the standalone DLL
+        // free of a hard SharpTS.dll reference) and binds the emitted $EventLoop
+        // singleton's Ref/Unref as the worker's keep-alive handle, so a running
+        // worker holds the compiled event loop open by default — Node semantics,
+        // and the compiled-mode half of the #329 premature-exit fix (#354). The
+        // worker itself runs an interpreter for its child script, so SharpTS.dll
+        // must be co-located; the emit site records that via RequireSharpTSRuntime.
         var method = runtimeType.DefineMethod(
             "CreateWorker",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -1230,9 +1238,87 @@ public partial class RuntimeEmitter
         );
 
         var il = method.GetILGenerator();
-        il.Emit(OpCodes.Ldstr, "Worker is not supported in standalone compiled output.");
+
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var loopLocal = il.DeclareLocal(runtime.EventLoopType);
+        var refLocal = il.DeclareLocal(typeof(Action));
+        var unrefLocal = il.DeclareLocal(typeof(Action));
+        var scheduleLocal = il.DeclareLocal(typeof(Action<Action>));
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var actionCtor = typeof(Action).GetConstructor([_types.Object, typeof(IntPtr)])!;
+        var actionOfActionCtor = typeof(Action<Action>).GetConstructor([_types.Object, typeof(IntPtr)])!;
+
+        // Type t = Type.GetType("SharpTS.Runtime.Types.SharpTSWorker, SharpTS");
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.SharpTSWorker, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // if (t == null) throw — SharpTS.dll must be co-located for Worker.
+        var typeOk = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brtrue, typeOk);
+        il.Emit(OpCodes.Ldstr, "Worker requires the SharpTS runtime (SharpTS.dll) to be present. " +
+                               "Compile without --standalone so it is co-located with the output.");
         il.Emit(OpCodes.Newobj, _types.InvalidOperationExceptionCtorString);
         il.Emit(OpCodes.Throw);
+        il.MarkLabel(typeOk);
+
+        // var loop = $EventLoop.GetInstance();
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Stloc, loopLocal);
+
+        // Action ref = new Action(loop, $EventLoop.Ref);
+        il.Emit(OpCodes.Ldloc, loopLocal);
+        il.Emit(OpCodes.Ldftn, runtime.EventLoopRef);
+        il.Emit(OpCodes.Newobj, actionCtor);
+        il.Emit(OpCodes.Stloc, refLocal);
+
+        // Action unref = new Action(loop, $EventLoop.Unref);
+        il.Emit(OpCodes.Ldloc, loopLocal);
+        il.Emit(OpCodes.Ldftn, runtime.EventLoopUnref);
+        il.Emit(OpCodes.Newobj, actionCtor);
+        il.Emit(OpCodes.Stloc, unrefLocal);
+
+        // Action<Action> schedule = new Action<Action>(loop, $EventLoop.Schedule);
+        il.Emit(OpCodes.Ldloc, loopLocal);
+        il.Emit(OpCodes.Ldftn, runtime.EventLoopSchedule);
+        il.Emit(OpCodes.Newobj, actionOfActionCtor);
+        il.Emit(OpCodes.Stloc, scheduleLocal);
+
+        // object[] args = { filename, options, ref, unref, schedule };
+        il.Emit(OpCodes.Ldc_I4_5);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, argsLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_0); // filename
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1); // options
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldloc, refLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Ldloc, unrefLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Ldloc, scheduleLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+
+        // return t.GetMethod("CreateForCompiledLoop").Invoke(null, args);
+        // (arg 2, parentInterpreter, is unused in compiled mode — always null.)
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "CreateForCompiledLoop");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Ret);
 
         runtime.TSWorkerType = _types.Object;
         runtime.TSWorkerCtor = method;

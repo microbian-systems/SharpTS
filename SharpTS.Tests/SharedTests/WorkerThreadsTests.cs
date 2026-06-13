@@ -454,15 +454,16 @@ public class WorkerThreadsTests
     /// blocks well past the 250ms give-up. That join task is invisible to
     /// <c>HasPendingEventLoopWork</c>; before the fix the parent abandoned the
     /// terminate promise and exited without printing "terminated". The fix Refs
-    /// the parent loop for the join's duration. InterpretedOnly because the fix
-    /// targets the interpreter event loop; <c>__dirname</c> routes the harness
-    /// through the real-disk path so the spawned worker can load its script.
-    /// The assertion is positive (output present) and load-independent — under
-    /// load the join simply takes longer and the Ref keeps the loop alive for
-    /// it, so the test cannot flake the way a wall-clock window would.
+    /// the parent loop for the join's duration — the parent interpreter loop
+    /// (interpreter mode) or the emitted <c>$EventLoop</c> (compiled mode, #354).
+    /// <c>__dirname</c> routes the harness through the real-disk path so the
+    /// spawned worker can load its script. The assertion is positive (output
+    /// present) and load-independent — under load the join simply takes longer and
+    /// the Ref keeps the loop alive for it, so the test cannot flake the way a
+    /// wall-clock window would.
     /// </remarks>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Worker_Terminate_KeepsEventLoopAliveUntilSettled(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -500,15 +501,17 @@ public class WorkerThreadsTests
     /// the wait at 250ms and exited without ever printing the message.
     /// </summary>
     /// <remarks>
-    /// InterpretedOnly: the keep-alive Ref is against the interpreter event loop;
-    /// compiled mode has no parent interpreter. <c>__dirname</c> routes the harness
+    /// The keep-alive Ref is against whichever loop owns the worker: the parent
+    /// interpreter (interpreter mode) or the emitted <c>$EventLoop</c> (compiled
+    /// mode, #354 — worker→parent delivery is marshalled onto the loop via the
+    /// injected <c>$EventLoop.Schedule</c>). <c>__dirname</c> routes the harness
     /// through the real-disk path so the worker can load its script. The assertion
     /// is positive and load-independent — under load the worker simply posts later
     /// and the running-Ref keeps the parent alive until it does, so the test cannot
     /// flake the way a wall-clock window would.
     /// </remarks>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Worker_RunningWorker_KeepsParentLoopAliveUntilMessage(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -539,7 +542,7 @@ public class WorkerThreadsTests
     /// delayed message is still delivered (positive, load-independent assertion).
     /// </summary>
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Worker_UnrefThenRef_RestoresKeepAlive(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
