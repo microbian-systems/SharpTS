@@ -29,11 +29,7 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly string _scriptPath;
     private readonly object? _workerData;
-    private readonly object? _stdin;
-    private readonly object? _stdout;
-    private readonly object? _stderr;
     private readonly SharpTSArray? _transferList;
-    private readonly SharpTSArray? _resourceLimits;
     private volatile bool _isRunning;
     private volatile bool _isTerminated;
     private Exception? _workerError;
@@ -125,15 +121,22 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         // Capture sync context for compiled code to marshal callbacks to main thread
         _syncContext = SynchronizationContext.Current;
 
-        // Extract options
+        // Extract options. Only workerData and transferList are honored: the worker
+        // runs an isolated interpreter on a dedicated thread in this same process, so
+        // the worker's console output already shares the parent's stdout/stderr by
+        // default. The Node stdio options (stdin/stdout/stderr) and resourceLimits are
+        // intentionally NOT supported:
+        //   - stdin/stdout/stderr=true would have to expose per-worker Readable/Writable
+        //     streams and divert the worker off the shared (process-global) Console,
+        //     which is not thread-safe in a single-process model.
+        //   - resourceLimits maps to V8 heap/stack sizing (maxOldGenerationSizeMb, …)
+        //     for which the .NET runtime exposes no per-thread equivalent.
+        // They are not read here (rather than read-and-ignored) so the dead fields can't
+        // masquerade as support. See issue #407.
         if (options != null)
         {
             _workerData = options.GetProperty("workerData");
             _transferList = options.GetProperty("transferList") as SharpTSArray;
-            _stdin = options.GetProperty("stdin");
-            _stdout = options.GetProperty("stdout");
-            _stderr = options.GetProperty("stderr");
-            _resourceLimits = options.GetProperty("resourceLimits") as SharpTSArray;
         }
 
         // Clone workerData for transfer to worker

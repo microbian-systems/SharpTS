@@ -449,7 +449,7 @@ SharpTS implements 20+ Node.js built-in modules accessible via `import ... from 
 | `timers` | ✅ | setTimeout, clearTimeout, setInterval, clearInterval, setImmediate, clearImmediate |
 | `timers/promises` | ✅ | Promise-based setTimeout, setImmediate, setInterval |
 | `perf_hooks` | ✅ | performance.now(), timeOrigin, mark(), measure(), getEntries(), getEntriesByName(), getEntriesByType(), clearMarks(), clearMeasures(); PerformanceObserver |
-| `worker_threads` | ✅ | Worker, isMainThread, parentPort, workerData, MessageChannel, MessagePort |
+| `worker_threads` | ✅ | Worker, isMainThread, parentPort, workerData, MessageChannel, MessagePort. Worker `stdin`/`stdout`/`stderr` and `resourceLimits` options are not supported (workers share the parent's console; resourceLimits has no .NET equivalent) |
 | `async_hooks` | ✅ | AsyncLocalStorage: run, getStore, enterWith, exit, disable; async context propagation via .NET AsyncLocal |
 
 ### Module Implementation Source

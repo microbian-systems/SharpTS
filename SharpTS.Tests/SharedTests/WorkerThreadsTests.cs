@@ -566,4 +566,48 @@ public class WorkerThreadsTests
     }
 
     #endregion
+
+    #region Unsupported Worker options (#407)
+
+    /// <summary>
+    /// Regression for #407: the Worker <c>stdin</c>/<c>stdout</c>/<c>stderr</c> and
+    /// <c>resourceLimits</c> options are intentionally unsupported, but supplying
+    /// them in the options bag must not break construction — the worker still
+    /// spawns, runs, and posts back. The bag also carries the honored
+    /// <c>workerData</c>/<c>transferList</c> options so this exercises the
+    /// unsupported keys coexisting with supported ones. Before the fix these keys
+    /// were read into inert dead fields (and <c>resourceLimits</c> was mistyped as
+    /// <c>SharpTSArray</c>); now they are simply ignored. <c>resourceLimits</c> is
+    /// passed as an object, not an array — the shape that always yielded null under
+    /// the old <c>as SharpTSArray</c> read, confirming the bag no longer trips on it.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_UnsupportedStdioAndResourceLimitsOptions_AreIgnored(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_echo.ts"] = """
+                setTimeout(() => { postMessage("ran"); }, 50);
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_echo.ts", {
+                    workerData: 42,
+                    stdout: true,
+                    stderr: true,
+                    stdin: true,
+                    resourceLimits: { maxOldGenerationSizeMb: 16 },
+                });
+                w.on("message", (e: any) => {
+                    console.log("received:" + e.data);
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("received:ran", output);
+    }
+
+    #endregion
 }
