@@ -223,14 +223,27 @@ public partial class Parser
             Expr? defaultExpr = null;
             Stmt? declaration = null;
 
-            // export default class Name { } or export default function name() { }
+            // export default class Name { }
+            // export default function name() { } / function* name() { }
+            // export default async function name() { } / async function* name() { }
             if (Match(TokenType.CLASS))
             {
                 declaration = ClassDeclaration(isAbstract: false);
             }
+            else if (Check(TokenType.ASYNC) && PeekNext().Type == TokenType.FUNCTION)
+            {
+                // `export default async function ...` — only claim ASYNC here when a
+                // `function` follows, so `export default async () => {}` still parses
+                // as a default async-arrow expression below.
+                Advance(); // consume 'async'
+                Advance(); // consume 'function'
+                bool isGenerator = Match(TokenType.STAR);
+                declaration = FunctionDeclaration("function", isAsync: true, isGenerator: isGenerator);
+            }
             else if (Match(TokenType.FUNCTION))
             {
-                declaration = FunctionDeclaration("function");
+                bool isGenerator = Match(TokenType.STAR);
+                declaration = FunctionDeclaration("function", isAsync: false, isGenerator: isGenerator);
             }
             else
             {

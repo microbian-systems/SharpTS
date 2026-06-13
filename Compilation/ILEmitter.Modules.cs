@@ -416,10 +416,10 @@ public partial class ILEmitter
                         IL.Emit(OpCodes.Ldsfld, staticField);
                         IL.Emit(OpCodes.Stsfld, defaultField);
                     }
-                    else if (_ctx.Functions.TryGetValue(_ctx.GetQualifiedFunctionName(name), out var funcBuilder))
+                    else if (TryResolveExportableFunction(name, out var funcBuilder))
                     {
-                        // Create TSFunction for function
-                        EmitFunctionReference(_ctx.GetQualifiedFunctionName(name), funcBuilder);
+                        // Create TSFunction for function (sync, async, generator, or async generator)
+                        EmitFunctionReference(name, funcBuilder);
                         IL.Emit(OpCodes.Stsfld, defaultField);
                     }
                     else if (_ctx.Classes.TryGetValue(_ctx.GetQualifiedClassName(name), out var classBuilder))
@@ -467,9 +467,9 @@ public partial class ILEmitter
                     IL.Emit(OpCodes.Ldsfld, staticField);
                     IL.Emit(OpCodes.Stsfld, field);
                 }
-                else if (_ctx.Functions.TryGetValue(_ctx.GetQualifiedFunctionName(name), out var funcBuilder))
+                else if (TryResolveExportableFunction(name, out var funcBuilder))
                 {
-                    EmitFunctionReference(_ctx.GetQualifiedFunctionName(name), funcBuilder);
+                    EmitFunctionReference(name, funcBuilder);
                     IL.Emit(OpCodes.Stsfld, field);
                 }
                 else if (_ctx.Classes.TryGetValue(_ctx.GetQualifiedClassName(name), out var classBuilder))
@@ -507,9 +507,9 @@ public partial class ILEmitter
                         IL.Emit(OpCodes.Ldsfld, staticField);
                         IL.Emit(OpCodes.Stsfld, field);
                     }
-                    else if (_ctx.Functions.TryGetValue(_ctx.GetQualifiedFunctionName(localName), out var funcBuilder))
+                    else if (TryResolveExportableFunction(localName, out var funcBuilder))
                     {
-                        EmitFunctionReference(_ctx.GetQualifiedFunctionName(localName), funcBuilder);
+                        EmitFunctionReference(localName, funcBuilder);
                         IL.Emit(OpCodes.Stsfld, field);
                     }
                     else if (_ctx.Classes.TryGetValue(_ctx.GetQualifiedClassName(localName), out var classBuilder))
@@ -571,6 +571,29 @@ public partial class ILEmitter
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// Resolves a top-level function name to its emitted stub <see cref="MethodBuilder"/>,
+    /// covering every function flavor that registers into <see cref="CompilationContext.Functions"/>.
+    /// Sync functions are keyed by their module-qualified name, whereas async / generator /
+    /// async-generator functions register their stub under the simple name (see
+    /// <c>ILCompiler.Async</c> / <c>ILCompiler.Generators</c> / <c>ILCompiler.AsyncGenerators</c>,
+    /// which write <c>_functions.Builders[funcStmt.Name.Lexeme]</c> without module qualification).
+    /// The export-store branches must consult both keys; otherwise an <c>export async function</c>,
+    /// <c>export function*</c>, or <c>export async function*</c> leaves its export field null and the
+    /// importing module throws "object is not a function" on call (#395).
+    /// </summary>
+    private bool TryResolveExportableFunction(string name, out MethodBuilder method)
+    {
+        // Sync functions: module-qualified key.
+        if (_ctx.Functions.TryGetValue(_ctx.GetQualifiedFunctionName(name), out method!))
+            return true;
+        // Async / generator / async-generator stubs: simple (unqualified) key.
+        if (_ctx.Functions.TryGetValue(name, out method!))
+            return true;
+        method = null!;
+        return false;
     }
 
     /// <summary>

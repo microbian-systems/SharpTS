@@ -74,9 +74,11 @@ public class ModuleTests
     }
 
     // These three guard the #392 parser fix (`export async function`,
-    // `export function*`, `export async function*`). They run InterpretedOnly:
-    // the parser fix is mode-independent, and compiled execution of exported
-    // state-machine functions is a separate gap tracked in #395.
+    // `export function*`, `export async function*`) in single-file form. They run
+    // InterpretedOnly: the parser fix is mode-independent, and single-file *script-mode*
+    // compilation does not bind exported function declarations at all (a broader gap that
+    // also affects plain sync functions, tracked in #417). Compiled cross-module execution of
+    // these exports is fixed by #395 — see the *_CrossModule tests below, which run in both modes.
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void ExportAsyncFunction_Parses(ExecutionMode mode)
@@ -127,6 +129,195 @@ public class ModuleTests
             """;
 
         Assert.Equal("1\n2\n", TestHarness.Run(source, mode));
+    }
+
+    // ---- #395: exported async / generator / async-generator functions callable across modules ----
+    // The three #392 tests above stay InterpretedOnly because they compile a single file in
+    // script (non-module) mode, where exported function declarations are still not bound
+    // (a separate, broader gap that also affects plain sync functions — see #417). These tests
+    // use the real cross-module path (RunModules), which
+    // is how the CLI compiles any file containing `export`. Before #395 the compiled export-store
+    // only consulted `_ctx.Functions` under the module-qualified name, missing async/generator
+    // stubs (keyed by simple name) — the import field stayed null and the call threw
+    // "object is not a function". They run in BOTH modes to pin the fix and guard the interpreter.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamedExport_AsyncFunction_CrossModule(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["./utils.ts"] = """
+                export async function addAsync(a: number, b: number): Promise<number> {
+                    return a + b;
+                }
+                """,
+            ["./main.ts"] = """
+                import { addAsync } from './utils';
+                async function main() { console.log(await addAsync(3, 4)); }
+                main();
+                """
+        };
+
+        Assert.Equal("7\n", TestHarness.RunModules(files, "./main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamedExport_GeneratorFunction_CrossModule(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["./utils.ts"] = """
+                export function* genCount(): Generator<number> {
+                    yield 1;
+                    yield 2;
+                    yield 3;
+                }
+                """,
+            ["./main.ts"] = """
+                import { genCount } from './utils';
+                for (const n of genCount()) console.log(n);
+                """
+        };
+
+        Assert.Equal("1\n2\n3\n", TestHarness.RunModules(files, "./main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamedExport_AsyncGeneratorFunction_CrossModule(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["./utils.ts"] = """
+                export async function* genAsync(): AsyncGenerator<number> {
+                    yield 10;
+                    yield 20;
+                }
+                """,
+            ["./main.ts"] = """
+                import { genAsync } from './utils';
+                async function main() {
+                    for await (const n of genAsync()) console.log(n);
+                }
+                main();
+                """
+        };
+
+        Assert.Equal("10\n20\n", TestHarness.RunModules(files, "./main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamedListExport_StateMachineFunctions_CrossModule(ExecutionMode mode)
+    {
+        // The `export { a, b, c }` list form is a distinct export-store branch from the
+        // inline `export async function ...` declaration form; cover it too.
+        var files = new Dictionary<string, string>
+        {
+            ["./utils.ts"] = """
+                async function addAsync(a: number, b: number): Promise<number> { return a + b; }
+                function* counter(): Generator<number> { yield 7; yield 8; }
+                async function* ag(): AsyncGenerator<number> { yield 99; }
+                export { addAsync, counter, ag };
+                """,
+            ["./main.ts"] = """
+                import { addAsync, counter, ag } from './utils';
+                async function main() {
+                    console.log(await addAsync(10, 5));
+                    for (const n of counter()) console.log(n);
+                    for await (const n of ag()) console.log(n);
+                }
+                main();
+                """
+        };
+
+        Assert.Equal("15\n7\n8\n99\n", TestHarness.RunModules(files, "./main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DefaultExport_AsyncFunction_CrossModule(ExecutionMode mode)
+    {
+        // `export default async function` / `export default function*` additionally required a
+        // parser fix: the `export default` dispatcher (unlike the non-default one fixed in #392)
+        // did not recognize `async`/`*`. With that in place the compiled $default export-store
+        // branch resolves the state-machine stub the same way as named exports.
+        var files = new Dictionary<string, string>
+        {
+            ["./util.ts"] = """
+                export default async function dbl(n: number): Promise<number> { return n * 2; }
+                """,
+            ["./main.ts"] = """
+                import dbl from './util';
+                async function main() { console.log(await dbl(21)); }
+                main();
+                """
+        };
+
+        Assert.Equal("42\n", TestHarness.RunModules(files, "./main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DefaultExport_GeneratorFunction_CrossModule(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["./util.ts"] = """
+                export default function* gen(): Generator<number> { yield 5; yield 6; }
+                """,
+            ["./main.ts"] = """
+                import gen from './util';
+                for (const n of gen()) console.log(n);
+                """
+        };
+
+        Assert.Equal("5\n6\n", TestHarness.RunModules(files, "./main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DefaultExport_AsyncGeneratorFunction_CrossModule(ExecutionMode mode)
+    {
+        // Guards the `async`+`*` combination in the `export default` parser branch.
+        var files = new Dictionary<string, string>
+        {
+            ["./util.ts"] = """
+                export default async function* ag(): AsyncGenerator<number> { yield 1; yield 2; }
+                """,
+            ["./main.ts"] = """
+                import ag from './util';
+                async function main() { for await (const n of ag()) console.log(n); }
+                main();
+                """
+        };
+
+        Assert.Equal("1\n2\n", TestHarness.RunModules(files, "./main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DefaultExport_AsyncArrow_StillParsesAsExpression(ExecutionMode mode)
+    {
+        // Guard: the `export default async function` parser branch must NOT swallow
+        // `export default async () => {}` — that's a default async-arrow *expression*,
+        // not a function declaration. The dispatcher uses a two-token lookahead
+        // (ASYNC followed by FUNCTION) so this keeps parsing via the expression path.
+        var files = new Dictionary<string, string>
+        {
+            ["./util.ts"] = """
+                export default async (n: number): Promise<number> => n + 1;
+                """,
+            ["./main.ts"] = """
+                import inc from './util';
+                async function main() { console.log(await inc(41)); }
+                main();
+                """
+        };
+
+        Assert.Equal("42\n", TestHarness.RunModules(files, "./main.ts", mode));
     }
 
     [Theory]
