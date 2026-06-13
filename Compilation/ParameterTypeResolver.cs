@@ -17,16 +17,21 @@ public static class ParameterTypeResolver
     /// <param name="parameters">Parameters from AST</param>
     /// <param name="typeMapper">TypeMapper for converting TypeInfo to .NET Type</param>
     /// <param name="funcType">Function type from TypeMap (may be null)</param>
+    /// <param name="typeMap">
+    /// TypeMap used to consult the #372 undefined-reachable-parameter flag. May be null (e.g. arrow
+    /// resolution without a recorded function type), in which case no parameter is widened on that basis.
+    /// </param>
     /// <returns>Array of .NET types for each parameter</returns>
     public static Type[] ResolveParameters(
         List<Stmt.Parameter> parameters,
         TypeMapper typeMapper,
-        TSTypeInfo.Function? funcType)
+        TSTypeInfo.Function? funcType,
+        TypeMap? typeMap = null)
     {
         if (funcType == null || funcType.ParamTypes.Count != parameters.Count)
         {
             // Fallback: try to resolve from parameter type annotations
-            return parameters.Select(p => ResolveParameterType(p, typeMapper)).ToArray();
+            return parameters.Select(p => WidenIfUndefinedReachableParam(ResolveParameterType(p, typeMapper), p, typeMap)).ToArray();
         }
 
         // Map each parameter type, but use 'object' for:
@@ -72,9 +77,25 @@ public static class ParameterTypeResolver
                     return typeof(object);
                 }
 
-                return mappedType;
+                return WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap);
             })
             .ToArray();
+    }
+
+    /// <summary>
+    /// #372: widen a <c>number</c>/<c>boolean</c> parameter slot (unboxed <c>double</c>/<c>bool</c>) to
+    /// <c>object</c> when the type checker flagged it as possibly holding the runtime <c>undefined</c>
+    /// sentinel (a body reassignment of an <c>any</c>/<c>undefined</c> value, e.g.
+    /// <c>function p(x: number) { x = undefined as any; }</c>). The unboxed slot cannot carry the
+    /// sentinel — it would coerce to <c>NaN</c>/<c>false</c> (or raw garbage for a never-stored slot).
+    /// A no-op for any other type, so it is safe to apply at every parameter mapping site.
+    /// </summary>
+    private static Type WidenIfUndefinedReachableParam(Type mapped, Stmt.Parameter param, TypeMap? typeMap)
+    {
+        if ((mapped == typeof(double) || mapped == typeof(bool)) &&
+            typeMap != null && typeMap.IsUndefinedReachableNumericParam(param))
+            return typeof(object);
+        return mapped;
     }
 
     /// <summary>
@@ -226,7 +247,7 @@ public static class ParameterTypeResolver
         }
 
         if (funcType == null || funcType.ParamTypes.Count != parameters.Count)
-            return parameters.Select(p => ResolveParameterType(p, typeMapper)).ToArray();
+            return parameters.Select(p => WidenIfUndefinedReachableParam(ResolveParameterType(p, typeMapper), p, typeMap)).ToArray();
 
         // Map each parameter type, handling optional parameters and BigInteger
         return funcType.ParamTypes
@@ -260,7 +281,9 @@ public static class ParameterTypeResolver
                     return typeof(object);
                 }
 
-                return mappedType;
+                return i < parameters.Count
+                    ? WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap)
+                    : mappedType;
             })
             .ToArray();
     }
@@ -322,7 +345,7 @@ public static class ParameterTypeResolver
 
         var funcType = ExtractFunctionType(ctorTypeInfo);
         if (funcType == null || funcType.ParamTypes.Count != parameters.Count)
-            return parameters.Select(p => ResolveParameterType(p, typeMapper)).ToArray();
+            return parameters.Select(p => WidenIfUndefinedReachableParam(ResolveParameterType(p, typeMapper), p, typeMap)).ToArray();
 
         // Map each parameter type, handling optional parameters and BigInteger
         return funcType.ParamTypes
@@ -356,7 +379,9 @@ public static class ParameterTypeResolver
                     }
                 }
 
-                return mappedType;
+                return i < parameters.Count
+                    ? WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap)
+                    : mappedType;
             })
             .ToArray();
     }

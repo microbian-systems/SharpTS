@@ -718,9 +718,10 @@ public partial class TypeChecker
                     {
                         CheckStmtList(method.Body);
 
-                        // #367: object-slot number-typed locals that an `any`/`undefined` value may
-                        // have left holding the sentinel, so a `return x` is not coerced to NaN.
-                        MarkUndefinedReachableLocalReturns(method.Body);
+                        // #367/#372: object-slot number/boolean-typed locals, parameters, and returns
+                        // that an `any`/`undefined` value may have left holding the sentinel, so they
+                        // are not coerced to NaN/false.
+                        MarkUndefinedReachableNumericSlots(method.Body, method.Parameters);
                     }
 
                     // Resolve inferred method return type
@@ -837,8 +838,10 @@ public partial class TypeChecker
                     {
                         CheckStmtList(accessor.Body);
 
-                        // #367: object-slot number-typed locals that may hold the undefined sentinel.
-                        MarkUndefinedReachableLocalReturns(accessor.Body);
+                        // #367/#372: object-slot number/boolean-typed locals and returns that may hold
+                        // the undefined sentinel. The setter parameter always uses an object slot, so
+                        // it never corrupts and is not passed.
+                        MarkUndefinedReachableNumericSlots(accessor.Body);
                     }
                     finally
                     {
