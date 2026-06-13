@@ -549,4 +549,90 @@ public class StaticMembersTests
     }
 
     #endregion
+
+    #region Inherited Static Read Through Class-As-Value (#358)
+
+    // A dynamic / value-position read (`(Sub as any).field`) of an inherited *declared* static must
+    // resolve up the superclass chain even when no per-subclass own shadow exists yet. In compiled
+    // mode this goes through the runtime System.Type reader, which previously probed only the
+    // subclass's own declared statics and ancestor expando shadows — never an ancestor's *declared*
+    // static (#358). The interpreter was already correct.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStaticAsValue_DeclaredFieldPreShadow(ExecutionMode mode)
+    {
+        var source = """
+            class Base { static n: number = 7; }
+            class Sub extends Base {}
+            const S: any = Sub;
+            console.log(S.n);
+            """;
+
+        Assert.Equal("7\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStaticAsValue_DeclaredMethod(ExecutionMode mode)
+    {
+        var source = """
+            class Base { static greet(): string { return "hi"; } }
+            class Sub extends Base {}
+            const S: any = Sub;
+            console.log(S.greet());
+            """;
+
+        Assert.Equal("hi\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStaticAsValue_MultiLevelChain(ExecutionMode mode)
+    {
+        var source = """
+            class Base { static n: number = 7; static greet(): string { return "hi"; } }
+            class Mid extends Base {}
+            class Sub extends Mid {}
+            const S: any = Sub;
+            console.log(S.n);
+            console.log(S.greet());
+            """;
+
+        Assert.Equal("7\nhi\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStaticAsValue_OwnShadowWinsOverDeclared(ExecutionMode mode)
+    {
+        // Once a per-subclass own shadow exists, the dynamic read returns it, not the base value.
+        var source = """
+            class Base { static m: number = 10; }
+            class Sub extends Base {}
+            (Sub as any).m = 99;
+            console.log((Sub as any).m);
+            console.log(Base.m);
+            """;
+
+        Assert.Equal("99\n10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedStaticAsValue_AncestorExpandoWinsOverDeclared(ExecutionMode mode)
+    {
+        // An expando shadow written on an ancestor (shadow-before-declared) is seen through the
+        // subclass before the ancestor's declared field — proto-chain order at each level.
+        var source = """
+            class Base { static k: number = 1; }
+            class Sub extends Base {}
+            (Base as any).k = 50;
+            console.log((Sub as any).k);
+            """;
+
+        Assert.Equal("50\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
 }
