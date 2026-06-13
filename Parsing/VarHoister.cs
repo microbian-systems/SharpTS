@@ -48,7 +48,7 @@ public static class VarHoister
     /// </summary>
     public static List<Stmt> Hoist(List<Stmt> body)
     {
-        var collected = new List<(Token Name, string? TypeAnnotation, TypeNode? TypeAnnotationNode)>();
+        var collected = new List<(Token Name, string? TypeAnnotation, TypeNode? TypeAnnotationNode, Expr? InitializerForInference)>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var rewritten = new List<Stmt>(body.Count);
         bool changed = false;
@@ -67,10 +67,13 @@ public static class VarHoister
         // Prepend synthetic `var name;` declarations for each unique hoisted name.
         // Carry the first-seen annotation so the type checker can detect TS2403 when a
         // later declaration uses a different annotation (e.g. nested string then top-level number).
+        // When the first declaration had no annotation but an initializer, carry the initializer
+        // (for type inference only) so the binding's declared type is the initializer's type rather
+        // than `any` — otherwise a later `var z: number;` / `var z = 5;` would not report TS2403.
         var result = new List<Stmt>(collected.Count + rewritten.Count);
-        foreach (var (nameToken, typeAnnotation, typeAnnotationNode) in collected)
+        foreach (var (nameToken, typeAnnotation, typeAnnotationNode, initializerForInference) in collected)
         {
-            result.Add(new Stmt.Var(nameToken, TypeAnnotation: typeAnnotation, TypeAnnotationNode: typeAnnotationNode, Initializer: null, HasDefiniteAssignmentAssertion: false, IsVar: true));
+            result.Add(new Stmt.Var(nameToken, TypeAnnotation: typeAnnotation, TypeAnnotationNode: typeAnnotationNode, Initializer: null, HasDefiniteAssignmentAssertion: false, IsVar: true, HoistTypeInferenceInitializer: initializerForInference));
         }
         result.AddRange(rewritten);
         return result;
@@ -83,7 +86,7 @@ public static class VarHoister
     /// <param name="isTopLevel">True if this statement is directly inside the function/module
     /// body. Top-level vars are still rewritten to assignments (so the synthetic declarations
     /// at the top can hold the binding) but they appear in the same source-order position.</param>
-    private static Stmt RewriteAndCollect(Stmt stmt, List<(Token Name, string? TypeAnnotation, TypeNode? TypeAnnotationNode)> collected, HashSet<string> seen, bool isTopLevel, ref bool changed)
+    private static Stmt RewriteAndCollect(Stmt stmt, List<(Token Name, string? TypeAnnotation, TypeNode? TypeAnnotationNode, Expr? InitializerForInference)> collected, HashSet<string> seen, bool isTopLevel, ref bool changed)
     {
         switch (stmt)
         {
@@ -108,7 +111,12 @@ public static class VarHoister
 
                 if (seen.Add(v.Name.Lexeme))
                 {
-                    collected.Add((v.Name, v.TypeAnnotation, v.TypeAnnotationNode));
+                    // Carry the initializer for type inference only when there is no annotation
+                    // to carry — an explicit annotation already establishes the declared type.
+                    Expr? initForInference = v.TypeAnnotation == null && v.TypeAnnotationNode == null
+                        ? v.Initializer
+                        : null;
+                    collected.Add((v.Name, v.TypeAnnotation, v.TypeAnnotationNode, initForInference));
                 }
                 changed = true;
                 if (v.Initializer == null)
@@ -317,7 +325,7 @@ public static class VarHoister
     /// Helper for rewriting a list of statements (used by TryCatch/Switch which carry
     /// <c>List&lt;Stmt&gt;</c> directly rather than wrapping in a Block).
     /// </summary>
-    private static List<Stmt> RewriteList(List<Stmt> list, List<(Token Name, string? TypeAnnotation, TypeNode? TypeAnnotationNode)> collected, HashSet<string> seen, ref bool changed)
+    private static List<Stmt> RewriteList(List<Stmt> list, List<(Token Name, string? TypeAnnotation, TypeNode? TypeAnnotationNode, Expr? InitializerForInference)> collected, HashSet<string> seen, ref bool changed)
     {
         var result = new List<Stmt>(list.Count);
         foreach (var s in list)

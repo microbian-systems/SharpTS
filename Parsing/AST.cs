@@ -357,7 +357,14 @@ public abstract record Stmt
     /// <param name="TypeAnnotationNode">Structured form of <c>TypeAnnotation</c> when the
     /// construct has node support (type-AST migration); null otherwise — consumers fall back to
     /// the string.</param>
-    public record Var(Token Name, string? TypeAnnotation, Expr? Initializer, bool HasDefiniteAssignmentAssertion = false, bool IsVar = false, TypeNode? TypeAnnotationNode = null) : Stmt;
+    /// <param name="HoistTypeInferenceInitializer">Set by <see cref="VarHoister"/> on a synthetic
+    /// hoisted <c>var</c> whose first real declaration was a nested, annotation-less initializer
+    /// (e.g. <c>if (c) { var z = "hello"; }</c>). The binding has no <c>Initializer</c> here (the
+    /// initializer runs at its original, rewritten position) and no annotation, so its declared type
+    /// would otherwise default to <c>any</c> — suppressing TS2403 for a later <c>var z: number;</c>.
+    /// The type checker infers the binding's declared type from this expression (widened, errors
+    /// suppressed since they surface at the original site); the interpreter and IL compiler ignore it.</param>
+    public record Var(Token Name, string? TypeAnnotation, Expr? Initializer, bool HasDefiniteAssignmentAssertion = false, bool IsVar = false, TypeNode? TypeAnnotationNode = null, Expr? HoistTypeInferenceInitializer = null) : Stmt;
     /// <summary>
     /// Const variable declaration. Separate from Var for cleaner const-specific handling (e.g., unique symbol).
     /// Initializer is non-nullable since const always requires initialization.

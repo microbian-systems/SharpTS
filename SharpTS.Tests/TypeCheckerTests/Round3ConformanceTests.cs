@@ -200,6 +200,69 @@ public class Round3ConformanceTests
         Assert.Equal("TS2403", ex.Diagnostic.TsCode);
     }
 
+    // ── Issue #378: nested-first var with an initializer but no annotation ─────────────────────────
+
+    [Fact]
+    public void VarRedeclaration_NestedFirstInitializerNoAnnotation_AnnotatedRedeclaration_IsTs2403Error()
+    {
+        // Issue #378: the first declaration is nested and has only an initializer (no annotation),
+        // so #363's annotation-carrying produced nothing — the hoisted `var z;` defaulted to `any`
+        // and silenced TS2403. The initializer is now carried for type inference, establishing
+        // `string` as the binding's type so a later `var z: number;` conflicts.
+        var source = """
+            function h(c: boolean) {
+                if (c) { var z = "hello"; }
+                var z: number;
+            }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2403", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void VarRedeclaration_NestedFirstInitializerNoAnnotation_InitializerRedeclaration_IsTs2403Error()
+    {
+        // The fully-initializer variant: nested `var z = "hello"` then top-level `var z = 5`.
+        var source = """
+            function h(c: boolean) {
+                if (c) { var z = "hello"; }
+                var z = 5;
+            }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2403", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void VarRedeclaration_NestedFirstInitializerNoAnnotation_SameType_IsNotError()
+    {
+        // The inferred type widens the literal (string, not "hello"), so a same-type redeclaration
+        // passes silently — matching tsc.
+        var source = """
+            function h(c: boolean) {
+                if (c) { var z = "hello"; }
+                var z = "world";
+            }
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void VarRedeclaration_NestedFirstInitializerNoAnnotation_RuntimeStillHoists()
+    {
+        // The carried initializer is type-inference-only: it must not run at the hoisted position,
+        // so `z` is undefined when the nested branch is skipped.
+        var source = """
+            function f(c: boolean): string | undefined {
+                if (c) { var z = "hello"; }
+                return z;
+            }
+            console.log(f(true));
+            console.log(f(false));
+            """;
+        Assert.Equal("hello\nundefined", TestHarness.RunInterpreted(source).Trim().Replace("\r\n", "\n"));
+    }
+
     [Fact]
     public void VarShadowing_InNestedFunction_IsNotRedeclaration()
     {

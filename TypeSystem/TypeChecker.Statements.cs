@@ -144,6 +144,15 @@ public partial class TypeChecker
         // Node-first annotation resolution (type-AST migration), string fallback.
         TypeInfo? declaredType = ResolveAnnotation(stmt.TypeAnnotation, stmt.TypeAnnotationNode);
 
+        // VarHoister carries the first nested declaration's initializer onto the synthetic hoisted
+        // `var` (which itself has no Initializer) when that declaration had no annotation. Infer the
+        // binding's declared type from it so a later `var z: number;` / `var z = 5;` reports TS2403
+        // instead of being silenced by an `any` placeholder. (See Stmt.Var.HoistTypeInferenceInitializer.)
+        if (declaredType is null && stmt.Initializer is null && stmt.HoistTypeInferenceInitializer is { } inferenceSource)
+        {
+            declaredType = InferHoistedVarType(inferenceSource);
+        }
+
         if (stmt.HasDefiniteAssignmentAssertion)
         {
             _environment.Define(stmt.Name.Lexeme, declaredType!);
@@ -255,6 +264,30 @@ public partial class TypeChecker
                 $" Subsequent variable declarations must have the same type. Variable '{stmt.Name.Lexeme}' must be of type '{previous}', but here has type '{newType}'.",
                 line: stmt.Name.Line, tsCode: "TS2403");
         }
+    }
+
+    /// <summary>
+    /// Infers the declared type of a hoisted <c>var</c> from the first nested declaration's
+    /// initializer (carried on <see cref="Stmt.Var.HoistTypeInferenceInitializer"/>). The literal
+    /// type is widened to match how <c>var x = expr;</c> is normally typed, and top-level
+    /// null/undefined widen to <c>any</c>. Errors are suppressed and degrade to <c>any</c>: the
+    /// initializer is also checked at its original (rewritten) position, where any real diagnostic
+    /// is reported with the correct location. The speculative check runs in its own narrowing scope
+    /// so it leaves no narrowings behind.
+    /// </summary>
+    private TypeInfo? InferHoistedVarType(Expr initializer)
+    {
+        PushEmptyNarrowingScope();
+        try
+        {
+            TypeInfo inferred = WidenLiteralType(CheckExpr(initializer));
+            if (inferred is TypeInfo.Null or TypeInfo.Undefined)
+                return new TypeInfo.Any();
+            return inferred;
+        }
+        catch (TypeMismatchException) { return null; }
+        catch (TypeCheckException) { return null; }
+        finally { PopNarrowingScope(); }
     }
 
     internal VoidResult VisitConst(Stmt.Const stmt)
