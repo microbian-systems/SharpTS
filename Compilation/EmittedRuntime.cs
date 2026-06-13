@@ -1604,6 +1604,12 @@ public class EmittedRuntime
     public MethodBuilder ProcessGetArgv { get; set; } = null!;
     public MethodBuilder ProcessHrtime { get; set; } = null!;
     public MethodBuilder ProcessUptime { get; set; } = null!;
+
+    // Monotonic process-start baseline (a Stopwatch timestamp) captured in the
+    // $Runtime .cctor, so ProcessUptime() reports a non-decreasing "seconds since
+    // process start" instead of a wall-clock delta that an NTP slew can reverse.
+    public FieldBuilder ProcessUptimeBaselineField { get; set; } = null!;
+
     public MethodBuilder ProcessMemoryUsage { get; set; } = null!;
     public MethodBuilder ProcessGetNextTick { get; set; } = null!;
     public MethodBuilder ProcessEventEmitterCall { get; set; } = null!;

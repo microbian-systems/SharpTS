@@ -472,6 +472,19 @@ public partial class RuntimeEmitter
         cctorIL.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.Object));
         cctorIL.Emit(OpCodes.Stsfld, mapNullSentinelField);
 
+        // Capture a monotonic process-start baseline for process.uptime(). Stopwatch
+        // is monotonic (QueryPerformanceCounter / CLOCK_MONOTONIC); reading wall-clock
+        // DateTime at each uptime() call could run backwards on an NTP slew. The .cctor
+        // runs once at type load (≈ process start), so ProcessUptime() reports a
+        // non-decreasing "seconds since process start". Read by EmitProcessUptime.
+        var uptimeBaselineField = typeBuilder.DefineField(
+            "_uptimeStartTimestamp",
+            _types.Int64,
+            FieldAttributes.Private | FieldAttributes.Static);
+        runtime.ProcessUptimeBaselineField = uptimeBaselineField;
+        cctorIL.Emit(OpCodes.Call, _types.StopwatchGetTimestamp);
+        cctorIL.Emit(OpCodes.Stsfld, uptimeBaselineField);
+
         // Initialize perf_hooks timing fields (must be called after fields are defined)
         // Note: Fields will be defined by EmitPerfHooksMethods, so we defer this initialization
         // The initialization is done inline in EmitPerfHooksMethods instead

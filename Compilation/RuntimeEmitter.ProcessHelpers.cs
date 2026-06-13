@@ -345,37 +345,33 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Get current process: Process.GetCurrentProcess()
-        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Process, "GetCurrentProcess"));
-        var processLocal = il.DeclareLocal(_types.Process);
-        il.Emit(OpCodes.Stloc, processLocal);
+        // Monotonic uptime: (now - baseline) / Stopwatch.Frequency, where baseline is a
+        // Stopwatch timestamp captured in the $Runtime .cctor. Stopwatch is monotonic,
+        // so two successive reads never decrease — unlike the former DateTime.UtcNow -
+        // Process.StartTime, which an NTP slew could reverse (intermittently failing
+        // Process_Uptime_IncreasesOverTime).
+        //
+        // CRITICAL ordering: read the baseline field BEFORE sampling 'now'. $Runtime is
+        // beforefieldinit, so its .cctor (which stamps the baseline) runs lazily at the
+        // first static-field access. Sampling 'now' first and then touching the field
+        // would let the .cctor stamp the baseline AFTER 'now', yielding a tiny negative
+        // uptime. Loading the field first forces the .cctor, so baseline <= now always.
+        var stopwatchType = _types.Stopwatch;
 
-        // Get start time: process.StartTime
-        il.Emit(OpCodes.Ldloc, processLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.Process, "StartTime"));
-        var startTimeLocal = il.DeclareLocal(_types.DateTime);
-        il.Emit(OpCodes.Stloc, startTimeLocal);
+        var baselineLocal = il.DeclareLocal(_types.Int64);
+        il.Emit(OpCodes.Ldsfld, runtime.ProcessUptimeBaselineField);
+        il.Emit(OpCodes.Stloc, baselineLocal);
 
-        // Get current time: DateTime.UtcNow
-        il.Emit(OpCodes.Call, _types.GetPropertyGetter(_types.DateTime, "UtcNow"));
-        var nowLocal = il.DeclareLocal(_types.DateTime);
-        il.Emit(OpCodes.Stloc, nowLocal);
+        // (now - baseline) as ticks, widened to double
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(stopwatchType, "GetTimestamp"));
+        il.Emit(OpCodes.Ldloc, baselineLocal);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Conv_R8);
 
-        // Convert start time to UTC
-        il.Emit(OpCodes.Ldloca, startTimeLocal);
-        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.DateTime, "ToUniversalTime"));
-        il.Emit(OpCodes.Stloc, startTimeLocal);
-
-        // Calculate difference: now - startTime
-        il.Emit(OpCodes.Ldloc, nowLocal);
-        il.Emit(OpCodes.Ldloc, startTimeLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.DateTime, "op_Subtraction", _types.DateTime, _types.DateTime));
-        var spanLocal = il.DeclareLocal(_types.TimeSpan);
-        il.Emit(OpCodes.Stloc, spanLocal);
-
-        // Get TotalSeconds
-        il.Emit(OpCodes.Ldloca, spanLocal);
-        il.Emit(OpCodes.Call, _types.GetPropertyGetter(_types.TimeSpan, "TotalSeconds"));
+        // / (double)Stopwatch.Frequency
+        il.Emit(OpCodes.Ldsfld, _types.GetField(stopwatchType, "Frequency"));
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Div);
 
         il.Emit(OpCodes.Ret);
     }
