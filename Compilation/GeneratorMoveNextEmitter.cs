@@ -113,8 +113,20 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
         _il.Emit(OpCodes.Ldc_I4_0);
         _il.Emit(OpCodes.Ret);
 
-        // Return false label (generator completed)
+        // Return false label — re-entry on an already-completed generator (state == -2):
+        // `gen.next()` called after the generator finished, or after `gen.return(v)`.
+        // Per ECMA-262 27.5.1.2, a completed generator's `next()` always reports
+        // `{ value: undefined, done: true }` — the completion value was already consumed by the
+        // call that finished it. Reset Current to the `$Undefined` sentinel so a stale value does
+        // not leak: an explicit `return X` left X in Current, and `gen.return(v)`
+        // (GeneratorStateMachineBuilder) leaves the last *yielded* value there untouched — either
+        // of which the done-path read of Current in `next()` would otherwise re-surface (#499).
+        // The first MoveNext to complete takes the fall-through / EmitReturn path above (which set
+        // the correct completion value), not this label, so genuine completion values are kept.
         _il.MarkLabel(_returnFalseLabel);
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
+        _il.Emit(OpCodes.Stfld, _builder.CurrentField);
         _il.Emit(OpCodes.Ldc_I4_0);
         _il.Emit(OpCodes.Ret);
     }
