@@ -1987,15 +1987,29 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noBuiltInMatchLabel);
 
-            // #265: walk the constructor's superclass chain for inherited expando
+            // #265/#358: walk the constructor's superclass chain for inherited
             // statics. In Node a class constructor inherits from its parent
-            // constructor (Object.getPrototypeOf(D) === C), so a string-keyed static
-            // set on a base (`Base.foo = 1`) is readable through a subclass `D.foo`.
-            // PDS keys descriptors by the Type identity per-class with no parent
-            // awareness, so probe each ancestor's store here — after the subclass's
-            // own descriptors and declared members, matching own-before-inherited.
+            // constructor (Object.getPrototypeOf(D) === C), so a static set on a
+            // base — whether a string-keyed expando (`Base.foo = 1`) or a declared
+            // static field/method (`static n = 7`) — is readable through a subclass
+            // `D.foo` / `D.n`. Neither PDS (keyed by Type identity per-class with no
+            // parent awareness) nor the own-only reflection probes above
+            // (Public|Static finds no inherited statics without FlattenHierarchy)
+            // crosses the chain, so probe each ancestor here. At every level the
+            // order mirrors the subclass's own probes: PDS shadow first
+            // (shadow-before-declared, so an expando write on an ancestor wins over
+            // its declared field — #339 keeps nearer-subclass shadows out of this
+            // walk by resolving them above), then declared static method, then
+            // declared static field. Declared-member probes are gated on
+            // $IHasFields so only emitted user classes are inspected — this skips
+            // System.Object / runtime base types ($Array/$Promise/$Error) whose
+            // BCL statics (e.g. Object.Equals) would otherwise bleed through.
+            const BindingFlags declaredStaticPublic =
+                BindingFlags.Public | BindingFlags.Static | BindingFlags.DeclaredOnly;
             var walkTypeLocal = il.DeclareLocal(_types.Type);
             var baseDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            var baseStaticMethodLocal = il.DeclareLocal(_types.MethodInfo);
+            var baseStaticFieldLocal = il.DeclareLocal(typeof(FieldInfo));
             il.Emit(OpCodes.Ldloc, typeLocal);
             il.Emit(OpCodes.Stloc, walkTypeLocal);
             var baseWalkLoop = il.DefineLabel();
@@ -2006,15 +2020,53 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Stloc, walkTypeLocal);
             il.Emit(OpCodes.Ldloc, walkTypeLocal);
             il.Emit(OpCodes.Brfalse, classInstanceLabel);
-            // desc = PDSGetPropertyDescriptor(walkType, name);
+            // desc = PDSGetPropertyDescriptor(walkType, name);  (expando shadow)
             il.Emit(OpCodes.Ldloc, walkTypeLocal);
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
             il.Emit(OpCodes.Stloc, baseDescLocal);
             il.Emit(OpCodes.Ldloc, baseDescLocal);
-            il.Emit(OpCodes.Brfalse, baseWalkLoop);
+            var baseProbeDeclaredLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, baseProbeDeclaredLabel);
             il.Emit(OpCodes.Ldloc, baseDescLocal);
             il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetGetMethod()!);
+            il.Emit(OpCodes.Ret);
+
+            // No expando shadow on this ancestor — probe its declared statics, but
+            // only when it is an emitted user class ($IHasFields.IsAssignableFrom).
+            il.MarkLabel(baseProbeDeclaredLabel);
+            il.Emit(OpCodes.Ldtoken, runtime.IHasFieldsInterface);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+            il.Emit(OpCodes.Ldloc, walkTypeLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+            il.Emit(OpCodes.Brfalse, baseWalkLoop);
+
+            // declared static method → $TSFunction(null, methodInfo)
+            il.Emit(OpCodes.Ldloc, walkTypeLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4, (int)declaredStaticPublic);
+            il.Emit(OpCodes.Call, runtime.SafeGetMethod);
+            il.Emit(OpCodes.Stloc, baseStaticMethodLocal);
+            il.Emit(OpCodes.Ldloc, baseStaticMethodLocal);
+            var noBaseStaticMethodLabel = il.DefineLabel();
+            il.Emit(OpCodes.Brfalse, noBaseStaticMethodLabel);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ldloc, baseStaticMethodLocal);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(noBaseStaticMethodLabel);
+
+            // declared static field → field.GetValue(null)
+            il.Emit(OpCodes.Ldloc, walkTypeLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4, (int)declaredStaticPublic);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetField", _types.String, typeof(BindingFlags)));
+            il.Emit(OpCodes.Stloc, baseStaticFieldLocal);
+            il.Emit(OpCodes.Ldloc, baseStaticFieldLocal);
+            il.Emit(OpCodes.Brfalse, baseWalkLoop);
+            il.Emit(OpCodes.Ldloc, baseStaticFieldLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(typeof(FieldInfo), "GetValue", _types.Object));
             il.Emit(OpCodes.Ret);
         }
 
