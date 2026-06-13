@@ -74,13 +74,15 @@ public class ModuleTests
     }
 
     // These three guard the #392 parser fix (`export async function`,
-    // `export function*`, `export async function*`) in single-file form. They run
-    // InterpretedOnly: the parser fix is mode-independent, and single-file *script-mode*
-    // compilation does not bind exported function declarations at all (a broader gap that
-    // also affects plain sync functions, tracked in #417). Compiled cross-module execution of
-    // these exports is fixed by #395 — see the *_CrossModule tests below, which run in both modes.
+    // `export function*`, `export async function*`) in single-file form. Since #417 they
+    // run in BOTH modes: single-file *script-mode* compilation now unwraps `export`-wrapped
+    // declarations (Phase4/Phase7 delegate to the shared define/emit helpers), so an exported
+    // function is bound and callable just like in the interpreter. The plain-sync single-file
+    // case — the broader gap #417 also fixed — is covered by ExportSyncFunction_SingleFile below.
+    // Compiled cross-module execution of these exports is additionally covered by the
+    // *_CrossModule tests further down (#395).
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ExportAsyncFunction_Parses(ExecutionMode mode)
     {
         // Regression: `export async function` previously failed to parse
@@ -97,7 +99,7 @@ public class ModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ExportGeneratorFunction_Parses(ExecutionMode mode)
     {
         // Regression: `export function*` previously failed to parse ("Expect
@@ -114,7 +116,7 @@ public class ModuleTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ExportAsyncGeneratorFunction_Parses(ExecutionMode mode)
     {
         // Regression: `export async function*` shares the same export dispatcher
@@ -131,15 +133,31 @@ public class ModuleTests
         Assert.Equal("1\n2\n", TestHarness.Run(source, mode));
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExportSyncFunction_SingleFile(ExecutionMode mode)
+    {
+        // Regression for #417: a plain `export function` in a single-file (script-mode)
+        // *compilation* was never bound — Phase4/Phase7 didn't unwrap Stmt.Export — so the
+        // call site threw "ReferenceError: Undefined variable 'f'". This is the broader gap
+        // that #417 fixed beyond the async/generator cases above. The interpreter always
+        // handled it; this pins the compiled single-file path too.
+        var source = """
+            export function f(): number { return 5; }
+            console.log(f());
+            """;
+
+        Assert.Equal("5\n", TestHarness.Run(source, mode));
+    }
+
     // ---- #395: exported async / generator / async-generator functions callable across modules ----
-    // The three #392 tests above stay InterpretedOnly because they compile a single file in
-    // script (non-module) mode, where exported function declarations are still not bound
-    // (a separate, broader gap that also affects plain sync functions — see #417). These tests
-    // use the real cross-module path (RunModules), which
-    // is how the CLI compiles any file containing `export`. Before #395 the compiled export-store
-    // only consulted `_ctx.Functions` under the module-qualified name, missing async/generator
-    // stubs (keyed by simple name) — the import field stayed null and the call threw
-    // "object is not a function". They run in BOTH modes to pin the fix and guard the interpreter.
+    // The single-file tests above exercise script (non-module) mode via TestHarness.Run; since
+    // #417 they run in both modes (the compiled script path now binds exported declarations).
+    // The tests below instead use the real cross-module path (RunModules), which is how the CLI
+    // compiles any file containing `export`. Before #395 the compiled export-store only consulted
+    // `_ctx.Functions` under the module-qualified name, missing async/generator stubs (keyed by
+    // simple name) — the import field stayed null and the call threw "object is not a function".
+    // They run in BOTH modes to pin the fix and guard the interpreter.
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
