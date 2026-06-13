@@ -144,8 +144,8 @@ public partial class Interpreter
             case Expr.LogicalAssign logical: return await EvaluateLogicalAssignAsync(logical);
             case Expr.LogicalSet logicalSet: return await EvaluateLogicalSetAsync(logicalSet);
             case Expr.LogicalSetIndex logicalSetIndex: return await EvaluateLogicalSetIndexAsync(logicalSetIndex);
-            case Expr.PrefixIncrement prefix: return EvaluatePrefixIncrement(prefix);
-            case Expr.PostfixIncrement postfix: return EvaluatePostfixIncrement(postfix);
+            case Expr.PrefixIncrement prefix: return await EvaluatePrefixIncrementAsync(prefix);
+            case Expr.PostfixIncrement postfix: return await EvaluatePostfixIncrementAsync(postfix);
             case Expr.ArrowFunction arrow: return EvaluateArrowFunction(arrow);
             case Expr.TemplateLiteral template: return await EvaluateTemplateLiteralAsync(template);
             case Expr.TaggedTemplateLiteral tagged: return await EvaluateTaggedTemplateLiteralAsync(tagged);

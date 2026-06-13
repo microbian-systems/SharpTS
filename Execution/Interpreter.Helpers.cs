@@ -186,42 +186,92 @@ public partial class Interpreter
         switch (operand)
         {
             case Expr.Variable variable:
-            {
-                double current = _environment.Get(variable.Name).AsNumber();
-                double newValue = current + delta;
-                _environment.Assign(variable.Name, RuntimeValue.FromNumber(newValue));
-                return RuntimeValue.FromNumber(returnOld ? current : newValue);
-            }
+                return IncrementVariable(variable, delta, returnOld);
 
             case Expr.Get get:
-            {
-                object? obj = Evaluate(get.Object);
-                if (TryGetProperty(obj, get.Name, out object? currentObj))
-                {
-                    double current = (double)currentObj!;
-                    double newValue = current + delta;
-                    if (TrySetProperty(obj, get.Name, newValue))
-                    {
-                        return RuntimeValue.FromNumber(returnOld ? current : newValue);
-                    }
-                }
-                break;
-            }
+                return IncrementProperty(Evaluate(get.Object), get.Name, delta, returnOld);
 
             case Expr.GetIndex getIndex:
             {
                 object? obj = Evaluate(getIndex.Object);
                 object? index = Evaluate(getIndex.Index);
-                if (TryGetIndex(obj, index, out object? currentObj))
-                {
-                    double current = (double)currentObj!;
-                    double newValue = current + delta;
-                    if (TrySetIndex(obj, index, newValue))
-                    {
-                        return RuntimeValue.FromNumber(returnOld ? current : newValue);
-                    }
-                }
-                break;
+                return IncrementIndex(obj, index, delta, returnOld);
+            }
+        }
+
+        throw new InterpreterException("Invalid increment operand.");
+    }
+
+    /// <summary>
+    /// Async counterpart of <see cref="EvaluateIncrement"/>. Resolves the operand's
+    /// receiver (and index) through the async-aware evaluator so an <c>await</c> or
+    /// thenable in the receiver/index — e.g. <c>(await foo()).n++</c>, <c>arr[await i()]--</c> —
+    /// is awaited rather than routed to the synchronous <c>VisitAwait</c>, which throws
+    /// "'await' can only be used inside async functions." The read-modify-write itself is
+    /// identical to the synchronous path. See issue #451.
+    /// </summary>
+    private async Task<RuntimeValue> EvaluateIncrementAsync(Expr operand, double delta, bool returnOld)
+    {
+        switch (operand)
+        {
+            case Expr.Variable variable:
+                return IncrementVariable(variable, delta, returnOld);
+
+            case Expr.Get get:
+                return IncrementProperty((await EvaluateAsync(get.Object)).ToObject(), get.Name, delta, returnOld);
+
+            case Expr.GetIndex getIndex:
+            {
+                object? obj = (await EvaluateAsync(getIndex.Object)).ToObject();
+                object? index = (await EvaluateAsync(getIndex.Index)).ToObject();
+                return IncrementIndex(obj, index, delta, returnOld);
+            }
+        }
+
+        throw new InterpreterException("Invalid increment operand.");
+    }
+
+    /// <summary>Increments a variable l-value, returning the old or new value.</summary>
+    private RuntimeValue IncrementVariable(Expr.Variable variable, double delta, bool returnOld)
+    {
+        double current = _environment.Get(variable.Name).AsNumber();
+        double newValue = current + delta;
+        _environment.Assign(variable.Name, RuntimeValue.FromNumber(newValue));
+        return RuntimeValue.FromNumber(returnOld ? current : newValue);
+    }
+
+    /// <summary>
+    /// Increments a property l-value on an already-resolved receiver. Shared by the
+    /// synchronous and async increment paths so the read-modify-write semantics stay identical.
+    /// </summary>
+    private RuntimeValue IncrementProperty(object? obj, Token name, double delta, bool returnOld)
+    {
+        if (TryGetProperty(obj, name, out object? currentObj))
+        {
+            double current = (double)currentObj!;
+            double newValue = current + delta;
+            if (TrySetProperty(obj, name, newValue))
+            {
+                return RuntimeValue.FromNumber(returnOld ? current : newValue);
+            }
+        }
+
+        throw new InterpreterException("Invalid increment operand.");
+    }
+
+    /// <summary>
+    /// Increments an indexed l-value on an already-resolved receiver/index. Shared by the
+    /// synchronous and async increment paths so the read-modify-write semantics stay identical.
+    /// </summary>
+    private RuntimeValue IncrementIndex(object? obj, object? index, double delta, bool returnOld)
+    {
+        if (TryGetIndex(obj, index, out object? currentObj))
+        {
+            double current = (double)currentObj!;
+            double newValue = current + delta;
+            if (TrySetIndex(obj, index, newValue))
+            {
+                return RuntimeValue.FromNumber(returnOld ? current : newValue);
             }
         }
 
