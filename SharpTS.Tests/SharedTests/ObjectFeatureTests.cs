@@ -588,6 +588,117 @@ public class ObjectFeatureTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Function_New_ArrowCapturesConstructedThis_DirectNew(ExecutionMode mode)
+    {
+        // #399: an arrow declared inside a plain `function` invoked with `new` must
+        // lexically capture the freshly-constructed `this`. In compiled mode the
+        // arrow's captured-`this` field was populated by a hand-rolled subset of the
+        // `this`-resolution chain that fell back to Ldnull for plain function bodies
+        // (which resolve `this` via the NewOnFunction thread-local), so the arrow saw
+        // `this == null`. The fix routes the capture through the shared LoadThis().
+        var source = """
+            function Cap(this: any, cb: () => void) {
+                this.tag = 'cap';
+                const arrow = () => { console.log('arrow: ' + this.tag); };
+                arrow();
+            }
+            new (Cap as any)(() => {});
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("arrow: cap\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Function_New_ArrowCapturesConstructedThis_DynamicNewViaValue(ExecutionMode mode)
+    {
+        // #399, dynamic-new form: the callee is a runtime value (`new C(...)`), so the
+        // compiled path goes through NewOnFunction. The nested arrow must still capture
+        // the constructed `this`.
+        var source = """
+            function Cap(this: any, cb: () => void) {
+                this.tag = 'cap';
+                const arrow = () => { console.log('arrow: ' + this.tag); };
+                arrow();
+            }
+            const C: any = Cap;
+            new C(() => {});
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("arrow: cap\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Function_New_NestedArrowsCaptureConstructedThis(ExecutionMode mode)
+    {
+        // #399, deep nesting: an arrow inside an arrow inside a function-as-constructor.
+        // The inner arrow's `this` propagates as a capture up through the outer arrow,
+        // so the outer arrow's display class carries `this` and the inner reads it from
+        // that field — the function body's snapshot of `this` must be the real instance.
+        var source = """
+            function Cap(this: any) {
+                this.tag = 'deep';
+                const outer = () => {
+                    const inner = () => 'inner: ' + this.tag;
+                    return inner();
+                };
+                console.log(outer());
+            }
+            new (Cap as any)();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("inner: deep\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Function_New_ArrowOnInstanceEscapesAndKeepsThis(ExecutionMode mode)
+    {
+        // #399, escaping arrow: the arrow is stored on the instance and invoked AFTER
+        // the constructor activation returns. Because `this` is snapshotted into the
+        // arrow's display class at creation time, the captured instance must survive.
+        var source = """
+            function Make(this: any, v: string) {
+                this.v = v;
+                this.get = () => 'escaped: ' + this.v;
+            }
+            const o: any = new (Make as any)('X');
+            console.log(o.get());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("escaped: X\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Function_New_ClassMethodArrowThis_StillWorks(ExecutionMode mode)
+    {
+        // #399 regression guard: routing captured-`this` through LoadThis() must not
+        // disturb the class-method-arrow path (the minimatch
+        // `.map(row => row.map(ss => this.x))` chain). Here the outermost capture
+        // resolves to the class method's arg0; the nested arrow reads it from the
+        // outer arrow's captured-`this` field.
+        var source = """
+            class Parser {
+                prefix = 'P:';
+                parseAll(items: string[][]): string {
+                    return items.map(row => row.map(s => this.prefix + s).join(',')).join(' | ');
+                }
+            }
+            console.log(new Parser().parseAll([['a', 'b'], ['c']]));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("P:a,P:b | P:c\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Function_Call_RoutesPropertyWritesToTarget(ExecutionMode mode)
     {
         // `Fn.call(target, ...)` must mutate `target`. Compiled path needed

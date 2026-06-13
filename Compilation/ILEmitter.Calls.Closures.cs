@@ -363,29 +363,22 @@ public partial class ILEmitter
             // Load the captured variable's current value
             if (capturedVar == "this")
             {
-                // Arrow-spec semantics: `this` is lexically captured from the enclosing
-                // non-arrow scope. When THIS arrow's own display class already has a
-                // captured `this` field (i.e. we're inside a parent arrow's body and the
-                // parent captured the class's `this`), propagate it from there. Don't use
-                // bare Ldarg_0 in that case — inside an arrow-body the arg0 slot is the
-                // display class instance itself, not the enclosing class's `this`, and
-                // passing the DC into a nested arrow caused InvalidCastException /
-                // NullReferenceException at use sites (minimatch's
-                // `.map(s => s.map(ss => this.parse(ss)))` hit this).
-                if (_ctx.CapturedFields != null && _ctx.CapturedFields.TryGetValue("this", out var outerThisField))
-                {
-                    IL.Emit(OpCodes.Ldarg_0);
-                    IL.Emit(OpCodes.Ldfld, outerThisField);
-                }
-                else if (_ctx.IsInstanceMethod)
-                {
-                    // Direct class-method body: Ldarg_0 IS the enclosing instance.
-                    IL.Emit(OpCodes.Ldarg_0);
-                }
-                else
-                {
-                    IL.Emit(OpCodes.Ldnull);
-                }
+                // `this` is lexically captured from the enclosing non-arrow scope.
+                // Snapshot it via the shared resolver so the capture matches a bare
+                // `this` read in this same enclosing body — every context shape is
+                // handled identically:
+                //   - parent arrow body that captured `this` → load from the $DisplayClass field
+                //   - object-method-shorthand arrow (`__this`) → the __this parameter
+                //   - direct class-method body                → Ldarg_0
+                //   - static-constructor context              → the class Type
+                //   - plain function invoked via `new`        → thread-local set by NewOnFunction
+                // The previous hand-rolled subset here only handled the first two
+                // shapes and fell back to Ldnull, so an arrow nested in a plain
+                // `function` used as a constructor captured `this == null` (#399).
+                // Routing through LoadThis() also picks up the minimatch
+                // `.map(s => s.map(ss => this.parse(ss)))` chain (case 1 fires for the
+                // parent arrow; class-method arg0 for the outermost).
+                _resolver.LoadThis();
             }
             else if (_ctx.TryGetParameter(capturedVar, out var argIndex))
             {
