@@ -21,6 +21,29 @@ public partial class CompilationContext
     // gets the same direct-delegate dispatch as the inline-arrow form.
     public Dictionary<string, ArrowFunction> ConstArrowBindings { get; set; } = [];
 
+    // ============================================
+    // Self-referential capture write-back (issue #421)
+    // ============================================
+
+    /// <summary>
+    /// Name of the variable currently being declared whose initializer may
+    /// create a closure capturing that same variable (e.g.
+    /// <c>const s = make(() =&gt; s)</c>). Set by the variable-declaration emitter
+    /// around the initializer, consulted by the arrow display-class populator.
+    /// Null when not emitting a self-capturable declaration initializer.
+    /// </summary>
+    public string? SelfCaptureVarName { get; set; }
+
+    /// <summary>
+    /// Display-class instances + fields that captured <see cref="SelfCaptureVarName"/>
+    /// during the current initializer. Each closure populates its field with a
+    /// SNAPSHOT of the local taken before the assignment (so it sees the stale
+    /// value); the declaration emitter writes the freshly-assigned value back into
+    /// these fields after the store. Preserves per-iteration fresh-binding because
+    /// each iteration creates a distinct display-class instance.
+    /// </summary>
+    public List<(LocalBuilder DcInstance, FieldBuilder Field)>? SelfCaptureWriteBacks { get; set; }
+
     // Display classes for capturing closures (arrow node -> type builder)
     public Dictionary<ArrowFunction, TypeBuilder> DisplayClasses { get; set; } = [];
 

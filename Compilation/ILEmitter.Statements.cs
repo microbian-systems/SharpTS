@@ -161,6 +161,19 @@ public partial class ILEmitter
 
         if (v.Initializer != null)
         {
+            // Self-referential capture write-back (issue #421): a closure created
+            // in the initializer that captures THIS variable (e.g.
+            // `const s = make(() => s)`) snapshots the local's value before this
+            // assignment, so it sees the stale/previous value (or null on the first
+            // loop iteration). Track the captured closures' display-class fields and
+            // write the freshly-assigned value back into them after the store —
+            // giving the closure the live value while keeping per-iteration
+            // fresh-binding (each iteration builds a distinct display class).
+            var savedSelfCaptureName = _ctx.SelfCaptureVarName;
+            var savedSelfCaptureWriteBacks = _ctx.SelfCaptureWriteBacks;
+            _ctx.SelfCaptureVarName = v.Name.Lexeme;
+            _ctx.SelfCaptureWriteBacks = [];
+
             EmitExpression(v.Initializer);
 
             if (_ctx.Types.IsDouble(localType))
@@ -174,6 +187,18 @@ public partial class ILEmitter
                 EmitBoxIfNeeded(v.Initializer);
             }
             IL.Emit(OpCodes.Stloc, local);
+
+            foreach (var (dcInstance, field) in _ctx.SelfCaptureWriteBacks)
+            {
+                IL.Emit(OpCodes.Ldloc, dcInstance);
+                IL.Emit(OpCodes.Ldloc, local);
+                if (_ctx.Types.IsDouble(localType))
+                    IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                IL.Emit(OpCodes.Stfld, field);
+            }
+
+            _ctx.SelfCaptureVarName = savedSelfCaptureName;
+            _ctx.SelfCaptureWriteBacks = savedSelfCaptureWriteBacks;
         }
         else
         {
