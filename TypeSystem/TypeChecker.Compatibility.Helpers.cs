@@ -764,6 +764,25 @@ public partial class TypeChecker
     private static string? GetClassName(TypeInfo? classType) =>
         ClassInfoAccessor.Get(classType, c => c.Name, gc => gc.Name);
 
+    /// <summary>
+    /// True when an instance's class hierarchy includes a built-in Error type (Error, TypeError, …),
+    /// i.e. it was declared <c>class X extends Error</c>. Lets such a user subclass satisfy an
+    /// Error-typed target as a nominal subtype, now that <c>Error</c> resolves to TypeInfo.Error rather
+    /// than <c>any</c> (#528). The <c>extends Error</c> placeholder superclass is a MutableClass whose
+    /// Name is the error type's leaf name, so read that directly (ClassInfoAccessor skips MutableClass).
+    /// </summary>
+    private static bool ExtendsBuiltInError(TypeInfo.Instance instance)
+    {
+        TypeInfo? current = instance.ResolvedClassType;
+        for (int guard = 0; current != null && guard < 64; guard++)
+        {
+            string? name = current is TypeInfo.MutableClass mc ? mc.Name : GetClassName(current);
+            if (name != null && BuiltInNames.IsErrorTypeName(name)) return true;
+            current = GetSuperclass(current);
+        }
+        return false;
+    }
+
     private static FrozenDictionary<string, TypeInfo>? GetStaticMethods(TypeInfo? classType) =>
         ClassInfoAccessor.Get(classType, c => c.StaticMethods, gc => gc.StaticMethods);
 
