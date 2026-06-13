@@ -151,6 +151,13 @@ public partial class TypeChecker
                 break;
         }
 
+        // Structurally-decomposable built-in object types (Date, RegExp, Map, Set, the weak/iterator
+        // variants, Promise, …) have no dedicated case above, so they reach here with no keys. Surface
+        // their apparent members as a key union, matching tsc's `keyof Date` etc. (#512).
+        if (Runtime.BuiltIns.BuiltInTypes.GetInstanceMemberNames(type) is { } builtInMemberNames)
+            foreach (var memberName in builtInMemberNames)
+                keys.Add(new TypeInfo.StringLiteral(memberName));
+
         return keys.Distinct(TypeInfoEqualityComparer.Instance).ToList();
     }
 

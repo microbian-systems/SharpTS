@@ -1,0 +1,87 @@
+using SharpTS.Runtime.BuiltIns;
+using SharpTS.TypeSystem;
+using Xunit;
+
+namespace SharpTS.Tests.TypeCheckerTests;
+
+/// <summary>
+/// Guards the shared apparent-members projection for decomposable built-in object types (#512):
+/// <see cref="BuiltInTypes.GetInstanceMemberNames"/> (used by keyof) and
+/// <see cref="BuiltInTypes.GetInstanceMemberType"/> (used by structural assignability and
+/// conditional infer-matching) must agree on one model. The two are authored from separate
+/// declarations (a name list and a name-keyed resolver switch), so this test pins them together:
+/// every advertised member name must resolve to a non-null type. Without this, a name added to one
+/// but not the other would make <c>keyof T</c> surface a key whose <c>T[K]</c> cannot be resolved.
+/// </summary>
+public class BuiltInApparentMembersTests
+{
+    private static readonly TypeInfo Any = new TypeInfo.Any();
+
+    /// <summary>Representative instances of every structurally-decomposable built-in type.</summary>
+    public static IEnumerable<object[]> DecomposableTypes()
+    {
+        yield return ["Date", new TypeInfo.Date()];
+        yield return ["RegExp", new TypeInfo.RegExp()];
+        yield return ["Map", new TypeInfo.Map(Any, Any)];
+        yield return ["Set", new TypeInfo.Set(Any)];
+        yield return ["WeakMap", new TypeInfo.WeakMap(Any, Any)];
+        yield return ["WeakSet", new TypeInfo.WeakSet(Any)];
+        yield return ["WeakRef", new TypeInfo.WeakRef(Any)];
+        yield return ["FinalizationRegistry", new TypeInfo.FinalizationRegistry(Any)];
+        yield return ["Promise", new TypeInfo.Promise(Any)];
+        yield return ["Iterator", new TypeInfo.Iterator(Any)];
+        yield return ["Generator", new TypeInfo.Generator(Any)];
+        yield return ["AsyncGenerator", new TypeInfo.AsyncGenerator(Any)];
+    }
+
+    [Theory]
+    [MemberData(nameof(DecomposableTypes))]
+    public void EveryAdvertisedMemberNameResolves(string label, TypeInfo type)
+    {
+        var names = BuiltInTypes.GetInstanceMemberNames(type);
+        Assert.NotNull(names);
+        Assert.NotEmpty(names);
+
+        foreach (var name in names)
+        {
+            Assert.True(
+                BuiltInTypes.GetInstanceMemberType(type, name) is not null,
+                $"keyof {label} advertises member '{name}' but GetInstanceMemberType could not resolve it. " +
+                $"The {label} member-name list and its GetXxxMemberType resolver have drifted apart.");
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(DecomposableTypes))]
+    public void AbsentMemberDoesNotResolve(string label, TypeInfo type)
+    {
+        // The resolver must not over-match: a name that is not a real member resolves to null, so an
+        // infer-match / structural check against it correctly fails.
+        Assert.Null(BuiltInTypes.GetInstanceMemberType(type, "definitelyNotARealMember"));
+        Assert.DoesNotContain("definitelyNotARealMember", BuiltInTypes.GetInstanceMemberNames(type)!);
+    }
+
+    [Fact]
+    public void IteratorVariantsShareOneMemberList()
+    {
+        // Iterator/Generator/AsyncGenerator all project through GetIteratorMemberType, so they expose
+        // the identical apparent-member set.
+        var iterator = BuiltInTypes.GetInstanceMemberNames(new TypeInfo.Iterator(Any));
+        var generator = BuiltInTypes.GetInstanceMemberNames(new TypeInfo.Generator(Any));
+        var asyncGenerator = BuiltInTypes.GetInstanceMemberNames(new TypeInfo.AsyncGenerator(Any));
+
+        Assert.Equal(iterator, generator);
+        Assert.Equal(iterator, asyncGenerator);
+    }
+
+    [Fact]
+    public void NonDecomposableTypesReturnNull()
+    {
+        // Types without a dedicated apparent-members model are not decomposable here; keyof/assignability
+        // handle them through their own paths (records, interfaces, classes, string/array index sigs).
+        Assert.Null(BuiltInTypes.GetInstanceMemberNames(new TypeInfo.String()));
+        Assert.Null(BuiltInTypes.GetInstanceMemberNames(new TypeInfo.Array(Any)));
+        Assert.Null(BuiltInTypes.GetInstanceMemberNames(Any));
+        Assert.Null(BuiltInTypes.GetInstanceMemberType(new TypeInfo.String(), "length"));
+    }
+}
