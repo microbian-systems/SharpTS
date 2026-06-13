@@ -1,0 +1,122 @@
+using SharpTS.Tests.Infrastructure;
+using SharpTS.TypeSystem.Exceptions;
+using Xunit;
+
+namespace SharpTS.Tests.TypeCheckerTests;
+
+/// <summary>
+/// Regression tests for #458: a <c>const</c>-bound object/array literal must infer WIDENED
+/// property/element types (<c>const o = { n: 1 }</c> ⇒ <c>{ n: number }</c>), so reassigning a
+/// property to another value of the same base type is allowed. <c>const</c> freezes the binding,
+/// not the mutability or declared type of an object literal's members — only <c>as const</c>
+/// produces readonly literal-typed members. This is type-checker behaviour, shared by the
+/// interpreted and compiled modes.
+/// </summary>
+public class ConstInitializerWideningTests
+{
+    // --- The headline bug: property/element reassignment on a const object/array literal ---
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ConstObjectLiteral_PropertyReassign_Allowed(ExecutionMode mode)
+    {
+        // `const o = { n: 1 }` has type `{ n: number }`, so `o.n = 9` is legal TypeScript.
+        var output = TestHarness.Run("const o = { n: 1 }; o.n = 9; console.log(o.n);", mode);
+        Assert.Equal("9\n", output);
+    }
+
+    [Fact]
+    public void ConstObjectLiteral_StringProperty_Reassign_Ok()
+    {
+        TestHarness.RunInterpreted("const o = { s: \"a\" }; o.s = \"b\"; console.log(o.s);");
+    }
+
+    [Fact]
+    public void ConstObjectLiteral_NestedProperty_Reassign_Ok()
+    {
+        // Widening recurses: `o.p` is `{ n: number }`, so `o.p.n = 9` is allowed.
+        TestHarness.RunInterpreted("const o = { p: { n: 1 } }; o.p.n = 9; console.log(o.p.n);");
+    }
+
+    [Fact]
+    public void ConstArrayLiteral_ElementReassign_Ok()
+    {
+        // `const arr = [1, 1, 1]` is `number[]`, not `1[]`, so `arr[0] = 9` is allowed.
+        TestHarness.RunInterpreted("const arr = [1, 1, 1]; arr[0] = 9; console.log(arr[0]);");
+    }
+
+    [Fact]
+    public void ConstObjectLiteral_SatisfiesObjectType_Reassign_Ok()
+    {
+        // `satisfies` is transparent to literal widening: `o` is still `{ n: number }`.
+        TestHarness.RunInterpreted("const o = { n: 1 } satisfies { n: number }; o.n = 9; console.log(o.n);");
+    }
+
+    [Fact]
+    public void ExportConstObjectLiteral_PropertyReassign_Ok()
+    {
+        // `export const` routes through the same VisitConst inference path.
+        TestHarness.RunInterpreted("export const o = { n: 1 }; o.n = 9;");
+    }
+
+    // --- const still preserves TOP-LEVEL primitive literal types ---
+
+    [Fact]
+    public void ConstPrimitiveLiteral_KeepsLiteralType()
+    {
+        // `const x = 1` is the literal type `1` (not `number`), assignable to a `1`-typed binding.
+        TestHarness.RunInterpreted("const x = 1; const y: 1 = x; console.log(y);");
+    }
+
+    // --- `as const` must STILL reject member reassignment (readonly literal types) ---
+
+    [Fact]
+    public void AsConstObject_PropertyReassign_Rejected()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() =>
+            TestHarness.RunInterpreted("const o = { n: 1 } as const; o.n = 9;"));
+    }
+
+    [Fact]
+    public void AsConstArray_ElementReassign_Rejected()
+    {
+        Assert.ThrowsAny<TypeCheckException>(() =>
+            TestHarness.RunInterpreted("const arr = [1, 2, 3] as const; arr[0] = 9;"));
+    }
+
+    [Fact]
+    public void ConstAliasOfAsConst_PropertyReassign_Rejected()
+    {
+        // Aliasing an `as const` value is not a fresh object literal — its literal types are
+        // preserved, so the reassignment through the alias is still rejected.
+        Assert.ThrowsAny<TypeCheckException>(() =>
+            TestHarness.RunInterpreted("const a = { n: 1 } as const; const o = a; o.n = 9;"));
+    }
+
+    // --- A nested `as const` member inside a plain const object literal is still preserved ---
+
+    [Fact]
+    public void ConstObjectLiteral_NestedAsConstMember_KeepsLiteralType()
+    {
+        // `o.p.n` is `1` (the nested `as const` is not widened away), so it is assignable to `1`.
+        TestHarness.RunInterpreted("const o = { p: { n: 1 } as const }; const y: 1 = o.p.n; console.log(y);");
+    }
+
+    [Fact]
+    public void ConstObjectLiteral_NestedAsConstMember_Reassign_Rejected()
+    {
+        // The nested `as const` keeps `o.p.n` at literal type `1`, so reassigning it is rejected.
+        Assert.ThrowsAny<TypeCheckException>(() =>
+            TestHarness.RunInterpreted("const o = { p: { n: 1 } as const }; o.p.n = 9;"));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ConstObjectLiteral_MixedPlainAndAsConstMembers(ExecutionMode mode)
+    {
+        // In the same object literal, a plain member widens (`o.b.m = 5` is allowed) while an
+        // `as const` member keeps its literal types (`o.a.n` stays `1`).
+        var source = "const o = { a: { n: 1 } as const, b: { m: 2 } }; o.b.m = 5; console.log(o.b.m);";
+        Assert.Equal("5\n", TestHarness.Run(source, mode));
+    }
+}
