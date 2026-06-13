@@ -482,9 +482,16 @@ public partial class ILEmitter
         }
         else if (_ctx.TryGetParameter(a.Name.Lexeme, out var argIndex))
         {
-            // Parameters are always object type
+            // A parameter slot is not always object: a `: number` param is an unboxed `double`
+            // slot, a `: boolean` param a `bool` slot, a `: string` param a `string` slot. Box the
+            // value (the assignment's result, left on the stack), then convert the copy destined for
+            // the arg slot to the slot's declared type before Starg — storing a boxed object straight
+            // into a double/bool/string slot fails IL verification (StackUnexpected) and reads back
+            // garbage (#402). EmitConvertForParamSlot is a no-op for object slots (the common case and
+            // the #372-widened undefined-reachable params).
             EmitBoxIfNeeded(a.Value);
             IL.Emit(OpCodes.Dup);
+            _ctx.EmitConvertForParamSlot(IL, a.Name.Lexeme);
             IL.Emit(OpCodes.Starg, argIndex);
             SetStackUnknown();
         }

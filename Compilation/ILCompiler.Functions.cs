@@ -62,7 +62,7 @@ public partial class ILCompiler
         var funcType = _typeMap?.GetFunctionType(qualifiedFunctionName)
                     ?? _typeMap?.GetFunctionType(funcStmt.Name.Lexeme);
         var paramTypes = ParameterTypeResolver.ResolveParameters(
-            funcStmt.Parameters, _typeMapper, funcType);
+            funcStmt.Parameters, _typeMapper, funcType, _typeMap);
 
         // Resolve typed return type (optimization: avoid boxing for : number returns).
         // Widen a number/boolean slot to object if the checker flagged an undefined-reachable

@@ -19,6 +19,7 @@ public class TypeMap
     private readonly Dictionary<Expr.ClassExpr, TypeInfo.Class> _classExprTypes = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Expr> _undefinedReachableReturns = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<object> _undefinedReachableNumericLocals = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Stmt.Parameter> _undefinedReachableNumericParams = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// Associates an expression with its resolved type.
@@ -91,6 +92,26 @@ public class TypeMap
     /// </summary>
     public bool IsUndefinedReachableNumericLocal(object declOrInitializer) =>
         _undefinedReachableNumericLocals.Contains(declOrInitializer);
+
+    /// <summary>
+    /// Flags a <c>number</c>/<c>boolean</c>-typed <em>parameter</em> that an <c>any</c>/<c>undefined</c>
+    /// value may have been (transitively) assigned in the body, leaving it holding the runtime
+    /// <c>undefined</c> sentinel (#372 — the parameter analogue of <see cref="MarkUndefinedReachableNumericLocal"/>).
+    /// A <c>: number</c> parameter compiles to an unboxed <c>double</c> arg slot (a <c>: boolean</c> to a
+    /// <c>bool</c> slot) which cannot carry the sentinel — storing it coerces to <c>NaN</c>/<c>false</c>
+    /// (or, for a never-initialized slot, raw garbage). The compiler's parameter resolver consults this
+    /// to widen just those parameter slots back to <c>object</c>. Keyed by reference on the
+    /// <see cref="Stmt.Parameter"/> node. Purely a compiler hint — caller-side checking still sees the
+    /// clean <c>number</c>/<c>boolean</c> parameter type.
+    /// </summary>
+    public void MarkUndefinedReachableNumericParam(Stmt.Parameter param) =>
+        _undefinedReachableNumericParams.Add(param);
+
+    /// <summary>
+    /// True if <paramref name="param"/> was flagged by <see cref="MarkUndefinedReachableNumericParam"/>.
+    /// </summary>
+    public bool IsUndefinedReachableNumericParam(Stmt.Parameter param) =>
+        _undefinedReachableNumericParams.Contains(param);
 
     /// <summary>
     /// Gets the resolved type for an expression, or null if not found.

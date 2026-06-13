@@ -643,12 +643,12 @@ public partial class TypeChecker
 
                 CheckStmtList(body);
 
-                // #367: flag returns of a number/boolean-typed local that an `any`/`undefined`
-                // assignment may have left holding the undefined sentinel (no-op unless the declared
-                // return is number/boolean). Runs after the body so every sub-expression type is known.
-                // Skipped while speculating — it only matters for the emitted output of the real pass.
+                // #367/#372: object-slot any number/boolean-typed local, parameter, or return that an
+                // `any`/`undefined` assignment may have left holding the undefined sentinel. Runs after
+                // the body so every sub-expression type is known. Skipped while speculating — it only
+                // matters for the emitted output of the real pass.
                 if (!suppress)
-                    MarkUndefinedReachableLocalReturns(body);
+                    MarkUndefinedReachableNumericSlots(body, funcStmt.Parameters);
             }
             catch (Exception) when (suppress)
             {

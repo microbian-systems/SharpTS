@@ -241,7 +241,7 @@ public partial class ILCompiler
         {
             // Resolve parameter types (use annotations only, no TypeMap function type)
             var resolvedParamTypes = ParameterTypeResolver.ResolveParameters(
-                func.Parameters, _typeMapper, null);
+                func.Parameters, _typeMapper, null, _typeMap);
 
             Type[] paramTypes = new Type[func.Parameters.Count];
             for (int i = 0; i < func.Parameters.Count; i++)

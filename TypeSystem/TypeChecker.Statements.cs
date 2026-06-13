@@ -480,30 +480,42 @@ public partial class TypeChecker
     };
 
     /// <summary>
-    /// #367 residual of #344: a <c>number</c>/<c>boolean</c>-typed <em>local</em> can be unsoundly
-    /// assigned an <c>any</c>/<c>undefined</c> value (e.g. <c>let x: number = undefined as any</c>)
-    /// and so hold the runtime <c>undefined</c> sentinel — yet <c>return x</c> has static type
-    /// <c>number</c>/<c>boolean</c>, so the per-return #344 detection (which keys on the return
-    /// value's own type being <c>any</c>/<c>unknown</c>) never fires and the compiler's unboxed
-    /// slot coerces it to <c>NaN</c>/<c>false</c>. Run a whole-body taint pass <em>after</em> the
-    /// body is type-checked (every sub-expression's type is then in the <see cref="TypeMap"/>):
-    /// compute the set of locals that may hold the sentinel to a fixpoint — seeded by direct
-    /// <c>any</c>/<c>undefined</c> assignments and grown transitively through other tainted locals —
-    /// then flag any <c>return</c> of such a local so the compiler widens the slot back to object.
-    /// Order-independent, so a taint reaching an earlier return via a loop back-edge is still
-    /// caught. Over-approximates (no narrowing): at worst a needless object slot, never a wrong
-    /// value. Only meaningful when the declared return is <c>number</c>/<c>boolean</c> — methods,
-    /// async, and inferred-return functions already use an object slot, so they cannot corrupt.
+    /// #367/#372 residual of #344: a <c>number</c>/<c>boolean</c>-typed <em>local or parameter</em>
+    /// can be unsoundly assigned an <c>any</c>/<c>undefined</c> value (e.g.
+    /// <c>let x: number = undefined as any</c> or <c>x = undefined as any</c> on a <c>x: number</c>
+    /// parameter) and so hold the runtime <c>undefined</c> sentinel. A <c>number</c>/<c>boolean</c>
+    /// slot is unboxed (<c>double</c>/<c>bool</c>), which cannot carry the sentinel — storing it
+    /// coerces to <c>NaN</c>/<c>false</c> (a never-initialized double arg slot yields raw garbage).
+    /// The narrow static type at every later use (a <c>return x</c>, a <c>console.log(x)</c>, an
+    /// arithmetic op) reports <c>number</c>/<c>boolean</c>, hiding the taint from the per-expression
+    /// #344 detection.
+    ///
+    /// <para>
+    /// Run a whole-body taint pass <em>after</em> the body is type-checked (every sub-expression's
+    /// type is then in the <see cref="TypeMap"/>): compute the set of names that may hold the
+    /// sentinel to a fixpoint — seeded by direct <c>any</c>/<c>undefined</c> assignments and grown
+    /// transitively through other tainted names — then flag, so the compiler widens each affected
+    /// slot back to <c>object</c>:
+    /// <list type="bullet">
+    ///   <item>tainted local <em>declarations</em> (their unboxed double slot would corrupt at the store);</item>
+    ///   <item>tainted <em>parameters</em> (their unboxed double arg slot likewise corrupts on reassignment);</item>
+    ///   <item><em>returns</em> of a tainted name (the unboxed return slot would corrupt at the return).</item>
+    /// </list>
+    /// </para>
+    ///
+    /// Order-independent, so a taint reaching an earlier use via a loop back-edge is still caught.
+    /// Over-approximates (no narrowing): at worst a needless object slot, never a wrong value. Runs
+    /// regardless of the declared return type — unlike #367 it is not gated on a <c>number</c>/<c>boolean</c>
+    /// return, because the corruption happens at the local/param store, independent of how (or
+    /// whether) the value is returned. Each flag is a no-op unless the slot it names would otherwise
+    /// be unboxed, so widening returns/locals/params that are not numeric costs nothing.
     /// </summary>
-    private void MarkUndefinedReachableLocalReturns(IReadOnlyList<Stmt> body)
+    private void MarkUndefinedReachableNumericSlots(
+        IReadOnlyList<Stmt> body,
+        IReadOnlyList<Stmt.Parameter>? parameters = null)
     {
-        TypeInfo? declared = _currentFunctionReturnType;
-        if (_inAsyncFunction && declared is TypeInfo.Promise promised) declared = promised.ValueType;
-        if (declared is not TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER or TokenType.TYPE_BOOLEAN })
-            return;
-
         var collected = ReturnLocalTaintCollector.Collect(body);
-        if (collected.Returns.Count == 0 || collected.Assignments.Count == 0) return;
+        if (collected.Assignments.Count == 0) return;
 
         var tainted = new HashSet<string>();
         bool changed = true;
@@ -522,11 +534,11 @@ public partial class TypeChecker
         }
         if (tainted.Count == 0) return;
 
-        // Local slot: object-slot every tainted number-typed local so its declaration does not get
-        // an unboxed double slot that would coerce the sentinel to NaN at the store (e.g. the
-        // intermediate `z` in `let y = undefined as any; let z = y; return z`). Both the declaration
-        // node and its initializer are flagged — `const` is recompiled through a fresh Stmt.Var that
-        // reuses the original initializer expression.
+        // Local slot: object-slot every tainted local so its declaration does not get an unboxed
+        // double slot that would coerce the sentinel to NaN at the store (e.g. the intermediate `z`
+        // in `let y = undefined as any; let z = y; return z`, or simply a local that is only logged).
+        // Both the declaration node and its initializer are flagged — `const` is recompiled through a
+        // fresh Stmt.Var that reuses the original initializer expression.
         foreach (var (name, node, initializer) in collected.Declarations)
         {
             if (!tainted.Contains(name)) continue;
@@ -534,7 +546,15 @@ public partial class TypeChecker
             if (initializer != null) _typeMap.MarkUndefinedReachableNumericLocal(initializer);
         }
 
-        // Return slot: flag returns of a tainted local so the compiler widens the otherwise-unboxed
+        // Parameter slot: object-slot every tainted parameter (e.g. `function p(x: number) { x =
+        // undefined as any; ... }`) so the compiler does not give it an unboxed double/bool arg slot.
+        // A parameter has no declaration node in `collected`; it is matched by name.
+        if (parameters != null)
+            foreach (var param in parameters)
+                if (tainted.Contains(param.Name.Lexeme))
+                    _typeMap.MarkUndefinedReachableNumericParam(param);
+
+        // Return slot: flag returns of a tainted name so the compiler widens the otherwise-unboxed
         // double/bool return slot back to object.
         foreach (var ret in collected.Returns)
             if (ValueMayBeUndefinedSentinel(ret, tainted))

@@ -1260,11 +1260,10 @@ public partial class TypeChecker
                 // Block body - check statements
                 CheckStmtList(arrow.BlockBody);
 
-                // #367: flag returns of a number/boolean-typed local left holding the undefined
-                // sentinel by an `any`/`undefined` assignment (no-op unless the declared return is
-                // number/boolean). Expression-bodied arrows have no local-assignment-then-return
-                // shape, so only block bodies need this.
-                MarkUndefinedReachableLocalReturns(arrow.BlockBody);
+                // #367/#372: object-slot number/boolean-typed locals, parameters, and returns left
+                // holding the undefined sentinel by an `any`/`undefined` assignment. Expression-bodied
+                // arrows have no body statements that could reassign a slot, so only block bodies need this.
+                MarkUndefinedReachableNumericSlots(arrow.BlockBody, arrow.Parameters);
 
                 // Resolve inferred return type for block-body arrows
                 if (inferringArrowReturn)
@@ -1812,8 +1811,9 @@ public partial class TypeChecker
                         foreach (var bodyStmt in method.Body)
                             CheckStmt(bodyStmt);
 
-                        // #367: object-slot number-typed locals that may hold the undefined sentinel.
-                        MarkUndefinedReachableLocalReturns(method.Body);
+                        // #367/#372: object-slot number/boolean-typed locals, parameters, and returns
+                        // that may hold the undefined sentinel.
+                        MarkUndefinedReachableNumericSlots(method.Body, method.Parameters);
                     }
                 }
                 finally
@@ -1872,8 +1872,9 @@ public partial class TypeChecker
                         foreach (var bodyStmt in accessor.Body)
                             CheckStmt(bodyStmt);
 
-                        // #367: object-slot number-typed locals that may hold the undefined sentinel.
-                        MarkUndefinedReachableLocalReturns(accessor.Body);
+                        // #367/#372: object-slot number/boolean-typed locals and returns that may hold
+                        // the undefined sentinel. The setter parameter always uses an object slot.
+                        MarkUndefinedReachableNumericSlots(accessor.Body);
                     }
                     finally
                     {

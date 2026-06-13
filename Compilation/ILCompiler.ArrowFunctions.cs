@@ -155,7 +155,7 @@ public partial class ILCompiler
             // Resolve typed parameters from annotations (optimization for numeric parameters)
             // Rest parameters always use List<object> to enable detection at invoke time
             var resolvedParamTypes = ParameterTypeResolver.ResolveParameters(
-                arrow.Parameters, _typeMapper, null); // null funcType - use annotations only
+                arrow.Parameters, _typeMapper, null, _typeMap); // null funcType - use annotations only
 
             // Store resolved types for use during arrow body emission
             _closures.ArrowParameterTypes[arrow] = resolvedParamTypes;

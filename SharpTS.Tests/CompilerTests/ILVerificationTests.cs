@@ -701,4 +701,126 @@ public class ILVerificationTests
         Assert.Equal("6\n43\n", output);
         Assert.Equal(output, TestHarness.RunInterpreted(source));
     }
+
+    // #372 case 1: an inferred-return (no annotation) function whose returned local holds the
+    // undefined sentinel. The return type is inferred as `number`, so it is double-slotted just like
+    // an explicit `: number` — but the #367 taint pass was gated on a declared number/boolean return
+    // and never ran here. The pass now runs regardless of return type, so the local and the inferred
+    // return slot are both widened to object and the sentinel survives.
+    [Fact]
+    public void TypedNumberLocal_InferredReturn_StaysUndefined()
+    {
+        var source = """
+            function inf(n: any) { let x: number = 0; x = undefined as any; return x; }
+            console.log(inf(1));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("undefined\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #372 case 2: a `: number` local holding the undefined sentinel is observed by something other
+    // than a return (here `console.log`) inside a void function. The corruption happens at the local
+    // store, independent of any return, so object-slotting the local must not be gated on the return.
+    [Fact]
+    public void TypedNumberLocal_ObservedInVoidFunction_StaysUndefined()
+    {
+        var source = """
+            function obs(): void { let x: number = 0; x = undefined as any; console.log(x); }
+            obs();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("undefined\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #372 case 3: a `: number` PARAMETER reassigned the undefined sentinel. A parameter has no local
+    // declaration to mark; it is matched by name in the taint pass and its arg slot widened to object.
+    // The same shape for a `: boolean` parameter widens the bool arg slot.
+    [Fact]
+    public void TypedNumberParam_ReassignedUndefined_StaysUndefined()
+    {
+        var source = """
+            function p(x: number): number { x = undefined as any; return x; }
+            function q(b: boolean): boolean { b = undefined as any; return b; }
+            console.log(p(1));
+            console.log(q(true));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("undefined\nundefined\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #372: the same tainted-parameter shape inside an instance method, a static method, and a
+    // constructor — each resolves parameter slots through a different resolver, all of which must
+    // widen a flagged number/boolean parameter to object.
+    [Fact]
+    public void TypedNumberParam_ReassignedUndefined_InMethodStaticAndCtor_StaysUndefined()
+    {
+        var source = """
+            class C {
+                m(x: number): number { x = undefined as any; return x; }
+                static s(x: number): number { x = undefined as any; return x; }
+                constructor(n: number) { n = undefined as any; this.r = n; }
+                r: any;
+            }
+            const c = new C(5);
+            console.log(c.m(1));
+            console.log(C.s(2));
+            console.log(c.r);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("undefined\nundefined\nundefined\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #372 (pre-existing param-assignment bug, discovered while fixing #372 and filed as a follow-up):
+    // reassigning a `: number` parameter with a SOUND numeric value would box the value and `Starg`
+    // it into the unboxed double arg slot, failing IL verification (StackUnexpected) and reading back
+    // garbage. The assignment now converts the value to the parameter slot's declared type first.
+    [Fact]
+    public void TypedNumberParam_SoundReassignment_ComputesCorrectly()
+    {
+        var source = """
+            function a(x: number): number { x = 99; return x; }
+            function c(x: number): number { x = x + 1; return x * 2; }
+            console.log(a(10));
+            console.log(c(10));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("99\n22\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #372 guard: a `: number` parameter that never receives an `any`/`undefined` value keeps its
+    // sound unboxed double arg slot — the taint pass must not over-widen parameters either.
+    [Fact]
+    public void TypedNumberParam_SoundBody_StillUsesNumericValue()
+    {
+        var source = """
+            function scale(x: number): number { let y: number = x * 2; return y + 1; }
+            console.log(scale(10));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("21\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
 }
