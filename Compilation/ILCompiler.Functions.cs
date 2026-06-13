@@ -155,6 +155,30 @@ public partial class ILCompiler
     }
 
     /// <summary>
+    /// Builds the parameter-type array for a state-machine stub method (async,
+    /// generator, or async-generator). Every parameter is typed <c>object</c>
+    /// except a trailing rest parameter, which is typed <c>List&lt;object&gt;</c>
+    /// — the marker that <c>$TSFunction.AdjustArgs</c> recognizes when it has to
+    /// pack the trailing call arguments into the rest list. State-machine stubs
+    /// invoked indirectly (e.g. a cross-module import routed through
+    /// <c>$TSFunction.Invoke</c>) rely on that marker; without it the indirect
+    /// path drops the first raw argument straight into the rest slot, so the
+    /// body's <c>for...of</c> over the rest value casts a scalar to
+    /// <c>IEnumerable</c> and crashes (#426). Same-module direct calls pack a
+    /// <c>$Array</c> (a <c>List&lt;object&gt;</c> subclass) via
+    /// EmitRestParameterCall, so both call paths stay type-compatible with the
+    /// <c>List&lt;object&gt;</c> slot. Mirrors the sync path's
+    /// <see cref="ParameterTypeResolver.ResolveParameters"/> rest handling.
+    /// </summary>
+    private Type[] BuildStateMachineStubParamTypes(Stmt.Function funcStmt)
+    {
+        var paramTypes = new Type[funcStmt.Parameters.Count];
+        for (int i = 0; i < funcStmt.Parameters.Count; i++)
+            paramTypes[i] = funcStmt.Parameters[i].IsRest ? _types.ListOfObject : _types.Object;
+        return paramTypes;
+    }
+
+    /// <summary>
     /// Module-qualifies the registry bookkeeping for an async / generator / async-generator
     /// top-level function so two modules declaring a same-named state-machine function no
     /// longer clobber each other (#418). Mirrors what <see cref="DefineFunction"/> does for
