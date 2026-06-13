@@ -6,22 +6,310 @@ namespace SharpTS.Compilation;
 
 public partial class GeneratorMoveNextEmitter
 {
-    // When emitting inside a flag-based try that has a finally, a `return` statement cannot
-    // `ret` directly — the finally must run first. It jumps here instead (after recording the
-    // pending return). Saved/restored around each try so nested finallys chain.
-    private Label? _returnCleanupLabel;
+    // ---- Unified exit-scope stack (#500) --------------------------------------------------------
+    //
+    // A non-local exit (return / break / continue / a throw from a catch or finally) that crosses a
+    // flag-based try/finally must run the enclosing finally(s) before transferring control. Because a
+    // finally can itself yield, the routing state has to survive a MoveNext re-entry, so it lives in
+    // state-machine fields rather than IL locals.
+    //
+    // The scheme mirrors how Roslyn lowers iterator try/finally: each exit is assigned an integer
+    // "pending action" code, stored in `<>pendingExit`, and branches to the innermost enclosing
+    // finally's cleanup label. After each finally body runs, a dispatch (EmitFinallyDispatch) inspects
+    // the code and either chains to the next outer finally or, if this finally is the last one the exit
+    // must traverse, performs the terminal action (complete / rethrow / jump to a loop label). The set
+    // of finallys an exit traverses — and which one is terminal — is known at exit-emission time (the
+    // scopes are on a stack), so each frame's per-code routing is recorded then.
 
-    // Set by a `return` inside a flag-based try/finally so that, once the finally(s) have run,
-    // MoveNext completes (returns false). Declared lazily; a finally that itself yields suspends
-    // MoveNext between the return and the completion check, so this must be a state-machine field
-    // (not an IL local, which the re-entry would reset) — mirrors the async generator's
-    // ReturnRequestedField. Defaults to false on the freshly-allocated state machine and is set
-    // at most once (the generator is completing), so it never needs resetting.
-    private FieldBuilder? _pendingReturnField;
+    private interface IExitScope;
 
-    private FieldBuilder GetPendingReturnField() =>
-        _pendingReturnField ??= _builder.StateMachineType.DefineField(
-            "<>pendingReturn", typeof(bool), FieldAttributes.Private);
+    /// <summary>A loop (or switch / labeled statement) that <c>break</c>/<c>continue</c> can target.</summary>
+    private sealed class LoopScope : IExitScope
+    {
+        public required Label BreakLabel;
+        public required Label ContinueLabel;
+        public string? LabelName;
+
+        // Lazily assigned the first time a break/continue to this loop must run an intervening
+        // finally; identifies that exit in the `<>pendingExit` field. Unset while the loop's
+        // break/continue need no finally routing (the common case → a direct branch).
+        public int? BreakCode;
+        public int? ContinueCode;
+    }
+
+    /// <summary>A flag-based <c>try</c> that has a <c>finally</c>; its finally runs on any exit that crosses it.</summary>
+    private sealed class FinallyScope : IExitScope
+    {
+        public required Label CleanupLabel;
+
+        // code → where control goes after this finally for that pending exit: a chain to the next
+        // outer finally's cleanup label, or null meaning "this finally is terminal for the exit".
+        public readonly Dictionary<int, Label?> Dispatch = [];
+    }
+
+    // Innermost-last stack of loop and finally scopes currently open at the emission point. Replaces
+    // the base class's `_loopLabels` (the loop-scope methods below are overridden to use this) so loops
+    // and finallys share one ordering — needed to know which finallys lie between a break and its loop.
+    private readonly List<IExitScope> _exitScopes = [];
+
+    private const int ExitCodeReturn = 1;
+    private const int ExitCodeThrow = 2;
+    private int _nextExitCode = 3; // break/continue codes are allocated from here
+
+    // code → emits the terminal action for that code (invoked when a finally is terminal for it).
+    private readonly Dictionary<int, Action> _exitTerminals = [];
+
+    // Depth of real IL exception blocks (EmitSimpleTryCatch / EmitSyncSegmentInTry) open around the
+    // current emission point. While > 0, a `br`/`ret` out of the region would be illegal, so exits are
+    // left to the existing per-path handling instead of being routed through the finally machinery.
+    private int _protectedRegionDepth;
+
+    // True while emitting a catch or finally body. A `throw` there must run the enclosing finally(s);
+    // a `throw` in a try body is instead captured by its sync-segment mini try/catch (and so must not
+    // be routed). Saved/restored around each region so nesting is handled correctly.
+    private bool _inHandlerBody;
+
+    // `<>pendingExit` (int): the code of an in-flight non-local exit, or 0 when none. A finally that
+    // yields suspends MoveNext mid-routing, so this must be a field (a local would reset on re-entry).
+    // Set once per exit and cleared by the terminal dispatch; defaults to 0 on a fresh state machine.
+    private FieldBuilder? _pendingExitField;
+
+    private FieldBuilder GetPendingExitField() =>
+        _pendingExitField ??= _builder.StateMachineType.DefineField(
+            "<>pendingExit", typeof(int), FieldAttributes.Private);
+
+    // `<>pendingException` (object): the value of a `throw` being routed through finally(s), held
+    // across any suspension in those finallys until the terminal dispatch rethrows it.
+    private FieldBuilder? _pendingExceptionField;
+
+    private FieldBuilder GetPendingExceptionField() =>
+        _pendingExceptionField ??= _builder.StateMachineType.DefineField(
+            "<>pendingException", typeof(object), FieldAttributes.Private);
+
+    // ---- Loop-scope methods (override the base stack to use `_exitScopes`) -----------------------
+
+    protected override void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
+        => _exitScopes.Add(new LoopScope { BreakLabel = breakLabel, ContinueLabel = continueLabel, LabelName = labelName });
+
+    protected override void ExitLoop()
+    {
+        // Well-nested: any try opened inside the loop body has already been closed, so the top of the
+        // stack is this loop's LoopScope.
+        _exitScopes.RemoveAt(_exitScopes.Count - 1);
+    }
+
+    protected override (Label BreakLabel, Label ContinueLabel, string? LabelName)? CurrentLoop
+    {
+        get
+        {
+            var loop = CurrentLoopScope();
+            return loop == null ? null : (loop.BreakLabel, loop.ContinueLabel, loop.LabelName);
+        }
+    }
+
+    protected override (Label BreakLabel, Label ContinueLabel, string? LabelName)? FindLabeledLoop(string labelName)
+    {
+        var loop = FindLabeledLoopScope(labelName);
+        return loop == null ? null : (loop.BreakLabel, loop.ContinueLabel, loop.LabelName);
+    }
+
+    private LoopScope? CurrentLoopScope()
+    {
+        for (int i = _exitScopes.Count - 1; i >= 0; i--)
+            if (_exitScopes[i] is LoopScope ls)
+                return ls;
+        return null;
+    }
+
+    private LoopScope? FindLabeledLoopScope(string labelName)
+    {
+        for (int i = _exitScopes.Count - 1; i >= 0; i--)
+            if (_exitScopes[i] is LoopScope ls && ls.LabelName == labelName)
+                return ls;
+        return null;
+    }
+
+    // ---- Non-local exit overrides ---------------------------------------------------------------
+
+    /// <summary>
+    /// A <c>break</c> must run any finally between it and the target loop before jumping out.
+    /// </summary>
+    protected override void EmitBreak(Stmt.Break b)
+    {
+        var loop = b.Label != null ? FindLabeledLoopScope(b.Label.Lexeme) : CurrentLoopScope();
+        if (loop == null) return; // matches the base: a break with no resolvable target is a no-op
+
+        if (_protectedRegionDepth == 0)
+        {
+            var chain = FinallyFramesAbove(loop);
+            if (chain.Count > 0)
+            {
+                int code = loop.BreakCode ??= _nextExitCode++;
+                _exitTerminals.TryAdd(code, () => _il.Emit(OpCodes.Br, loop.BreakLabel));
+                RouteThroughFinallys(chain, code);
+                return;
+            }
+        }
+
+        EmitBranchToLabel(loop.BreakLabel);
+    }
+
+    /// <summary>
+    /// A <c>continue</c> must run any finally between it and the target loop before jumping to the
+    /// loop's continue point.
+    /// </summary>
+    protected override void EmitContinue(Stmt.Continue c)
+    {
+        var loop = c.Label != null ? FindLabeledLoopScope(c.Label.Lexeme) : CurrentLoopScope();
+        if (loop == null) return;
+
+        if (_protectedRegionDepth == 0)
+        {
+            var chain = FinallyFramesAbove(loop);
+            if (chain.Count > 0)
+            {
+                int code = loop.ContinueCode ??= _nextExitCode++;
+                _exitTerminals.TryAdd(code, () => _il.Emit(OpCodes.Br, loop.ContinueLabel));
+                RouteThroughFinallys(chain, code);
+                return;
+            }
+        }
+
+        EmitBranchToLabel(loop.ContinueLabel);
+    }
+
+    /// <summary>
+    /// A <c>throw</c> in a catch or finally body must run the enclosing finally(s) before the
+    /// exception propagates. A throw in a try body is captured by its sync-segment mini try/catch
+    /// (handled by the catch arm), so it is not routed here.
+    /// </summary>
+    protected override void EmitThrow(Stmt.Throw t)
+    {
+        if (_inHandlerBody && _protectedRegionDepth == 0)
+        {
+            var chain = ActiveFinallyFrames();
+            if (chain.Count > 0)
+            {
+                EmitExpression(t.Value);
+                EnsureBoxed();
+                var thrown = _il.DeclareLocal(typeof(object));
+                _il.Emit(OpCodes.Stloc, thrown);
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldloc, thrown);
+                _il.Emit(OpCodes.Stfld, GetPendingExceptionField());
+
+                RegisterThrowTerminal();
+                RouteThroughFinallys(chain, ExitCodeThrow);
+                return;
+            }
+        }
+
+        base.EmitThrow(t);
+    }
+
+    // ---- Routing helpers ------------------------------------------------------------------------
+
+    /// <summary>All open finally scopes, innermost first.</summary>
+    private List<FinallyScope> ActiveFinallyFrames()
+    {
+        var result = new List<FinallyScope>();
+        for (int i = _exitScopes.Count - 1; i >= 0; i--)
+            if (_exitScopes[i] is FinallyScope fs)
+                result.Add(fs);
+        return result;
+    }
+
+    /// <summary>The finally scopes between the current point and <paramref name="target"/>, innermost first.</summary>
+    private List<FinallyScope> FinallyFramesAbove(LoopScope target)
+    {
+        var result = new List<FinallyScope>();
+        for (int i = _exitScopes.Count - 1; i >= 0; i--)
+        {
+            if (ReferenceEquals(_exitScopes[i], target)) break;
+            if (_exitScopes[i] is FinallyScope fs)
+                result.Add(fs);
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Records <paramref name="code"/>'s per-frame routing across <paramref name="chain"/> (each frame
+    /// chains to the next, the outermost is terminal), then sets the pending-exit field and branches to
+    /// the innermost finally. The caller must have prepared any value the terminal needs (e.g. the
+    /// thrown value, or the Current/return state) beforehand.
+    /// </summary>
+    private void RouteThroughFinallys(List<FinallyScope> chain, int code)
+    {
+        for (int i = 0; i < chain.Count; i++)
+        {
+            // The last frame in the chain is terminal for this code (null); the rest chain outward.
+            Label? next = i < chain.Count - 1 ? chain[i + 1].CleanupLabel : null;
+            chain[i].Dispatch[code] = next; // idempotent: the same code always routes a frame the same way
+        }
+
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldc_I4, code);
+        _il.Emit(OpCodes.Stfld, GetPendingExitField());
+        _il.Emit(OpCodes.Br, chain[0].CleanupLabel);
+    }
+
+    /// <summary>
+    /// Emitted after a finally body: for each pending-exit code that routes through this frame, either
+    /// chain to the next outer finally or, if terminal here, clear the pending field and run the
+    /// terminal action. A pending value of 0 (none) and codes not handled here fall through unchanged.
+    /// </summary>
+    private void EmitFinallyDispatch(FinallyScope frame)
+    {
+        foreach (var (code, next) in frame.Dispatch)
+        {
+            var skip = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, GetPendingExitField());
+            _il.Emit(OpCodes.Ldc_I4, code);
+            _il.Emit(OpCodes.Bne_Un, skip);
+
+            if (next.HasValue)
+            {
+                // Not terminal here — keep the pending code and run the next outer finally.
+                _il.Emit(OpCodes.Br, next.Value);
+            }
+            else
+            {
+                // Terminal: the exit has run every finally it needed to. Clear the flag first so a
+                // break/continue resumes the generator with clean state.
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldc_I4_0);
+                _il.Emit(OpCodes.Stfld, GetPendingExitField());
+                _exitTerminals[code]();
+            }
+
+            _il.MarkLabel(skip);
+        }
+    }
+
+    private void RegisterReturnTerminal() => _exitTerminals.TryAdd(ExitCodeReturn, () =>
+    {
+        // The generator completes. State -2 is re-asserted here because a yielding finally between the
+        // `return` and this point overwrote it with the finally's resume state.
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldc_I4, -2);
+        _il.Emit(OpCodes.Stfld, _builder.StateField);
+        _il.Emit(OpCodes.Ldc_I4_0);
+        _il.Emit(OpCodes.Ret);
+    });
+
+    private void RegisterThrowTerminal() => _exitTerminals.TryAdd(ExitCodeThrow, () =>
+    {
+        // The routed exception has run every enclosing finally; propagate it now. The generator is
+        // completing (throwing), so mark it done first.
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldc_I4, -2);
+        _il.Emit(OpCodes.Stfld, _builder.StateField);
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, GetPendingExceptionField());
+        _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateException);
+        _il.Emit(OpCodes.Throw);
+    });
 
     /// <summary>
     /// Emits try/catch/finally. When a yield crosses the protected region, real IL exception
@@ -46,6 +334,9 @@ public partial class GeneratorMoveNextEmitter
     /// </summary>
     private void EmitSimpleTryCatch(Stmt.TryCatch t)
     {
+        // A real IL protected region is open: a routed `br`/`ret` out of it would be illegal, so
+        // exits emitted inside fall back to their per-path handling (see the exit overrides).
+        _protectedRegionDepth++;
         _il.BeginExceptionBlock();
 
         foreach (var stmt in t.TryBlock)
@@ -78,6 +369,7 @@ public partial class GeneratorMoveNextEmitter
         }
 
         _il.EndExceptionBlock();
+        _protectedRegionDepth--;
     }
 
     /// <summary>
@@ -115,21 +407,27 @@ public partial class GeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldnull);
         _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
 
-        // A `return` inside this try must run the finally before completing, so point its cleanup
-        // at the catch/finally entry. On the return path the exception flag is null, so the catch
-        // is skipped and the finally runs. Only meaningful when a finally is present; without one,
-        // a `return` completes directly (it is emitted at the top level, so `ret` is legal).
-        var previousCleanupLabel = _returnCleanupLabel;
+        // A non-local exit inside this try (or its catch) must run the finally before transferring
+        // control, so register a finally scope whose cleanup is the catch/finally entry. On those exit
+        // paths the exception flag is null, so the catch is skipped and the finally runs. Without a
+        // finally there is nothing to route through, so no scope is pushed and exits go directly.
+        FinallyScope? frame = null;
         if (t.FinallyBlock != null)
-            _returnCleanupLabel = afterTryBodyLabel;
+        {
+            frame = new FinallyScope { CleanupLabel = afterTryBodyLabel };
+            _exitScopes.Add(frame);
+        }
 
+        // Throws in the try body are captured by their sync segments, not routed.
+        bool previousInHandler = _inHandlerBody;
+        _inHandlerBody = false;
         EmitTryBodyWithYields(t.TryBlock, caughtExceptionLocal, afterTryBodyLabel);
-
-        _returnCleanupLabel = previousCleanupLabel;
+        _inHandlerBody = previousInHandler;
 
         _il.MarkLabel(afterTryBodyLabel);
 
-        // Catch: runs only when the try body captured an exception.
+        // Catch: runs only when the try body captured an exception. The finally scope is still open, so
+        // a non-local exit (including a throw) from the catch body runs this finally too.
         if (t.CatchBlock != null)
         {
             var skipCatchLabel = _il.DefineLabel();
@@ -142,42 +440,33 @@ public partial class GeneratorMoveNextEmitter
                 StoreCaughtExceptionToParam(t.CatchParam.Lexeme);
             }
 
-            // Catch handles it; clear the flag so the post-finally rethrow below is skipped.
+            // Catch handles it; clear the flag so the post-finally rethrow below is skipped — and so a
+            // routed exit re-entering afterTryBodyLabel skips the catch rather than re-running it.
             _il.Emit(OpCodes.Ldnull);
             _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
 
+            _inHandlerBody = true;
             foreach (var stmt in t.CatchBlock)
                 EmitStatement(stmt);
+            _inHandlerBody = previousInHandler;
 
             _il.MarkLabel(skipCatchLabel);
         }
 
-        // Finally: always runs — on normal completion, after a caught exception, or on a pending
-        // return that routed here.
+        // The finally itself is outside its own scope: an exit within it runs the *enclosing* finallys.
+        if (frame != null)
+            _exitScopes.RemoveAt(_exitScopes.Count - 1);
+
+        // Finally: always runs — on normal completion, after a caught exception, or on a routed exit.
         if (t.FinallyBlock != null)
         {
+            _inHandlerBody = true;
             foreach (var stmt in t.FinallyBlock)
                 EmitStatement(stmt);
+            _inHandlerBody = previousInHandler;
 
-            // After the finally, propagate a pending `return` — to the next enclosing finally if
-            // there is one, otherwise complete MoveNext.
-            if (_pendingReturnField != null)
-            {
-                var noPendingReturnLabel = _il.DefineLabel();
-                _il.Emit(OpCodes.Ldarg_0);
-                _il.Emit(OpCodes.Ldfld, _pendingReturnField);
-                _il.Emit(OpCodes.Brfalse, noPendingReturnLabel);
-
-                if (previousCleanupLabel != null)
-                    _il.Emit(OpCodes.Br, previousCleanupLabel.Value);
-                else
-                {
-                    _il.Emit(OpCodes.Ldc_I4_0);
-                    _il.Emit(OpCodes.Ret);
-                }
-
-                _il.MarkLabel(noPendingReturnLabel);
-            }
+            // After the finally, dispatch any pending non-local exit that routed through here.
+            EmitFinallyDispatch(frame!);
         }
 
         // Rethrow an uncaught exception once the finally has run (try/finally with no catch).
@@ -187,6 +476,10 @@ public partial class GeneratorMoveNextEmitter
             _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
             _il.Emit(OpCodes.Brfalse, noExceptionLabel);
 
+            // Mark the generator done before the exception leaves MoveNext.
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldc_I4, -2);
+            _il.Emit(OpCodes.Stfld, _builder.StateField);
             _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
             _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateException);
             _il.Emit(OpCodes.Throw);
@@ -243,6 +536,8 @@ public partial class GeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
         _il.Emit(OpCodes.Brtrue, skipLabel);
 
+        // A real IL protected region is open across the segment body (see _protectedRegionDepth).
+        _protectedRegionDepth++;
         _il.BeginExceptionBlock();
         foreach (var stmt in statements)
             EmitStatement(stmt);
@@ -251,6 +546,7 @@ public partial class GeneratorMoveNextEmitter
         _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
         _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
         _il.EndExceptionBlock();
+        _protectedRegionDepth--;
 
         _il.MarkLabel(skipLabel);
     }
