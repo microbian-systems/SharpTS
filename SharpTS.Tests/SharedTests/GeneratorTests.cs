@@ -415,6 +415,106 @@ public class GeneratorTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_AccumulatorPattern_CompoundAssignAcrossYield(ExecutionMode mode)
+    {
+        // #497: the same two-way accumulator, but the running total is read *before* the yield
+        // as the LHS of `+=`, so it is loop-carried across the suspension. The sibling test
+        // Generator_AccumulatorPattern_UsesSentValues sidesteps this by reading `total` after
+        // the yield. Pre-fix the compiled state machine left `total` in an IL local that the
+        // MoveNext re-entry wiped, so each resume recomputed `0 + n` (5, 10, 3) instead of the
+        // running total. The analyzer now hoists loop-body locals of any yielding loop.
+        var source = """
+            function* adder() {
+                let total = 0;
+                while (true) {
+                    total += yield total;
+                }
+            }
+            const a = adder();
+            console.log(a.next().value);
+            console.log(a.next(5).value);
+            console.log(a.next(10).value);
+            console.log(a.next(3).value);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n5\n15\n18\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_AccumulatorPattern_CompoundAssignAcrossYield_DoWhile(ExecutionMode mode)
+    {
+        // #497: do-while is one of the loop forms that lacked loop-body hoisting pre-fix.
+        var source = """
+            function* adder() {
+                let total = 0;
+                do {
+                    total += yield total;
+                } while (true);
+            }
+            const a = adder();
+            console.log(a.next().value);
+            console.log(a.next(5).value);
+            console.log(a.next(10).value);
+            console.log(a.next(3).value);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n5\n15\n18\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_AccumulatorPattern_CompoundAssignAcrossYield_For(ExecutionMode mode)
+    {
+        // #497: an unbounded for(;;) likewise lacked loop-body hoisting pre-fix.
+        var source = """
+            function* adder() {
+                let total = 0;
+                for (;;) {
+                    total += yield total;
+                }
+            }
+            const a = adder();
+            console.log(a.next().value);
+            console.log(a.next(5).value);
+            console.log(a.next(10).value);
+            console.log(a.next(3).value);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n5\n15\n18\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_LoopCarriedLocal_ReadBeforeYield_SurvivesAcrossIterations(ExecutionMode mode)
+    {
+        // #497 (general shape): a counted for-loop whose induction-adjacent local is read in the
+        // loop body before the yield. The accumulator must persist across the loop back-edge.
+        var source = """
+            function* g() {
+                let sum = 0;
+                for (let i = 0; i < 3; i++) {
+                    sum = sum + (yield sum);
+                }
+                return sum;
+            }
+            const it = g();
+            console.log(it.next().value);    // 0
+            console.log(it.next(10).value);  // 10
+            console.log(it.next(20).value);  // 30
+            console.log(it.next(30).value);  // 60 (return)
+            console.log(it.next().done);     // true
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n10\n30\n60\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_BareNext_ResumesWithUndefined(ExecutionMode mode)
     {
         var source = """
