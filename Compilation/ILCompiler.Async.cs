@@ -15,6 +15,13 @@ public partial class ILCompiler
         // Analyze the async function for await points and hoisted variables
         var analysis = _async.Analyzer.Analyze(funcStmt);
 
+        // Module-qualify the stub/registry keys (#418) so two modules that each declare a
+        // same-named async function don't clobber each other. Single-file compilation returns
+        // the simple name unchanged. The readable state-machine type name stays the simple name
+        // (the builder's counter already disambiguates `<name>d__N`).
+        var ctx = GetDefinitionContext();
+        string qualifiedFunctionName = ctx.GetQualifiedFunctionName(funcStmt.Name.Lexeme);
+
         // Create state machine builder
         var smBuilder = new AsyncStateMachineBuilder(_moduleBuilder, _types, _async.StateMachineCounter++);
         var hasAsyncArrows = analysis.AsyncArrows.Count > 0;
@@ -25,22 +32,20 @@ public partial class ILCompiler
         // ($TSFunction.Invoke) call path packs trailing args into it (#426).
         var paramTypes = BuildStateMachineStubParamTypes(funcStmt);
         var stubMethod = _programType.DefineMethod(
-            funcStmt.Name.Lexeme,
+            qualifiedFunctionName,
             MethodAttributes.Public | MethodAttributes.Static,
             _types.TaskOfObject,
             paramTypes
         );
 
         // Store for later body emission
-        _functions.Builders[funcStmt.Name.Lexeme] = stubMethod;
-        _async.StateMachines[funcStmt.Name.Lexeme] = smBuilder;
-        _async.Functions[funcStmt.Name.Lexeme] = funcStmt;
+        _functions.Builders[qualifiedFunctionName] = stubMethod;
+        _async.StateMachines[qualifiedFunctionName] = smBuilder;
+        _async.Functions[qualifiedFunctionName] = funcStmt;
 
         // Create function-level display class for captured locals (same as sync functions).
         // This enables closure mutation sharing between the async state machine and sync inner arrows.
         // Variables also captured by async arrows are excluded since they use the hoisted field mechanism.
-        var ctx = GetDefinitionContext();
-        string qualifiedFunctionName = ctx.GetQualifiedFunctionName(funcStmt.Name.Lexeme);
         _closures.FunctionAstNodes[qualifiedFunctionName] = funcStmt;
 
         // Collect variables captured by async arrows (these can't use the function DC)
@@ -526,8 +531,11 @@ public partial class ILCompiler
                 ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
             };
 
-            // Set function DC info if this async function has captured locals
-            var qualifiedName = GetDefinitionContext().GetQualifiedFunctionName(funcName);
+            // Set function DC info if this async function has captured locals.
+            // funcName is already the module-qualified registry key (#418) — and the
+            // closure registries are keyed by that same qualified name — so use it
+            // directly rather than re-qualifying (which would double-prefix).
+            var qualifiedName = funcName;
             if (_closures.FunctionDisplayClassFields.TryGetValue(qualifiedName, out var funcDCFields))
             {
                 ctx.FunctionDisplayClassFields = funcDCFields;
@@ -722,11 +730,13 @@ public partial class ILCompiler
             }
         }
 
-        // Initialize function display class for closure mutation sharing
+        // Initialize function display class for closure mutation sharing.
+        // FunctionDCField is only set for top-level async functions, whose stub method
+        // name is already the module-qualified registry/closure key (#418) — use it
+        // directly rather than re-qualifying.
         if (smBuilder.FunctionDCField != null)
         {
-            var funcName = stubMethod.Name;
-            var qualifiedName = GetDefinitionContext().GetQualifiedFunctionName(funcName);
+            var qualifiedName = stubMethod.Name;
             if (_closures.FunctionDisplayClassCtors.TryGetValue(qualifiedName, out var dcCtor))
             {
                 il.Emit(OpCodes.Ldloca, smLocal);

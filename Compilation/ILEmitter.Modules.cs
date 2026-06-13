@@ -576,20 +576,23 @@ public partial class ILEmitter
     /// <summary>
     /// Resolves a top-level function name to its emitted stub <see cref="MethodBuilder"/>,
     /// covering every function flavor that registers into <see cref="CompilationContext.Functions"/>.
-    /// Sync functions are keyed by their module-qualified name, whereas async / generator /
-    /// async-generator functions register their stub under the simple name (see
-    /// <c>ILCompiler.Async</c> / <c>ILCompiler.Generators</c> / <c>ILCompiler.AsyncGenerators</c>,
-    /// which write <c>_functions.Builders[funcStmt.Name.Lexeme]</c> without module qualification).
-    /// The export-store branches must consult both keys; otherwise an <c>export async function</c>,
-    /// <c>export function*</c>, or <c>export async function*</c> leaves its export field null and the
-    /// importing module throws "object is not a function" on call (#395).
+    /// Every flavor — sync and async / generator / async-generator alike — registers its stub
+    /// under the module-qualified name (since #418; <c>ILCompiler.Async</c> /
+    /// <c>ILCompiler.Generators</c> / <c>ILCompiler.AsyncGenerators</c> key
+    /// <c>_functions.Builders</c> by <see cref="CompilationContext.GetQualifiedFunctionName"/>),
+    /// so the qualified lookup is the live path. The simple-name fallback is retained as a
+    /// defensive measure for any stub registered before module qualification was wired up.
+    /// Without resolving the stub here, an <c>export async function</c>, <c>export function*</c>,
+    /// or <c>export async function*</c> leaves its export field null and the importing module
+    /// throws "object is not a function" on call (#395).
     /// </summary>
     private bool TryResolveExportableFunction(string name, out MethodBuilder method)
     {
-        // Sync functions: module-qualified key.
+        // All function flavors: module-qualified key (matches single-file too, where the
+        // qualified name collapses to the simple name).
         if (_ctx.Functions.TryGetValue(_ctx.GetQualifiedFunctionName(name), out method!))
             return true;
-        // Async / generator / async-generator stubs: simple (unqualified) key.
+        // Defensive fallback: simple (unqualified) key.
         if (_ctx.Functions.TryGetValue(name, out method!))
             return true;
         method = null!;
