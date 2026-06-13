@@ -823,4 +823,44 @@ public class ILVerificationTests
         Assert.Equal("21\n", output);
         Assert.Equal(output, TestHarness.RunInterpreted(source));
     }
+
+    // #402: the same StackUnexpected corruption applied to `: boolean` params, which compile to an
+    // unboxed `bool` arg slot. Reassigning one (literal or computed) must Unbox_Any the boxed value
+    // back to bool before Starg.
+    [Fact]
+    public void TypedBooleanParam_SoundReassignment_ComputesCorrectly()
+    {
+        var source = """
+            function a(x: boolean): boolean { x = false; return x; }
+            function c(x: boolean): boolean { x = !x; return x; }
+            console.log(a(true));
+            console.log(c(true));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("false\nfalse\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #402: a `: string` param compiles to a `string` arg slot (a reference type), so the conversion
+    // before Starg is a `castclass` rather than `Unbox_Any`. Reassigning one must not box-and-Starg
+    // an `object` into the `string` slot.
+    [Fact]
+    public void TypedStringParam_SoundReassignment_ComputesCorrectly()
+    {
+        var source = """
+            function a(x: string): string { x = "hi"; return x; }
+            function c(x: string): string { x = x + "!"; return x; }
+            console.log(a("a"));
+            console.log(c("a"));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("hi\na!\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
 }
