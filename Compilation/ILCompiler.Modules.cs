@@ -334,10 +334,21 @@ public partial class ILCompiler
     }
 
     /// <summary>
-    /// Emits an expression statement with special handling to wait for async return values.
-    /// If the expression returns a Task or Promise, waits for it to complete.
-    /// This provides "top-level await" behavior for compiled code.
+    /// Emits a top-level expression statement plus "top-level await" handling: if the
+    /// value is a <c>Task&lt;object&gt;</c> or <c>$Promise</c>, pump the event loop until
+    /// it settles via <see cref="EmittedRuntime.EventLoopWaitForTask"/>, then GetResult to
+    /// rethrow faults. Shared by the single-file entry point (<c>EmitDefaultEntryPoint</c>)
+    /// and every module/script init body so both wait the same way.
     /// </summary>
+    /// <remarks>
+    /// The wait MUST pump (drain the loop queue + fire timers), not block on
+    /// <c>GetResult()</c>: once <c>$EventLoopSyncContext</c> is installed (issues
+    /// #319/#320/#381), await continuations are Posted to the loop queue, so a thread
+    /// blocked in <c>GetResult()</c> would never drain them — the awaited promise could
+    /// never settle and the program would deadlock. <c>WaitForTask</c> runs the queue and
+    /// the timer processor on this thread until the task completes (or the loop proves
+    /// quiescent, matching Node's "a forever-pending top-level promise doesn't block exit").
+    /// </remarks>
     private void EmitExpressionWithAsyncWait(ILGenerator il, ILEmitter emitter, Stmt.Expression exprStmt)
     {
         emitter.EmitExpression(exprStmt.Expr);
@@ -372,8 +383,20 @@ public partial class ILCompiler
         il.Emit(OpCodes.Ldloc, exprResult);
         il.Emit(OpCodes.Castclass, _types.TaskOfObject);
 
-        // Wait for the task
+        // Pump the event loop until the task settles (drains Posted await
+        // continuations + fires timers). Returns false if the loop went quiescent
+        // with the task still pending (never-settling promise) — then skip GetResult.
         il.MarkLabel(waitForTaskLabel);
+        var taskLocal = il.DeclareLocal(_types.TaskOfObject);
+        il.Emit(OpCodes.Stloc, taskLocal);
+
+        il.Emit(OpCodes.Call, _runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Ldloc, taskLocal);
+        il.Emit(OpCodes.Callvirt, _runtime.EventLoopWaitForTask);
+        il.Emit(OpCodes.Brfalse, notTaskLabel);
+
+        // Task is complete — GetResult() to rethrow if faulted
+        il.Emit(OpCodes.Ldloc, taskLocal);
         var getAwaiter = _types.GetMethodNoParams(_types.TaskOfObject, "GetAwaiter");
         il.Emit(OpCodes.Call, getAwaiter);
         var awaiterLocal = il.DeclareLocal(_types.TaskAwaiterOfObject);
@@ -563,6 +586,14 @@ public partial class ILCompiler
         _entryPoint = mainMethod;
 
         var il = mainMethod.GetILGenerator();
+
+        // Install the event-loop SynchronizationContext before any module runs, so
+        // top-level async/await continuations (e.g. fetch) resume on the event-loop
+        // thread instead of escaping to the thread pool — the same durable fix the
+        // single-file entry point applies (issues #319/#320/#381). Module init bodies
+        // hold the first top-level awaits, so the context must be current before the
+        // first $Initialize call captures an awaiter.
+        EmitInstallEventLoopSyncContext(il);
 
         // Create entry-point display class instance if there are captured top-level variables
         if (_closures.EntryPointDisplayClass != null &&

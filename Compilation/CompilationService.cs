@@ -216,6 +216,11 @@ public static class CompilationService
             var priorErr = Console.Error;
             Console.SetOut(output);
             Console.SetError(output);
+            // The emitted Main installs $EventLoopSyncContext on the current thread
+            // (issues #319/#320/#381). For in-process embedding the calling thread is
+            // long-lived and may invoke Execute repeatedly, so restore the ambient
+            // context afterward rather than leaking the loop context onto the host.
+            var priorSyncContext = System.Threading.SynchronizationContext.Current;
             try
             {
                 mainMethod.Invoke(null, null);
@@ -229,6 +234,7 @@ public static class CompilationService
             }
             finally
             {
+                System.Threading.SynchronizationContext.SetSynchronizationContext(priorSyncContext);
                 Console.SetOut(priorOut);
                 Console.SetError(priorErr);
             }
