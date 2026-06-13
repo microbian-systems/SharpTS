@@ -216,11 +216,8 @@ public abstract partial class ExpressionEmitterBase
         var skipLabel = IL.DefineLabel();
         var endLabel = IL.DefineLabel();
 
-        // Store object
-        EmitExpression(ls.Object);
-        EnsureBoxed();
-        var objLocal = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, objLocal);
+        // Store object (registered so an await inside ls.Value persists it — #400)
+        var objLocal = SpillBoxed(ls.Object);
 
         // Get current value
         IL.Emit(OpCodes.Ldloc, objLocal);
@@ -253,16 +250,9 @@ public abstract partial class ExpressionEmitterBase
         var skipLabel = IL.DefineLabel();
         var endLabel = IL.DefineLabel();
 
-        // Store object and index
-        EmitExpression(lsi.Object);
-        EnsureBoxed();
-        var objLocal = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, objLocal);
-
-        EmitExpression(lsi.Index);
-        EnsureBoxed();
-        var indexLocal = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, indexLocal);
+        // Store object and index (registered so an await inside lsi.Value persists them — #400)
+        var objLocal = SpillBoxed(lsi.Object);
+        var indexLocal = SpillBoxed(lsi.Index);
 
         // Get current value
         IL.Emit(OpCodes.Ldloc, objLocal);
@@ -320,8 +310,8 @@ public abstract partial class ExpressionEmitterBase
             if (Ctx.ClassRegistry!.TryGetCallableStaticField(resolvedClassName, cs.Name.Lexeme, compoundClassBuilder, out var inheritedField))
             {
                 EmitStaticFieldLoadWithShadow(resolvedClassName, compoundClassBuilder, cs.Name.Lexeme, inheritedField!);
-                var inheritedCurrentTemp = IL.DeclareLocal(typeof(object));
-                IL.Emit(OpCodes.Stloc, inheritedCurrentTemp);
+                // Registered so an await inside cs.Value persists it across the suspension (#400).
+                var inheritedCurrentTemp = _helpers.SpillStoreObject();
 
                 // Spill the RHS so an await inside it suspends with an empty stack.
                 var inheritedRhsTemp = SpillBoxed(cs.Value);
@@ -344,17 +334,14 @@ public abstract partial class ExpressionEmitterBase
             }
         }
 
-        // Dynamic property compound assignment
-        EmitExpression(cs.Object);
-        EnsureBoxed();
-        var objTemp = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, objTemp);
+        // Dynamic property compound assignment. objTemp and currentTemp are registered so
+        // an await inside cs.Value persists them across the suspension (#400).
+        var objTemp = SpillBoxed(cs.Object);
 
         IL.Emit(OpCodes.Ldloc, objTemp);
         IL.Emit(OpCodes.Ldstr, cs.Name.Lexeme);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
-        var currentTemp = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, currentTemp);
+        var currentTemp = _helpers.SpillStoreObject();
 
         // Spill the value so an await inside it suspends with an empty stack
         // (the current property value must not stay on the stack across it).
@@ -381,21 +368,15 @@ public abstract partial class ExpressionEmitterBase
     /// </summary>
     protected virtual void EmitCompoundSetIndex(Expr.CompoundSetIndex csi)
     {
-        EmitExpression(csi.Object);
-        EnsureBoxed();
-        var objTemp = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, objTemp);
-
-        EmitExpression(csi.Index);
-        EnsureBoxed();
-        var indexTemp = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, indexTemp);
+        // objTemp, indexTemp and currentTemp are registered so an await inside csi.Value
+        // persists them across the suspension (#400).
+        var objTemp = SpillBoxed(csi.Object);
+        var indexTemp = SpillBoxed(csi.Index);
 
         IL.Emit(OpCodes.Ldloc, objTemp);
         IL.Emit(OpCodes.Ldloc, indexTemp);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.GetIndex);
-        var currentTemp = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, currentTemp);
+        var currentTemp = _helpers.SpillStoreObject();
 
         // Spill the value so an await inside it suspends with an empty stack
         // (the current element value must not stay on the stack across it).

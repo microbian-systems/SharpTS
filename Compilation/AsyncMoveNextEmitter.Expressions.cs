@@ -75,6 +75,11 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Ldc_I4, stateNumber);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
 
+        // Mirror live spill temps to fields before AwaitUnsafeOnCompleted boxes the state
+        // machine: IL locals do not survive the MoveNext re-entry, and writes after the box
+        // would not reach the continuation's snapshot (#400). Suspending path only.
+        _helpers.PersistLiveSpillsBeforeSuspend();
+
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldflda, _builder.BuilderField);
         _il.Emit(OpCodes.Ldarg_0);
@@ -89,6 +94,10 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4_M1);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
+
+        // Restore spill temps from their fields — only on the resumed path; the
+        // synchronously-completed path (below) never persisted and keeps its locals.
+        _helpers.RehydrateLiveSpillsAfterResume();
 
         // 8. Continue point
         _il.MarkLabel(continueLabel);

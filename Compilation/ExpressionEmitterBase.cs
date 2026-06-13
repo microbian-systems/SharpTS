@@ -335,9 +335,10 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     {
         EmitExpression(e);
         EnsureBoxed();
-        var local = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, local);
-        return local;
+        // Register the temp so a suspension (await) inside a *later* operand of the same
+        // expression persists this value to a field and rehydrates it on resume (#400).
+        // In non-state-machine emitters this is just a plain local.
+        return _helpers.SpillStoreObject();
     }
 
     /// <summary>
@@ -951,16 +952,12 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             return;
         }
 
-        // Phase 1: Evaluate all expressions to temps (awaits/yields happen here)
+        // Phase 1: Evaluate all expressions to temps (awaits/yields happen here).
+        // SpillBoxed registers each temp so an await in a later interpolation persists
+        // the earlier ones across the suspension (#400).
         var exprTemps = new List<LocalBuilder>();
         for (int i = 0; i < tl.Expressions.Count; i++)
-        {
-            EmitExpression(tl.Expressions[i]);
-            EnsureBoxed();
-            var temp = IL.DeclareLocal(typeof(object));
-            IL.Emit(OpCodes.Stloc, temp);
-            exprTemps.Add(temp);
-        }
+            exprTemps.Add(SpillBoxed(tl.Expressions[i]));
 
         // Phase 2: Build string from temps (no awaits, stack safe)
         IL.Emit(OpCodes.Ldstr, tl.Strings[0]);
@@ -988,21 +985,14 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual void EmitTaggedTemplateLiteral(Expr.TaggedTemplateLiteral ttl)
     {
-        // Phase 1: Evaluate tag and all expressions to temps
-        EmitExpression(ttl.Tag);
-        EnsureBoxed();
-        var tagTemp = IL.DeclareLocal(typeof(object));
-        IL.Emit(OpCodes.Stloc, tagTemp);
+        // Phase 1: Evaluate tag and all expressions to temps. SpillBoxed registers each
+        // so an await in a later interpolation persists the tag and earlier expressions
+        // across the suspension (#400).
+        var tagTemp = SpillBoxed(ttl.Tag);
 
         var exprTemps = new List<LocalBuilder>();
         for (int i = 0; i < ttl.Expressions.Count; i++)
-        {
-            EmitExpression(ttl.Expressions[i]);
-            EnsureBoxed();
-            var temp = IL.DeclareLocal(typeof(object));
-            IL.Emit(OpCodes.Stloc, temp);
-            exprTemps.Add(temp);
-        }
+            exprTemps.Add(SpillBoxed(ttl.Expressions[i]));
 
         // Phase 2: Build arrays and call from temps
         IL.Emit(OpCodes.Ldloc, tagTemp);

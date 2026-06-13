@@ -198,6 +198,10 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         if (IsDead(stmt))
             return;
 
+        // Spill temps never cross a statement boundary, so drop the live set here to keep
+        // the per-suspension persist/rehydrate cost proportional to one statement (#400).
+        _helpers.ClearLiveSpills();
+
         switch (stmt)
         {
             case Stmt.Expression e:
