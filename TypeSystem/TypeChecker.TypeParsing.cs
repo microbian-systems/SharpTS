@@ -349,6 +349,11 @@ public partial class TypeChecker
         if (typeName == "String") return new TypeInfo.String();
         if (typeName == "Number") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
         if (typeName == "Boolean") return new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
+        // Built-in Error type references (Error, TypeError, RangeError, …) resolve to their structured
+        // TypeInfo.Error — like Date/RegExp above — instead of degrading to `any`. This types member
+        // access (`e.message: string`, so `const n: number = e.message` is a TS2322 error) and aligns
+        // the annotation with the value `new Error("x")`, which already produces TypeInfo.Error (#528).
+        if (Runtime.BuiltIns.BuiltInNames.IsErrorTypeName(typeName)) return new TypeInfo.Error(typeName);
 
         // A mapped-type parameter in scope (e.g. P in `{ [P in K]: DeepReadonly<T[P]> }`)
         // parses to a TypeParameter so the body builds deferred forms (IndexedAccess,
