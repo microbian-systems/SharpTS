@@ -529,45 +529,6 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Core binary operation logic, shared between sync and async evaluation.
-    /// Uses SemanticOperatorResolver for centralized operator dispatch.
-    /// </summary>
-    private object? EvaluateBinaryOperation(Token op, object? left, object? right)
-    {
-        // Check for bigint operations first
-        var leftBigInt = GetBigIntValue(left);
-        var rightBigInt = GetBigIntValue(right);
-
-        if (leftBigInt.HasValue || rightBigInt.HasValue)
-        {
-            return EvaluateBigIntBinary(op.Type, left, right, leftBigInt, rightBigInt);
-        }
-
-        var desc = SemanticOperatorResolver.Resolve(op.Type);
-
-        return desc switch
-        {
-            OperatorDescriptor.Plus => EvaluatePlus(left, right),
-            // ECMA-262 ToNumber coercion: undefined→NaN, null→0, booleans→0/1 (#190).
-            OperatorDescriptor.Arithmetic => EvaluateArithmetic(op.Type, CoerceToNumber(left), CoerceToNumber(right)),
-            OperatorDescriptor.Power => Math.Pow(CoerceToNumber(left), CoerceToNumber(right)),
-            // JS AbstractRelationalComparison: if both are strings, compare
-            // lexicographically; otherwise coerce to number.
-            OperatorDescriptor.Comparison =>
-                left is string ls && right is string rs
-                    ? EvaluateStringComparison(op.Type, ls, rs)
-                    : EvaluateComparison(op.Type, CoerceToNumber(left), CoerceToNumber(right)),
-            OperatorDescriptor.Equality eq => EvaluateEquality(left, right, eq.IsStrict, eq.IsNegated),
-            OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift =>
-                EvaluateBitwise(op.Type, ToInt32(left), ToInt32(right)),
-            OperatorDescriptor.UnsignedRightShift => (double)(ToUint32(left) >> (ToInt32(right) & 0x1F)),
-            OperatorDescriptor.In => EvaluateIn(left, right),
-            OperatorDescriptor.InstanceOf => EvaluateInstanceof(left, right),
-            _ => null
-        };
-    }
-
-    /// <summary>
     /// Evaluates arithmetic operators (-, *, /, %).
     /// </summary>
     private static double EvaluateArithmetic(TokenType op, double left, double right) => op switch
