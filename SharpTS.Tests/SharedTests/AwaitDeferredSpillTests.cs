@@ -147,6 +147,54 @@ public class AwaitDeferredSpillTests
             """, mode));
     }
 
+    // #413: a top-level function with a rest parameter, whose call args are assembled into an
+    // object[]/List<object> on the IL stack. An await inside such an argument must spill the
+    // already-evaluated args off the evaluation stack before the array is built — otherwise the
+    // array reference sits stacked across the suspension (invalid IL, PathStackDepth) and earlier
+    // args are lost on MoveNext re-entry. `g` is all-rest; `h` has a typed regular param first.
+    // `h`'s rest-join is hoisted to a local so the body avoids the unrelated #434 BackwardBranch
+    // verify bug (`<expr> + rest.join(...)` directly), keeping these tests focused on #413.
+    private const string RestScaffold =
+        "function g(...a: any[]): string { return a.join(\",\"); }\n" +
+        "function h(x: string, ...rest: any[]): string { const s = rest.join(\",\"); return x + \"|\" + s; }\n";
+
+    private static string RunRest(string body, ExecutionMode mode)
+        => TestHarness.Run(Defer + RestScaffold + "async function m() {\n" + body + "\n}\nm();\n", mode);
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RestParamCall_DeferredAwaitArg(ExecutionMode mode)
+    {
+        // The exact issue repro shape: await in the second (rest) argument.
+        Assert.Equal("x,1\n", RunRest("""console.log(g("x", await defer(1, 5)));""", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RestParamCall_RegularParamSurvivesDeferredAwait(ExecutionMode mode)
+    {
+        // `h`'s typed regular param "X" is spilled before the deferred await in the rest arg;
+        // it must survive the suspension and be coerced back to its declared string slot.
+        Assert.Equal("X|y,Z\n", RunRest("""console.log(h("X", "y", await defer("Z", 5)));""", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RestParamCall_TwoDeferredAwaits(ExecutionMode mode)
+    {
+        Assert.Equal("p,q\n", RunRest("""console.log(g(await defer("p", 5), await defer("q", 5)));""", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RestParamCall_SpreadBetweenDeferredAwaits(ExecutionMode mode)
+    {
+        // Spread element plus deferred awaits on both sides — exercises the spread/ExpandCallArgs
+        // path, which must also read pre-spilled locals rather than re-evaluating across the await.
+        Assert.Equal("0,10,20,30\n", RunRest(
+            """const arr = [10, 20]; console.log(g(await defer(0, 5), ...arr, await defer(30, 5)));""", mode));
+    }
+
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void DeferredThenableSpecies_PrefixSurvives(ExecutionMode mode)

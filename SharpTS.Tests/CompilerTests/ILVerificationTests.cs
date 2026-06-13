@@ -66,6 +66,50 @@ public class ILVerificationTests
     }
 
     [Fact]
+    public void AwaitInRestParamCallArg_PassesILVerification()
+    {
+        // #413: await inside an argument of a call whose args are assembled as a rest/varargs
+        // array. The args must be spilled off the IL evaluation stack before the array is built;
+        // otherwise the array reference sits stacked across the suspension and the MoveNext body
+        // fails verification with PathStackDepth (and throws InvalidProgramException at runtime).
+        var source = """
+            function g(...a: any[]): string { return a.join(","); }
+            async function m() {
+                console.log(g("x", await new Promise<number>(r => setTimeout(() => r(1), 5))));
+            }
+            m();
+            """;
+
+        // Verify-only: the executor arrow captures variables, which trips the in-memory
+        // reference-assembly run path (see #343); verification alone is the precise guard here.
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void AwaitWithRegularParamBeforeRestParamCall_PassesILVerification()
+    {
+        // #413 variant: a typed regular parameter precedes the rest parameter, and the await is
+        // in a rest-position argument. The regular arg is spilled as a boxed object and must be
+        // coerced back to its declared (string) slot when loaded for the call.
+        // (The rest-join result is hoisted to a local so the body avoids the unrelated #434
+        // BackwardBranch verify bug — `<expr> + rest.join(...)` directly — keeping this test
+        // focused on the #413 call-site fix.)
+        var source = """
+            function h(x: string, ...rest: any[]): string { const s = rest.join(","); return x + "|" + s; }
+            async function m() {
+                console.log(h("X", "y", await new Promise<string>(r => setTimeout(() => r("Z"), 5))));
+            }
+            m();
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
     public void Closures_PassesILVerification()
     {
         var source = """
