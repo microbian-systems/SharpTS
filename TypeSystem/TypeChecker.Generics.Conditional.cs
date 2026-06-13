@@ -625,7 +625,7 @@ public partial class TypeChecker
                     recCallSigs.Select(CallSignatureToFunction).ToList(), inferredTypes))
                 return false;
 
-            var checkProps = ExtractPropertiesWithTypes(checkType);
+            var checkProps = ExtractInferMatchProperties(checkType);
             foreach (var (key, extendsFieldType) in extendsRec.Fields)
             {
                 if (!checkProps.TryGetValue(key, out var checkFieldType))
@@ -648,7 +648,7 @@ public partial class TypeChecker
                     itfCallSigs.Select(CallSignatureToFunction).ToList(), inferredTypes))
                 return false;
 
-            var checkProps = ExtractPropertiesWithTypes(checkType);
+            var checkProps = ExtractInferMatchProperties(checkType);
             foreach (var (key, extendsFieldType) in extendsItf.Members)
             {
                 if (extendsItf.OptionalMembers.Contains(key))
@@ -672,6 +672,34 @@ public partial class TypeChecker
         // Fall back to standard compatibility check (no infer patterns)
         return IsCompatible(extendsType, checkType);
     }
+
+    /// <summary>
+    /// Property source for the infer-match path — the <see cref="TypeInfo.Record"/>/<see cref="TypeInfo.Interface"/>
+    /// branches of <see cref="CheckExtendsRecursive"/>, which look up each extends-clause member on the
+    /// check type. For a class instance this contributes the full structural surface tsc matches against:
+    /// public fields, getters, AND methods, merged across the entire <c>Superclass</c> chain
+    /// (derived shadows inherited; the synthetic <c>constructor</c> and private/protected members are
+    /// excluded). Generic bases have their type arguments substituted.
+    ///
+    /// This is the deliberate divergence from <see cref="ExtractPropertiesWithTypes"/>, which stays
+    /// own-fields-and-getters-only because it also feeds keyof/mapped-type machinery (adding methods or
+    /// inherited members to a class's key domain there is a separate, broader decision). Routing only
+    /// the two infer-match call sites here keeps that blast radius contained while letting an extends
+    /// clause resolve against an inherited or method member (#461 own methods, #492 inherited members).
+    /// Adding members can only turn a currently-failing structural match into a success, never the
+    /// reverse, so it cannot perturb conditionals that already resolved. Non-class types defer to
+    /// <see cref="ExtractPropertiesWithTypes"/> unchanged.
+    /// </summary>
+    private Dictionary<string, TypeInfo> ExtractInferMatchProperties(TypeInfo type) => type switch
+    {
+        TypeInfo.Class cls => CollectPublicInstanceMembers(cls),
+        TypeInfo.Instance { ResolvedClassType: TypeInfo.Class instCls } => CollectPublicInstanceMembers(instCls),
+        TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig
+            => CollectGenericClassMembers(gc, ig.TypeArguments),
+        TypeInfo.Instance { ResolvedClassType: TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig }
+            => CollectGenericClassMembers(gc, ig.TypeArguments),
+        _ => ExtractPropertiesWithTypes(type)
+    };
 
     /// <summary>
     /// True when the type still contains type variables (type parameters, infer placeholders,
