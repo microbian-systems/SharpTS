@@ -35,16 +35,17 @@ public static class ProcessBuiltIns
     private static string? _scriptPath;
     private static string[]? _scriptArgs;
 
-    // Process start time for uptime calculation
-    private static readonly DateTime _processStartTime = Process.GetCurrentProcess().StartTime.ToUniversalTime();
-
-    // Script start time — reset each time a script begins execution.
-    // When set, uptime() reports time since script start rather than process start.
-    private static DateTime? _scriptStartTime;
-
-    // Stopwatch frequency for hrtime calculations
+    // Monotonic process-start baseline for uptime()/hrtime(). Stopwatch is monotonic
+    // (QueryPerformanceCounter on Windows, CLOCK_MONOTONIC on Unix); wall-clock
+    // DateTime.UtcNow is NOT — an NTP slew between two reads could make uptime() run
+    // backwards, which intermittently failed Process_Uptime_IncreasesOverTime.
     private static readonly long _startTimestamp = Stopwatch.GetTimestamp();
     private static readonly double _tickFrequency = Stopwatch.Frequency;
+
+    // Script start as a monotonic Stopwatch timestamp — reset each time a script
+    // begins execution. When set, uptime() reports time since script start rather
+    // than process start.
+    private static long? _scriptStartTimestamp;
 
     /// <summary>
     /// Gets a member of the process object by name.
@@ -157,7 +158,7 @@ public static class ProcessBuiltIns
         _scriptPath = scriptPath;
         _scriptArgs = args;
         _argvArray = null; // Clear cache to rebuild with new arguments
-        _scriptStartTime = DateTime.UtcNow;
+        _scriptStartTimestamp = Stopwatch.GetTimestamp();
     }
 
     /// <summary>
@@ -168,7 +169,7 @@ public static class ProcessBuiltIns
         _scriptPath = null;
         _scriptArgs = null;
         _argvArray = null;
-        _scriptStartTime = null;
+        _scriptStartTimestamp = null;
     }
 
     /// <summary>
@@ -177,7 +178,7 @@ public static class ProcessBuiltIns
     /// </summary>
     public static void ResetScriptStartTime()
     {
-        _scriptStartTime ??= DateTime.UtcNow;
+        _scriptStartTimestamp ??= Stopwatch.GetTimestamp();
     }
 
     /// <summary>
@@ -451,8 +452,9 @@ public static class ProcessBuiltIns
     /// </summary>
     private static object? Uptime(Interpreter i, object? r, List<object?> args)
     {
-        var start = _scriptStartTime ?? _processStartTime;
-        return (DateTime.UtcNow - start).TotalSeconds;
+        // Monotonic: derived from Stopwatch so two reads never go backwards.
+        long start = _scriptStartTimestamp ?? _startTimestamp;
+        return (Stopwatch.GetTimestamp() - start) / _tickFrequency;
     }
 
     /// <summary>

@@ -549,6 +549,14 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, runtime.NetSocketStartReading);
 
             il.MarkLabel(done);
+
+            // Release the in-flight-connect keep-alive Ref taken in $NetSocket.Connect.
+            // Both IPC and TCP success paths merge at 'done', so a single Unref here is
+            // balanced 1:1 with that Ref. The connect has been delivered ('connect'
+            // emitted); StartReading holds its own independent Ref for the read phase.
+            il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+            il.Emit(OpCodes.Call, runtime.EventLoopUnref);
+
             il.Emit(OpCodes.Ret);
         }
 
@@ -641,6 +649,12 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Stelem_Ref);
             il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
             il.Emit(OpCodes.Pop);
+
+            // Release the in-flight-connect keep-alive Ref taken in $NetSocket.Connect.
+            // The connect has settled (errored); balanced 1:1 with that Ref. Both the
+            // TCP and IPC connect workers schedule this closure on failure.
+            il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+            il.Emit(OpCodes.Call, runtime.EventLoopUnref);
 
             il.Emit(OpCodes.Ret);
         }
