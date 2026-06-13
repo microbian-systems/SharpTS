@@ -142,6 +142,26 @@ public partial class GeneratorMoveNextEmitter
         EnsureBoxed();
         _il.Emit(OpCodes.Stloc, iterableLocal);
 
+        // A delegated SharpTS generator implements $IGenerator. Store it directly in the
+        // delegate field and skip the Symbol.iterator/$IteratorWrapper setup below, which
+        // drives via IEnumerator.MoveNext() — a path with no slot to forward the outer's
+        // resume value. The per-element loop detects $IGenerator and drives it via
+        // next(sent) instead, forwarding next(v) into the delegate (ECMA-262 §14.4.14, #476).
+        var generatorInterfaceType = _ctx?.Runtime?.GeneratorInterfaceType;
+        if (generatorInterfaceType != null)
+        {
+            var notDelegatedGeneratorLabel = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldloc, iterableLocal);
+            _il.Emit(OpCodes.Isinst, generatorInterfaceType);
+            _il.Emit(OpCodes.Brfalse, notDelegatedGeneratorLabel);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldloc, iterableLocal);
+            _il.Emit(OpCodes.Castclass, typeof(System.Collections.IEnumerator));
+            _il.Emit(OpCodes.Stfld, delegatedField);
+            _il.Emit(OpCodes.Br, resumeLabel);
+            _il.MarkLabel(notDelegatedGeneratorLabel);
+        }
+
         // Handle Map/Set specially - convert to List before iteration. Each
         // arm checks the corresponding $Runtime method MethodBuilder for null;
         // when Map/Set emission is gated off, the dispatch arm is skipped.
@@ -238,40 +258,80 @@ public partial class GeneratorMoveNextEmitter
         // before the setup above, so the field already holds the live value (#400/#414).
         _helpers.RehydrateLiveSpillsAfterResume();
 
-        // Load the delegated enumerator from field
+        // Drive the delegate one step. Two paths converge on a single value via valueTemp:
+        //   - $IGenerator (a delegated SharpTS generator): call next(this.SentField) so the
+        //     outer's resume value reaches the inner's suspended yield (#476). The result is
+        //     a { value, done } record.
+        //   - IEnumerator (arrays, $IteratorWrapper, etc.): MoveNext()/Current, which carry
+        //     no resume slot — the sent value is irrelevant to those iterators.
+        var valueTemp = _il.DeclareLocal(typeof(object));
+        var genResultLocal = _il.DeclareLocal(typeof(object));
+        var yieldStarResultLocal = _il.DeclareLocal(typeof(object));
+        var haveValueLabel = _il.DefineLabel();
+        var doneCleanupLabel = _il.DefineLabel();
+        Label driveViaGeneratorLabel = default, genDoneLabel = default;
+        if (generatorInterfaceType != null)
+        {
+            driveViaGeneratorLabel = _il.DefineLabel();
+            genDoneLabel = _il.DefineLabel();
+
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, delegatedField);
+            _il.Emit(OpCodes.Isinst, generatorInterfaceType);
+            _il.Emit(OpCodes.Brtrue, driveViaGeneratorLabel);
+        }
+
+        // IEnumerator path: advance, then read Current into valueTemp.
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldfld, delegatedField);
-
-        // Check if there are more elements
         _il.Emit(OpCodes.Callvirt, moveNext);
         _il.Emit(OpCodes.Brfalse, loopEnd);
-
-        // Get current value from delegated enumerator
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldfld, delegatedField);
         _il.Emit(OpCodes.Callvirt, current);
-
-        // Store in <>2__current
-        var valueTemp = _il.DeclareLocal(typeof(object));
         _il.Emit(OpCodes.Stloc, valueTemp);
+        _il.Emit(OpCodes.Br, haveValueLabel);
+
+        // $IGenerator path: result = delegate.next(this.SentField); branch on result.done.
+        if (generatorInterfaceType != null)
+        {
+            _il.MarkLabel(driveViaGeneratorLabel);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, delegatedField);
+            _il.Emit(OpCodes.Castclass, generatorInterfaceType);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.SentField);
+            _il.Emit(OpCodes.Callvirt, _ctx!.Runtime!.GeneratorNextMethod);
+            _il.Emit(OpCodes.Stloc, genResultLocal);
+
+            _il.Emit(OpCodes.Ldloc, genResultLocal);
+            _il.Emit(OpCodes.Call, _ctx.Runtime.GetIteratorDone);
+            _il.Emit(OpCodes.Brtrue, genDoneLabel);
+
+            _il.Emit(OpCodes.Ldloc, genResultLocal);
+            _il.Emit(OpCodes.Call, _ctx.Runtime.GetIteratorValue);
+            _il.Emit(OpCodes.Stloc, valueTemp);
+            // fall through to haveValue
+        }
+
+        // Yield the delegated value: store in <>2__current, set resume state, return true.
+        _il.MarkLabel(haveValueLabel);
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldloc, valueTemp);
         _il.Emit(OpCodes.Stfld, _builder.CurrentField);
-
-        // Set state and return true
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, stateNumber);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
-
         _il.Emit(OpCodes.Ldc_I4_1);
         _il.Emit(OpCodes.Ret);
 
-        // End of delegation — reached when delegated.MoveNext() returned false.
-        // ECMA-262 27.3: the completion value of `yield* expr` is the delegated iterator's
-        // return value (the value passed to its `return` statement). For SharpTS-emitted
-        // generators we store that value in the state machine's CurrentField (see EmitReturn
-        // in Statements.cs). IEnumerator.Current is a valid property even after MoveNext
-        // returned false for our generators — the runtime preserves the last-set value.
+        // End of delegation — reached when the delegate reports done.
+        // ECMA-262 §14.4.14: the completion value of `yield* expr` is the delegated
+        // iterator's return value. For the $IGenerator path it is the done record's `value`;
+        // for the IEnumerator path SharpTS-emitted generators store it in CurrentField (see
+        // EmitReturn in Statements.cs), which IEnumerator.Current still reports after MoveNext
+        // returned false. Non-SharpTS iterators (e.g. List<T>.Enumerator) throw on Current
+        // past the end, so that read is guarded and falls back to null.
         _il.MarkLabel(loopEnd);
 
         // Capture the delegated iterator's Current as the yield* result. Guard against
@@ -281,7 +341,6 @@ public partial class GeneratorMoveNextEmitter
         // ECMA-262 14.4.14 the `yield*` completion value is `undefined` — load the emitted
         // `$Undefined` sentinel, not CLR `null` (which would surface as JS `null`, #443). The
         // interpreter's DelegateYieldStar coerces its own null sentinel to `undefined` the same way.
-        var yieldStarResultLocal = _il.DeclareLocal(typeof(object));
         _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
         _il.Emit(OpCodes.Stloc, yieldStarResultLocal);
         _il.BeginExceptionBlock();
@@ -292,6 +351,19 @@ public partial class GeneratorMoveNextEmitter
         _il.BeginCatchBlock(typeof(Exception));
         _il.Emit(OpCodes.Pop);
         _il.EndExceptionBlock();
+        if (generatorInterfaceType != null)
+        {
+            _il.Emit(OpCodes.Br, doneCleanupLabel);
+
+            // $IGenerator done: the completion value is the done record's `value`.
+            _il.MarkLabel(genDoneLabel);
+            _il.Emit(OpCodes.Ldloc, genResultLocal);
+            _il.Emit(OpCodes.Call, _ctx!.Runtime!.GetIteratorValue);
+            _il.Emit(OpCodes.Stloc, yieldStarResultLocal);
+            // fall through to doneCleanup
+        }
+
+        _il.MarkLabel(doneCleanupLabel);
 
         // Clear the delegated enumerator field
         _il.Emit(OpCodes.Ldarg_0);

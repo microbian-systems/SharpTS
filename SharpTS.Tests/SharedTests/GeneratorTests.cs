@@ -98,6 +98,103 @@ public class GeneratorTests
         Assert.Equal("1\n2\n3\n4\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_YieldStar_ForwardsSentValue(ExecutionMode mode)
+    {
+        // ECMA-262 §14.4.14: the value passed to the outer's next(v) is forwarded
+        // into the delegated iterator's next(v), so the inner yield resumes with it
+        // rather than undefined (issue #476).
+        var source = """
+            function* inner() {
+                const a = yield 1;
+                console.log("inner got", a);
+            }
+            function* outer() {
+                yield* inner();
+            }
+            const it = outer();
+            it.next();
+            it.next(99);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("inner got 99\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_YieldStar_ForwardsAcrossYields_AndYieldsCompletionValue(ExecutionMode mode)
+    {
+        // Each next(v) feeds the inner's successive yields, and the delegate's
+        // return value becomes the value of the `yield*` expression.
+        var source = """
+            function* inner() {
+                const a = yield "a";
+                const b = yield "b";
+                return `inner:${a},${b}`;
+            }
+            function* outer() {
+                const ret = yield* inner();
+                console.log("ret", ret);
+                yield "after";
+            }
+            const it = outer();
+            console.log(it.next().value);
+            console.log(it.next(1).value);
+            console.log(it.next(2).value);
+            console.log(it.next(3).done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("a\nb\nret inner:1,2\nafter\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_YieldStar_Nested_ForwardsSentValue(ExecutionMode mode)
+    {
+        // A resume value must thread through every level of nested delegation.
+        var source = """
+            function* a() {
+                const x = yield 1;
+                console.log("a got", x);
+            }
+            function* b() { yield* a(); }
+            function* c() { yield* b(); }
+            const it = c();
+            it.next();
+            it.next(42);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("a got 42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_YieldStar_InExpression_ForwardsSentValue(ExecutionMode mode)
+    {
+        // yield* as a sub-expression (operand-spill path) still forwards the resume
+        // value and yields the delegate's return value into the surrounding expression.
+        var source = """
+            function* inner() {
+                const x = yield 1;
+                return x + 10;
+            }
+            function* outer() {
+                const v = "R:" + (yield* inner());
+                console.log(v);
+            }
+            const it = outer();
+            it.next();
+            it.next(5);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("R:15\n", output);
+    }
+
     #endregion
 
     #region Control Flow
