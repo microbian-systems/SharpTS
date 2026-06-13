@@ -1504,6 +1504,8 @@ public partial class TypeChecker
             Stmt.Function f => f.Name.Lexeme,
             Stmt.Class c => c.Name.Lexeme,
             Stmt.Var v => v.Name.Lexeme,
+            // `export const x = …` now parses as Stmt.Const (was Stmt.Var before #428).
+            Stmt.Const c => c.Name.Lexeme,
             Stmt.Interface i => i.Name.Lexeme,
             Stmt.TypeAlias t => t.Name.Lexeme,
             Stmt.Enum e => e.Name.Lexeme,
@@ -1522,6 +1524,9 @@ public partial class TypeChecker
             Stmt.Function f => _environment.Get(f.Name.Lexeme) ?? new TypeInfo.Any(),
             Stmt.Class c => _environment.Get(c.Name.Lexeme) ?? new TypeInfo.Any(),
             Stmt.Var v => _environment.Get(v.Name.Lexeme) ?? new TypeInfo.Any(),
+            // `export const x = …` now parses as Stmt.Const (was Stmt.Var before #428). The
+            // environment holds the narrowed literal type recorded by VisitConst.
+            Stmt.Const c => _environment.Get(c.Name.Lexeme) ?? new TypeInfo.Any(),
             Stmt.Interface i => _environment.Get(i.Name.Lexeme) ?? new TypeInfo.Any(),
             Stmt.TypeAlias t => ToTypeInfo(t.TypeDefinition),
             Stmt.Enum e => _environment.Get(e.Name.Lexeme) ?? new TypeInfo.Any(),

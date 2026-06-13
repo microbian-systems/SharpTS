@@ -1886,6 +1886,8 @@ public partial class Interpreter : IDisposable
             Stmt.Function f => f.Name.Lexeme,
             Stmt.Class c => c.Name.Lexeme,
             Stmt.Var v => v.Name.Lexeme,
+            // `export const x = …` now parses as Stmt.Const (was Stmt.Var before #428).
+            Stmt.Const c => c.Name.Lexeme,
             Stmt.Enum e => e.Name.Lexeme,
             _ => throw new InterpreterException($"Cannot get name of declaration type {decl.GetType().Name}")
         };
@@ -1902,6 +1904,8 @@ public partial class Interpreter : IDisposable
             Stmt.Function f => f.Name,
             Stmt.Class c => c.Name,
             Stmt.Var v => v.Name,
+            // `export const x = …` now parses as Stmt.Const (was Stmt.Var before #428).
+            Stmt.Const c => c.Name,
             Stmt.Enum e => e.Name,
             _ => throw new InterpreterException($"Cannot get value of declaration type {decl.GetType().Name}")
         };
