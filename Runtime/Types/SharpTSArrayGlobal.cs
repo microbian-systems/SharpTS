@@ -142,26 +142,34 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
                 $"Array.prototype.{_name} called on null or undefined"));
         }
 
-        // Fast path: receiver is a real array.
-        if (_receiver is SharpTSArray arr)
+        // ECMA-262 §23.1.3: every Array.prototype method begins with
+        // `O = ToObject(this value)`. A primitive receiver (string/number/
+        // boolean) therefore becomes its wrapper object, so the callback's
+        // final "array" argument (O) is an object — e.g.
+        // `Array.prototype.forEach.call("ab", cb)` passes a String wrapper
+        // (`typeof obj === "object"`, `obj instanceof String === true`),
+        // not the bare `"ab"`. Objects/arrays are returned unchanged. (#454)
+        object? receiver = BuiltIns.BuiltInConstructorFactory.ToObject(_receiver);
+
+        // Fast path: receiver is a real array (ToObject is identity for objects).
+        if (receiver is SharpTSArray arr)
             return _inner.Bind(arr).Call(interpreter, arguments);
 
-        // Slow path: receiver is array-like (object with `length` + indexed
-        // props, or a string). ECMA-262 spec: ToObject(this), then iterate via
-        // LengthOfArrayLike(O) / HasProperty(O, i) / Get(O, i). Materialize
-        // into a temp SharpTSArray for dispatch, but wrap any callable
-        // argument so the callback sees the ORIGINAL receiver as its final
-        // "array" parameter — per spec, callbacks get O, not the internal
-        // materialization.
-        if (TryMaterializeArrayLike(_receiver, interpreter, out var tempArr))
+        // Slow path: receiver is array-like (a wrapper object with `length` +
+        // indexed props, e.g. a boxed String, or any object exposing them).
+        // Iterate via LengthOfArrayLike(O) / HasProperty(O, i) / Get(O, i)
+        // by materializing into a temp SharpTSArray for dispatch, but wrap any
+        // callable argument so the callback sees O as its final "array"
+        // parameter — per spec, callbacks get O, not the internal materialization.
+        if (TryMaterializeArrayLike(receiver, interpreter, out var tempArr))
         {
-            var wrappedArgs = WrapCallbackArguments(arguments, tempArr, _receiver);
+            var wrappedArgs = WrapCallbackArguments(arguments, tempArr, receiver);
             return _inner.Bind(tempArr).Call(interpreter, wrappedArgs);
         }
 
         // Fallback: receiver type we can't coerce — let the inner method try.
         // It will likely throw a meaningful error.
-        return _inner.Bind(_receiver).Call(interpreter, arguments);
+        return _inner.Bind(receiver).Call(interpreter, arguments);
     }
 
     /// <summary>
@@ -213,14 +221,10 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
                 tempArr = new SharpTSArray(list);
                 return true;
             }
-            case string s:
-            {
-                var list = new List<object?>(s.Length);
-                for (int i = 0; i < s.Length; i++)
-                    list.Add(s[i].ToString());
-                tempArr = new SharpTSArray(list);
-                return true;
-            }
+            // A primitive string receiver never reaches here: Call() runs it
+            // through ToObject first, so it arrives as a boxed String wrapper
+            // (SharpTSObject with `length` + indexed char slots) handled by the
+            // SharpTSObject case above.
             default:
                 return false;
         }

@@ -781,42 +781,77 @@ public static class ObjectBuiltIns
         var target = args[0];
         var props = args[1];
 
-        if (target == null)
+        if (target is null or SharpTSUndefined)
         {
             throw new Exception("TypeError: Object.defineProperties called on null or undefined");
         }
 
-        if (props == null)
+        if (props is null or SharpTSUndefined)
         {
             throw new Exception("TypeError: Cannot convert undefined or null to object");
         }
 
-        // Get keys from the properties object
-        IEnumerable<string> keys = props switch
+        // ECMA-262 §19.1.2.3 ObjectDefineProperties: for each own ENUMERABLE
+        // property key of props, read its descriptor object via Get — firing any
+        // accessor getter with `this` bound to props — then DefineProperty on the
+        // target. Reading via Get (not the raw field) matters when props is a
+        // boxed primitive wrapper carrying an accessor descriptor, e.g.
+        // `Object.defineProperties(o, new Number(n))` where the descriptor lives
+        // behind a getter whose body inspects `this instanceof Number`. (#454)
+        if (props is SharpTSObject obj)
         {
-            SharpTSObject obj => obj.Fields.Keys,
-            SharpTSInstance inst => inst.GetFieldNames(),
-            Dictionary<string, object?> dict => dict.Keys,
+            foreach (var key in OwnEnumerablePropertyKeys(obj))
+            {
+                var descriptor = interpreter.GetProperty(obj, key);
+                DefineProperty(interpreter, [target, key, descriptor]);
+            }
+            return target;
+        }
+
+        // SharpTSInstance / plain Dictionary carriers store data only (no
+        // separate accessor storage), so a raw field read already matches Get.
+        IEnumerable<KeyValuePair<string, object?>> entries = props switch
+        {
+            SharpTSInstance inst => inst.GetFieldNames()
+                .Select(k => new KeyValuePair<string, object?>(k, inst.GetRawField(k))),
+            Dictionary<string, object?> dict => dict,
             _ => throw new Exception("TypeError: Property descriptions must be an object")
         };
 
-        foreach (var key in keys)
+        foreach (var entry in entries)
         {
-            // Get the descriptor for this key
-            object? descriptor = props switch
-            {
-                SharpTSObject obj => obj.Fields.TryGetValue(key, out var v) ? v : null,
-                SharpTSInstance inst => inst.GetRawField(key),
-                Dictionary<string, object?> dict => dict.TryGetValue(key, out var v) ? v : null,
-                _ => null
-            };
-
-            // Delegate to defineProperty
-            DefineProperty(interpreter, [target, key, descriptor]);
+            DefineProperty(interpreter, [target, entry.Key, entry.Value]);
         }
 
         return target;
     }
+
+    /// <summary>
+    /// Own enumerable string-keyed property names of <paramref name="obj"/> —
+    /// enumerable data fields plus enumerable accessor (getter/setter)
+    /// properties — excluding the internal slots that back boxed primitive
+    /// wrappers (<c>new String/Number/Boolean</c>), which must stay invisible to
+    /// enumeration per ECMA-262. Accessor names are stored disjointly from data
+    /// fields (see <see cref="SharpTSObject.AccessorPropertyNames"/>).
+    /// </summary>
+    private static IEnumerable<string> OwnEnumerablePropertyKeys(SharpTSObject obj)
+    {
+        foreach (var key in obj.Fields.Keys)
+            if (!IsBoxedPrimitiveInternalSlot(key) && obj.GetPropertyFlags(key).Enumerable)
+                yield return key;
+        foreach (var key in obj.AccessorPropertyNames)
+            if (obj.GetPropertyFlags(key).Enumerable)
+                yield return key;
+    }
+
+    /// <summary>
+    /// True for the internal-slot field names used by boxed primitive wrappers
+    /// (see <see cref="BuiltInConstructorFactory"/>). They hold [[StringData]] /
+    /// [[NumberData]] / [[BooleanData]] plus the wrapper's type tag — not real
+    /// own properties — so enumeration-based spec operations must skip them.
+    /// </summary>
+    private static bool IsBoxedPrimitiveInternalSlot(string key)
+        => key is "__primitiveType" or "__primitiveValue";
 
     /// <summary>
     /// Object.getOwnPropertyDescriptors(obj) - returns all own property descriptors.
