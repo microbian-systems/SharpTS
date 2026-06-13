@@ -257,30 +257,50 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
 
     /// <summary>
     /// Shared <c>yield*</c> delegation loop used by both generator types.
-    /// For inner generators, iterates via <c>Next()</c> and captures the
+    /// For inner generators, iterates via <c>Next(sent)</c> and captures the
     /// completion value. For other iterables, iterates lazily with no return value.
     /// </summary>
-    internal static object? DelegateYieldStar(Interpreter interpreter, object? outerGen, object? iterable, Action<object?> suspend, Func<bool> isClosed)
+    /// <param name="suspend">
+    /// Suspends the outer generator with the delegated value and returns the value
+    /// passed to the outer's resuming <c>next(v)</c> (ECMA-262 §14.4.14): each value
+    /// the delegate yields is handed to <paramref name="suspend"/>, whose return is
+    /// forwarded into the delegate's next <c>next(v)</c>.
+    /// </param>
+    internal static object? DelegateYieldStar(Interpreter interpreter, object? outerGen, object? iterable, Func<object?, object?> suspend, Func<bool> isClosed)
     {
         switch (iterable)
         {
             case SharpTSGenerator gen:
+            {
+                // §14.4.14: the loop seeds `received` with undefined, so the first
+                // inner next() gets undefined; every later one forwards the outer's
+                // resume value. (A delegate suspended at its start ignores the
+                // argument, so seeding undefined matches when the outer was mid-yield.)
+                object? sent = SharpTSUndefined.Instance;
                 while (true)
                 {
                     if (isClosed()) return null;
-                    var r = gen.Next();
+                    var r = gen.Next(sent);
                     if (r.Done) return r.Value;
-                    suspend(r.Value);
+                    sent = suspend(r.Value);
                 }
+            }
             case SharpTSArrowGenerator agen:
+            {
+                object? sent = SharpTSUndefined.Instance;
                 while (true)
                 {
                     if (isClosed()) return null;
-                    var r = agen.Next();
+                    var r = agen.Next(sent);
                     if (r.Done) return r.Value;
-                    suspend(r.Value);
+                    sent = suspend(r.Value);
                 }
+            }
             default:
+                // Non-generator iterables (arrays, Maps, custom iterator objects) are
+                // driven lazily via GetIterableElements, which calls next() without an
+                // argument. Built-in iterators ignore the resume value; forwarding it to
+                // a custom iterator's next(v) is a separate gap (tracked in #476 notes).
                 foreach (var element in interpreter.GetIterableElements(iterable))
                 {
                     if (isClosed()) return null;
