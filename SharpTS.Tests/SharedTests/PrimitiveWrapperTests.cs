@@ -89,11 +89,12 @@ public class PrimitiveWrapperTests
     }
 
     // ── primitive (non-new) is NOT an instance ───────────────────────────────
-    // Interpreter-only: compiled mode treats bare primitives differently for instanceof
-    // (pre-existing gap, tracked separately).
+    // Per ECMA-262 OrdinaryHasInstance a bare primitive is never an instance of
+    // its wrapper constructor; only boxed `new Number(5)` wrappers are. Both modes
+    // now agree (#360 interp, #375 compiled).
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Number_Bare_NotInstanceofNumber(ExecutionMode mode)
     {
         var output = TestHarness.Run("console.log((5 as any) instanceof Number);", mode);
@@ -101,10 +102,18 @@ public class PrimitiveWrapperTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void String_Bare_NotInstanceofString(ExecutionMode mode)
     {
         var output = TestHarness.Run("console.log(('x' as any) instanceof String);", mode);
+        Assert.Equal("false\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Boolean_Bare_NotInstanceofBoolean(ExecutionMode mode)
+    {
+        var output = TestHarness.Run("console.log((true as any) instanceof Boolean);", mode);
         Assert.Equal("false\n", output);
     }
 
