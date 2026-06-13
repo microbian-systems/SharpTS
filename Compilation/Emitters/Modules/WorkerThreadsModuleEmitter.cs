@@ -88,8 +88,11 @@ public sealed class WorkerThreadsModuleEmitter : IBuiltInModuleEmitter
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // workerData is stored as a thread-local, access via runtime helper
-        // For now, return null in compiled code (workers load from file, not inline)
+        // workerData is only defined in worker context, and worker child scripts
+        // always run under the interpreter (SharpTSWorker.RunWorkerScript news up an
+        // Interpreter), which binds the cloned workerData via env.Define. This
+        // compiled path is therefore only ever reached on the MAIN thread, where
+        // Node's workerData is null — so null is the correct value here (#380).
         il.Emit(OpCodes.Ldnull);
         return true;
     }

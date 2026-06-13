@@ -610,4 +610,77 @@ public class WorkerThreadsTests
     }
 
     #endregion
+
+    #region Worker options bag — workerData (#380)
+
+    /// <summary>
+    /// Regression for #380: a worker spawned with a <c>workerData</c> option must see
+    /// that value via <c>worker_threads.workerData</c>. In compiled mode the options
+    /// bag is a <c>Dictionary&lt;string, object?&gt;</c> (a compiled object literal),
+    /// not a <c>SharpTSObject</c>; before the fix the constructor's
+    /// <c>options as SharpTSObject</c> cast yielded null and the entire bag was
+    /// dropped, so a compiled worker saw <c>workerData === undefined</c>.
+    /// </summary>
+    /// <remarks>
+    /// The worker child script always runs under the interpreter, so it reads
+    /// workerData through <c>env.Define</c>; the fix is purely in how the parent
+    /// (compiled or interpreted) marshals the options bag into <c>SharpTSWorker</c>.
+    /// <c>__dirname</c> routes the harness through the real-disk path so the worker
+    /// can load its script.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_WorkerData_PrimitiveIsVisibleInWorker(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_data.ts"] = """
+                // workerData/postMessage resolve as worker-context globals (no import).
+                postMessage("data:" + workerData);
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_data.ts", { workerData: 123 });
+                w.on("message", (e: any) => {
+                    console.log("received:" + e.data);
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("received:data:123", output);
+    }
+
+    /// <summary>
+    /// #380: an object <c>workerData</c> is structured-cloned across the boundary and
+    /// its fields are readable in the worker. Exercises the compiled
+    /// <c>Dictionary&lt;string, object?&gt;</c> clone path as well as the interpreter
+    /// <c>SharpTSObject</c> path.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_WorkerData_ObjectIsClonedAndVisibleInWorker(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_data_obj.ts"] = """
+                // workerData/postMessage resolve as worker-context globals (no import).
+                postMessage("got:" + workerData.name + ":" + workerData.count);
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_data_obj.ts", {
+                    workerData: { name: "alice", count: 7 }
+                });
+                w.on("message", (e: any) => {
+                    console.log("received:" + e.data);
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("received:got:alice:7", output);
+    }
+
+    #endregion
 }
