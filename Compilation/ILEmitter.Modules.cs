@@ -373,7 +373,20 @@ public partial class ILEmitter
     {
         if (_ctx.CurrentModulePath == null || _ctx.ModuleExportFields == null)
         {
-            // Not in module context
+            // Single-file (script) mode: there is no module to export into, so the
+            // `export` marker itself is inert. But a wrapped var/const declaration
+            // still needs its initializer to run and its binding stored — exactly
+            // as a bare `const x = …` would (its static/captured field was defined
+            // by DefineModuleScopedTopLevelStaticField / RegisterCapturedStmt). A
+            // Stmt.Sequence covers destructuring and multi-declarator forms
+            // (`export const { a } = o`, `export let a = 1, b = 2`). Function/class/
+            // enum/namespace declarations bind by name via the registries and need
+            // no entry-point store, so they stay no-ops here.
+            if (_ctx.CurrentModulePath == null &&
+                export.Declaration is Stmt.Var or Stmt.Const or Stmt.Sequence)
+            {
+                EmitStatement(export.Declaration);
+            }
             return;
         }
 

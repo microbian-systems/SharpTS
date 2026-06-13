@@ -1381,6 +1381,17 @@ public partial class ILCompiler
                 return;
             }
 
+            // Single-file (script) mode: `export const/let/var x = …` still declares
+            // the top-level binding `x`, so a closure capturing it needs a field on
+            // the entry-point display class exactly as a bare declaration would.
+            // Real modules (non-null path) bind exported vars through export fields,
+            // so leave those untouched.
+            if (path == null && stmt is Stmt.Export { Declaration: { } exportedDecl })
+            {
+                RegisterCapturedStmt(exportedDecl, captureKey, path, ref mv, ref mf);
+                return;
+            }
+
             string? varName = stmt switch
             {
                 Stmt.Var v => v.Name.Lexeme,
@@ -1490,6 +1501,18 @@ public partial class ILCompiler
             {
                 DefineModuleScopedTopLevelStaticField(inner, modulePath, moduleDict);
             }
+            return;
+        }
+
+        // Single-file (script) mode: `export const/let/var x = …` still declares the
+        // top-level binding `x`. Unwrap to the inner declaration so it gets a static
+        // field exactly like a bare declaration would; without this its initializer
+        // would have nowhere to store and references to `x` would throw at runtime.
+        // Real modules (non-null path) bind exported vars through export fields +
+        // per-init-method locals, so leave those untouched.
+        if (modulePath == null && stmt is Stmt.Export { Declaration: { } exportedDecl })
+        {
+            DefineModuleScopedTopLevelStaticField(exportedDecl, modulePath, moduleDict);
             return;
         }
 

@@ -131,6 +131,87 @@ public class ModuleTests
         Assert.Equal("1\n2\n", TestHarness.Run(source, mode));
     }
 
+    // ---- #424: exported variable declarations bound in single-file (script) compilation ----
+    // These compile a single file in script (non-module) mode (TestHarness.Run + Compiled →
+    // ILCompiler.Compile, not CompileModules). Before #424 the compiled script path dropped the
+    // initializer of an `export const/let/var` (EmitExport no-ops when CurrentModulePath == null)
+    // and never defined a backing field for the binding, so a later reference threw
+    // "ReferenceError: Undefined variable". They run in BOTH modes to pin the fix and guard the
+    // interpreter (which was already correct). The CLI routes any file with import/export through
+    // the module path, so no production program hit this — only the in-process single-file harness.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExportConst_SingleFile(ExecutionMode mode)
+    {
+        // The canonical #424 repro: a non-captured exported const must still be
+        // stored in its $topLevel_ static field and resolve when referenced.
+        var source = """
+            export const x = 5;
+            console.log(x);
+            """;
+
+        Assert.Equal("5\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExportLet_SingleFile(ExecutionMode mode)
+    {
+        // `export let` is mutable — exercises the Stmt.Var arm and a later reassignment.
+        var source = """
+            export let count = 7;
+            count = count + 1;
+            console.log(count);
+            """;
+
+        Assert.Equal("8\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExportVar_SingleFile(ExecutionMode mode)
+    {
+        var source = """
+            export var greeting = "hi";
+            console.log(greeting);
+            """;
+
+        Assert.Equal("hi\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExportConst_CapturedByClosure_SingleFile(ExecutionMode mode)
+    {
+        // When a function (a separate compiled method) reads the exported binding, the
+        // closure analyzer marks it captured, so it lives on the entry-point display class
+        // rather than a static field. Exercises the RegisterCapturedStmt unwrap path.
+        var source = """
+            export const factor = 5;
+            function scale(n: number): number {
+                return n * factor;
+            }
+            console.log(scale(3));
+            """;
+
+        Assert.Equal("15\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExportConst_MultiDeclarator_SingleFile(ExecutionMode mode)
+    {
+        // `export const a = 1, b = 2` desugars to Stmt.Export { Declaration: Stmt.Sequence };
+        // both the field-definition helpers and EmitExport must recurse through the sequence.
+        var source = """
+            export const a = 1, b = 2;
+            console.log(a + b);
+            """;
+
+        Assert.Equal("3\n", TestHarness.Run(source, mode));
+    }
+
     // ---- #395: exported async / generator / async-generator functions callable across modules ----
     // The three #392 tests above stay InterpretedOnly because they compile a single file in
     // script (non-module) mode, where exported function declarations are still not bound
