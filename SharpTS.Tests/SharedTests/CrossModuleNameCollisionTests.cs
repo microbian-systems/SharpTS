@@ -133,4 +133,165 @@ public class CrossModuleNameCollisionTests
         Assert.Contains("arch-len: true", output);
         Assert.Contains("pid-typeof: number", output);
     }
+
+    // ---- #418: same-named async / generator / async-generator functions across modules ----
+    // Sync top-level functions register their stub/builders under the module-qualified name
+    // (`$M_<module>_<name>`), so two modules never collide. Pre-#418 the state-machine flavors
+    // (async / generator / async-generator) registered every piece of their state — stub
+    // MethodBuilder, state-machine builder, AST node, _functionDefinitionModule — under the
+    // SIMPLE name. A second `async function dup` in another module overwrote the first's stub,
+    // orphaning it (no body emitted) and crashing emission with "The invoked member is not
+    // supported before the type is created." #418 module-qualifies these registries to match
+    // sync. These run in BOTH modes: compiled pins the fix, interpreted guards the (already
+    // correct) reference behavior.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TwoModulesDeclaringSameAsyncFunctionName(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["a.ts"] = """
+                export async function dup(): Promise<string> { return 'A'; }
+                """,
+            ["b.ts"] = """
+                export async function dup(): Promise<string> { return 'B'; }
+                """,
+            ["main.ts"] = """
+                import { dup as dupA } from './a';
+                import { dup as dupB } from './b';
+                async function main() { console.log(await dupA(), await dupB()); }
+                main();
+                """
+        };
+
+        Assert.Equal("A B\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TwoModulesDeclaringSameGeneratorFunctionName(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["a.ts"] = """
+                export function* dup(): Generator<string> { yield 'A1'; yield 'A2'; }
+                """,
+            ["b.ts"] = """
+                export function* dup(): Generator<string> { yield 'B1'; yield 'B2'; }
+                """,
+            ["main.ts"] = """
+                import { dup as dupA } from './a';
+                import { dup as dupB } from './b';
+                console.log([...dupA()].join(','));
+                console.log([...dupB()].join(','));
+                """
+        };
+
+        Assert.Equal("A1,A2\nB1,B2\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TwoModulesDeclaringSameAsyncGeneratorFunctionName(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["a.ts"] = """
+                export async function* dup(): AsyncGenerator<string> { yield 'A1'; yield 'A2'; }
+                """,
+            ["b.ts"] = """
+                export async function* dup(): AsyncGenerator<string> { yield 'B1'; yield 'B2'; }
+                """,
+            ["main.ts"] = """
+                import { dup as dupA } from './a';
+                import { dup as dupB } from './b';
+                async function main() {
+                    for await (const v of dupA()) console.log(v);
+                    for await (const v of dupB()) console.log(v);
+                }
+                main();
+                """
+        };
+
+        Assert.Equal("A1\nA2\nB1\nB2\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TwoModulesDefaultExportingSameAsyncFunctionName(ExecutionMode mode)
+    {
+        // The `export default` store branch is distinct from named exports; cover the
+        // collision there too.
+        var files = new Dictionary<string, string>
+        {
+            ["a.ts"] = """
+                export default async function dup(): Promise<string> { return 'DA'; }
+                """,
+            ["b.ts"] = """
+                export default async function dup(): Promise<string> { return 'DB'; }
+                """,
+            ["main.ts"] = """
+                import dupA from './a';
+                import dupB from './b';
+                async function main() { console.log(await dupA(), await dupB()); }
+                main();
+                """
+        };
+
+        Assert.Equal("DA DB\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TwoModulesMixingAsyncAndSyncSameFunctionName(ExecutionMode mode)
+    {
+        // One module's `dup` is async (qualified state-machine stub), the other's is sync
+        // (qualified plain stub). Each must resolve to its own module's definition.
+        var files = new Dictionary<string, string>
+        {
+            ["a.ts"] = """
+                export async function dup(): Promise<string> { return 'async'; }
+                """,
+            ["b.ts"] = """
+                export function dup(): string { return 'sync'; }
+                """,
+            ["main.ts"] = """
+                import { dup as dupA } from './a';
+                import { dup as dupB } from './b';
+                async function main() { console.log(await dupA(), dupB()); }
+                main();
+                """
+        };
+
+        Assert.Equal("async sync\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TwoModulesSameAsyncFunctionNameEachCapturingOwnModuleConst(ExecutionMode mode)
+    {
+        // Each colliding async function captures a module-level const of the same name. Beyond
+        // disambiguating the stub, emission must restore the correct module context per function
+        // so each reads its OWN module's binding (not the other's).
+        var files = new Dictionary<string, string>
+        {
+            ["a.ts"] = """
+                const tag = 'CA';
+                export async function dup(): Promise<string> { return tag; }
+                """,
+            ["b.ts"] = """
+                const tag = 'CB';
+                export async function dup(): Promise<string> { return tag; }
+                """,
+            ["main.ts"] = """
+                import { dup as dupA } from './a';
+                import { dup as dupB } from './b';
+                async function main() { console.log(await dupA(), await dupB()); }
+                main();
+                """
+        };
+
+        Assert.Equal("CA CB\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
 }

@@ -132,13 +132,22 @@ public partial class ILCompiler
     // into lib.ts's resolver.
     private readonly Dictionary<string, Dictionary<string, FieldBuilder>> _moduleTopLevelStaticVars = [];
 
-    // Simple function name -> owning module path. Populated in DefineFunction
-    // for every top-level function (including async/generator). Used to
-    // restore _modules.CurrentPath during Phase-7 body emission so per-module
-    // lookups resolve against the right module's storage. Distinct from
-    // _modules.FunctionToModule, which ResolveFunctionName treats as "qualify
-    // the method name" — async stubs don't use qualified names, so they
-    // mustn't be added there.
+    // Function name -> owning module path. Used to restore _modules.CurrentPath
+    // during Phase-7 body emission so per-module lookups resolve against the
+    // right module's storage.
+    //
+    // Keying differs by flavor, matching how each reader looks the entry up:
+    //  * async / generator / async-generator functions register via
+    //    RegisterStateMachineFunctionModule keyed by the module-QUALIFIED name,
+    //    because the Phase-7 state-machine emission loops iterate the
+    //    *.StateMachines registries (also keyed by the qualified name since #418)
+    //    and restore the module by that same key.
+    //  * sync functions register keyed by the SIMPLE name (Functions.cs).
+    // These flavors also populate _modules.FunctionToModule (keyed by simple name)
+    // so ResolveFunctionName qualifies call-site / value references. Pre-#418 the
+    // state-machine flavors used simple stub names and were deliberately kept out of
+    // FunctionToModule; #418 qualified their stubs, making that entry both safe and
+    // required to disambiguate same-named functions across modules.
     //
     // For script files (which share global scope), the stored path IS the
     // script's own path; <see cref="NormalizeToEmissionPath"/> translates it
@@ -602,26 +611,13 @@ public partial class ILCompiler
     /// </summary>
     private void Phase4_DefineDeclarations(List<Stmt> statements)
     {
-        // Define all declarations
+        // Define all declarations. Delegates to the shared per-statement helper so
+        // single-file (script) mode unwraps `export`-wrapped declarations exactly like
+        // the module path does — without it, `export function f() {}` never defines its
+        // MethodBuilder and call sites can't resolve `f` (issue #417).
         foreach (var stmt in statements)
         {
-            if (stmt is Stmt.Class classStmt)
-            {
-                DefineClass(classStmt);
-            }
-            else if (stmt is Stmt.Function funcStmt)
-            {
-                if (funcStmt.Body == null) continue; // Skip overload signatures
-                DefineFunction(funcStmt);
-            }
-            else if (stmt is Stmt.Enum enumStmt)
-            {
-                DefineEnum(enumStmt);
-            }
-            else if (stmt is Stmt.Namespace nsStmt)
-            {
-                DefineNamespaceFields(nsStmt);
-            }
+            DefineDeclarationFromStatement(stmt);
         }
 
         // Define static fields for top-level variables captured by async functions
@@ -675,22 +671,13 @@ public partial class ILCompiler
     /// </summary>
     private void Phase7_EmitMethodBodies(List<Stmt> statements)
     {
+        // Delegates to the shared per-statement helper so single-file (script) mode
+        // unwraps `export`-wrapped declarations like the module path does — otherwise an
+        // exported function's body is never emitted and its call site can't resolve the
+        // name (issue #417).
         foreach (var stmt in statements)
         {
-            if (stmt is Stmt.Class classStmt)
-            {
-                EmitClassMethods(classStmt);
-            }
-            else if (stmt is Stmt.Function funcStmt)
-            {
-                if (funcStmt.Body == null) continue; // Skip overload signatures
-                EmitFunctionBody(funcStmt);
-                EmitFunctionOverloads(funcStmt);
-            }
-            else if (stmt is Stmt.Namespace nsStmt)
-            {
-                EmitNamespaceMemberBodies(nsStmt);
-            }
+            EmitMethodBodyFromStatement(stmt);
         }
 
         EmitClassExpressionBodies();
@@ -1094,6 +1081,12 @@ public partial class ILCompiler
             case Stmt.Function funcStmt when funcStmt.Body != null:
                 EmitFunctionBody(funcStmt);
                 EmitFunctionOverloads(funcStmt);
+                break;
+            case Stmt.Namespace nsStmt:
+                // Mirrors the Stmt.Namespace arm in DefineDeclarationFromStatement so the
+                // define/emit helpers stay symmetric. EmitNamespaceMemberBodies internally
+                // unwraps exported members, so an `export namespace` reaches its members.
+                EmitNamespaceMemberBodies(nsStmt);
                 break;
             case Stmt.Export { Declaration: not null } export:
                 EmitMethodBodyFromStatement(export.Declaration);

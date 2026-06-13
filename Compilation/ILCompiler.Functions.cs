@@ -18,9 +18,7 @@ public partial class ILCompiler
         // Must check this FIRST since it has both IsAsync and IsGenerator true
         if (funcStmt.IsAsync && funcStmt.IsGenerator)
         {
-            // Record mapping for Phase-7 state-machine emission (see _functionDefinitionModule).
-            if (_modules.CurrentPath != null)
-                _functionDefinitionModule[funcStmt.Name.Lexeme] = _modules.CurrentPath;
+            RegisterStateMachineFunctionModule(funcStmt);
             DefineAsyncGeneratorFunction(funcStmt);
             return;
         }
@@ -28,8 +26,7 @@ public partial class ILCompiler
         // Check if this is an async function - use native IL state machine
         if (funcStmt.IsAsync)
         {
-            if (_modules.CurrentPath != null)
-                _functionDefinitionModule[funcStmt.Name.Lexeme] = _modules.CurrentPath;
+            RegisterStateMachineFunctionModule(funcStmt);
             DefineAsyncFunction(funcStmt);
             return;
         }
@@ -37,8 +34,7 @@ public partial class ILCompiler
         // Check if this is a generator function - use generator state machine
         if (funcStmt.IsGenerator)
         {
-            if (_modules.CurrentPath != null)
-                _functionDefinitionModule[funcStmt.Name.Lexeme] = _modules.CurrentPath;
+            RegisterStateMachineFunctionModule(funcStmt);
             DefineGeneratorFunction(funcStmt);
             return;
         }
@@ -156,6 +152,33 @@ public partial class ILCompiler
 
         // Create function-level display class if this function has captured locals
         DefineFunctionDisplayClass(funcStmt, qualifiedFunctionName);
+    }
+
+    /// <summary>
+    /// Module-qualifies the registry bookkeeping for an async / generator / async-generator
+    /// top-level function so two modules declaring a same-named state-machine function no
+    /// longer clobber each other (#418). Mirrors what <see cref="DefineFunction"/> does for
+    /// sync functions: the stub/state-machine registries are keyed by the module-qualified
+    /// name (see <c>DefineAsyncFunction</c> / <c>DefineGeneratorFunction</c> /
+    /// <c>DefineAsyncGeneratorFunction</c>), so this records:
+    /// <list type="bullet">
+    /// <item><see cref="_functionDefinitionModule"/> keyed by the <em>qualified</em> name, which
+    /// the Phase-7 emission loops use to restore <c>_modules.CurrentPath</c> per function.</item>
+    /// <item><c>_modules.FunctionToModule</c> keyed by the simple name, so
+    /// <see cref="CompilationContext.ResolveFunctionName"/> qualifies call-site / value
+    /// references to the now-qualified stub key.</item>
+    /// </list>
+    /// No-op in single-file compilation (<c>CurrentPath == null</c>): there the qualified name
+    /// equals the simple name and the registries stay under the simple key.
+    /// </summary>
+    private void RegisterStateMachineFunctionModule(Stmt.Function funcStmt)
+    {
+        if (_modules.CurrentPath == null)
+            return;
+
+        string qualifiedName = GetDefinitionContext().GetQualifiedFunctionName(funcStmt.Name.Lexeme);
+        _functionDefinitionModule[qualifiedName] = _modules.CurrentPath;
+        _modules.FunctionToModule[funcStmt.Name.Lexeme] = _modules.CurrentPath;
     }
 
     /// <summary>
