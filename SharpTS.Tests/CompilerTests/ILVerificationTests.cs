@@ -65,6 +65,134 @@ public class ILVerificationTests
         Assert.Equal("42\n", output);
     }
 
+    // #357: a member-access increment (obj.prop++ / ++obj.prop / arr[i]++ / --arr[i]) inside an
+    // async/generator body underflowed the state machine's MoveNext — the shared base emitter only
+    // handled Expr.Variable operands and emitted nothing for Expr.Get/Expr.GetIndex. These pin the
+    // four distinct state-machine emitter contexts (async function, generator, async arrow, async
+    // generator) plus both operand kinds (property and index).
+
+    [Fact]
+    public void AsyncFunctionPropertyIncrement_PassesILVerification()
+    {
+        var source = """
+            async function go(): Promise<void> {
+                const obj = { x: 1 };
+                const a = obj.x++;   // postfix returns the original
+                const b = ++obj.x;   // prefix returns the new value
+                console.log(a, b, obj.x);
+            }
+            go();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("1 3 3\n", output);
+    }
+
+    [Fact]
+    public void AsyncFunctionIndexIncrement_PassesILVerification()
+    {
+        var source = """
+            async function go(): Promise<void> {
+                const arr = [5, 6];
+                const a = arr[0]++;  // postfix returns the original
+                const b = --arr[1];  // prefix decrement returns the new value
+                console.log(a, b, arr[0], arr[1]);
+            }
+            go();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("5 5 6 5\n", output);
+    }
+
+    [Fact]
+    public void GeneratorMemberIncrement_PassesILVerification()
+    {
+        var source = """
+            function* gen(): Generator<number> {
+                const o = { n: 5 };
+                o.n++;
+                yield o.n;
+                yield --o.n;
+            }
+            const g = gen();
+            console.log(g.next().value, g.next().value);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("6 5\n", output);
+    }
+
+    [Fact]
+    public void AsyncArrowMemberIncrement_PassesILVerification()
+    {
+        var source = """
+            const run = async (): Promise<void> => {
+                const o = { c: 41 };
+                console.log(++o.c, o.c);
+            };
+            run();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("42 42\n", output);
+    }
+
+    [Fact]
+    public void AsyncGeneratorMemberIncrement_PassesILVerification()
+    {
+        var source = """
+            async function* agen(): AsyncGenerator<number> {
+                const arr = [100];
+                arr[0]++;
+                yield arr[0];
+            }
+            async function main(): Promise<void> {
+                const ag = agen();
+                console.log((await ag.next()).value);
+            }
+            main();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("101\n", output);
+    }
+
+    [Fact]
+    public void AsyncStaticFieldIncrement_PassesILVerification()
+    {
+        // Class.field++ inside async needs the own/inherited static-field shadow handling (#339)
+        // that EmitCompoundSet already has; the generic dynamic path would desync the write (→ PDS)
+        // from the static-typed Ldsfld read (count would print 10, not 12).
+        var source = """
+            class Base { static shared: number = 100; }
+            class Derived extends Base {}
+            class Counter { static count: number = 10; }
+            async function go(): Promise<void> {
+                Counter.count++;     // own field: 11
+                ++Counter.count;     // own field: 12
+                Derived.shared++;    // inherited: own-shadow 101, Base.shared stays 100
+                console.log(Counter.count, Derived.shared, Base.shared);
+            }
+            go();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("12 101 100\n", output);
+    }
+
     // ---- #414: async-arrow / generator spill across a suspension ----
 
     [Fact]
