@@ -34,50 +34,30 @@ public partial class GeneratorMoveNextEmitter
             _il.Emit(OpCodes.Stfld, _builder.CurrentField);
         }
 
-        // Generator return - set state to completed and return false
+        // Generator return - set state to completed.
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, -2);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
+
+        // Inside a flag-based try/finally, the finally must run before the generator actually
+        // completes. Record a pending return and branch to the cleanup point instead of `ret`
+        // (which is also illegal here — this return statement is emitted outside the protected
+        // segment, but the finally is emitted after it). See EmitTryCatchWithYields.
+        if (_returnCleanupLabel != null)
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldc_I4_1);
+            _il.Emit(OpCodes.Stfld, GetPendingReturnField());
+            _il.Emit(OpCodes.Br, _returnCleanupLabel.Value);
+            return;
+        }
+
         _il.Emit(OpCodes.Ldc_I4_0);
         _il.Emit(OpCodes.Ret);
     }
 
-    protected override void EmitTryCatch(Stmt.TryCatch t)
-    {
-        _il.BeginExceptionBlock();
-
-        foreach (var stmt in t.TryBlock)
-            EmitStatement(stmt);
-
-        if (t.CatchBlock != null)
-        {
-            _il.BeginCatchBlock(typeof(Exception));
-
-            if (t.CatchParam != null)
-            {
-                var exLocal = _il.DeclareLocal(typeof(object));
-                _ctx!.Locals.RegisterLocal(t.CatchParam.Lexeme, exLocal);
-                _il.Emit(OpCodes.Call, _ctx.Runtime!.WrapException);
-                _il.Emit(OpCodes.Stloc, exLocal);
-            }
-            else
-            {
-                _il.Emit(OpCodes.Pop);
-            }
-
-            foreach (var stmt in t.CatchBlock)
-                EmitStatement(stmt);
-        }
-
-        if (t.FinallyBlock != null)
-        {
-            _il.BeginFinallyBlock();
-            foreach (var stmt in t.FinallyBlock)
-                EmitStatement(stmt);
-        }
-
-        _il.EndExceptionBlock();
-    }
+    // EmitTryCatch lives in GeneratorMoveNextEmitter.Statements.TryCatch.cs — it needs
+    // suspension-aware (flag-based) handling when a yield crosses the protected region.
 
     #endregion
 
