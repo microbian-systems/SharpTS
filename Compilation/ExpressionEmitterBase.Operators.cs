@@ -177,7 +177,43 @@ public abstract partial class ExpressionEmitterBase
             // Dup new value (expression result), then store
             IL.Emit(OpCodes.Dup);
             EmitStoreVariable(name);
+            SetStackUnknown();
+            return;
         }
+
+        // ++obj.prop — read via GetProperty, write via SetProperty. The synchronous ILEmitter
+        // overrides handle Get/GetIndex operands; without this arm the base (used by every
+        // state-machine MoveNext) emitted nothing and the surrounding statement underflowed the
+        // stack (#357).
+        if (pi.Operand is Expr.Get get)
+        {
+            // Class.field++ on a static data field needs the own/inherited shadow handling so the
+            // write lands on the storage the static-typed read consults (#339) — the generic
+            // GetProperty/SetProperty path below would desync with the Ldsfld read.
+            if (TryEmitStaticFieldIncrement(get, isPrefix: true, pi.Operator.Type))
+                return;
+
+            var objLocal = SpillBoxed(get.Object);
+            EmitMemberAccessIncrement(
+                isPrefix: true, pi.Operator.Type, objLocal,
+                emitKey: () => IL.Emit(OpCodes.Ldstr, get.Name.Lexeme),
+                Ctx.Runtime!.GetProperty, Ctx.Runtime!.SetProperty);
+            return;
+        }
+
+        // ++arr[i] — read via GetIndex, write via SetIndex.
+        if (pi.Operand is Expr.GetIndex gi)
+        {
+            var objLocal = SpillBoxed(gi.Object);
+            var indexLocal = SpillBoxed(gi.Index);
+            EmitMemberAccessIncrement(
+                isPrefix: true, pi.Operator.Type, objLocal,
+                emitKey: () => IL.Emit(OpCodes.Ldloc, indexLocal),
+                Ctx.Runtime!.GetIndex, Ctx.Runtime!.SetIndex);
+            return;
+        }
+
+        // Unknown operand — keep the stack state defined for the verifier.
         SetStackUnknown();
     }
 
@@ -204,8 +240,164 @@ public abstract partial class ExpressionEmitterBase
 
             // Store incremented value (original remains on stack)
             EmitStoreVariable(name);
+            SetStackUnknown();
+            return;
         }
+
+        // obj.prop++ — read via GetProperty, write via SetProperty (mirrors ++obj.prop; see #357).
+        if (poi.Operand is Expr.Get get)
+        {
+            // Class.field++ on a static data field — own/inherited shadow handling (#339); see prefix.
+            if (TryEmitStaticFieldIncrement(get, isPrefix: false, poi.Operator.Type))
+                return;
+
+            var objLocal = SpillBoxed(get.Object);
+            EmitMemberAccessIncrement(
+                isPrefix: false, poi.Operator.Type, objLocal,
+                emitKey: () => IL.Emit(OpCodes.Ldstr, get.Name.Lexeme),
+                Ctx.Runtime!.GetProperty, Ctx.Runtime!.SetProperty);
+            return;
+        }
+
+        // arr[i]++ — read via GetIndex, write via SetIndex.
+        if (poi.Operand is Expr.GetIndex gi)
+        {
+            var objLocal = SpillBoxed(gi.Object);
+            var indexLocal = SpillBoxed(gi.Index);
+            EmitMemberAccessIncrement(
+                isPrefix: false, poi.Operator.Type, objLocal,
+                emitKey: () => IL.Emit(OpCodes.Ldloc, indexLocal),
+                Ctx.Runtime!.GetIndex, Ctx.Runtime!.SetIndex);
+            return;
+        }
+
+        // Unknown operand — keep the stack state defined for the verifier.
         SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits <c>++</c>/<c>--</c> for a member-access operand (<c>obj.prop</c> or <c>arr[i]</c>) in
+    /// a state-machine body. The receiver (and index) must already be spilled into <paramref name="objLocal"/>
+    /// (and captured by <paramref name="emitKey"/>) via <see cref="SpillBoxed"/>, so any await/yield inside
+    /// them has already suspended with an empty stack and is evaluated exactly once; from here the
+    /// read → ToNumber → write sequence is straight-line with no suspension point, so plain locals suffice.
+    /// <paramref name="emitKey"/> pushes the property name (Ldstr) or index local (Ldloc) and is invoked
+    /// once for the read and once for the write. <paramref name="isPrefix"/> selects the result: prefix
+    /// returns the new value, postfix the ToNumber-coerced original (ECMA-262 §13.4).
+    /// </summary>
+    private void EmitMemberAccessIncrement(
+        bool isPrefix, TokenType op, LocalBuilder objLocal, Action emitKey,
+        MethodBuilder getMethod, MethodBuilder setMethod)
+    {
+        double delta = op == TokenType.PLUS_PLUS ? 1.0 : -1.0;
+
+        // Read current value and coerce to a number (undefined→NaN, never throws — #190).
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        emitKey();
+        IL.Emit(OpCodes.Call, getMethod);
+        IL.Emit(OpCodes.Call, Ctx.Runtime?.ConvertToNumber ?? Types.ConvertToDoubleFromObject);
+
+        var newValue = IL.DeclareLocal(typeof(object));
+        var resultValue = IL.DeclareLocal(typeof(object));
+        EmitIncrementComputeStoreResult(isPrefix, delta, newValue, resultValue);
+
+        // Write the incremented value back to the same member.
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        emitKey();
+        IL.Emit(OpCodes.Ldloc, newValue);
+        IL.Emit(OpCodes.Call, setMethod);
+
+        IL.Emit(OpCodes.Ldloc, resultValue);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Given the current numeric value on the stack as an unboxed <c>double</c>, computes the
+    /// incremented value and stores two boxed locals: <paramref name="newValue"/> (to write back)
+    /// and <paramref name="resultValue"/> (what the expression evaluates to — the new value for
+    /// prefix, the ToNumber-coerced original for postfix). Consumes the stack value.
+    /// </summary>
+    private void EmitIncrementComputeStoreResult(
+        bool isPrefix, double delta, LocalBuilder newValue, LocalBuilder resultValue)
+    {
+        if (isPrefix)
+        {
+            // Stack: [current:double] → compute new, return it.
+            IL.Emit(OpCodes.Ldc_R8, delta);
+            IL.Emit(OpCodes.Add);
+            IL.Emit(OpCodes.Box, typeof(double));
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Stloc, newValue);
+            IL.Emit(OpCodes.Stloc, resultValue);
+        }
+        else
+        {
+            // Stack: [current:double] → stash the coerced original as the result, then compute new.
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Box, typeof(double));
+            IL.Emit(OpCodes.Stloc, resultValue);
+            IL.Emit(OpCodes.Ldc_R8, delta);
+            IL.Emit(OpCodes.Add);
+            IL.Emit(OpCodes.Box, typeof(double));
+            IL.Emit(OpCodes.Stloc, newValue);
+        }
+    }
+
+    /// <summary>
+    /// Emits <c>++</c>/<c>--</c> on a class's static data field accessed as <c>Class.field</c>.
+    /// Returns false (emitting nothing) when <paramref name="get"/> is not a known class's static
+    /// data field, so callers fall through to the generic property path. Mirrors the own/inherited
+    /// shadow handling of <see cref="EmitCompoundSet"/> (#339): an own field is read and written
+    /// directly; an inherited field is read shadow-or-base and the result written as a per-subclass
+    /// own shadow via SetProperty's Type arm (→ PDS). Binding here keeps the read and write on the
+    /// same storage as the static-typed <c>Ldsfld</c> read, which the generic dynamic path desyncs with.
+    /// </summary>
+    private bool TryEmitStaticFieldIncrement(Expr.Get get, bool isPrefix, TokenType op)
+    {
+        if (get.Object is not Expr.Variable classVar)
+            return false;
+        string resolvedClassName = Ctx.ResolveClassName(classVar.Name.Lexeme);
+        if (!Ctx.Classes.TryGetValue(resolvedClassName, out var classBuilder))
+            return false;
+
+        double delta = op == TokenType.PLUS_PLUS ? 1.0 : -1.0;
+        var newValue = IL.DeclareLocal(typeof(object));
+        var resultValue = IL.DeclareLocal(typeof(object));
+
+        // Own static data field — read+write the field directly (write side is own-only).
+        if (Ctx.ClassRegistry!.TryGetOwnCallableStaticField(resolvedClassName, get.Name.Lexeme, classBuilder, out var ownField))
+        {
+            IL.Emit(OpCodes.Ldsfld, ownField!);
+            IL.Emit(OpCodes.Call, Ctx.Runtime?.ConvertToNumber ?? Types.ConvertToDoubleFromObject);
+            EmitIncrementComputeStoreResult(isPrefix, delta, newValue, resultValue);
+
+            IL.Emit(OpCodes.Ldloc, newValue);
+            IL.Emit(OpCodes.Stsfld, ownField!);
+
+            IL.Emit(OpCodes.Ldloc, resultValue);
+            SetStackUnknown();
+            return true;
+        }
+
+        // Inherited static data field — read shadow-or-base, write a per-subclass own shadow (→ PDS).
+        if (Ctx.ClassRegistry!.TryGetCallableStaticField(resolvedClassName, get.Name.Lexeme, classBuilder, out var inheritedField))
+        {
+            EmitStaticFieldLoadWithShadow(resolvedClassName, classBuilder, get.Name.Lexeme, inheritedField!);
+            IL.Emit(OpCodes.Call, Ctx.Runtime?.ConvertToNumber ?? Types.ConvertToDoubleFromObject);
+            EmitIncrementComputeStoreResult(isPrefix, delta, newValue, resultValue);
+
+            IL.Emit(OpCodes.Ldtoken, classBuilder);
+            IL.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
+            IL.Emit(OpCodes.Ldstr, get.Name.Lexeme);
+            IL.Emit(OpCodes.Ldloc, newValue);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.SetProperty);
+
+            IL.Emit(OpCodes.Ldloc, resultValue);
+            SetStackUnknown();
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>
