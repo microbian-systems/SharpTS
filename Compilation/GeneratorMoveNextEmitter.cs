@@ -96,7 +96,17 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
             EmitStatement(stmt);
         }
 
-        // Fall through after body completes - mark as done and return false
+        // Fall through after body completes — the generator ran off the end with no `return`.
+        // Per ECMA-262 its completion value is `undefined`, so reset Current to the `$Undefined`
+        // sentinel: it currently still holds the last *yielded* value, which would otherwise
+        // surface as the completion value via `gen.next().value` after done, or as the result of
+        // a delegating `yield* thisGenerator()` (#443). An explicit `return X` takes the
+        // EmitReturn path instead and stores X in Current, so this only affects the no-return case.
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
+        _il.Emit(OpCodes.Stfld, _builder.CurrentField);
+
+        // Mark as done and return false
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, -2);
         _il.Emit(OpCodes.Stfld, _builder.StateField);

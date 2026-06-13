@@ -33,6 +33,16 @@ public partial class GeneratorMoveNextEmitter
             _il.Emit(OpCodes.Ldloc, returnValueTemp);
             _il.Emit(OpCodes.Stfld, _builder.CurrentField);
         }
+        else
+        {
+            // Bare `return;` completes the generator with `undefined`. Store the `$Undefined`
+            // sentinel into Current so the completion value read by `gen.next().value` after
+            // done — and by a delegating `yield* thisGenerator()` — is `undefined` rather than
+            // the stale last-yielded value still sitting in Current (#443).
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
+            _il.Emit(OpCodes.Stfld, _builder.CurrentField);
+        }
 
         // Generator return - set state to completed and return false
         _il.Emit(OpCodes.Ldarg_0);
