@@ -30,6 +30,12 @@ public class GeneratorStateMachineBuilder
     // §27.5.3.3 — `yield expr` evaluates to the argument of the resuming next).
     public FieldBuilder SentField { get; private set; } = null!;
 
+    // True only while the body is running inside MoveNext (set around the call in next()).
+    // A re-entrant next()/return()/throw() — the generator advancing itself — observes it
+    // set and is rejected with a TypeError per ECMA-262 §27.5.3.3 (#521). Defined only when
+    // the $IGenerator methods are emitted (see DefineGeneratorMethods).
+    public FieldBuilder? ExecutingField { get; private set; }
+
     // Hoisted variables (become struct fields) - delegated to HoistingManager
     public Dictionary<string, FieldBuilder> HoistedParameters => _hoisting.HoistedParameters;
     public Dictionary<string, FieldBuilder> HoistedLocals => _hoisting.HoistedLocals;
@@ -410,6 +416,17 @@ public class GeneratorStateMachineBuilder
         // We need to emit an iterator result object with { value, done } properties
         // For simplicity, we'll use a Dictionary<string, object> as the result
 
+        // Re-entrancy flag: set only while the body runs inside MoveNext (see next()).
+        // The single observable window for a guest call is re-entrancy — the generator
+        // advancing itself — which ECMA-262 §27.5.3.3 (GeneratorValidate) rejects with a
+        // TypeError. Without this the compiled state machine would recurse into MoveNext
+        // and overflow the stack rather than throw (#521).
+        var executingField = _stateMachineType.DefineField(
+            "<>5__executing",
+            _types.Boolean,
+            FieldAttributes.Private);
+        ExecutingField = executingField;
+
         // next() method - wraps MoveNext/Current into iterator result
         // Using lowercase to match JavaScript API
         NextMethod = _stateMachineType.DefineMethod(
@@ -423,15 +440,33 @@ public class GeneratorStateMachineBuilder
         var doneLabel = nextIL.DefineLabel();
         var endLabel = nextIL.DefineLabel();
 
+        // Reject a re-entrant next() before touching any state (ECMA-262 §27.5.3.3).
+        EmitThrowIfExecuting(nextIL, executingField);
+
         // Stash the sent value so the resumed yield (read of SentField in MoveNext)
         // sees it. Set before MoveNext so the resume path observes the new value.
         nextIL.Emit(OpCodes.Ldarg_0);
         nextIL.Emit(OpCodes.Ldarg_1);
         nextIL.Emit(OpCodes.Stfld, SentField);
 
-        // Call MoveNext()
+        // Run the body with the executing flag set so a re-entrant next()/return()/throw()
+        // from inside it hits the guards and throws "already running" instead of recursing
+        // into MoveNext. The try/finally clears the flag on suspension, completion, AND an
+        // uncaught body throw — a leaked flag would make later calls falsely report it.
+        nextIL.Emit(OpCodes.Ldarg_0);
+        nextIL.Emit(OpCodes.Ldc_I4_1);
+        nextIL.Emit(OpCodes.Stfld, executingField);
+        var movedLocal = nextIL.DeclareLocal(_types.Boolean);
+        nextIL.BeginExceptionBlock();
         nextIL.Emit(OpCodes.Ldarg_0);
         nextIL.Emit(OpCodes.Call, MoveNextMethod);
+        nextIL.Emit(OpCodes.Stloc, movedLocal);
+        nextIL.BeginFinallyBlock();
+        nextIL.Emit(OpCodes.Ldarg_0);
+        nextIL.Emit(OpCodes.Ldc_I4_0);
+        nextIL.Emit(OpCodes.Stfld, executingField);
+        nextIL.EndExceptionBlock();
+        nextIL.Emit(OpCodes.Ldloc, movedLocal);
         nextIL.Emit(OpCodes.Brfalse, doneLabel);
 
         // Not done: create { value: Current, done: false }
@@ -480,6 +515,9 @@ public class GeneratorStateMachineBuilder
 
         var returnIL = ReturnMethod.GetILGenerator();
 
+        // Reject a re-entrant return() (ECMA-262 §27.5.3.3) before mutating state.
+        EmitThrowIfExecuting(returnIL, executingField);
+
         // Set state to -2 (completed)
         returnIL.Emit(OpCodes.Ldarg_0);
         returnIL.Emit(OpCodes.Ldc_I4, -2);
@@ -511,6 +549,10 @@ public class GeneratorStateMachineBuilder
 
         var throwIL = ThrowMethod.GetILGenerator();
 
+        // Reject a re-entrant throw() (ECMA-262 §27.5.3.3): the "already running" guard
+        // takes precedence over injecting the caller's error into the running body.
+        EmitThrowIfExecuting(throwIL, executingField);
+
         // Set state to -2 (completed)
         throwIL.Emit(OpCodes.Ldarg_0);
         throwIL.Emit(OpCodes.Ldc_I4, -2);
@@ -537,5 +579,24 @@ public class GeneratorStateMachineBuilder
         throwIL.Emit(OpCodes.Throw);
 
         _stateMachineType.DefineMethodOverride(ThrowMethod, _runtime!.GeneratorThrowMethod);
+    }
+
+    /// <summary>
+    /// Emits <c>if (this.&lt;&gt;5__executing) throw new TypeError("Generator is already running");</c>
+    /// at the head of next()/return()/throw(). The error is wrapped via CreateException so the guest
+    /// observes a catchable TypeError (ECMA-262 §27.5.3.3). Only called from DefineGeneratorMethods,
+    /// where <see cref="_runtime"/> is guaranteed non-null.
+    /// </summary>
+    private void EmitThrowIfExecuting(ILGenerator il, FieldBuilder executingField)
+    {
+        var okLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, executingField);
+        il.Emit(OpCodes.Brfalse, okLabel);
+        il.Emit(OpCodes.Ldstr, "Generator is already running");
+        il.Emit(OpCodes.Newobj, _runtime!.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, _runtime!.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(okLabel);
     }
 }
