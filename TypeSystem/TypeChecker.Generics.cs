@@ -156,6 +156,37 @@ public partial class TypeChecker
                 throw new TypeCheckException($" WeakSet requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             result = new TypeInfo.WeakSet(typeArgs[0]);
         }
+        // IterableIterator<T> / Iterator<T> references resolve to the dedicated Iterator record — the
+        // same one .keys()/.values()/.entries() and array/set/map iteration already produce — instead
+        // of the `any` fallback, so the annotation is strongly typed and conditional-type check sides
+        // keep their element type (#456). The lib signature is Iterator<T, TReturn = any, TNext = any>
+        // (IterableIterator likewise gained TReturn/TNext in recent lib): SharpTS models only the
+        // element type, so 1–3 arguments are accepted and the optional TReturn/TNext are dropped, the
+        // same way the Generator arm above keeps only its yield type. Out-of-range is TS2707 ("between
+        // M and N"), the code tsc uses for a defaulted range, not the exact-count TS2314. (The
+        // Generator/AsyncGenerator arms still require exactly 1 arg and reject their own TReturn/TNext
+        // — a pre-existing gap tracked in #487.)
+        else if (baseName is "Iterator" or "IterableIterator")
+        {
+            if (typeArgs.Count is < 1 or > 3)
+                throw new TypeCheckException($" {baseName} requires between 1 and 3 type arguments, got {typeArgs.Count}.", tsCode: "TS2707");
+            result = new TypeInfo.Iterator(typeArgs[0]);
+        }
+        // WeakRef<T> / FinalizationRegistry<T> references resolve to their dedicated records — which
+        // already carry IsCompatible + member-type support (exercised by `new WeakRef()` /
+        // `new FinalizationRegistry()` today) — rather than degrading to `any` (#456).
+        else if (baseName == "WeakRef")
+        {
+            if (typeArgs.Count != 1)
+                throw new TypeCheckException($" WeakRef requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
+            result = new TypeInfo.WeakRef(typeArgs[0]);
+        }
+        else if (baseName == "FinalizationRegistry")
+        {
+            if (typeArgs.Count != 1)
+                throw new TypeCheckException($" FinalizationRegistry requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
+            result = new TypeInfo.FinalizationRegistry(typeArgs[0]);
+        }
         // Handle built-in utility types
         else if (baseName == "Partial")
         {

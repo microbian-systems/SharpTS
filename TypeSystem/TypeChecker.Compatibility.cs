@@ -835,6 +835,62 @@ public partial class TypeChecker
             return IsCompatible(expWeakRef.TargetType, actWeakRef.TargetType);
         }
 
+        // Iterator<T> / IterableIterator<T> share one record (TypeInfo.Iterator) — the type that
+        // .keys()/.values()/.entries() and array/set/map iteration produce, and that the
+        // IterableIterator<T>/Iterator<T> annotations now resolve to (#456). The element type is
+        // covariant. A sync Generator structurally IS an IterableIterator (Generator<T> extends
+        // IterableIterator<T> extends Iterator<T>), so a generator satisfies an Iterator-typed target;
+        // without this, assigning a generator to a now-strongly-typed IterableIterator<T> annotation
+        // would regress from the prior `any`. AsyncGenerator is excluded — async iterators are a
+        // distinct hierarchy. A source that is neither an iterator record nor a generator falls through
+        // (so a plain Iterator is rejected for the Generator-typed target handled just below).
+        if (expected is TypeInfo.Iterator expIter)
+        {
+            TypeInfo? actualElement = actual switch
+            {
+                TypeInfo.Iterator actIter => actIter.ElementType,
+                TypeInfo.Generator actGenAsIter => actGenAsIter.YieldType,
+                _ => null
+            };
+            if (actualElement is not null)
+                return IsCompatible(expIter.ElementType, actualElement);
+
+            // tsc types Iterator<T> structurally, so an object literal / interface / class instance
+            // that supplies a callable `next` member satisfies it (e.g. the hand-written iterators that
+            // `[Symbol.iterator]()` returns). Before #456 the annotation was `any` and accepted these
+            // outright; rejecting them now would regress that idiom. SharpTS models iterables nominally
+            // elsewhere and does not model IteratorResult<T> (a `next` method's return resolves to
+            // `any`), so the element type is not re-derived from `next` — this is permissive on the
+            // element type while still rejecting non-iterator objects (arrays/maps/strings have no
+            // `next`). Full structural iterator/iterable typing is tracked in #485.
+            if (GetMemberType(actual, "next") is TypeInfo.Function or TypeInfo.GenericFunction or TypeInfo.OverloadedFunction)
+                return true;
+        }
+
+        // Generator<T> / AsyncGenerator<T> relate to the SAME kind with a covariant yield type. These
+        // records were already resolvable from a type reference (Generator/AsyncGenerator predate #456
+        // in ResolveGenericType) but had no compatibility arm, so even `let g: Generator<number> =
+        // gen()` spuriously failed — a same-record pair with no arm falls through to the final
+        // `return false`. Adding the arm completes the dedicated-iterable-record family #456 touches. A
+        // plain Iterator is intentionally NOT accepted for a Generator target (the relation is
+        // asymmetric: Generator extends IterableIterator, not the reverse).
+        if (expected is TypeInfo.Generator expGen && actual is TypeInfo.Generator actGen)
+        {
+            return IsCompatible(expGen.YieldType, actGen.YieldType);
+        }
+        if (expected is TypeInfo.AsyncGenerator expAsyncGen && actual is TypeInfo.AsyncGenerator actAsyncGen)
+        {
+            return IsCompatible(expAsyncGen.YieldType, actAsyncGen.YieldType);
+        }
+
+        // FinalizationRegistry<T1> is compatible with FinalizationRegistry<T2> when the held-value
+        // types relate (#456 makes FinalizationRegistry<T> resolve to this record; like the other
+        // dedicated container records it would otherwise fall through to `return false`).
+        if (expected is TypeInfo.FinalizationRegistry expFinReg && actual is TypeInfo.FinalizationRegistry actFinReg)
+        {
+            return IsCompatible(expFinReg.TargetType, actFinReg.TargetType);
+        }
+
         // Member accessibility (TypeScript private/protected): two object types are unrelated when a
         // member they share has a conflicting accessibility origin — a public member cannot satisfy a
         // private one, and two private members must originate from the same declaration. Applies in

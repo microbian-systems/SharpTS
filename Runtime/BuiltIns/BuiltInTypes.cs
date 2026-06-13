@@ -556,14 +556,21 @@ public static class BuiltInTypes
     }
 
     /// <summary>
-    /// FinalizationRegistry has register() and unregister() methods.
+    /// FinalizationRegistry has register() and unregister() methods. <paramref name="targetType"/> is
+    /// the registry's element type T (the held value), not the GC target.
     /// </summary>
     public static TypeInfo? GetFinalizationRegistryMemberType(string name, TypeInfo targetType)
     {
         return name switch
         {
-            "register" => new TypeInfo.Function([targetType, new TypeInfo.Any(), new TypeInfo.Any()],
-                new TypeInfo.Undefined(), RequiredParams: 1),
+            // register(target: WeakKey, heldValue: T, unregisterToken?: WeakKey): void
+            // The GC target and unregister token are arbitrary objects — SharpTS does not model the
+            // WeakKey type precisely, so `any` keeps them permissive — while heldValue carries the
+            // registry's element type T. target and heldValue are required; the token is optional.
+            // (Before #456 the FinalizationRegistry<T> annotation degraded to `any`, so this signature
+            // was never observed against an explicit T; T was previously mis-placed at parameter 0.)
+            "register" => new TypeInfo.Function([new TypeInfo.Any(), targetType, new TypeInfo.Any()],
+                new TypeInfo.Undefined(), RequiredParams: 2),
             "unregister" => new TypeInfo.Function([new TypeInfo.Any()],
                 new TypeInfo.Primitive(Parsing.TokenType.TYPE_BOOLEAN)),
             _ => null
