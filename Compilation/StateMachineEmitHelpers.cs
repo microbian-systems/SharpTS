@@ -57,6 +57,90 @@ public class StateMachineEmitHelpers
         _runtime = runtime;
     }
 
+    #region Persistent Spills (#400)
+
+    // A spilled value temp. `Field` is allocated lazily the first time the temp is
+    // found live at a real suspension point.
+    private sealed class SpillEntry
+    {
+        public required LocalBuilder Local;
+        public FieldBuilder? Field;
+    }
+
+    private Func<string, FieldBuilder>? _defineSpillField;
+    private int _spillFieldCount;
+    // Spill temps created since the last statement boundary. A temp that is still
+    // registered when a suspension is emitted is live across it (operands are spilled
+    // up front, then loaded), so it must survive the MoveNext re-entry in a field.
+    private readonly List<SpillEntry> _liveSpills = new();
+
+    /// <summary>
+    /// Enables persistent spills for a state-machine emitter whose MoveNext can suspend.
+    /// IL evaluation-stack temps do not survive a MoveNext re-entry, so a value spilled
+    /// before an <c>await</c> and used after it must be mirrored to a state-machine field
+    /// (#400). The factory defines a fresh object field on the state-machine type.
+    /// Without this call, <see cref="SpillStoreObject"/> just declares a plain local.
+    /// </summary>
+    public void EnablePersistentSpills(Func<string, FieldBuilder> defineSpillField)
+        => _defineSpillField = defineSpillField;
+
+    /// <summary>
+    /// Pops the boxed value on top of the stack into a fresh object local and returns it.
+    /// When persistent spills are enabled, the local is also registered so that a later
+    /// suspension persists it to a field (#400). Stack: [value] -> [].
+    /// </summary>
+    public LocalBuilder SpillStoreObject()
+    {
+        var local = _il.DeclareLocal(_types.Object);
+        _il.Emit(OpCodes.Stloc, local);
+        if (_defineSpillField != null)
+            _liveSpills.Add(new SpillEntry { Local = local });
+        return local;
+    }
+
+    /// <summary>
+    /// Drops all registered spill temps. Called at statement boundaries: spill temps are
+    /// consumed within the expression that created them and never cross a statement, so
+    /// clearing keeps the live set (and the per-suspension persist/rehydrate cost) small.
+    /// </summary>
+    public void ClearLiveSpills() => _liveSpills.Clear();
+
+    /// <summary>
+    /// Mirrors every live spill local to a backing field. Emitted at a suspension point
+    /// just before the state machine yields control, so the values survive the re-entry.
+    /// Fields are allocated lazily and reused across suspensions. Stack-neutral. (#400)
+    /// </summary>
+    public void PersistLiveSpillsBeforeSuspend()
+    {
+        if (_defineSpillField == null) return;
+        foreach (var entry in _liveSpills)
+        {
+            entry.Field ??= _defineSpillField($"<>s__spill{_spillFieldCount++}");
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldloc, entry.Local);
+            _il.Emit(OpCodes.Stfld, entry.Field);
+        }
+    }
+
+    /// <summary>
+    /// Reloads every persisted spill local from its backing field. Emitted only on the
+    /// resumed path of a suspension (the synchronously-completed path never persisted, so
+    /// its locals are still intact). Stack-neutral. (#400)
+    /// </summary>
+    public void RehydrateLiveSpillsAfterResume()
+    {
+        if (_defineSpillField == null) return;
+        foreach (var entry in _liveSpills)
+        {
+            if (entry.Field == null) continue;
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, entry.Field);
+            _il.Emit(OpCodes.Stloc, entry.Local);
+        }
+    }
+
+    #endregion
+
     #region Label Operations
 
     /// <summary>
@@ -1129,9 +1213,9 @@ public class StateMachineEmitHelpers
         for (int i = start; i < call.Arguments.Count; i++)
         {
             emitArgumentBoxed(call.Arguments[i]);
-            var temp = _il.DeclareLocal(_types.Object);
-            _il.Emit(OpCodes.Stloc, temp);
-            temps.Add(temp);
+            // Register each arg temp so a suspension in a later arg persists the earlier
+            // ones across the MoveNext re-entry (#400).
+            temps.Add(SpillStoreObject());
         }
         return temps;
     }

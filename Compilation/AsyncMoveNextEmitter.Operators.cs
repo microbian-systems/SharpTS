@@ -29,11 +29,9 @@ public partial class AsyncMoveNextEmitter
         var exprTemps = new List<LocalBuilder>();
         for (int i = 0; i < tl.Expressions.Count; i++)
         {
-            EmitExpression(tl.Expressions[i]);
-            EnsureBoxed();
-            var temp = _il.DeclareLocal(typeof(object));
-            _il.Emit(OpCodes.Stloc, temp);
-            exprTemps.Add(temp);
+            // SpillBoxed registers each temp so an await in a later interpolation persists
+            // the earlier ones across the suspension (#400).
+            exprTemps.Add(SpillBoxed(tl.Expressions[i]));
         }
 
         // Phase 2: Build string from temps (no awaits, stack safe)
