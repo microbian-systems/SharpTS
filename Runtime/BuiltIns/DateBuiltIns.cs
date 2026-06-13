@@ -66,6 +66,11 @@ public static class DateBuiltIns
             .MethodV2("toISOString", 0, (_, date, _) => RuntimeValue.FromString(date.ToISOString()))
             .MethodV2("toDateString", 0, (_, date, _) => RuntimeValue.FromString(date.ToDateString()))
             .MethodV2("toTimeString", 0, (_, date, _) => RuntimeValue.FromString(date.ToTimeString()))
+            // ECMA-262 §21.4.4.37: toJSON returns the ISO string, or null for a non-finite
+            // (Invalid) date — guard so we never reach ToISOString's RangeError throw.
+            .MethodV2("toJSON", 0, (_, date, _) => double.IsNaN(date.GetTime())
+                ? RuntimeValue.Null
+                : RuntimeValue.FromString(date.ToISOString()))
             .MethodV2("valueOf", 0, (_, date, _) => RuntimeValue.FromNumber(date.ValueOf()))
             .Build();
 

@@ -37,6 +37,7 @@ public partial class RuntimeEmitter
         EmitDateToISOString(typeBuilder, runtime);
         EmitDateToDateString(typeBuilder, runtime);
         EmitDateToTimeString(typeBuilder, runtime);
+        EmitDateToJSON(typeBuilder, runtime);
         EmitDateValueOf(typeBuilder, runtime);
     }
 
@@ -645,6 +646,43 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(invalidLabel);
         il.Emit(OpCodes.Ldstr, "Invalid Date");
+        il.Emit(OpCodes.Ret);
+    }
+
+    // ECMA-262 §21.4.4.37: toJSON returns the ISO string, or null for a non-finite (Invalid)
+    // date. Returns object (string | null), mirroring DateBuiltIns' interpreted implementation.
+    private void EmitDateToJSON(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DateToJSON",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        runtime.DateToJSON = method;
+
+        var il = method.GetILGenerator();
+        var nullLabel = il.DefineLabel();
+
+        // Non-Date receiver → null (lenient; unreachable when the type checker is satisfied).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSDateType);
+        il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // Invalid (NaN timestamp) → null, before ToISOString's RangeError throw can be reached.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSDateType);
+        il.Emit(OpCodes.Callvirt, runtime.TSDateMethods["GetTime"]);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("IsNaN")!);
+        il.Emit(OpCodes.Brtrue, nullLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSDateType);
+        il.Emit(OpCodes.Callvirt, runtime.TSDateMethods["ToISOString"]);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(nullLabel);
+        il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
     }
 

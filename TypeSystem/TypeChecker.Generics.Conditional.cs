@@ -1,4 +1,5 @@
 using SharpTS.TypeSystem.Exceptions;
+using SharpTS.Runtime.BuiltIns;
 using System.Collections.Frozen;
 
 namespace SharpTS.TypeSystem;
@@ -629,8 +630,9 @@ public partial class TypeChecker
             foreach (var (key, extendsFieldType) in extendsRec.Fields)
             {
                 if (!checkProps.TryGetValue(key, out var checkFieldType))
-                    return false;
-                if (!CheckExtendsRecursive(checkFieldType, extendsFieldType, inferredTypes))
+                    checkFieldType = ResolveBuiltInRecordMember(checkType, key);
+                if (checkFieldType is null
+                    || !CheckExtendsRecursive(checkFieldType, extendsFieldType, inferredTypes))
                     return false;
             }
             return true;
@@ -655,8 +657,9 @@ public partial class TypeChecker
                     continue; // Optional members don't need to exist
 
                 if (!checkProps.TryGetValue(key, out var checkFieldType))
-                    return false;
-                if (!CheckExtendsRecursive(checkFieldType, extendsFieldType, inferredTypes))
+                    checkFieldType = ResolveBuiltInRecordMember(checkType, key);
+                if (checkFieldType is null
+                    || !CheckExtendsRecursive(checkFieldType, extendsFieldType, inferredTypes))
                     return false;
             }
             return true;
@@ -672,6 +675,32 @@ public partial class TypeChecker
         // Fall back to standard compatibility check (no infer patterns)
         return IsCompatible(extendsType, checkType);
     }
+
+    /// <summary>
+    /// Resolves the type of a single instance member on a dedicated built-in type record
+    /// (Date/RegExp/Map/Set/Promise and the weak/iterator variants) for conditional-type infer
+    /// matching — e.g. so <c>T extends { toJSON(): infer R }</c> can see <c>Date.toJSON: () =&gt; string</c>
+    /// (#491). Delegates to the same <see cref="BuiltInTypes"/> model that ordinary <c>value.member</c>
+    /// reads use, so both agree on one source of truth. Returns null when <paramref name="checkType"/>
+    /// is not such a record or the member is absent — the infer match then fails (false branch), exactly
+    /// as the previous empty-dictionary lookup did.
+    /// </summary>
+    private static TypeInfo? ResolveBuiltInRecordMember(TypeInfo checkType, string memberName) => checkType switch
+    {
+        TypeInfo.Date => BuiltInTypes.GetDateInstanceMemberType(memberName),
+        TypeInfo.RegExp => BuiltInTypes.GetRegExpMemberType(memberName),
+        TypeInfo.Map m => BuiltInTypes.GetMapMemberType(memberName, m.KeyType, m.ValueType),
+        TypeInfo.Set s => BuiltInTypes.GetSetMemberType(memberName, s.ElementType),
+        TypeInfo.WeakMap wm => BuiltInTypes.GetWeakMapMemberType(memberName, wm.KeyType, wm.ValueType),
+        TypeInfo.WeakSet ws => BuiltInTypes.GetWeakSetMemberType(memberName, ws.ElementType),
+        TypeInfo.WeakRef wr => BuiltInTypes.GetWeakRefMemberType(memberName, wr.TargetType),
+        TypeInfo.FinalizationRegistry fr => BuiltInTypes.GetFinalizationRegistryMemberType(memberName, fr.TargetType),
+        TypeInfo.Promise p => BuiltInTypes.GetPromiseMemberType(memberName, p.ValueType),
+        TypeInfo.Iterator it => BuiltInTypes.GetIteratorMemberType(memberName, it.ElementType),
+        TypeInfo.Generator g => BuiltInTypes.GetIteratorMemberType(memberName, g.YieldType),
+        TypeInfo.AsyncGenerator ag => BuiltInTypes.GetIteratorMemberType(memberName, ag.YieldType),
+        _ => null
+    };
 
     /// <summary>
     /// True when the type still contains type variables (type parameters, infer placeholders,

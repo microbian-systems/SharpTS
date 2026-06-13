@@ -371,6 +371,9 @@ public static class BuiltInTypes
             "toISOString" => new TypeInfo.Function([], StringType),
             "toDateString" => new TypeInfo.Function([], StringType),
             "toTimeString" => new TypeInfo.Function([], StringType),
+            // lib.es5: `toJSON(key?: any): string` (used by JSON.stringify and matched by
+            // `T extends { toJSON(): infer R }`, see #491). Runtime impl in DateBuiltIns.
+            "toJSON" => new TypeInfo.Function([], StringType),
             "valueOf" => new TypeInfo.Function([], NumberType),
 
             _ => null
