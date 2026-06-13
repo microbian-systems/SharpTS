@@ -1077,6 +1077,7 @@ public class EmittedRuntime
     public MethodBuilder DateToISOString { get; set; } = null!;
     public MethodBuilder DateToDateString { get; set; } = null!;
     public MethodBuilder DateToTimeString { get; set; } = null!;
+    public MethodBuilder DateToJSON { get; set; } = null!;
     public MethodBuilder DateValueOf { get; set; } = null!;
 
     // RegExp support - $Runtime wrapper methods

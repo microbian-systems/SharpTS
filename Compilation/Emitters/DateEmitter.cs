@@ -137,6 +137,11 @@ public sealed class DateEmitter : ITypeEmitterStrategy
                 il.Emit(OpCodes.Call, ctx.Runtime!.DateToTimeString);
                 return true;
 
+            // toJSON (no arguments, returns string | null as object)
+            case "toJSON":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateToJSON);
+                return true;
+
             // valueOf (no arguments, returns double)
             case "valueOf":
                 il.Emit(OpCodes.Call, ctx.Runtime!.DateValueOf);
