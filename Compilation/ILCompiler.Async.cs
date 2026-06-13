@@ -562,9 +562,12 @@ public partial class ILCompiler
         }
         _modules.CurrentPath = savedPath;
 
-        // Finalize all async arrow state machine types
+        // Finalize nested async arrow state machine types. Standalone (top-level) arrows are
+        // finalized in EmitTopLevelAsyncArrowBodies AFTER their MoveNext is emitted — creating
+        // them here would freeze the type before that pass can define spill fields (#400/#414).
         foreach (var (_, arrowBuilder) in _async.ArrowBuilders)
         {
+            if (arrowBuilder.IsStandalone) continue;
             arrowBuilder.CreateType();
         }
     }
@@ -777,34 +780,17 @@ public partial class ILCompiler
         // and store the boxed reference so async arrows can share the same instance
         if (smBuilder.SelfBoxedField != null)
         {
-            // Box the state machine to get a heap-allocated copy
-            il.Emit(OpCodes.Ldloc, smLocal);
-            il.Emit(OpCodes.Box, smBuilder.StateMachineType);
-            var boxedLocal = il.DeclareLocal(typeof(object));
-            il.Emit(OpCodes.Stloc, boxedLocal);
-
-            // Store the boxed reference in the state machine
-            // Use Unbox to get a pointer to the boxed value, then store the reference there
-            il.Emit(OpCodes.Ldloc, boxedLocal);
-            il.Emit(OpCodes.Unbox, smBuilder.StateMachineType);
-            il.Emit(OpCodes.Ldloc, boxedLocal);
-            il.Emit(OpCodes.Stfld, smBuilder.SelfBoxedField);
-
-            // Now call Start on the BOXED state machine (cast to IAsyncStateMachine)
-            // builder.Start expects ref TSM, so we use Unbox to get the pointer
-            il.Emit(OpCodes.Ldloc, boxedLocal);
-            il.Emit(OpCodes.Unbox, smBuilder.StateMachineType);
-            il.Emit(OpCodes.Ldflda, smBuilder.BuilderField);
-            il.Emit(OpCodes.Ldloc, boxedLocal);
-            il.Emit(OpCodes.Unbox, smBuilder.StateMachineType);
-            il.Emit(OpCodes.Call, smBuilder.GetBuilderStartMethod());
-
-            // return boxed.<>t__builder.Task
-            il.Emit(OpCodes.Ldloc, boxedLocal);
-            il.Emit(OpCodes.Unbox, smBuilder.StateMachineType);
-            il.Emit(OpCodes.Ldflda, smBuilder.BuilderField);
-            il.Emit(OpCodes.Call, smBuilder.GetBuilderTaskGetter());
-            il.Emit(OpCodes.Ret);
+            // This function defines async arrows that must share its boxed state machine.
+            // Box once and run the box via a verifiable ref (see helper for the #414 fix).
+            StateMachineEmitHelpers.EmitSelfBoxedStartAndReturnTask(
+                il,
+                smLocal,
+                smBuilder.StateMachineType,
+                smBuilder.SelfBoxedField,
+                smBuilder.BuilderField,
+                smBuilder.GetBuilderStartMethod(),
+                smBuilder.GetBuilderTaskGetter(),
+                _types);
         }
         else
         {
