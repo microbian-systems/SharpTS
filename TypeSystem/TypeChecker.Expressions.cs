@@ -353,7 +353,13 @@ public partial class TypeChecker
             return InferConstType(ta.Expression, sourceType);
         }
 
-        TypeInfo targetType = ToTypeInfo(ta.TargetType);
+        // Resolve the target node-first: a composite target such as a conditional type whose
+        // extends clause is a function type (`X extends () => infer U ? U : V`) is mis-scanned by
+        // the string resolver (the '>' of '=>' reads as a closing bracket, so the conditional's
+        // '?' is missed and the type garbles). The node path resolves it structurally; the string
+        // path stays the fallback for any node the migration doesn't cover yet (#346).
+        TypeInfo targetType = (ta.TargetTypeNode is { } targetNode ? TryToTypeInfo(targetNode) : null)
+            ?? ToTypeInfo(ta.TargetType);
 
         // Allow any <-> anything (escape hatch)
         if (sourceType is TypeInfo.Any || targetType is TypeInfo.Any)
@@ -369,7 +375,10 @@ public partial class TypeChecker
     private TypeInfo CheckSatisfies(Expr.Satisfies sat)
     {
         TypeInfo inferredType = CheckExpr(sat.Expression);
-        TypeInfo constraintType = ToTypeInfo(sat.ConstraintType);
+        // Node-first, mirroring CheckTypeAssertion (#346): a composite constraint such as a
+        // conditional with a function-type extends clause garbles in the string resolver.
+        TypeInfo constraintType = (sat.ConstraintTypeNode is { } constraintNode ? TryToTypeInfo(constraintNode) : null)
+            ?? ToTypeInfo(sat.ConstraintType);
 
         // Escape hatches - any/unknown constraints always pass
         if (constraintType is TypeInfo.Any or TypeInfo.Unknown)

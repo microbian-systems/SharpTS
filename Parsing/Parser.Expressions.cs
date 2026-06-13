@@ -534,7 +534,7 @@ public partial class Parser
                 {
                     // Type assertion: expr as Type
                     string targetType = ParseTypeAnnotation();
-                    expr = new Expr.TypeAssertion(expr, targetType);
+                    expr = new Expr.TypeAssertion(expr, targetType, TakeTypeNode());
                 }
             }
             else if (Match(TokenType.SATISFIES))
@@ -542,7 +542,7 @@ public partial class Parser
                 // Satisfies operator: expr satisfies Type (TS 4.9+)
                 // Validates that expr matches Type without widening the inferred type
                 string constraintType = ParseTypeAnnotation();
-                expr = new Expr.Satisfies(expr, constraintType);
+                expr = new Expr.Satisfies(expr, constraintType, TakeTypeNode());
             }
             else if (Match(TokenType.BANG))
             {

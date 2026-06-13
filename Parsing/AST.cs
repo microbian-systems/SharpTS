@@ -216,10 +216,15 @@ public abstract record Expr
     ) : Expr;
     // Spread expression for calls and array literals
     public record Spread(Expr Expression) : Expr;
-    // Type assertion: value as Type
-    public record TypeAssertion(Expr Expression, string TargetType) : Expr;
-    // Satisfies operator: value satisfies Type (TS 4.9+) - validates without widening
-    public record Satisfies(Expr Expression, string ConstraintType) : Expr;
+    // Type assertion: value as Type. TargetTypeNode is the structured form of TargetType (type-AST
+    // migration) when the parser could build one; the checker resolves it node-first so a composite
+    // target (e.g. a conditional type with a function-type extends clause) bypasses the string
+    // resolver's scanning hazards. Null for `as const` and any construct without node support.
+    public record TypeAssertion(Expr Expression, string TargetType, TypeNode? TargetTypeNode = null) : Expr;
+    // Satisfies operator: value satisfies Type (TS 4.9+) - validates without widening.
+    // ConstraintTypeNode mirrors TypeAssertion.TargetTypeNode: the structured form resolved
+    // node-first so a composite constraint bypasses the string resolver's scanning hazards.
+    public record Satisfies(Expr Expression, string ConstraintType, TypeNode? ConstraintTypeNode = null) : Expr;
     // Await expression: await expr (only valid inside async functions)
     public record Await(Token Keyword, Expr Expression) : Expr;
     // Dynamic import: import(pathExpr) - returns Promise of module namespace
