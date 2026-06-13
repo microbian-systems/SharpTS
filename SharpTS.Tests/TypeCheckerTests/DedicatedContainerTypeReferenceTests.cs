@@ -218,17 +218,59 @@ public class DedicatedContainerTypeReferenceTests
     [Fact]
     public void FinalizationRegistry_RealMembersResolve()
     {
-        // The strongly-typed registry still exposes register/unregister (i.e. resolution did not turn
-        // the type into something memberless). Kept in an UNCALLED function so only the type checker
-        // runs: the runtime register() target validation is orthogonal to #456, and its type-checker
-        // signature is independently imprecise (see the filed follow-up).
+        // The strongly-typed registry exposes register/unregister with the spec signature
+        // register(target: WeakKey, heldValue: T, unregisterToken?: WeakKey): the FIRST argument is the
+        // GC target (an object) and the SECOND is the held value of type T (#482, which corrected the
+        // earlier signature that mis-modelled the held value as the first and only required parameter).
+        // Kept in an UNCALLED function so only the type checker runs.
         var source = """
             function use(fr: FinalizationRegistry<string>): void {
-              fr.register("held");
-              fr.unregister("token");
+              const target = { id: 1 };
+              fr.register(target, "held");
+              fr.register(target, "held", target);
+              fr.unregister(target);
             }
             """;
         TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void FinalizationRegistry_Register_MissingHeldValue_Rejected()
+    {
+        // register requires BOTH target and heldValue, so a single argument no longer type-checks.
+        // Under the old signature `register("held")` type-checked (held value as the sole required
+        // param) but threw "target must be an object" at runtime — no call satisfied both (#482).
+        var source = """
+            function use(fr: FinalizationRegistry<string>): void {
+              fr.register("held");
+            }
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void FinalizationRegistry_Register_WrongHeldValueType_Rejected()
+    {
+        // The held value (second argument) must be T; a number is not a string.
+        var source = """
+            function use(fr: FinalizationRegistry<string>): void {
+              fr.register({ id: 1 }, 42);
+            }
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void FinalizationRegistry_Register_PrimitiveTarget_Rejected()
+    {
+        // The target must be an object (WeakKey); a primitive is rejected at compile time, matching the
+        // runtime's "target must be an object" validation.
+        var source = """
+            function use(fr: FinalizationRegistry<string>): void {
+              fr.register("not-an-object", "held");
+            }
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
     }
 
     [Fact]

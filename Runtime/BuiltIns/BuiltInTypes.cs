@@ -559,14 +559,22 @@ public static class BuiltInTypes
     }
 
     /// <summary>
-    /// FinalizationRegistry has register() and unregister() methods.
+    /// FinalizationRegistry has register() and unregister() methods. <paramref name="targetType"/> is
+    /// the registry's element type T (the held value), not the GC target.
     /// </summary>
     public static TypeInfo? GetFinalizationRegistryMemberType(string name, TypeInfo targetType)
     {
         return name switch
         {
-            "register" => new TypeInfo.Function([targetType, new TypeInfo.Any(), new TypeInfo.Any()],
-                new TypeInfo.Undefined(), RequiredParams: 1),
+            // register(target: WeakKey, heldValue: T, unregisterToken?: WeakKey): void
+            // The GC target and unregister token are objects (modelled as `object` so a primitive is
+            // rejected at compile time, matching the runtime's "target must be an object" check); the
+            // SECOND parameter carries the registry's element type T. target and heldValue are required,
+            // the token optional. Before #456 the FinalizationRegistry<T> annotation degraded to `any`
+            // so this signature was unobserved, and T was mis-placed at parameter 0 — meaning no call
+            // satisfied both the checker and the runtime for a typed registry (#482).
+            "register" => new TypeInfo.Function([new TypeInfo.Object(), targetType, new TypeInfo.Object()],
+                new TypeInfo.Undefined(), RequiredParams: 2),
             "unregister" => new TypeInfo.Function([new TypeInfo.Any()],
                 new TypeInfo.Primitive(Parsing.TokenType.TYPE_BOOLEAN)),
             _ => null
