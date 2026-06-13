@@ -420,7 +420,17 @@ public partial class ILEmitter
         var prevReceiverLocal = IL.DeclareLocal(_ctx.Types.Object);
         IL.Emit(OpCodes.Ldsfld, runtime.CurrentArrayLikeReceiverField);
         IL.Emit(OpCodes.Stloc, prevReceiverLocal);
+        // ECMA-262 §23.1.3: O = ToObject(this value). The callback's final
+        // "array" argument is O, so a primitive receiver must surface as its
+        // wrapper object — `Array.prototype.forEach.call("ab", cb)` passes a
+        // String wrapper (`typeof obj === "object"`, `obj instanceof String`),
+        // not the bare string. ToObject is identity for objects/arrays and
+        // returns an empty object for null/undefined (the spec TypeError still
+        // fires later at materialization, before the callback ever reads this).
+        // Materialization below keeps using the raw receiver, observationally
+        // identical to O for every shape this path supports. (#454)
         IL.Emit(OpCodes.Ldloc, receiverLocal);
+        IL.Emit(OpCodes.Call, runtime.ToObjectMethod);
         IL.Emit(OpCodes.Stsfld, runtime.CurrentArrayLikeReceiverField);
 
         var methodArgs = c.Arguments.Skip(1).ToList();
