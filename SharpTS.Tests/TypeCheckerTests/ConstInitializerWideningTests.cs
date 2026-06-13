@@ -119,4 +119,94 @@ public class ConstInitializerWideningTests
         var source = "const o = { a: { n: 1 } as const, b: { m: 2 } }; o.b.m = 5; console.log(o.b.m);";
         Assert.Equal("5\n", TestHarness.Run(source, mode));
     }
+
+    // --- #493: `as const` literal types survive `const`-initializer widening regardless of the
+    // nesting position (array element, spread member), and `as const` members model readonly. ---
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsConstArrayElement_KeepsLiteralType(ExecutionMode mode)
+    {
+        // `as const` on an *array element* inside a fresh array literal is no longer widened away:
+        // `arr` is `{ readonly n: 1 }[]`, so `arr[0].n` is `1`, assignable to a `1`-typed binding.
+        var source = "const arr = [{ n: 1 } as const]; const y: 1 = arr[0].n; console.log(y);";
+        Assert.Equal("1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SpreadOfAsConstObject_KeepsLiteralType(ExecutionMode mode)
+    {
+        // Spreading an `as const` object into a fresh object literal preserves the (already-fixed)
+        // literal member types: `o.a` is `1` (not widened to `number`).
+        var source = "const x = { a: 1 } as const; const o = { ...x }; const y: 1 = o.a; console.log(y);";
+        Assert.Equal("1\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void AsConstObject_MemberWrite_ReportsReadonlyTS2540()
+    {
+        // Writing through an `as const` member is a read-only violation (TS2540), not a literal-type
+        // mismatch (TS2322).
+        var ex = Assert.ThrowsAny<TypeCheckException>(() =>
+            TestHarness.RunInterpreted("const x = { a: 1 } as const; x.a = 9;"));
+        Assert.Equal("TS2540", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void AsConstArrayElement_MemberWrite_ReportsReadonlyTS2540()
+    {
+        // The `as const` element is a readonly record, so writing its member is rejected with TS2540.
+        var ex = Assert.ThrowsAny<TypeCheckException>(() =>
+            TestHarness.RunInterpreted("const arr = [{ n: 1 } as const]; arr[0].n = 9;"));
+        Assert.Equal("TS2540", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void DeepNestedAsConst_MemberWrite_ReportsReadonlyTS2540()
+    {
+        // `as const` is deep: every nested member is readonly, so `o.a.b.c = 9` is a TS2540 violation.
+        var ex = Assert.ThrowsAny<TypeCheckException>(() =>
+            TestHarness.RunInterpreted("const o = { a: { b: { c: 1 } } } as const; o.a.b.c = 9;"));
+        Assert.Equal("TS2540", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void SpreadOfAsConst_FieldIsWritable_ReadonlyDropped()
+    {
+        // The spread *drops* readonly (the result object is a plain literal), so the field is writable
+        // — assigning the same literal value is allowed.
+        TestHarness.RunInterpreted("const x = { a: 1 } as const; const o = { ...x }; o.a = 1;");
+    }
+
+    [Fact]
+    public void SpreadOfAsConst_FieldKeepsLiteralType_RejectsOtherValueWithTS2322()
+    {
+        // The spread preserves the literal type `1` (mutable), so writing a different value is a
+        // literal-type mismatch (TS2322), NOT a readonly violation.
+        var ex = Assert.ThrowsAny<TypeCheckException>(() =>
+            TestHarness.RunInterpreted("const x = { a: 1 } as const; const o = { ...x }; o.a = 2;"));
+        Assert.Equal("TS2322", ex.Diagnostic.TsCode);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SpreadOfFreshObjectLiteral_Widens(ExecutionMode mode)
+    {
+        // Spreading a *fresh* inline object literal still widens its members (unlike an `as const`
+        // source), so `o.a` is `number` and `o.a = 2` is allowed.
+        var source = "const o = { ...{ a: 1 } }; o.a = 2; console.log(o.a);";
+        Assert.Equal("2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void MixedSpread_PlainSourceWidens_AsConstSourcePreserved(ExecutionMode mode)
+    {
+        // A plain spread member widens (`o.a` is `number`, writable) while a later `as const` spread
+        // member preserves its literal type (`o.b` is `2`). Later members win.
+        var source = "const base = { a: 1 }; const ov = { b: 2 } as const; " +
+                     "const o = { ...base, ...ov }; const yb: 2 = o.b; o.a = 99; console.log(o.a, yb);";
+        Assert.Equal("99 2\n", TestHarness.Run(source, mode));
+    }
 }

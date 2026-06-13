@@ -583,6 +583,13 @@ public partial class TypeChecker
         {
              if (record.Fields.TryGetValue(set.Name.Lexeme, out var fieldType))
              {
+                 // A readonly record (`as const`, `Readonly<T>`, a const type parameter) rejects all
+                 // member writes with TS2540, in preference to the literal-type mismatch TS2322 the
+                 // value-compatibility check below would otherwise report (#493).
+                 if (record.IsReadonly)
+                 {
+                     throw new TypeCheckException($" Cannot assign to '{set.Name.Lexeme}' because it is a read-only property.", tsCode: "TS2540");
+                 }
                  TypeInfo valueType = CheckExpr(set.Value);
                  // Getter-only properties: allow at type-check time, runtime handles sloppy/strict
                  if (record.IsGetterOnly(set.Name.Lexeme))
