@@ -1013,6 +1013,20 @@ public static class BuiltInTypes
     /// <summary>
     /// Type signatures for instance members on Iterator objects (ES2025 Iterator Helpers).
     /// </summary>
+    /// <summary>
+    /// Members of the sync <c>Iterable&lt;T&gt;</c> interface — only <c>[Symbol.iterator](): Iterator&lt;T&gt;</c>.
+    /// Deliberately narrower than <see cref="GetIteratorMemberType"/>: an Iterable is not itself an iterator,
+    /// so it exposes no <c>next</c>/<c>return</c>/<c>throw</c> (#485).
+    /// </summary>
+    public static TypeInfo? GetIterableMemberType(string name, TypeInfo elementType)
+    {
+        return name switch
+        {
+            "@@iterator" => new TypeInfo.Function([], new TypeInfo.Iterator(elementType)),
+            _ => null
+        };
+    }
+
     public static TypeInfo? GetIteratorMemberType(string name, TypeInfo elementType)
     {
         return name switch

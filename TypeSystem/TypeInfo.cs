@@ -1125,6 +1125,18 @@ public abstract record TypeInfo
         public override string ToString() => $"AsyncIterable<{ElementType}>";
     }
 
+    /// <summary>
+    /// Represents the sync Iterable&lt;T&gt; type — an object exposing <c>[Symbol.iterator](): Iterator&lt;T&gt;</c>.
+    /// This is the supertype of arrays, sets, maps, strings, generators and the dedicated iterator record;
+    /// it is what <c>for...of</c>, spread and <c>yield*</c> consume. Modeled nominally (parallel to
+    /// <see cref="AsyncIterable"/>) so an <c>Iterable&lt;T&gt;</c> annotation/parameter is element-typed
+    /// rather than degrading to <c>any</c>, and so structural object types can be related to it (#485).
+    /// </summary>
+    public record Iterable(TypeInfo ElementType) : TypeInfo
+    {
+        public override string ToString() => $"Iterable<{ElementType}>";
+    }
+
     public record StringLiteral(string Value) : TypeInfo
     {
         public override string ToString() => $"\"{Value}\"";

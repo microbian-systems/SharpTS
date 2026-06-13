@@ -287,11 +287,15 @@ public partial class TypeChecker
         TypeInfo.Generator gen => gen.YieldType,
         TypeInfo.AsyncGenerator asyncGen => asyncGen.YieldType,
         TypeInfo.Iterator iter => iter.ElementType,
+        TypeInfo.Iterable iterable => iterable.ElementType,
         TypeInfo.Set set => set.ElementType,
         TypeInfo.Map map => TypeInfo.Tuple.FromTypes([map.KeyType, map.ValueType], 2),  // [K, V] tuples
         TypeInfo.String => new TypeInfo.String(),  // String yields characters (as strings)
         TypeInfo.StringLiteral => new TypeInfo.String(),  // String literal also yields characters
         TypeInfo.Any => new TypeInfo.Any(),
+        // A hand-written object exposing [Symbol.iterator] is iterable structurally (#485); dedicated
+        // records are handled above, so only genuine structural objects reach here.
+        _ when TryGetStructuralIterableElement(type, out var structuralElem) => structuralElem,
         _ => throw new TypeCheckException($" Type '{type}' is not iterable for yield*.", tsCode: "TS2488")
     };
 
@@ -299,7 +303,7 @@ public partial class TypeChecker
     /// Tries to get the element type from a spreadable/iterable type.
     /// Returns true if the type is spreadable, with the element type in the out parameter.
     /// </summary>
-    private static bool TryGetSpreadElementType(TypeInfo type, out TypeInfo elementType)
+    private bool TryGetSpreadElementType(TypeInfo type, out TypeInfo elementType)
     {
         switch (type)
         {
@@ -308,6 +312,9 @@ public partial class TypeChecker
                 return true;
             case TypeInfo.Iterator iter:
                 elementType = iter.ElementType;
+                return true;
+            case TypeInfo.Iterable iterable:
+                elementType = iterable.ElementType;
                 return true;
             case TypeInfo.Generator gen:
                 elementType = gen.YieldType;
@@ -326,8 +333,8 @@ public partial class TypeChecker
                 elementType = new TypeInfo.Any();
                 return true;
             default:
-                elementType = null!;
-                return false;
+                // A hand-written object exposing [Symbol.iterator] is spreadable structurally (#485).
+                return TryGetStructuralIterableElement(type, out elementType);
         }
     }
 

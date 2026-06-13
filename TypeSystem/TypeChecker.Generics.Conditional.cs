@@ -953,6 +953,7 @@ public partial class TypeChecker
         TypeInfo.Generator g => [g.YieldType],
         TypeInfo.AsyncGenerator g => [g.YieldType],
         TypeInfo.Iterator it => [it.ElementType],
+        TypeInfo.Iterable ib => [ib.ElementType],
         TypeInfo.WeakRef wr => [wr.TargetType],
         TypeInfo.FinalizationRegistry fr => [fr.TargetType],
         _ => null

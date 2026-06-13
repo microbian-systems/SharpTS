@@ -828,15 +828,21 @@ public partial class TypeChecker
         TypeInfo iterableType = CheckExpr(stmt.Iterable);
 
         // For `for await...of`, an AsyncIterable<T> yields T.
-        // (AsyncGenerator yield types are intentionally NOT extracted here — async generators
-        // still produce TypeInfo.Any element bindings to preserve flexibility for legacy tests.)
+        // (Generator/AsyncGenerator yield types are intentionally NOT extracted here — generator yield-type
+        // inference does not yet account for `yield*` delegation, so a delegating-only generator infers a
+        // `void` yield; binding `any` preserves that flexibility. Tracked separately.)
         TypeInfo elementType = iterableType switch
         {
             TypeInfo.Array arr => arr.ElementType,
             TypeInfo.Map mapType => TypeInfo.Tuple.FromTypes([mapType.KeyType, mapType.ValueType], 2),
             TypeInfo.Set setType => setType.ElementType,
             TypeInfo.Iterator iterType => iterType.ElementType,
+            TypeInfo.Iterable iterableElem => iterableElem.ElementType,
             TypeInfo.AsyncIterable asyncIter when stmt.IsAsync => asyncIter.ElementType,
+            // A hand-written object exposing [Symbol.iterator] is iterable structurally (#485). Limited to
+            // sync `for...of`; the async iterable protocol resolution is tracked separately (#483). A
+            // non-iterable still binds `any` (no new TS2488) to avoid regressing previously-accepted code.
+            _ when !stmt.IsAsync && TryGetStructuralIterableElement(iterableType, out var structuralElem) => structuralElem,
             _ => new TypeInfo.Any()
         };
 
