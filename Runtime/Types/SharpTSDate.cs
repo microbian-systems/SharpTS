@@ -242,6 +242,65 @@ public class SharpTSDate : ITypeCategorized
         return -TimeZoneInfo.Local.GetUtcOffset(_utcDateTime).TotalMinutes;
     }
 
+    // ========== UTC Getter Methods ==========
+    // These read the stored UTC instant directly, with no local-time conversion.
+
+    /// <summary>Returns the 4-digit year in UTC.</summary>
+    public double GetUTCFullYear()
+    {
+        if (_isInvalid) return double.NaN;
+        return _utcDateTime.Year;
+    }
+
+    /// <summary>Returns the month (0-11) in UTC. 0 = January, 11 = December.</summary>
+    public double GetUTCMonth()
+    {
+        if (_isInvalid) return double.NaN;
+        return _utcDateTime.Month - 1; // Convert to 0-indexed
+    }
+
+    /// <summary>Returns the day of the month (1-31) in UTC.</summary>
+    public double GetUTCDate()
+    {
+        if (_isInvalid) return double.NaN;
+        return _utcDateTime.Day;
+    }
+
+    /// <summary>Returns the day of the week (0-6) in UTC. 0 = Sunday, 6 = Saturday.</summary>
+    public double GetUTCDay()
+    {
+        if (_isInvalid) return double.NaN;
+        return (double)_utcDateTime.DayOfWeek;
+    }
+
+    /// <summary>Returns the hour (0-23) in UTC.</summary>
+    public double GetUTCHours()
+    {
+        if (_isInvalid) return double.NaN;
+        return _utcDateTime.Hour;
+    }
+
+    /// <summary>Returns the minutes (0-59) in UTC.</summary>
+    public double GetUTCMinutes()
+    {
+        if (_isInvalid) return double.NaN;
+        return _utcDateTime.Minute;
+    }
+
+    /// <summary>Returns the seconds (0-59) in UTC.</summary>
+    public double GetUTCSeconds()
+    {
+        if (_isInvalid) return double.NaN;
+        return _utcDateTime.Second;
+    }
+
+    /// <summary>Returns the milliseconds (0-999) in UTC.</summary>
+    public double GetUTCMilliseconds()
+    {
+        if (_isInvalid) return double.NaN;
+        return _utcDateTime.Millisecond;
+    }
+
     // ========== Setter Methods ==========
     // All setters mutate the date and return the new timestamp
 
@@ -444,6 +503,186 @@ public class SharpTSDate : ITypeCategorized
         return GetTime();
     }
 
+    // ========== UTC Setter Methods ==========
+    // These build the new instant directly in UTC; no local-time round-trip.
+    // Overflowing components roll over (e.g. setUTCMonth(13) advances the year),
+    // matching JavaScript semantics via DateTime's Add* methods.
+
+    /// <summary>
+    /// Sets the UTC full year, optionally also month and day. Returns the new timestamp.
+    /// </summary>
+    public double SetUTCFullYear(double year, double? month = null, double? date = null)
+    {
+        if (_isInvalid) return double.NaN;
+
+        var utc = _utcDateTime;
+        int newYear = (int)year;
+        int newMonth = month.HasValue ? (int)month.Value + 1 : utc.Month; // Convert 0-indexed to 1-indexed
+        int newDay = date.HasValue ? (int)date.Value : utc.Day;
+
+        try
+        {
+            _utcDateTime = new DateTime(newYear, 1, 1, utc.Hour, utc.Minute, utc.Second, utc.Millisecond, DateTimeKind.Utc)
+                .AddMonths(newMonth - 1)
+                .AddDays(newDay - 1);
+        }
+        catch
+        {
+            _isInvalid = true;
+        }
+
+        return GetTime();
+    }
+
+    /// <summary>
+    /// Sets the UTC month (0-indexed), optionally also day. Returns the new timestamp.
+    /// </summary>
+    public double SetUTCMonth(double month, double? date = null)
+    {
+        if (_isInvalid) return double.NaN;
+
+        var utc = _utcDateTime;
+        int newDay = date.HasValue ? (int)date.Value : utc.Day;
+
+        try
+        {
+            _utcDateTime = new DateTime(utc.Year, 1, 1, utc.Hour, utc.Minute, utc.Second, utc.Millisecond, DateTimeKind.Utc)
+                .AddMonths((int)month)
+                .AddDays(newDay - 1);
+        }
+        catch
+        {
+            _isInvalid = true;
+        }
+
+        return GetTime();
+    }
+
+    /// <summary>
+    /// Sets the UTC day of the month. Returns the new timestamp.
+    /// </summary>
+    public double SetUTCDate(double date)
+    {
+        if (_isInvalid) return double.NaN;
+
+        var utc = _utcDateTime;
+
+        try
+        {
+            _utcDateTime = new DateTime(utc.Year, utc.Month, 1, utc.Hour, utc.Minute, utc.Second, utc.Millisecond, DateTimeKind.Utc)
+                .AddDays((int)date - 1);
+        }
+        catch
+        {
+            _isInvalid = true;
+        }
+
+        return GetTime();
+    }
+
+    /// <summary>
+    /// Sets the UTC hour, optionally also minutes, seconds, and milliseconds. Returns the new timestamp.
+    /// </summary>
+    public double SetUTCHours(double hours, double? min = null, double? sec = null, double? ms = null)
+    {
+        if (_isInvalid) return double.NaN;
+
+        var utc = _utcDateTime;
+        int newHours = (int)hours;
+        int newMin = min.HasValue ? (int)min.Value : utc.Minute;
+        int newSec = sec.HasValue ? (int)sec.Value : utc.Second;
+        int newMs = ms.HasValue ? (int)ms.Value : utc.Millisecond;
+
+        try
+        {
+            _utcDateTime = new DateTime(utc.Year, utc.Month, utc.Day, 0, 0, 0, 0, DateTimeKind.Utc)
+                .AddHours(newHours)
+                .AddMinutes(newMin)
+                .AddSeconds(newSec)
+                .AddMilliseconds(newMs);
+        }
+        catch
+        {
+            _isInvalid = true;
+        }
+
+        return GetTime();
+    }
+
+    /// <summary>
+    /// Sets the UTC minutes, optionally also seconds and milliseconds. Returns the new timestamp.
+    /// </summary>
+    public double SetUTCMinutes(double min, double? sec = null, double? ms = null)
+    {
+        if (_isInvalid) return double.NaN;
+
+        var utc = _utcDateTime;
+        int newMin = (int)min;
+        int newSec = sec.HasValue ? (int)sec.Value : utc.Second;
+        int newMs = ms.HasValue ? (int)ms.Value : utc.Millisecond;
+
+        try
+        {
+            _utcDateTime = new DateTime(utc.Year, utc.Month, utc.Day, utc.Hour, 0, 0, 0, DateTimeKind.Utc)
+                .AddMinutes(newMin)
+                .AddSeconds(newSec)
+                .AddMilliseconds(newMs);
+        }
+        catch
+        {
+            _isInvalid = true;
+        }
+
+        return GetTime();
+    }
+
+    /// <summary>
+    /// Sets the UTC seconds, optionally also milliseconds. Returns the new timestamp.
+    /// </summary>
+    public double SetUTCSeconds(double sec, double? ms = null)
+    {
+        if (_isInvalid) return double.NaN;
+
+        var utc = _utcDateTime;
+        int newSec = (int)sec;
+        int newMs = ms.HasValue ? (int)ms.Value : utc.Millisecond;
+
+        try
+        {
+            _utcDateTime = new DateTime(utc.Year, utc.Month, utc.Day, utc.Hour, utc.Minute, 0, 0, DateTimeKind.Utc)
+                .AddSeconds(newSec)
+                .AddMilliseconds(newMs);
+        }
+        catch
+        {
+            _isInvalid = true;
+        }
+
+        return GetTime();
+    }
+
+    /// <summary>
+    /// Sets the UTC milliseconds. Returns the new timestamp.
+    /// </summary>
+    public double SetUTCMilliseconds(double ms)
+    {
+        if (_isInvalid) return double.NaN;
+
+        var utc = _utcDateTime;
+
+        try
+        {
+            _utcDateTime = new DateTime(utc.Year, utc.Month, utc.Day, utc.Hour, utc.Minute, utc.Second, 0, DateTimeKind.Utc)
+                .AddMilliseconds((int)ms);
+        }
+        catch
+        {
+            _isInvalid = true;
+        }
+
+        return GetTime();
+    }
+
     // ========== Conversion Methods ==========
 
     /// <summary>
@@ -500,11 +739,71 @@ public class SharpTSDate : ITypeCategorized
     }
 
     /// <summary>
+    /// Returns the date as a UTC string in RFC 7231 format, e.g. "Thu, 01 Jan 1970 00:00:00 GMT".
+    /// </summary>
+    public string ToUTCString()
+    {
+        if (_isInvalid) return "Invalid Date";
+        return _utcDateTime.ToString("ddd, dd MMM yyyy HH:mm:ss 'GMT'", CultureInfo.InvariantCulture);
+    }
+
+    // The toLocale* family formats in local time using the host's current culture.
+    // Locale/options arguments (lib.es2020.date) are accepted by the type checker but
+    // not yet honored at runtime — full Intl-options support would route through
+    // SharpTSIntlDateTimeFormat (see #539). Output is implementation-defined per
+    // ECMA-262, so callers should not depend on the exact format.
+
+    /// <summary>Returns the date portion as a locale-formatted string in local time.</summary>
+    public string ToLocaleDateString()
+    {
+        if (_isInvalid) return "Invalid Date";
+        return _utcDateTime.ToLocalTime().ToString("d", CultureInfo.CurrentCulture);
+    }
+
+    /// <summary>Returns the time portion as a locale-formatted string in local time.</summary>
+    public string ToLocaleTimeString()
+    {
+        if (_isInvalid) return "Invalid Date";
+        return _utcDateTime.ToLocalTime().ToString("T", CultureInfo.CurrentCulture);
+    }
+
+    /// <summary>Returns the full date and time as a locale-formatted string in local time.</summary>
+    public string ToLocaleString()
+    {
+        if (_isInvalid) return "Invalid Date";
+        return _utcDateTime.ToLocalTime().ToString("G", CultureInfo.CurrentCulture);
+    }
+
+    /// <summary>
     /// Returns the primitive value (timestamp) of the date.
     /// </summary>
     public double ValueOf()
     {
         return GetTime();
+    }
+
+    // ========== Legacy Methods (ECMA-262 Annex B) ==========
+
+    /// <summary>
+    /// ECMA-262 Annex B B.2.4.1: returns the local-time year minus 1900.
+    /// </summary>
+    public double GetYear()
+    {
+        if (_isInvalid) return double.NaN;
+        return _utcDateTime.ToLocalTime().Year - 1900;
+    }
+
+    /// <summary>
+    /// ECMA-262 Annex B B.2.4.2: sets the local-time year, mapping 0-99 to 1900-1999.
+    /// Returns the new timestamp.
+    /// </summary>
+    public double SetYear(double year)
+    {
+        if (_isInvalid) return double.NaN;
+
+        int y = (int)year;
+        if (y >= 0 && y <= 99) y += 1900;
+        return SetFullYear(y);
     }
 
     /// <summary>

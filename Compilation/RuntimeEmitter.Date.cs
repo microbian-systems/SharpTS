@@ -39,6 +39,149 @@ public partial class RuntimeEmitter
         EmitDateToTimeString(typeBuilder, runtime);
         EmitDateToJSON(typeBuilder, runtime);
         EmitDateValueOf(typeBuilder, runtime);
+
+        // UTC getters + legacy getYear (#516): 0-arg, return double, NaN on non-Date.
+        runtime.DateGetUTCFullYear = EmitDateDoubleGetter(typeBuilder, runtime, "DateGetUTCFullYear", "GetUTCFullYear");
+        runtime.DateGetUTCMonth = EmitDateDoubleGetter(typeBuilder, runtime, "DateGetUTCMonth", "GetUTCMonth");
+        runtime.DateGetUTCDate = EmitDateDoubleGetter(typeBuilder, runtime, "DateGetUTCDate", "GetUTCDate");
+        runtime.DateGetUTCDay = EmitDateDoubleGetter(typeBuilder, runtime, "DateGetUTCDay", "GetUTCDay");
+        runtime.DateGetUTCHours = EmitDateDoubleGetter(typeBuilder, runtime, "DateGetUTCHours", "GetUTCHours");
+        runtime.DateGetUTCMinutes = EmitDateDoubleGetter(typeBuilder, runtime, "DateGetUTCMinutes", "GetUTCMinutes");
+        runtime.DateGetUTCSeconds = EmitDateDoubleGetter(typeBuilder, runtime, "DateGetUTCSeconds", "GetUTCSeconds");
+        runtime.DateGetUTCMilliseconds = EmitDateDoubleGetter(typeBuilder, runtime, "DateGetUTCMilliseconds", "GetUTCMilliseconds");
+        runtime.DateGetYear = EmitDateDoubleGetter(typeBuilder, runtime, "DateGetYear", "GetYear");
+
+        // UTC setters (#516). Multi-arg setters package args as object[] (primary arg read);
+        // single-arg setters take a direct double. Legacy setYear takes a direct double.
+        runtime.DateSetUTCFullYear = EmitDateArgsArraySetter(typeBuilder, runtime, "DateSetUTCFullYear", "SetUTCFullYear");
+        runtime.DateSetUTCMonth = EmitDateArgsArraySetter(typeBuilder, runtime, "DateSetUTCMonth", "SetUTCMonth");
+        runtime.DateSetUTCDate = EmitDateDoubleArgSetter(typeBuilder, runtime, "DateSetUTCDate", "SetUTCDate");
+        runtime.DateSetUTCHours = EmitDateArgsArraySetter(typeBuilder, runtime, "DateSetUTCHours", "SetUTCHours");
+        runtime.DateSetUTCMinutes = EmitDateArgsArraySetter(typeBuilder, runtime, "DateSetUTCMinutes", "SetUTCMinutes");
+        runtime.DateSetUTCSeconds = EmitDateArgsArraySetter(typeBuilder, runtime, "DateSetUTCSeconds", "SetUTCSeconds");
+        runtime.DateSetUTCMilliseconds = EmitDateDoubleArgSetter(typeBuilder, runtime, "DateSetUTCMilliseconds", "SetUTCMilliseconds");
+        runtime.DateSetYear = EmitDateDoubleArgSetter(typeBuilder, runtime, "DateSetYear", "SetYear");
+
+        // Conversion methods (#516): return string, "Invalid Date" on non-Date.
+        runtime.DateToUTCString = EmitDateStringMethod(typeBuilder, runtime, "DateToUTCString", "ToUTCString");
+        runtime.DateToLocaleDateString = EmitDateStringMethod(typeBuilder, runtime, "DateToLocaleDateString", "ToLocaleDateString");
+        runtime.DateToLocaleTimeString = EmitDateStringMethod(typeBuilder, runtime, "DateToLocaleTimeString", "ToLocaleTimeString");
+        runtime.DateToLocaleString = EmitDateStringMethod(typeBuilder, runtime, "DateToLocaleString", "ToLocaleString");
+    }
+
+    /// <summary>
+    /// Emits a static $Runtime helper for a 0-arg $TSDate getter returning a double
+    /// (NaN when the receiver is not a $TSDate). Returns the emitted method.
+    /// </summary>
+    private MethodBuilder EmitDateDoubleGetter(TypeBuilder typeBuilder, EmittedRuntime runtime, string runtimeName, string instanceMethodName)
+    {
+        var method = typeBuilder.DefineMethod(
+            runtimeName,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.Object]
+        );
+        EmitDateInstanceMethodCall(typeBuilder, runtime, runtimeName, instanceMethodName, method);
+        return method;
+    }
+
+    /// <summary>
+    /// Emits a static $Runtime helper for a $TSDate setter taking a single double argument
+    /// (NaN when the receiver is not a $TSDate). Returns the emitted method.
+    /// </summary>
+    private MethodBuilder EmitDateDoubleArgSetter(TypeBuilder typeBuilder, EmittedRuntime runtime, string runtimeName, string instanceMethodName)
+    {
+        var method = typeBuilder.DefineMethod(
+            runtimeName,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.Object, _types.Double]
+        );
+
+        var il = method.GetILGenerator();
+        var invalidLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSDateType);
+        il.Emit(OpCodes.Brfalse, invalidLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSDateType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, runtime.TSDateMethods[instanceMethodName]);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(invalidLabel);
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Ret);
+        return method;
+    }
+
+    /// <summary>
+    /// Emits a static $Runtime helper for a multi-arg $TSDate setter whose arguments are
+    /// packaged as object[]; only the primary argument (index 0) is honored, matching the
+    /// other compiled Date setters (#536) (NaN when the receiver is not a $TSDate). Returns the method.
+    /// </summary>
+    private MethodBuilder EmitDateArgsArraySetter(TypeBuilder typeBuilder, EmittedRuntime runtime, string runtimeName, string instanceMethodName)
+    {
+        var method = typeBuilder.DefineMethod(
+            runtimeName,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.Object, _types.ObjectArray]
+        );
+
+        var il = method.GetILGenerator();
+        var invalidLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSDateType);
+        il.Emit(OpCodes.Brfalse, invalidLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSDateType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Callvirt, runtime.TSDateMethods[instanceMethodName]);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(invalidLabel);
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Ret);
+        return method;
+    }
+
+    /// <summary>
+    /// Emits a static $Runtime helper for a 0-arg $TSDate conversion method returning a string
+    /// ("Invalid Date" when the receiver is not a $TSDate). Returns the emitted method.
+    /// </summary>
+    private MethodBuilder EmitDateStringMethod(TypeBuilder typeBuilder, EmittedRuntime runtime, string runtimeName, string instanceMethodName)
+    {
+        var method = typeBuilder.DefineMethod(
+            runtimeName,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]
+        );
+
+        var il = method.GetILGenerator();
+        var invalidLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSDateType);
+        il.Emit(OpCodes.Brfalse, invalidLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSDateType);
+        il.Emit(OpCodes.Callvirt, runtime.TSDateMethods[instanceMethodName]);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(invalidLabel);
+        il.Emit(OpCodes.Ldstr, "Invalid Date");
+        il.Emit(OpCodes.Ret);
+        return method;
     }
 
     private void EmitDateNow(TypeBuilder typeBuilder, EmittedRuntime runtime)

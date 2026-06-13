@@ -971,6 +971,79 @@ public class GeneratorTests
 
     #endregion
 
+    #region Generator function EXPRESSION closes over block-scoped outer variables — issue #522
+
+    // A generator function expression (`const g = function*() {...}`) is lifted to a top-level
+    // declaration so the IL pipeline can handle it (GeneratorArrowLifter). The lift must not move
+    // the body ahead of the block-scoped (let/const) bindings it closes over, or the type checker
+    // (which checks bodies in source order) rejects the reference as "Undefined variable".
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_ClosesOverOuterLet(ExecutionMode mode)
+    {
+        // The exact repro from issue #522.
+        var source = """
+            let x: number = 1;
+            const g = function*() { yield x; yield x + 1; };
+            for (const v of g()) console.log(v);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_ClosesOverOuterConst(ExecutionMode mode)
+    {
+        var source = """
+            const base = 10;
+            const g = function*() { yield base; yield base * 2; };
+            for (const v of g()) console.log(v);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10\n20\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_CapturesVariableNotSnapshot(ExecutionMode mode)
+    {
+        // The closure binds the variable, so a mutation between definition and iteration is observed.
+        var source = """
+            let c: number = 5;
+            const g = function*() { yield c; };
+            c = 99;
+            for (const v of g()) console.log(v);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("99\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_NestedInFunction_ClosesOverModuleLet(ExecutionMode mode)
+    {
+        // A generator expression nested inside another function may still close over module-scope
+        // bindings; the lift carries it to module scope, where `base` is visible.
+        var source = """
+            let baseVal: number = 100;
+            function make() {
+                const g = function*() { yield baseVal; };
+                return g;
+            }
+            for (const v of make()()) console.log(v);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("100\n", output);
+    }
+
+    #endregion
+
     #region Re-entrant next()/return()/throw() — "already running" (ECMA-262 §27.5.3.3) — issues #515, #521
 
     // ECMA-262 §27.5.3.3 (GeneratorValidate): calling next/return/throw on a generator whose state

@@ -1079,6 +1079,30 @@ public class EmittedRuntime
     public MethodBuilder DateToTimeString { get; set; } = null!;
     public MethodBuilder DateToJSON { get; set; } = null!;
     public MethodBuilder DateValueOf { get; set; } = null!;
+    // UTC getters (issue #516)
+    public MethodBuilder DateGetUTCFullYear { get; set; } = null!;
+    public MethodBuilder DateGetUTCMonth { get; set; } = null!;
+    public MethodBuilder DateGetUTCDate { get; set; } = null!;
+    public MethodBuilder DateGetUTCDay { get; set; } = null!;
+    public MethodBuilder DateGetUTCHours { get; set; } = null!;
+    public MethodBuilder DateGetUTCMinutes { get; set; } = null!;
+    public MethodBuilder DateGetUTCSeconds { get; set; } = null!;
+    public MethodBuilder DateGetUTCMilliseconds { get; set; } = null!;
+    // UTC setters (issue #516)
+    public MethodBuilder DateSetUTCFullYear { get; set; } = null!;
+    public MethodBuilder DateSetUTCMonth { get; set; } = null!;
+    public MethodBuilder DateSetUTCDate { get; set; } = null!;
+    public MethodBuilder DateSetUTCHours { get; set; } = null!;
+    public MethodBuilder DateSetUTCMinutes { get; set; } = null!;
+    public MethodBuilder DateSetUTCSeconds { get; set; } = null!;
+    public MethodBuilder DateSetUTCMilliseconds { get; set; } = null!;
+    // Conversion + legacy (issue #516)
+    public MethodBuilder DateToUTCString { get; set; } = null!;
+    public MethodBuilder DateToLocaleDateString { get; set; } = null!;
+    public MethodBuilder DateToLocaleTimeString { get; set; } = null!;
+    public MethodBuilder DateToLocaleString { get; set; } = null!;
+    public MethodBuilder DateGetYear { get; set; } = null!;
+    public MethodBuilder DateSetYear { get; set; } = null!;
 
     // RegExp support - $Runtime wrapper methods
     public MethodBuilder RegExpCoerceArg { get; set; } = null!;
