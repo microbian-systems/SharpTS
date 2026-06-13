@@ -17,6 +17,12 @@ public partial class ILCompiler
     {
         string funcName = funcStmt.Name.Lexeme;
 
+        // Module-qualify the stub/registry keys (#418) so two modules that each declare a
+        // same-named async-generator function don't clobber each other. Single-file
+        // compilation returns the simple name unchanged. The readable state-machine type name
+        // keeps the simple name (the builder's counter already disambiguates `<name>d__N`).
+        string qualifiedName = GetDefinitionContext().GetQualifiedFunctionName(funcName);
+
         // Analyze the async generator function for yield/await points and hoisted variables
         var analysis = _asyncGenerators.Analyzer.Analyze(funcStmt);
 
@@ -24,27 +30,28 @@ public partial class ILCompiler
         var smBuilder = new AsyncGeneratorStateMachineBuilder(_moduleBuilder, _types, _asyncGenerators.StateMachineCounter++);
         smBuilder.DefineStateMachine(funcName, analysis, isInstanceMethod: false, runtime: _runtime);
 
-        _asyncGenerators.StateMachines[funcName] = smBuilder;
-        _asyncGenerators.Functions[funcName] = funcStmt;
+        _asyncGenerators.StateMachines[qualifiedName] = smBuilder;
+        _asyncGenerators.Functions[qualifiedName] = funcStmt;
 
         // Define the stub method that creates and returns the state machine
         var paramTypes = funcStmt.Parameters.Select(_ => _types.Object).ToArray();
         var methodBuilder = _programType.DefineMethod(
-            funcName,
+            qualifiedName,
             MethodAttributes.Public | MethodAttributes.Static,
             _types.IAsyncEnumerableOfObject,  // Async generator returns IAsyncEnumerable<object>
             paramTypes
         );
 
-        _functions.Builders[funcName] = methodBuilder;
+        _functions.Builders[qualifiedName] = methodBuilder;
 
-        // Track rest parameter info
+        // Track rest parameter info (keyed by the qualified name so ResolveFunctionName-based
+        // call-site lookups in ExpressionEmitterBase find it).
         var restParam = funcStmt.Parameters.FirstOrDefault(p => p.IsRest);
         if (restParam != null)
         {
             int restIndex = funcStmt.Parameters.IndexOf(restParam);
             int regularCount = funcStmt.Parameters.Count(p => !p.IsRest);
-            _functions.RestParams[funcName] = (restIndex, regularCount);
+            _functions.RestParams[qualifiedName] = (restIndex, regularCount);
         }
     }
 
