@@ -243,7 +243,13 @@ public static class JSONBuiltIns
             return RuntimeValue.FromString(sb.ToString());
         }
 
-        return RuntimeValue.Null;
+        // ECMA-262 25.5.2.1 step 12 returns whatever SerializeJSONProperty
+        // yields. A top-level value that serializes to nothing — undefined, a
+        // function, or a symbol — makes SerializeJSONProperty return the JS
+        // value `undefined` (steps 3, 9, 11), NOT null. `StringifyValue`
+        // signals that case by returning false, so surface `undefined` here.
+        // (Compiled mode does the same; see RuntimeEmitter.Json.Stringify.cs.)
+        return RuntimeValue.Undefined;
     }
 
     private static bool StringifyValue(Interpreter interp, object? value, object? key,
