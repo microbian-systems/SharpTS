@@ -549,6 +549,13 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, runtime.NetSocketStartReading);
 
             il.MarkLabel(done);
+
+            // Release the in-flight-connect Ref taken in $TSNetSocket.Connect, after
+            // the 'connect' event has been delivered (and reading started), so the
+            // handle outlives delivery. Mirrors SharpTSSocket's interpreter.Unref().
+            il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+            il.Emit(OpCodes.Call, runtime.EventLoopUnref);
+
             il.Emit(OpCodes.Ret);
         }
 
@@ -641,6 +648,12 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Stelem_Ref);
             il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
             il.Emit(OpCodes.Pop);
+
+            // Release the in-flight-connect Ref taken in $TSNetSocket.Connect, after
+            // the 'error' event has been delivered. Mirrors SharpTSSocket's
+            // interpreter.Unref() on the failure path.
+            il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+            il.Emit(OpCodes.Call, runtime.EventLoopUnref);
 
             il.Emit(OpCodes.Ret);
         }
