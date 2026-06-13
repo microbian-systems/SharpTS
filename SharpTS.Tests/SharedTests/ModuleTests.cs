@@ -73,6 +73,62 @@ public class ModuleTests
         Assert.Equal("7\n", output);
     }
 
+    // These three guard the #392 parser fix (`export async function`,
+    // `export function*`, `export async function*`). They run InterpretedOnly:
+    // the parser fix is mode-independent, and compiled execution of exported
+    // state-machine functions is a separate gap tracked in #395.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void ExportAsyncFunction_Parses(ExecutionMode mode)
+    {
+        // Regression: `export async function` previously failed to parse
+        // ("Expect declaration after 'export'"). See issue #392.
+        var source = """
+            export async function add(a: number, b: number): Promise<number> {
+                return a + b;
+            }
+            async function main() { console.log(await add(3, 4)); }
+            main();
+            """;
+
+        Assert.Equal("7\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void ExportGeneratorFunction_Parses(ExecutionMode mode)
+    {
+        // Regression: `export function*` previously failed to parse ("Expect
+        // function name") because the export dispatcher never consumed the `*`.
+        var source = """
+            export function* g(): Generator<number> {
+                yield 1;
+                yield 2;
+            }
+            for (const x of g()) console.log(x);
+            """;
+
+        Assert.Equal("1\n2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void ExportAsyncGeneratorFunction_Parses(ExecutionMode mode)
+    {
+        // Regression: `export async function*` shares the same export dispatcher
+        // path as `export async function` (issue #392).
+        var source = """
+            export async function* ag(): AsyncGenerator<number> {
+                yield 1;
+                yield 2;
+            }
+            async function main() { for await (const x of ag()) console.log(x); }
+            main();
+            """;
+
+        Assert.Equal("1\n2\n", TestHarness.Run(source, mode));
+    }
+
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NamedExport_Class(ExecutionMode mode)

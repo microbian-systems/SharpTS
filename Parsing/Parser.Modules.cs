@@ -282,9 +282,18 @@ public partial class Parser
 
         // export function/class/const/let/interface/type/enum
         Stmt? decl = null;
-        if (Match(TokenType.FUNCTION))
+        if (Match(TokenType.ASYNC))
         {
-            decl = FunctionDeclaration("function");
+            // export async function foo() {}  /  export async function* foo() {}
+            Consume(TokenType.FUNCTION, "Expect 'function' after 'async'.");
+            bool isGenerator = Match(TokenType.STAR);
+            decl = FunctionDeclaration("function", isAsync: true, isGenerator: isGenerator);
+        }
+        else if (Match(TokenType.FUNCTION))
+        {
+            // export function foo() {}  /  export function* foo() {}
+            bool isGenerator = Match(TokenType.STAR);
+            decl = FunctionDeclaration("function", isAsync: false, isGenerator: isGenerator);
         }
         else if (Match(TokenType.CLASS))
         {
