@@ -1006,7 +1006,9 @@ public static class BuiltInTypes
     {
         return name switch
         {
-            "next" => new TypeInfo.Function([], AnyType),
+            // next accepts an optional value (ECMA-262 §27.5.1.2: the argument
+            // becomes the result of the resumed yield expression).
+            "next" => new TypeInfo.Function([AnyType], AnyType, RequiredParams: 0),
             "return" => new TypeInfo.Function([AnyType], AnyType, RequiredParams: 0),
             "throw" => new TypeInfo.Function([AnyType], AnyType, RequiredParams: 0),
             "map" => new TypeInfo.Function(

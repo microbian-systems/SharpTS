@@ -277,7 +277,7 @@ public partial class Interpreter
             // Handle generator methods
             return methodName switch
             {
-                "next" => gen.Next(),
+                "next" => gen.Next(args.Count > 0 ? args[0] : SharpTSUndefined.Instance),
                 "return" => gen.Return(args.Count > 0 ? args[0] : null),
                 "throw" => gen.Throw(args.Count > 0 ? args[0] : null),
                 _ => throw new InterpreterException($"Generator does not have method '{methodName}'.")

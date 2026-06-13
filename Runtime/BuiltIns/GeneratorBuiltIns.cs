@@ -18,11 +18,14 @@ public static class GeneratorBuiltIns
     {
         return name switch
         {
-            "next" => BuiltInMethod.CreateV2("next", 0, 0, static (_, receiver, _) =>
+            "next" => BuiltInMethod.CreateV2("next", 0, 1, static (_, receiver, args) =>
             {
                 if (receiver.ToObject() is SharpTSGenerator gen)
                 {
-                    return RuntimeValue.FromObject(gen.Next());
+                    // ECMA-262 §27.5.3.3: the argument becomes the result of the
+                    // resumed yield. A bare next() resumes with undefined.
+                    object? sent = args.Length > 0 ? args[0].ToObject() : SharpTSUndefined.Instance;
+                    return RuntimeValue.FromObject(gen.Next(sent));
                 }
                 throw new Exception("Runtime Error: next() called on non-generator.");
             }),

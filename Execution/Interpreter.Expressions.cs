@@ -183,7 +183,14 @@ public partial class Interpreter
         if (YieldCallback != null)
         {
             var result = YieldCallback(value, yieldExpr.IsDelegating);
-            return RuntimeValue.FromBoxed(result ?? SharpTSUndefined.Instance);
+            // For a plain `yield`, the callback returns the exact value passed to the
+            // resuming next(v) — delivered verbatim so `next(null)` yields null and a
+            // bare next() yields undefined (the generator normalizes that to undefined).
+            // For `yield*`, the completion value of a non-generator delegate is undefined;
+            // coalesce null → undefined to preserve that.
+            if (yieldExpr.IsDelegating)
+                return RuntimeValue.FromBoxed(result ?? SharpTSUndefined.Instance);
+            return RuntimeValue.FromBoxed(result);
         }
 
         throw new YieldException(value, yieldExpr.IsDelegating);
