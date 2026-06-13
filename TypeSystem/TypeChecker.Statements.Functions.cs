@@ -89,34 +89,66 @@ public partial class TypeChecker
     /// </summary>
     private void RefineHoistedFunctionReturnType(Stmt.Function funcStmt)
     {
-        // Only plain, implemented, non-generic, non-overloaded functions without a return
-        // annotation are eligible. Generics defer to the real pass; overload groups drive call
-        // sites from their explicit signatures, not the implementation's inferred return.
+        // Only plain, implemented, non-overloaded functions without a return annotation are
+        // eligible. Overload groups drive call sites from their explicit signatures, not the
+        // implementation's inferred return. Generic functions ARE handled here (#388): their
+        // inferred return is expressed in terms of the type parameters and re-instantiated at
+        // each call site, so a call preceding the declaration types precisely instead of `any`.
         if (funcStmt.ReturnType != null || funcStmt.Body == null) return;
-        if (funcStmt.TypeParams is { Count: > 0 }) return;
         string funcName = funcStmt.Name.Lexeme;
         if (_pendingOverloadSignatures.ContainsKey(funcName)) return;
         if (!_environment.IsDefinedLocally(funcName)) return;
-        if (_environment.Get(funcName) is not TypeInfo.Function hoisted || hoisted.ReturnType is not TypeInfo.Any)
-            return; // not our hoisted `any` placeholder (annotated, redefined, or already refined)
+
+        // Recognize our hoisted `any`-return placeholder: a non-generic function hoists as a plain
+        // Function, a generic one as a GenericFunction (carrying its type parameters). Anything else
+        // (annotated, redefined, or already refined) is left untouched.
+        List<TypeInfo> paramTypes;
+        int requiredParams;
+        bool hasRest;
+        List<string>? paramNames;
+        TypeInfo? thisType;
+        List<TypeInfo.TypeParameter>? typeParams;
+        switch (_environment.Get(funcName))
+        {
+            case TypeInfo.GenericFunction { ReturnType: TypeInfo.Any } gh:
+                paramTypes = gh.ParamTypes; requiredParams = gh.RequiredParams; hasRest = gh.HasRestParam;
+                paramNames = gh.ParamNames; thisType = gh.ThisType; typeParams = gh.TypeParams;
+                break;
+            case TypeInfo.Function { ReturnType: TypeInfo.Any } fh:
+                paramTypes = fh.ParamTypes; requiredParams = fh.RequiredParams; hasRest = fh.HasRestParam;
+                paramNames = fh.ParamNames; thisType = fh.ThisType; typeParams = null;
+                break;
+            default:
+                return;
+        }
 
         if (_hoistInferredReturnTypes.TryGetValue(funcStmt, out var cached))
         {
             // Re-register a previously inferred type into this (fresh) scope. A null value marks an
             // in-progress (mutual recursion) or failed inference — leave the placeholder in place.
             if (cached != null)
-                _environment.Define(funcName, new TypeInfo.Function(
-                    hoisted.ParamTypes, cached, hoisted.RequiredParams, hoisted.HasRestParam,
-                    hoisted.ThisType, hoisted.ParamNames));
+            {
+                _environment.Define(funcName, typeParams is { Count: > 0 }
+                    ? new TypeInfo.GenericFunction(typeParams, paramTypes, cached, requiredParams, hasRest, thisType, paramNames)
+                    : new TypeInfo.Function(paramTypes, cached, requiredParams, hasRest, thisType, paramNames));
+            }
             return;
         }
 
         // Mark in-progress before inferring so mutual recursion terminates against the placeholder.
         _hoistInferredReturnTypes[funcStmt] = null;
         var funcEnv = new TypeEnvironment(_environment);
+        // A generic function's parameter and return types reference its type parameters. Define them
+        // in the body environment (the same TypeParameter instances the hoisted signature carries) so
+        // references inside the body resolve and the inferred return is expressed in those terms.
+        if (typeParams is { Count: > 0 })
+        {
+            foreach (var tp in typeParams)
+                funcEnv.DefineTypeParameter(tp.Name, tp);
+        }
         CheckFunctionBodyAndInferReturn(
-            funcStmt, funcEnv, hoisted.ParamTypes, hoisted.RequiredParams, hoisted.HasRestParam,
-            hoisted.ParamNames ?? new List<string>(), hoisted.ThisType, typeParams: null,
+            funcStmt, funcEnv, paramTypes, requiredParams, hasRest,
+            paramNames ?? new List<string>(), thisType, typeParams,
             returnType: new TypeInfo.Inferred(), inferringReturnType: true, funcName, suppress: true);
     }
 
