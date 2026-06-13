@@ -182,6 +182,40 @@ public class JSONTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_Undefined_ReturnsUndefinedNotNull(ExecutionMode mode)
+    {
+        // ECMA-262 25.5.2.1 step 12: a top-level undefined makes
+        // SerializeJSONProperty return the JS value `undefined`, NOT null.
+        // Regression for #519 (interpreter previously coerced it to null).
+        // `typeof` distinguishes JS undefined ("undefined") from null
+        // ("object"), so this fails loudly if the old behavior returns.
+        var source = """
+            let r: any = JSON.stringify(undefined);
+            console.log(typeof r);
+            console.log(r);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("undefined\nundefined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_Function_ReturnsUndefined(ExecutionMode mode)
+    {
+        // ECMA-262 25.5.2.3 step 9: a top-level callable serializes to the JS
+        // value `undefined` (same root cause / fix as the undefined case).
+        var source = """
+            let r: any = JSON.stringify((): number => 1);
+            console.log(typeof r);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("undefined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void JSON_Stringify_Object(ExecutionMode mode)
     {
         var source = """
