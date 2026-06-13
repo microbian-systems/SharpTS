@@ -52,6 +52,10 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
         _analysis = analysis;
         _il = builder.MoveNextMethod.GetILGenerator();
         _types = types;
+        // A value spilled across a yield must survive the MoveNext re-entry in a
+        // state-machine field, not a transient IL local (#400/#414).
+        _helpers.EnablePersistentSpills(name => _builder.StateMachineType.DefineField(
+            name, _types.Object, System.Reflection.FieldAttributes.Private));
     }
 
     /// <summary>

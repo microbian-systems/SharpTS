@@ -41,12 +41,20 @@ public partial class GeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldc_I4, stateNumber);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
 
+        // Mirror live spill temps to fields before returning: IL locals do not survive the
+        // MoveNext re-entry, so a value spilled before this yield and used after it would be
+        // lost (#400/#414). The state machine is a class, so the fields persist directly.
+        _helpers.PersistLiveSpillsBeforeSuspend();
+
         // 4. Return true (has value)
         _il.Emit(OpCodes.Ldc_I4_1);
         _il.Emit(OpCodes.Ret);
 
         // 5. Mark the resume label (jumped to from state switch)
         _il.MarkLabel(resumeLabel);
+
+        // Restore spill temps from their fields on the resumed path.
+        _helpers.RehydrateLiveSpillsAfterResume();
 
         // 6. yield expression evaluates to undefined (null) when resumed
         _il.Emit(OpCodes.Ldnull);
@@ -103,6 +111,13 @@ public partial class GeneratorMoveNextEmitter
                 _il.Emit(OpCodes.Stfld, field);
             }
         }
+
+        // Mirror operand spill temps (SpillBoxed locals, e.g. the left side of
+        // `"x" + (yield* g())`) to fields up front. Unlike the on-stack spill above, these
+        // live in locals that the per-element re-entry would wipe. Persisting before the
+        // resume label means the field is valid on both the first fall-through and every
+        // state-dispatch re-entry, where it is rehydrated (#400/#414).
+        _helpers.PersistLiveSpillsBeforeSuspend();
 
         var moveNext = typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!;
         var current = typeof(System.Collections.IEnumerator).GetProperty("Current")!.GetGetMethod()!;
@@ -212,8 +227,12 @@ public partial class GeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldloc, enumTemp);
         _il.Emit(OpCodes.Stfld, delegatedField);
 
-        // This label is where we resume from state dispatch
+        // This label is where we resume from state dispatch (and the per-element loop top).
         _il.MarkLabel(resumeLabel);
+
+        // Restore operand spill temps. Safe on the first fall-through too: they were persisted
+        // before the setup above, so the field already holds the live value (#400/#414).
+        _helpers.RehydrateLiveSpillsAfterResume();
 
         // Load the delegated enumerator from field
         _il.Emit(OpCodes.Ldarg_0);

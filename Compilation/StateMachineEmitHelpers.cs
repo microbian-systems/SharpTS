@@ -141,6 +141,73 @@ public class StateMachineEmitHelpers
 
     #endregion
 
+    #region Self-Boxed State Machine Kickoff (#414)
+
+    // System.Runtime.CompilerServices.Unsafe.Unbox<T>(object) : ref T — a BCL helper
+    // (forwarded into CoreLib), so emitting a call to it keeps standalone DLLs free of a
+    // SharpTS.dll dependency. Resolved once, instantiated per state-machine type.
+    private static readonly MethodInfo UnsafeUnboxOpen =
+        typeof(System.Runtime.CompilerServices.Unsafe)
+            .GetMethod(nameof(System.Runtime.CompilerServices.Unsafe.Unbox),
+                       BindingFlags.Public | BindingFlags.Static)!;
+
+    /// <summary>
+    /// Emits the kickoff tail for an async state machine that pre-boxes itself so nested
+    /// async arrows can capture the one shared instance: box the SM once, record the box in
+    /// <paramref name="selfBoxedField"/>, run it via <paramref name="startMethod"/>, and
+    /// return its <c>builder.Task</c>.
+    ///
+    /// The naive form re-emits <c>unbox</c> per use, but <c>unbox</c> yields a
+    /// controlled-mutability managed pointer that ILVerify rejects when stored, used with
+    /// <c>ldflda</c>, or passed as a <c>ref</c> arg (#414: StackUnexpected on the kickoff).
+    /// <see cref="System.Runtime.CompilerServices.Unsafe.Unbox{T}"/> returns an ordinary
+    /// <c>ref T</c> instead, taken once into a byref local and reused — verifiable and a
+    /// single unbox at runtime. Stack: [] -&gt; [] (ends in <c>ret</c>).
+    /// </summary>
+    public static void EmitSelfBoxedStartAndReturnTask(
+        ILGenerator il,
+        LocalBuilder smLocal,
+        Type stateMachineType,
+        FieldInfo selfBoxedField,
+        FieldInfo builderField,
+        MethodInfo startMethod,
+        MethodInfo taskGetter,
+        TypeProvider types)
+    {
+        var unbox = UnsafeUnboxOpen.MakeGenericMethod(stateMachineType);
+
+        // object boxed = (object)sm;  (heap copy shared with nested arrows)
+        il.Emit(OpCodes.Ldloc, smLocal);
+        il.Emit(OpCodes.Box, stateMachineType);
+        var boxedLocal = il.DeclareLocal(types.Object);
+        il.Emit(OpCodes.Stloc, boxedLocal);
+
+        // ref TSM smRef = ref Unsafe.Unbox<TSM>(boxed);  (verifiable byref into the box)
+        il.Emit(OpCodes.Ldloc, boxedLocal);
+        il.Emit(OpCodes.Call, unbox);
+        var smRef = il.DeclareLocal(stateMachineType.MakeByRefType());
+        il.Emit(OpCodes.Stloc, smRef);
+
+        // smRef.<>__selfBoxed = boxed;
+        il.Emit(OpCodes.Ldloc, smRef);
+        il.Emit(OpCodes.Ldloc, boxedLocal);
+        il.Emit(OpCodes.Stfld, selfBoxedField);
+
+        // smRef.<>t__builder.Start(ref smRef);
+        il.Emit(OpCodes.Ldloc, smRef);
+        il.Emit(OpCodes.Ldflda, builderField);
+        il.Emit(OpCodes.Ldloc, smRef);
+        il.Emit(OpCodes.Call, startMethod);
+
+        // return smRef.<>t__builder.Task;
+        il.Emit(OpCodes.Ldloc, smRef);
+        il.Emit(OpCodes.Ldflda, builderField);
+        il.Emit(OpCodes.Call, taskGetter);
+        il.Emit(OpCodes.Ret);
+    }
+
+    #endregion
+
     #region Label Operations
 
     /// <summary>

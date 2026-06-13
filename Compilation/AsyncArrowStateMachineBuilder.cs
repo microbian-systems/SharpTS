@@ -401,34 +401,19 @@ public class AsyncArrowStateMachineBuilder
         il.Emit(OpCodes.Stfld, StateField);
 
         // If this arrow has nested async arrows, box and store self reference before Start
+        // so the nested arrows capture the one shared instance. Box once and run the box via
+        // a verifiable ref (see helper for the #414 fix).
         if (SelfBoxedField != null)
         {
-            // Box the state machine
-            il.Emit(OpCodes.Ldloc, smLocal);
-            il.Emit(OpCodes.Box, _stateMachineType);
-            var boxedLocal = il.DeclareLocal(_types.Object);
-            il.Emit(OpCodes.Stloc, boxedLocal);
-
-            // Store in sm.<>__selfBoxed (access through the boxed reference since we already boxed)
-            il.Emit(OpCodes.Ldloc, boxedLocal);
-            il.Emit(OpCodes.Unbox, _stateMachineType);
-            il.Emit(OpCodes.Ldloc, boxedLocal);
-            il.Emit(OpCodes.Stfld, SelfBoxedField);
-
-            // Now call Start on the boxed instance's builder
-            il.Emit(OpCodes.Ldloc, boxedLocal);
-            il.Emit(OpCodes.Unbox, _stateMachineType);
-            il.Emit(OpCodes.Ldflda, BuilderField);
-            il.Emit(OpCodes.Ldloc, boxedLocal);
-            il.Emit(OpCodes.Unbox, _stateMachineType);
-            il.Emit(OpCodes.Call, GetBuilderStartMethod());
-
-            // return builder.Task from boxed instance
-            il.Emit(OpCodes.Ldloc, boxedLocal);
-            il.Emit(OpCodes.Unbox, _stateMachineType);
-            il.Emit(OpCodes.Ldflda, BuilderField);
-            il.Emit(OpCodes.Call, GetBuilderTaskGetter());
-            il.Emit(OpCodes.Ret);
+            StateMachineEmitHelpers.EmitSelfBoxedStartAndReturnTask(
+                il,
+                smLocal,
+                _stateMachineType,
+                SelfBoxedField,
+                BuilderField,
+                GetBuilderStartMethod(),
+                GetBuilderTaskGetter(),
+                _types);
         }
         else
         {
