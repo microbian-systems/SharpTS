@@ -625,7 +625,7 @@ public partial class TypeChecker
                     recCallSigs.Select(CallSignatureToFunction).ToList(), inferredTypes))
                 return false;
 
-            var checkProps = ExtractPropertiesWithTypes(checkType);
+            var checkProps = ExtractInferMatchProperties(checkType);
             foreach (var (key, extendsFieldType) in extendsRec.Fields)
             {
                 if (!checkProps.TryGetValue(key, out var checkFieldType))
@@ -648,7 +648,7 @@ public partial class TypeChecker
                     itfCallSigs.Select(CallSignatureToFunction).ToList(), inferredTypes))
                 return false;
 
-            var checkProps = ExtractPropertiesWithTypes(checkType);
+            var checkProps = ExtractInferMatchProperties(checkType);
             foreach (var (key, extendsFieldType) in extendsItf.Members)
             {
                 if (extendsItf.OptionalMembers.Contains(key))
