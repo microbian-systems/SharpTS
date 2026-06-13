@@ -635,4 +635,57 @@ public class StaticMembersTests
     }
 
     #endregion
+
+    #region Missing Static Read Through Class-As-Value (#398)
+
+    // ECMA-262 §7.3.2 (Get): reading a *missing* own/inherited property returns `undefined` — it
+    // never throws. A statically-typed `Klass.missing` is already a compile-time error (TS2339), so
+    // these reads come through an `any`/value position. Compiled mode was already correct; the
+    // interpreter previously threw "Static member 'x' does not exist on class 'y'." (#398).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void MissingStaticAsValue_OnSubclass(ExecutionMode mode)
+    {
+        var source = """
+            class Base {}
+            class Sub extends Base {}
+            const S: any = Sub;
+            console.log(S.nope);
+            """;
+
+        Assert.Equal("undefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void MissingStaticAsValue_OnPlainClass(ExecutionMode mode)
+    {
+        var source = """
+            class C { static known: number = 1; }
+            const K: any = C;
+            console.log(K.known);
+            console.log(K.missing);
+            """;
+
+        Assert.Equal("1\nundefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void MissingStaticAsValue_UsedInExpression(ExecutionMode mode)
+    {
+        // A missing read yielding `undefined` participates in normal coercion rather than aborting.
+        var source = """
+            class Base {}
+            class Sub extends Base {}
+            const S: any = Sub;
+            console.log(S.nope === undefined);
+            console.log(typeof S.nope);
+            """;
+
+        Assert.Equal("true\nundefined\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
 }
