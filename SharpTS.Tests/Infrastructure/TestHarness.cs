@@ -1181,6 +1181,64 @@ public static class TestHarness
     }
 
     /// <summary>
+    /// Compiles a multi-module program (via the <see cref="ILCompiler.CompileModules"/> pipeline,
+    /// the same path the CLI uses for any file with imports) and verifies the generated IL without
+    /// running it. Use this — not <see cref="CompileAndVerifyOnly"/> — whenever the program has
+    /// <c>import</c>s (including stdlib modules like <c>timers/promises</c>), since the single-file
+    /// <see cref="ILCompiler.Compile"/> path does not resolve module dependencies. Catches bad IL in
+    /// emitted module helpers that still runs under the JIT (e.g. #393), which the run-only
+    /// <see cref="RunModules"/> path cannot detect.
+    /// </summary>
+    /// <param name="files">Map of module path → source.</param>
+    /// <param name="entryPoint">Entry module path (key into <paramref name="files"/>).</param>
+    /// <returns>List of verification errors (empty when the IL is valid).</returns>
+    public static List<string> CompileModulesAndVerifyOnly(Dictionary<string, string> files, string entryPoint)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_module_verify_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            foreach (var (path, content) in files)
+            {
+                var fullPath = Path.Combine(tempDir, path.TrimStart('.', '/', '\\'));
+                var dir = Path.GetDirectoryName(fullPath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+                File.WriteAllText(fullPath, content);
+            }
+
+            var entryPath = Path.Combine(tempDir, entryPoint.TrimStart('.', '/', '\\'));
+            var dllPath = Path.Combine(tempDir, "test_modules.dll");
+
+            var resolver = new ModuleResolver(entryPath);
+            var entryModule = resolver.LoadModule(entryPath);
+            var allModules = resolver.GetModulesInOrder(entryModule);
+
+            var checker = new TypeChecker();
+            var typeMap = checker.CheckModules(allModules, resolver);
+
+            var allStatements = allModules.SelectMany(m => m.Statements).ToList();
+            var deadCodeAnalyzer = new DeadCodeAnalyzer(typeMap);
+            var deadCodeInfo = deadCodeAnalyzer.Analyze(allStatements);
+
+            // Use reference assemblies for IL verification compatibility (matches CompileAndVerifyOnly).
+            var sdkPath = SdkResolver.FindReferenceAssembliesPath();
+            var compiler = new ILCompiler("test_modules", preserveConstEnums: false, useReferenceAssemblies: true, sdkPath: sdkPath);
+            compiler.CompileModules(allModules, resolver, typeMap, deadCodeInfo);
+            compiler.Save(dllPath);
+
+            // Filter out expected "Failed to load assembly 'SharpTS'" errors (the verifier can't
+            // resolve the SharpTS runtime, which standalone output late-binds anyway).
+            return VerifyIL(dllPath).Where(e => !e.Contains("Failed to load assembly")).ToList();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { /* ignore cleanup errors */ }
+        }
+    }
+
+    /// <summary>
     /// Compiles TypeScript source and verifies the generated IL.
     /// </summary>
     /// <param name="source">TypeScript source code</param>
