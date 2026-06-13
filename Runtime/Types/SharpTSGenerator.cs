@@ -9,6 +9,38 @@ using SharpTS.TypeSystem;
 namespace SharpTS.Runtime.Types;
 
 /// <summary>
+/// How a suspended generator's <c>yield</c> is resumed (ECMA-262 §27.5.3.4): a plain
+/// <c>next(v)</c>, or a <c>return(v)</c>/<c>throw(e)</c> that injects an abrupt completion
+/// so active <c>try</c>/<c>finally</c>(/<c>catch</c>) blocks run before the generator settles.
+/// </summary>
+internal enum GeneratorResumeKind { Next, Return, Throw }
+
+/// <summary>
+/// The completion that resumes a suspended generator: its <see cref="Kind"/> plus the carried
+/// value (the sent value for <c>next</c>, the return value for <c>return</c>, the error for
+/// <c>throw</c>). Returned by the suspend point so a <c>yield*</c> delegation loop can forward
+/// the completion into the delegated iterator (ECMA-262 §14.4.14) instead of unwinding the
+/// outer generator immediately.
+/// </summary>
+internal readonly record struct GeneratorResume(GeneratorResumeKind Kind, object? Value)
+{
+    /// <summary>
+    /// Realizes an abrupt resume as the control-flow exception the interpreter unwinds it
+    /// with — <see cref="Exceptions.GeneratorReturnException"/> for a return (bypasses
+    /// <c>catch</c>, runs <c>finally</c>), <see cref="Exceptions.ThrowException"/> for a
+    /// throw. A normal resume just returns its sent value. Used where the suspended <c>yield</c>
+    /// is NOT a delegation (a plain <c>yield</c>) and by the <c>yield*</c> fallback for
+    /// non-generator iterables.
+    /// </summary>
+    public object? Realize() => Kind switch
+    {
+        GeneratorResumeKind.Return => throw new Exceptions.GeneratorReturnException(Value),
+        GeneratorResumeKind.Throw => throw Exceptions.ThrowException.FromResult(Value),
+        _ => Value,
+    };
+}
+
+/// <summary>
 /// Runtime object representing an active generator instance.
 /// </summary>
 /// <remarks>
@@ -49,8 +81,7 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
     // normally; return(v)/throw(e) inject an abrupt completion at the yield point so any
     // active try/finally blocks run before the generator settles. The resuming call sets
     // this (and _injectedValue) before signaling the worker, which reads it on wake.
-    private enum ResumeKind { Next, Return, Throw }
-    private ResumeKind _resumeKind = ResumeKind.Next;
+    private GeneratorResumeKind _resumeKind = GeneratorResumeKind.Next;
     // Value carried by an abrupt resume: the return value for Return, the error for Throw.
     private object? _injectedValue;
 
@@ -104,7 +135,7 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
         {
             // Resume: hand the sent value to the suspended yield, restore the
             // generator's environment, and signal the worker.
-            _resumeKind = ResumeKind.Next;
+            _resumeKind = GeneratorResumeKind.Next;
             _sentValue = sentValue;
             _state = State.Running;
             _callerReady.Set();
@@ -136,7 +167,7 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
         // Suspended: inject the return at the yield point so finally blocks run. The body's
         // completion (which a finally block may override) becomes the reported value.
         _callerEnv = _interpreter.Environment;
-        _resumeKind = ResumeKind.Return;
+        _resumeKind = GeneratorResumeKind.Return;
         _injectedValue = value;
         _state = State.Running;
         _callerReady.Set();
@@ -161,7 +192,7 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
 
         // Suspended: inject the throw at the yield point so catch/finally blocks run.
         _callerEnv = _interpreter.Environment;
-        _resumeKind = ResumeKind.Throw;
+        _resumeKind = GeneratorResumeKind.Throw;
         _injectedValue = error;
         _state = State.Running;
         _callerReady.Set();
@@ -249,73 +280,119 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
     {
         if (isDelegating)
         {
-            return DelegateYieldStar(_interpreter, this, value, v => SuspendWithValue(v), () => _closed);
+            return DelegateYieldStar(_interpreter, value, v => SuspendCore(v), () => _closed);
         }
-        // A plain `yield` evaluates to the value passed to the resuming next(v).
-        return SuspendWithValue(value);
+        // A plain `yield` evaluates to the value passed to the resuming next(v); an abrupt
+        // resume (return/throw) is realized as the control-flow exception that unwinds the
+        // outer body's own try/finally blocks (ECMA-262 §27.5.3.4).
+        return SuspendCore(value).Realize();
     }
 
     /// <summary>
-    /// Shared <c>yield*</c> delegation loop used by both generator types.
-    /// For inner generators, iterates via <c>Next(sent)</c> and captures the
-    /// completion value. For other iterables, iterates lazily with no return value.
+    /// Shared <c>yield*</c> delegation loop used by both generator types (ECMA-262 §14.4.14).
+    /// A delegated SharpTS generator is driven via <c>next/return/throw</c> so the outer
+    /// generator's resume completion is forwarded into it; other iterables are iterated lazily.
     /// </summary>
     /// <param name="suspend">
-    /// Suspends the outer generator with the delegated value and returns the value
-    /// passed to the outer's resuming <c>next(v)</c> (ECMA-262 §14.4.14): each value
-    /// the delegate yields is handed to <paramref name="suspend"/>, whose return is
-    /// forwarded into the delegate's next <c>next(v)</c>.
+    /// Suspends the outer generator with the delegated value and returns the completion that
+    /// resumes it (the spec's <c>GeneratorYield</c>). Each value the delegate yields is handed
+    /// to <paramref name="suspend"/>; its returned completion drives the next loop turn —
+    /// <c>next(v)</c> forwards the sent value, <c>return(v)</c>/<c>throw(e)</c> forward the
+    /// abrupt completion into the delegate (running its <c>finally</c>/<c>catch</c>).
     /// </param>
-    internal static object? DelegateYieldStar(Interpreter interpreter, object? outerGen, object? iterable, Func<object?, object?> suspend, Func<bool> isClosed)
+    internal static object? DelegateYieldStar(Interpreter interpreter, object? iterable, Func<object?, GeneratorResume> suspend, Func<bool> isClosed)
     {
         switch (iterable)
         {
             case SharpTSGenerator gen:
-            {
-                // §14.4.14: the loop seeds `received` with undefined, so the first
-                // inner next() gets undefined; every later one forwards the outer's
-                // resume value. (A delegate suspended at its start ignores the
-                // argument, so seeding undefined matches when the outer was mid-yield.)
-                object? sent = SharpTSUndefined.Instance;
-                while (true)
-                {
-                    if (isClosed()) return null;
-                    var r = gen.Next(sent);
-                    if (r.Done) return r.Value;
-                    sent = suspend(r.Value);
-                }
-            }
+                return DelegateToGenerator(gen.Next, gen.Return, gen.Throw, suspend, isClosed);
             case SharpTSArrowGenerator agen:
-            {
-                object? sent = SharpTSUndefined.Instance;
-                while (true)
-                {
-                    if (isClosed()) return null;
-                    var r = agen.Next(sent);
-                    if (r.Done) return r.Value;
-                    sent = suspend(r.Value);
-                }
-            }
+                return DelegateToGenerator(agen.Next, agen.Return, agen.Throw, suspend, isClosed);
             default:
                 // Non-generator iterables (arrays, Maps, custom iterator objects) are
                 // driven lazily via GetIterableElements, which calls next() without an
-                // argument. Built-in iterators ignore the resume value; forwarding it to
-                // a custom iterator's next(v) is a separate gap (tracked in #476 notes).
+                // argument. Built-in iterators ignore the resume value; an abrupt resume
+                // (return/throw) is realized here to unwind the outer body. Forwarding the
+                // sent value or the abrupt completion into a custom iterator's
+                // next(v)/return/throw is a separate gap (tracked in #476 notes, #516).
                 foreach (var element in interpreter.GetIterableElements(iterable))
                 {
                     if (isClosed()) return null;
-                    suspend(element);
+                    suspend(element).Realize();
                 }
                 return null;
         }
     }
 
     /// <summary>
-    /// Suspends the worker thread, passing a single yielded value to the caller.
-    /// Returns the value supplied to the resuming <c>next(v)</c> call, which becomes
-    /// the result of the <c>yield</c> expression.
+    /// Drives a delegated SharpTS generator, forwarding into it whatever completion the outer
+    /// generator receives at each <c>yield*</c> suspension (ECMA-262 §14.4.14):
+    /// <list type="bullet">
+    /// <item><c>next(v)</c> → <paramref name="next"/>; when the delegate finishes, <c>yield*</c>
+    /// evaluates to its return value (step a.v).</item>
+    /// <item><c>return(v)</c> → <paramref name="return"/>, running the delegate's <c>finally</c>;
+    /// when it finishes, the <c>yield*</c> itself completes as a <c>return</c> carrying the
+    /// delegate's value, so the OUTER generator returns (step c.viii).</item>
+    /// <item><c>throw(e)</c> → <paramref name="throw"/>, running the delegate's <c>catch</c>/
+    /// <c>finally</c>. If the delegate has no handler, <paramref name="throw"/> rethrows and the
+    /// error propagates out of <c>yield*</c> (step b.ii). If it catches and finishes,
+    /// <c>yield*</c> evaluates to its value as a NORMAL completion — the outer continues past
+    /// <c>yield*</c> (step b.5).</item>
+    /// </list>
+    /// In every case, a delegate that yields again (from its body, a <c>catch</c>, or a
+    /// <c>finally</c>) re-suspends the outer; the resulting completion drives the next turn.
     /// </summary>
-    private object? SuspendWithValue(object? value)
+    private static object? DelegateToGenerator(
+        Func<object?, SharpTSIteratorResult> next,
+        Func<object?, SharpTSIteratorResult> @return,
+        Func<object?, SharpTSIteratorResult> @throw,
+        Func<object?, GeneratorResume> suspend,
+        Func<bool> isClosed)
+    {
+        // Seed `received` with normal/undefined: the first inner next() gets undefined (a
+        // delegate suspended at its start ignores the argument anyway); every later turn
+        // forwards whatever completion the outer received at the previous GeneratorYield.
+        var received = new GeneratorResume(GeneratorResumeKind.Next, SharpTSUndefined.Instance);
+        while (true)
+        {
+            if (isClosed()) return null;
+
+            SharpTSIteratorResult inner;
+            switch (received.Kind)
+            {
+                case GeneratorResumeKind.Return:
+                    inner = @return(received.Value);
+                    // Delegate finished its finally → the outer generator returns this value.
+                    if (inner.Done) throw new GeneratorReturnException(inner.Value);
+                    break;
+
+                case GeneratorResumeKind.Throw:
+                    // @throw rethrows if the delegate has no catch — propagating out of yield*.
+                    inner = @throw(received.Value);
+                    // Delegate caught + finished → yield* value (normal); outer continues.
+                    if (inner.Done) return inner.Value;
+                    break;
+
+                default:
+                    inner = next(received.Value);
+                    // Delegate finished normally → yield* evaluates to its return value.
+                    if (inner.Done) return inner.Value;
+                    break;
+            }
+
+            // Delegate yielded again; suspend the outer and forward the next completion.
+            received = suspend(inner.Value);
+        }
+    }
+
+    /// <summary>
+    /// Suspends the worker thread, handing a single yielded value to the caller, and returns the
+    /// completion that resumes it (a plain <c>next(v)</c>, or an abrupt <c>return(v)</c>/
+    /// <c>throw(e)</c>). Callers decide how to act on the completion: a plain <c>yield</c> realizes
+    /// an abrupt resume as a thrown control-flow exception (<see cref="GeneratorResume.Realize"/>),
+    /// while a <c>yield*</c> delegation forwards it into the delegated iterator.
+    /// </summary>
+    private GeneratorResume SuspendCore(object? value)
     {
         _yieldedValue = value;
         _state = State.Suspended;
@@ -335,24 +412,14 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
         _interpreter.SetEnvironment(generatorEnv);
         _interpreter.YieldCallback = HandleYieldCallback;
 
-        // Inject the abrupt completion requested by return(v)/throw(e) at this yield point
-        // (ECMA-262 §27.5.3.4). The exception unwinds through any active try/finally blocks
-        // on the worker's call stack — running their finally handlers — before settling.
+        // Read the resume completion requested by the resuming next(v)/return(v)/throw(e) call.
         // Consume the resume kind so a later wake that doesn't set it (e.g. Dispose) resumes
         // normally instead of re-injecting a stale abrupt completion.
         var kind = _resumeKind;
         var injected = _injectedValue;
-        _resumeKind = ResumeKind.Next;
+        _resumeKind = GeneratorResumeKind.Next;
         _injectedValue = null;
-        switch (kind)
-        {
-            case ResumeKind.Return:
-                throw new GeneratorReturnException(injected);
-            case ResumeKind.Throw:
-                throw ThrowException.FromResult(injected);
-            default:
-                return _sentValue;
-        }
+        return new GeneratorResume(kind, kind == GeneratorResumeKind.Next ? _sentValue : injected);
     }
 
     // IEnumerable implementation for for...of integration
@@ -413,8 +480,7 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
 
     // How the suspended yield is resumed (ECMA-262 §27.5.3.4): a plain next(v), or a
     // return(v)/throw(e) that injects an abrupt completion so active try/finally blocks run.
-    private enum ResumeKind { Next, Return, Throw }
-    private ResumeKind _resumeKind = ResumeKind.Next;
+    private GeneratorResumeKind _resumeKind = GeneratorResumeKind.Next;
     // Value carried by an abrupt resume: the return value for Return, the error for Throw.
     private object? _injectedValue;
 
@@ -454,7 +520,7 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
         }
         else
         {
-            _resumeKind = ResumeKind.Next;
+            _resumeKind = GeneratorResumeKind.Next;
             _sentValue = sentValue;
             _state = State.Running;
             _callerReady.Set();
@@ -479,7 +545,7 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
             return new SharpTSIteratorResult(value, done: true);
 
         _callerEnv = _interpreter.Environment;
-        _resumeKind = ResumeKind.Return;
+        _resumeKind = GeneratorResumeKind.Return;
         _injectedValue = value;
         _state = State.Running;
         _callerReady.Set();
@@ -500,7 +566,7 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
         }
 
         _callerEnv = _interpreter.Environment;
-        _resumeKind = ResumeKind.Throw;
+        _resumeKind = GeneratorResumeKind.Throw;
         _injectedValue = error;
         _state = State.Running;
         _callerReady.Set();
@@ -577,12 +643,14 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
     {
         if (isDelegating)
         {
-            return SharpTSGenerator.DelegateYieldStar(_interpreter, this, value, v => SuspendWithValue(v), () => _closed);
+            return SharpTSGenerator.DelegateYieldStar(_interpreter, value, v => SuspendCore(v), () => _closed);
         }
-        return SuspendWithValue(value);
+        // A plain `yield`: realize an abrupt resume (return/throw) as the control-flow exception
+        // that unwinds the outer body's own try/finally blocks (ECMA-262 §27.5.3.4).
+        return SuspendCore(value).Realize();
     }
 
-    private object? SuspendWithValue(object? value)
+    private GeneratorResume SuspendCore(object? value)
     {
         _yieldedValue = value;
         _state = State.Suspended;
@@ -602,22 +670,13 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
         _interpreter.SetEnvironment(generatorEnv);
         _interpreter.YieldCallback = HandleYieldCallback;
 
-        // Inject the abrupt completion requested by return(v)/throw(e) (ECMA-262 §27.5.3.4),
-        // unwinding through active try/finally blocks on the worker's call stack. Consume the
+        // Read the resume completion requested by next(v)/return(v)/throw(e). Consume the
         // resume kind so a later non-setting wake (e.g. Dispose) resumes normally.
         var kind = _resumeKind;
         var injected = _injectedValue;
-        _resumeKind = ResumeKind.Next;
+        _resumeKind = GeneratorResumeKind.Next;
         _injectedValue = null;
-        switch (kind)
-        {
-            case ResumeKind.Return:
-                throw new GeneratorReturnException(injected);
-            case ResumeKind.Throw:
-                throw ThrowException.FromResult(injected);
-            default:
-                return _sentValue;
-        }
+        return new GeneratorResume(kind, kind == GeneratorResumeKind.Next ? _sentValue : injected);
     }
 
     public IEnumerator<object?> GetEnumerator()
