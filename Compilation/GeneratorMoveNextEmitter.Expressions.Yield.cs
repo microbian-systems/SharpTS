@@ -57,8 +57,9 @@ public partial class GeneratorMoveNextEmitter
         _helpers.RehydrateLiveSpillsAfterResume();
 
         // 6. The yield expression evaluates to the value passed to next(v), which
-        // next() stashed in SentField before driving MoveNext (ECMA-262 §27.5.3.3).
-        // A bare next()/for-of resume leaves it as the caller's sent value (undefined).
+        // next() stashed in SentField before driving MoveNext (ECMA-262 §27.5.3.3, #452).
+        // A bare next()/for-of resume leaves it as the caller's sent value (undefined) — so
+        // this also subsumes #443's resumed-yield case (`"x:" + (yield 1)` → `x:undefined`).
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldfld, _builder.SentField);
         SetStackUnknown();
@@ -275,9 +276,13 @@ public partial class GeneratorMoveNextEmitter
 
         // Capture the delegated iterator's Current as the yield* result. Guard against
         // non-SharpTS iterators (e.g. List<T>.Enumerator) that throw on Current after
-        // MoveNext returned false: wrap in try/catch and fall back to null.
+        // MoveNext returned false: wrap in try/catch and fall back to `undefined`.
+        // A non-generator iterable (array, string, Map/Set) has no return value, so per
+        // ECMA-262 14.4.14 the `yield*` completion value is `undefined` — load the emitted
+        // `$Undefined` sentinel, not CLR `null` (which would surface as JS `null`, #443). The
+        // interpreter's DelegateYieldStar coerces its own null sentinel to `undefined` the same way.
         var yieldStarResultLocal = _il.DeclareLocal(typeof(object));
-        _il.Emit(OpCodes.Ldnull);
+        _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
         _il.Emit(OpCodes.Stloc, yieldStarResultLocal);
         _il.BeginExceptionBlock();
         _il.Emit(OpCodes.Ldarg_0);
