@@ -27,21 +27,27 @@ public static class StructuredClone
     /// Clones a value using the structured clone algorithm.
     /// </summary>
     /// <param name="value">The value to clone.</param>
-    /// <param name="transfer">Optional array of transferable objects.</param>
+    /// <param name="transfer">
+    /// Optional list of transferable objects. Accepts both the interpreter
+    /// <see cref="SharpTSArray"/> and a compiled <c>List&lt;object?&gt;</c> (both are
+    /// <see cref="IEnumerable{T}"/> of <c>object?</c>), so a transfer list survives
+    /// from either runtime (#406).
+    /// </param>
     /// <returns>A deep clone of the value.</returns>
-    public static object? Clone(object? value, SharpTSArray? transfer = null)
+    public static object? Clone(object? value, IEnumerable<object?>? transfer = null)
     {
         var cloned = new Dictionary<object, object>();
         var transferred = new HashSet<object>();
 
-        // Process transfer list
+        // Process transfer list. A transferable is either the interpreter
+        // SharpTSMessagePort or the emitted compiled $MessagePort (#406).
         if (transfer != null)
         {
             foreach (var item in transfer)
             {
-                if (item is SharpTSMessagePort)
+                if (item is SharpTSMessagePort || CompiledMessagePortBridge.IsEmittedMessagePort(item))
                 {
-                    transferred.Add(item);
+                    transferred.Add(item!);
                 }
                 else if (item != null)
                 {
@@ -153,6 +159,15 @@ public static class StructuredClone
             // EventEmitter - cannot be cloned (has listeners)
             SharpTSEventEmitter => throw new DataCloneError("EventEmitter cannot be cloned"),
 
+            // Emitted $MessagePort from compiled code - transferred (never cloned).
+            // When in the transfer set, adopt it into a worker-usable bridge so the
+            // worker's interpreter can drive the compiled port; otherwise reject,
+            // matching the interpreter SharpTSMessagePort arms above (#406).
+            _ when CompiledMessagePortBridge.IsEmittedMessagePort(value) && transferred.Contains(value)
+                => CompiledMessagePortBridge.Adopt(value),
+            _ when CompiledMessagePortBridge.IsEmittedMessagePort(value)
+                => throw new DataCloneError("MessagePort cannot be cloned, only transferred"),
+
             // Emitted $SharedArrayBuffer type from compiled code - pass by reference
             // Check by type name since we can't reference the dynamically emitted type
             _ when value.GetType().Name == "$SharedArrayBuffer" => value,
@@ -227,8 +242,14 @@ public static class StructuredClone
 
     private static SharpTSMessagePort TransferMessagePort(SharpTSMessagePort port)
     {
-        // Neutering happens on the sending side; the port is handed to the receiver
-        port.Neuter();
+        // A worker transfer hands the SAME port object to the worker's interpreter,
+        // which runs on another thread in this process. Neutering it (the browser
+        // semantics, where transfer detaches the sender's handle) would make the
+        // shared object unusable on the RECEIVING side too, since both sides see
+        // one object. Instead mark it and its partner cross-thread: each port then
+        // marshals delivery onto its own owner-loop thread and a started port keeps
+        // that loop alive (#406).
+        port.MarkTransferredAcrossThreads();
         return port;
     }
 
