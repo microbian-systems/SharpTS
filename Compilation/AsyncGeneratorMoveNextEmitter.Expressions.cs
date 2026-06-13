@@ -449,9 +449,11 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Isinst, typeof(Task<object>));
         _il.Emit(OpCodes.Brtrue, isTaskLabel);
 
-        // Not a Promise or Task - wrap in Task.FromResult
+        // Not a Promise or Task - adopt an ordinary thenable (e.g. a general
+        // non-Promise then/catch/finally species result, #349); non-thenables
+        // become Task.FromResult(value).
         _il.MarkLabel(wrapValueLabel);
-        _il.Emit(OpCodes.Call, typeof(Task).GetMethod("FromResult")!.MakeGenericMethod(typeof(object)));
+        _il.Emit(OpCodes.Call, _ctx!.Runtime!.CoerceAwaitableToTaskMethod);
         _il.Emit(OpCodes.Stloc, taskLocal);
         _il.Emit(OpCodes.Br, haveTaskLabel);
 

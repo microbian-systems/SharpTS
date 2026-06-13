@@ -29,6 +29,17 @@ public partial class RuntimeEmitter
 
         // Promise-subclass support (#242): receiver unwrapping + derived-result wrapping
         EmitUnwrapPromiseReceiverMethod(runtimeType, runtime);
+
+        // Pre-declare the general NewPromiseCapability helper (#349) so
+        // WrapDerivedPromiseResult can call it; the body and the $PromiseCapability
+        // type are emitted later (EmitPromiseCapabilitySupport, after
+        // ConstructDynamicValue) when all of its dependencies are available.
+        runtime.NewPromiseCapabilityResultMethod = runtimeType.DefineMethod(
+            "NewPromiseCapabilityResult",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Type, _types.TaskOfObject]);
+
         EmitWrapDerivedPromiseResultMethod(runtimeType, runtime);
     }
 
@@ -166,9 +177,11 @@ public partial class RuntimeEmitter
     /// subclass itself when neither is present — and constructs the result
     /// through it: <c>%Promise%</c> (or a
     /// <c>@@species</c> yielding <c>Promise</c>/<c>undefined</c>/<c>null</c>)
-    /// returns the raw task, any other guest Promise class is built by invoking
-    /// its single-object (executor) constructor reflectively (PromiseFromExecutor
-    /// adopts a raw task, so the new instance wraps <c>result</c>).
+    /// returns the raw task; a guest Promise SUBCLASS is built by invoking its
+    /// single-object (executor) constructor reflectively (PromiseFromExecutor
+    /// adopts a raw task, so the new instance wraps <c>result</c>); a general
+    /// non-Promise species is built through NewPromiseCapabilityResult (#349, see
+    /// below).
     /// </summary>
     /// <remarks>
     /// Generic Promise subclasses (#351): the static <c>@@species</c> accessor is
@@ -176,8 +189,11 @@ public partial class RuntimeEmitter
     /// runtime type is closed (MyP&lt;object&gt;); FindSymbolGetterFor reconciles
     /// the two (SymbolRegistryKey/CloseSymbolAccessor) and a species naming a
     /// generic subclass is closed via SymbolClosedOwner before construction.
-    /// A species that yields a non-Promise constructor (general
-    /// NewPromiseCapability) falls back to <c>%Promise%</c> — tracked by #349.
+    /// A species that is NOT a $Promise subclass (a general guest constructor)
+    /// is routed to <see cref="EmittedRuntime.NewPromiseCapabilityResultMethod"/>
+    /// (#349): the (object)→PromiseFromExecutor task-adoption path below only
+    /// works for $Promise subclasses, so a general class is constructed with a
+    /// real capturing executor and the result task adopted into its capability.
     /// </remarks>
     private void EmitWrapDerivedPromiseResultMethod(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
@@ -339,6 +355,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldtoken, _types.TaskOfObject);
         il.Emit(OpCodes.Call, getTypeFromHandle);
         il.Emit(OpCodes.Beq, returnResultLabel);
+
+        // #349 general NewPromiseCapability: a species that is NOT a $Promise
+        // subclass cannot be settled by the (object)→PromiseFromExecutor task-
+        // adoption path below — its (object) executor ctor would receive the raw
+        // task and throw "object is not a function". Route it through
+        // NewPromiseCapabilityResult, which constructs new S(executor) with a
+        // capturing capability and adopts the result task into it.
+        // if (!typeof($Promise).IsAssignableFrom(speciesType))
+        //     return NewPromiseCapabilityResult(speciesType, result);
+        var promiseSubclassLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldtoken, runtime.TSPromiseType);
+        il.Emit(OpCodes.Call, getTypeFromHandle);
+        il.Emit(OpCodes.Ldloc, speciesTypeLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "IsAssignableFrom", _types.Type));
+        il.Emit(OpCodes.Brtrue, promiseSubclassLabel);
+        il.Emit(OpCodes.Ldloc, speciesTypeLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.NewPromiseCapabilityResultMethod);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(promiseSubclassLabel);
 
         // var ctor = speciesType.GetConstructor(new[] { typeof(object) });
         il.Emit(OpCodes.Ldloc, speciesTypeLocal);

@@ -384,6 +384,12 @@ public partial class RuntimeEmitter
         // Must follow EmitNewOnFunction — it calls through runtime.NewOnFunction.
         EmitConstructDynamicValue(_runtimeTypeBuilder!, runtime);
 
+        // General NewPromiseCapability (#349): the $PromiseCapability holder type
+        // and the body of the pre-declared NewPromiseCapabilityResult helper.
+        // Must follow EmitConstructDynamicValue (it calls through that helper) and
+        // EmitRuntimeClass (depends on InvokeValue / WrapException).
+        EmitPromiseCapabilitySupport(moduleBuilder, runtime);
+
         // AbortSignal / Intl value-position singletons (#224). Must follow
         // EmitRuntimeClass — they wrap the AbortSignal*/CreateIntl* helpers
         // emitted there.

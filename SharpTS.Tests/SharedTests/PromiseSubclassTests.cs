@@ -600,6 +600,155 @@ public class PromiseSubclassTests
 
     #endregion
 
+    #region General NewPromiseCapability (#349) — non-Promise species + thenable await
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_NonPromiseConstructor_BuildsThroughIt(ExecutionMode mode)
+    {
+        // ECMA-262 §27.2.5.4 step 7 / §27.2.4.5: when @@species resolves to a
+        // constructor that is NOT %Promise% or a Promise subclass, then/catch/
+        // finally build the result through `new S(executor)` (general
+        // NewPromiseCapability) and adopt the captured capability — the result is
+        // an instance of S, not a Promise (#349). A `then` member makes it a
+        // thenable, which `await` adopts back to the settled value.
+        var source = """
+            class Thenable {
+                _value: any = undefined;
+                _settled: boolean = false;
+                _cb: any = undefined;
+                constructor(executor: (res: any, rej: any) => void) {
+                    executor(
+                        (v: any) => { this._value = v; this._settled = true; if (this._cb) this._cb(v); },
+                        (_e: any) => {});
+                }
+                then(onF: any, _onR?: any) {
+                    if (this._settled) onF(this._value); else this._cb = onF;
+                }
+            }
+            class P extends Promise<number> {
+                static get [Symbol.species]() { return Thenable as any; }
+            }
+            async function main() {
+                const r: any = P.resolve(10).then((x: number) => x + 1);
+                console.log(r instanceof Thenable);
+                console.log(r instanceof Promise);
+                console.log(await r);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\n11\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_NonPromiseConstructor_AdoptsRejection(ExecutionMode mode)
+    {
+        // The captured capability's reject is driven when the source task faults
+        // (here a catch handler that rethrows): the species instance records the
+        // rejection reason, unwrapped to the guest value (not an AggregateException).
+        var source = """
+            class Box {
+                err: any = undefined;
+                ok: any = undefined;
+                constructor(ex: (res: any, rej: any) => void) {
+                    ex((v: any) => { this.ok = v; }, (e: any) => { this.err = e; });
+                }
+            }
+            class Q extends Promise<number> {
+                static get [Symbol.species]() { return Box as any; }
+            }
+            const q: any = Q.reject("boom").catch((e: string) => { throw "rethrow:" + e; });
+            console.log(q instanceof Box);
+            setTimeout(() => { console.log(q.err, q.ok); }, 30);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nrethrow:boom undefined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Species_ExpandoNonPromiseConstructor_BuildsThroughIt(ExecutionMode mode)
+    {
+        // The general NewPromiseCapability path is reached through an EXPANDO
+        // @@species ((C as any)[Symbol.species] = S, #262) just as through a
+        // declared getter.
+        var source = """
+            class Thenable {
+                v: any = undefined;
+                settled: boolean = false;
+                cb: any = undefined;
+                constructor(executor: (res: any, rej: any) => void) {
+                    executor(
+                        (x: any) => { this.v = x; this.settled = true; if (this.cb) this.cb(x); },
+                        (_e: any) => {});
+                }
+                then(onF: any) { if (this.settled) onF(this.v); else this.cb = onF; }
+            }
+            class P extends Promise<number> {}
+            (P as any)[Symbol.species] = Thenable;
+            async function main() {
+                const r: any = P.resolve(5).then((x: number) => x * 2);
+                console.log(r instanceof Thenable);
+                console.log(r instanceof Promise);
+                console.log(await r);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nfalse\n10\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Await_AdoptsPlainThenable(ExecutionMode mode)
+    {
+        // `await` on an ordinary object whose `then` is callable adopts it
+        // (ECMA-262 await → PromiseResolve), independent of any Promise species.
+        var source = """
+            const resolving = { then(onF: any, _onR: any) { onF("hello"); } };
+            const rejecting = { then(_onF: any, onR: any) { onR("nope"); } };
+            async function main() {
+                console.log(await resolving);
+                try {
+                    await rejecting;
+                } catch (e) {
+                    console.log("caught:" + e);
+                }
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("hello\ncaught:nope\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Await_NonThenableObjectPassesThrough(ExecutionMode mode)
+    {
+        // An object WITHOUT a callable `then` is not a thenable: `await` returns
+        // it unchanged rather than hanging or adopting.
+        var source = """
+            async function main() {
+                const o = { value: 42, then: 7 };
+                const r: any = await o;
+                console.log(r.value);
+                console.log(r.then);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n7\n", output);
+    }
+
+    #endregion
+
     #region Poisoned constructor getter (#350) — then/catch/finally throw synchronously
 
     [Theory]

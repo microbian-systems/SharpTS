@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Numerics;
 using SharpTS.Modules;
@@ -212,8 +213,74 @@ public partial class Interpreter
             return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(task));
         }
 
+        // Thenable adoption (ECMA-262 await → PromiseResolve, §25.6.4.5 step 8 /
+        // §27.2.1.3.2): an ordinary object exposing a callable `then` is adopted
+        // by invoking then(resolve, reject) and awaiting the captured capability.
+        // SharpTSPromise is handled above; only plain guest thenables reach here —
+        // including the general non-Promise then/catch/finally species results
+        // produced by NewPromiseCapability (#349).
+        if (TryGetThenable(value, out var thenFn))
+        {
+            return RuntimeValue.FromBoxed(await AwaitPreservingEnvironment(AdoptThenable(value!, thenFn)));
+        }
+
         // Await on non-Promise returns the value (TypeScript behavior)
         return RuntimeValue.FromBoxed(value);
+    }
+
+    /// <summary>
+    /// Detects an ordinary guest thenable: a <see cref="SharpTSObject"/> or
+    /// <see cref="SharpTSInstance"/> with a callable <c>then</c> member.
+    /// Promise/Task values are recognised by the caller before this is reached.
+    /// </summary>
+    private bool TryGetThenable(object? value, [NotNullWhen(true)] out ISharpTSCallable? thenFn)
+    {
+        thenFn = null;
+        if (value is not (SharpTSObject or SharpTSInstance))
+            return false;
+        if (GetProperty(value, "then") is ISharpTSCallable fn)
+        {
+            thenFn = fn;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Adopts a guest thenable into a host task: invokes <c>then(resolve, reject)</c>
+    /// with the receiver bound, settling the returned task from whichever callback
+    /// fires first. A synchronous throw from <c>then</c> rejects the task
+    /// (ECMA-262 §27.2.1.3.2 — a throw after resolve/reject is ignored).
+    /// </summary>
+    private Task<object?> AdoptThenable(object thenable, ISharpTSCallable thenFn)
+    {
+        var tcs = new TaskCompletionSource<object?>();
+        var resolve = new PromiseResolveCallback(v =>
+        {
+            // Flatten a promise resolution value the same way the executor
+            // resolve callback does, so `await` yields the eventual value.
+            if (v is SharpTSPromise inner)
+                inner.Task.ContinueWith(t =>
+                {
+                    if (t.IsFaulted)
+                        tcs.TrySetException(t.Exception!.InnerException ?? t.Exception);
+                    else
+                        tcs.TrySetResult(t.Result);
+                }, TaskScheduler.Default);
+            else
+                tcs.TrySetResult(v);
+        });
+        var reject = new PromiseRejectCallback(r => tcs.TrySetException(new SharpTSPromiseRejectedException(r)));
+
+        try
+        {
+            SharpTSClass.BindMethodToReceiver(thenFn, thenable).Call(this, [resolve, reject]);
+        }
+        catch (ThrowException tex)
+        {
+            tcs.TrySetException(new SharpTSPromiseRejectedException(tex.Value));
+        }
+        return tcs.Task;
     }
 
     /// <summary>
