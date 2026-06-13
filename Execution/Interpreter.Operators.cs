@@ -217,6 +217,26 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// Async counterpart of <see cref="EvaluatePrefixIncrement"/>; resolves an
+    /// <c>await</c>/thenable in the operand's receiver or index (issue #451).
+    /// </summary>
+    private Task<RuntimeValue> EvaluatePrefixIncrementAsync(Expr.PrefixIncrement prefix)
+    {
+        double delta = prefix.Operator.Type == TokenType.PLUS_PLUS ? 1 : -1;
+        return EvaluateIncrementAsync(prefix.Operand, delta, returnOld: false);
+    }
+
+    /// <summary>
+    /// Async counterpart of <see cref="EvaluatePostfixIncrement"/>; resolves an
+    /// <c>await</c>/thenable in the operand's receiver or index (issue #451).
+    /// </summary>
+    private Task<RuntimeValue> EvaluatePostfixIncrementAsync(Expr.PostfixIncrement postfix)
+    {
+        double delta = postfix.Operator.Type == TokenType.PLUS_PLUS ? 1 : -1;
+        return EvaluateIncrementAsync(postfix.Operand, delta, returnOld: true);
+    }
+
+    /// <summary>
     /// Evaluates the plus operator, handling both addition and string concatenation.
     /// </summary>
     /// <param name="left">The left operand.</param>
