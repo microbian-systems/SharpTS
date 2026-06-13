@@ -785,7 +785,12 @@ public partial class Interpreter
             if (promiseStatic != null) return promiseStatic;
         }
 
-        throw new InterpreterException($"Static member '{memberName}' does not exist on class '{klass.Name}'.");
+        // ECMA-262 §7.3.2 (Get): reading an absent own/inherited property
+        // returns `undefined` — it never throws. A statically-typed
+        // `Klass.missing` is already rejected at compile time (TS2339), so
+        // reaching here means the read came through an `any`/dynamic value
+        // position; mirror compiled mode and JS by yielding `undefined`.
+        return SharpTSUndefined.Instance;
     }
 
     /// <summary>
