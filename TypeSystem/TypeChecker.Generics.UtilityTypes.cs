@@ -764,7 +764,16 @@ public partial class TypeChecker
     /// <summary>
     /// Extracts property names and their types from an object-like type.
     /// </summary>
-    private Dictionary<string, TypeInfo> ExtractPropertiesWithTypes(TypeInfo type)
+    /// <param name="includeMethods">
+    /// When true, a class's public methods are extracted alongside its fields and getters. Only the
+    /// conditional-type infer-match path (<see cref="CheckExtendsRecursive"/>, via
+    /// <see cref="ExtractInferMatchProperties"/>) sets this, so that a structural extends clause such
+    /// as <c>T extends { toJSON(): infer R }</c> can match a class instance whose <c>toJSON</c> is a
+    /// method rather than a function-typed field (#461). The default omits methods because the other
+    /// callers (keyof, mapped types, Pick/Omit/Record) model a class's key domain as data
+    /// properties only — folding methods into that domain is a separate, broader decision.
+    /// </param>
+    private Dictionary<string, TypeInfo> ExtractPropertiesWithTypes(TypeInfo type, bool includeMethods = false)
     {
         Dictionary<string, TypeInfo> props = [];
 
@@ -790,22 +799,43 @@ public partial class TypeChecker
                 // Public getters (property accessors)
                 foreach (var (name, propType) in cls.Getters)
                     props[name] = propType;
+                // Public methods (infer-match only). A field/getter of the same name already wins;
+                // methods cannot collide with either in a valid class, so TryAdd is purely defensive.
+                if (includeMethods)
+                {
+                    foreach (var (name, methodType) in cls.Methods)
+                    {
+                        if (cls.MethodAccess.GetValueOrDefault(name, Parsing.AccessModifier.Public) == Parsing.AccessModifier.Public)
+                            props.TryAdd(name, methodType);
+                    }
+                }
                 break;
 
             case TypeInfo.Instance inst:
-                return ExtractPropertiesWithTypes(inst.ClassType);
+                return ExtractPropertiesWithTypes(inst.ClassType, includeMethods);
 
             case TypeInfo.InstantiatedGeneric ig:
                 var expanded = ExpandInstantiatedGenericForKeyOf(ig);
-                return ExtractPropertiesWithTypes(expanded);
+                return ExtractPropertiesWithTypes(expanded, includeMethods);
 
             case TypeInfo.MappedType mapped:
                 var expandedMapped = ExpandMappedType(mapped);
-                return ExtractPropertiesWithTypes(expandedMapped);
+                return ExtractPropertiesWithTypes(expandedMapped, includeMethods);
         }
 
         return props;
     }
+
+    /// <summary>
+    /// Property extraction for conditional-type infer matching: like
+    /// <see cref="ExtractPropertiesWithTypes(TypeInfo, bool)"/> but also surfaces a class instance's
+    /// public methods, so an extends clause such as <c>T extends { toJSON(): infer R }</c> matches a
+    /// class whose member is a method (its <c>toJSON</c> renders structurally as a function-typed
+    /// property). Without this, the match silently fails and the conditional takes its false branch
+    /// (#461).
+    /// </summary>
+    private Dictionary<string, TypeInfo> ExtractInferMatchProperties(TypeInfo type) =>
+        ExtractPropertiesWithTypes(type, includeMethods: true);
 
     /// <summary>
     /// Extracts the set of optional property names from an object-like type.
