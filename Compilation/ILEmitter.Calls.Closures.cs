@@ -342,6 +342,22 @@ public partial class ILEmitter
         {
             if (selfRefSkipName != null && capturedVar == selfRefSkipName) continue;
 
+            // Self-referential capture (issue #421): this arrow captures the
+            // variable currently being declared, whose initializer creates this
+            // arrow. The field is about to be populated with a snapshot of the
+            // local taken BEFORE the assignment — the stale/previous value. Stash
+            // the display-class instance so the declaration emitter can write the
+            // post-initializer value back into this field. Per-iteration freshness
+            // is preserved: each iteration builds a distinct DC instance.
+            if (_ctx.SelfCaptureVarName != null && capturedVar == _ctx.SelfCaptureVarName
+                && _ctx.SelfCaptureWriteBacks != null)
+            {
+                var dcInstanceLocal = IL.DeclareLocal(displayClass);
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Stloc, dcInstanceLocal);
+                _ctx.SelfCaptureWriteBacks.Add((dcInstanceLocal, field));
+            }
+
             IL.Emit(OpCodes.Dup); // Keep display class on stack
 
             // Load the captured variable's current value

@@ -305,4 +305,51 @@ public class InnerFunctionArrowCaptureTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("8008\n", output);
     }
+
+    // #421: a `const`/`let` whose initializer creates a closure capturing that
+    // same variable (self-reference). The closure's display-class field was
+    // populated with a snapshot of the local taken BEFORE the assignment, so it
+    // saw the stale/previous value — null on the first loop iteration. The
+    // declaration now writes the freshly-assigned value back into the closure's
+    // DC field after the store, while keeping per-iteration fresh-binding.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SelfReferentialConst_SingleDeclaration_ClosureSeesValue(ExecutionMode mode)
+    {
+        var source = """
+            function make(cb: any) { return { cb: cb, val: 42 }; }
+            const thing = make(() => thing);
+            console.log(thing.cb() === thing);
+            console.log(thing.cb().val);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SelfReferentialConst_InLoop_EachClosureSeesOwnBinding(ExecutionMode mode)
+    {
+        // The first iteration's closure captured null (snapshot before the
+        // assignment); every other iteration captured the PREVIOUS iteration's
+        // value (off-by-one). Each closure must return its OWN object — the
+        // per-iteration fresh binding — so the self-reference identity holds.
+        var source = """
+            function make(id: number, cb: any) { return { id: id, cb: cb }; }
+            const things: any[] = [];
+            for (let i = 0; i < 5; i++) {
+              const thing = make(i, () => thing);
+              things.push(thing);
+            }
+            let wrong = 0;
+            for (let k = 0; k < things.length; k++) {
+              if (things[k].cb() !== things[k]) wrong++;
+            }
+            console.log(wrong);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n", output);
+    }
 }
