@@ -249,9 +249,14 @@ public partial class TypeChecker
             return ParseInlineObjectTypeInfo(typeName);
         }
 
-        // Check for function type syntax: "(params) => returnType"
-        // Must check BEFORE parenthesized types since both start with "("
-        if (typeName.Contains("=>"))
+        // Check for function type syntax: "(params) => returnType". The arrow must be at the TOP
+        // level — a nested arrow belongs to a composite that the branches below own: a function-typed
+        // tuple element ("[() => number, string]"), an indexed-access member
+        // ("{ a: () => number }[\"a\"]"), or a parenthesized "(() => number)". A bare Contains("=>")
+        // here misroutes those into ParseFunctionTypeInfo, which finds no top-level arrow and collapses
+        // them to `any` (#462). Contains is a cheap pre-filter before the O(n) FindOutermostArrow scan.
+        // Must check BEFORE parenthesized types since both start with "(".
+        if (typeName.Contains("=>") && FindOutermostArrow(typeName) >= 0)
         {
             return ParseFunctionTypeInfo(typeName);
         }
@@ -966,7 +971,7 @@ public partial class TypeChecker
         {
             char c = inner[i];
             if (c == '(' || c == '[' || c == '<') depth++;
-            else if (c == ')' || c == ']' || c == '>') depth--;
+            else if (c == ')' || c == ']' || (c == '>' && (i == 0 || inner[i - 1] != '='))) depth--;  // Skip > in =>
             else if (c == ',' && depth == 0)
             {
                 ReadOnlySpan<char> segment = inner[start..i];
@@ -1256,7 +1261,7 @@ public partial class TypeChecker
         {
             char c = typeName[i];
             if (c == '<' || c == '(' || c == '{') depth++;
-            else if (c == '>' || c == ')' || c == '}') depth--;
+            else if (c == ')' || c == '}' || (c == '>' && (i == 0 || typeName[i - 1] != '='))) depth--;  // Skip > in =>
             else if (c == '[' && depth == 0)
             {
                 // Empty `[]` is an array suffix, part of the base type — keep scanning.
@@ -1499,7 +1504,7 @@ public partial class TypeChecker
         {
             char c = str[i];
             if (c == '<' || c == '(' || c == '[' || c == '{') depth++;
-            else if (c == '>' || c == ')' || c == ']' || c == '}') depth--;
+            else if (c == ')' || c == ']' || c == '}' || (c == '>' && (i == 0 || str[i - 1] != '='))) depth--;  // Skip > in =>
             else if (depth == 0 && str.Substring(i, 4) == " as " &&
                      (i + 4 >= str.Length || !char.IsLetterOrDigit(str[i + 4])))
             {
@@ -1598,7 +1603,7 @@ public partial class TypeChecker
         {
             char c = str[i];
             if (c == '<' || c == '(' || c == '[' || c == '{') depth++;
-            else if (c == '>' || c == ')' || c == ']' || c == '}') depth--;
+            else if (c == ')' || c == ']' || c == '}' || (c == '>' && (i == 0 || str[i - 1] != '='))) depth--;  // Skip > in =>
             else if (depth == 0 && str.Substring(i, keyword.Length) == keyword)
             {
                 return i;
@@ -1620,7 +1625,7 @@ public partial class TypeChecker
         {
             char c = str[i];
             if (c == '<' || c == '(' || c == '[' || c == '{') depth++;
-            else if (c == '>' || c == ')' || c == ']' || c == '}') depth--;
+            else if (c == ')' || c == ']' || c == '}' || (c == '>' && (i == 0 || str[i - 1] != '='))) depth--;  // Skip > in =>
             else if (depth == 0 && c == '?') ternaryDepth++;
             else if (depth == 0 && c == ':')
             {
@@ -1642,7 +1647,7 @@ public partial class TypeChecker
         {
             char c = str[i];
             if (c == '<' || c == '(' || c == '[' || c == '{') depth++;
-            else if (c == '>' || c == ')' || c == ']' || c == '}') depth--;
+            else if (c == ')' || c == ']' || c == '}' || (c == '>' && (i == 0 || str[i - 1] != '='))) depth--;  // Skip > in =>
             else if (depth == 0 && c == target)
             {
                 return i;
