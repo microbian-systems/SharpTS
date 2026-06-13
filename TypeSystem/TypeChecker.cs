@@ -253,20 +253,6 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Checks if a narrowing path would be affected by any of the assigned paths.
-    /// A path is affected if any assignment is to the path itself or to a prefix of the path.
-    /// </summary>
-    private static bool IsPathAffectedByAssignments(Narrowing.NarrowingPath path, HashSet<Narrowing.NarrowingPath> assignedPaths)
-    {
-        foreach (var assigned in assignedPaths)
-        {
-            if (path.IsAffectedByAssignmentTo(assigned))
-                return true;
-        }
-        return false;
-    }
-
-    /// <summary>
     /// Pushes a new scope for declared variable types (called when entering a function).
     /// </summary>
     private void PushDeclaredVariableScope()
