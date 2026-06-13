@@ -33,12 +33,16 @@ public partial class RuntimeEmitter
         // Pre-declare the general NewPromiseCapability helper (#349) so
         // WrapDerivedPromiseResult can call it; the body and the $PromiseCapability
         // type are emitted later (EmitPromiseCapabilitySupport, after
-        // ConstructDynamicValue) when all of its dependencies are available.
+        // ConstructDynamicValue) when all of its dependencies are available. The
+        // species is typed `object` (not `Type`): a class species arrives as a Type
+        // token, but a function-valued species or a non-constructor arrives as its
+        // raw value, and ConstructDynamicValue dispatches all three (Type →
+        // Activator, function → NewOnFunction, non-constructor → TypeError, #390).
         runtime.NewPromiseCapabilityResultMethod = runtimeType.DefineMethod(
             "NewPromiseCapabilityResult",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Object,
-            [_types.Type, _types.TaskOfObject]);
+            [_types.Object, _types.TaskOfObject]);
 
         EmitWrapDerivedPromiseResultMethod(runtimeType, runtime);
     }
@@ -209,8 +213,13 @@ public partial class RuntimeEmitter
         var returnResultLabel = il.DefineLabel();
         var haveSpeciesLabel = il.DefineLabel();
         var expandoLookupLabel = il.DefineLabel();
+        // #390: a resolved @@species value that is NOT a Type (a function-valued
+        // species, or a non-constructor like a number) but is also not
+        // undefined/null is routed here with its raw value preserved.
+        var generalFromValueLabel = il.DefineLabel();
         var typeLocal = il.DeclareLocal(_types.Type);          // receiver's runtime type (= C)
         var speciesTypeLocal = il.DeclareLocal(_types.Type);   // resolved SpeciesConstructor
+        var speciesValLocal = il.DeclareLocal(_types.Object);  // raw @@species value (#390)
         var getterLocal = il.DeclareLocal(_types.Object);
         var ctorLocal = il.DeclareLocal(typeof(ConstructorInfo));
         var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
@@ -279,13 +288,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
-        // speciesType = speciesVal as Type;
+        // speciesVal = the raw return; speciesType = speciesVal as Type;
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stloc, speciesValLocal);
         il.Emit(OpCodes.Isinst, _types.Type);
         il.Emit(OpCodes.Stloc, speciesTypeLocal);
-        // if (speciesType == null) return result;  // undefined/null/non-Type species → %Promise%
+        // A Type species (class / %Promise%) flows to the shared tail.
         il.Emit(OpCodes.Ldloc, speciesTypeLocal);
-        il.Emit(OpCodes.Brfalse, returnResultLabel);
-        il.Emit(OpCodes.Br, haveSpeciesLabel);  // declared accessor resolved → skip expando
+        il.Emit(OpCodes.Brtrue, haveSpeciesLabel);
+        // Non-Type: undefined/null → %Promise% (§7.3.22 steps 6-7); any other
+        // value (a function-valued species, or a non-constructor) → general path,
+        // which constructs it or throws TypeError (§7.3.22 step 5, #390).
+        EmitSpeciesValueRouting(il, runtime, speciesValLocal, returnResultLabel, generalFromValueLabel);
 
         // #349: no declared static @@species accessor — consult the expando
         // assigned via `(C as any)[Symbol.species] = …` (#262), which the
@@ -333,13 +347,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, expandoLoopLabel);
 
         il.MarkLabel(haveExpandoLabel);
-        // speciesType = expandoVal as Type;  // undefined/null/non-Type → %Promise%
+        // speciesVal = expandoVal; speciesType = expandoVal as Type;
+        il.Emit(OpCodes.Ldloc, expandoValLocal);
+        il.Emit(OpCodes.Stloc, speciesValLocal);
         il.Emit(OpCodes.Ldloc, expandoValLocal);
         il.Emit(OpCodes.Isinst, _types.Type);
         il.Emit(OpCodes.Stloc, speciesTypeLocal);
+        // A Type species flows to the shared tail; a non-Type expando is routed
+        // exactly like a non-Type getter return (#390).
         il.Emit(OpCodes.Ldloc, speciesTypeLocal);
-        il.Emit(OpCodes.Brfalse, returnResultLabel);
-        // fall through to the shared SpeciesConstructor tail.
+        il.Emit(OpCodes.Brtrue, haveSpeciesLabel);
+        EmitSpeciesValueRouting(il, runtime, speciesValLocal, returnResultLabel, generalFromValueLabel);
 
         il.MarkLabel(haveSpeciesLabel);
         // #351: a species naming a generic Promise subclass resolves to the OPEN
@@ -403,9 +421,40 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, typeof(ConstructorInfo).GetMethod("Invoke", [typeof(object[])])!);
         il.Emit(OpCodes.Ret);
 
+        // #390 general path for a non-Type species value (a function, or a
+        // non-constructor): NewPromiseCapabilityResult → ConstructDynamicValue,
+        // which constructs new S(executor) for a callable or throws TypeError
+        // (§7.3.22 step 5) for a non-constructor.
+        il.MarkLabel(generalFromValueLabel);
+        il.Emit(OpCodes.Ldloc, speciesValLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.NewPromiseCapabilityResultMethod);
+        il.Emit(OpCodes.Ret);
+
         il.MarkLabel(returnResultLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits the §7.3.22 steps 5-7 branch for a resolved <c>@@species</c> value
+    /// already known not to be a <see cref="Type"/> (so it is neither a class nor
+    /// <c>%Promise%</c>): <c>undefined</c>/<c>null</c> falls back to <c>%Promise%</c>
+    /// (<paramref name="promiseFallbackLabel"/>); any other value is routed with
+    /// its raw form preserved to the general NewPromiseCapability path
+    /// (<paramref name="generalFromValueLabel"/>), which constructs a callable
+    /// species or throws <c>TypeError</c> for a non-constructor (#390).
+    /// </summary>
+    private void EmitSpeciesValueRouting(
+        ILGenerator il, EmittedRuntime runtime, LocalBuilder speciesValLocal,
+        Label promiseFallbackLabel, Label generalFromValueLabel)
+    {
+        il.Emit(OpCodes.Ldloc, speciesValLocal);
+        il.Emit(OpCodes.Brfalse, promiseFallbackLabel);    // null → %Promise%
+        il.Emit(OpCodes.Ldloc, speciesValLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, promiseFallbackLabel);     // undefined → %Promise%
+        il.Emit(OpCodes.Br, generalFromValueLabel);
     }
 
     /// <summary>
