@@ -835,6 +835,55 @@ public partial class TypeChecker
             return IsCompatible(expWeakRef.TargetType, actWeakRef.TargetType);
         }
 
+        // Iterator<T> compatibility (the IterableIterator/Iterator annotations resolved by
+        // ResolveGenericType and the records .keys()/.values()/.entries() produce). A dedicated
+        // iterator record or a sync Generator carries the element/yield type directly — a sync
+        // Generator structurally IS an iterator (Generator<T> extends IterableIterator<T> extends
+        // Iterator<T>), so it satisfies an Iterator-typed target too; without that, assigning a
+        // generator to an `IterableIterator<T>` annotation would regress now that the annotation is
+        // strongly typed rather than `any` (#456). AsyncGenerator is deliberately excluded: it belongs
+        // to the separate async-iterator hierarchy and is not a sync Iterator.
+        if (expected is TypeInfo.Iterator expIter)
+        {
+            if ((actual switch
+                {
+                    TypeInfo.Iterator it => it.ElementType,
+                    TypeInfo.Generator g => g.YieldType,
+                    _ => (TypeInfo?)null
+                }) is { } actualIterElem)
+            {
+                return IsCompatible(expIter.ElementType, actualIterElem);
+            }
+
+            // Honour TS's structural typing of the iterator protocol: any object exposing a callable
+            // `next` member satisfies `Iterator<T>` (e.g. returning a hand-written `{ next() {…} }`
+            // literal). SharpTS models next() as returning `any`, so the element type is not re-derived
+            // from a structural next here — this gates only that the protocol member is present. Without
+            // it such assignments would regress, since `Iterator<T>` is now a real type, not `any`.
+            if (GetMemberType(actual, "next") is TypeInfo.Function or TypeInfo.OverloadedFunction)
+                return true;
+            // Not an iterator-shaped source: fall through to the remaining (ultimately rejecting) rules.
+        }
+
+        // Generator<T1>/AsyncGenerator<T1> relate to the SAME kind when the yield types relate. These
+        // records resolved from a type reference before #456 but had no compatibility arm, so even
+        // `let g: Generator<number> = gen()` spuriously failed (every same-record pair without an arm
+        // falls through to `return false`); #456 completes the iterable-record family it touches.
+        if (expected is TypeInfo.Generator expGen && actual is TypeInfo.Generator actGen)
+        {
+            return IsCompatible(expGen.YieldType, actGen.YieldType);
+        }
+        if (expected is TypeInfo.AsyncGenerator expAsyncGen && actual is TypeInfo.AsyncGenerator actAsyncGen)
+        {
+            return IsCompatible(expAsyncGen.YieldType, actAsyncGen.YieldType);
+        }
+
+        // FinalizationRegistry<T1> is compatible with FinalizationRegistry<T2> if T1=T2 (#456).
+        if (expected is TypeInfo.FinalizationRegistry expFinReg && actual is TypeInfo.FinalizationRegistry actFinReg)
+        {
+            return IsCompatible(expFinReg.TargetType, actFinReg.TargetType);
+        }
+
         // Member accessibility (TypeScript private/protected): two object types are unrelated when a
         // member they share has a conflicting accessibility origin — a public member cannot satisfy a
         // private one, and two private members must originate from the same declaration. Applies in

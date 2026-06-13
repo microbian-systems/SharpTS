@@ -920,8 +920,9 @@ public partial class TypeChecker
     };
 
     /// <summary>
-    /// Decomposes a dedicated built-in container type (Map, Set, the weak variants, generators) into
-    /// its type arguments, so the conditional-type machinery can treat <c>Map&lt;…, infer V&gt;</c>
+    /// Decomposes a dedicated built-in container type (Map, Set, the weak variants, generators,
+    /// iterators, WeakRef, FinalizationRegistry) into its type arguments, so the conditional-type
+    /// machinery can treat <c>Map&lt;…, infer V&gt;</c> or <c>IterableIterator&lt;infer V&gt;</c>
     /// like a generic instantiation. These carry bespoke TypeInfo records rather than
     /// <see cref="TypeInfo.InstantiatedGeneric"/>. The set mirrors exactly the container names that
     /// <see cref="ResolveGenericType"/> resolves from a type reference — so an extends clause can
@@ -936,6 +937,9 @@ public partial class TypeChecker
         TypeInfo.WeakSet s => [s.ElementType],
         TypeInfo.Generator g => [g.YieldType],
         TypeInfo.AsyncGenerator g => [g.YieldType],
+        TypeInfo.Iterator it => [it.ElementType],
+        TypeInfo.WeakRef wr => [wr.TargetType],
+        TypeInfo.FinalizationRegistry fr => [fr.TargetType],
         _ => null
     };
 

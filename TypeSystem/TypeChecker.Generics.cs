@@ -156,6 +156,30 @@ public partial class TypeChecker
                 throw new TypeCheckException($" WeakSet requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
             result = new TypeInfo.WeakSet(typeArgs[0]);
         }
+        // IterableIterator<T> / Iterator<T> references resolve to the dedicated Iterator record (the
+        // same one .keys()/.values()/.entries() already produce) instead of the `any` fallback, so the
+        // annotations are strongly typed and conditional-type check sides keep their element type
+        // (#456). The lib signature is Iterator<T, TReturn = any, TNext = any> — SharpTS models only the
+        // element type, so 1–3 arguments are accepted and TReturn/TNext are dropped, matching how the
+        // Generator arm above keeps only its yield type.
+        else if (baseName is "Iterator" or "IterableIterator")
+        {
+            if (typeArgs.Count is < 1 or > 3)
+                throw new TypeCheckException($" {baseName} requires between 1 and 3 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
+            result = new TypeInfo.Iterator(typeArgs[0]);
+        }
+        else if (baseName == "WeakRef")
+        {
+            if (typeArgs.Count != 1)
+                throw new TypeCheckException($" WeakRef requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
+            result = new TypeInfo.WeakRef(typeArgs[0]);
+        }
+        else if (baseName == "FinalizationRegistry")
+        {
+            if (typeArgs.Count != 1)
+                throw new TypeCheckException($" FinalizationRegistry requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
+            result = new TypeInfo.FinalizationRegistry(typeArgs[0]);
+        }
         // Handle built-in utility types
         else if (baseName == "Partial")
         {
