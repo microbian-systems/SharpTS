@@ -1,0 +1,354 @@
+using System.Reflection;
+using System.Reflection.Emit;
+
+namespace SharpTS.Compilation;
+
+/// <summary>
+/// Emits the general NewPromiseCapability support (#349): the result of
+/// <c>then</c>/<c>catch</c>/<c>finally</c> when <c>SpeciesConstructor</c> resolves
+/// to a constructor that is <em>not</em> <c>%Promise%</c> or a guest
+/// <c>class … extends Promise</c> (ECMA-262 §27.2.4.5 + §27.2.5.4 step 7). The
+/// result is <c>new S((resolve, reject) =&gt; …)</c> with the captured capability
+/// adopting the settled source task; <c>S</c> may be any guest class and the
+/// returned object need not be a $Promise.
+/// </summary>
+public partial class RuntimeEmitter
+{
+    /// <summary>
+    /// Emits the <c>$PromiseCapability</c> holder type and fills the
+    /// pre-declared <see cref="EmittedRuntime.NewPromiseCapabilityResultMethod"/>
+    /// body. Must be called AFTER <c>EmitConstructDynamicValue</c> and after the
+    /// $Runtime helpers it depends on (<c>InvokeValue</c>, <c>WrapException</c>,
+    /// <c>ConstructDynamicValue</c>) are emitted, but while <c>$Runtime</c> is
+    /// still open for new method bodies.
+    /// </summary>
+    internal void EmitPromiseCapabilitySupport(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        EmitPromiseCapabilityType(moduleBuilder, runtime);
+        EmitNewPromiseCapabilityResultBody(runtime);
+        EmitCoerceAwaitableToTask(runtime);
+    }
+
+    /// <summary>
+    /// Emits <c>CoerceAwaitableToTask(object value) -> Task&lt;object&gt;</c>: the
+    /// await coercion for a value that reached the state machine's wrap-value
+    /// path (already known not to be a $Promise or Task). An ordinary thenable
+    /// (a value whose <c>then</c> member is callable, by <c>typeof</c>) is
+    /// adopted — <c>then(resolve, reject)</c> settles a fresh capability whose
+    /// task is awaited (ECMA-262 await → PromiseResolve, §27.2.1.3.2); anything
+    /// else is wrapped with Task.FromResult (#349).
+    /// </summary>
+    private void EmitCoerceAwaitableToTask(EmittedRuntime runtime)
+    {
+        var method = _runtimeTypeBuilder!.DefineMethod(
+            "CoerceAwaitableToTask",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.TaskOfObject,
+            [_types.Object]);
+        runtime.CoerceAwaitableToTaskMethod = method;
+
+        var il = method.GetILGenerator();
+        var wrapLabel = il.DefineLabel();
+        var tcsType = typeof(TaskCompletionSource<object?>);
+
+        var thenLocal = il.DeclareLocal(_types.Object);
+        var tcsLocal = il.DeclareLocal(tcsType);
+        var lockLocal = il.DeclareLocal(_types.Object);
+
+        // if (value == null) goto wrap;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, wrapLabel);
+
+        // then = GetProperty(value, "then");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "then");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, thenLocal);
+
+        // if (TypeOf(then) != "function") goto wrap;
+        il.Emit(OpCodes.Ldloc, thenLocal);
+        il.Emit(OpCodes.Call, runtime.TypeOf);
+        il.Emit(OpCodes.Ldstr, "function");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, wrapLabel);
+
+        // var tcs = new TaskCompletionSource<object?>(); var lockObj = new object();
+        il.Emit(OpCodes.Newobj, tcsType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, tcsLocal);
+        il.Emit(OpCodes.Newobj, _types.Object.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, lockLocal);
+
+        // try { InvokeMethodValue(value, then,
+        //          new object[] { new $PromiseResolveCallback(tcs, lock),
+        //                         new $PromiseRejectCallback(tcs, lock) }); }
+        // catch (Exception e) { tcs.TrySetException(new $PromiseRejectedException(WrapException(e))); }
+        var exLocal = il.DeclareLocal(_types.Exception);
+        var endTryLabel = il.DefineLabel();
+        il.BeginExceptionBlock();
+
+        il.Emit(OpCodes.Ldarg_0);                       // receiver = value
+        il.Emit(OpCodes.Ldloc, thenLocal);              // function = then
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, tcsLocal);
+        il.Emit(OpCodes.Ldloc, lockLocal);
+        il.Emit(OpCodes.Newobj, runtime.PromiseResolveCallbackCtor);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, tcsLocal);
+        il.Emit(OpCodes.Ldloc, lockLocal);
+        il.Emit(OpCodes.Newobj, runtime.PromiseRejectCallbackCtor);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endTryLabel);
+
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Stloc, exLocal);
+        il.Emit(OpCodes.Ldloc, tcsLocal);
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Call, runtime.WrapException);
+        il.Emit(OpCodes.Newobj, runtime.TSPromiseRejectedExceptionCtor);
+        il.Emit(OpCodes.Callvirt, tcsType.GetMethod("TrySetException", [_types.Exception])!);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, endTryLabel);
+        il.EndExceptionBlock();
+        il.MarkLabel(endTryLabel);
+
+        // return tcs.Task;
+        il.Emit(OpCodes.Ldloc, tcsLocal);
+        il.Emit(OpCodes.Callvirt, tcsType.GetProperty("Task")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+
+        // wrap: return Task.FromResult(value);
+        il.MarkLabel(wrapLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(Task).GetMethod("FromResult")!.MakeGenericMethod(_types.Object));
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits the <c>$PromiseCapability</c> type: two object slots (Resolve,
+    /// Reject), a <c>Capture(object[])</c> executor body (stored as the resolve/
+    /// reject the species hands it), and a <c>Settle(Task&lt;object&gt;)</c>
+    /// continuation that drives the captured callbacks when the source settles.
+    /// </summary>
+    private void EmitPromiseCapabilityType(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$PromiseCapability",
+            TypeAttributes.Public | TypeAttributes.Sealed,
+            _types.Object);
+
+        var resolveField = typeBuilder.DefineField("Resolve", _types.Object, FieldAttributes.Public);
+        var rejectField = typeBuilder.DefineField("Reject", _types.Object, FieldAttributes.Public);
+
+        var ctor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
+        {
+            var il = ctor.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, _types.Object.GetConstructor(Type.EmptyTypes)!);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // object Capture(object[] args): Resolve = args[0]; Reject = args[1];
+        // return undefined. This is the executor the species constructor invokes
+        // (recognised by InvokeValue as a Func<object[], object>). Per
+        // NewPromiseCapability (§27.2.1.5) it is meant to run once; a benign
+        // re-entry simply overwrites the slots (the realistic species calls it
+        // exactly once, synchronously, from its constructor).
+        var capture = typeBuilder.DefineMethod(
+            "Capture", MethodAttributes.Public, _types.Object, [_types.ObjectArray]);
+        {
+            var il = capture.GetILGenerator();
+            var noResolveLabel = il.DefineLabel();
+            var noRejectLabel = il.DefineLabel();
+
+            // if (args.Length > 0) this.Resolve = args[0];
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ble, noResolveLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Stfld, resolveField);
+            il.MarkLabel(noResolveLabel);
+
+            // if (args.Length > 1) this.Reject = args[1];
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ble, noRejectLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Stfld, rejectField);
+            il.MarkLabel(noRejectLabel);
+
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // void Settle(Task<object> t): drives the captured capability from the
+        // settled source. Faulted -> Reject(WrapException(t.Exception)); else ->
+        // Resolve(t.Result). A missing (never-captured) callback is skipped so a
+        // species that ignored the executor simply never settles instead of
+        // throwing. Runs on the event-loop SynchronizationContext (the scheduler
+        // passed to ContinueWith), so the guest callbacks resume on the loop
+        // thread rather than the thread pool (#319/#320).
+        var settle = typeBuilder.DefineMethod(
+            "Settle", MethodAttributes.Public, typeof(void), [_types.TaskOfObject]);
+        {
+            var il = settle.GetILGenerator();
+            var faultedLabel = il.DefineLabel();
+            var doRejectLabel = il.DefineLabel();
+            var doResolveLabel = il.DefineLabel();
+            var retLabel = il.DefineLabel();
+            var argLocal = il.DeclareLocal(_types.Object);
+
+            // if (t.IsFaulted) goto faulted;
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Task, "IsFaulted").GetGetMethod()!);
+            il.Emit(OpCodes.Brtrue, faultedLabel);
+
+            // arg = t.Result; callback = this.Resolve; (resolve path)
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.TaskOfObject, "Result").GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, argLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, resolveField);
+            il.Emit(OpCodes.Brfalse, retLabel);     // no resolve captured → skip
+            il.Emit(OpCodes.Br, doResolveLabel);
+
+            // faulted: arg = WrapException(t.Exception.InnerException); callback = this.Reject.
+            // Task.Exception is an AggregateException; WrapException unwraps
+            // TargetInvocationException and reads $PromiseRejectedException.Reason
+            // but not AggregateException, so peel the first inner first.
+            il.MarkLabel(faultedLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Task, "Exception").GetGetMethod()!);
+            il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "InnerException").GetGetMethod()!);
+            il.Emit(OpCodes.Call, runtime.WrapException);
+            il.Emit(OpCodes.Stloc, argLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, rejectField);
+            il.Emit(OpCodes.Brfalse, retLabel);     // no reject captured → skip
+            // fall through to doReject
+
+            il.MarkLabel(doRejectLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, rejectField);
+            EmitInvokeCapabilityCallback(il, runtime, argLocal);
+            il.Emit(OpCodes.Br, retLabel);
+
+            il.MarkLabel(doResolveLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, resolveField);
+            EmitInvokeCapabilityCallback(il, runtime, argLocal);
+
+            il.MarkLabel(retLabel);
+            il.Emit(OpCodes.Ret);
+        }
+
+        typeBuilder.CreateType();
+        runtime.PromiseCapabilityType = typeBuilder;
+        runtime.PromiseCapabilityCtor = ctor;
+        runtime.PromiseCapabilityCaptureMethod = capture;
+        runtime.PromiseCapabilitySettleMethod = settle;
+    }
+
+    /// <summary>
+    /// Emits, with the callback value already on the stack, the call
+    /// <c>InvokeValue(callback, new object[] { arg })</c> and discards the
+    /// result.
+    /// </summary>
+    private void EmitInvokeCapabilityCallback(ILGenerator il, EmittedRuntime runtime, LocalBuilder argLocal)
+    {
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, argLocal);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        il.Emit(OpCodes.Pop);
+    }
+
+    /// <summary>
+    /// Fills the body of the pre-declared
+    /// <c>NewPromiseCapabilityResult(Type species, Task&lt;object&gt; result)</c>:
+    /// constructs <c>new species(executor)</c> through ConstructDynamicValue
+    /// (Type → Activator), captures the resolve/reject, schedules adoption of
+    /// <paramref name="result"/> onto the current SynchronizationContext, and
+    /// returns the constructed object.
+    /// </summary>
+    private void EmitNewPromiseCapabilityResultBody(EmittedRuntime runtime)
+    {
+        var method = runtime.NewPromiseCapabilityResultMethod;
+        var il = method.GetILGenerator();
+
+        var capabilityType = runtime.PromiseCapabilityType;
+        var funcType = _types.FuncObjectArrayToObject;                 // Func<object[], object>
+        var actionType = typeof(Action<Task<object?>>);
+        var schedulerType = typeof(System.Threading.Tasks.TaskScheduler);
+        var syncContextType = typeof(System.Threading.SynchronizationContext);
+
+        var capabilityLocal = il.DeclareLocal(capabilityType);
+        var instanceLocal = il.DeclareLocal(_types.Object);
+        var schedulerLocal = il.DeclareLocal(schedulerType);
+        var useDefaultLabel = il.DefineLabel();
+        var haveSchedulerLabel = il.DefineLabel();
+
+        // var cap = new $PromiseCapability();
+        il.Emit(OpCodes.Newobj, runtime.PromiseCapabilityCtor);
+        il.Emit(OpCodes.Stloc, capabilityLocal);
+
+        // var executor = new Func<object[], object>(cap.Capture);
+        // var instance = ConstructDynamicValue(species, new object[] { executor });
+        il.Emit(OpCodes.Ldarg_0);                                       // species (object)
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, capabilityLocal);
+        il.Emit(OpCodes.Ldftn, runtime.PromiseCapabilityCaptureMethod);
+        il.Emit(OpCodes.Newobj, funcType.GetConstructor([_types.Object, typeof(IntPtr)])!);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, runtime.ConstructDynamicValue);
+        il.Emit(OpCodes.Stloc, instanceLocal);
+
+        // var scheduler = SynchronizationContext.Current != null
+        //     ? TaskScheduler.FromCurrentSynchronizationContext()
+        //     : TaskScheduler.Default;
+        il.Emit(OpCodes.Call, syncContextType.GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, useDefaultLabel);
+        il.Emit(OpCodes.Call, schedulerType.GetMethod("FromCurrentSynchronizationContext", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Br, haveSchedulerLabel);
+        il.MarkLabel(useDefaultLabel);
+        il.Emit(OpCodes.Call, schedulerType.GetProperty("Default")!.GetGetMethod()!);
+        il.MarkLabel(haveSchedulerLabel);
+        il.Emit(OpCodes.Stloc, schedulerLocal);
+
+        // result.ContinueWith(new Action<Task<object>>(cap.Settle), scheduler);
+        il.Emit(OpCodes.Ldarg_1);                                       // result : Task<object>
+        il.Emit(OpCodes.Ldloc, capabilityLocal);
+        il.Emit(OpCodes.Ldftn, runtime.PromiseCapabilitySettleMethod);
+        il.Emit(OpCodes.Newobj, actionType.GetConstructor([_types.Object, typeof(IntPtr)])!);
+        il.Emit(OpCodes.Ldloc, schedulerLocal);
+        il.Emit(OpCodes.Callvirt, _types.TaskOfObject.GetMethod("ContinueWith", [actionType, schedulerType])!);
+        il.Emit(OpCodes.Pop);
+
+        // return instance;
+        il.Emit(OpCodes.Ldloc, instanceLocal);
+        il.Emit(OpCodes.Ret);
+    }
+}

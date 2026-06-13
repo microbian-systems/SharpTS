@@ -120,7 +120,7 @@ public static class PromiseBuiltIns
     /// call time before the rejected-promise conversion, so a poisoned
     /// <c>constructor</c>/<c>@@species</c> getter throws synchronously (#350).
     /// </summary>
-    private static readonly Func<Interpreter, object?, Func<Interpreter, Task<object?>, SharpTSPromise>?> SpeciesResolver =
+    private static readonly Func<Interpreter, object?, Func<Interpreter, Task<object?>, object?>?> SpeciesResolver =
         static (interp, recv) => ResolveResultPromiseFactory((SharpTSPromise)recv!, interp);
 
     /// <summary>
@@ -144,7 +144,7 @@ public static class PromiseBuiltIns
     /// or <c>%Promise%</c> (plain); a subclass then reads its static
     /// <c>@@species</c> (#221).
     /// </remarks>
-    private static Func<Interpreter, Task<object?>, SharpTSPromise>? ResolveResultPromiseFactory(
+    private static Func<Interpreter, Task<object?>, object?>? ResolveResultPromiseFactory(
         SharpTSPromise receiver, Interpreter interp)
     {
         if (receiver.TryGetAccessor("constructor", out var ctorGetter, out _) && ctorGetter != null)
@@ -158,18 +158,127 @@ public static class PromiseBuiltIns
     }
 
     /// <summary>
-    /// Wraps a resolved species class into a result-promise factory, or returns
-    /// null (meaning <c>%Promise%</c>, the plain wrapping) when species is null.
+    /// Wraps a resolved species constructor into a result-promise factory, or
+    /// returns null (meaning <c>%Promise%</c>, the plain wrapping) when species
+    /// is null.
     /// </summary>
-    private static Func<Interpreter, Task<object?>, SharpTSPromise>? SpeciesMaterializer(SharpTSPromiseClass? species)
-        => species == null ? null : (interp, task) => species.ConstructDerived(interp, task);
+    /// <remarks>
+    /// A <see cref="SharpTSPromiseClass"/> species takes the fast subclass path
+    /// (<see cref="SharpTSPromiseClass.ConstructDerived"/>). A species that is a
+    /// general (non-Promise) guest class goes through the spec's
+    /// NewPromiseCapability (§27.2.4.5): the result is
+    /// <c>new S((resolve, reject) =&gt; …)</c> with the captured capability
+    /// adopting the settled task (#349). Any other species value (a non-class,
+    /// e.g. a number, or a plain function used as a constructor) conservatively
+    /// falls back to <c>%Promise%</c> rather than throwing the spec's
+    /// <c>TypeError</c> (§7.3.22 step 5) — tracked by #390.
+    /// </remarks>
+    private static Func<Interpreter, Task<object?>, object?>? SpeciesMaterializer(object? species)
+        => species switch
+        {
+            null => null,
+            SharpTSPromiseClass pc => (interp, task) => pc.ConstructDerived(interp, task),
+            SharpTSClass cls => (interp, task) => ConstructPromiseCapabilityAndAdopt(interp, cls, task),
+            _ => null
+        };
+
+    /// <summary>
+    /// General NewPromiseCapability over an arbitrary (non-Promise) guest
+    /// constructor <c>S</c> (ECMA-262 §27.2.4.5 + §27.2.5.4 step 7). Constructs
+    /// <c>new S(executor)</c>, capturing the resolve/reject the executor is
+    /// handed, then adopts the settled <paramref name="source"/> task into that
+    /// capability and returns the constructed object — which need not be a
+    /// SharpTSPromise (it behaves as a promise downstream only insofar as it is a
+    /// thenable; <c>await</c> adopts thenables, #349).
+    /// </summary>
+    private static object? ConstructPromiseCapabilityAndAdopt(
+        Interpreter interp, SharpTSClass speciesCtor, Task<object?> source)
+    {
+        var capability = new PromiseCapabilityExecutor();
+        object? promiseObject = speciesCtor.Call(interp, [capability]);
+
+        // §27.2.1.5 step 4: the resolve/reject the executor stored must be callable.
+        if (capability.ResolveFn is not { } resolveFn || capability.RejectFn is not { } rejectFn)
+            throw new InterpreterException(
+                "Promise resolve or reject function is not callable");
+
+        // Adopt the source task into the captured capability. Awaiting inside this
+        // helper captures the interpreter's SynchronizationContext, so the guest
+        // resolve/reject callbacks resume on the event-loop thread rather than
+        // escaping to the thread pool (#319/#320).
+        _ = AdoptIntoCapability(source, resolveFn, rejectFn, interp);
+        return promiseObject;
+    }
+
+    private static async Task AdoptIntoCapability(
+        Task<object?> source, ISharpTSCallable resolveFn, ISharpTSCallable rejectFn, Interpreter interp)
+    {
+        object? value;
+        try
+        {
+            value = await source;
+        }
+        catch (SharpTSPromiseRejectedException ex)
+        {
+            InvokeCapabilityCallback(rejectFn, ex.Reason, interp);
+            return;
+        }
+        catch (Exception ex)
+        {
+            InvokeCapabilityCallback(rejectFn, ex.Message, interp);
+            return;
+        }
+        InvokeCapabilityCallback(resolveFn, value, interp);
+    }
+
+    /// <summary>
+    /// Invokes a captured capability resolve/reject callback. A throw from the
+    /// guest callback has nowhere to propagate (the adopting task is detached),
+    /// so it is reported like an uncaught microtask rather than crashing the loop.
+    /// </summary>
+    private static void InvokeCapabilityCallback(ISharpTSCallable callback, object? arg, Interpreter interp)
+    {
+        try
+        {
+            callback.Call(interp, [arg]);
+        }
+        catch (Exceptions.ThrowException tex)
+        {
+            Console.Error.WriteLine($"Uncaught (in promise capability): {interp.Stringify(tex.Value)}");
+        }
+    }
+
+    /// <summary>
+    /// The host executor handed to a general species constructor by
+    /// <see cref="ConstructPromiseCapabilityAndAdopt"/>. Per
+    /// NewPromiseCapability (§27.2.1.5) it captures the resolve/reject functions
+    /// the constructor passes it; calling it more than once, or with already-set
+    /// slots, is a TypeError.
+    /// </summary>
+    private sealed class PromiseCapabilityExecutor : ISharpTSCallable
+    {
+        public ISharpTSCallable? ResolveFn { get; private set; }
+        public ISharpTSCallable? RejectFn { get; private set; }
+
+        public int Arity() => 2;
+
+        public object? Call(Interpreter interpreter, List<object?> arguments)
+        {
+            if (ResolveFn != null || RejectFn != null)
+                throw new InterpreterException("Promise executor was already invoked");
+            ResolveFn = arguments.Count > 0 ? arguments[0] as ISharpTSCallable : null;
+            RejectFn = arguments.Count > 1 ? arguments[1] as ISharpTSCallable : null;
+            return SharpTSUndefined.Instance;
+        }
+    }
 
     /// <summary>
     /// Computes SpeciesConstructor(promise, %Promise%) (ECMA-262 §7.3.22) for a
-    /// Promise subclass receiver, returning the guest Promise class to construct
-    /// the result through, or <c>null</c> to mean <c>%Promise%</c> (the plain
-    /// built-in). Reads <c>C[@@species]</c> where <c>C</c> is the receiver's
-    /// class: a declared <c>static get [Symbol.species]()</c> or an expando
+    /// Promise subclass receiver, returning the constructor to build the result
+    /// through (a guest Promise subclass, or a general non-Promise class), or
+    /// <c>null</c> to mean <c>%Promise%</c> (the plain built-in). Reads
+    /// <c>C[@@species]</c> where <c>C</c> is the receiver's class: a declared
+    /// <c>static get [Symbol.species]()</c> or an expando
     /// <c>(C as any)[Symbol.species]</c> (#262) override wins; absent either,
     /// the inherited <c>Promise[@@species]</c> (which returns <c>this</c>) makes
     /// the species the receiver's own class. An override that yields
@@ -177,14 +286,13 @@ public static class PromiseBuiltIns
     /// <c>%Promise%</c>.
     /// </summary>
     /// <remarks>
-    /// A species override that returns a non-Promise constructor (the general
-    /// NewPromiseCapability path) is not yet supported and falls back to
-    /// <c>%Promise%</c> — tracked by #349. A poisoned own <c>constructor</c>
-    /// getter (<c>then/ctor-poisoned.js</c>, #350) is handled earlier, in
-    /// <see cref="ResolveResultPromiseFactory"/>, which reads
-    /// <c>Get(promise, "constructor")</c> before reaching here.
+    /// A species override that returns a general non-Promise class is materialized
+    /// through NewPromiseCapability by <see cref="SpeciesMaterializer"/> (#349). A
+    /// poisoned own <c>constructor</c> getter (<c>then/ctor-poisoned.js</c>, #350)
+    /// is handled earlier, in <see cref="ResolveResultPromiseFactory"/>, which
+    /// reads <c>Get(promise, "constructor")</c> before reaching here.
     /// </remarks>
-    private static SharpTSPromiseClass? ResolveSpeciesConstructor(SharpTSPromiseClass klass, Interpreter interp)
+    private static object? ResolveSpeciesConstructor(SharpTSPromiseClass klass, Interpreter interp)
     {
         object? species;
         if (klass.FindStaticSymbolGetter(SharpTSSymbol.Species) is { } getter)
@@ -200,10 +308,10 @@ public static class PromiseBuiltIns
             null or SharpTSUndefined => null,                                  // → %Promise%
             SharpTSBuiltInConstructor { Name: BuiltInNames.Promise } => null,  // `return Promise`
             SharpTSPromiseClass sc when ReferenceEquals(sc, SharpTSPromiseClass.PromiseBase) => null,
-            SharpTSPromiseClass sc => sc,
-            // Non-Promise species constructor: general NewPromiseCapability not
-            // yet supported (#349) — fall back to %Promise%.
-            _ => null
+            // A Promise subclass or a general non-Promise class flows to
+            // SpeciesMaterializer, which picks the subclass fast path or the
+            // general NewPromiseCapability path (#349) respectively.
+            _ => species
         };
     }
 

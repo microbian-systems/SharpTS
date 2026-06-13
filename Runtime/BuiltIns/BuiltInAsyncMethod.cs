@@ -31,8 +31,8 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
     private readonly int _minArity;
     private readonly int _maxArity;
     private readonly Func<Interpreter, object?, List<object?>, Task<object?>> _implementation;
-    private readonly Func<Interpreter, Task<object?>, SharpTSPromise>? _promiseFactory;
-    private readonly Func<Interpreter, object?, Func<Interpreter, Task<object?>, SharpTSPromise>?>? _speciesResolver;
+    private readonly Func<Interpreter, Task<object?>, object?>? _promiseFactory;
+    private readonly Func<Interpreter, object?, Func<Interpreter, Task<object?>, object?>?>? _speciesResolver;
     private readonly bool _refsEventLoopWhileInFlight;
     private object? _receiver;
 
@@ -74,9 +74,9 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         int minArity,
         int maxArity,
         Func<Interpreter, object?, List<object?>, Task<object?>> implementation,
-        Func<Interpreter, Task<object?>, SharpTSPromise>? promiseFactory = null,
+        Func<Interpreter, Task<object?>, object?>? promiseFactory = null,
         bool refsEventLoopWhileInFlight = false,
-        Func<Interpreter, object?, Func<Interpreter, Task<object?>, SharpTSPromise>?>? speciesResolver = null)
+        Func<Interpreter, object?, Func<Interpreter, Task<object?>, object?>?>? speciesResolver = null)
     {
         _name = name;
         _minArity = minArity;
@@ -93,9 +93,9 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         int minArity,
         int maxArity,
         Func<Interpreter, object?, List<object?>, Task<object?>> implementation,
-        Func<Interpreter, Task<object?>, SharpTSPromise>? promiseFactory,
+        Func<Interpreter, Task<object?>, object?>? promiseFactory,
         bool refsEventLoopWhileInFlight,
-        Func<Interpreter, object?, Func<Interpreter, Task<object?>, SharpTSPromise>?>? speciesResolver,
+        Func<Interpreter, object?, Func<Interpreter, Task<object?>, object?>?>? speciesResolver,
         object? receiver)
     {
         _name = name;
@@ -179,9 +179,9 @@ public class BuiltInAsyncMethod : ISharpTSCallable, ISharpTSAsyncCallable
         }
     }
 
-    private static SharpTSPromise WrapResult(
+    private static object? WrapResult(
         Interpreter interpreter,
-        Func<Interpreter, Task<object?>, SharpTSPromise>? factory,
+        Func<Interpreter, Task<object?>, object?>? factory,
         Task<object?> task)
         => factory != null ? factory(interpreter, task) : new SharpTSPromise(task);
 
