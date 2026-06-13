@@ -501,6 +501,7 @@ public partial class TypeChecker
     /// </summary>
     private static bool IsBuiltInGenericName(string name) => name is
         "Array" or "ReadonlyArray" or "Promise" or "Generator" or "AsyncGenerator" or
+        "Map" or "Set" or "WeakMap" or "WeakSet" or
         "Partial" or "Required" or "Readonly" or "Record" or "Pick" or "Omit" or
         "ReturnType" or "Parameters" or "ConstructorParameters" or "InstanceType" or
         "ThisType" or "Awaited" or "NonNullable" or "Extract" or "Exclude" or
