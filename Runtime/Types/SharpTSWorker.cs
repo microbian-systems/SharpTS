@@ -50,6 +50,21 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     private bool _refed;             // currently holding one parent-loop Ref for the running worker
     private bool _refReleased;       // worker exited/terminated — ref/unref are permanent no-ops
 
+    // The keep-alive primitive, abstracted so the same accounting drives both
+    // runtimes: in interpreter mode these are the parent Interpreter's Ref/Unref;
+    // in compiled mode (no parent interpreter) they are the emitted $EventLoop
+    // singleton's Ref/Unref, injected via CreateForCompiledLoop (#354). Null only
+    // when there is neither — then ref/unref are no-ops.
+    private readonly Action? _loopRef;
+    private readonly Action? _loopUnref;
+
+    // Compiled-mode callback marshal: the emitted $EventLoop's Schedule(Action),
+    // which enqueues onto the loop and wakes it. Injected (rather than captured
+    // from SynchronizationContext.Current, which is not reliably the installed
+    // event-loop context at worker-construction time) so worker→parent event
+    // delivery lands on the loop thread deterministically (#354).
+    private readonly Action<Action>? _loopSchedule;
+
     // For compiled code support - enables Worker communication without interpreter
     private readonly SynchronizationContext? _syncContext;
     private readonly ConcurrentQueue<Action> _pendingCallbacks = new();
@@ -73,11 +88,39 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     /// <param name="filename">Path to the TypeScript file to execute.</param>
     /// <param name="options">Optional worker options (workerData, transferList, etc.).</param>
     /// <param name="parentInterpreter">The parent interpreter for message delivery.</param>
-    public SharpTSWorker(string filename, SharpTSObject? options, Interpreter? parentInterpreter)
+    /// <param name="eventLoopRef">
+    /// Compiled-mode keep-alive Ref (the emitted <c>$EventLoop</c>'s <c>Ref</c>). When
+    /// supplied it takes precedence over <paramref name="parentInterpreter"/> for
+    /// event-loop accounting; in interpreter mode it is left null and the parent
+    /// interpreter's Ref/Unref are used instead (#354).
+    /// </param>
+    /// <param name="eventLoopUnref">Compiled-mode keep-alive Unref, paired with <paramref name="eventLoopRef"/>.</param>
+    /// <param name="eventLoopSchedule">
+    /// Compiled-mode marshal that runs an action on the event-loop thread (the
+    /// emitted <c>$EventLoop.Schedule</c>). Used to deliver worker events to the
+    /// parent without relying on an ambient <see cref="SynchronizationContext"/>.
+    /// </param>
+    public SharpTSWorker(string filename, SharpTSObject? options, Interpreter? parentInterpreter,
+        Action? eventLoopRef = null, Action? eventLoopUnref = null, Action<Action>? eventLoopSchedule = null)
     {
+        _loopSchedule = eventLoopSchedule;
         ThreadId = Interlocked.Increment(ref _nextThreadId);
         _scriptPath = filename;
         _parentInterpreter = parentInterpreter;
+
+        // Resolve the keep-alive handle once: explicit delegates (compiled mode)
+        // win over the parent interpreter (interpreter mode). Both arms feed the
+        // identical Ref accounting below, so the #329 fix now covers both runtimes.
+        if (eventLoopRef != null && eventLoopUnref != null)
+        {
+            _loopRef = eventLoopRef;
+            _loopUnref = eventLoopUnref;
+        }
+        else if (parentInterpreter != null)
+        {
+            _loopRef = parentInterpreter.Ref;
+            _loopUnref = parentInterpreter.Unref;
+        }
 
         // Capture sync context for compiled code to marshal callbacks to main thread
         _syncContext = SynchronizationContext.Current;
@@ -120,14 +163,38 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         // (and Unref) before we've counted it.
         lock (_refLock)
         {
-            if (_parentInterpreter != null)
+            if (_loopRef != null)
             {
                 _refed = true;
-                _parentInterpreter.Ref();
+                _loopRef();
             }
         }
 
         _thread.Start();
+    }
+
+    /// <summary>
+    /// Factory used by compiled output to construct a worker whose running-lifetime
+    /// keep-alive is accounted against the emitted <c>$EventLoop</c> singleton rather
+    /// than an <see cref="Interpreter"/> (which does not exist at runtime in compiled
+    /// programs). The emitted <c>$Runtime.CreateWorker</c> resolves this method by
+    /// reflection — keeping the standalone DLL free of a hard SharpTS.dll reference —
+    /// and passes the loop's <c>Ref</c>/<c>Unref</c> as delegates (#354).
+    /// </summary>
+    /// <param name="filename">Path to the TypeScript file to execute.</param>
+    /// <param name="options">
+    /// Worker options. Only <see cref="SharpTSObject"/> option bags are honored today;
+    /// a compiled object literal is currently ignored (see issue for workerData/
+    /// transferList marshaling in compiled mode).
+    /// </param>
+    /// <param name="eventLoopRef">The emitted <c>$EventLoop</c> instance's <c>Ref</c>.</param>
+    /// <param name="eventLoopUnref">The emitted <c>$EventLoop</c> instance's <c>Unref</c>.</param>
+    public static SharpTSWorker CreateForCompiledLoop(
+        string filename, object? options, Action eventLoopRef, Action eventLoopUnref,
+        Action<Action> eventLoopSchedule)
+    {
+        return new SharpTSWorker(filename, options as SharpTSObject, parentInterpreter: null,
+            eventLoopRef, eventLoopUnref, eventLoopSchedule);
     }
 
     /// <summary>
@@ -146,7 +213,7 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             if (_refed)
             {
                 _refed = false;
-                _parentInterpreter?.Unref();
+                _loopUnref?.Invoke();
             }
         }
     }
@@ -279,11 +346,12 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             var cloned = StructuredClone.Clone(message, transfer);
             _workerToParentQueue.Add(new SharpTSMessagePort.ClonedMessage(cloned, transfer));
 
-            // Schedule delivery on parent thread
-            _parentInterpreter?.ScheduleTimer(0, 0, () =>
-            {
-                DeliverMessagesToParent();
-            }, false);
+            // Schedule delivery on the parent thread. Routed through
+            // ScheduleOnMainThread so compiled mode (no parent interpreter) marshals
+            // the delivery onto the $EventLoop via the captured sync context — a bare
+            // _parentInterpreter?.ScheduleTimer here would silently drop every worker
+            // message in compiled programs (#354).
+            ScheduleOnMainThread(DeliverMessagesToParent);
         }
         catch (StructuredClone.DataCloneError e)
         {
@@ -343,6 +411,11 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         {
             // Interpreter path - use timer for callback delivery
             _parentInterpreter.ScheduleTimer(0, 0, action, false);
+        }
+        else if (_loopSchedule != null)
+        {
+            // Compiled path - marshal onto the emitted $EventLoop deterministically.
+            _loopSchedule(action);
         }
         else if (_syncContext != null)
         {
@@ -454,22 +527,22 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         ReleaseRunningRef();
 
         // The thread join is real, always-completing work bounded at 5s. Ref the
-        // parent event loop for its duration so the interpreter's quiescence
-        // heuristic does not abandon a program whose only remaining work is
-        // `await worker.terminate()` when the worker takes >250ms to wind down
-        // (the #319/#320 native-I/O liveness class; #324). Unref once the join
-        // settles. The Ref is opt-in on having a parent interpreter — the
-        // compiled path (no _parentInterpreter) is unaffected.
-        var interp = _parentInterpreter;
-        interp?.Ref();
+        // owning event loop for its duration so the quiescence heuristic does not
+        // abandon a program whose only remaining work is `await worker.terminate()`
+        // when the worker takes >250ms to wind down (the #319/#320 native-I/O
+        // liveness class; #324). Unref once the join settles. Accounted against the
+        // parent interpreter (interpreter mode) or the emitted $EventLoop (compiled
+        // mode, #354); a no-op when neither is present.
+        var loopUnref = _loopUnref;
+        _loopRef?.Invoke();
         var task = Task.Run<object?>(() =>
         {
             _thread.Join(5000); // Wait up to 5 seconds
             return (double)0;
         });
-        if (interp != null)
+        if (_loopRef != null && loopUnref != null)
         {
-            task.ContinueWith(_ => interp.Unref(), TaskScheduler.Default);
+            task.ContinueWith(_ => loopUnref(), TaskScheduler.Default);
         }
         return new SharpTSPromise(task);
     }
@@ -477,16 +550,16 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     /// <summary>
     /// Opts the worker back into keeping the parent event loop alive (Node's
     /// <c>worker.ref()</c>). No-op once the worker has exited or been terminated,
-    /// or in compiled mode (no parent interpreter).
+    /// or when no event loop owns the worker.
     /// </summary>
     public SharpTSWorker Ref()
     {
         lock (_refLock)
         {
-            if (!_refReleased && !_refed && _parentInterpreter != null)
+            if (!_refReleased && !_refed && _loopRef != null)
             {
                 _refed = true;
-                _parentInterpreter.Ref();
+                _loopRef();
             }
         }
         return this;
@@ -496,7 +569,7 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     /// Opts the worker out of keeping the parent event loop alive (Node's
     /// <c>worker.unref()</c>). The worker keeps running; the parent is just free to
     /// exit if the worker is its only remaining work. No-op once the worker has
-    /// exited/terminated, or in compiled mode (no parent interpreter).
+    /// exited/terminated, or when no event loop owns the worker.
     /// </summary>
     public void Unref()
     {
@@ -505,7 +578,7 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             if (_refed)
             {
                 _refed = false;
-                _parentInterpreter?.Unref();
+                _loopUnref?.Invoke();
             }
         }
     }

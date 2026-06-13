@@ -461,6 +461,11 @@ public abstract partial class ExpressionEmitterBase
             case "Worker":
                 if (arguments.Count == 0)
                     throw new CompileException("Worker constructor requires at least 1 argument (filename).");
+                // A Worker runs an interpreter for its child script and is
+                // constructed by reflection into SharpTS.dll, so the runtime must
+                // be co-located (#354). Record the soft dependency so the CLI
+                // copies SharpTS.dll next to the output.
+                Ctx.Runtime!.RequireSharpTSRuntime("Worker");
                 EmitExpression(arguments[0]);
                 EnsureBoxed();
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.Stringify);
