@@ -15,7 +15,12 @@ public partial class TypeChecker
     {
         foreach (var member in requiredMembers)
         {
-            TypeInfo? actualMemberType = GetMemberType(actual, member.Key);
+            // GetMemberType resolves members for object-like and primitive-wrapper sources (records,
+            // interfaces, classes, string/array/tuple). A structurally-decomposable built-in object
+            // type (Date, RegExp, Map, Set, …) carries its members in BuiltInTypes' per-type model,
+            // so fall back to that — letting a `Date` satisfy `{ getTime(): number }` etc. (#512).
+            TypeInfo? actualMemberType = GetMemberType(actual, member.Key)
+                ?? BuiltInTypes.GetInstanceMemberType(actual, member.Key);
 
             // If member is optional and not present, that's OK
             if (actualMemberType == null && (optionalMembers?.Contains(member.Key) ?? false))

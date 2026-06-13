@@ -168,6 +168,34 @@ public partial class TypeChecker
                 throw new TypeCheckException($" {baseName} requires between 1 and 3 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
             result = new TypeInfo.Iterator(typeArgs[0]);
         }
+        // Iterable<T> references resolve to the dedicated Iterable record so the annotation is element-typed
+        // (for...of/spread/yield* and assignment) rather than degrading to `any` (#485). The newer lib
+        // signature is Iterable<T, TReturn = void, TNext = undefined> — only the element type is modeled, so
+        // 1–3 arguments are accepted and the rest are dropped, mirroring the Iterator arm above. The async
+        // parallel (AsyncIterable/AsyncIterableIterator references) is tracked separately in #483.
+        else if (baseName == "Iterable")
+        {
+            if (typeArgs.Count is < 1 or > 3)
+                throw new TypeCheckException($" Iterable requires between 1 and 3 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
+            result = new TypeInfo.Iterable(typeArgs[0]);
+        }
+        // IteratorResult<T, TReturn = any> and its IteratorYieldResult/IteratorReturnResult arms are
+        // structural types in TS ({ value; done }); SharpTS models them as the structural record
+        // { value: T; done?: boolean } so a `next(): IteratorResult<T>` annotation is element-typed and a
+        // hand-written { value, done } object literal satisfies it (#485). Only the value type is kept
+        // (matching the single-type-param convention used for Iterator/Generator).
+        else if (baseName == "IteratorResult")
+        {
+            if (typeArgs.Count is < 1 or > 2)
+                throw new TypeCheckException($" IteratorResult requires 1 or 2 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
+            result = BuildIteratorResultType(typeArgs[0]);
+        }
+        else if (baseName is "IteratorYieldResult" or "IteratorReturnResult")
+        {
+            if (typeArgs.Count != 1)
+                throw new TypeCheckException($" {baseName} requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
+            result = BuildIteratorResultType(typeArgs[0]);
+        }
         else if (baseName == "WeakRef")
         {
             if (typeArgs.Count != 1)

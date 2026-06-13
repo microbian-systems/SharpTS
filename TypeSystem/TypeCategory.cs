@@ -27,6 +27,7 @@ public enum TypeCategory
     Promise,
     Timeout,
     Iterator,
+    Iterable,
     Generator,
     AsyncGenerator,
     Buffer,
