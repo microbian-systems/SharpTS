@@ -459,6 +459,23 @@ public partial class TypeChecker
             };
         }
 
+        // Numeric indexed access — `T[number]` over an array/tuple yields the element type.
+        // Without this, `DeepReadonlyArray<T[number]>` over `Part[]` would collapse the element
+        // to `any` and lose the recursive shape (#365).
+        if (IsNumber(indexType) || indexType is TypeInfo.NumberLiteral)
+        {
+            switch (objectType)
+            {
+                case TypeInfo.Array arr:
+                    return arr.ElementType;
+                case TypeInfo.Tuple tup when indexType is TypeInfo.NumberLiteral { Value: var n }
+                    && (int)n >= 0 && (int)n < tup.ElementTypes.Count:
+                    return tup.ElementTypes[(int)n];
+                case TypeInfo.Tuple tup:
+                    return ComputeTupleElementUnion(tup);
+            }
+        }
+
         return new TypeInfo.Any();
     }
 

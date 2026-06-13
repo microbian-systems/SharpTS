@@ -1245,7 +1245,10 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo? TryParseIndexedAccessType(string typeName)
     {
-        // Find the outermost [ that's followed by content and then ]
+        // Find the outermost [ that's followed by content and then ] — the indexing bracket.
+        // A leading array suffix (`Part[][number]` → base `Part[]`, index `number`) contributes
+        // empty `[]` pairs at depth 0 that are NOT the index; skip them so the base keeps its
+        // array dimension instead of bailing on the first empty bracket (#365).
         int depth = 0;
         int bracketStart = -1;
 
@@ -1256,6 +1259,12 @@ public partial class TypeChecker
             else if (c == '>' || c == ')' || c == '}') depth--;
             else if (c == '[' && depth == 0)
             {
+                // Empty `[]` is an array suffix, part of the base type — keep scanning.
+                if (i + 1 < typeName.Length && typeName[i + 1] == ']')
+                {
+                    i++;
+                    continue;
+                }
                 bracketStart = i;
                 break;
             }
@@ -1290,7 +1299,10 @@ public partial class TypeChecker
         // Parse the base and index types
         TypeInfo baseTypeInfo = ToTypeInfo(baseType);
         TypeInfo indexTypeInfo = ToTypeInfo(indexType);
-        TypeInfo result = new TypeInfo.IndexedAccess(baseTypeInfo, indexTypeInfo);
+        // A fully concrete access (`Part[][number]`, `Foo["bar"]`) simplifies to the member type
+        // now; one mentioning an open type variable (`T[K]` mid-definition) stays a deferred
+        // IndexedAccess that later substitution/EvaluateConditionalType resolves (#365).
+        TypeInfo result = SimplifyConcreteIndexedAccess(baseTypeInfo, indexTypeInfo);
 
         // Consume trailing suffixes iteratively against the already-built `result`:
         // chained indexed access (T[K][J]) and array suffixes (T[K][]), in any order.
@@ -1321,7 +1333,7 @@ public partial class TypeChecker
             if (suffixEnd <= 1) break; // malformed or empty — stop consuming
 
             string nextIndex = remaining[1..suffixEnd];
-            result = new TypeInfo.IndexedAccess(result, ToTypeInfo(nextIndex));
+            result = SimplifyConcreteIndexedAccess(result, ToTypeInfo(nextIndex));
             remaining = remaining[(suffixEnd + 1)..];
         }
 
@@ -1527,9 +1539,26 @@ public partial class TypeChecker
         string trueTypeStr = afterQuestion[..colonIndex].Trim();
         string falseTypeStr = afterQuestion[(colonIndex + 1)..].Trim();
 
-        // Parse all four type components
+        // Parse the check and extends sides first so we can decide the conditional eagerly when
+        // it is already determined.
         TypeInfo checkType = ToTypeInfo(checkTypeStr);
         TypeInfo extendsType = ToTypeInfo(extendsTypeStr);
+
+        // A conditional whose check type is fully concrete (no type variables) and whose extends
+        // type is concrete and infer-free is decidable right now. Resolve ONLY the selected branch
+        // and discard the other: tsc never instantiates the branch a decided conditional did not
+        // take, and for a self-referential alias (DeepReadonly's `T extends object ?
+        // DeepReadonlyObject<T> : T` branch over an array element) eagerly building the untaken
+        // branch re-enters a mapped-over-array expansion that grows without bound and trips the
+        // instantiation-depth guard (#365). `any` matches BOTH branches and a union may distribute,
+        // so those keep the full node for EvaluateConditionalType to handle.
+        if (!IsGenericTypeShape(checkType) && checkType is not (TypeInfo.Any or TypeInfo.Union)
+            && !IsGenericTypeShape(extendsType))
+        {
+            var (matches, _) = CheckExtendsWithInfer(checkType, extendsType);
+            return ToTypeInfo(matches ? trueTypeStr : falseTypeStr);
+        }
+
         TypeInfo trueType = ToTypeInfo(trueTypeStr);
         TypeInfo falseType = ToTypeInfo(falseTypeStr);
 

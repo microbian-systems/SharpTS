@@ -84,7 +84,7 @@ public partial class TypeChecker
                     mapped.Modifiers,
                     mapped.AsClause != null ? Substitute(mapped.AsClause, substitutions) : null),
             TypeInfo.IndexedAccess ia =>
-                new TypeInfo.IndexedAccess(
+                SimplifyConcreteIndexedAccess(
                     Substitute(ia.ObjectType, substitutions),
                     Substitute(ia.IndexType, substitutions)),
             // Conditional types: evaluate with current substitutions
@@ -108,6 +108,23 @@ public partial class TypeChecker
             // Primitives, Any, Void, Never, Unknown, Null pass through unchanged
             _ => type
         };
+    }
+
+    /// <summary>
+    /// Simplifies an indexed access whose object and index are both fully concrete (no remaining
+    /// type variables) to the accessed member type — e.g. <c>Part[][number]</c> ⇒ <c>Part</c>,
+    /// <c>Foo["bar"]</c> ⇒ the member type. A generic object or index is left as a deferred
+    /// <see cref="TypeInfo.IndexedAccess"/> so distribution and per-instantiation resolution still
+    /// run. Used by <see cref="Substitute"/> so substituting a concrete argument into a <c>T[K]</c>
+    /// position (e.g. flattening <c>DeepReadonlyArray&lt;Part[][number]&gt;</c>) collapses the access
+    /// instead of carrying an unresolved node that downstream consumers read as <c>any</c> (#365).
+    /// </summary>
+    private TypeInfo SimplifyConcreteIndexedAccess(TypeInfo objectType, TypeInfo indexType)
+    {
+        if (IsGenericTypeShape(objectType) || IsGenericTypeShape(indexType))
+            return new TypeInfo.IndexedAccess(objectType, indexType);
+        return ResolveIndexedAccess(
+            new TypeInfo.IndexedAccess(objectType, indexType), new Dictionary<string, TypeInfo>());
     }
 
     /// <summary>

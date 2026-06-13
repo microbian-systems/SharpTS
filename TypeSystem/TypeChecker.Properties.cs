@@ -126,6 +126,7 @@ public partial class TypeChecker
         {
             objType = ExpandRecursiveTypeAlias(rta);
         }
+        objType = ResolveMappedTypeForAccess(objType);
 
         var category = TypeCategoryResolver.Classify(objType);
         string memberName = get.Name.Lexeme;
@@ -340,9 +341,34 @@ public partial class TypeChecker
         }
     }
 
+    /// <summary>
+    /// Expands a concrete mapped type to its equivalent Interface/Record so a member access on it
+    /// resolves real members. A consumer can receive a mapped type that was never expanded by its
+    /// producer — e.g. <c>DeepReadonlyArray&lt;Part&gt;</c>'s numeric-index element is the
+    /// <c>DeepReadonlyObject&lt;Part&gt;</c> mapped node, since <see cref="EvaluateConditionalType"/>
+    /// substitutes a branch without running the post-expansion <see cref="ResolveGenericType"/>
+    /// applies. A still-deferred key domain (a generic key-filter) or one mentioning open type
+    /// variables is left untouched so it stays deferred (#365).
+    /// </summary>
+    private TypeInfo ResolveMappedTypeForAccess(TypeInfo objType)
+    {
+        if (objType is TypeInfo.MappedType mapped && !ContainsOpenTypeVariable(mapped)
+            && !IsDeferredKeyDomain(ResolveMappedKeyDomain(mapped)))
+            return ExpandMappedType(mapped);
+        return objType;
+    }
+
     private TypeInfo CheckSet(Expr.Set set)
     {
         TypeInfo objType = CheckExpr(set.Object);
+
+        // Expand recursive type aliases lazily before property assignment — mirrors CheckGet, so a
+        // write through a deferred alias (`part.subparts[0].id = …` where the element is the still
+        // deferred `DeepReadonly<Part>`) sees the readonly `DeepReadonlyObject<Part>` shape and
+        // rejects with TS2540 instead of "Only instances and objects have properties" (#365).
+        if (objType is TypeInfo.RecursiveTypeAlias rtaObj)
+            objType = ExpandRecursiveTypeAlias(rtaObj);
+        objType = ResolveMappedTypeForAccess(objType);
 
         // Extract the narrowing path for the written location, if narrowable.
         var basePath = Narrowing.NarrowingPathExtractor.TryExtract(set.Object);
@@ -690,6 +716,7 @@ public partial class TypeChecker
         {
             objType = ExpandRecursiveTypeAlias(rta);
         }
+        objType = ResolveMappedTypeForAccess(objType);
 
         // Handle TypeParameter recursively - delegate to constraint
         if (objType is TypeInfo.TypeParameter tp)

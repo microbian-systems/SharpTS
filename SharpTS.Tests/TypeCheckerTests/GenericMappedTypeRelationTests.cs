@@ -139,4 +139,70 @@ public class GenericMappedTypeRelationTests
         Assert.ThrowsAny<SharpTS.TypeSystem.Exceptions.TypeCheckException>(() => TestHarness.RunInterpreted(
             "interface RA<T> extends ReadonlyArray<T> {}\nfunction f(r: RA<number>) { r[0] = 5; }\n"));
     }
+
+    // ---- #365: recursive DeepReadonly over a self-referential interface ----
+    //
+    // `part.subparts` is the deferred alias `DeepReadonly<Part[]>`; indexing it resolves one level
+    // to `DeepReadonlyArray<Part>` (read-only numeric index of the still-deferred `DeepReadonly<Part>`),
+    // which only expands its members when one is touched. Exercises the conditional short-circuit,
+    // the concrete `T[number]` simplification, the `extends` type-param scope fix, and lazy
+    // member expansion on the indexed element.
+
+    private const string DeepReadonlyPreamble = """
+        interface Part { id: number; name: string; subparts: Part[]; updatePart(n: string): void; }
+        type NonFunctionPropertyNames<T> = { [K in keyof T]: T[K] extends Function ? never : K }[keyof T];
+        type DeepReadonly<T> =
+            T extends any[] ? DeepReadonlyArray<T[number]> :
+            T extends object ? DeepReadonlyObject<T> : T;
+        interface DeepReadonlyArray<T> extends ReadonlyArray<DeepReadonly<T>> {}
+        type DeepReadonlyObject<T> = { readonly [P in NonFunctionPropertyNames<T>]: DeepReadonly<T[P]>; };
+        """;
+
+    private static SharpTS.TypeSystem.Exceptions.TypeCheckException DeepReadonlyError(string body) =>
+        Assert.ThrowsAny<SharpTS.TypeSystem.Exceptions.TypeCheckException>(
+            () => TestHarness.RunInterpreted(DeepReadonlyPreamble + "\n" + body));
+
+    [Fact]
+    public void RecursiveDeepReadonly_IndexesArrayElement_ReadsMemberType()
+    {
+        // No TS7053 ("can't index") and the element member reads as `number`.
+        Assert.Equal("ok\n", TestHarness.RunInterpreted(DeepReadonlyPreamble + "\n" +
+            "function f10(part: DeepReadonly<Part>) { let id: number = part.subparts[0].id; }\n" +
+            "console.log(\"ok\");\n"));
+    }
+
+    [Fact]
+    public void RecursiveDeepReadonly_IndexedElementMember_HasPreciseType()
+    {
+        // The element member is `number`, not `any`: a string annotation is rejected (TS2322).
+        Assert.Contains("not assignable",
+            DeepReadonlyError("function f10(part: DeepReadonly<Part>) { let bad: string = part.subparts[0].id; }").Message);
+    }
+
+    [Fact]
+    public void RecursiveDeepReadonly_WriteThroughReadonlyIndex_Rejected()
+    {
+        // `part.subparts[0] = …` writes through the read-only numeric index → TS2542.
+        Assert.Contains("only permits reading",
+            DeepReadonlyError("function f10(part: DeepReadonly<Part>) { part.subparts[0] = part.subparts[0]; }").Message);
+    }
+
+    [Fact]
+    public void RecursiveDeepReadonly_WriteReadonlyElementMember_Rejected()
+    {
+        // `part.subparts[0].id = …` writes a read-only member of the deferred element → TS2540.
+        Assert.Contains("read-only property",
+            DeepReadonlyError("function f10(part: DeepReadonly<Part>) { part.subparts[0].id = part.subparts[0].id; }").Message);
+    }
+
+    [Fact]
+    public void ConcreteIndexedAccess_OverArray_ResolvesElementType()
+    {
+        // `Part[][number]` over a concrete array simplifies to the element type (not `any`).
+        const string preamble = "interface P { id: number }\ntype Elem = P[][number];\n";
+        Assert.Equal("ok\n", TestHarness.RunInterpreted(
+            preamble + "function f(e: Elem) { let n: number = e.id; }\nconsole.log(\"ok\");\n"));
+        Assert.ThrowsAny<SharpTS.TypeSystem.Exceptions.TypeCheckException>(() => TestHarness.RunInterpreted(
+            preamble + "function f(e: Elem) { let s: string = e.id; }\nconsole.log(\"ok\");\n"));
+    }
 }
