@@ -13,10 +13,13 @@ namespace SharpTS.Tests.SharedTests;
 /// resume labels are reachable and their <c>ret</c>/<c>br</c> are legal.
 ///
 /// Run against both modes; the interpreter already behaved correctly, so these double as a
-/// cross-mode parity guard. Cases that depend on still-open gaps are documented inline and
-/// intentionally not asserted here: generator <c>.throw()</c>/<c>.return()</c> injecting through
-/// a suspended <c>try</c> (#478), <c>break</c>/<c>continue</c> running an enclosing <c>finally</c>
-/// (#500), and the completion value of a normally-finished generator (#499) are out of scope.
+/// cross-mode parity guard. #500 extended the compiled scheme so that every non-local exit
+/// (<c>break</c>/<c>continue</c> leaving the try, and a <c>throw</c> or <c>return</c> from a catch
+/// or finally body) runs the enclosing <c>finally</c>(s) before transferring control — previously
+/// only <c>return</c> from the try body did. Cases that depend on still-open gaps are documented
+/// inline and intentionally not asserted here: generator <c>.throw()</c>/<c>.return()</c> injecting
+/// through a suspended <c>try</c> (#478) and the completion value of a normally-finished generator
+/// (#499) are out of scope.
 /// </summary>
 public class GeneratorTryFinallyTests
 {
@@ -234,6 +237,197 @@ public class GeneratorTryFinallyTests
         Assert.Equal("1\n2\n", TestHarness.Run(source, mode));
     }
 
+    // ---- #500: non-local exits other than a try-body return must run the enclosing finally ----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BreakOutOfTryFinally_RunsFinallyBeforeBreaking(ExecutionMode mode)
+    {
+        // The exact #500 repro: break leaving the try must run the finally first.
+        var source = """
+            function* g() {
+              while (true) {
+                try { yield 1; break; } finally { console.log("FIN"); }
+              }
+            }
+            for (const v of g()) console.log(v);
+            """;
+
+        Assert.Equal("1\nFIN\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ContinueOutOfTryFinally_RunsFinallyThatIteration(ExecutionMode mode)
+    {
+        // `continue` from inside the try must run the finally before jumping to the next iteration,
+        // and the code after the continue must be skipped on that iteration only.
+        var source = """
+            function* g() {
+              for (let i = 0; i < 3; i++) {
+                try {
+                  yield i;
+                  if (i === 1) continue;
+                  console.log("after" + i);
+                } finally {
+                  console.log("fin" + i);
+                }
+              }
+            }
+            for (const v of g()) console.log("got" + v);
+            """;
+
+        Assert.Equal("got0\nafter0\nfin0\ngot1\nfin1\ngot2\nafter2\nfin2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ThrowFromCatch_RunsFinallyThenPropagates(ExecutionMode mode)
+    {
+        // The exact #500 repro: a throw inside the catch must still run the finally before the
+        // exception propagates out of the generator to the consumer.
+        var source = """
+            function* g() {
+              try { yield 1; throw "a"; } catch (e) { throw "b"; } finally { console.log("FIN"); }
+            }
+            try { for (const v of g()) console.log(v); } catch (e) { console.log("outer " + e); }
+            """;
+
+        Assert.Equal("1\nFIN\nouter b\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ReturnFromCatch_RunsFinallyBeforeCompleting(ExecutionMode mode)
+    {
+        // A `return` from the catch body must run the finally; the yield after the try must not run.
+        var source = """
+            function* g() {
+              try { yield 1; throw "x"; } catch (e) { return; } finally { console.log("FIN"); }
+              yield 99;
+            }
+            for (const v of g()) console.log(v);
+            """;
+
+        Assert.Equal("1\nFIN\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BreakThroughNestedFinallys_RunsInnerThenOuter(ExecutionMode mode)
+    {
+        // A break that leaves two enclosing trys runs both finallys, innermost first.
+        var source = """
+            function* g() {
+              while (true) {
+                try {
+                  try { yield 1; break; } finally { console.log("inner"); }
+                } finally { console.log("outer"); }
+              }
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v1\ninner\nouter\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void LabeledBreakToOuterLoop_RunsInterveningFinally(ExecutionMode mode)
+    {
+        // A labeled break targeting the outer loop runs the finally of the inner loop's try.
+        var source = """
+            function* g() {
+              outer: for (let i = 0; i < 3; i++) {
+                for (let j = 0; j < 3; j++) {
+                  try { yield i * 10 + j; if (j === 1) break outer; } finally { console.log("fin" + i + j); }
+                }
+              }
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v0\nfin00\nv1\nfin01\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BreakToLoopBetweenTwoTrys_RunsOnlyInnerFinally(ExecutionMode mode)
+    {
+        // The break targets a loop that sits *between* two trys: only the finally inside that loop
+        // runs at the break; the outer finally runs once, later, when the generator completes.
+        var source = """
+            function* g() {
+              try {
+                for (let i = 0; i < 3; i++) {
+                  try { yield i; if (i === 1) break; } finally { console.log("inner" + i); }
+                }
+                console.log("after-loop");
+              } finally { console.log("OUTER"); }
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v0\ninner0\nv1\ninner1\nafter-loop\nOUTER\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BreakWithYieldingFinally_DrivesFinallyThenBreaks(ExecutionMode mode)
+    {
+        // The finally that runs on the break path itself yields; the break completes only after the
+        // finally's yields are driven, then control resumes after the loop.
+        var source = """
+            function* g() {
+              while (true) {
+                try { yield 1; break; } finally { yield 2; }
+              }
+              yield 3;
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v1\nv2\nv3\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ThrowFromFinally_RunsEnclosingFinallyThenPropagates(ExecutionMode mode)
+    {
+        // A throw raised inside a finally body must still run the enclosing finally before it
+        // propagates to the consumer.
+        var source = """
+            function* g() {
+              try {
+                try { yield 1; } finally { throw "boom"; }
+              } finally { console.log("OUTER"); }
+            }
+            try { for (const v of g()) console.log("v" + v); } catch (e) { console.log("caught " + e); }
+            """;
+
+        Assert.Equal("v1\nOUTER\ncaught boom\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BreakOutOfInnerCatchlessTry_RunsOuterFinally(ExecutionMode mode)
+    {
+        // The break leaves an inner try/catch that has no finally, nested in an outer try-with-
+        // finally; the outer finally must still run on the way out.
+        var source = """
+            function* g() {
+              while (true) {
+                try {
+                  try { yield 1; break; } catch (e) {}
+                } finally { console.log("OUTERFIN"); }
+              }
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v1\nOUTERFIN\n", TestHarness.Run(source, mode));
+    }
+
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NextValue_DeliveredToYieldInsideTry(ExecutionMode mode)
@@ -290,6 +484,15 @@ public class GeneratorTryFinallyTests
     [InlineData("function* g() { try { yield 1; } finally { yield 2; } } for (const v of g()) {}")]
     [InlineData("function* g() { while (true) { try { yield 1; break; } finally { console.log('f'); } } } for (const v of g()) {}")]
     [InlineData("function* inner(){ yield 2; } function* g() { try { yield 1; yield* inner(); } finally { console.log('f'); } } for (const v of g()) {}")]
+    // #500 control-flow shapes: continue, throw-from-catch, return-from-catch, nested-finally break,
+    // labeled break, break to a loop sitting between two trys, and a yielding finally on the break path.
+    [InlineData("function* g() { for (let i=0;i<2;i++){ try { yield i; continue; } finally { console.log('f'); } } } for (const v of g()) {}")]
+    [InlineData("function* g() { try { yield 1; throw 'a'; } catch (e) { throw 'b'; } finally { console.log('f'); } } try { for (const v of g()) {} } catch (e) {}")]
+    [InlineData("function* g() { try { yield 1; throw 'a'; } catch (e) { return; } finally { console.log('f'); } } for (const v of g()) {}")]
+    [InlineData("function* g() { while (true) { try { try { yield 1; break; } finally { console.log('a'); } } finally { console.log('b'); } } } for (const v of g()) {}")]
+    [InlineData("function* g() { outer: for(let i=0;i<2;i++){ for(let j=0;j<2;j++){ try { yield j; break outer; } finally { console.log('f'); } } } } for (const v of g()) {}")]
+    [InlineData("function* g() { try { for(let i=0;i<2;i++){ try { yield i; break; } finally { console.log('a'); } } } finally { console.log('b'); } } for (const v of g()) {}")]
+    [InlineData("function* g() { while (true) { try { yield 1; break; } finally { yield 2; } } } for (const v of g()) {}")]
     public void GeneratorTryFinallyWithYield_EmitsVerifiableIL(string source)
     {
         var errors = TestHarness.CompileAndVerifyOnly(source);
