@@ -36,12 +36,24 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
     private enum State { NotStarted, Suspended, Running, Completed }
     private State _state = State.NotStarted;
     private object? _yieldedValue;
-    private object? _returnValue;
+    // The generator's completion value. Defaults to undefined so a body that falls off the
+    // end (or a no-arg return()) reports { value: undefined, done: true }, not C# null.
+    private object? _returnValue = SharpTSUndefined.Instance;
     // The value passed to the next/return call that resumes the suspended yield.
     // ECMA-262 §27.5.3.3: `yield expr` evaluates to the argument of the resuming
     // `next(v)`. Defaults to undefined so a yield resumed without an explicit value
     // (for...of, yield* delegation, bare next()) evaluates to undefined.
     private object? _sentValue = SharpTSUndefined.Instance;
+
+    // How the suspended yield is resumed (ECMA-262 §27.5.3.4). A plain next(v) resumes
+    // normally; return(v)/throw(e) inject an abrupt completion at the yield point so any
+    // active try/finally blocks run before the generator settles. The resuming call sets
+    // this (and _injectedValue) before signaling the worker, which reads it on wake.
+    private enum ResumeKind { Next, Return, Throw }
+    private ResumeKind _resumeKind = ResumeKind.Next;
+    // Value carried by an abrupt resume: the return value for Return, the error for Throw.
+    private object? _injectedValue;
+
     private bool _closed;
     private Exception? _workerException;
 
@@ -73,8 +85,11 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
     /// </param>
     public SharpTSIteratorResult Next(object? sentValue)
     {
+        // A finished or disposed generator yields nothing more. The completion value is
+        // delivered exactly once (when the body finishes); later next() calls report
+        // undefined (ECMA-262 §27.5.3.3 → CreateIterResultObject(undefined, true)).
         if (_closed || _state == State.Completed)
-            return new SharpTSIteratorResult(_returnValue, done: true);
+            return new SharpTSIteratorResult(SharpTSUndefined.Instance, done: true);
 
         // Save caller's environment
         _callerEnv = _interpreter.Environment;
@@ -89,12 +104,78 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
         {
             // Resume: hand the sent value to the suspended yield, restore the
             // generator's environment, and signal the worker.
+            _resumeKind = ResumeKind.Next;
             _sentValue = sentValue;
             _state = State.Running;
             _callerReady.Set();
         }
 
-        // Wait for worker to yield or complete
+        return AwaitWorker();
+    }
+
+    /// <summary>
+    /// Resumes a suspended generator with a <c>return</c> abrupt completion, running any
+    /// active <c>try</c>/<c>finally</c> blocks before it settles as done
+    /// (ECMA-262 §27.5.3.4). A not-yet-started generator is closed without running its
+    /// body; an already-finished one simply reports the supplied value. If a <c>finally</c>
+    /// block yields, the generator suspends there and this returns that yielded value.
+    /// </summary>
+    public SharpTSIteratorResult Return(object? value = null)
+    {
+        // Never started: close without running the body — there is no finally to run.
+        if (_state == State.NotStarted)
+        {
+            _state = State.Completed;
+            return new SharpTSIteratorResult(value, done: true);
+        }
+
+        // Already finished/disposed: report { value, done: true } (no body to resume).
+        if (_closed || _state == State.Completed)
+            return new SharpTSIteratorResult(value, done: true);
+
+        // Suspended: inject the return at the yield point so finally blocks run. The body's
+        // completion (which a finally block may override) becomes the reported value.
+        _callerEnv = _interpreter.Environment;
+        _resumeKind = ResumeKind.Return;
+        _injectedValue = value;
+        _state = State.Running;
+        _callerReady.Set();
+
+        return AwaitWorker();
+    }
+
+    /// <summary>
+    /// Resumes a suspended generator with a <c>throw</c> abrupt completion at the yield
+    /// point, running active <c>catch</c>/<c>finally</c> blocks (ECMA-262 §27.5.3.4). If a
+    /// <c>catch</c> handles it the generator continues (and may yield again); otherwise the
+    /// error propagates to this caller. A not-yet-started or finished generator just throws.
+    /// </summary>
+    public SharpTSIteratorResult Throw(object? error = null)
+    {
+        // Never started or already finished/disposed: nothing to resume — just throw.
+        if (_state == State.NotStarted || _closed || _state == State.Completed)
+        {
+            _state = State.Completed;
+            throw ThrowException.FromResult(error);
+        }
+
+        // Suspended: inject the throw at the yield point so catch/finally blocks run.
+        _callerEnv = _interpreter.Environment;
+        _resumeKind = ResumeKind.Throw;
+        _injectedValue = error;
+        _state = State.Running;
+        _callerReady.Set();
+
+        return AwaitWorker();
+    }
+
+    /// <summary>
+    /// Blocks until the worker reaches its next yield or completes, then either rethrows a
+    /// worker exception (an uncaught throw or a finally that threw) or builds the iterator
+    /// result. Shared by <see cref="Next(object?)"/>, <see cref="Return"/> and <see cref="Throw"/>.
+    /// </summary>
+    private SharpTSIteratorResult AwaitWorker()
+    {
         _workerReady.Wait();
         _workerReady.Reset();
 
@@ -110,39 +191,6 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
             return new SharpTSIteratorResult(_returnValue, done: true);
 
         return new SharpTSIteratorResult(_yieldedValue, done: false);
-    }
-
-    /// <summary>
-    /// Closes the generator and returns a result with the given value.
-    /// </summary>
-    public SharpTSIteratorResult Return(object? value = null)
-    {
-        _closed = true;
-        _returnValue = value;
-
-        // If the worker is suspended, wake it so it can exit
-        if (_state == State.Suspended)
-        {
-            _callerReady.Set();
-        }
-
-        return new SharpTSIteratorResult(value, done: true);
-    }
-
-    /// <summary>
-    /// Throws an exception at the current yield point.
-    /// </summary>
-    public SharpTSIteratorResult Throw(object? error = null)
-    {
-        _closed = true;
-
-        if (_state == State.Suspended)
-        {
-            _callerReady.Set();
-        }
-
-        string message = error?.ToString() ?? "Generator.throw() called";
-        throw new ThrowException(error ?? message);
     }
 
     /// <summary>
@@ -169,6 +217,13 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
             if (result.Type == ExecutionResult.ResultType.Return)
             {
                 _returnValue = result.Value.ToObject();
+            }
+            else if (result.Type == ExecutionResult.ResultType.Throw)
+            {
+                // An uncaught guest throw — from the body itself or from a throw(e) injection
+                // that no catch handled — completes the generator abnormally and propagates
+                // to the resuming next()/throw() caller.
+                _workerException = ThrowException.FromResult(result.Value.ToObject());
             }
         }
         catch (Exception ex) when (ex is not ThreadInterruptedException)
@@ -251,7 +306,7 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
         _interpreter.YieldCallback = _callerYieldCallback;
 
         _workerReady.Set();    // Signal caller that value is ready
-        _callerReady.Wait();   // Wait for next Next() call
+        _callerReady.Wait();   // Wait for the resuming next/return/throw call
         _callerReady.Reset();
 
         // Save caller state (may have changed), restore generator state
@@ -260,7 +315,24 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
         _interpreter.SetEnvironment(generatorEnv);
         _interpreter.YieldCallback = HandleYieldCallback;
 
-        return _sentValue;
+        // Inject the abrupt completion requested by return(v)/throw(e) at this yield point
+        // (ECMA-262 §27.5.3.4). The exception unwinds through any active try/finally blocks
+        // on the worker's call stack — running their finally handlers — before settling.
+        // Consume the resume kind so a later wake that doesn't set it (e.g. Dispose) resumes
+        // normally instead of re-injecting a stale abrupt completion.
+        var kind = _resumeKind;
+        var injected = _injectedValue;
+        _resumeKind = ResumeKind.Next;
+        _injectedValue = null;
+        switch (kind)
+        {
+            case ResumeKind.Return:
+                throw new GeneratorReturnException(injected);
+            case ResumeKind.Throw:
+                throw ThrowException.FromResult(injected);
+            default:
+                return _sentValue;
+        }
     }
 
     // IEnumerable implementation for for...of integration
@@ -312,10 +384,20 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
     private enum State { NotStarted, Suspended, Running, Completed }
     private State _state = State.NotStarted;
     private object? _yieldedValue;
-    private object? _returnValue;
+    // The generator's completion value. Defaults to undefined so a body that falls off the
+    // end (or a no-arg return()) reports { value: undefined, done: true }, not C# null.
+    private object? _returnValue = SharpTSUndefined.Instance;
     // The value passed to the resuming next(v); becomes the result of the suspended
     // yield (ECMA-262 §27.5.3.3). Defaults to undefined for implicit resumes.
     private object? _sentValue = SharpTSUndefined.Instance;
+
+    // How the suspended yield is resumed (ECMA-262 §27.5.3.4): a plain next(v), or a
+    // return(v)/throw(e) that injects an abrupt completion so active try/finally blocks run.
+    private enum ResumeKind { Next, Return, Throw }
+    private ResumeKind _resumeKind = ResumeKind.Next;
+    // Value carried by an abrupt resume: the return value for Return, the error for Throw.
+    private object? _injectedValue;
+
     private bool _closed;
     private Exception? _workerException;
 
@@ -337,8 +419,10 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
     /// </summary>
     public SharpTSIteratorResult Next(object? sentValue)
     {
+        // A finished/disposed generator delivers undefined; the completion value is reported
+        // only once, when the body finishes (ECMA-262 §27.5.3.3).
         if (_closed || _state == State.Completed)
-            return new SharpTSIteratorResult(_returnValue, done: true);
+            return new SharpTSIteratorResult(SharpTSUndefined.Instance, done: true);
 
         _callerEnv = _interpreter.Environment;
 
@@ -350,11 +434,66 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
         }
         else
         {
+            _resumeKind = ResumeKind.Next;
             _sentValue = sentValue;
             _state = State.Running;
             _callerReady.Set();
         }
 
+        return AwaitWorker();
+    }
+
+    /// <summary>
+    /// Resumes a suspended generator with a <c>return</c> abrupt completion, running active
+    /// <c>try</c>/<c>finally</c> blocks (ECMA-262 §27.5.3.4). See <see cref="SharpTSGenerator.Return"/>.
+    /// </summary>
+    public SharpTSIteratorResult Return(object? value = null)
+    {
+        if (_state == State.NotStarted)
+        {
+            _state = State.Completed;
+            return new SharpTSIteratorResult(value, done: true);
+        }
+
+        if (_closed || _state == State.Completed)
+            return new SharpTSIteratorResult(value, done: true);
+
+        _callerEnv = _interpreter.Environment;
+        _resumeKind = ResumeKind.Return;
+        _injectedValue = value;
+        _state = State.Running;
+        _callerReady.Set();
+
+        return AwaitWorker();
+    }
+
+    /// <summary>
+    /// Resumes a suspended generator with a <c>throw</c> abrupt completion, running active
+    /// <c>catch</c>/<c>finally</c> blocks (ECMA-262 §27.5.3.4). See <see cref="SharpTSGenerator.Throw"/>.
+    /// </summary>
+    public SharpTSIteratorResult Throw(object? error = null)
+    {
+        if (_state == State.NotStarted || _closed || _state == State.Completed)
+        {
+            _state = State.Completed;
+            throw ThrowException.FromResult(error);
+        }
+
+        _callerEnv = _interpreter.Environment;
+        _resumeKind = ResumeKind.Throw;
+        _injectedValue = error;
+        _state = State.Running;
+        _callerReady.Set();
+
+        return AwaitWorker();
+    }
+
+    /// <summary>
+    /// Blocks until the worker yields again or completes, rethrowing a worker exception or
+    /// building the iterator result. Shared by next/return/throw.
+    /// </summary>
+    private SharpTSIteratorResult AwaitWorker()
+    {
         _workerReady.Wait();
         _workerReady.Reset();
 
@@ -370,22 +509,6 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
             return new SharpTSIteratorResult(_returnValue, done: true);
 
         return new SharpTSIteratorResult(_yieldedValue, done: false);
-    }
-
-    public SharpTSIteratorResult Return(object? value = null)
-    {
-        _closed = true;
-        _returnValue = value;
-        if (_state == State.Suspended) _callerReady.Set();
-        return new SharpTSIteratorResult(value, done: true);
-    }
-
-    public SharpTSIteratorResult Throw(object? error = null)
-    {
-        _closed = true;
-        if (_state == State.Suspended) _callerReady.Set();
-        string message = error?.ToString() ?? "Generator.throw() called";
-        throw new ThrowException(error ?? message);
     }
 
     private void RunBody()
@@ -408,6 +531,12 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
                 if (result.Type == ExecutionResult.ResultType.Return)
                 {
                     _returnValue = result.Value.ToObject();
+                }
+                else if (result.Type == ExecutionResult.ResultType.Throw)
+                {
+                    // An uncaught guest throw — from the body or an unhandled throw(e)
+                    // injection — propagates to the resuming next()/throw() caller.
+                    _workerException = ThrowException.FromResult(result.Value.ToObject());
                 }
             }
         }
@@ -453,7 +582,22 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
         _interpreter.SetEnvironment(generatorEnv);
         _interpreter.YieldCallback = HandleYieldCallback;
 
-        return _sentValue;
+        // Inject the abrupt completion requested by return(v)/throw(e) (ECMA-262 §27.5.3.4),
+        // unwinding through active try/finally blocks on the worker's call stack. Consume the
+        // resume kind so a later non-setting wake (e.g. Dispose) resumes normally.
+        var kind = _resumeKind;
+        var injected = _injectedValue;
+        _resumeKind = ResumeKind.Next;
+        _injectedValue = null;
+        switch (kind)
+        {
+            case ResumeKind.Return:
+                throw new GeneratorReturnException(injected);
+            case ResumeKind.Throw:
+                throw ThrowException.FromResult(injected);
+            default:
+                return _sentValue;
+        }
     }
 
     public IEnumerator<object?> GetEnumerator()

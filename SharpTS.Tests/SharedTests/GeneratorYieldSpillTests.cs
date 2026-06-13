@@ -11,11 +11,11 @@ namespace SharpTS.Tests.SharedTests;
 /// <c>"a…"</c>). The fix mirrors live spill locals to state-machine fields at the yield and
 /// restores them on resume.
 ///
-/// These assert the spilled prefix is <em>present</em> rather than the exact line, because the
-/// value a resumed <c>yield</c> expression evaluates to differs between modes (interpreter:
-/// <c>undefined</c>; compiler: <c>null</c>) — a separate, pre-existing gap (compiled generators
-/// don't thread <c>.next(arg)</c> / the JS <c>undefined</c> sentinel back into the yield
-/// expression). The prefix-survival is what #414 fixes and is identical across modes.
+/// These now assert the <em>exact</em> output across both modes. They previously asserted only
+/// that the spilled prefix was present, because a resumed <c>yield</c> evaluated to CLR
+/// <c>null</c> in compiled mode versus JS <c>undefined</c> in the interpreter — that divergence
+/// is fixed by #443 (compiled generators now load the <c>$Undefined</c> sentinel for a resumed
+/// yield with no sent value), so the resume value is identical across modes.
 /// </summary>
 public class GeneratorYieldSpillTests
 {
@@ -27,8 +27,9 @@ public class GeneratorYieldSpillTests
             function* g() { console.log("PFX:" + (yield 1)); }
             for (const x of g()) {}
             """;
-        // Pre-fix compiled output was "0" (prefix lost). The prefix must now be present.
-        Assert.StartsWith("PFX:", TestHarness.Run(source, mode));
+        // Pre-fix compiled output was "0" (prefix lost). The prefix now survives (#414) and the
+        // resumed `yield 1` evaluates to `undefined` in both modes (#443).
+        Assert.Equal("PFX:undefined\n", TestHarness.Run(source, mode));
     }
 
     [Theory]
@@ -39,7 +40,7 @@ public class GeneratorYieldSpillTests
             function* g() { console.log("TAG:" + (yield 1) + "|" + (yield 2)); }
             for (const x of g()) {}
             """;
-        Assert.Contains("TAG:", TestHarness.Run(source, mode));
+        Assert.Equal("TAG:undefined|undefined\n", TestHarness.Run(source, mode));
     }
 
     [Theory]
@@ -50,7 +51,7 @@ public class GeneratorYieldSpillTests
             function* g() { console.log(`[${"head"}-${yield 1}]`); }
             for (const x of g()) {}
             """;
-        Assert.Contains("[head-", TestHarness.Run(source, mode));
+        Assert.Equal("[head-undefined]\n", TestHarness.Run(source, mode));
     }
 
     [Theory]
@@ -62,6 +63,8 @@ public class GeneratorYieldSpillTests
             function* g() { console.log("PFX:" + (yield* inner())); }
             for (const x of g()) {}
             """;
-        Assert.StartsWith("PFX:", TestHarness.Run(source, mode));
+        // `inner` runs off the end with no `return`, so the `yield*` completion value is
+        // `undefined` in both modes (#443).
+        Assert.Equal("PFX:undefined\n", TestHarness.Run(source, mode));
     }
 }

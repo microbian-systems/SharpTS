@@ -808,6 +808,35 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Property source for the infer-match path — the <see cref="TypeInfo.Record"/>/<see cref="TypeInfo.Interface"/>
+    /// branches of <see cref="CheckExtendsRecursive"/>, which look up each extends-clause member on the
+    /// check type. For a class instance this contributes the full structural surface tsc matches against:
+    /// public fields, getters, AND methods, merged across the entire <c>Superclass</c> chain (derived
+    /// shadows inherited; the synthetic <c>constructor</c> and private/protected members are excluded),
+    /// with generic-base type arguments substituted — so an extends clause can resolve against an
+    /// inherited or a method member (#461 own methods, #492 inherited members). Reuses the structural-compat
+    /// member collectors, keeping infer-matching consistent with structural assignability.
+    ///
+    /// Deliberately distinct from <see cref="ExtractPropertiesWithTypes"/>, which stays
+    /// own-fields-and-getters-only because it also feeds keyof/mapped-type machinery (folding methods or
+    /// inherited members into a class's key domain there is a separate, broader decision). Adding members
+    /// can only turn a currently-failing structural match into a success, never the reverse, so it cannot
+    /// perturb conditionals that already resolved. Built-in record members (Date/Map/…) are supplied
+    /// separately by <see cref="ResolveBuiltInRecordMember"/> at the call sites. Non-class types defer to
+    /// <see cref="ExtractPropertiesWithTypes"/> unchanged.
+    /// </summary>
+    private Dictionary<string, TypeInfo> ExtractInferMatchProperties(TypeInfo type) => type switch
+    {
+        TypeInfo.Class cls => CollectPublicInstanceMembers(cls),
+        TypeInfo.Instance { ResolvedClassType: TypeInfo.Class instCls } => CollectPublicInstanceMembers(instCls),
+        TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig
+            => CollectGenericClassMembers(gc, ig.TypeArguments),
+        TypeInfo.Instance { ResolvedClassType: TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig }
+            => CollectGenericClassMembers(gc, ig.TypeArguments),
+        _ => ExtractPropertiesWithTypes(type)
+    };
+
+    /// <summary>
     /// Extracts the set of optional property names from an object-like type.
     /// </summary>
     private HashSet<string> ExtractOptionalProperties(TypeInfo type)

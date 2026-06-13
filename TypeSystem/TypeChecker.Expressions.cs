@@ -817,6 +817,103 @@ public partial class TypeChecker
         };
     }
 
+    /// <summary>
+    /// Widens the inferred type of an un-annotated <c>const</c> initializer to match TypeScript.
+    /// A <c>const</c> binding freezes the <em>binding</em>, not the mutability of an object/array
+    /// literal's members, so a fresh object- or array-literal initializer has its property/element
+    /// types widened to their base types (<c>const o = { n: 1 }</c> ⇒ <c>{ n: number }</c>), which
+    /// keeps a later <c>o.n = 9</c> legal. A bare primitive literal keeps its literal type
+    /// (<c>const x = 1</c> ⇒ <c>1</c>), and <c>as const</c> assertions keep their readonly literal
+    /// types — including a <c>as const</c> nested inside a plain object literal. Non-literal
+    /// initializers (variables, calls, …) are not "fresh" and pass through unchanged.
+    /// </summary>
+    private static TypeInfo WidenConstInitializerType(Expr initializer, TypeInfo inferredType)
+        => WidenFreshLiteralsForConst(initializer, inferredType, topLevel: true);
+
+    /// <summary>
+    /// Recursively widens the literal types produced by <em>fresh</em> object/array literals for a
+    /// <c>const</c> binding, while preserving <c>as const</c> assertions and non-literal
+    /// expressions. At the binding top level a bare primitive literal is preserved
+    /// (<c>const x = 1</c> ⇒ <c>1</c>); inside an object literal it is widened
+    /// (<c>{ a: 1 }</c> ⇒ <c>{ a: number }</c>), mirroring the <c>let</c> path.
+    /// </summary>
+    private static TypeInfo WidenFreshLiteralsForConst(Expr expr, TypeInfo type, bool topLevel)
+    {
+        // `satisfies` and parentheses are transparent to widening:
+        // `const o = ({ n: 1 }) satisfies T` widens exactly like `const o = { n: 1 }`.
+        Expr inner = expr;
+        while (true)
+        {
+            if (inner is Expr.Satisfies sat) { inner = sat.Expression; continue; }
+            if (inner is Expr.Grouping grp) { inner = grp.Expression; continue; }
+            break;
+        }
+
+        switch (inner)
+        {
+            // `as const` keeps its readonly literal property/element types.
+            case Expr.TypeAssertion { TargetType: "const" }:
+                return type;
+
+            // A fresh object literal widens each member; a member that is itself `as const` (or a
+            // non-fresh reference) is preserved by recursing on its value expression.
+            case Expr.ObjectLiteral obj when type is TypeInfo.Record rec:
+                return WidenConstObjectLiteralFields(obj, rec);
+
+            // A fresh array literal widens its element type. Element expressions are collapsed into
+            // a single element type during inference, so an `as const` *element* is not kept.
+            case Expr.ArrayLiteral when type is TypeInfo.Array arr:
+                return new TypeInfo.Array(WidenLiteralType(arr.ElementType));
+
+            // A bare primitive literal: preserved at the binding top level, widened inside a literal.
+            case Expr.Literal:
+                return topLevel ? type : WidenLiteralType(type);
+
+            // Variables, calls, non-const assertions, …: not fresh — preserve as-is.
+            default:
+                return type;
+        }
+    }
+
+    /// <summary>
+    /// Widens the fields of a fresh object-literal <see cref="TypeInfo.Record"/> for a <c>const</c>
+    /// binding. Direct (<c>name: value</c>) members recurse so a nested <c>as const</c> member keeps
+    /// its literal types; spread/computed/accessor members widen conservatively. Other record
+    /// metadata (optional/getter-only/index signatures, …) is preserved.
+    /// </summary>
+    private static TypeInfo WidenConstObjectLiteralFields(Expr.ObjectLiteral obj, TypeInfo.Record rec)
+    {
+        // Map each statically-named, non-spread `name: value` member to its value expression.
+        var valueExprByName = new Dictionary<string, Expr>();
+        foreach (var prop in obj.Properties)
+        {
+            if (prop.IsSpread || prop.Kind != Expr.ObjectPropertyKind.Value) continue;
+            string? name = prop.Key switch
+            {
+                Expr.IdentifierKey ik => ik.Name.Lexeme,
+                Expr.LiteralKey { Literal.Literal: string s } => s,
+                _ => null,
+            };
+            if (name != null) valueExprByName[name] = prop.Value;
+        }
+
+        var widenedFields = new Dictionary<string, TypeInfo>(rec.Fields.Count);
+        foreach (var (name, fieldType) in rec.Fields)
+        {
+            widenedFields[name] = valueExprByName.TryGetValue(name, out var valueExpr)
+                ? WidenFreshLiteralsForConst(valueExpr, fieldType, topLevel: false)
+                : WidenLiteralType(fieldType);
+        }
+
+        return rec with
+        {
+            Fields = widenedFields.ToFrozenDictionary(),
+            StringIndexType = rec.StringIndexType != null ? WidenLiteralType(rec.StringIndexType) : null,
+            NumberIndexType = rec.NumberIndexType != null ? WidenLiteralType(rec.NumberIndexType) : null,
+            SymbolIndexType = rec.SymbolIndexType != null ? WidenLiteralType(rec.SymbolIndexType) : null,
+        };
+    }
+
     private TypeInfo CheckArray(Expr.ArrayLiteral array)
     {
         if (array.Elements.Count == 0) return new TypeInfo.Array(new TypeInfo.Any()); // Empty array is any[]? or generic?

@@ -1,4 +1,5 @@
 using SharpTS.TypeSystem.Exceptions;
+using SharpTS.Runtime.BuiltIns;
 using System.Collections.Frozen;
 
 namespace SharpTS.TypeSystem;
@@ -629,8 +630,9 @@ public partial class TypeChecker
             foreach (var (key, extendsFieldType) in extendsRec.Fields)
             {
                 if (!checkProps.TryGetValue(key, out var checkFieldType))
-                    return false;
-                if (!CheckExtendsRecursive(checkFieldType, extendsFieldType, inferredTypes))
+                    checkFieldType = ResolveBuiltInRecordMember(checkType, key);
+                if (checkFieldType is null
+                    || !CheckExtendsRecursive(checkFieldType, extendsFieldType, inferredTypes))
                     return false;
             }
             return true;
@@ -655,8 +657,9 @@ public partial class TypeChecker
                     continue; // Optional members don't need to exist
 
                 if (!checkProps.TryGetValue(key, out var checkFieldType))
-                    return false;
-                if (!CheckExtendsRecursive(checkFieldType, extendsFieldType, inferredTypes))
+                    checkFieldType = ResolveBuiltInRecordMember(checkType, key);
+                if (checkFieldType is null
+                    || !CheckExtendsRecursive(checkFieldType, extendsFieldType, inferredTypes))
                     return false;
             }
             return true;
@@ -674,31 +677,29 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Property source for the infer-match path — the <see cref="TypeInfo.Record"/>/<see cref="TypeInfo.Interface"/>
-    /// branches of <see cref="CheckExtendsRecursive"/>, which look up each extends-clause member on the
-    /// check type. For a class instance this contributes the full structural surface tsc matches against:
-    /// public fields, getters, AND methods, merged across the entire <c>Superclass</c> chain
-    /// (derived shadows inherited; the synthetic <c>constructor</c> and private/protected members are
-    /// excluded). Generic bases have their type arguments substituted.
-    ///
-    /// This is the deliberate divergence from <see cref="ExtractPropertiesWithTypes"/>, which stays
-    /// own-fields-and-getters-only because it also feeds keyof/mapped-type machinery (adding methods or
-    /// inherited members to a class's key domain there is a separate, broader decision). Routing only
-    /// the two infer-match call sites here keeps that blast radius contained while letting an extends
-    /// clause resolve against an inherited or method member (#461 own methods, #492 inherited members).
-    /// Adding members can only turn a currently-failing structural match into a success, never the
-    /// reverse, so it cannot perturb conditionals that already resolved. Non-class types defer to
-    /// <see cref="ExtractPropertiesWithTypes"/> unchanged.
+    /// Resolves the type of a single instance member on a dedicated built-in type record
+    /// (Date/RegExp/Map/Set/Promise and the weak/iterator variants) for conditional-type infer
+    /// matching — e.g. so <c>T extends { toJSON(): infer R }</c> can see <c>Date.toJSON: () =&gt; string</c>
+    /// (#491). Delegates to the same <see cref="BuiltInTypes"/> model that ordinary <c>value.member</c>
+    /// reads use, so both agree on one source of truth. Returns null when <paramref name="checkType"/>
+    /// is not such a record or the member is absent — the infer match then fails (false branch), exactly
+    /// as the previous empty-dictionary lookup did.
     /// </summary>
-    private Dictionary<string, TypeInfo> ExtractInferMatchProperties(TypeInfo type) => type switch
+    private static TypeInfo? ResolveBuiltInRecordMember(TypeInfo checkType, string memberName) => checkType switch
     {
-        TypeInfo.Class cls => CollectPublicInstanceMembers(cls),
-        TypeInfo.Instance { ResolvedClassType: TypeInfo.Class instCls } => CollectPublicInstanceMembers(instCls),
-        TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig
-            => CollectGenericClassMembers(gc, ig.TypeArguments),
-        TypeInfo.Instance { ResolvedClassType: TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig }
-            => CollectGenericClassMembers(gc, ig.TypeArguments),
-        _ => ExtractPropertiesWithTypes(type)
+        TypeInfo.Date => BuiltInTypes.GetDateInstanceMemberType(memberName),
+        TypeInfo.RegExp => BuiltInTypes.GetRegExpMemberType(memberName),
+        TypeInfo.Map m => BuiltInTypes.GetMapMemberType(memberName, m.KeyType, m.ValueType),
+        TypeInfo.Set s => BuiltInTypes.GetSetMemberType(memberName, s.ElementType),
+        TypeInfo.WeakMap wm => BuiltInTypes.GetWeakMapMemberType(memberName, wm.KeyType, wm.ValueType),
+        TypeInfo.WeakSet ws => BuiltInTypes.GetWeakSetMemberType(memberName, ws.ElementType),
+        TypeInfo.WeakRef wr => BuiltInTypes.GetWeakRefMemberType(memberName, wr.TargetType),
+        TypeInfo.FinalizationRegistry fr => BuiltInTypes.GetFinalizationRegistryMemberType(memberName, fr.TargetType),
+        TypeInfo.Promise p => BuiltInTypes.GetPromiseMemberType(memberName, p.ValueType),
+        TypeInfo.Iterator it => BuiltInTypes.GetIteratorMemberType(memberName, it.ElementType),
+        TypeInfo.Generator g => BuiltInTypes.GetIteratorMemberType(memberName, g.YieldType),
+        TypeInfo.AsyncGenerator ag => BuiltInTypes.GetIteratorMemberType(memberName, ag.YieldType),
+        _ => null
     };
 
     /// <summary>

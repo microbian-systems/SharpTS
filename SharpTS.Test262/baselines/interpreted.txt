@@ -423,7 +423,7 @@ test/built-ins/Array/prototype/every/15.4.4.16-1-3.js RuntimeError
 test/built-ins/Array/prototype/every/15.4.4.16-1-4.js RuntimeError
 test/built-ins/Array/prototype/every/15.4.4.16-1-5.js RuntimeError
 test/built-ins/Array/prototype/every/15.4.4.16-1-6.js RuntimeError
-test/built-ins/Array/prototype/every/15.4.4.16-1-7.js Fail
+test/built-ins/Array/prototype/every/15.4.4.16-1-7.js Pass
 test/built-ins/Array/prototype/every/15.4.4.16-1-8.js Fail
 test/built-ins/Array/prototype/every/15.4.4.16-1-9.js RuntimeError
 test/built-ins/Array/prototype/every/15.4.4.16-2-1.js Pass
@@ -619,7 +619,7 @@ test/built-ins/Array/prototype/every/15.4.4.16-8-5.js RuntimeError
 test/built-ins/Array/prototype/every/15.4.4.16-8-6.js RuntimeError
 test/built-ins/Array/prototype/every/15.4.4.16-8-7.js RuntimeError
 test/built-ins/Array/prototype/every/15.4.4.16-8-8.js RuntimeError
-test/built-ins/Array/prototype/every/call-with-boolean.js RuntimeError
+test/built-ins/Array/prototype/every/call-with-boolean.js Pass
 test/built-ins/Array/prototype/every/callbackfn-resize-arraybuffer.js RuntimeError
 test/built-ins/Array/prototype/every/length.js Fail
 test/built-ins/Array/prototype/every/name.js Fail
@@ -663,7 +663,7 @@ test/built-ins/Array/prototype/filter/15.4.4.20-1-3.js RuntimeError
 test/built-ins/Array/prototype/filter/15.4.4.20-1-4.js RuntimeError
 test/built-ins/Array/prototype/filter/15.4.4.20-1-5.js RuntimeError
 test/built-ins/Array/prototype/filter/15.4.4.20-1-6.js RuntimeError
-test/built-ins/Array/prototype/filter/15.4.4.20-1-7.js Fail
+test/built-ins/Array/prototype/filter/15.4.4.20-1-7.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-1-8.js Fail
 test/built-ins/Array/prototype/filter/15.4.4.20-1-9.js RuntimeError
 test/built-ins/Array/prototype/filter/15.4.4.20-10-1.js Pass
@@ -868,7 +868,7 @@ test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-6.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-7.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-8.js Pass
 test/built-ins/Array/prototype/filter/15.4.4.20-9-c-iii-9.js Pass
-test/built-ins/Array/prototype/filter/call-with-boolean.js RuntimeError
+test/built-ins/Array/prototype/filter/call-with-boolean.js Pass
 test/built-ins/Array/prototype/filter/callbackfn-resize-arraybuffer.js RuntimeError
 test/built-ins/Array/prototype/filter/create-ctor-non-object.js Fail
 test/built-ins/Array/prototype/filter/create-ctor-poisoned.js Fail
@@ -1042,7 +1042,7 @@ test/built-ins/Array/prototype/forEach/15.4.4.18-1-3.js RuntimeError
 test/built-ins/Array/prototype/forEach/15.4.4.18-1-4.js RuntimeError
 test/built-ins/Array/prototype/forEach/15.4.4.18-1-5.js RuntimeError
 test/built-ins/Array/prototype/forEach/15.4.4.18-1-6.js RuntimeError
-test/built-ins/Array/prototype/forEach/15.4.4.18-1-7.js Fail
+test/built-ins/Array/prototype/forEach/15.4.4.18-1-7.js Pass
 test/built-ins/Array/prototype/forEach/15.4.4.18-1-8.js Fail
 test/built-ins/Array/prototype/forEach/15.4.4.18-1-9.js RuntimeError
 test/built-ins/Array/prototype/forEach/15.4.4.18-2-1.js Pass
@@ -1211,7 +1211,7 @@ test/built-ins/Array/prototype/forEach/15.4.4.18-8-8.js RuntimeError
 test/built-ins/Array/prototype/forEach/15.4.4.18-8-9.js RuntimeError
 test/built-ins/Array/prototype/forEach/S15.4.4.18_A1.js Pass
 test/built-ins/Array/prototype/forEach/S15.4.4.18_A2.js Pass
-test/built-ins/Array/prototype/forEach/call-with-boolean.js RuntimeError
+test/built-ins/Array/prototype/forEach/call-with-boolean.js Pass
 test/built-ins/Array/prototype/forEach/callbackfn-resize-arraybuffer.js RuntimeError
 test/built-ins/Array/prototype/forEach/length.js Fail
 test/built-ins/Array/prototype/forEach/name.js Fail
@@ -1697,7 +1697,7 @@ test/built-ins/Array/prototype/map/15.4.4.19-1-3.js RuntimeError
 test/built-ins/Array/prototype/map/15.4.4.19-1-4.js RuntimeError
 test/built-ins/Array/prototype/map/15.4.4.19-1-5.js RuntimeError
 test/built-ins/Array/prototype/map/15.4.4.19-1-6.js RuntimeError
-test/built-ins/Array/prototype/map/15.4.4.19-1-7.js Fail
+test/built-ins/Array/prototype/map/15.4.4.19-1-7.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-1-8.js Fail
 test/built-ins/Array/prototype/map/15.4.4.19-1-9.js RuntimeError
 test/built-ins/Array/prototype/map/15.4.4.19-2-1.js Pass
@@ -1874,7 +1874,7 @@ test/built-ins/Array/prototype/map/15.4.4.19-9-6.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-9-7.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-9-8.js Pass
 test/built-ins/Array/prototype/map/15.4.4.19-9-9.js Pass
-test/built-ins/Array/prototype/map/call-with-boolean.js RuntimeError
+test/built-ins/Array/prototype/map/call-with-boolean.js Pass
 test/built-ins/Array/prototype/map/callbackfn-resize-arraybuffer.js RuntimeError
 test/built-ins/Array/prototype/map/create-ctor-non-object.js Fail
 test/built-ins/Array/prototype/map/create-ctor-poisoned.js Fail
@@ -1963,7 +1963,7 @@ test/built-ins/Array/prototype/reduce/15.4.4.21-1-3.js RuntimeError
 test/built-ins/Array/prototype/reduce/15.4.4.21-1-4.js RuntimeError
 test/built-ins/Array/prototype/reduce/15.4.4.21-1-5.js RuntimeError
 test/built-ins/Array/prototype/reduce/15.4.4.21-1-6.js RuntimeError
-test/built-ins/Array/prototype/reduce/15.4.4.21-1-7.js Fail
+test/built-ins/Array/prototype/reduce/15.4.4.21-1-7.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-1-8.js Fail
 test/built-ins/Array/prototype/reduce/15.4.4.21-1-9.js RuntimeError
 test/built-ins/Array/prototype/reduce/15.4.4.21-10-1.js Pass
@@ -2202,7 +2202,7 @@ test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-5.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-7.js Pass
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-8.js Fail
 test/built-ins/Array/prototype/reduce/15.4.4.21-9-c-ii-9.js Pass
-test/built-ins/Array/prototype/reduce/call-with-boolean.js RuntimeError
+test/built-ins/Array/prototype/reduce/call-with-boolean.js Pass
 test/built-ins/Array/prototype/reduce/callbackfn-resize-arraybuffer.js RuntimeError
 test/built-ins/Array/prototype/reduce/length.js Fail
 test/built-ins/Array/prototype/reduce/name.js Fail
@@ -2223,7 +2223,7 @@ test/built-ins/Array/prototype/reduceRight/15.4.4.22-1-3.js RuntimeError
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-1-4.js RuntimeError
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-1-5.js RuntimeError
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-1-6.js RuntimeError
-test/built-ins/Array/prototype/reduceRight/15.4.4.22-1-7.js Fail
+test/built-ins/Array/prototype/reduceRight/15.4.4.22-1-7.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-1-8.js Fail
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-1-9.js RuntimeError
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-10-1.js Pass
@@ -2461,7 +2461,7 @@ test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-5.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-7.js Pass
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-8.js Fail
 test/built-ins/Array/prototype/reduceRight/15.4.4.22-9-c-ii-9.js Pass
-test/built-ins/Array/prototype/reduceRight/call-with-boolean.js RuntimeError
+test/built-ins/Array/prototype/reduceRight/call-with-boolean.js Pass
 test/built-ins/Array/prototype/reduceRight/callbackfn-resize-arraybuffer.js RuntimeError
 test/built-ins/Array/prototype/reduceRight/length-near-integer-limit.js Fail
 test/built-ins/Array/prototype/reduceRight/length.js Fail
@@ -2592,7 +2592,7 @@ test/built-ins/Array/prototype/some/15.4.4.17-1-3.js RuntimeError
 test/built-ins/Array/prototype/some/15.4.4.17-1-4.js RuntimeError
 test/built-ins/Array/prototype/some/15.4.4.17-1-5.js RuntimeError
 test/built-ins/Array/prototype/some/15.4.4.17-1-6.js RuntimeError
-test/built-ins/Array/prototype/some/15.4.4.17-1-7.js Fail
+test/built-ins/Array/prototype/some/15.4.4.17-1-7.js Pass
 test/built-ins/Array/prototype/some/15.4.4.17-1-8.js Fail
 test/built-ins/Array/prototype/some/15.4.4.17-1-9.js RuntimeError
 test/built-ins/Array/prototype/some/15.4.4.17-2-1.js Pass
@@ -2790,7 +2790,7 @@ test/built-ins/Array/prototype/some/15.4.4.17-8-5.js RuntimeError
 test/built-ins/Array/prototype/some/15.4.4.17-8-6.js RuntimeError
 test/built-ins/Array/prototype/some/15.4.4.17-8-7.js RuntimeError
 test/built-ins/Array/prototype/some/15.4.4.17-8-8.js RuntimeError
-test/built-ins/Array/prototype/some/call-with-boolean.js RuntimeError
+test/built-ins/Array/prototype/some/call-with-boolean.js Pass
 test/built-ins/Array/prototype/some/callbackfn-resize-arraybuffer.js RuntimeError
 test/built-ins/Array/prototype/some/length.js Fail
 test/built-ins/Array/prototype/some/name.js Fail
@@ -4452,9 +4452,9 @@ test/built-ins/Object/defineProperties/15.2.3.7-2-16.js RuntimeError
 test/built-ins/Object/defineProperties/15.2.3.7-2-18.js RuntimeError
 test/built-ins/Object/defineProperties/15.2.3.7-2-2.js Fail
 test/built-ins/Object/defineProperties/15.2.3.7-2-3.js RuntimeError
-test/built-ins/Object/defineProperties/15.2.3.7-2-4.js RuntimeError
+test/built-ins/Object/defineProperties/15.2.3.7-2-4.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-2-5.js RuntimeError
-test/built-ins/Object/defineProperties/15.2.3.7-2-6.js RuntimeError
+test/built-ins/Object/defineProperties/15.2.3.7-2-6.js Pass
 test/built-ins/Object/defineProperties/15.2.3.7-2-7.js RuntimeError
 test/built-ins/Object/defineProperties/15.2.3.7-2-8.js RuntimeError
 test/built-ins/Object/defineProperties/15.2.3.7-2-9.js RuntimeError

@@ -249,6 +249,33 @@ public class DateTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_ToJSON_ReturnsISOString(ExecutionMode mode)
+    {
+        // toJSON returns the same ISO string as toISOString for a valid date (#491).
+        var source = @"
+            let d = new Date('2024-06-15T12:00:00Z');
+            console.log(d.toJSON() === d.toISOString());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_ToJSON_InvalidDate_ReturnsNull(ExecutionMode mode)
+    {
+        // ECMA-262 §21.4.4.37: toJSON returns null for a non-finite (Invalid) date,
+        // rather than throwing the way toISOString does.
+        var source = @"
+            let d = new Date(NaN);
+            console.log(d.toJSON());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("null\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Date_ValueOf_ReturnsTimestamp(ExecutionMode mode)
     {
         var source = @"

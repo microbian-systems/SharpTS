@@ -187,6 +187,24 @@ public static class BuiltInConstructorFactory
     public static RuntimeValue TryCreateRV(string className, List<object?> args, Interpreter interpreter)
         => RuntimeValue.FromBoxed(TryCreate(className, args, interpreter));
 
+    /// <summary>
+    /// ECMA-262 §7.1.18 ToObject for the primitive cases: wraps a
+    /// <c>string</c>/<c>number</c>/<c>boolean</c> primitive in its boxed wrapper
+    /// object (so <c>typeof</c> is <c>"object"</c> and <c>instanceof</c> works),
+    /// reusing the same <c>new String/Number/Boolean</c> layout as #360. Every
+    /// other value — already-object values, arrays, <c>null</c>, <c>undefined</c>,
+    /// symbols, bigint — is returned unchanged; callers that must reject
+    /// <c>null</c>/<c>undefined</c> guard before calling. Mirrors compiled mode's
+    /// <c>$Runtime.ToObject</c> (see <c>RuntimeEmitter.BoxedPrimitives.EmitToObject</c>).
+    /// </summary>
+    public static object? ToObject(object? value) => value switch
+    {
+        string => CreateBoxedString(new[] { value }),
+        double => CreateBoxedNumber(new[] { value }),
+        bool => CreateBoxedBoolean(new[] { value }),
+        _ => value,
+    };
+
     #region Constructor Implementations
 
     private static object CreateDate(IReadOnlyList<object?> args)
