@@ -155,7 +155,8 @@ public partial class TypeChecker
     /// <summary>
     /// Pre-registers top-level var declarations by defining them as 'any' in the type environment.
     /// This enables forward references to var-declared variables from within function bodies,
-    /// matching JavaScript's var hoisting semantics. Does NOT apply to let/const (TDZ).
+    /// matching JavaScript's var hoisting semantics. <c>let</c>/<c>const</c> are handled by the
+    /// sibling <see cref="HoistLexicalDeclarations"/>.
     /// </summary>
     private void HoistVarDeclarations(IEnumerable<Stmt> statements)
     {
@@ -170,6 +171,50 @@ public partial class TypeChecker
                 case Stmt.Export { Declaration: Stmt.Var v } when v.IsVar:
                     if (!_environment.IsDefinedLocally(v.Name.Lexeme))
                         _environment.Define(v.Name.Lexeme, new TypeInfo.Any());
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Pre-registers top-level <c>let</c>/<c>const</c> declarations by defining their names as
+    /// <c>any</c> in the type environment, so a function/closure body that textually PRECEDES the
+    /// declaration can still forward-reference it (#533). TypeScript collects every lexical binding
+    /// in a scope before checking any function body, so such forward references are legal there; the
+    /// body only executes once the binding is initialized. The real type is installed when
+    /// VisitVar/VisitConst runs during the sequential pass, overwriting the <c>any</c> placeholder,
+    /// so a reference appearing AFTER the declaration keeps its precise type.
+    ///
+    /// Mirrors <see cref="HoistVarDeclarations"/> (var) and <see cref="HoistClassDeclarations"/>
+    /// (class — also block-scoped/TDZ). Like those, this trades precise TDZ diagnostics for
+    /// forward-reference support: a *direct* use-before-declaration (e.g. <c>console.log(x); let x = 1;</c>)
+    /// no longer reports a static error, but still fails at runtime because the interpreter/compiler
+    /// only bind the name when the declaration statement runs. The <c>IsDefinedLocally</c> guard
+    /// preserves the precise function type that <c>HoistConstFunctionExpressions</c> may already have
+    /// registered for a <c>const f = () =&gt; …</c> arrow.
+    /// </summary>
+    private void HoistLexicalDeclarations(IEnumerable<Stmt> statements)
+    {
+        foreach (var stmt in statements)
+        {
+            switch (stmt)
+            {
+                // `let` is Stmt.Var with IsVar == false; `var` is handled by HoistVarDeclarations.
+                case Stmt.Var v when !v.IsVar:
+                    if (!_environment.IsDefinedLocally(v.Name.Lexeme))
+                        _environment.Define(v.Name.Lexeme, new TypeInfo.Any());
+                    break;
+                case Stmt.Const c:
+                    if (!_environment.IsDefinedLocally(c.Name.Lexeme))
+                        _environment.Define(c.Name.Lexeme, new TypeInfo.Any());
+                    break;
+                case Stmt.Export { Declaration: Stmt.Var v } when !v.IsVar:
+                    if (!_environment.IsDefinedLocally(v.Name.Lexeme))
+                        _environment.Define(v.Name.Lexeme, new TypeInfo.Any());
+                    break;
+                case Stmt.Export { Declaration: Stmt.Const c }:
+                    if (!_environment.IsDefinedLocally(c.Name.Lexeme))
+                        _environment.Define(c.Name.Lexeme, new TypeInfo.Any());
                     break;
             }
         }
@@ -672,6 +717,12 @@ public partial class TypeChecker
                 // scope before any statement executes; the TypeChecker needs to
                 // mirror that to accept well-formed mutually-recursive inner fns.
                 HoistFunctionDeclarations(body);
+
+                // Hoist the body's own let/const (as `any`) so an inner function declared before a
+                // later block-scoped binding in the SAME body can forward-reference it (#533). `var`
+                // is already lifted to the body top by the parse-time VarHoister, so it is not repeated
+                // here; let/const are not physically moved (TDZ), so they need this registration.
+                HoistLexicalDeclarations(body);
 
                 CheckStmtList(body);
 

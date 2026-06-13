@@ -64,6 +64,10 @@ public partial class TypeChecker
             // (`var a: { foo: typeof a }`, `var a2 = { foo: a2 }`).
             HoistVarDeclarations(ns.Members);
 
+            // Likewise pre-register let/const members as `any` so a member function declared before a
+            // later block-scoped binding can forward-reference it (#533).
+            HoistLexicalDeclarations(ns.Members);
+
             // First pass: collect all type declarations (classes, interfaces, enums, nested namespaces)
             foreach (var member in ns.Members)
             {
