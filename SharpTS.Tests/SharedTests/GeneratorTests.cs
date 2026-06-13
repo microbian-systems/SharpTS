@@ -415,6 +415,106 @@ public class GeneratorTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_AccumulatorPattern_CompoundAssignAcrossYield(ExecutionMode mode)
+    {
+        // #497: the same two-way accumulator, but the running total is read *before* the yield
+        // as the LHS of `+=`, so it is loop-carried across the suspension. The sibling test
+        // Generator_AccumulatorPattern_UsesSentValues sidesteps this by reading `total` after
+        // the yield. Pre-fix the compiled state machine left `total` in an IL local that the
+        // MoveNext re-entry wiped, so each resume recomputed `0 + n` (5, 10, 3) instead of the
+        // running total. The analyzer now hoists loop-body locals of any yielding loop.
+        var source = """
+            function* adder() {
+                let total = 0;
+                while (true) {
+                    total += yield total;
+                }
+            }
+            const a = adder();
+            console.log(a.next().value);
+            console.log(a.next(5).value);
+            console.log(a.next(10).value);
+            console.log(a.next(3).value);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n5\n15\n18\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_AccumulatorPattern_CompoundAssignAcrossYield_DoWhile(ExecutionMode mode)
+    {
+        // #497: do-while is one of the loop forms that lacked loop-body hoisting pre-fix.
+        var source = """
+            function* adder() {
+                let total = 0;
+                do {
+                    total += yield total;
+                } while (true);
+            }
+            const a = adder();
+            console.log(a.next().value);
+            console.log(a.next(5).value);
+            console.log(a.next(10).value);
+            console.log(a.next(3).value);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n5\n15\n18\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_AccumulatorPattern_CompoundAssignAcrossYield_For(ExecutionMode mode)
+    {
+        // #497: an unbounded for(;;) likewise lacked loop-body hoisting pre-fix.
+        var source = """
+            function* adder() {
+                let total = 0;
+                for (;;) {
+                    total += yield total;
+                }
+            }
+            const a = adder();
+            console.log(a.next().value);
+            console.log(a.next(5).value);
+            console.log(a.next(10).value);
+            console.log(a.next(3).value);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n5\n15\n18\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_LoopCarriedLocal_ReadBeforeYield_SurvivesAcrossIterations(ExecutionMode mode)
+    {
+        // #497 (general shape): a counted for-loop whose induction-adjacent local is read in the
+        // loop body before the yield. The accumulator must persist across the loop back-edge.
+        var source = """
+            function* g() {
+                let sum = 0;
+                for (let i = 0; i < 3; i++) {
+                    sum = sum + (yield sum);
+                }
+                return sum;
+            }
+            const it = g();
+            console.log(it.next().value);    // 0
+            console.log(it.next(10).value);  // 10
+            console.log(it.next(20).value);  // 30
+            console.log(it.next(30).value);  // 60 (return)
+            console.log(it.next().done);     // true
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n10\n30\n60\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_BareNext_ResumesWithUndefined(ExecutionMode mode)
     {
         var source = """
@@ -940,6 +1040,146 @@ public class GeneratorTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("100\n", output);
+    }
+
+    #endregion
+
+    #region Re-entrant next()/return()/throw() — "already running" (ECMA-262 §27.5.3.3) — issue #515
+
+    // ECMA-262 §27.5.3.3 (GeneratorValidate): calling next/return/throw on a generator whose state
+    // is `executing` throws a TypeError ("Generator is already running"). The only way to reach
+    // that state from a guest call is re-entrancy — the body advancing itself. Before the fix the
+    // interpreter's thread-coroutine deadlocked (the re-entrant call ran on the worker thread and
+    // waited on the same worker-ready signal it would have to set). These are InterpretedOnly: the
+    // compiled state-machine path doesn't hang but currently surfaces the wrong error (tracked by a
+    // separate issue), so it can't share these assertions yet.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_ReentrantNext_ThrowsTypeErrorThenResumes(ExecutionMode mode)
+    {
+        // The re-entrant next() throws a catchable TypeError; once caught, the generator is still
+        // suspended-able and resumes normally (the guard must not corrupt its running state).
+        var source = """
+            let it: any;
+            function* g() {
+                try { it.next(); }
+                catch (e: any) { console.log(e instanceof TypeError, e.name, e.message); }
+                yield 1;
+            }
+            it = g();
+            const r = it.next();
+            console.log(r.value, r.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true TypeError Generator is already running\n1 false\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_ReentrantNext_UncaughtPropagatesToResumingCaller(ExecutionMode mode)
+    {
+        // An uncaught re-entrant next() completes the generator abnormally and the TypeError
+        // surfaces to the outer next() that resumed it — matching Node's uncaught behavior.
+        var source = """
+            let it: any;
+            function* g() { it.next(); yield 1; }
+            it = g();
+            try { it.next(); }
+            catch (e: any) { console.log("outer caught", e.message); }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("outer caught Generator is already running\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_ReentrantReturn_ThrowsTypeErrorThenResumes(ExecutionMode mode)
+    {
+        var source = """
+            let it: any;
+            function* g() {
+                try { it.return(0); }
+                catch (e: any) { console.log("return ->", e.message); }
+                yield 1;
+            }
+            it = g();
+            const r = it.next();
+            console.log(r.value, r.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("return -> Generator is already running\n1 false\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_ReentrantThrow_ThrowsTypeErrorThenResumes(ExecutionMode mode)
+    {
+        // The "already running" guard takes precedence over the injected throw(e): the caller's
+        // error never reaches the body — it gets a TypeError instead.
+        var source = """
+            let it: any;
+            function* g() {
+                try { it.throw("boom"); }
+                catch (e: any) { console.log("throw ->", e.message); }
+                yield 1;
+            }
+            it = g();
+            const r = it.next();
+            console.log(r.value, r.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("throw -> Generator is already running\n1 false\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_ReentrantThroughYieldStar_ThrowsTypeError(ExecutionMode mode)
+    {
+        // The outer generator is still `executing` while it delegates via yield*, so an inner
+        // generator that calls the outer's next() must observe "already running".
+        var source = """
+            let outer: any;
+            function* inner() {
+                try { outer.next(); }
+                catch (e: any) { console.log("deleg ->", e.message); }
+                yield 5;
+            }
+            function* g() { yield* inner(); }
+            outer = g();
+            const r = outer.next();
+            console.log(r.value, r.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("deleg -> Generator is already running\n5 false\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_ReentrantNext_ThrowsTypeError(ExecutionMode mode)
+    {
+        // A generator function *expression* uses a distinct runtime class (SharpTSArrowGenerator);
+        // its guard is exercised here. `var` (not `let`) sidesteps an unrelated type-checker scoping
+        // bug for generator function expressions that close over block-scoped variables.
+        var source = """
+            var it: any;
+            const g = function*() {
+                try { it.next(); }
+                catch (e: any) { console.log("expr ->", e.message); }
+                yield 7;
+            };
+            it = g();
+            const r = it.next();
+            console.log(r.value, r.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("expr -> Generator is already running\n7 false\n", output);
     }
 
     #endregion

@@ -855,13 +855,14 @@ public partial class TypeChecker
                 return IsCompatible(expIter.ElementType, actualIterElem);
             }
 
-            // Honour TS's structural typing of the iterator protocol: any object exposing a callable
-            // `next` member satisfies `Iterator<T>` (e.g. returning a hand-written `{ next() {…} }`
-            // literal). SharpTS models next() as returning `any`, so the element type is not re-derived
-            // from a structural next here — this gates only that the protocol member is present. Without
-            // it such assignments would regress, since `Iterator<T>` is now a real type, not `any`.
-            if (GetMemberType(actual, "next") is TypeInfo.Function or TypeInfo.OverloadedFunction)
-                return true;
+            // Honour TS's structural typing of the iterator protocol: an object exposing a callable `next`
+            // satisfies `Iterator<T>` (e.g. a hand-written `{ next() {…} }` literal). The element type is
+            // re-derived from `next().value` (the IteratorResult value) and checked against T (#485): an
+            // untyped/union next yields `any`, which stays compatible, so the structural iterators accepted
+            // since #456 do not regress, while a real element mismatch is now rejected. Dedicated iterator
+            // records are invisible to GetMemberType, so only genuine structural objects reach here.
+            if (TryGetStructuralIteratorElement(actual, out var structuralIterElem))
+                return IsCompatible(expIter.ElementType, structuralIterElem);
             // Not an iterator-shaped source: fall through to the remaining (ultimately rejecting) rules.
         }
 
@@ -869,13 +870,34 @@ public partial class TypeChecker
         // records resolved from a type reference before #456 but had no compatibility arm, so even
         // `let g: Generator<number> = gen()` spuriously failed (every same-record pair without an arm
         // falls through to `return false`); #456 completes the iterable-record family it touches.
-        if (expected is TypeInfo.Generator expGen && actual is TypeInfo.Generator actGen)
+        if (expected is TypeInfo.Generator expGen)
         {
-            return IsCompatible(expGen.YieldType, actGen.YieldType);
+            if (actual is TypeInfo.Generator actGen)
+                return IsCompatible(expGen.YieldType, actGen.YieldType);
+            // A structural object satisfies Generator<T1> when it is at least an IterableIterator — it
+            // exposes BOTH the iterator protocol (next) and the iterable protocol ([Symbol.iterator]); its
+            // element comes from next().value and is checked against T1 (#485). Requiring both protocols
+            // keeps a bare, non-iterable `{ next() {…} }` from passing. Dedicated Iterator/AsyncGenerator
+            // records are invisible to the structural lookup, so the asymmetric relations stay rejected.
+            if (TryGetStructuralIteratorElement(actual, out var genElem) &&
+                TryGetStructuralIterableElement(actual, out _))
+                return IsCompatible(expGen.YieldType, genElem);
         }
         if (expected is TypeInfo.AsyncGenerator expAsyncGen && actual is TypeInfo.AsyncGenerator actAsyncGen)
         {
             return IsCompatible(expAsyncGen.YieldType, actAsyncGen.YieldType);
+        }
+
+        // Iterable<T1> (#485): a sync-iterable source satisfies it when its element type relates to T1 —
+        // arrays, sets, maps ([K, V]), strings, the dedicated iterator/generator records, and structural
+        // objects exposing [Symbol.iterator]. Covariant in the element, like the other container records.
+        // The async-iterator hierarchy (AsyncGenerator/AsyncIterable) is not a sync Iterable and falls
+        // through to rejection.
+        if (expected is TypeInfo.Iterable expIterable)
+        {
+            if (TryGetIterableElementType(actual, out var iterableSrcElem))
+                return IsCompatible(expIterable.ElementType, iterableSrcElem);
+            // Not iterable: fall through to the remaining (ultimately rejecting) rules.
         }
 
         // FinalizationRegistry<T1> is compatible with FinalizationRegistry<T2> if T1=T2 (#456).

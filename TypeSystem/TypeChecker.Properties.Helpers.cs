@@ -51,6 +51,8 @@ public partial class TypeChecker
             TypeCategory.AbortSignal => BuiltInTypes.GetAbortSignalMemberType(memberName),
             TypeCategory.Iterator when objType is TypeInfo.Iterator iter =>
                 BuiltInTypes.GetIteratorMemberType(memberName, iter.ElementType),
+            TypeCategory.Iterable when objType is TypeInfo.Iterable iterable =>
+                BuiltInTypes.GetIterableMemberType(memberName, iterable.ElementType),
             TypeCategory.Generator when objType is TypeInfo.Generator gen =>
                 BuiltInTypes.GetIteratorMemberType(memberName, gen.YieldType),
             TypeCategory.AsyncGenerator when objType is TypeInfo.AsyncGenerator asyncGen =>
