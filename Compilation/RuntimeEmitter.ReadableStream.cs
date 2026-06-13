@@ -1059,6 +1059,21 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(loopTop);
 
+        // #355: When a signal is present, drive the event loop one tick at the
+        // top of each iteration — BEFORE the abort check below — so an abort
+        // delivered through the event loop actually fires. The pump is a
+        // synchronous blocking loop (each Read()/Write() is GetAwaiter().GetResult()'d
+        // on this thread), so without this the main thread never yields and a
+        // mid-pipe `setTimeout(() => ac.abort(), 0)` callback can't run: only a
+        // signal already aborted when a read is reached would ever be observed.
+        // $Runtime.ProcessPendingTimers — the same routine $EventLoop.Run()/
+        // WaitForTask invoke — drains microtasks and fires due timers, so this
+        // also covers a microtask-driven abort (`Promise.resolve().then(() => ac.abort())`).
+        // Scoped to the signal path: non-aborting pipes keep their existing
+        // ordering and pay nothing. All references are same-DLL emitted types,
+        // so the pure-IL stream stays standalone (no SharpTS.dll dependency).
+        EmitPumpEventLoopForSignal(il, signalLocal, runtime);
+
         // Per-iteration signal check. If signal != null AND signal.aborted,
         // call writer.abort(reason) + source.cancel(reason), then throw so
         // the PipeTo task is rejected.
@@ -1280,6 +1295,38 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, awaiterLocal);
         il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.TaskAwaiterOfObject, "GetResult"));
         // Stack: [object]
+    }
+
+    /// <summary>
+    /// Emits a one-tick drive of the emitted event loop for the <c>PipeTo</c>
+    /// pump so an event-loop-driven mid-pipe <c>AbortSignal</c> can fire while
+    /// the synchronous pump holds the main thread (#355).
+    /// </summary>
+    /// <remarks>
+    /// Emits the equivalent of:
+    /// <code>
+    /// if (signal != null) $Runtime.ProcessPendingTimers();  // drains microtasks + fires due timers
+    /// </code>
+    /// <c>ProcessPendingTimers</c> self-initializes (so it's safe even when no
+    /// timer was ever scheduled — the no-timer case still drains the microtask
+    /// queue, covering a <c>Promise.then()</c>-driven abort) and is the same
+    /// routine <c>$EventLoop.Run()</c>/<c>WaitForTask</c> invoke. Stack on
+    /// entry/exit: empty. References only same-DLL emitted <c>$Runtime</c>, so
+    /// the pure-IL stream stays standalone (no SharpTS.dll dependency).
+    /// </remarks>
+    private void EmitPumpEventLoopForSignal(ILGenerator il, LocalBuilder signalLocal, EmittedRuntime runtime)
+    {
+        var skipLabel = il.DefineLabel();
+
+        // if (signal == null) skip — keep the pump cost on the signal path only.
+        il.Emit(OpCodes.Ldloc, signalLocal);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+
+        // $Runtime.ProcessPendingTimers() → int ms-until-next-timer (discarded).
+        il.Emit(OpCodes.Call, runtime.ProcessPendingTimers);
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(skipLabel);
     }
 
     /// <summary>

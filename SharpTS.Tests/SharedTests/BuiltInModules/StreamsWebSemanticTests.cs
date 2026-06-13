@@ -351,16 +351,21 @@ public class StreamsWebSemanticTests
     /// flushed "source-canceled". Fixed in #325 — the pump now Refs the event
     /// loop for the duration of the teardown sequence (see
     /// <c>WebStreamsHelpers.PipeTo</c>), then Unrefs. Compiled-mode
-    /// <c>$ReadableStream.PipeTo</c> does extract the signal and check
-    /// <c>aborted</c> per iteration, but its pump sync-awaits each read on the
-    /// calling thread, so an event-loop-driven mid-pipe abort (the
-    /// <c>setTimeout(() => ac.abort())</c> here) never gets a chance to fire —
-    /// the abort is only observed for signals already aborted when a read is
-    /// reached (#355). So this stays InterpretedOnly.
+    /// <c>$ReadableStream.PipeTo</c> extracts the signal and checks
+    /// <c>aborted</c> per iteration, and as of #355 also drives the event-loop
+    /// timer processor once per iteration when a signal is present (see
+    /// <c>RuntimeEmitter.EmitPumpEventLoopForSignal</c>), so the
+    /// <c>setTimeout(() => ac.abort())</c> here actually fires mid-pipe rather
+    /// than being starved by the synchronous pump. The deterministic
+    /// compiled-mode coverage for that fix is
+    /// <see cref="ReadableStream_PipeTo_MidPipeAbortSignal_Compiled"/>; this
+    /// guest test stays InterpretedOnly only because its end-to-end assertion
+    /// flakes under CI load in interpreter mode (real thread-pool continuation
+    /// timing) — the compiled variant runs synchronously and is deterministic.
     ///
     /// This guest-level test asserts the end-to-end behavior but only flakes
-    /// under load; the deterministic regression guard for the fix itself is
-    /// <see cref="PipeTo_MidPipeAbort_RefsEventLoopAcrossTeardown"/>.
+    /// under load; the deterministic regression guard for the interpreter fix
+    /// itself is <see cref="PipeTo_MidPipeAbort_RefsEventLoopAcrossTeardown"/>.
     /// </remarks>
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
@@ -702,6 +707,63 @@ public class StreamsWebSemanticTests
                         await source.pipeTo(dest, { signal: ac.signal });
                         console.log("pipe-completed-normally");
                     } catch {
+                        console.log("pipe-rejected");
+                    }
+                }
+                run();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("dest-aborted", output);
+        Assert.Contains("source-canceled", output);
+        Assert.Contains("pipe-rejected", output);
+        Assert.DoesNotContain("pipe-completed-normally", output);
+    }
+
+    /// <summary>
+    /// #355: a mid-pipe abort delivered through the event loop
+    /// (<c>setTimeout(() =&gt; ac.abort(), 0)</c>) must abort the destination,
+    /// cancel the source, and reject the pipe — even though the compiled pump
+    /// is a synchronous blocking loop.
+    /// </summary>
+    /// <remarks>
+    /// Compiled-mode only, and deterministic here. The source is an infinite
+    /// synchronous-pull stream, so before the fix the sync pump spun forever
+    /// reading chunks and the abort timer never got a chance to run (the whole
+    /// test would hang to the harness timeout). The fix drives the event-loop
+    /// timer processor once per pump iteration when a signal is present (see
+    /// <c>RuntimeEmitter.EmitPumpEventLoopForSignal</c>), so the
+    /// <c>setTimeout(0)</c> callback fires on the first iteration, mutates the
+    /// signal, and the existing per-iteration <c>aborted</c> check runs the
+    /// abort/cancel/reject teardown. Unlike the interpreter variant
+    /// (<see cref="ReadableStream_PipeTo_AbortSignalCancelsSourceAndAbortsDest"/>),
+    /// the entire sequence runs synchronously on the main thread, so there is
+    /// no thread-pool continuation race and the assertion is load-independent.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void ReadableStream_PipeTo_MidPipeAbortSignal_Compiled(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                let i = 0;
+                const source = new ReadableStream({
+                    pull(c) { c.enqueue(i++); },
+                    cancel(reason) { console.log("source-canceled"); }
+                });
+                const dest = new WritableStream({
+                    write(chunk) { /* accept everything */ },
+                    abort(reason) { console.log("dest-aborted"); }
+                });
+                const ac = new AbortController();
+                setTimeout(() => ac.abort(), 0);
+                async function run() {
+                    try {
+                        await source.pipeTo(dest, { signal: ac.signal });
+                        console.log("pipe-completed-normally");
+                    } catch (e) {
                         console.log("pipe-rejected");
                     }
                 }
