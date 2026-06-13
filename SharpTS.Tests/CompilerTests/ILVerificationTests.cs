@@ -331,6 +331,58 @@ public class ILVerificationTests
     }
 
     [Fact]
+    public void NonAsyncFunctionReturningPromise_PassesILVerification()
+    {
+        // A NON-async function/arrow declared `: Promise<T>` maps its return slot (strictly) to
+        // Task<T>, but the body returns the runtime $TSPromise carried as object — not CLR-assignable
+        // to the Task slot. That left an object on the stack where the verifier expected Task<T>,
+        // raising StackUnexpected even though it ran (the JIT tolerates the reference-type store).
+        // The return type now falls back to object. Async functions are unaffected: they hardcode a
+        // Task<object> stub whose state machine builds a real Task. Covers both a top-level function
+        // and an arrow (both route through ParameterTypeResolver.ResolveReturnType). (#393)
+        var source = """
+            function wrap(): Promise<number> { return Promise.resolve(42); }
+            const arrow = (): Promise<string> => Promise.resolve("hi");
+            async function main() {
+                console.log(await wrap());
+                console.log(await arrow());
+            }
+            main();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("42\nhi\n", output);
+    }
+
+    [Fact]
+    public void TimersPromisesImport_PassesILVerification()
+    {
+        // Exact #393 repro: importing timers/promises emitted the re-export wrappers
+        // $M_promises_setTimeout / $M_promises_setImmediate as non-async functions declared
+        // `: Promise<any>`, whose Task<object> return slot didn't match the object the body
+        // produced (StackUnexpected). setInterval returns AsyncIterable<any> (→ object slot) and
+        // was always clean. Verifies the whole module — covers all three wrappers regardless of
+        // which member is imported (all are emitted). (#393)
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { setTimeout } from 'timers/promises';
+                async function main() {
+                    const r = await setTimeout(10, 'tick');
+                    console.log(r);
+                }
+                main();
+                """
+        };
+
+        var errors = TestHarness.CompileModulesAndVerifyOnly(files, "main.ts");
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
     public void ClassGetPropertyWithTypedGetter_PassesILVerification()
     {
         // The compiler-generated GetProperty dispatch helper invokes a typed getter (e.g. the

@@ -203,6 +203,22 @@ public static class ParameterTypeResolver
             {
                 baseType = typeof(object);
             }
+
+            // A non-async function/arrow declared to return `Promise<T>` maps (strictly) to
+            // Task<T>/Task, but its body never produces a real CLR Task — it returns the runtime
+            // `$TSPromise` carried as object (e.g. the timers/promises re-export wrappers, which
+            // return $Runtime.SetTimeoutPromise(...)). That object is not CLR-assignable to the
+            // Task slot, so the `ret` raises ILVerify StackUnexpected; the JIT tolerates the
+            // reference-type store (the program still runs), but `--verify` rejects it, and a
+            // castclass at the return site would throw InvalidCastException since the value is not
+            // a Task. Fall back to object so the dynamic promise is returned directly. Async
+            // functions don't reach this resolver — they hardcode a Task<object> stub whose state
+            // machine builds a real Task. (#393)
+            if (!isAsync && (baseType == typeof(Task) ||
+                (baseType.IsGenericType && baseType.GetGenericTypeDefinition() == typeof(Task<>))))
+            {
+                baseType = typeof(object);
+            }
         }
 
         // Wrap async return types in Task<T>
