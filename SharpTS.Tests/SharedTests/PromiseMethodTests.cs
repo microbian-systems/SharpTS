@@ -112,6 +112,59 @@ public class PromiseMethodTests
         Assert.Equal("42\n", output);
     }
 
+    // Per ECMA-262 the handler arguments to then/catch/finally are all
+    // optional, so a zero-argument call is legal and acts as a pass-through
+    // (then/catch) or no-op (finally). Previously the interpreter registered
+    // these with minArity 1 and threw "expects 1-2 arguments but got 0" (#382).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Then_ZeroArgs_PassesValueThrough(ExecutionMode mode)
+    {
+        var source = """
+            async function main(): Promise<void> {
+                let result = await Promise.resolve(5).then();
+                console.log(result);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("5\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Catch_ZeroArgs_PassesValueThrough(ExecutionMode mode)
+    {
+        var source = """
+            async function main(): Promise<void> {
+                let result = await Promise.resolve(7).catch();
+                console.log(result);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("7\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Finally_ZeroArgs_PassesValueThrough(ExecutionMode mode)
+    {
+        var source = """
+            async function main(): Promise<void> {
+                let result = await Promise.resolve(9).finally();
+                console.log(result);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("9\n", output);
+    }
+
     #endregion
 
     #region Promise.catch() Tests

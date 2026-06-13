@@ -26,13 +26,17 @@ public static class PromiseBuiltIns
     {
         return name switch
         {
-            "then" => new BuiltInAsyncMethod("then", 1, 2, (interp, recv, args) =>
+            // Per ECMA-262 the handler arguments are all optional: §27.2.5.4
+            // then(onFulfilled?, onRejected?), §27.2.5.1 catch(onRejected?),
+            // §27.2.5.3 finally(onFinally?). minArity is 0; maxArity pins the
+            // spec shape. The impls null-default any missing args (#382).
+            "then" => new BuiltInAsyncMethod("then", 0, 2, (interp, recv, args) =>
                 ThenImpl((SharpTSPromise)recv!, args, interp), speciesResolver: SpeciesResolver).Bind(receiver),
 
-            "catch" => new BuiltInAsyncMethod("catch", 1, 1, (interp, recv, args) =>
+            "catch" => new BuiltInAsyncMethod("catch", 0, 1, (interp, recv, args) =>
                 CatchImpl((SharpTSPromise)recv!, args, interp), speciesResolver: SpeciesResolver).Bind(receiver),
 
-            "finally" => new BuiltInAsyncMethod("finally", 1, 1, (interp, recv, args) =>
+            "finally" => new BuiltInAsyncMethod("finally", 0, 1, (interp, recv, args) =>
                 FinallyImpl((SharpTSPromise)recv!, args, interp), speciesResolver: SpeciesResolver).Bind(receiver),
 
             // ECMA-262 §27.2.5.1: Promise.prototype.constructor is %Promise%.
