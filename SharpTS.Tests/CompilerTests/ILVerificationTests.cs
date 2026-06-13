@@ -193,6 +193,120 @@ public class ILVerificationTests
         Assert.Equal("12 101 100\n", output);
     }
 
+    // ---- #414: async-arrow / generator spill across a suspension ----
+
+    [Fact]
+    public void AsyncFunctionContainingAsyncArrow_PassesILVerification()
+    {
+        // #414 Defect A: the self-boxed kickoff for an async function that defines an async
+        // arrow re-emitted `unbox` (a controlled-mutability managed pointer ILVerify rejects).
+        // The kickoff now takes a single verifiable `Unsafe.Unbox<T>` byref.
+        var source = """
+            async function m() {
+                const f = async () => { return 1; };
+                await f();
+            }
+            m();
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void StandaloneAsyncArrowSpillAcrossAwait_PassesILVerification()
+    {
+        // #414 Defect B: a value spilled before an await in an async arrow. The await is of an
+        // inline `new Promise(...)`; awaiting a *function call* in an async arrow trips a
+        // separate pre-existing IL gap that would mask this one.
+        var source = """
+            const f = async () => {
+                const a = "A" + (await new Promise<number>(r => setTimeout(() => r(1), 5)));
+                const b = a + "B" + (await new Promise<number>(r => setTimeout(() => r(2), 3)));
+                console.log(b);
+            };
+            f();
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void GeneratorSpillAcrossYield_PassesILVerification()
+    {
+        // #414 Defect E: a value spilled before a yield in a generator.
+        var source = """
+            function* g() { console.log("PFX:" + (yield 1) + "|" + (yield 2)); }
+            for (const x of g()) {}
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void GeneratorSpillAcrossYieldStar_PassesILVerification()
+    {
+        // #414 Defect E: a value spilled before a yield* delegation.
+        var source = """
+            function* inner() { yield 1; yield 2; }
+            function* g() { console.log("PFX:" + (yield* inner())); }
+            for (const x of g()) {}
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void AwaitInRestParamCallArg_PassesILVerification()
+    {
+        // #413: await inside an argument of a call whose args are assembled as a rest/varargs
+        // array. The args must be spilled off the IL evaluation stack before the array is built;
+        // otherwise the array reference sits stacked across the suspension and the MoveNext body
+        // fails verification with PathStackDepth (and throws InvalidProgramException at runtime).
+        var source = """
+            function g(...a: any[]): string { return a.join(","); }
+            async function m() {
+                console.log(g("x", await new Promise<number>(r => setTimeout(() => r(1), 5))));
+            }
+            m();
+            """;
+
+        // Verify-only: the executor arrow captures variables, which trips the in-memory
+        // reference-assembly run path (see #343); verification alone is the precise guard here.
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void AwaitWithRegularParamBeforeRestParamCall_PassesILVerification()
+    {
+        // #413 variant: a typed regular parameter precedes the rest parameter, and the await is
+        // in a rest-position argument. The regular arg is spilled as a boxed object and must be
+        // coerced back to its declared (string) slot when loaded for the call.
+        // (The rest-join result is hoisted to a local so the body avoids the unrelated #434
+        // BackwardBranch verify bug — `<expr> + rest.join(...)` directly — keeping this test
+        // focused on the #413 call-site fix.)
+        var source = """
+            function h(x: string, ...rest: any[]): string { const s = rest.join(","); return x + "|" + s; }
+            async function m() {
+                console.log(h("X", "y", await new Promise<string>(r => setTimeout(() => r("Z"), 5))));
+            }
+            m();
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
     [Fact]
     public void Closures_PassesILVerification()
     {

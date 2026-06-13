@@ -148,7 +148,7 @@ public abstract partial class ExpressionEmitterBase
 
                 if (hasRestParam)
                 {
-                    EmitRestParameterCall(c.Arguments, restInfo.RegularParamCount);
+                    EmitRestParameterCall(c.Arguments, restInfo.RegularParamCount, targetMethod.GetParameters());
                 }
                 else
                 {
@@ -394,26 +394,36 @@ public abstract partial class ExpressionEmitterBase
     }
 
     /// <summary>
-    /// Emits arguments for a function call with rest parameter, handling spreads.
-    /// Emits regular args first, then builds an array for the rest parameter.
+    /// Emits arguments for a function call with rest parameter, handling spreads: loads the
+    /// leading regular arguments, then builds the trailing rest array.
     /// </summary>
-    private void EmitRestParameterCall(List<Expr> arguments, int regularCount)
+    /// <remarks>
+    /// Every argument is spilled to a local up front via <see cref="SpillBoxed"/> before any
+    /// array is assembled. State-machine emitters can suspend (<c>await</c>) inside any
+    /// argument; assembling the rest array inline would leave the array reference (and the
+    /// regular args) on the IL evaluation stack across the suspension, which produces invalid
+    /// IL (<c>PathStackDepth</c>, #413). SpillBoxed also registers each value so it survives
+    /// the MoveNext re-entry (#400). In non-suspending emitters (ILEmitter) these are plain
+    /// locals the JIT collapses away.
+    /// </remarks>
+    private void EmitRestParameterCall(List<Expr> arguments, int regularCount, ParameterInfo[] targetParams)
     {
         bool hasSpreads = arguments.Any(a => a is Expr.Spread);
 
-        // Emit regular arguments (before rest param)
+        // Spill every argument (spreads spill their inner expression) before touching the stack.
+        var argLocals = new LocalBuilder[arguments.Count];
+        for (int i = 0; i < arguments.Count; i++)
+            argLocals[i] = SpillBoxed(arguments[i] is Expr.Spread spread ? spread.Expression : arguments[i]);
+
+        // Load regular arguments (before rest param) from their locals, coercing each boxed
+        // object back to the parameter's declared CLR type — free-function params are emitted
+        // with their real type (e.g. string, double), so passing a bare object would fail
+        // verification (StackUnexpected). The rest List<object> always takes boxed elements.
         for (int i = 0; i < Math.Min(regularCount, arguments.Count); i++)
         {
-            if (arguments[i] is Expr.Spread spread)
-            {
-                EmitExpression(spread.Expression);
-                EnsureBoxed();
-            }
-            else
-            {
-                EmitExpression(arguments[i]);
-                EnsureBoxed();
-            }
+            IL.Emit(OpCodes.Ldloc, argLocals[i]);
+            if (i < targetParams.Length)
+                EmitCoerceBoxedToType(targetParams[i].ParameterType);
         }
 
         // Pad regular args with nulls if needed
@@ -424,7 +434,7 @@ public abstract partial class ExpressionEmitterBase
         int restArgsCount = Math.Max(0, arguments.Count - regularCount);
         if (hasSpreads && restArgsCount > 0)
         {
-            EmitSpreadArray(arguments, regularCount, restArgsCount);
+            EmitSpreadArrayFromLocals(arguments, argLocals, regularCount, restArgsCount);
             EmitExpandCallArgs();
             IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateArray);
         }
@@ -436,8 +446,7 @@ public abstract partial class ExpressionEmitterBase
             {
                 IL.Emit(OpCodes.Dup);
                 IL.Emit(OpCodes.Ldc_I4, i);
-                EmitExpression(arguments[regularCount + i]);
-                EnsureBoxed();
+                IL.Emit(OpCodes.Ldloc, argLocals[regularCount + i]);
                 IL.Emit(OpCodes.Stelem_Ref);
             }
             IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateArray);
@@ -452,10 +461,13 @@ public abstract partial class ExpressionEmitterBase
     }
 
     /// <summary>
-    /// Emits an args array and isSpread bool array for arguments starting at offset.
-    /// Leaves both arrays on the stack (args array first, then isSpread array on top).
+    /// Emits an args array and isSpread bool array from pre-spilled argument locals (a slice of
+    /// <paramref name="argLocals"/> starting at <paramref name="offset"/>). Leaves both arrays
+    /// on the stack (args array first, then isSpread array on top). Reads from locals rather
+    /// than re-emitting expressions so no <c>await</c> can suspend while the arrays are stacked
+    /// (#413); the caller is responsible for having spilled the values.
     /// </summary>
-    private void EmitSpreadArray(List<Expr> arguments, int offset, int count)
+    private void EmitSpreadArrayFromLocals(List<Expr> arguments, LocalBuilder[] argLocals, int offset, int count)
     {
         IL.Emit(OpCodes.Ldc_I4, count);
         IL.Emit(OpCodes.Newarr, Types.Object);
@@ -463,17 +475,7 @@ public abstract partial class ExpressionEmitterBase
         {
             IL.Emit(OpCodes.Dup);
             IL.Emit(OpCodes.Ldc_I4, i);
-            var arg = arguments[offset + i];
-            if (arg is Expr.Spread spread)
-            {
-                EmitExpression(spread.Expression);
-                EnsureBoxed();
-            }
-            else
-            {
-                EmitExpression(arg);
-                EnsureBoxed();
-            }
+            IL.Emit(OpCodes.Ldloc, argLocals[offset + i]);
             IL.Emit(OpCodes.Stelem_Ref);
         }
 
@@ -490,6 +492,21 @@ public abstract partial class ExpressionEmitterBase
                 IL.Emit(OpCodes.Stelem_I1);
             }
         }
+    }
+
+    /// <summary>
+    /// Coerces the boxed object currently on the stack to <paramref name="targetType"/>:
+    /// unbox for value types, downcast for reference types, no-op for object. Used when
+    /// loading a previously-spilled (boxed) argument into a typed parameter slot.
+    /// </summary>
+    private void EmitCoerceBoxedToType(Type targetType)
+    {
+        if (targetType == typeof(object) || targetType == Types.Object)
+            return;
+        if (targetType.IsValueType)
+            IL.Emit(OpCodes.Unbox_Any, targetType);
+        else
+            IL.Emit(OpCodes.Castclass, targetType);
     }
 
     /// <summary>

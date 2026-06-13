@@ -118,6 +118,10 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
         _analysis = analysis;
         _types = types;
         _il = builder.MoveNextMethod.GetILGenerator();
+        // A value spilled across an await must survive the MoveNext re-entry in a
+        // state-machine field, not a transient IL local (#400/#414).
+        _helpers.EnablePersistentSpills(name => _builder.StateMachineType.DefineField(
+            name, _types.Object, System.Reflection.FieldAttributes.Private));
     }
 
     /// <summary>
