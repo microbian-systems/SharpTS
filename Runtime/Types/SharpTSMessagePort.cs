@@ -41,6 +41,24 @@ public class SharpTSMessagePort : SharpTSEventEmitter
     private bool _neutered;
 
     /// <summary>
+    /// Whether this port (and its partner) have been transferred to a worker on
+    /// another thread. The two ports of a channel live in the same process but on
+    /// different event-loop threads once one is handed to a worker, so delivery
+    /// must be marshalled onto each owner's loop rather than emitted synchronously
+    /// on the poster's thread, and a started port must keep its owner's loop alive
+    /// (Node semantics for a listening port). See <see cref="MarkTransferredAcrossThreads"/>
+    /// and #406.
+    /// </summary>
+    private bool _crossThread;
+
+    /// <summary>
+    /// Whether this port currently holds a keep-alive Ref against its owner loop
+    /// (only ever true for a started, unclosed cross-thread port). Guards against
+    /// double Ref/Unref.
+    /// </summary>
+    private bool _loopRefed;
+
+    /// <summary>
     /// The interpreter to use for event dispatch (set when added to a context).
     /// </summary>
     internal Interp? OwnerInterpreter { get; set; }
@@ -71,6 +89,32 @@ public class SharpTSMessagePort : SharpTSEventEmitter
     internal void Neuter()
     {
         _neutered = true;
+    }
+
+    /// <summary>
+    /// Marks this port and its partner as having been transferred across an
+    /// event-loop-thread boundary (one of the pair was handed to a worker). After
+    /// this, message delivery is marshalled onto each port's owner-loop thread and
+    /// a started port Refs that loop so a worker waiting only on a transferred port
+    /// stays alive until the port closes (#406). Idempotent; recurses once to the
+    /// partner.
+    /// </summary>
+    internal void MarkTransferredAcrossThreads()
+    {
+        if (_crossThread)
+            return;
+        _crossThread = true;
+
+        // If the port was already started before the transfer was recorded (the
+        // listener was attached before the worker spawned), take the keep-alive Ref
+        // now — Start() won't run again.
+        if (_started && !_closed && !_loopRefed && OwnerInterpreter != null)
+        {
+            _loopRefed = true;
+            OwnerInterpreter.Ref();
+        }
+
+        _partner?.MarkTransferredAcrossThreads();
     }
 
     /// <summary>
@@ -105,10 +149,16 @@ public class SharpTSMessagePort : SharpTSEventEmitter
 
         _queue.Add(message);
 
-        // If started, trigger message delivery
+        // If started, trigger message delivery.
         if (_started && OwnerInterpreter != null)
         {
-            DeliverPendingMessages();
+            if (_crossThread)
+                // The poster runs on the partner's thread (e.g. a worker), not on
+                // this port's owner loop. Marshal delivery onto the owner loop so
+                // guest 'message' listeners run on the correct, single thread.
+                OwnerInterpreter.EnqueueCallback(DeliverPendingMessages);
+            else
+                DeliverPendingMessages();
         }
     }
 
@@ -122,10 +172,23 @@ public class SharpTSMessagePort : SharpTSEventEmitter
 
         _started = true;
 
-        // Deliver any queued messages
+        // A started cross-thread port keeps its owner loop alive (Node: a port with
+        // a 'message' listener is ref'd). Without this a worker whose only pending
+        // work is a transferred port would quiesce and exit before any message
+        // arrives (#406 — same liveness class as #329).
+        if (_crossThread && !_loopRefed && OwnerInterpreter != null)
+        {
+            _loopRefed = true;
+            OwnerInterpreter.Ref();
+        }
+
+        // Deliver any queued messages.
         if (OwnerInterpreter != null)
         {
-            DeliverPendingMessages();
+            if (_crossThread)
+                OwnerInterpreter.EnqueueCallback(DeliverPendingMessages);
+            else
+                DeliverPendingMessages();
         }
     }
 
@@ -139,6 +202,13 @@ public class SharpTSMessagePort : SharpTSEventEmitter
 
         _closed = true;
         _queue.CompleteAdding();
+
+        // Release the keep-alive Ref so the owner loop can quiesce and exit.
+        if (_loopRefed && OwnerInterpreter != null)
+        {
+            _loopRefed = false;
+            OwnerInterpreter.Unref();
+        }
 
         // Emit close event
         if (OwnerInterpreter != null)

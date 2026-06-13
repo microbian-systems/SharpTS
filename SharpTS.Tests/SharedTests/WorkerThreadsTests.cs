@@ -683,4 +683,146 @@ public class WorkerThreadsTests
     }
 
     #endregion
+
+    #region MessagePort transfer to a worker (#406)
+
+    /// <summary>
+    /// Regression for #406: a <c>MessagePort</c> created in the parent and listed in
+    /// a Worker's <c>transferList</c> must be usable inside the worker — the worker
+    /// can attach a listener and post back through it, round-tripping with the
+    /// partner port retained by the parent.
+    /// </summary>
+    /// <remarks>
+    /// This exercises the full cross-runtime/cross-thread contract. In compiled mode
+    /// the channel ports are the emitted <c>$MessagePort</c> type and the transferred
+    /// port is adopted by the worker's interpreter via <c>CompiledMessagePortBridge</c>
+    /// (which forwards posts to the compiled partner on the parent's <c>$EventLoop</c>
+    /// and drains the partner's posts onto the worker loop). In interpreter mode the
+    /// ports are <c>SharpTSMessagePort</c>; transfer marks the pair cross-thread so
+    /// delivery marshals onto each owner's loop instead of the poster's thread, and a
+    /// started port keeps its loop alive. Before the fix the compiled
+    /// <c>transferList</c> (a <c>List&lt;object?&gt;</c>) was dropped and the
+    /// <c>$MessagePort</c> failed to clone; the interpreter port was neutered on
+    /// transfer (unusable by the receiver) and delivered on the wrong thread.
+    /// <para>
+    /// Load-independent: the parent's "ping" is queued on the port until the worker
+    /// attaches its listener (whenever that happens), the started ports keep both
+    /// loops alive until each side closes, and the assertion is a positive
+    /// output-present check — so it cannot flake under load.
+    /// </para>
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_TransferredMessagePort_RoundTripsBetweenParentAndWorker(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_port.ts"] = """
+                // The transferred port arrives via workerData. Echo each message
+                // back through it, then close so the worker's loop can quiesce.
+                const port: any = workerData.port;
+                port.on("message", (m: any) => {
+                    port.postMessage("pong:" + m);
+                    port.close();
+                });
+                """,
+            ["main.ts"] = """
+                import { Worker, MessageChannel } from "worker_threads";
+                const { port1, port2 } = new MessageChannel();
+                const w = new Worker(__dirname + "/worker_port.ts", {
+                    workerData: { port: port1 },
+                    transferList: [port1],
+                });
+                port2.on("message", (m: any) => {
+                    console.log("received:" + m);
+                    port2.close();
+                });
+                port2.postMessage("ping");
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("received:pong:ping", output);
+    }
+
+    /// <summary>
+    /// #406: an object posted across a transferred port is structured-cloned in both
+    /// directions, so each side reads independent field values (exercises the
+    /// compiled <c>Dictionary&lt;string, object?&gt;</c> clone path through the bridge
+    /// as well as the interpreter <c>SharpTSObject</c> path).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_TransferredMessagePort_StructuredClonesObjectPayloads(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_port_obj.ts"] = """
+                const port: any = workerData.port;
+                port.on("message", (m: any) => {
+                    port.postMessage({ tag: "reply", value: m.value + 1 });
+                    port.close();
+                });
+                """,
+            ["main.ts"] = """
+                import { Worker, MessageChannel } from "worker_threads";
+                const { port1, port2 } = new MessageChannel();
+                const w = new Worker(__dirname + "/worker_port_obj.ts", {
+                    workerData: { port: port1 },
+                    transferList: [port1],
+                });
+                port2.on("message", (m: any) => {
+                    console.log("received:" + m.tag + ":" + m.value);
+                    port2.close();
+                });
+                port2.postMessage({ tag: "req", value: 41 });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("received:reply:42", output);
+    }
+
+    /// <summary>
+    /// #406: a <c>MessagePort</c> placed in <c>workerData</c> WITHOUT being listed in
+    /// <c>transferList</c> must be rejected (a port can only be transferred, never
+    /// cloned), in both modes — not silently shared and not an opaque crash.
+    /// </summary>
+    /// <remarks>
+    /// Compiled mode surfaces the error message via <c>e.message</c>; interpreter mode
+    /// currently surfaces worker-construction failures as a raw string (a separate,
+    /// pre-existing quirk — see issue filed alongside #406), so the guest reads
+    /// whichever is present. Either way the rejection text is observable.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_MessagePortInWorkerDataWithoutTransfer_IsRejected(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_noop.ts"] = """
+                console.log("worker-should-not-start");
+                """,
+            ["main.ts"] = """
+                import { Worker, MessageChannel } from "worker_threads";
+                const { port1, port2 } = new MessageChannel();
+                try {
+                    // port1 is in workerData but NOT in a transferList.
+                    const w = new Worker(__dirname + "/worker_noop.ts", {
+                        workerData: { port: port1 },
+                    });
+                    console.log("constructed-without-error");
+                } catch (e: any) {
+                    console.log("caught:" + (e && e.message ? e.message : e));
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("MessagePort cannot be cloned", output);
+        Assert.DoesNotContain("constructed-without-error", output);
+        Assert.DoesNotContain("worker-should-not-start", output);
+    }
+
+    #endregion
 }

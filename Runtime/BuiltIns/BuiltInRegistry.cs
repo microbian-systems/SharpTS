@@ -1039,6 +1039,12 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSMessagePort), (instance, name) =>
             ((SharpTSMessagePort)instance).GetMember(name));
 
+        // Register the worker-side bridge for a compiled $MessagePort transferred
+        // into an interpreter worker. Instance lookup is exact-type, so this distinct
+        // type needs its own registration to reach its GetMember (#406).
+        registry.RegisterInstanceType(typeof(CompiledMessagePortBridge), (instance, name) =>
+            ((CompiledMessagePortBridge)instance).GetMember(name));
+
         // Register the worker-side parentPort (postMessage + EventEmitter members).
         // Instance lookup is exact-type, so the WorkerParentPort subclass needs
         // its own registration to reach its GetMember (#209).

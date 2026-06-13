@@ -29,7 +29,10 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly string _scriptPath;
     private readonly object? _workerData;
-    private readonly SharpTSArray? _transferList;
+    // Honored from either runtime: the interpreter SharpTSArray and a compiled
+    // List<object?> both implement IEnumerable<object?>, so StructuredClone.Clone
+    // receives the transfer list regardless of how the parent built it (#406).
+    private readonly IEnumerable<object?>? _transferList;
     private volatile bool _isRunning;
     private volatile bool _isTerminated;
     private Exception? _workerError;
@@ -136,14 +139,15 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         //
         // The bag is a SharpTSObject in interpreter mode and a Dictionary<string, object?>
         // (a compiled object literal) in compiled mode; ReadOption reads through both so
-        // workerData/transferList are honored either way (#380). transferList stays typed
-        // as SharpTSArray: a compiled List<object?> transferList yields null here (so
-        // workerData still clones), and cross-boundary MessagePort transfer in compiled
-        // mode is a separate gap (#406).
+        // workerData/transferList are honored either way (#380). transferList is read as
+        // IEnumerable<object?> so both the interpreter SharpTSArray and a compiled
+        // List<object?> survive — a transferred MessagePort is then adopted by the worker
+        // (cross-thread for interpreter ports, via CompiledMessagePortBridge for compiled
+        // $MessagePort) inside StructuredClone.Clone (#406).
         if (options != null)
         {
             _workerData = ReadOption(options, "workerData");
-            _transferList = ReadOption(options, "transferList") as SharpTSArray;
+            _transferList = ReadOption(options, "transferList") as IEnumerable<object?>;
         }
 
         // Clone workerData for transfer to worker
