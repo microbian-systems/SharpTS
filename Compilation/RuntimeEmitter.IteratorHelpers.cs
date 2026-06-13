@@ -1124,18 +1124,40 @@ public partial class RuntimeEmitter
 
     private void EmitIteratorNext(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // static object IteratorNext(object source)
+        // static object IteratorNext(object source, object sent)
         // Calls MoveNext on the source (which should already be an IEnumerator from prior normalization
         // or a lazy iterator type). Returns a Dictionary<string, object?> with value and done.
+        // `sent` is the value passed to next(v); it only has an effect for SharpTS
+        // generators, which thread it into the resumed yield (#452).
         var method = typeBuilder.DefineMethod(
             "IteratorNext", MethodAttributes.Public | MethodAttributes.Static,
-            _types.Object, [_types.Object]);
+            _types.Object, [_types.Object, _types.Object]);
         runtime.IteratorNext = method;
 
         var il = method.GetILGenerator();
         var enumLocal = il.DeclareLocal(_types.IEnumeratorOfObject);
         var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
         var doneLabel = il.DefineLabel();
+
+        // SharpTS generators implement $IGenerator. Route through next(value) so the
+        // sent value reaches the suspended yield; the call also drives MoveNext and
+        // builds the {value,done} result. Other sources (BCL enumerators from
+        // array.values(), user iterators) carry no resume slot — fall through and
+        // drive MoveNext directly (the sent value is ignored, matching the spec's
+        // "the next method of a built-in iterator ignores its argument").
+        if (runtime.GeneratorInterfaceType != null)
+        {
+            var notGeneratorLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.GeneratorInterfaceType);
+            il.Emit(OpCodes.Brfalse, notGeneratorLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.GeneratorInterfaceType);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, runtime.GeneratorNextMethod);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notGeneratorLabel);
+        }
 
         // Normalize source to IEnumerator<object>
         il.Emit(OpCodes.Ldarg_0);

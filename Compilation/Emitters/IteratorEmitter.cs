@@ -109,6 +109,18 @@ public sealed class IteratorEmitter : ITypeEmitterStrategy
             case "next":
                 emitter.EmitExpression(receiver);
                 emitter.EmitBoxIfNeeded(receiver);
+                // The value passed to next(v) is delivered to the resumed yield for
+                // generators (#452); a bare next() resumes with undefined. Plain
+                // iterators ignore it.
+                if (arguments.Count > 0)
+                {
+                    emitter.EmitExpression(arguments[0]);
+                    emitter.EmitBoxIfNeeded(arguments[0]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
+                }
                 il.Emit(OpCodes.Call, ctx.Runtime!.IteratorNext);
                 return true;
 

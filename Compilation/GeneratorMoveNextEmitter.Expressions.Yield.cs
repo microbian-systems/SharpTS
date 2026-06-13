@@ -56,8 +56,11 @@ public partial class GeneratorMoveNextEmitter
         // Restore spill temps from their fields on the resumed path.
         _helpers.RehydrateLiveSpillsAfterResume();
 
-        // 6. yield expression evaluates to undefined (null) when resumed
-        _il.Emit(OpCodes.Ldnull);
+        // 6. The yield expression evaluates to the value passed to next(v), which
+        // next() stashed in SentField before driving MoveNext (ECMA-262 §27.5.3.3).
+        // A bare next()/for-of resume leaves it as the caller's sent value (undefined).
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, _builder.SentField);
         SetStackUnknown();
     }
 

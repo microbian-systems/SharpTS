@@ -924,6 +924,43 @@ public partial class RuntimeEmitter
         var notEnumeratorLabel = il.DefineLabel();
         var returnBranchLabel = il.DefineLabel();
 
+        // SharpTS generators implement $IGenerator. For an explicit next(v), call
+        // $IGenerator.next(value) directly so the sent value reaches the suspended
+        // yield with the correct default — a bare next() must resume with undefined,
+        // not the null that GetProperty+InvokeMethodValue would pad in for a missing
+        // argument (#452). User iterators carrying their own next() keep the
+        // GetProperty path below (they don't implement $IGenerator).
+        if (runtime.GeneratorInterfaceType != null)
+        {
+            var notGeneratorNextLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "next");
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, notGeneratorNextLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.GeneratorInterfaceType);
+            il.Emit(OpCodes.Brfalse, notGeneratorNextLabel);
+            // ((​$IGenerator)recv).next(args.Length > 0 ? args[0] : undefined)
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.GeneratorInterfaceType);
+            var sentArgLabel = il.DefineLabel();
+            var sentDoneLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Brtrue, sentArgLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Br, sentDoneLabel);
+            il.MarkLabel(sentArgLabel);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.MarkLabel(sentDoneLabel);
+            il.Emit(OpCodes.Callvirt, runtime.GeneratorNextMethod);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notGeneratorNextLabel);
+        }
+
         // Resolve the JS-level member first. Generators and user-defined
         // iterators expose a real `next`/`return` callable here; only when the
         // receiver has NO such member (a bare BCL enumerator) do we synthesize

@@ -37,6 +37,11 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
     private State _state = State.NotStarted;
     private object? _yieldedValue;
     private object? _returnValue;
+    // The value passed to the next/return call that resumes the suspended yield.
+    // ECMA-262 §27.5.3.3: `yield expr` evaluates to the argument of the resuming
+    // `next(v)`. Defaults to undefined so a yield resumed without an explicit value
+    // (for...of, yield* delegation, bare next()) evaluates to undefined.
+    private object? _sentValue = SharpTSUndefined.Instance;
     private bool _closed;
     private Exception? _workerException;
 
@@ -52,9 +57,21 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
     }
 
     /// <summary>
+    /// Advances the generator to the next yield point, resuming the suspended
+    /// <c>yield</c> with <c>undefined</c> (the implicit value for for...of,
+    /// yield* delegation, and a bare <c>next()</c>).
+    /// </summary>
+    public SharpTSIteratorResult Next() => Next(SharpTSUndefined.Instance);
+
+    /// <summary>
     /// Advances the generator to the next yield point.
     /// </summary>
-    public SharpTSIteratorResult Next()
+    /// <param name="sentValue">
+    /// The value the resumed <c>yield</c> expression evaluates to (ECMA-262 §27.5.3.3).
+    /// Ignored on the first call, which only starts the body — there is no suspended
+    /// yield waiting to receive it.
+    /// </param>
+    public SharpTSIteratorResult Next(object? sentValue)
     {
         if (_closed || _state == State.Completed)
             return new SharpTSIteratorResult(_returnValue, done: true);
@@ -70,7 +87,9 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
         }
         else
         {
-            // Resume: restore generator's environment and signal worker
+            // Resume: hand the sent value to the suspended yield, restore the
+            // generator's environment, and signal the worker.
+            _sentValue = sentValue;
             _state = State.Running;
             _callerReady.Set();
         }
@@ -177,8 +196,8 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
         {
             return DelegateYieldStar(_interpreter, this, value, v => SuspendWithValue(v), () => _closed);
         }
-        SuspendWithValue(value);
-        return null;
+        // A plain `yield` evaluates to the value passed to the resuming next(v).
+        return SuspendWithValue(value);
     }
 
     /// <summary>
@@ -218,8 +237,10 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
 
     /// <summary>
     /// Suspends the worker thread, passing a single yielded value to the caller.
+    /// Returns the value supplied to the resuming <c>next(v)</c> call, which becomes
+    /// the result of the <c>yield</c> expression.
     /// </summary>
-    private void SuspendWithValue(object? value)
+    private object? SuspendWithValue(object? value)
     {
         _yieldedValue = value;
         _state = State.Suspended;
@@ -238,6 +259,8 @@ public class SharpTSGenerator : IEnumerable<object?>, IDisposable, ITypeCategori
         _callerYieldCallback = _interpreter.YieldCallback;
         _interpreter.SetEnvironment(generatorEnv);
         _interpreter.YieldCallback = HandleYieldCallback;
+
+        return _sentValue;
     }
 
     // IEnumerable implementation for for...of integration
@@ -290,6 +313,9 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
     private State _state = State.NotStarted;
     private object? _yieldedValue;
     private object? _returnValue;
+    // The value passed to the resuming next(v); becomes the result of the suspended
+    // yield (ECMA-262 §27.5.3.3). Defaults to undefined for implicit resumes.
+    private object? _sentValue = SharpTSUndefined.Instance;
     private bool _closed;
     private Exception? _workerException;
 
@@ -303,7 +329,13 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
         _interpreter = interpreter;
     }
 
-    public SharpTSIteratorResult Next()
+    public SharpTSIteratorResult Next() => Next(SharpTSUndefined.Instance);
+
+    /// <summary>
+    /// Advances the generator, resuming the suspended <c>yield</c> with
+    /// <paramref name="sentValue"/> (ECMA-262 §27.5.3.3). Ignored on the first call.
+    /// </summary>
+    public SharpTSIteratorResult Next(object? sentValue)
     {
         if (_closed || _state == State.Completed)
             return new SharpTSIteratorResult(_returnValue, done: true);
@@ -318,6 +350,7 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
         }
         else
         {
+            _sentValue = sentValue;
             _state = State.Running;
             _callerReady.Set();
         }
@@ -397,11 +430,10 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
         {
             return SharpTSGenerator.DelegateYieldStar(_interpreter, this, value, v => SuspendWithValue(v), () => _closed);
         }
-        SuspendWithValue(value);
-        return null;
+        return SuspendWithValue(value);
     }
 
-    private void SuspendWithValue(object? value)
+    private object? SuspendWithValue(object? value)
     {
         _yieldedValue = value;
         _state = State.Suspended;
@@ -420,6 +452,8 @@ public class SharpTSArrowGenerator : IEnumerable<object?>, IDisposable
         _callerYieldCallback = _interpreter.YieldCallback;
         _interpreter.SetEnvironment(generatorEnv);
         _interpreter.YieldCallback = HandleYieldCallback;
+
+        return _sentValue;
     }
 
     public IEnumerator<object?> GetEnumerator()

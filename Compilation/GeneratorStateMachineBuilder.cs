@@ -26,6 +26,10 @@ public class GeneratorStateMachineBuilder
     public FieldBuilder StateField { get; private set; } = null!;
     public FieldBuilder CurrentField { get; private set; } = null!;
 
+    // The value passed to next(v); read by a resumed yield expression (ECMA-262
+    // §27.5.3.3 — `yield expr` evaluates to the argument of the resuming next).
+    public FieldBuilder SentField { get; private set; } = null!;
+
     // Hoisted variables (become struct fields) - delegated to HoistingManager
     public Dictionary<string, FieldBuilder> HoistedParameters => _hoisting.HoistedParameters;
     public Dictionary<string, FieldBuilder> HoistedLocals => _hoisting.HoistedLocals;
@@ -125,6 +129,7 @@ public class GeneratorStateMachineBuilder
         // Define core fields
         DefineStateField();
         DefineCurrentField();
+        DefineSentField();
 
         // Define hoisted variables using HoistingManager
         _hoisting = new HoistingManager(_stateMachineType, _types.Object);
@@ -193,6 +198,17 @@ public class GeneratorStateMachineBuilder
         );
     }
 
+    private void DefineSentField()
+    {
+        // <>3__sent - the value passed to next(v), delivered to the resumed yield.
+        // Stored by next() before driving MoveNext; read on the resume path.
+        SentField = _stateMachineType.DefineField(
+            "<>3__sent",
+            _types.Object,
+            FieldAttributes.Private
+        );
+    }
+
     private void DefineConstructor()
     {
         // Define default constructor
@@ -210,6 +226,15 @@ public class GeneratorStateMachineBuilder
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_M1);
         il.Emit(OpCodes.Stfld, StateField);
+        // Seed the sent value with undefined so a yield resumed without an explicit
+        // next(v) — for...of and yield* delegation drive MoveNext directly, never
+        // setting SentField — evaluates to undefined rather than the null default.
+        if (_runtime?.UndefinedInstance != null)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldsfld, _runtime.UndefinedInstance);
+            il.Emit(OpCodes.Stfld, SentField);
+        }
         il.Emit(OpCodes.Ret);
     }
 
@@ -391,12 +416,18 @@ public class GeneratorStateMachineBuilder
             "next",
             MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.HideBySig | MethodAttributes.NewSlot,
             _types.Object,
-            Type.EmptyTypes
+            [_types.Object]
         );
 
         var nextIL = NextMethod.GetILGenerator();
         var doneLabel = nextIL.DefineLabel();
         var endLabel = nextIL.DefineLabel();
+
+        // Stash the sent value so the resumed yield (read of SentField in MoveNext)
+        // sees it. Set before MoveNext so the resume path observes the new value.
+        nextIL.Emit(OpCodes.Ldarg_0);
+        nextIL.Emit(OpCodes.Ldarg_1);
+        nextIL.Emit(OpCodes.Stfld, SentField);
 
         // Call MoveNext()
         nextIL.Emit(OpCodes.Ldarg_0);

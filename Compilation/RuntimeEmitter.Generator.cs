@@ -23,14 +23,15 @@ public partial class RuntimeEmitter
         );
         runtime.GeneratorInterfaceType = interfaceBuilder;
 
-        // Define next() method: object next()
-        // This wraps MoveNext + Current into a single call returning iterator result
-        // Using lowercase to match JavaScript API
+        // Define next(object value) method: object next(object value)
+        // Wraps MoveNext + Current into a single call returning an iterator result.
+        // The value argument becomes the result of the resumed yield (ECMA-262
+        // §27.5.1.2). Using lowercase to match the JavaScript API.
         var nextMethod = interfaceBuilder.DefineMethod(
             "next",
             MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Abstract | MethodAttributes.HideBySig | MethodAttributes.NewSlot,
             _types.Object,
-            Type.EmptyTypes
+            [_types.Object]
         );
         runtime.GeneratorNextMethod = nextMethod;
 
