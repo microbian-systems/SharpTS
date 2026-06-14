@@ -563,16 +563,26 @@ public class DateTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Date_ToLocale_HonorsLocaleAndOptions(ExecutionMode mode)
     {
-        // #539: locale and options are honored. timeZone:'UTC' makes the assertion independent of
-        // the host time zone; an explicit locale makes it independent of the host culture.
+        // #539: locale and options are honored. Exact locale-formatted output is host-dependent
+        // (ICU vs Windows NLS differ, e.g. a narrow no-break space before AM/PM), so — like
+        // IntlDateTimeFormatTests — assert on stable localized names and structural effects rather
+        // than exact strings. timeZone:'UTC' keeps it independent of the host time zone.
         var source = @"
             let d = new Date(Date.UTC(2024, 0, 15, 12, 0, 0));
-            console.log(d.toLocaleDateString('en-US', { dateStyle: 'full', timeZone: 'UTC' }));
-            console.log(d.toLocaleDateString('de-DE', { dateStyle: 'full', timeZone: 'UTC' }));
-            console.log(d.toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'medium', timeZone: 'UTC' }));
+            let enFull = d.toLocaleDateString('en-US', { dateStyle: 'full', timeZone: 'UTC' });
+            let deFull = d.toLocaleDateString('de-DE', { dateStyle: 'full', timeZone: 'UTC' });
+            let enShort = d.toLocaleDateString('en-US', { dateStyle: 'short', timeZone: 'UTC' });
+            let enTime = d.toLocaleTimeString('en-US', { timeStyle: 'medium', timeZone: 'UTC' });
+            console.log(enFull.includes('Monday') && enFull.includes('January') && enFull.includes('2024'));
+            console.log(deFull.includes('Montag') && deFull.includes('Januar'));
+            console.log(deFull !== enFull);
+            console.log(enShort !== enFull && !enShort.includes('Monday'));
+            console.log(enTime.includes('12:00:00'));
         ";
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("Monday, January 15, 2024\nMontag, 15. Januar 2024\n1/15/2024 12:00:00 PM\n", output);
+        // en-US full has English weekday/month names; de-DE full uses German names; locale changes
+        // the output; dateStyle:'short' drops the weekday; timeStyle:'medium' shows H:M:S.
+        Assert.Equal("true\ntrue\ntrue\ntrue\ntrue\n", output);
     }
 
     [Fact]

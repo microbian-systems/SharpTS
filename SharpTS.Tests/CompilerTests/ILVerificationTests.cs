@@ -1282,19 +1282,21 @@ public class ILVerificationTests
     }
 
     // #539: toLocale* with locale/options emits verifiable IL (the reflection-based options path)
-    // and matches the interpreter. timeZone:'UTC' keeps the output timezone-independent.
+    // and matches the interpreter. Exact locale-formatted output is host-dependent, so assert on
+    // stable localized substrings (see IntlDateTimeFormatTests) plus interpreter parity.
     [Fact]
     public void DateToLocaleWithOptions_PassesILVerification()
     {
         var source = """
             const d = new Date(Date.UTC(2024, 0, 15, 12, 0, 0));
-            console.log(d.toLocaleDateString('en-US', { dateStyle: 'full', timeZone: 'UTC' }));
+            const s = d.toLocaleDateString('en-US', { dateStyle: 'full', timeZone: 'UTC' });
+            console.log(s.includes('Monday'), s.includes('January'), s.includes('2024'));
             """;
 
         var (errors, output) = TestHarness.CompileVerifyAndRun(source);
 
         Assert.Empty(errors);
-        Assert.Equal("Monday, January 15, 2024\n", output);
+        Assert.Equal("true true true\n", output);
         Assert.Equal(output, TestHarness.RunInterpreted(source));
     }
 }
