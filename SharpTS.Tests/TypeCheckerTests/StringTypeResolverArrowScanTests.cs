@@ -129,4 +129,45 @@ public class StringTypeResolverArrowScanTests
             """;
         TestHarness.RunInterpreted(source);
     }
+
+    // ---- TryParseGenericFunctionTypeInfo: arrow inside a type-parameter constraint/default (#510) ----
+    // A 7th scanner in the same family, with a different idiom (an early-break `--depth == 0` loop):
+    // the '>' of a `T extends () => number` constraint closed the type-parameter list early, so the
+    // remainder no longer parsed as `(...) => ...` and the whole type collapsed to `any` (a bare
+    // number was then wrongly accepted). FindTopLevelChar also had to skip the arrow's '=' so the
+    // constraint is not mis-split at `=>` into a phantom default.
+
+    [Fact]
+    public void GenericFunctionType_ArrowConstraint_RejectsNonFunction()
+    {
+        // F is a generic function type; 5 is not assignable to it. Before #510, F garbled to `any`
+        // and 5 was accepted.
+        var source = """
+            type F = <T extends () => number>(x: T) => T;
+            let bad: F = 5;
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void GenericFunctionType_ArrowConstraint_AcceptsGenericFunction()
+    {
+        var source = """
+            type F = <T extends () => number>(x: T) => T;
+            const ok: F = <T extends () => number>(x: T): T => x;
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void GenericFunctionType_ObjectConstraint_StillRejectsNonFunction()
+    {
+        // Control from #510: a non-arrow constraint already resolved to a proper generic function
+        // type, so 5 was correctly rejected. This must keep working.
+        var source = """
+            type G = <T extends { n: number }>(x: T) => T;
+            let bad: G = 5;
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
 }

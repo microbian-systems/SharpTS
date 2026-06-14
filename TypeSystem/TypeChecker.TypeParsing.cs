@@ -713,7 +713,9 @@ public partial class TypeChecker
         {
             char c = typeName[i];
             if (c == '<') depth++;
-            else if (c == '>' && --depth == 0) { close = i; break; }
+            // Skip the '>' of an arrow '=>' (e.g. a `T extends () => number` constraint), which would
+            // otherwise close the type-parameter list early and collapse the whole type to `any`.
+            else if (c == '>' && (i == 0 || typeName[i - 1] != '=') && --depth == 0) { close = i; break; }
         }
         if (close < 0) return false;
 
@@ -1653,7 +1655,9 @@ public partial class TypeChecker
             char c = str[i];
             if (c == '<' || c == '(' || c == '[' || c == '{') depth++;
             else if (c == ')' || c == ']' || c == '}' || (c == '>' && (i == 0 || str[i - 1] != '='))) depth--;  // Skip > in =>
-            else if (depth == 0 && c == target)
+            // When searching for a type-parameter default '=', skip the '=' of an arrow '=>' so a
+            // constraint/default like `T extends () => number` is not split at the arrow (#510).
+            else if (depth == 0 && c == target && !(target == '=' && i + 1 < str.Length && str[i + 1] == '>'))
             {
                 return i;
             }
