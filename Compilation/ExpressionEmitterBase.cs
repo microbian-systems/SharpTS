@@ -98,10 +98,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
 
     #region Constant Emission Delegations
     protected void EmitNullConstant() => _helpers.EmitNullConstant();
-    // Pass Ctx.Runtime so the real $Undefined sentinel is emitted: state-machine emitters construct
-    // their helpers without a runtime, and the helper's own null fallback turned `undefined` into CLR
-    // null inside async/generator bodies. (#600)
-    protected void EmitUndefinedConstant() => _helpers.EmitUndefinedConstant(Ctx.Runtime);
+    protected void EmitUndefinedConstant() => _helpers.EmitUndefinedConstant();
     protected void EmitDoubleConstant(double value) => _helpers.EmitDoubleConstant(value);
     protected void EmitBoolConstant(bool value) => _helpers.EmitBoolConstant(value);
     protected void EmitStringConstant(string value) => _helpers.EmitStringConstant(value);
@@ -323,12 +320,12 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case double d: EmitDoubleConstant(d); break;
             case bool b: EmitBoolConstant(b); break;
             case string s: EmitStringConstant(s); break;
-            // The `undefined` literal carries a SharpTSUndefined sentinel value. Without this case it
-            // fell through to `default` and emitted a CLR null, so inside state machines (async,
-            // generator, async-arrow, async-generator — the only users of this base override)
-            // `undefined` read back as null: `typeof undefined` was "object" and `x === undefined`
-            // behaved like a null check (`await nullPromise === undefined` wrongly true). Mirror the
-            // ILEmitter.EmitLiteral override and load the real $Undefined sentinel. (#600)
+            // The `undefined` keyword parses to a Literal holding the $Undefined sentinel
+            // (Parser.Expressions.cs), as do array holes. State-machine emitters use this base
+            // method, so without an explicit arm `undefined` would fall to `default` and emit
+            // CLR null — making `=== undefined` collapse into `=== null` and any undefined operand
+            // stringify as "null" inside async/generators (#600, #629). ILEmitter has the same arm.
+            // (Requires the helper's runtime to be wired via SetRuntime; see the emitters' EmitMoveNext.)
             case Runtime.Types.SharpTSUndefined: EmitUndefinedConstant(); break;
             default: IL.Emit(OpCodes.Ldnull); SetStackUnknown(); break;
         }

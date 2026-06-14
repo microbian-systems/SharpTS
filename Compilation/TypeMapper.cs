@@ -312,6 +312,22 @@ public class TypeMapper
         return def == _types.ListOpen || def == _types.DictionaryOpen || def == _types.HashSetOpen;
     }
 
+    /// <summary>
+    /// Reports whether <paramref name="mappedType"/> is a CLR type that <see cref="MapTypeInfoStrict"/>
+    /// produces but whose TypeScript runtime value is carried dynamically as <see cref="object"/> — a
+    /// <c>$TSDate</c>/<c>$RegExp</c>/<c>$Array</c>/<c>$Map</c>/<c>$Set</c>, not an instance of that CLR
+    /// type. Extends <see cref="IsDynamicRuntimeCollection"/> (the <c>List&lt;T&gt;</c>/
+    /// <c>Dictionary&lt;,&gt;</c>/<c>HashSet&lt;T&gt;</c> mappings for array/Map/Set) with the
+    /// non-collection BCL mappings <c>DateTime</c> (Date) and <c>Regex</c> (RegExp). A parameter or
+    /// return slot of such a type is not assignable from the runtime value: it fails strict ILVerify
+    /// with StackUnexpected and a castclass at the call/return site throws InvalidCastException, so
+    /// callers fall back to <see cref="object"/>. (#278, #573)
+    /// </summary>
+    public bool IsDynamicRuntimeType(Type mappedType) =>
+        mappedType == _types.DateTime ||
+        mappedType == _types.Regex ||
+        IsDynamicRuntimeCollection(mappedType);
+
     private Type MapPromiseTypeStrict(TypeInfo.Promise promise)
     {
         Type innerType = MapTypeInfoStrict(promise.ValueType);

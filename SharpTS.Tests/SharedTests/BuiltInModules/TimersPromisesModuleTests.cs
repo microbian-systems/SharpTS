@@ -124,11 +124,8 @@ public class TimersPromisesModuleTests
         Assert.Equal("42\n", output);
     }
 
-    // #640: in compiled mode the omitted `value` is null-padded across the stdlib wrapper's module
-    // boundary, so `await setTimeout(10)` resolves null (not the undefined sentinel) and `=== undefined`
-    // is false. Interpreter is correct. Pinned to InterpretedOnly until the cross-module padding is fixed.
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TimersPromises_SetTimeout_DefaultValue(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -226,10 +223,8 @@ public class TimersPromisesModuleTests
         Assert.Equal("quick\n", output);
     }
 
-    // #640: compiled mode null-pads the omitted `value` across the stdlib wrapper boundary, so
-    // `await setImmediate()` resolves null instead of the undefined sentinel. Interpreter is correct.
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TimersPromises_SetImmediate_DefaultValue(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
@@ -371,11 +366,8 @@ public class TimersPromisesModuleTests
         Assert.Equal("after break\n", output);
     }
 
-    // #640: compiled mode null-pads the omitted `value` across the stdlib wrapper boundary, so the
-    // values yielded by `setInterval(10)` are null instead of the undefined sentinel. Interpreter is
-    // correct. Pinned to InterpretedOnly until the cross-module padding is fixed.
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TimersPromises_SetInterval_ForAwaitOf_DefaultValue(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>

@@ -1,3 +1,4 @@
+using System.Linq;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation;
@@ -59,13 +60,18 @@ internal sealed class NestedFunctionLifter
 {
     private readonly ClosureAnalyzer _analyzer;
     private readonly HashSet<Stmt.Function> _safeCandidates;
+    private readonly Dictionary<Stmt.Function, List<string>> _lambdaForwards;
     private readonly List<Stmt.Function> _lifted = new();
     private int _counter;
 
-    private NestedFunctionLifter(ClosureAnalyzer analyzer, HashSet<Stmt.Function> safeCandidates)
+    private NestedFunctionLifter(
+        ClosureAnalyzer analyzer,
+        HashSet<Stmt.Function> safeCandidates,
+        Dictionary<Stmt.Function, List<string>> lambdaForwards)
     {
         _analyzer = analyzer;
         _safeCandidates = safeCandidates;
+        _lambdaForwards = lambdaForwards;
     }
 
     /// <summary>
@@ -92,26 +98,52 @@ internal sealed class NestedFunctionLifter
         var analyzer = new ClosureAnalyzer();
         analyzer.Analyze(module);
 
-        // A candidate is liftable when it captures nothing from an enclosing scope and its name does
-        // not collide with a top-level binding (which would hijack the injected alias).
+        // A candidate is liftable when it captures nothing from an enclosing FUNCTION scope.
         var reservedTopLevelNames = CollectTopLevelBindingNames(module);
         var safe = new HashSet<Stmt.Function>(ReferenceEqualityComparer.Instance);
+        // Module-block declarations that CAPTURE an enclosing block/loop binding are lambda-lifted:
+        // each captured binding becomes a leading parameter of the relocated top-level declaration,
+        // forwarded by an in-place arrow that closes over it (see LambdaLiftCandidate). Maps such a
+        // function to the ordered list of capture names to forward.
+        var lambdaForwards = new Dictionary<Stmt.Function, List<string>>(ReferenceEqualityComparer.Instance);
         foreach (var f in scan.Candidates)
         {
+            // A reference into an intermediate FUNCTION scope is a real closure capture (#583 §1)
+            // that neither plain relocation nor lambda-lifting can perform — leave it nested.
             if (!IsNonCapturing(analyzer, f)) continue;
-            if (reservedTopLevelNames.Contains(f.Name.Lexeme)) continue;
-            // A module-level-block candidate that captures a binding declared in an enclosing
-            // block/loop scope (e.g. a generator in a `for` reading the loop variable) cannot be
-            // lifted: that name does not exist at module top level, so the relocated body would
-            // read the wrong slot. Leaving it nested is a clean failure, never a miscompile (#605).
-            if (scan.ModuleBlockEnclosingBindings.TryGetValue(f, out var blockBindings) &&
-                CapturesAnyOf(analyzer, f, blockBindings))
+
+            bool isModuleBlock = scan.ModuleBlockEnclosingBindings.TryGetValue(f, out var blockBindings);
+
+            // A module-block candidate that captures an enclosing block/loop binding (e.g. a
+            // generator in a `for` reading the loop variable) can't move to module top level as-is —
+            // that name doesn't exist there. Lambda-lift it: the captured bindings become leading
+            // parameters of the relocated declaration, forwarded by an in-place arrow that closes
+            // over them. The compiler cannot emit a generator/async that captures locals, so this
+            // declaration-with-parameters form is the only route that handles all three function
+            // kinds uniformly (#622). The type checker has already rejected any reference to a
+            // captured binding before its declaration (or to the function before its own), so the
+            // arrow's snapshot of each capture at its in-place position is always well-defined.
+            if (isModuleBlock && CapturesAnyOf(analyzer, f, blockBindings!))
+            {
+                if (TryComputeLambdaForward(analyzer, f, blockBindings!, out var forwarded))
+                    lambdaForwards[f] = forwarded;
+                // Otherwise leave nested — a clean failure, never a miscompile.
                 continue;
+            }
+
+            // The injected alias for a MODULE-BLOCK candidate is a `var` that hoists to module
+            // scope, so a same-named top-level binding would collide with it — keep declining those.
+            // An INSIDE-FUNCTION candidate's alias is function-scoped and correctly shadows a
+            // same-named top-level function now that in-scope locals win that resolution (#607),
+            // so the name-collision guard is unnecessary there: without this relaxation a liftable
+            // nested generator/async whose name matched a top-level binding failed to compile with
+            // "Yield not supported in this context" instead of being lifted.
+            if (isModuleBlock && reservedTopLevelNames.Contains(f.Name.Lexeme)) continue;
             safe.Add(f);
         }
-        if (safe.Count == 0) return module;
+        if (safe.Count == 0 && lambdaForwards.Count == 0) return module;
 
-        var lifter = new NestedFunctionLifter(analyzer, safe);
+        var lifter = new NestedFunctionLifter(analyzer, safe, lambdaForwards);
         var rewritten = lifter.ProcessTopLevel(module);
         if (lifter._lifted.Count == 0) return module;
 
@@ -157,6 +189,81 @@ internal sealed class NestedFunctionLifter
             if (names.Contains(captured)) return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Decides whether a module-block declaration that captures enclosing block/loop bindings can be
+    /// lambda-lifted, and if so produces the ordered list of capture names to forward as leading
+    /// parameters. Declines (returns false — the declaration stays nested, a clean failure) when the
+    /// forwarding arrow cannot faithfully reproduce the call:
+    /// <list type="bullet">
+    /// <item>rest or default parameters — forwarding them through the arrow miscompiles (spread call
+    /// args and expression-body arrow defaults are not yet reliable);</item>
+    /// <item>the body uses <c>this</c> or <c>arguments</c> — a plain top-level function reached
+    /// through an arrow has neither the original receiver nor the original argument list.</item>
+    /// </list>
+    /// The forwarded set is exactly the captured names that resolve to an enclosing block/loop
+    /// binding (a module top-level binding is reachable by the relocated function directly, so it is
+    /// not forwarded). The function's own name is included when it recurses, so the relocated body's
+    /// self-calls resolve to the forwarded arrow.
+    /// </summary>
+    private static bool TryComputeLambdaForward(
+        ClosureAnalyzer analyzer, Stmt.Function f, HashSet<string> blockBindings, out List<string> forwarded)
+    {
+        forwarded = [];
+
+        foreach (var p in f.Parameters)
+            if (p.IsRest || p.DefaultValue != null)
+                return false;
+
+        if (UsesThisOrArguments(f.Body))
+            return false;
+
+        // Ordinal sort gives a deterministic parameter order shared by the relocated declaration's
+        // leading parameters and the arrow's leading call arguments.
+        forwarded = analyzer.GetCaptures(f)
+            .Where(blockBindings.Contains)
+            .OrderBy(c => c, System.StringComparer.Ordinal)
+            .ToList();
+        return forwarded.Count > 0;
+    }
+
+    /// <summary>
+    /// True if any statement in <paramref name="body"/> reads <c>this</c> or <c>arguments</c>.
+    /// Deliberately over-approximates: it descends through nested function/arrow boundaries (which
+    /// rebind both), so a nested function's own <c>this</c> also trips it. A false positive only
+    /// declines a lambda-lift (a clean failure), never miscompiles.
+    /// </summary>
+    private static bool UsesThisOrArguments(List<Stmt>? body)
+    {
+        if (body == null) return false;
+        var scanner = new ThisArgumentsScanner();
+        foreach (var stmt in body)
+        {
+            scanner.Visit(stmt);
+            if (scanner.Found) return true;
+        }
+        return scanner.Found;
+    }
+
+    private sealed class ThisArgumentsScanner : Parsing.Visitors.AstVisitorBase
+    {
+        public bool Found { get; private set; }
+
+        protected override void VisitThis(Expr.This expr)
+        {
+            Found = true;
+            ShouldContinue = false;
+        }
+
+        protected override void VisitVariable(Expr.Variable expr)
+        {
+            if (expr.Name.Lexeme == "arguments")
+            {
+                Found = true;
+                ShouldContinue = false;
+            }
+        }
     }
 
     /// <summary>Accumulates the structural candidate scan results.</summary>
@@ -332,12 +439,27 @@ internal sealed class NestedFunctionLifter
         {
             var stmt = body[i];
 
-            if (stmt is Stmt.Function f && f.Body != null && _safeCandidates.Contains(f))
+            if (stmt is Stmt.Function f && f.Body != null)
             {
-                aliases ??= new List<Stmt>();
-                aliases.Add(LiftCandidate(f));
-                result ??= new List<Stmt>(body.GetRange(0, i));
-                continue; // drop the declaration from this body
+                if (_safeCandidates.Contains(f))
+                {
+                    // Non-capturing relocation: hoist a `var name = freshName;` alias to the top of
+                    // this body (function declarations hoist, so the alias must too).
+                    aliases ??= new List<Stmt>();
+                    aliases.Add(LiftCandidate(f));
+                    result ??= new List<Stmt>(body.GetRange(0, i));
+                    continue; // drop the declaration from this body
+                }
+                if (_lambdaForwards.TryGetValue(f, out var forwarded))
+                {
+                    // Capturing relocation: replace the declaration IN PLACE with a forwarding
+                    // arrow. In-place (not hoisted) so the arrow snapshots each captured binding
+                    // where they are all in scope and assigned — the type checker has already
+                    // guaranteed that ordering, rejecting any earlier reference.
+                    result ??= new List<Stmt>(body.GetRange(0, i));
+                    result.Add(LambdaLiftCandidate(f, forwarded));
+                    continue;
+                }
             }
 
             var rewritten = ProcessStmt(stmt, enclosingIsStateMachine);
@@ -380,6 +502,65 @@ internal sealed class NestedFunctionLifter
     /// <summary>Builds <c>var &lt;original&gt; = &lt;fresh&gt;;</c>.</summary>
     private static Stmt MakeAlias(Token original, Token fresh)
         => new Stmt.Var(original, TypeAnnotation: null, Initializer: new Expr.Variable(fresh), IsVar: true);
+
+    /// <summary>
+    /// Lambda-lifts a capturing module-block declaration: relocates it to a top-level declaration
+    /// whose leading parameters are the captured bindings (<paramref name="forwarded"/>), and returns
+    /// a block-scoped <c>let &lt;name&gt; = (&lt;params&gt;) =&gt; &lt;fresh&gt;(&lt;captures&gt;,
+    /// &lt;params&gt;);</c> arrow that stands in for it at its original position. The arrow closes over
+    /// the captured bindings and forwards them, so a generator/async relocated this way — which the
+    /// compiler cannot emit as a capturing closure directly — still observes its captures, and each
+    /// loop iteration builds a fresh arrow over that iteration's bindings (#622).
+    /// </summary>
+    private Stmt LambdaLiftCandidate(Stmt.Function f, List<string> forwarded)
+    {
+        var freshName = $"__nestedFn_{f.Name.Lexeme}_{_counter++}";
+        var freshToken = new Token(TokenType.IDENTIFIER, freshName, null, f.Name.Line);
+
+        // Recurse first so nested candidates inside the relocated body are also handled.
+        var liftedBody = ProcessBody(f.Body!, f.IsGenerator || f.IsAsync);
+
+        // Relocated declaration: captured bindings become leading (untyped) parameters, followed by
+        // the original parameters. Body references to the captured names now resolve to these
+        // parameters, so the body needs no renaming.
+        var liftedParams = new List<Stmt.Parameter>(forwarded.Count + f.Parameters.Count);
+        foreach (var name in forwarded)
+            liftedParams.Add(new Stmt.Parameter(new Token(TokenType.IDENTIFIER, name, null, f.Name.Line), Type: null));
+        foreach (var p in f.Parameters)
+            liftedParams.Add(p with { });
+        _lifted.Add(f with { Name = freshToken, Parameters = liftedParams, Body = liftedBody });
+
+        // Forwarding arrow: original parameters in, captured bindings + those parameters forwarded
+        // to the relocated declaration. Not a generator/async itself — it returns whatever the
+        // relocated declaration produces (the iterator for a generator, the promise for async).
+        var callArgs = new List<Expr>(forwarded.Count + f.Parameters.Count);
+        foreach (var name in forwarded)
+            callArgs.Add(new Expr.Variable(new Token(TokenType.IDENTIFIER, name, null, f.Name.Line)));
+        foreach (var p in f.Parameters)
+            callArgs.Add(new Expr.Variable(p.Name));
+
+        var call = new Expr.Call(
+            new Expr.Variable(freshToken),
+            new Token(TokenType.LEFT_PAREN, "(", null, f.Name.Line),
+            TypeArgs: null,
+            Arguments: callArgs);
+
+        var arrow = new Expr.ArrowFunction(
+            Name: null,
+            TypeParams: null,
+            ThisType: null,
+            Parameters: [.. f.Parameters.Select(p => p with { })],
+            ExpressionBody: call,
+            BlockBody: null,
+            ReturnType: null,
+            HasOwnThis: false,
+            IsAsync: false,
+            IsGenerator: false);
+
+        // Block-scoped `let`: doesn't leak past its block and is re-bound per loop iteration,
+        // matching block-scoped function-declaration semantics.
+        return new Stmt.Var(f.Name, TypeAnnotation: null, Initializer: arrow, IsVar: false);
+    }
 
     private Stmt ProcessStmt(Stmt stmt, bool enclosingIsStateMachine)
     {

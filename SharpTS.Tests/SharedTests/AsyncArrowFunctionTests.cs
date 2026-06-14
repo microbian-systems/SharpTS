@@ -477,9 +477,10 @@ public class AsyncArrowFunctionTests
         Assert.Equal("50\n", output);
     }
 
-    // #615: a top-level async arrow whose body directly nests another async-arrow expression failed
-    // to compile ("Async arrow with nested arrows does not have SelfBoxedField set"). The nested
-    // arrow is registered standalone, so it is emitted as a plain TSFunction over its stub.
+    // #615: a top-level (standalone) async arrow whose body nests another async-arrow expression
+    // (e.g. an immediately-invoked async arrow) failed to compile with "Async arrow with nested
+    // arrows does not have SelfBoxedField set." — the standalone arrow never provisioned the
+    // <>__selfBoxed field the nested-arrow emit requires. The interpreter was always correct.
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncArrow_NestsAsyncArrowIife_Compiles(ExecutionMode mode)
@@ -493,39 +494,43 @@ public class AsyncArrowFunctionTests
         Assert.Equal("9\n", output);
     }
 
-    // #615 follow-up: a parameterized nested async arrow inside a top-level async arrow. Earlier the
-    // self-boxed instance was (wrongly) prepended as the inner arrow's first argument; the standalone
-    // emit path passes a null target so the call's own args map to the parameters.
+    // #615: deeper and repeated nesting of self-contained async arrows inside a standalone async
+    // arrow.
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void AsyncArrow_NestsParameterizedAsyncArrow_Compiles(ExecutionMode mode)
+    public void AsyncArrow_NestsAsyncArrows_DeepAndRepeated(ExecutionMode mode)
     {
         var source = """
             const f = async () => {
-                const g = async (z: number) => z * 2;
-                console.log(await g(21));
+                const a = await (async () => 1)();
+                const b = await (async () => await (async () => 2)())();
+                console.log(a + b);
             };
             f();
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("42\n", output);
+        Assert.Equal("3\n", output);
     }
 
-    // #615: deep nesting of standalone async arrows (each its own state machine) resolves correctly.
+    // #615: a *parameterized* nested async arrow inside a standalone async arrow. The nested arrow
+    // is emitted as an independent TSFunction over its own stub (null target); passing the
+    // enclosing arrow's boxed state machine as the target would clobber the first parameter
+    // (InvalidCastException at the call site).
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void AsyncArrow_TripleNestedAsyncArrow_Compiles(ExecutionMode mode)
+    public void AsyncArrow_NestsParameterizedAsyncArrow(ExecutionMode mode)
     {
         var source = """
             const f = async () => {
-                const x = await (async () => await (async () => 7)())();
-                console.log(x);
+                const x = await (async (n: number) => n + 1)(5);
+                const y = await (async (a: number, b: number) => a * b)(6, 7);
+                console.log(x + " " + y);
             };
             f();
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("7\n", output);
+        Assert.Equal("6 42\n", output);
     }
 }

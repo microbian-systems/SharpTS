@@ -73,6 +73,9 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
         if (body == null) return;
 
         _ctx = ctx;
+        // Wire the runtime into the helper now that the context is bound, so MoveNext uses the
+        // $Undefined sentinel and JS-spec coercion/comparison helpers rather than null/Convert (#600).
+        if (ctx.Runtime != null) _helpers.SetRuntime(ctx.Runtime);
 
         // Create variable resolver for hoisted fields and non-hoisted locals
         _resolver = new StateMachineVariableResolver(

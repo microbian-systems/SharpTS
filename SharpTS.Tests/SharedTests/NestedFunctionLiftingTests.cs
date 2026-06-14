@@ -166,6 +166,22 @@ public class NestedFunctionLiftingTests
         Assert.Equal("[10] 20\n", TestHarness.Run(source, mode));
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedGenerator_NameCollidesWithTopLevelFunction_IsLifted(ExecutionMode mode)
+    {
+        // The nested generator `a3` shares a name with a top-level function. It is relocated under a
+        // fresh name and aliased by a function-local that correctly shadows the top-level `a3`
+        // (#607). Before the name-collision guard was relaxed, the lifter declined this and the
+        // nested generator failed to compile with "Yield not supported in this context".
+        var source = """
+            function a3(): number { return 1; }
+            function t3(): number { function* a3(): Generator<number> { yield 23; } return a3().next().value; }
+            console.log(a3(), t3());
+            """;
+        Assert.Equal("1 23\n", TestHarness.Run(source, mode));
+    }
+
     // ── Deep nesting ─────────────────────────────────────────────────────────────────────────────
 
     [Theory]
@@ -280,10 +296,77 @@ public class NestedFunctionLiftingTests
         Assert.Equal("yes\n", TestHarness.Run(source, mode));
     }
 
-    // ── Documented limitation #583 §1: capturing nested function-likes are NOT lifted ────────────
-    // The interpreter handles them via real closures; the compiler still cannot lower a nested
-    // state-machine function that captures an enclosing local (it stays nested and fails to compile,
-    // a clean failure — never a miscompile). This pins the interpreter behaviour.
+    // ── #622: capturing declarations inside a MODULE-LEVEL block/loop are lambda-lifted ──────────
+    // A function/generator/async declared in a module-level block that captures an enclosing
+    // block/loop binding is relocated to a top-level declaration whose leading parameters are the
+    // captured bindings, with an in-place arrow that closes over them and forwards them. This is the
+    // only route that lowers a capturing GENERATOR/ASYNC (the compiler cannot emit one as a capturing
+    // closure directly). Previously these threw "ReferenceError: Undefined variable" in compiled mode.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BlockFunction_CapturingBlockConst_IsCallable(ExecutionMode mode)
+    {
+        var source = """
+            { const base = 5; function add(n: number): number { return n + base; } console.log(add(1)); }
+            """;
+        Assert.Equal("6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BlockFunction_CapturingMultipleBlockBindings_IsCallable(ExecutionMode mode)
+    {
+        var source = """
+            { const a = 3; const b = 4; function sum(n: number): number { return a + b + n; } console.log(sum(5)); }
+            """;
+        Assert.Equal("12\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BlockAsyncFunction_CapturingBlockConst_IsCallable(ExecutionMode mode)
+    {
+        var source = """
+            { const base = "y"; async function af(): Promise<string> { return base; } af().then((v: string) => console.log(v)); }
+            """;
+        Assert.Equal("y\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RecursiveBlockGenerator_CapturingBlockConst_IsCallable(ExecutionMode mode)
+    {
+        // The function's own name is forwarded too, so the relocated body's self-calls resolve to
+        // the forwarding arrow.
+        var source = """
+            { const lim = 3; function* count(n: number): Generator<number> { yield n; if (n + 1 < lim) yield* count(n + 1); }
+              console.log([...count(0)].join(",")); }
+            """;
+        Assert.Equal("0,1,2\n", TestHarness.Run(source, mode));
+    }
+
+    // The headline #622 repro: a generator in a module-level for-loop capturing the loop variable.
+    // Compiled mode now lowers it conformantly — each iteration builds a fresh closure over that
+    // iteration's `let` binding, so the captured values are 0,1,2. (The interpreter still shares a
+    // single binding and yields 3,3,3 — a separate, pre-existing per-iteration `let` defect, #631-
+    // adjacent — so this is pinned for the compiler only.)
+    [Fact]
+    public void GeneratorCapturingModuleLevelLoopVar_IsLoweredConformantly()
+    {
+        var source = """
+            const gens: any[] = [];
+            for (let k = 0; k < 3; k++) { function* g() { yield k; } gens.push(g()); }
+            console.log(gens.map((it: any) => it.next().value).join(","));
+            """;
+        Assert.Equal("0,1,2\n", TestHarness.RunCompiled(source));
+    }
+
+    // ── Documented limitation #583 §1: capturing an enclosing FUNCTION scope is NOT lifted ───────
+    // Lambda-lifting forwards captured module-level block/loop bindings; a nested state-machine
+    // function that captures a local of an enclosing FUNCTION still cannot be lowered (it stays
+    // nested and fails to compile, a clean failure — never a miscompile). This pins the interpreter
+    // behaviour and asserts the compiler does not miscompile it.
 
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
@@ -300,22 +383,19 @@ public class NestedFunctionLiftingTests
         Assert.Equal("10\n", TestHarness.Run(source, mode));
     }
 
-    // A generator declared inside a module-level loop that captures the loop variable must NOT be
-    // relocated: lifting it out of the loop would silently drop the capture. The compiler may decline
-    // to lower it (a clean failure), but it must never produce the miscompiled empty values.
+    // A block declaration that uses `this`/`arguments`, or has rest/default parameters, is declined
+    // by the lambda-lift (the forwarding arrow cannot faithfully reproduce the call). It must fail
+    // cleanly in compiled mode, never miscompile to a wrong value.
     [Fact]
-    public void GeneratorCapturingModuleLevelLoopVar_IsNotMiscompiled()
+    public void BlockFunction_WithRestParam_CapturingBlockConst_FailsCleanly()
     {
         var source = """
-            const gens: any[] = [];
-            for (let k = 0; k < 3; k++) { function* g() { yield k; } gens.push(g()); }
-            console.log(gens.map((it: any) => it.next().value).join(","));
+            { const b = 1; function f(...args: number[]): number { return b + args.length; } console.log(f(9, 9)); }
             """;
         string compiled;
         try { compiled = TestHarness.RunCompiled(source); }
         catch { compiled = "<compile-or-runtime-error>"; }
-        // The bug produced ",," (three lost captures). Anything but that wrong value is acceptable
-        // here — either a clean failure, or the correct interpreter result if lowering improves.
-        Assert.NotEqual(",,\n", compiled);
+        // The interpreter result is "3"; a clean failure is acceptable, a different (wrong) value is not.
+        Assert.True(compiled == "<compile-or-runtime-error>" || compiled == "3\n", $"unexpected: {compiled}");
     }
 }

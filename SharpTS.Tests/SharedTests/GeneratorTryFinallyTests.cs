@@ -765,6 +765,104 @@ public class GeneratorTryFinallyTests
             TestHarness.Run(source, mode));
     }
 
+    // ---- #619: throwing null/undefined into a flag-based try/catch must engage the catch ----
+    // The flag-based scheme inferred "was an exception thrown?" from the captured value's nullness, so
+    // a thrown null/undefined (a null CLR reference) read as "no exception" — skipping the catch and
+    // dropping the post-finally rethrow. A dedicated present flag now records presence independent of
+    // the value. (A `throw undefined` *literal* stringifies as "null" in compiled state-machine code —
+    // a separate, broader representation gap tracked elsewhere — so undefined cases assert via
+    // `=== undefined` rather than string form. `throw null` is fully correct.)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ThrowNullIntoFlagBasedTryCatch_IsCaught(ExecutionMode mode)
+    {
+        // The exact #619 repro: throw null after a yield, caught in the same try's catch.
+        var source = """
+            function* g() { try { yield 1; throw null; } catch (e) { console.log("caught e=" + e); } }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v1\ncaught e=null\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ThrowUndefinedIntoFlagBasedTryCatch_IsCaught(ExecutionMode mode)
+    {
+        // throw undefined likewise reaches the catch (was skipped). Asserted via `=== undefined`
+        // because the compiled stringification of the caught value is the separate representation gap.
+        var source = """
+            function* g() { try { yield 1; throw undefined; } catch (e) { console.log("isUndef=" + (e === undefined)); } }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v1\nisUndef=true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FalsyNonNullThrowIntoFlagBasedTryCatch_StillCaught(ExecutionMode mode)
+    {
+        // Guard the boundary: a falsy-but-non-null thrown value (0 / "" / false box to non-null
+        // references) was already caught and must remain so under the present-flag scheme.
+        var source = """
+            function* g() { try { yield 1; throw 0; } catch (e) { console.log("caught e=" + e); } }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v1\ncaught e=0\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ThrowNullIntoCatchlessTryFinally_RethrowsAfterFinally(ExecutionMode mode)
+    {
+        // The catch-less rethrow gate also used value-nullness; a thrown null was dropped instead of
+        // rethrown after the finally. It now propagates to the outer catch.
+        var source = """
+            function* g() { try { yield 1; throw null; } finally { console.log("fin"); } }
+            try { for (const v of g()) console.log("v" + v); } catch (e) { console.log("outer isNull=" + (e === null)); }
+            """;
+
+        Assert.Equal("v1\nfin\nouter isNull=true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ThrowNullIntoCatchlessTry_WithYieldingFinally_RethrowsAfterFinally(ExecutionMode mode)
+    {
+        // The present flag must survive a yielding finally (persisted to a field, like the captured
+        // value in #599) so the post-finally rethrow still fires for a thrown null.
+        var source = """
+            function* g() { try { yield 1; throw null; } finally { yield 2; } }
+            const it = g();
+            console.log(JSON.stringify(it.next()));
+            console.log(JSON.stringify(it.next()));
+            try { it.next(); } catch (e) { console.log("isNull=" + (e === null)); }
+            """;
+
+        Assert.Equal(
+            "{\"value\":1,\"done\":false}\n{\"value\":2,\"done\":false}\nisNull=true\n",
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BareThrowOnSuspendedGenerator_InjectsUndefined(ExecutionMode mode)
+    {
+        // A bare it.throw() (no argument) injects `undefined` into the suspended yield and engages the
+        // catch — previously it padded `null` (and even then the value-nullness gate skipped the catch).
+        var source = """
+            function* g() { try { yield 1; } catch (e) { console.log("c:" + e); } }
+            const it = g();
+            it.next();
+            it.throw();
+            """;
+
+        Assert.Equal("c:undefined\n", TestHarness.Run(source, mode));
+    }
+
     // ---- IL-verification guards (the heart of #477: emitted IL must verify) ----
 
     [Theory]
@@ -816,6 +914,10 @@ public class GeneratorTryFinallyTests
     [InlineData("function* inner(){ try { yield 1; } finally { console.log('x'); } } function* g(){ yield* inner(); } for (const v of g()) {}")]
     [InlineData("function* inner(){ try { yield 1; } finally {} } function* mid(){ try { yield* inner(); } finally {} } function* g(){ yield* mid(); } for (const v of g()) {}")]
     [InlineData("function* g(){ try { yield 1; } catch (e) { yield 2; } finally { yield 3; } } for (const v of g()) {}")]
+    // #619: thrown null/undefined into a flag-based try — the present-flag gates must still verify.
+    [InlineData("function* g() { try { yield 1; throw null; } catch (e) { console.log(e); } } for (const v of g()) {}")]
+    [InlineData("function* g() { try { yield 1; throw undefined; } catch (e) { console.log(e); } } for (const v of g()) {}")]
+    [InlineData("function* g() { try { yield 1; throw null; } finally { yield 2; } } try { for (const v of g()) {} } catch (e) {}")]
     public void GeneratorTryFinallyWithYield_EmitsVerifiableIL(string source)
     {
         var errors = TestHarness.CompileAndVerifyOnly(source);
