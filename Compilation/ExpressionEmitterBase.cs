@@ -320,6 +320,13 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case double d: EmitDoubleConstant(d); break;
             case bool b: EmitBoolConstant(b); break;
             case string s: EmitStringConstant(s); break;
+            // The `undefined` keyword parses to a Literal holding the $Undefined sentinel
+            // (Parser.Expressions.cs), as do array holes. State-machine emitters use this base
+            // method, so without an explicit arm `undefined` would fall to `default` and emit
+            // CLR null — making `=== undefined` collapse into `=== null` and any undefined operand
+            // stringify as "null" inside async/generators (#600, #629). ILEmitter has the same arm.
+            // (Requires the helper's runtime to be wired via SetRuntime; see the emitters' EmitMoveNext.)
+            case Runtime.Types.SharpTSUndefined: EmitUndefinedConstant(); break;
             default: IL.Emit(OpCodes.Ldnull); SetStackUnknown(); break;
         }
     }

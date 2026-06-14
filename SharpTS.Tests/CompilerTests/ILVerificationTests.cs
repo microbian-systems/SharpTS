@@ -1434,4 +1434,76 @@ public class ILVerificationTests
         Assert.Equal("true true true\n", output);
         Assert.Equal(output, TestHarness.RunInterpreted(source));
     }
+
+    // #573: Date/RegExp/Map/Set parameters, returns, and fields mapped (strictly) to the CLR types
+    // DateTime/Regex/Dictionary/HashSet, but their runtime values are dynamic $TSDate/$RegExp/$Map/
+    // $Set carried as object. A typed slot failed strict ILVerify with StackUnexpected and a
+    // castclass at the call/use site threw InvalidCastException. The slots must fall back to object,
+    // matching the return-slot rule that already covered the collections.
+    [Fact]
+    public void DateRegExpMapSetParametersAndReturns_PassILVerification()
+    {
+        var source = """
+            function takeDate(d: Date): number { return d.getUTCFullYear(); }
+            function makeDate(): Date { return new Date(0); }
+            function takeRegExp(r: RegExp): boolean { return r.test("x"); }
+            function makeRegExp(): RegExp { return /a/; }
+            function takeMap(m: Map<string, number>): number { return m.size; }
+            function takeSet(s: Set<number>): number { return s.size; }
+            class C { m(d: Date): number { return d.getUTCFullYear(); } }
+            console.log(takeDate(new Date(0)));
+            console.log(makeDate().getUTCFullYear());
+            console.log(takeRegExp(/x/));
+            console.log(makeRegExp().test("a"));
+            console.log(takeMap(new Map([["a", 1]])));
+            console.log(takeSet(new Set([1, 2, 3])));
+            console.log(new C().m(new Date(0)));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("1970\n1970\ntrue\ntrue\n1\n3\n1970\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #573: a Date-typed parameter-property (`constructor(public when: Date)`) generated a DateTime
+    // backing field; storing the runtime $TSDate threw InvalidCastException. The field slot must be
+    // object too — generalizing the original typed-array carve-out in GetFieldType.
+    [Fact]
+    public void DateParameterPropertyField_PassesILVerification()
+    {
+        var source = """
+            class Holder { constructor(public when: Date) {} }
+            const h = new Holder(new Date(0));
+            console.log(h.when.getUTCFullYear());
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("1970\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #568: a `T | undefined` parameter compiled into a non-nullable slot — String for a reference
+    // T (so storing the $Undefined sentinel threw InvalidCastException), or double? for a value T
+    // (unverifiable IL). Such parameters must use an object slot, as locals already do. The body
+    // reassigns the parameter to `undefined` and observes it, exercising both store and read.
+    [Fact]
+    public void UndefinedUnionParameterReassignment_PassesILVerification()
+    {
+        var source = """
+            function fs(x: string | undefined): string { x = undefined; return typeof x; }
+            function fn(x: number | undefined): string { x = undefined; return typeof x; }
+            console.log(fs("hi"));
+            console.log(fn(3));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("undefined\nundefined\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
 }

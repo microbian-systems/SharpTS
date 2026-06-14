@@ -13,7 +13,7 @@ public class StateMachineEmitHelpers
     private readonly ILGenerator _il;
     private readonly TypeProvider _types;
     private readonly ValidatedILBuilder? _builder;
-    private readonly EmittedRuntime? _runtime;
+    private EmittedRuntime? _runtime;
     private StackType _stackType = StackType.Unknown;
 
     /// <summary>
@@ -56,6 +56,18 @@ public class StateMachineEmitHelpers
         _builder = builder;
         _runtime = runtime;
     }
+
+    /// <summary>
+    /// Wires the emitted runtime into this helper after construction. State-machine emitters
+    /// (async/generator MoveNext) build their helper in the base constructor, before the
+    /// <see cref="CompilationContext"/> — and thus the runtime — is available, so they call this
+    /// once the context is bound. Without it, runtime-gated emit paths fall back to inferior
+    /// inline IL: most importantly <c>undefined</c> is emitted as CLR <c>null</c> (collapsing
+    /// <c>=== undefined</c> into <c>=== null</c>, #600), and numeric coercion/comparison use
+    /// <c>Convert.ToDouble</c> instead of the JS-spec <c>$Runtime</c> helpers. A no-op for
+    /// <see cref="ILEmitter"/>, which already supplies the runtime at construction.
+    /// </summary>
+    public void SetRuntime(EmittedRuntime runtime) => _runtime ??= runtime;
 
     #region Persistent Spills (#400)
 
@@ -1086,15 +1098,31 @@ public class StateMachineEmitHelpers
             return true;
         }
 
-        // Handle equality (== and ===)
-        if (op is TokenType.EQUAL_EQUAL or TokenType.EQUAL_EQUAL_EQUAL)
+        // Strict equality (=== / !==): NaN-aware and keeps `null !== undefined`. Routes to the
+        // same helpers ILEmitter.EmitEqualityBinary uses on the non-async path, so equality inside
+        // an async/generator state machine matches everywhere else. The loose runtime `Equals`
+        // below collapses null and undefined into one another, which is correct for `==` but wrong
+        // for `===` (e.g. `await`-ing a null-resolved promise then comparing `=== undefined`). (#600)
+        if (op == TokenType.EQUAL_EQUAL_EQUAL)
+        {
+            EmitObjectEqualsBoxed_NoBox();
+            _il.Emit(OpCodes.Box, _types.Boolean);
+            SetStackUnknown();
+            return true;
+        }
+        if (op == TokenType.BANG_EQUAL_EQUAL)
+        {
+            EmitObjectNotEqualsBoxed();
+            return true;
+        }
+
+        // Loose equality (== / !=): null and undefined compare equal to each other.
+        if (op == TokenType.EQUAL_EQUAL)
         {
             EmitRuntimeEquals(runtimeEquals);
             return true;
         }
-
-        // Handle inequality (!= and !==)
-        if (op is TokenType.BANG_EQUAL or TokenType.BANG_EQUAL_EQUAL)
+        if (op == TokenType.BANG_EQUAL)
         {
             EmitRuntimeNotEquals(runtimeEquals);
             return true;

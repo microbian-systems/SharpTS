@@ -837,4 +837,55 @@ public class AsyncAwaitTests
     }
 
     #endregion
+
+    #region Null vs Undefined Across Await (#600)
+
+    // #600: in compiled mode, awaiting a promise that resolves with JS null produced a value that
+    // compared `=== undefined` as true. Two root causes inside state-machine bodies: the `undefined`
+    // literal was emitted as CLR null (no SharpTSUndefined arm in the base EmitLiteral), and `===`
+    // used the null≡undefined-collapsing loose equality helper instead of strict. The awaited null
+    // must stay null-ish (typeof "object", === null) but must NOT be === undefined.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Await_NullResolvedPromise_IsNotStrictUndefined(ExecutionMode mode)
+    {
+        var source = """
+            async function f() { return null; }
+            async function main() {
+                const v = await f();
+                console.log(typeof v);
+                console.log(v === null);
+                console.log(v === undefined);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("object\ntrue\nfalse\n", output);
+    }
+
+    // #600 (companion): the `undefined` literal must be the undefined sentinel inside an async body,
+    // and `===` must keep null and undefined distinct while loose `==` still collapses them.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Await_UndefinedResolvedPromise_AndStrictEquality(ExecutionMode mode)
+    {
+        var source = """
+            async function g() { return undefined; }
+            async function main() {
+                const u = await g();
+                console.log(typeof u);
+                console.log(u === undefined);
+                console.log(u === null);
+                console.log(null === undefined);
+                console.log(null == undefined);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("undefined\ntrue\nfalse\nfalse\ntrue\n", output);
+    }
+
+    #endregion
 }

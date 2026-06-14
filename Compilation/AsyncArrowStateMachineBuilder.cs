@@ -239,7 +239,9 @@ public class AsyncArrowStateMachineBuilder
             [_types.IAsyncStateMachine]
         );
 
-        // No outer reference field for standalone arrows
+        // No outer reference field for standalone arrows. A nested async-arrow expression inside a
+        // standalone arrow is emitted as an independent TSFunction over its own stub (see
+        // EmitNestedAsyncArrow), so no self-boxed field is needed here. (#615)
 
         // Define core fields
         StateField = _stateMachineType.DefineField(

@@ -39,11 +39,16 @@ public partial class ILCompiler
             var classType = _typeMap.GetClassType(className);
             if (classType != null && classType.FieldTypes.TryGetValue(field.Name.Lexeme, out var fieldTypeInfo))
             {
-                // Skip typed arrays for now - runtime creates List<object> which can't be cast to List<T>
-                // Union types, primitives, and classes are safe to type
-                if (fieldTypeInfo is not TypeSystem.TypeInfo.Array)
+                var mapped = _typeMapper.MapTypeInfoStrict(fieldTypeInfo);
+                // A field whose runtime value is a dynamic $TSDate/$RegExp/$Array/$Map/$Set — mapped
+                // strictly to DateTime/Regex/List<T>/Dictionary/HashSet — must use an object backing
+                // field: the runtime value is not a CLR instance of that type, so a typed field throws
+                // InvalidCastException on store/read (e.g. a `d: Date` parameter-property storing a
+                // $TSDate). This generalizes the original typed-array carve-out to the whole dynamic
+                // family; primitives, classes, and unions stay typed. (#573)
+                if (!_typeMapper.IsDynamicRuntimeType(mapped))
                 {
-                    return _typeMapper.MapTypeInfoStrict(fieldTypeInfo);
+                    return mapped;
                 }
             }
         }
