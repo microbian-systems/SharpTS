@@ -359,7 +359,16 @@ public partial class GeneratorMoveNextEmitter
             || (t.CatchBlock != null && ContainsYield(t.CatchBlock))
             || (t.FinallyBlock != null && ContainsYield(t.FinallyBlock));
 
-        if (hasYields)
+        // A return/break/continue lexically inside the finally body can never be lowered with the
+        // real-IL path: none of `ret`/`br`/`Leave` may exit a .NET `finally` region, so it would emit
+        // invalid IL (LeaveOutOfFinally). Route the whole construct through the flag-based scheme even
+        // with no yield, so the finally is emitted as top-level statements and the exit is dispatched
+        // legally (#598, the finally-side analog of #554, which handles exits in the try/catch body).
+        // An exit targeting a loop *inside* the finally stays local and does not count as escaping.
+        bool finallyHasEscapingExit = t.FinallyBlock != null
+            && ContainsEscapingExit2(t.FinallyBlock, insideLoop: false, insideSwitch: false);
+
+        if (hasYields || finallyHasEscapingExit)
             EmitTryCatchWithYields(t);
         else
             EmitSimpleTryCatch(t);
