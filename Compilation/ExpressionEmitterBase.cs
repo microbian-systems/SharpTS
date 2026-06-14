@@ -1539,6 +1539,24 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             return true;
         }
 
+        // A captured top-level variable (a real let/const/var binding closed over by this
+        // body) must be resolved BEFORE Functions: a variable binding in scope shadows a
+        // same-named top-level function from another module. The EntryPointDisplayClassFields
+        // guard means only genuine variable bindings stored on the display class match here;
+        // function references aren't in that map and correctly fall through to Functions below.
+        // Without this ordering, a generator capturing e.g. `const composeDoc = require(...)`
+        // whose name collides with a cross-module `composeDoc` function resolved to the
+        // function and threw "object is not a function" (#541).
+        if (Ctx.CapturedTopLevelVars?.Contains(name) == true &&
+            Ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var capturedEntryField) == true &&
+            Ctx.EntryPointDisplayClassStaticField != null)
+        {
+            IL.Emit(OpCodes.Ldsfld, Ctx.EntryPointDisplayClassStaticField);
+            IL.Emit(OpCodes.Ldfld, capturedEntryField);
+            SetStackUnknown();
+            return true;
+        }
+
         if (Ctx.Functions.TryGetValue(Ctx.ResolveFunctionName(name), out var funcMethod))
         {
             // Stage 6r: route through GetOrCreate (MethodInfo-keyed instance cache)
@@ -1573,16 +1591,6 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         if (Ctx.NamespaceFields?.TryGetValue(name, out var nsField) == true)
         {
             IL.Emit(OpCodes.Ldsfld, nsField);
-            SetStackUnknown();
-            return true;
-        }
-
-        if (Ctx.CapturedTopLevelVars?.Contains(name) == true &&
-            Ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
-            Ctx.EntryPointDisplayClassStaticField != null)
-        {
-            IL.Emit(OpCodes.Ldsfld, Ctx.EntryPointDisplayClassStaticField);
-            IL.Emit(OpCodes.Ldfld, entryPointField);
             SetStackUnknown();
             return true;
         }
