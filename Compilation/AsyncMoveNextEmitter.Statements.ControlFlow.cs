@@ -15,6 +15,14 @@ public partial class AsyncMoveNextEmitter
             if (_returnValueLocal != null)
                 _il.Emit(OpCodes.Stloc, _returnValueLocal);
         }
+        else if (_returnValueLocal != null)
+        {
+            // Bare `return;` resolves the promise with `undefined`, not null (#587) — mirrors
+            // the generator GeneratorMoveNextEmitter.EmitReturn else. A genuine `return null;`
+            // takes the branch above and still resolves with null.
+            _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
+            _il.Emit(OpCodes.Stloc, _returnValueLocal);
+        }
 
         // If we're inside a try with finally-with-awaits, set pending return flag
         // and jump to after-finally label (which will then complete the return)

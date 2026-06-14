@@ -479,9 +479,10 @@ public partial class Interpreter
 
     internal async ValueTask<ExecutionResult> ExecuteReturnAsyncVT(Stmt.Return returnStmt)
     {
-        object? returnValue = null;
-        if (returnStmt.Value != null) returnValue = (await EvaluateAsync(returnStmt.Value)).ToObject();
-        return ExecutionResult.Return(returnValue);
+        // Bare `return;` completes with `undefined`, not null — see VisitReturn (#480).
+        if (returnStmt.Value == null)
+            return ExecutionResult.Return(RuntimeValue.Undefined);
+        return ExecutionResult.Return((await EvaluateAsync(returnStmt.Value)).ToObject());
     }
 
     internal async ValueTask<ExecutionResult> ExecutePrintAsyncVT(Stmt.Print printStmt)

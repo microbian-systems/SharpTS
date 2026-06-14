@@ -212,6 +212,16 @@ public partial class AsyncMoveNextEmitter : StatementEmitterBase, IEmitterContex
             EmitStatement(stmt);
         }
 
+        // Falling off the end of the body completes the async function with `undefined`,
+        // not null (#587) — the default-null _returnValueLocal would otherwise resolve the
+        // promise with null. Explicit `return` statements Leave straight to _setResultLabel
+        // and never reach this fall-through, so this only sets the implicit-completion value.
+        if (_returnValueLocal != null)
+        {
+            _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
+            _il.Emit(OpCodes.Stloc, _returnValueLocal);
+        }
+
         // Jump to set result
         _il.Emit(OpCodes.Br, _setResultLabel);
 
