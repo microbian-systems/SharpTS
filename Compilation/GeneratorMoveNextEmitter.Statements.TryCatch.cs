@@ -70,12 +70,14 @@ public partial class GeneratorMoveNextEmitter
     private bool _inHandlerBody;
 
     // The innermost flag-based try whose *body* is currently being emitted: its catch/finally entry
-    // (afterTryBodyLabel) and the local capturing a try-body exception. An external throw() injected
-    // at a yield in this body behaves as if the body threw there — it stores the error into this
-    // local and branches to the cleanup so the catch/finally run (#526). Saved/restored around the
-    // try-body emission, so it is null (or the enclosing try's) while emitting a catch/finally body,
-    // where `_inHandlerBody` instead routes an injected throw through the enclosing finally(s).
-    private (Label AfterTryBody, LocalBuilder CaughtException)? _tryBodyContext;
+    // (afterTryBodyLabel), the local capturing a try-body exception, and the boolean flag recording
+    // whether one was captured. An external throw() injected at a yield in this body behaves as if the
+    // body threw there — it stores the error into the local, sets the flag, and branches to the cleanup
+    // so the catch/finally run (#526). The flag (not the value's nullness) gates the catch so an
+    // injected throw(null)/throw(undefined) still engages it (#619). Saved/restored around the try-body
+    // emission, so it is null (or the enclosing try's) while emitting a catch/finally body, where
+    // `_inHandlerBody` instead routes an injected throw through the enclosing finally(s).
+    private (Label AfterTryBody, LocalBuilder CaughtException, LocalBuilder ExceptionPresent)? _tryBodyContext;
 
     // `<>pendingExit` (int): the code of an in-flight non-local exit, or 0 when none. A finally that
     // yields suspends MoveNext mid-routing, so this must be a field (a local would reset on re-entry).
@@ -115,6 +117,16 @@ public partial class GeneratorMoveNextEmitter
     private FieldBuilder DefineCaughtExceptionField() =>
         _builder.StateMachineType.DefineField(
             $"<>caughtException{_caughtExceptionFieldCounter++}", typeof(object), FieldAttributes.Private);
+
+    // Companion to `<>caughtException{n}`: the exception-present flag (#619) that must likewise survive
+    // a *yielding* finally in a catch-less try/finally. Gating the catch/rethrow on this boolean rather
+    // than the captured value's nullness is what lets a thrown null/undefined be caught (a null CLR ref
+    // would otherwise read as "no exception"). Own counter so each construct gets a distinct field.
+    private int _exceptionPresentFieldCounter;
+
+    private FieldBuilder DefineExceptionPresentField() =>
+        _builder.StateMachineType.DefineField(
+            $"<>exceptionPresent{_exceptionPresentFieldCounter++}", typeof(bool), FieldAttributes.Private);
 
     // ---- Loop-scope methods (override the base stack to use `_exitScopes`) -----------------------
 
@@ -454,9 +466,12 @@ public partial class GeneratorMoveNextEmitter
         {
             // In a try body: capture exactly like a try-body exception so the catch/finally at
             // afterTryBodyLabel handle it. A catch-less yielding finally persists this local to a
-            // field before suspending, so it survives (#599).
+            // field before suspending, so it survives (#599). Set the present flag (not the value's
+            // nullness) so an injected throw(null)/throw(undefined) still engages the catch (#619).
             loadValue();
             _il.Emit(OpCodes.Stloc, tryBody.CaughtException);
+            _il.Emit(OpCodes.Ldc_I4_1);
+            _il.Emit(OpCodes.Stloc, tryBody.ExceptionPresent);
             _il.Emit(OpCodes.Br, tryBody.AfterTryBody);
             return;
         }
@@ -588,16 +603,22 @@ public partial class GeneratorMoveNextEmitter
     private void EmitTryCatchWithYields(Stmt.TryCatch t)
     {
         var caughtExceptionLocal = _il.DeclareLocal(typeof(object));
+        // Whether the try body raised an exception, tracked separately from caughtExceptionLocal's
+        // nullness: a thrown null/undefined captures as a null CLR reference, which a value-nullness
+        // gate misreads as "no exception" — skipping the catch and dropping the post-finally rethrow
+        // (#619). This flag records presence regardless of the captured value.
+        var exceptionPresentLocal = _il.DeclareLocal(typeof(bool));
         var afterTryBodyLabel = _il.DefineLabel();
 
         // #599: in a try/finally with no catch whose finally can yield, the captured try-body
         // exception must survive the finally's suspension. The IL local resets on MoveNext re-entry,
         // so persist it to a dedicated field before the finally and read that field in the
-        // post-finally rethrow. Allocated only for that shape; null means "use the local".
-        FieldBuilder? caughtExceptionField =
-            t.CatchBlock == null && t.FinallyBlock != null && ContainsYield(t.FinallyBlock)
-                ? DefineCaughtExceptionField()
-                : null;
+        // post-finally rethrow. Allocated only for that shape; null means "use the local". The
+        // present flag needs the same persistence (read by the rethrow gate after the finally, #619).
+        bool persistAcrossYieldingFinally =
+            t.CatchBlock == null && t.FinallyBlock != null && ContainsYield(t.FinallyBlock);
+        FieldBuilder? caughtExceptionField = persistAcrossYieldingFinally ? DefineCaughtExceptionField() : null;
+        FieldBuilder? exceptionPresentField = persistAcrossYieldingFinally ? DefineExceptionPresentField() : null;
 
         void EmitLoadCaughtException()
         {
@@ -612,9 +633,24 @@ public partial class GeneratorMoveNextEmitter
             }
         }
 
+        void EmitLoadExceptionPresent()
+        {
+            if (exceptionPresentField != null)
+            {
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldfld, exceptionPresentField);
+            }
+            else
+            {
+                _il.Emit(OpCodes.Ldloc, exceptionPresentLocal);
+            }
+        }
+
         // No exception captured yet.
         _il.Emit(OpCodes.Ldnull);
         _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
+        _il.Emit(OpCodes.Ldc_I4_0);
+        _il.Emit(OpCodes.Stloc, exceptionPresentLocal);
 
         // A non-local exit inside this try (or its catch) must run the finally before transferring
         // control, so register a finally scope whose cleanup is the catch/finally entry. On those exit
@@ -633,8 +669,8 @@ public partial class GeneratorMoveNextEmitter
         bool previousInHandler = _inHandlerBody;
         var previousTryBody = _tryBodyContext;
         _inHandlerBody = false;
-        _tryBodyContext = (afterTryBodyLabel, caughtExceptionLocal);
-        EmitTryBodyWithYields(t.TryBlock, caughtExceptionLocal, afterTryBodyLabel);
+        _tryBodyContext = (afterTryBodyLabel, caughtExceptionLocal, exceptionPresentLocal);
+        EmitTryBodyWithYields(t.TryBlock, caughtExceptionLocal, exceptionPresentLocal, afterTryBodyLabel);
         _tryBodyContext = previousTryBody;
         _inHandlerBody = previousInHandler;
 
@@ -644,8 +680,10 @@ public partial class GeneratorMoveNextEmitter
         // a non-local exit (including a throw) from the catch body runs this finally too.
         if (t.CatchBlock != null)
         {
+            // Gate on the present flag, not the value's nullness, so a caught null/undefined enters the
+            // catch (#619). In the with-catch shape no field is allocated, so the local is authoritative.
             var skipCatchLabel = _il.DefineLabel();
-            _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+            _il.Emit(OpCodes.Ldloc, exceptionPresentLocal);
             _il.Emit(OpCodes.Brfalse, skipCatchLabel);
 
             if (t.CatchParam != null)
@@ -654,10 +692,11 @@ public partial class GeneratorMoveNextEmitter
                 StoreCaughtExceptionToParam(t.CatchParam.Lexeme);
             }
 
-            // Catch handles it; clear the flag so the post-finally rethrow below is skipped — and so a
-            // routed exit re-entering afterTryBodyLabel skips the catch rather than re-running it.
-            _il.Emit(OpCodes.Ldnull);
-            _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
+            // Catch handles it; clear the present flag so the post-finally rethrow below is skipped —
+            // and so a routed exit re-entering afterTryBodyLabel skips the catch rather than re-running
+            // it. The flag (not the value) is the gate now, so clearing it is what matters (#619).
+            _il.Emit(OpCodes.Ldc_I4_0);
+            _il.Emit(OpCodes.Stloc, exceptionPresentLocal);
 
             _inHandlerBody = true;
             foreach (var stmt in t.CatchBlock)
@@ -681,6 +720,12 @@ public partial class GeneratorMoveNextEmitter
                 _il.Emit(OpCodes.Ldarg_0);
                 _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
                 _il.Emit(OpCodes.Stfld, caughtExceptionField);
+
+                // Persist the present flag alongside the value so the post-finally rethrow gate reads a
+                // live flag after a yielding finally (#619, same survival reason as the value, #599).
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldloc, exceptionPresentLocal);
+                _il.Emit(OpCodes.Stfld, exceptionPresentField!);
             }
 
             _inHandlerBody = true;
@@ -696,7 +741,7 @@ public partial class GeneratorMoveNextEmitter
         if (t.CatchBlock == null)
         {
             var noExceptionLabel = _il.DefineLabel();
-            EmitLoadCaughtException();
+            EmitLoadExceptionPresent();
             _il.Emit(OpCodes.Brfalse, noExceptionLabel);
 
             // Mark the generator done before the exception leaves MoveNext.
@@ -715,7 +760,7 @@ public partial class GeneratorMoveNextEmitter
     /// Walks the try body, wrapping runs of plain statements in mini IL try/catch blocks while
     /// emitting suspension points and non-local exits (return/break/continue) at the top level.
     /// </summary>
-    private void EmitTryBodyWithYields(List<Stmt> tryBody, LocalBuilder caughtExceptionLocal, Label afterTryLabel)
+    private void EmitTryBodyWithYields(List<Stmt> tryBody, LocalBuilder caughtExceptionLocal, LocalBuilder exceptionPresentLocal, Label afterTryLabel)
     {
         List<Stmt> syncSegment = [];
 
@@ -726,12 +771,13 @@ public partial class GeneratorMoveNextEmitter
                 // Flush the accumulated plain statements first.
                 if (syncSegment.Count > 0)
                 {
-                    EmitSyncSegmentInTry(syncSegment, caughtExceptionLocal);
+                    EmitSyncSegmentInTry(syncSegment, caughtExceptionLocal, exceptionPresentLocal);
                     syncSegment.Clear();
                 }
 
                 // If an earlier segment threw, skip the suspension/exit and head to catch/finally.
-                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                // Gate on the present flag so a thrown null/undefined still short-circuits here (#619).
+                _il.Emit(OpCodes.Ldloc, exceptionPresentLocal);
                 _il.Emit(OpCodes.Brtrue, afterTryLabel);
 
                 // Emitted at the top level: a yield's `ret`/resume label and a return's `br` are
@@ -745,18 +791,19 @@ public partial class GeneratorMoveNextEmitter
         }
 
         if (syncSegment.Count > 0)
-            EmitSyncSegmentInTry(syncSegment, caughtExceptionLocal);
+            EmitSyncSegmentInTry(syncSegment, caughtExceptionLocal, exceptionPresentLocal);
     }
 
     /// <summary>
     /// Emits a run of plain (non-suspending, non-exiting) statements inside a real IL try/catch
     /// that records any thrown exception into <paramref name="caughtExceptionLocal"/>.
     /// </summary>
-    private void EmitSyncSegmentInTry(List<Stmt> statements, LocalBuilder caughtExceptionLocal)
+    private void EmitSyncSegmentInTry(List<Stmt> statements, LocalBuilder caughtExceptionLocal, LocalBuilder exceptionPresentLocal)
     {
-        // An earlier segment may already have thrown — don't run this one.
+        // An earlier segment may already have thrown — don't run this one. Gate on the present flag so
+        // a prior thrown null/undefined still suppresses this segment (#619).
         var skipLabel = _il.DefineLabel();
-        _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+        _il.Emit(OpCodes.Ldloc, exceptionPresentLocal);
         _il.Emit(OpCodes.Brtrue, skipLabel);
 
         // A real IL protected region is open across the segment body (see _protectedRegionDepth).
@@ -768,6 +815,10 @@ public partial class GeneratorMoveNextEmitter
         _il.BeginCatchBlock(typeof(Exception));
         _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
         _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
+        // Record presence with the flag, not the value: a caught null/undefined would otherwise read
+        // as "no exception" at the gates above (#619).
+        _il.Emit(OpCodes.Ldc_I4_1);
+        _il.Emit(OpCodes.Stloc, exceptionPresentLocal);
         _il.EndExceptionBlock();
         _protectedRegionDepth--;
 

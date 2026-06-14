@@ -384,10 +384,10 @@ public partial class AsyncGeneratorMoveNextEmitter
 
             if (t.CatchParam != null)
             {
-                var exLocal = _il.DeclareLocal(typeof(object));
-                _ctx!.Locals.RegisterLocal(t.CatchParam.Lexeme, exLocal);
-                _il.Emit(OpCodes.Call, _ctx.Runtime!.WrapException);
-                _il.Emit(OpCodes.Stloc, exLocal);
+                // Stack has the .NET exception; wrap to the TS value and bind to the catch param,
+                // honouring a hoisted field if the param is read across a suspension (#569).
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
+                StoreCaughtExceptionToParam(t.CatchParam.Lexeme);
             }
             else
             {
@@ -408,6 +408,26 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.EndExceptionBlock();
         _ctx!.ExceptionBlockDepth--;
         _protectedRegionDepth--;
+    }
+
+    /// <summary>
+    /// Binds the caught exception value (on the IL stack) to the catch parameter, honouring whether
+    /// the parameter was hoisted to a state-machine field (because it is read across a yield/await in
+    /// the catch body) or lives in an IL local. Storing to a fresh local unconditionally — the
+    /// previous behaviour — lost the value whenever the catch parameter was hoisted, because reads
+    /// resolve the field first (#569, async analog of GeneratorMoveNextEmitter.StoreCaughtExceptionToParam).
+    /// </summary>
+    private void StoreCaughtExceptionToParam(string name)
+    {
+        if (GetHoistedVariableField(name) == null)
+        {
+            // Not hoisted: register a local so the catch body's reads resolve to it.
+            var exLocal = _il.DeclareLocal(typeof(object));
+            _ctx!.Locals.RegisterLocal(name, exLocal);
+        }
+
+        // Resolver stores to the hoisted field if present, otherwise the registered local.
+        Resolver.TryStoreVariable(name);
     }
 
     /// <summary>
@@ -463,13 +483,13 @@ public partial class AsyncGeneratorMoveNextEmitter
             _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
             _il.Emit(OpCodes.Brfalse, skipCatchLabel);
 
-            // Store exception in catch param if needed
+            // Bind the captured value to the catch param, honouring a hoisted field when the param is
+            // read across a suspension in the catch body (#569). Storing to a fresh local
+            // unconditionally lost the value whenever the param was hoisted (reads resolve the field).
             if (t.CatchParam != null)
             {
-                var exLocal = _il.DeclareLocal(typeof(object));
-                _ctx!.Locals.RegisterLocal(t.CatchParam.Lexeme, exLocal);
                 _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-                _il.Emit(OpCodes.Stloc, exLocal);
+                StoreCaughtExceptionToParam(t.CatchParam.Lexeme);
             }
 
             // Catch handles it; clear the flag so the post-finally rethrow below is skipped — and so a
