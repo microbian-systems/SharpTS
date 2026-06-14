@@ -79,6 +79,193 @@ public class NamespaceTests
         Assert.Equal("3\n", TestHarness.Run(code, mode));
     }
 
+    // The original #567 fix only reached the plain-function path. Generators, async
+    // functions, and class members emit their bodies through separate paths (state-machine
+    // MoveNext methods, class method/accessor/constructor emission) that built their
+    // top-level-static-var view without the namespace augmentation, so they could not
+    // resolve a namespace var by bare name — silently returning undefined (state machines)
+    // or throwing "Undefined variable" (class members). These pin each path.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceGenerator_ReadsNamespaceVar(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { const val = 4; export function* g() { yield val; } }
+            console.log(N.g().next().value);
+        ";
+        Assert.Equal("4\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceAsyncFunction_ReadsNamespaceVar(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { const val = 7; export async function a() { return val; } }
+            N.a().then(x => console.log(x));
+        ";
+        Assert.Equal("7\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceClassMethod_ReadsNamespaceVar(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { const val = 3; export class C { m() { return val; } } }
+            console.log(new N.C().m());
+        ";
+        Assert.Equal("3\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceClassStaticMethod_ReadsNamespaceVar(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { const val = 5; export class C { static m() { return val; } } }
+            console.log(N.C.m());
+        ";
+        Assert.Equal("5\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceClassAccessor_ReadsNamespaceVar(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { const val = 8; export class C { get x() { return val; } } }
+            console.log(new N.C().x);
+        ";
+        Assert.Equal("8\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceClassConstructor_ReadsNamespaceVar(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { const val = 6; export class C { y: number; constructor() { this.y = val; } } }
+            console.log(new N.C().y);
+        ";
+        Assert.Equal("6\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedNamespaceGenerator_ReadsOuterNamespaceVar(ExecutionMode mode)
+    {
+        var code = @"
+            namespace Out {
+                const a = 10;
+                export namespace In {
+                    const b = 5;
+                    export function* g() { yield a + b; }
+                }
+            }
+            console.log(Out.In.g().next().value);
+        ";
+        Assert.Equal("15\n", TestHarness.Run(code, mode));
+    }
+
+    #endregion
+
+    #region Mutable exported namespace variable is a live binding (#623)
+
+    // An exported `let`/`var` that a member function mutates must be a live view through
+    // external `N.x` access too, matching tsc/Node — not the snapshot taken at declaration.
+    // Interpreter: the namespace object exposes a live binding onto the namespace scope slot.
+    // Compiled: external `N.x` reads the var's static backing field (the one member functions
+    // write), instead of the namespace object's declaration-time member. const members never
+    // change, so their external value is unaffected.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void MutableExportedLet_MutationVisibleViaExternalAccess(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N {
+                export let count = 0;
+                export function inc() { count = count + 1; }
+                export function get() { return count; }
+            }
+            N.inc();
+            N.inc();
+            console.log(N.get());
+            console.log(N.count);
+        ";
+        Assert.Equal("2\n2\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void MutableExportedVar_MutationVisibleViaExternalAccess(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N {
+                export var count = 0;
+                export function inc() { count++; }
+            }
+            N.inc();
+            N.inc();
+            N.inc();
+            console.log(N.count);
+        ";
+        Assert.Equal("3\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void MutableExportedLet_ExternalAccessReflectsEachMutation(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N {
+                export let v = 1;
+                export function set(n: number) { v = n; }
+            }
+            console.log(N.v);
+            N.set(10);
+            console.log(N.v);
+            N.set(20);
+            console.log(N.v);
+        ";
+        Assert.Equal("1\n10\n20\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ConstExportedMember_ExternalAccessUnaffected(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N {
+                export const c = 5;
+                export function get() { return c; }
+            }
+            console.log(N.get());
+            console.log(N.c);
+        ";
+        Assert.Equal("5\n5\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedNamespace_MutableExport_LiveViaExternalAccess(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N {
+                export namespace M {
+                    export let count = 0;
+                    export function inc() { count++; }
+                }
+            }
+            N.M.inc();
+            N.M.inc();
+            console.log(N.M.count);
+        ";
+        Assert.Equal("2\n", TestHarness.Run(code, mode));
+    }
+
     #endregion
 
     #region Basic Namespace Features (Both Modes)
