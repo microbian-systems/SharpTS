@@ -1311,15 +1311,25 @@ public class GeneratorTests
 
     #endregion
 
-    #region Re-entrant next()/return()/throw() — "already running" (ECMA-262 §27.5.3.3) — issue #515
+    #region Re-entrant next()/return()/throw() — "already running" (ECMA-262 §27.5.3.3) — issues #515, #521
 
     // ECMA-262 §27.5.3.3 (GeneratorValidate): calling next/return/throw on a generator whose state
     // is `executing` throws a TypeError ("Generator is already running"). The only way to reach
     // that state from a guest call is re-entrancy — the body advancing itself. Before the fix the
-    // interpreter's thread-coroutine deadlocked (the re-entrant call ran on the worker thread and
-    // waited on the same worker-ready signal it would have to set). These are InterpretedOnly: the
-    // compiled state-machine path doesn't hang but currently surfaces the wrong error (tracked by a
-    // separate issue), so it can't share these assertions yet.
+    // interpreter's thread-coroutine deadlocked (#515) and the compiled state machine recursed back
+    // into MoveNext and overflowed the stack (#521; return/throw silently corrupted state). Both are
+    // now guarded.
+    //
+    // The interpreted and compiled cases are tested from separate sources rather than shared:
+    //   * Interpreted tests use the `let it; it = g()` self-reference form.
+    //   * Compiled tests resolve the receiver through a live object property (`h.it`), because
+    //     compiled generators capture closure variables by value (#541) — a self-assigned `it` is
+    //     snapshotted as `undefined`, so the `let it; it = g()` form never reaches the guard.
+    //   * `instanceof TypeError` is asserted only when the error is caught OUTSIDE the generator; a
+    //     separate pre-existing bug (#543) makes `instanceof` report false for an error caught
+    //     inside a compiled generator body (its `.name`/`.message` are still correct).
+    // The yield*-delegation case doesn't rely on the captured self-reference (the inner generator is
+    // created after the outer is assigned), so it runs in both modes from a single source.
 
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
@@ -1404,11 +1414,12 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_ReentrantThroughYieldStar_ThrowsTypeError(ExecutionMode mode)
     {
         // The outer generator is still `executing` while it delegates via yield*, so an inner
-        // generator that calls the outer's next() must observe "already running".
+        // generator that calls the outer's next() must observe "already running". This case doesn't
+        // depend on the captured self-reference, so it runs in both modes (#515 interp + #521 compiled).
         var source = """
             let outer: any;
             function* inner() {
@@ -1442,6 +1453,114 @@ public class GeneratorTests
             };
             it = g();
             const r = it.next();
+            console.log(r.value, r.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("expr -> Generator is already running\n7 false\n", output);
+    }
+
+    // --- Compiled variants (#521): genuine re-entrancy via a live object-property receiver,
+    // so the guard is reached despite the by-value closure capture (#541). ---
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_ReentrantNext_Compiled_ThrowsTypeErrorThenResumes(ExecutionMode mode)
+    {
+        // The re-entrant next() throws a catchable TypeError; once caught, the generator is still
+        // suspended-able and resumes normally (the guard must not corrupt its running state).
+        var source = """
+            const h: any = {};
+            function* g() {
+                try { h.it.next(); }
+                catch (e: any) { console.log(e.name, e.message); }
+                yield 1;
+            }
+            h.it = g();
+            const r = h.it.next();
+            console.log(r.value, r.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("TypeError Generator is already running\n1 false\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_ReentrantNext_Compiled_UncaughtPropagatesToResumingCaller(ExecutionMode mode)
+    {
+        // An uncaught re-entrant next() completes the generator abnormally and the TypeError
+        // surfaces to the outer next() that resumed it. Caught outside the body, so instanceof works.
+        var source = """
+            const h: any = {};
+            function* g() { h.it.next(); yield 1; }
+            h.it = g();
+            try { h.it.next(); }
+            catch (e: any) { console.log(e instanceof TypeError, e.name, e.message); }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true TypeError Generator is already running\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_ReentrantReturn_Compiled_ThrowsTypeErrorThenResumes(ExecutionMode mode)
+    {
+        var source = """
+            const h: any = {};
+            function* g() {
+                try { h.it.return(0); }
+                catch (e: any) { console.log("return ->", e.message); }
+                yield 1;
+            }
+            h.it = g();
+            const r = h.it.next();
+            console.log(r.value, r.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("return -> Generator is already running\n1 false\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void Generator_ReentrantThrow_Compiled_ThrowsTypeErrorThenResumes(ExecutionMode mode)
+    {
+        // The "already running" guard takes precedence over the injected throw(e): the caller's
+        // error never reaches the body — it gets a TypeError instead.
+        var source = """
+            const h: any = {};
+            function* g() {
+                try { h.it.throw("boom"); }
+                catch (e: any) { console.log("throw ->", e.message); }
+                yield 1;
+            }
+            h.it = g();
+            const r = h.it.next();
+            console.log(r.value, r.done);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("throw -> Generator is already running\n1 false\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_ReentrantNext_Compiled_ThrowsTypeError(ExecutionMode mode)
+    {
+        // A generator function *expression* uses the same state-machine builder; its guard is
+        // exercised here. `var` (not `const`) sidesteps an unrelated scoping bug for generator
+        // function expressions that close over block-scoped variables.
+        var source = """
+            var h: any = {};
+            var g = function*() {
+                try { h.it.next(); }
+                catch (e: any) { console.log("expr ->", e.message); }
+                yield 7;
+            };
+            h.it = g();
+            var r = h.it.next();
             console.log(r.value, r.done);
             """;
 
