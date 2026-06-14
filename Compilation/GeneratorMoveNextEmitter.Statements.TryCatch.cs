@@ -69,6 +69,14 @@ public partial class GeneratorMoveNextEmitter
     // be routed). Saved/restored around each region so nesting is handled correctly.
     private bool _inHandlerBody;
 
+    // The innermost flag-based try whose *body* is currently being emitted: its catch/finally entry
+    // (afterTryBodyLabel) and the local capturing a try-body exception. An external throw() injected
+    // at a yield in this body behaves as if the body threw there — it stores the error into this
+    // local and branches to the cleanup so the catch/finally run (#526). Saved/restored around the
+    // try-body emission, so it is null (or the enclosing try's) while emitting a catch/finally body,
+    // where `_inHandlerBody` instead routes an injected throw through the enclosing finally(s).
+    private (Label AfterTryBody, LocalBuilder CaughtException)? _tryBodyContext;
+
     // `<>pendingExit` (int): the code of an in-flight non-local exit, or 0 when none. A finally that
     // yields suspends MoveNext mid-routing, so this must be a field (a local would reset on re-entry).
     // Set once per exit and cleared by the terminal dispatch; defaults to 0 on a fresh state machine.
@@ -95,6 +103,18 @@ public partial class GeneratorMoveNextEmitter
     private FieldBuilder GetPendingReturnValueField() =>
         _pendingReturnValueField ??= _builder.StateMachineType.DefineField(
             "<>pendingReturnValue", typeof(object), FieldAttributes.Private);
+
+    // Per-construct fields holding a try-body exception across a *yielding* finally in a try/finally
+    // with no catch (#599). The exception is captured into an IL local during the try body, but that
+    // local resets when the yielding finally suspends MoveNext, so the post-finally rethrow would see
+    // null and silently drop it. Persisting to a field before the finally keeps it alive. Each
+    // qualifying construct gets its own field rather than sharing one: a nested persisting construct
+    // inside the finally body would otherwise clobber the outer's captured exception.
+    private int _caughtExceptionFieldCounter;
+
+    private FieldBuilder DefineCaughtExceptionField() =>
+        _builder.StateMachineType.DefineField(
+            $"<>caughtException{_caughtExceptionFieldCounter++}", typeof(object), FieldAttributes.Private);
 
     // ---- Loop-scope methods (override the base stack to use `_exitScopes`) -----------------------
 
@@ -336,6 +356,132 @@ public partial class GeneratorMoveNextEmitter
         _il.Emit(OpCodes.Throw);
     });
 
+    // ---- External return()/throw() injection at a suspended yield (#526) -------------------------
+
+    /// <summary>
+    /// At a yield resume point, consult the injection fields a suspended generator's
+    /// return()/throw() set (#526) and, if one is pending, perform that abrupt completion here —
+    /// running active try/finally(/catch) — instead of resuming normally. Emits nothing that
+    /// transfers control when no injection is pending, so the caller's normal-resume code runs. A
+    /// no-op when the $IGenerator methods (hence the injection fields) were not emitted.
+    /// </summary>
+    private void EmitResumeInjectionCheck()
+    {
+        var kindField = _builder.InjectedKindField;
+        var valueField = _builder.InjectedValueField;
+        if (kindField == null || valueField == null) return;
+
+        void LoadInjectedValue()
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, valueField);
+        }
+
+        // return(v): behaves as `return v` at this point (consume the kind first so a yielding
+        // finally that re-enters MoveNext does not re-inject).
+        var afterReturn = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, kindField);
+        _il.Emit(OpCodes.Ldc_I4, GeneratorStateMachineBuilder.InjectKindReturn);
+        _il.Emit(OpCodes.Bne_Un, afterReturn);
+        ClearInjectedKind();
+        EmitRoutedReturn(LoadInjectedValue);
+        _il.MarkLabel(afterReturn);
+
+        // throw(e): behaves as `throw e` at this point.
+        var afterThrow = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, kindField);
+        _il.Emit(OpCodes.Ldc_I4, GeneratorStateMachineBuilder.InjectKindThrow);
+        _il.Emit(OpCodes.Bne_Un, afterThrow);
+        ClearInjectedKind();
+        EmitRoutedThrow(LoadInjectedValue);
+        _il.MarkLabel(afterThrow);
+    }
+
+    private void ClearInjectedKind()
+    {
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldc_I4, GeneratorStateMachineBuilder.InjectKindNone);
+        _il.Emit(OpCodes.Stfld, _builder.InjectedKindField!);
+    }
+
+    /// <summary>
+    /// Emits an abrupt <c>return &lt;value&gt;</c> at a top-level resume point: store the value into
+    /// Current, mark the generator done, and route through any enclosing flag-based finally(s) so
+    /// they run before completion. <paramref name="loadValue"/> pushes the boxed completion value.
+    /// Mirrors <see cref="EmitReturn"/>'s chain logic, but the value is supplied (not evaluated from
+    /// an expression) and the resume point is always at the top level, so the route uses <c>Br</c>.
+    /// </summary>
+    private void EmitRoutedReturn(Action loadValue)
+    {
+        _il.Emit(OpCodes.Ldarg_0);
+        loadValue();
+        _il.Emit(OpCodes.Stfld, _builder.CurrentField);
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldc_I4, -2);
+        _il.Emit(OpCodes.Stfld, _builder.StateField);
+
+        var chain = ActiveFinallyFrames();
+        if (chain.Count > 0)
+        {
+            // Stash the completion value: a yielding finally overwrites Current; the return terminal
+            // restores it after the finally has run (#555).
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.CurrentField);
+            _il.Emit(OpCodes.Stfld, GetPendingReturnValueField());
+
+            RegisterReturnTerminal();
+            RouteThroughFinallys(chain, ExitCodeReturn, OpCodes.Br);
+            return;
+        }
+
+        _il.Emit(OpCodes.Ldc_I4_0);
+        _il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits a <c>throw &lt;value&gt;</c> at a top-level resume point. Inside a try body it behaves
+    /// as if the body threw there (store into the try's caught-exception local and branch to its
+    /// cleanup, so the catch/finally run); inside a catch/finally body it routes through the
+    /// enclosing finally(s); with no enclosing try it propagates out of MoveNext. <paramref
+    /// name="loadValue"/> pushes the boxed guest error value.
+    /// </summary>
+    private void EmitRoutedThrow(Action loadValue)
+    {
+        if (!_inHandlerBody && _tryBodyContext is { } tryBody)
+        {
+            // In a try body: capture exactly like a try-body exception so the catch/finally at
+            // afterTryBodyLabel handle it. A catch-less yielding finally persists this local to a
+            // field before suspending, so it survives (#599).
+            loadValue();
+            _il.Emit(OpCodes.Stloc, tryBody.CaughtException);
+            _il.Emit(OpCodes.Br, tryBody.AfterTryBody);
+            return;
+        }
+
+        var chain = ActiveFinallyFrames();
+        if (chain.Count > 0)
+        {
+            // In a catch/finally body: run the enclosing finally(s), then rethrow at the terminal.
+            _il.Emit(OpCodes.Ldarg_0);
+            loadValue();
+            _il.Emit(OpCodes.Stfld, GetPendingExceptionField());
+            RegisterThrowTerminal();
+            RouteThroughFinallys(chain, ExitCodeThrow, OpCodes.Br);
+            return;
+        }
+
+        // No enclosing try: mark done and propagate out of MoveNext.
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldc_I4, -2);
+        _il.Emit(OpCodes.Stfld, _builder.StateField);
+        loadValue();
+        _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateException);
+        _il.Emit(OpCodes.Throw);
+    }
+
     /// <summary>
     /// Emits try/catch/finally. When a yield crosses the protected region, real IL exception
     /// blocks cannot be used (the state-dispatch switch can't branch into a protected region,
@@ -347,7 +493,16 @@ public partial class GeneratorMoveNextEmitter
             || (t.CatchBlock != null && ContainsYield(t.CatchBlock))
             || (t.FinallyBlock != null && ContainsYield(t.FinallyBlock));
 
-        if (hasYields)
+        // A return/break/continue lexically inside the finally body can never be lowered with the
+        // real-IL path: none of `ret`/`br`/`Leave` may exit a .NET `finally` region, so it would emit
+        // invalid IL (LeaveOutOfFinally). Route the whole construct through the flag-based scheme even
+        // with no yield, so the finally is emitted as top-level statements and the exit is dispatched
+        // legally (#598, the finally-side analog of #554, which handles exits in the try/catch body).
+        // An exit targeting a loop *inside* the finally stays local and does not count as escaping.
+        bool finallyHasEscapingExit = t.FinallyBlock != null
+            && ContainsEscapingExit2(t.FinallyBlock, insideLoop: false, insideSwitch: false);
+
+        if (hasYields || finallyHasEscapingExit)
             EmitTryCatchWithYields(t);
         else
             EmitSimpleTryCatch(t);
@@ -435,6 +590,28 @@ public partial class GeneratorMoveNextEmitter
         var caughtExceptionLocal = _il.DeclareLocal(typeof(object));
         var afterTryBodyLabel = _il.DefineLabel();
 
+        // #599: in a try/finally with no catch whose finally can yield, the captured try-body
+        // exception must survive the finally's suspension. The IL local resets on MoveNext re-entry,
+        // so persist it to a dedicated field before the finally and read that field in the
+        // post-finally rethrow. Allocated only for that shape; null means "use the local".
+        FieldBuilder? caughtExceptionField =
+            t.CatchBlock == null && t.FinallyBlock != null && ContainsYield(t.FinallyBlock)
+                ? DefineCaughtExceptionField()
+                : null;
+
+        void EmitLoadCaughtException()
+        {
+            if (caughtExceptionField != null)
+            {
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldfld, caughtExceptionField);
+            }
+            else
+            {
+                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+            }
+        }
+
         // No exception captured yet.
         _il.Emit(OpCodes.Ldnull);
         _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
@@ -450,10 +627,15 @@ public partial class GeneratorMoveNextEmitter
             _exitScopes.Add(frame);
         }
 
-        // Throws in the try body are captured by their sync segments, not routed.
+        // Throws in the try body are captured by their sync segments, not routed. While emitting the
+        // body, expose this try as the injected-throw target so an external throw() at a yield here
+        // engages this try's catch/finally (#526).
         bool previousInHandler = _inHandlerBody;
+        var previousTryBody = _tryBodyContext;
         _inHandlerBody = false;
+        _tryBodyContext = (afterTryBodyLabel, caughtExceptionLocal);
         EmitTryBodyWithYields(t.TryBlock, caughtExceptionLocal, afterTryBodyLabel);
+        _tryBodyContext = previousTryBody;
         _inHandlerBody = previousInHandler;
 
         _il.MarkLabel(afterTryBodyLabel);
@@ -492,6 +674,15 @@ public partial class GeneratorMoveNextEmitter
         // Finally: always runs — on normal completion, after a caught exception, or on a routed exit.
         if (t.FinallyBlock != null)
         {
+            // #599: persist the captured exception (null on the normal/routed-exit paths) before the
+            // finally so a suspension inside it does not wipe the IL local out from under the rethrow.
+            if (caughtExceptionField != null)
+            {
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                _il.Emit(OpCodes.Stfld, caughtExceptionField);
+            }
+
             _inHandlerBody = true;
             foreach (var stmt in t.FinallyBlock)
                 EmitStatement(stmt);
@@ -505,14 +696,14 @@ public partial class GeneratorMoveNextEmitter
         if (t.CatchBlock == null)
         {
             var noExceptionLabel = _il.DefineLabel();
-            _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+            EmitLoadCaughtException();
             _il.Emit(OpCodes.Brfalse, noExceptionLabel);
 
             // Mark the generator done before the exception leaves MoveNext.
             _il.Emit(OpCodes.Ldarg_0);
             _il.Emit(OpCodes.Ldc_I4, -2);
             _il.Emit(OpCodes.Stfld, _builder.StateField);
-            _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+            EmitLoadCaughtException();
             _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateException);
             _il.Emit(OpCodes.Throw);
 
