@@ -22,61 +22,7 @@ public partial class TypeChecker
             return;
         }
 
-        TypeInfo? superclass = null;
-        if (classStmt.SuperclassExpr != null)
-        {
-            TypeInfo superType = CheckExpr(classStmt.SuperclassExpr);
-
-            // Handle generic class with type arguments: extends Box<number>
-            if (classStmt.SuperclassTypeArgs != null && classStmt.SuperclassTypeArgs.Count > 0)
-            {
-                if (superType is TypeInfo.GenericClass gc)
-                {
-                    // Convert type argument strings to TypeInfo
-                    var typeArgs = classStmt.SuperclassTypeArgs.Select(ToTypeInfo).ToList();
-                    // Instantiate the generic class with the type arguments
-                    superclass = InstantiateGenericClass(gc, typeArgs);
-                }
-                else if (superType is TypeInfo.Any)
-                {
-                    // Built-in generic globals (Promise<T>, Array<T>) resolve to
-                    // Any in value position; `extends Promise<T>` must not be
-                    // rejected as "non-generic" (#233). Validate the type args
-                    // resolve, then fall through to the Any placeholder below.
-                    foreach (var typeArg in classStmt.SuperclassTypeArgs)
-                        ToTypeInfo(typeArg);
-                }
-                else
-                {
-                    throw new TypeCheckException($"Cannot use type arguments with non-generic class '{Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)}'", tsCode: "TS2315");
-                }
-            }
-            if (superclass == null)
-            {
-                if (superType is TypeInfo.Instance si && si.ClassType is TypeInfo.Class sic)
-                    superclass = sic;
-                else if (superType is TypeInfo.Class sc)
-                    superclass = sc;
-                else if (superType is TypeInfo.GenericClass gc2)
-                {
-                    // Generic class without type arguments - error
-                    throw new TypeCheckException($"Generic class '{gc2.Name}' requires type arguments", tsCode: "TS2314");
-                }
-                else if (superType is TypeInfo.Any)
-                {
-                    // Allow extending Any-typed globals (e.g. Error, TypeError,
-                    // Promise<T>, Array). Create a placeholder class so super()
-                    // calls and constructor validation type-check correctly
-                    // (accept any number of args).
-                    var placeholder = new TypeInfo.MutableClass(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!);
-                    placeholder.Methods["constructor"] = new TypeInfo.Function(
-                        [new TypeInfo.Any()], new TypeInfo.Void(), RequiredParams: 0, HasRestParam: true);
-                    superclass = placeholder;
-                }
-                else
-                    throw new TypeCheckException("Superclass must be a class", tsCode: "TS2507");
-            }
-        }
+        TypeInfo? superclass = ResolveDeclaredSuperclass(classStmt);
 
         // Handle generic type parameters
         List<TypeInfo.TypeParameter>? classTypeParams = null;
@@ -866,6 +812,75 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Resolves a class declaration's <c>extends</c> clause to its superclass <see cref="TypeInfo"/>:
+    /// generic instantiation (<c>extends Box&lt;number&gt;</c>), a plain class/instance base, or an
+    /// Any-typed global base (e.g. <c>Error</c>) via a constructor placeholder. Returns <c>null</c>
+    /// when there is no <c>extends</c> clause. Shared by <see cref="CheckClassDeclaration"/> and
+    /// <see cref="CheckDeclareClass"/> so the two paths cannot drift and ambient
+    /// (<c>declare class</c>/<c>@DotNetType</c>) declarations inherit superclass members too (#505).
+    /// Resolved against the enclosing environment (the class's own type parameters are not in scope,
+    /// matching the regular path).
+    /// </summary>
+    private TypeInfo? ResolveDeclaredSuperclass(Stmt.Class classStmt)
+    {
+        if (classStmt.SuperclassExpr == null) return null;
+
+        TypeInfo superType = CheckExpr(classStmt.SuperclassExpr);
+        TypeInfo? superclass = null;
+
+        // Handle generic class with type arguments: extends Box<number>
+        if (classStmt.SuperclassTypeArgs != null && classStmt.SuperclassTypeArgs.Count > 0)
+        {
+            if (superType is TypeInfo.GenericClass gc)
+            {
+                // Convert type argument strings to TypeInfo
+                var typeArgs = classStmt.SuperclassTypeArgs.Select(ToTypeInfo).ToList();
+                // Instantiate the generic class with the type arguments
+                superclass = InstantiateGenericClass(gc, typeArgs);
+            }
+            else if (superType is TypeInfo.Any)
+            {
+                // Built-in generic globals (Promise<T>, Array<T>) resolve to
+                // Any in value position; `extends Promise<T>` must not be
+                // rejected as "non-generic" (#233). Validate the type args
+                // resolve, then fall through to the Any placeholder below.
+                foreach (var typeArg in classStmt.SuperclassTypeArgs)
+                    ToTypeInfo(typeArg);
+            }
+            else
+            {
+                throw new TypeCheckException($"Cannot use type arguments with non-generic class '{Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)}'", tsCode: "TS2315");
+            }
+        }
+        if (superclass == null)
+        {
+            if (superType is TypeInfo.Instance si && si.ClassType is TypeInfo.Class sic)
+                superclass = sic;
+            else if (superType is TypeInfo.Class sc)
+                superclass = sc;
+            else if (superType is TypeInfo.GenericClass gc2)
+            {
+                // Generic class without type arguments - error
+                throw new TypeCheckException($"Generic class '{gc2.Name}' requires type arguments", tsCode: "TS2314");
+            }
+            else if (superType is TypeInfo.Any)
+            {
+                // Allow extending Any-typed globals (e.g. Error, TypeError,
+                // Promise<T>, Array). Create a placeholder class so super()
+                // calls and constructor validation type-check correctly
+                // (accept any number of args).
+                var placeholder = new TypeInfo.MutableClass(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!);
+                placeholder.Methods["constructor"] = new TypeInfo.Function(
+                    [new TypeInfo.Any()], new TypeInfo.Void(), RequiredParams: 0, HasRestParam: true);
+                superclass = placeholder;
+            }
+            else
+                throw new TypeCheckException("Superclass must be a class", tsCode: "TS2507");
+        }
+        return superclass;
+    }
+
+    /// <summary>
     /// Type checks a declare class (ambient declaration).
     /// For declare classes, we only validate signatures without requiring implementations.
     /// Used for @DotNetType external type declarations.
@@ -874,6 +889,11 @@ public partial class TypeChecker
     {
         // Save reference to current environment for later registration
         TypeEnvironment parentEnv = _environment;
+
+        // Resolve the `extends` clause in the enclosing environment (before the class's own type
+        // parameters enter scope), so inherited members are visible to consumers of this ambient
+        // type (member access, structural assignability, conditional `infer`) — #505.
+        TypeInfo? superclass = ResolveDeclaredSuperclass(classStmt);
 
         // Handle generic type parameters
         TypeEnvironment classTypeEnv = new(_environment);
@@ -893,6 +913,7 @@ public partial class TypeChecker
         // The mutable class is populated during signature collection and frozen at the end.
         var mutableClass = new TypeInfo.MutableClass(classStmt.Name.Lexeme)
         {
+            Superclass = superclass,
             IsAbstract = classStmt.IsAbstract
         };
         classTypeEnv.Define(classStmt.Name.Lexeme, mutableClass);

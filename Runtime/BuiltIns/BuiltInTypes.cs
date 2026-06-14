@@ -1170,13 +1170,56 @@ public static class BuiltInTypes
         "toArray", "forEach", "some", "every", "find",
     ];
 
+    // Apparent members of the remaining GetXxxMemberType-backed built-ins (#530, follow-up to #512):
+    // Error (and subclasses), Timeout, Buffer, EventEmitter, AbortController, AbortSignal. As with the
+    // lists above, every listed name must resolve through its GetXxxMemberType switch
+    // (BuiltInApparentMembersTests asserts this). Function is intentionally excluded — its members
+    // (.call/.apply/.bind and call signatures) depend on the function's own signature, so it does not
+    // fit this type-argument-independent name projection.
+
+    private static readonly string[] ErrorMemberNames = ["name", "message", "stack", "cause", "toString"];
+
+    // AggregateError additionally exposes `errors` (see GetErrorMemberType).
+    private static readonly string[] AggregateErrorMemberNames =
+        ["name", "message", "stack", "cause", "toString", "errors"];
+
+    private static readonly string[] TimeoutMemberNames = ["ref", "unref", "hasRef", "toString"];
+
+    private static readonly string[] BufferMemberNames =
+    [
+        "length", "toString", "slice", "copy", "compare", "equals", "fill", "write",
+        "readUInt8", "writeUInt8", "toJSON",
+        "readInt8", "readUInt16LE", "readUInt16BE", "readUInt32LE", "readUInt32BE",
+        "readInt16LE", "readInt16BE", "readInt32LE", "readInt32BE",
+        "readFloatLE", "readFloatBE", "readDoubleLE", "readDoubleBE",
+        "readBigInt64LE", "readBigInt64BE", "readBigUInt64LE", "readBigUInt64BE",
+        "writeInt8", "writeUInt16LE", "writeUInt16BE", "writeUInt32LE", "writeUInt32BE",
+        "writeInt16LE", "writeInt16BE", "writeInt32LE", "writeInt32BE",
+        "writeFloatLE", "writeFloatBE", "writeDoubleLE", "writeDoubleBE",
+        "writeBigInt64LE", "writeBigInt64BE", "writeBigUInt64LE", "writeBigUInt64BE",
+        "indexOf", "includes", "swap16", "swap32", "swap64",
+    ];
+
+    private static readonly string[] EventEmitterMemberNames =
+    [
+        "on", "addListener", "once", "off", "removeListener", "emit", "removeAllListeners",
+        "listeners", "rawListeners", "listenerCount", "eventNames",
+        "prependListener", "prependOnceListener", "setMaxListeners", "getMaxListeners",
+    ];
+
+    private static readonly string[] AbortControllerMemberNames = ["signal", "abort"];
+
+    private static readonly string[] AbortSignalMemberNames =
+        ["aborted", "reason", "onabort", "throwIfAborted", "addEventListener", "removeEventListener"];
+
     /// <summary>
     /// Resolves the type of a single instance member on a structurally-decomposable built-in object
-    /// type (Date/RegExp/Map/Set/Promise and the weak/iterator variants), or null when
-    /// <paramref name="type"/> is not such a type or the member is absent. Delegates to the same
-    /// per-type GetXxxMemberType resolvers that <c>value.member</c> reads use, so member access,
-    /// structural assignability, and conditional infer-matching agree on one model. The set of
-    /// handled types matches <see cref="GetInstanceMemberNames"/>.
+    /// type (Date/RegExp/Map/Set/Promise, the weak/iterator variants, and Error/Timeout/Buffer/
+    /// EventEmitter/AbortController/AbortSignal), or null when <paramref name="type"/> is not such a
+    /// type or the member is absent. Delegates to the same per-type GetXxxMemberType resolvers that
+    /// <c>value.member</c> reads use, so member access, structural assignability, and conditional
+    /// infer-matching agree on one model. The set of handled types matches
+    /// <see cref="GetInstanceMemberNames"/>.
     /// </summary>
     public static TypeInfo? GetInstanceMemberType(TypeInfo type, string name) => type switch
     {
@@ -1192,6 +1235,12 @@ public static class BuiltInTypes
         TypeInfo.Iterator it => GetIteratorMemberType(name, it.ElementType),
         TypeInfo.Generator g => GetIteratorMemberType(name, g.YieldType),
         TypeInfo.AsyncGenerator ag => GetIteratorMemberType(name, ag.YieldType),
+        TypeInfo.Error e => GetErrorMemberType(name, e.Name),
+        TypeInfo.Timeout => GetTimeoutMemberType(name),
+        TypeInfo.Buffer => GetBufferMemberType(name),
+        TypeInfo.EventEmitter => GetEventEmitterMemberType(name),
+        TypeInfo.AbortController => GetAbortControllerMemberType(name),
+        TypeInfo.AbortSignal => GetAbortSignalMemberType(name),
         _ => null
     };
 
@@ -1213,6 +1262,13 @@ public static class BuiltInTypes
         TypeInfo.FinalizationRegistry => FinalizationRegistryMemberNames,
         TypeInfo.Promise => PromiseMemberNames,
         TypeInfo.Iterator or TypeInfo.Generator or TypeInfo.AsyncGenerator => IteratorMemberNames,
+        TypeInfo.Error { Name: "AggregateError" } => AggregateErrorMemberNames,
+        TypeInfo.Error => ErrorMemberNames,
+        TypeInfo.Timeout => TimeoutMemberNames,
+        TypeInfo.Buffer => BufferMemberNames,
+        TypeInfo.EventEmitter => EventEmitterMemberNames,
+        TypeInfo.AbortController => AbortControllerMemberNames,
+        TypeInfo.AbortSignal => AbortSignalMemberNames,
         _ => null
     };
 

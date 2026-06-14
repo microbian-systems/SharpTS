@@ -175,4 +175,78 @@ public class BuiltInStructuralTypeTests
             """;
         Assert.Equal("object\n", TestHarness.Run(source, mode));
     }
+
+    // ----- #530: the projection extended to Error (and the other GetXxxMemberType built-ins) -----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void KeyOf_Error_AcceptsMemberName(ExecutionMode mode)
+    {
+        var source = """
+            const k: keyof Error = "message";
+            console.log(k);
+            """;
+        Assert.Equal("message\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void KeyOf_Error_RejectsNonMember(ExecutionMode mode)
+    {
+        var source = """
+            const k: keyof Error = "notAMember";
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Structural_Error_AssignableToMatchingShape(ExecutionMode mode)
+    {
+        // The verbatim repro from #530: an Error value satisfies a matching structural shape.
+        var source = """
+            const e = new Error("boom");
+            const o: { message: string } = e;
+            console.log(o.message);
+            """;
+        Assert.Equal("boom\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Structural_Error_MissingMember_Rejected(ExecutionMode mode)
+    {
+        var source = """
+            const e = new Error("boom");
+            const o: { notARealErrorMember: string } = e;
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.Run(source, mode));
+    }
+
+    // ----- #529: the weak-type check (TS2559) now sees a built-in source's members -----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void WeakType_BuiltInSource_NoSharedMember_Rejected(ExecutionMode mode)
+    {
+        // tsc: TS2559 — Date has no properties in common with the all-optional target. Before #529 the
+        // built-in source contributed zero members, so the weak-type check was silently skipped.
+        var source = """
+            const o: { bogus?: number } = new Date();
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void WeakType_BuiltInSource_SharedMember_Accepted(ExecutionMode mode)
+    {
+        // The weak-type rule fires only when NOTHING is in common: a target sharing a member name with
+        // the Date source passes the weak check (and then ordinary structural assignability applies).
+        var source = """
+            const o: { getTime?: () => number } = new Date();
+            console.log(typeof o.getTime);
+            """;
+        Assert.Equal("function\n", TestHarness.Run(source, mode));
+    }
 }
