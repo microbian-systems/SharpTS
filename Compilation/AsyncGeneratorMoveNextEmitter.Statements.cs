@@ -13,8 +13,8 @@ public partial class AsyncGeneratorMoveNextEmitter
 
     protected override void EmitReturn(Stmt.Return r)
     {
-        // Async generator return - store the return value in Current (read as the completion value),
-        // then complete the state machine — unless an enclosing flag-based try/finally must run first.
+        // Async generator return — store the completion value in Current (read back as next().value when
+        // done), then complete the state machine, running any enclosing finally(s) first.
         if (r.Value != null)
         {
             // Evaluate fully before touching the frame: the value may itself contain a yield/await
@@ -28,26 +28,50 @@ public partial class AsyncGeneratorMoveNextEmitter
             _il.Emit(OpCodes.Ldloc, returnValueTemp);
             _il.Emit(OpCodes.Stfld, _builder.CurrentField);
         }
+        else
+        {
+            // Bare `return;` completes with `undefined`. Store the `$Undefined` sentinel into Current so
+            // the completion value is undefined, not the stale last-yielded value (#481/#540).
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
+            _il.Emit(OpCodes.Stfld, _builder.CurrentField);
+        }
 
-        // Set state to -2 (completed). The direct path below returns immediately; a routed return
-        // re-asserts this at its terminal, since a yielding finally would overwrite it.
+        // Set state to -2 (completed). The direct path below returns immediately; a routed or deferred
+        // return re-asserts this at its terminal / landing pad, since a yielding finally between here and
+        // there would overwrite it with the finally's resume state.
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, -2);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
 
-        // Inside a flag-based try/finally, the enclosing finally(s) must run before the generator
-        // actually completes. Route the return through them instead of returning directly (a `ret`
-        // here is also illegal — this return is emitted outside the protected segment, but a finally
-        // is emitted after it). See AsyncGeneratorMoveNextEmitter.Statements.TryCatch.cs.
-        if (_protectedRegionDepth == 0)
+        // A non-local `return` must run any enclosing flag-based finally(s) before the generator
+        // completes. See AsyncGeneratorMoveNextEmitter.Statements.TryCatch.cs.
+        var chain = ActiveFinallyFrames();
+        if (chain.Count > 0)
         {
-            var chain = ActiveFinallyFrames();
-            if (chain.Count > 0)
-            {
-                RegisterReturnTerminal();
-                RouteThroughFinallys(chain, ExitCodeReturn);
-                return;
-            }
+            // Stash the completion value: a finally that yields overwrites Current with its yielded
+            // value, and the return terminal restores it from here after the finally has run (#597,
+            // async analog of #555). From inside a real IL block the route uses `Leave` (running that
+            // block's no-yield finally) to reach the innermost flag cleanup label (#597/#554).
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.CurrentField);
+            _il.Emit(OpCodes.Stfld, GetPendingReturnValueField());
+
+            RegisterReturnTerminal();
+            RouteThroughFinallys(chain, ExitCodeReturn, _protectedRegionDepth > 0 ? OpCodes.Leave : OpCodes.Br);
+            return;
+        }
+
+        if (_protectedRegionDepth > 0)
+        {
+            // Inside a real IL try/finally with no enclosing flag finally: completing directly (a
+            // `ret`/EmitReturnValueTaskBool) is illegal inside the protected region. Current/state are
+            // set above; `Leave` the deferred-return landing pad, which runs the enclosing no-yield
+            // finally(s) and returns false (#597, async analog of #554).
+            _deferredReturnUsed = true;
+            _il.Emit(OpCodes.Leave, _deferredReturnLabel);
+            return;
         }
 
         EmitReturnValueTaskBool(false);

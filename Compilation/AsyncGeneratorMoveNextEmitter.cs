@@ -26,6 +26,14 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
     private readonly Dictionary<int, Label> _stateLabels = [];
     private Label _returnFalseLabel;
 
+    // Landing pad for a `return` emitted inside a real IL try/finally (EmitSimpleTryCatch) that has no
+    // enclosing flag-based finally (#597, async analog of #554). Such a return cannot complete the state
+    // machine directly (a `ret`/EmitReturnValueTaskBool is illegal inside a protected region), so it sets
+    // Current/state then `Leave`s here — running the enclosing no-yield finally(s) — to return false.
+    // Marked only when used; Current already holds the completion value, so it is not reset here.
+    private Label _deferredReturnLabel;
+    private bool _deferredReturnUsed;
+
     // Current suspension point being processed
     private int _currentSuspensionState = 0;
 
@@ -78,6 +86,7 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
             _stateLabels[suspensionPoint.StateNumber] = _il.DefineLabel();
         }
         _returnFalseLabel = _il.DefineLabel();
+        _deferredReturnLabel = _il.DefineLabel();
 
         // Check if generator is already completed (state == -2)
         _il.Emit(OpCodes.Ldarg_0);
@@ -94,18 +103,40 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
             EmitStatement(stmt);
         }
 
-        // Fall through after body completes - clear current value, mark as done and return false
-        // (Implicit return has value: null)
+        // Fall through after body completes — the generator ran off the end with no `return`.
+        // Per ECMA-262 its completion value is `undefined`, so reset Current to the `$Undefined`
+        // sentinel rather than CLR null: it currently still holds the last *yielded* value, which would
+        // otherwise surface as `next().value` after done, or as a delegating `yield*`'s completion value
+        // (#481, async analog of #443). An explicit `return X` takes the EmitReturn path and stores X.
         _il.Emit(OpCodes.Ldarg_0);
-        _il.Emit(OpCodes.Ldnull);
+        _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
         _il.Emit(OpCodes.Stfld, _builder.CurrentField);
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, -2);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
         EmitReturnValueTaskBool(false);
 
-        // Return false label (generator completed)
+        // Deferred-return landing pad (#597, async analog of #554): a `return` inside a real IL
+        // try/finally `Leave`s here after its enclosing no-yield finally(s) have run. Current and state
+        // were already set at the `return`, so just return false. Marked only if such a return was emitted.
+        if (_deferredReturnUsed)
+        {
+            _il.MarkLabel(_deferredReturnLabel);
+            EmitReturnValueTaskBool(false);
+        }
+
+        // Return false label — re-entry on an already-completed generator (state == -2): next() called
+        // after the generator finished, or after return(v). Per ECMA-262 27.6.1.2 a completed async
+        // generator's next() always reports { value: undefined, done: true } — the completion value was
+        // already consumed by the call that finished it. Reset Current to the `$Undefined` sentinel so a
+        // stale value does not leak: an explicit `return X` left X in Current, and return(v) leaves the
+        // last *yielded* value there untouched — either of which the done-path read of Current in next()
+        // would otherwise re-surface (#540, async analog of #499). The first MoveNextAsync to complete
+        // takes the fall-through / EmitReturn path above (correct completion value), not this label.
         _il.MarkLabel(_returnFalseLabel);
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
+        _il.Emit(OpCodes.Stfld, _builder.CurrentField);
         EmitReturnValueTaskBool(false);
     }
 

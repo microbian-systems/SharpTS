@@ -400,6 +400,94 @@ public class AsyncGeneratorTryFinallyTests
         Assert.Equal("v0\nfin0\nv1\nfin1\n", TestHarness.Run(source, mode));
     }
 
+    // ---- #597: return in a NO-yield try, and return value preserved across a yielding finally ----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void ReturnInNoYieldTry_RunsFinally(ExecutionMode mode)
+    {
+        // #597(a): the `return` sits in a try whose body has NO suspension (a real IL try via
+        // EmitSimpleTryCatch). Previously the return completed the state machine directly inside the
+        // protected region — illegal IL (InvalidProgramException). It now Leaves a deferred-return
+        // landing pad that runs the no-yield finally first. The outer `yield 0` makes g a state machine.
+        var source = """
+            async function* g() { yield 0; try { return; } finally { console.log("f"); } }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v0\nf\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void ReturnValueInTry_WithYieldingFinally_PreservesReturnValue(ExecutionMode mode)
+    {
+        // #597(b): when the finally yields, its yielded value must not clobber the return value in
+        // <>2__current. The return value (5) is stashed in <>pendingReturnValue at the `return` and
+        // restored to Current by the return terminal after the finally has run. Driven via next() so
+        // the exact { value, done } records are observable.
+        var source = """
+            async function* g() { try { return 5; } finally { yield 9; } }
+            async function main() {
+                const it = g();
+                console.log(JSON.stringify(await it.next()));
+                console.log(JSON.stringify(await it.next()));
+            }
+            main();
+            """;
+
+        Assert.Equal("{\"value\":9,\"done\":false}\n{\"value\":5,\"done\":true}\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void BreakOutOfNoYieldTry_NestedInYieldingTry_RunsOuterFinally(ExecutionMode mode)
+    {
+        // A break inside an inner NO-yield try (real IL) nested in an outer flag-based try-with-finally
+        // must still run the outer finally. Aligning the async EmitBreak/EmitContinue routing with the
+        // sync emitter (route through the flag finally with `Leave` even inside a real IL block) fixed
+        // this latent gap alongside #597; the old code Leave'd straight to the break label, skipping it.
+        var source = """
+            async function* g() {
+              while (true) {
+                try {
+                  yield 0;
+                  try { break; } catch (e) {}
+                } finally { console.log("OUTERFIN"); }
+              }
+            }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v0\nOUTERFIN\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void ContinueOutOfNoYieldTry_NestedInYieldingTry_RunsOuterFinallyEachIteration(ExecutionMode mode)
+    {
+        // The continue sibling of the break case above: continue from an inner no-yield try nested in
+        // an outer flag-based try-with-finally runs the outer finally each iteration (and skips the
+        // statement after the continue).
+        var source = """
+            async function* g() {
+              for (let i = 0; i < 2; i++) {
+                try {
+                  yield i;
+                  try { continue; } catch (e) {}
+                  console.log("unreached");
+                } finally { console.log("fin" + i); }
+              }
+            }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v0\nfin0\nv1\nfin1\n", TestHarness.Run(source, mode));
+    }
+
     // ---- IL-verification guards (the heart of #559: emitted IL must verify) ----
 
     [Theory]
@@ -426,6 +514,13 @@ public class AsyncGeneratorTryFinallyTests
     // await suspensions crossing the protected region alongside the non-local exits.
     [InlineData("async function* g() { try { await Promise.resolve(0); yield 1; return; } finally { console.log('f'); } } async function main(){ for await (const v of g()) {} } main();")]
     [InlineData("async function* g() { while (true) { try { await Promise.resolve(0); yield 1; break; } finally { console.log('f'); } } } async function main(){ for await (const v of g()) {} } main();")]
+    // #597: return in a NO-yield try (deferred-return landing pad), a value return preserved across a
+    // yielding finally, and break/continue from an inner no-yield try nested in an outer yielding try.
+    [InlineData("async function* g() { yield 0; try { return; } finally { console.log('f'); } } async function main(){ for await (const v of g()) {} } main();")]
+    [InlineData("async function* g() { yield 0; try { return 5; } finally { console.log('f'); } } async function main(){ for await (const v of g()) {} } main();")]
+    [InlineData("async function* g() { try { return 5; } finally { yield 9; } } async function main(){ for await (const v of g()) {} } main();")]
+    [InlineData("async function* g() { while (true) { try { yield 0; try { break; } catch (e) {} } finally { console.log('f'); } } } async function main(){ for await (const v of g()) {} } main();")]
+    [InlineData("async function* g() { for (let i=0;i<2;i++) { try { yield i; try { continue; } catch (e) {} } finally { console.log('f'); } } } async function main(){ for await (const v of g()) {} } main();")]
     public void AsyncGeneratorTryFinallyWithSuspension_EmitsVerifiableIL(string source)
     {
         var errors = TestHarness.CompileAndVerifyOnly(source);

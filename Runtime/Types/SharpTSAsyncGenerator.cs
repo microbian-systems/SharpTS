@@ -27,8 +27,14 @@ public class SharpTSAsyncGenerator : ITypeCategorized
 
     private List<object?>? _values = null;  // Collected yielded values (null = not yet executed)
     private int _index = 0;
-    private object? _returnValue = null;
+    // The generator's completion value. Defaults to undefined so a body that falls off the end (or a
+    // no-arg return) reports { value: undefined, done: true }, not C# null (#540).
+    private object? _returnValue = SharpTSUndefined.Instance;
     private bool _closed = false;
+    // Whether the one-time completion result has already been handed out. Once the body is drained
+    // (or the generator is closed), the completion value is reported exactly once; every later next()
+    // reports undefined (ECMA-262 §27.6.1.2 → CreateIterResultObject(undefined, true), #540).
+    private bool _completionDelivered = false;
 
     public SharpTSAsyncGenerator(Stmt.Function declaration, RuntimeEnvironment environment, Interpreter interpreter)
     {
@@ -43,10 +49,11 @@ public class SharpTSAsyncGenerator : ITypeCategorized
     /// </summary>
     public async Task<object?> Next()
     {
-        // If generator is closed, always return done
+        // A finished/disposed generator (closed via return()/throw()) reports undefined; its completion
+        // value was already delivered/consumed by that return()/throw() call (ECMA-262 §27.6.1.2, #540).
         if (_closed)
         {
-            return new SharpTSIteratorResult(_returnValue, done: true);
+            return new SharpTSIteratorResult(SharpTSUndefined.Instance, done: true);
         }
 
         // Execute the generator body on first call (async)
@@ -69,6 +76,14 @@ public class SharpTSAsyncGenerator : ITypeCategorized
             return new SharpTSIteratorResult(_values[_index++], done: false);
         }
 
+        // Body fully drained. Deliver the completion value once (the body's `return X`, or undefined
+        // when it ran off the end), then undefined on every later call — the stale completion / last
+        // yielded value must not replay forever (#540; mirrors the sync generator's done semantics).
+        if (_completionDelivered)
+        {
+            return new SharpTSIteratorResult(SharpTSUndefined.Instance, done: true);
+        }
+        _completionDelivered = true;
         return new SharpTSIteratorResult(_returnValue, done: true);
     }
 
@@ -77,8 +92,12 @@ public class SharpTSAsyncGenerator : ITypeCategorized
     /// </summary>
     public Task<object?> Return(object? value = null)
     {
+        // return(v) reports { value: v, done: true } (echoing the argument, per ECMA-262 §27.6.1.3) and
+        // closes the generator; a later next() then reports undefined via the `_closed` guard in Next()
+        // rather than replaying v (#540). _completionDelivered is set so the once-only accounting stays
+        // consistent even if the body had already run off the end before this return().
         _closed = true;
-        _returnValue = value;
+        _completionDelivered = true;
         return Task.FromResult<object?>(new SharpTSIteratorResult(value, done: true));
     }
 

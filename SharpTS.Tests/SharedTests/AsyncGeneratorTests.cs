@@ -40,7 +40,8 @@ public class AsyncGeneratorTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("1 false\n2 false\n3 false\nnull true\n", output);
+        // After the last yield, next() reports { value: undefined, done: true } — not null (#481/#540).
+        Assert.Equal("1 false\n2 false\n3 false\nundefined true\n", output);
     }
 
     [Theory]
@@ -139,7 +140,8 @@ public class AsyncGeneratorTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("42 false\nnull true\n", output);
+        // The result after the single yield is { value: undefined, done: true } — not null (#481/#540).
+        Assert.Equal("42 false\nundefined true\n", output);
     }
 
     [Theory]
@@ -556,7 +558,7 @@ public class AsyncGeneratorTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void AsyncGenerator_ImplicitReturn_ReturnsNull(ExecutionMode mode)
+    public void AsyncGenerator_ImplicitReturn_ReturnsUndefined(ExecutionMode mode)
     {
         var source = """
             async function* gen() {
@@ -574,7 +576,8 @@ public class AsyncGeneratorTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("null true\n", output);
+        // A generator that runs off the end completes with `undefined`, not null (#481/#540).
+        Assert.Equal("undefined true\n", output);
     }
 
     [Theory]
@@ -953,6 +956,122 @@ public class AsyncGeneratorTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("6\n20\n", output);
+    }
+
+    #endregion
+
+    #region Completion / resume value semantics — #481, #540
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ResumedYield_EvaluatesToUndefined(ExecutionMode mode)
+    {
+        // The resumed `yield` expression evaluates to undefined (no value sent), not null (#481, the
+        // async analog of #443). Previously the compiled emitter loaded CLR null here.
+        //
+        // COMPILED-ONLY: #481 is a compiled-emitter bug. The interpreter eagerly drains the body and
+        // does not bind a variable whose initializer is a yield (`const r = yield 1`) at all — it
+        // throws "Undefined variable 'r'" — a separate pre-existing eager-drain gap, not what #481 fixes.
+        var source = """
+            async function* ag() { const r = yield 1; console.log("r=" + r); }
+            async function main() { for await (const v of ag()) {} }
+            main();
+            """;
+
+        Assert.Equal("r=undefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldStarCompletion_EvaluatesToUndefined(ExecutionMode mode)
+    {
+        // The completion value of `yield* inner()` (when the delegate has no explicit return value) is
+        // undefined, not null (#481). COMPILED-ONLY for the same eager-drain reason as the resumed-yield
+        // test: the interpreter does not bind `const x = yield* …`.
+        var source = """
+            async function* inner() { yield 2; yield 3; }
+            async function* g() { const x = yield* inner(); console.log("x=" + x); yield 4; }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v2\nv3\nx=undefined\nv4\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_NextAfterDone_ReportsUndefinedNotStaleReturn(ExecutionMode mode)
+    {
+        // The return value is delivered exactly once; every later next() reports undefined, not the
+        // stale completion value replayed forever (#540, async analog of #499/#480).
+        var source = """
+            async function* ag() { yield 1; return 42; }
+            async function main() {
+                const it = ag();
+                console.log((await it.next()).value);
+                console.log((await it.next()).value);
+                console.log((await it.next()).value);
+                console.log((await it.next()).value);
+            }
+            main();
+            """;
+
+        Assert.Equal("1\n42\nundefined\nundefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_NextAfterReturn_ReportsUndefinedNotLastYielded(ExecutionMode mode)
+    {
+        // After return(v) delivers { value: v, done: true }, a later next() reports undefined — the
+        // last *yielded* value must not replay (#540).
+        var source = """
+            async function* ag() { yield 1; yield 2; }
+            async function main() {
+                const it = ag();
+                console.log((await it.next()).value);
+                console.log(JSON.stringify(await it.return(99)));
+                console.log((await it.next()).value);
+            }
+            main();
+            """;
+
+        Assert.Equal("1\n{\"value\":99,\"done\":true}\nundefined\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
+
+    #region Re-entrant next() — "already running" guard (#542)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ReentrantNext_Compiled_RejectsInsteadOfStackOverflow(ExecutionMode mode)
+    {
+        // A compiled async generator whose body advances itself previously recursed into MoveNextAsync
+        // until the stack overflowed (RangeError: Maximum call stack size exceeded). ECMA-262 §27.6.3
+        // queues such a request, but under this synchronous drive a real queue would deadlock the only
+        // reachable re-entrancy case (the body awaiting its own request), so the guard rejects with a
+        // catchable TypeError instead of crashing (#542). Observed here via a `for await…of` consumer,
+        // whose next()-drive surfaces the rejection to the enclosing try/catch.
+        //
+        // COMPILED-ONLY: the interpreter eagerly drains the body, so its re-entrant next() returns a
+        // (non-conformant) done result rather than recursing — it never hit the stack overflow this
+        // guards against, and asserting that divergent eager-drain output here would not test #542.
+        var source = """
+            const h: any = {};
+            async function* g() { await h.it.next(); yield 1; }
+            h.it = g();
+            async function main() {
+              try {
+                for await (const v of h.it) { console.log("v" + v); }
+              } catch (e: any) {
+                console.log("caught: " + e.name + " " + e.message);
+              }
+            }
+            main();
+            """;
+
+        Assert.Equal("caught: TypeError Async generator is already running\n", TestHarness.Run(source, mode));
     }
 
     #endregion

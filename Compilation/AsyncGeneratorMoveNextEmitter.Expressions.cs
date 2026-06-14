@@ -79,8 +79,10 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldc_I4_M1);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
 
-        // 7. yield expression evaluates to undefined (null) when resumed
-        _il.Emit(OpCodes.Ldnull);
+        // 7. The resumed `yield` expression evaluates to `undefined` (e.g. `const r = yield 1` → r is
+        // undefined). Load the emitted `$Undefined` sentinel, not CLR null which would surface as JS
+        // `null` (#481, async analog of #443). next(v) forwarding a sent value is the separate gap #473.
+        _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
         SetStackUnknown();
     }
 
@@ -255,8 +257,10 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldnull);
         _il.Emit(OpCodes.Stfld, delegatedField);
 
-        // yield* evaluates to undefined
-        _il.Emit(OpCodes.Ldnull);
+        // yield* evaluates to undefined — load the `$Undefined` sentinel, not CLR null (#481). (A
+        // delegated iterator's own return value as the yield* result is a separate, deeper gap; this
+        // path drives via IAsyncEnumerator/IEnumerator, which carry no return value.)
+        _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
         SetStackUnknown();
     }
 
@@ -323,7 +327,8 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldnull);
         _il.Emit(OpCodes.Stfld, delegatedField);
 
-        _il.Emit(OpCodes.Ldnull);
+        // yield* evaluates to undefined — load the `$Undefined` sentinel, not CLR null (#481).
+        _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
         SetStackUnknown();
     }
 
@@ -411,8 +416,8 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldnull);
         _il.Emit(OpCodes.Stfld, delegatedField);
 
-        // yield* evaluates to undefined
-        _il.Emit(OpCodes.Ldnull);
+        // yield* evaluates to undefined — load the `$Undefined` sentinel, not CLR null (#481).
+        _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
         SetStackUnknown();
     }
 
