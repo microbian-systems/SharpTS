@@ -1211,8 +1211,19 @@ public partial class ILEmitter
             {
                 // Void functions: no value on stack; ret takes nothing.
             }
-            else if (returnType == _ctx.Types.Object || !returnType.IsValueType)
+            else if (returnType == _ctx.Types.Object)
             {
+                // ECMA-262: a bare `return;` completes with undefined, not null. Emit the
+                // $Undefined sentinel for untyped object returns — mirrors EmitDefaultReturnValue
+                // (the off-the-end path) and the interpreter's VisitReturn — so a plain function
+                // returning no value is `undefined`. `return null;` (the r.Value != null branch
+                // above) still yields null. #563
+                EmitUndefinedConstant();
+            }
+            else if (!returnType.IsValueType)
+            {
+                // Specific reference-typed returns keep their null default (matches
+                // EmitDefaultReturnValue): the checker treats an explicit `T | null` return as null.
                 IL.Emit(OpCodes.Ldnull);
             }
             else if (_ctx.Types.IsDouble(returnType))
