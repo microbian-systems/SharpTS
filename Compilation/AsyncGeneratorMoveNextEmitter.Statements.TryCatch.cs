@@ -92,7 +92,11 @@ public partial class AsyncGeneratorMoveNextEmitter
     // ---- Loop-scope methods (override the base stack to use `_exitScopes`) -----------------------
 
     protected override void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
-        => _exitScopes.Add(new LoopScope { BreakLabel = breakLabel, ContinueLabel = continueLabel, LabelName = labelName });
+        // Adopt a pending label (`outer: for (...)`) just like the sync generator emitter does, so a
+        // labeled `break`/`continue` can resolve this loop as its target. Without the fallback the
+        // LoopScope registers with LabelName == null and FindLabeledLoopScope never matches, making a
+        // labeled break/continue a silent no-op — the loop keeps iterating (#586).
+        => _exitScopes.Add(new LoopScope { BreakLabel = breakLabel, ContinueLabel = continueLabel, LabelName = labelName ?? Ctx.TakePendingLoopLabel() });
 
     protected override void ExitLoop()
     {
