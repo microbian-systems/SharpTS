@@ -697,7 +697,11 @@ public partial class TypeChecker
 
     /// <summary>
     /// Checks index assignment on a given type (used for delegating from Union types).
-    /// Returns the value type if assignment is valid, null otherwise.
+    /// Returns the value type if assignment is valid, null when the index is structurally invalid
+    /// for the type (the union caller turns null into TS7053). A write to a <b>readonly</b> array or
+    /// tuple member throws TS2542 directly — mirroring the direct-write guard in
+    /// <see cref="CheckSetIndex"/> — so a readonly member of a surviving union makes the whole
+    /// index write TS2542 (#594).
     /// </summary>
     private TypeInfo? CheckSetIndexOnType(TypeInfo objType, TypeInfo indexType, TypeInfo valueType, Expr.SetIndex setIndex)
     {
@@ -732,8 +736,32 @@ public partial class TypeChecker
         // Handle number index
         if (IsNumber(indexType) || indexType is TypeInfo.NumberLiteral)
         {
+            // Tuple member (the main CheckSetIndex path handles tuples; this helper previously did
+            // not, so a union with a tuple member rejected every numeric write). A readonly tuple
+            // rejects the write (TS2542); otherwise the value must match the addressed element. (#594)
+            if (objType is TypeInfo.Tuple tupleType)
+            {
+                if (tupleType.IsReadonly)
+                    throw new TypeCheckException($" Index signature in type '{objType}' only permits reading.", tsCode: "TS2542");
+                if (setIndex.Index is Expr.Literal { Value: double tIdx })
+                {
+                    int i = (int)tIdx;
+                    if (i >= 0 && i < tupleType.ElementTypes.Count)
+                        return IsCompatible(tupleType.ElementTypes[i], valueType) ? valueType : null;
+                    if (tupleType.RestElementType != null && i >= tupleType.ElementTypes.Count)
+                        return IsCompatible(tupleType.RestElementType, valueType) ? valueType : null;
+                    return null; // out of bounds for this constituent
+                }
+                var allTypes = tupleType.ElementTypes.ToList();
+                if (tupleType.RestElementType != null) allTypes.Add(tupleType.RestElementType);
+                return allTypes.All(t => IsCompatible(t, valueType)) ? valueType : null;
+            }
             if (objType is TypeInfo.Array arrayType)
             {
+                // A readonly array member permits reading only — reject the write with TS2542,
+                // mirroring the direct-write guard in CheckSetIndex (#594).
+                if (arrayType.IsReadonly)
+                    throw new TypeCheckException($" Index signature in type '{objType}' only permits reading.", tsCode: "TS2542");
                 // Same out-of-range carve-out as CheckSetIndex above.
                 if (!IsArrayIndexInRange(setIndex.Index))
                     return valueType;

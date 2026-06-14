@@ -362,7 +362,7 @@ public partial class TypeChecker
     /// provided by the source; accessibility itself is enforced separately by
     /// <see cref="MembersAccessibilityCompatible"/>.
     /// </summary>
-    private static Dictionary<string, TypeInfo> CollectAllInstanceMembers(TypeInfo.Class cls)
+    private Dictionary<string, TypeInfo> CollectAllInstanceMembers(TypeInfo.Class cls)
     {
         Dictionary<string, TypeInfo> members = [];
         TypeInfo? current = cls;
@@ -375,6 +375,14 @@ public partial class TypeChecker
             foreach (var (name, type) in core.Getters) members.TryAdd(name, type);
             current = GetSuperclass(current);
         }
+        // A generic-instantiation superclass (`class Sub extends Base<number>`) is not a
+        // TypeInfo.Class, so the walk above stops at it. Fold in the generic base's members —
+        // including private/protected — with its type arguments substituted, mirroring the public
+        // collector (CollectPublicInstanceMembers, #506) but in all-members mode (#639). Derived
+        // members already collected shadow these.
+        if (current is TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass baseGc } baseIg)
+            foreach (var (name, type) in CollectGenericClassMembers(baseGc, baseIg.TypeArguments, includeNonPublic: true))
+                members.TryAdd(name, type);
         return members;
     }
 
@@ -712,26 +720,28 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Collects the public instance members of a generic class with its type arguments substituted
+    /// Collects the instance members of a generic class with its type arguments substituted
     /// (e.g. a field <c>item: T</c> on <c>A&lt;Base&gt;</c> becomes <c>item: Base</c>). Inherited members from a
-    /// non-generic superclass are included verbatim.
+    /// superclass are included with substitutions composed down the chain. By default only public
+    /// members are collected; <paramref name="includeNonPublic"/> additionally includes
+    /// TypeScript private/protected members (the all-members mode used for a branded target, #639).
     /// </summary>
-    private Dictionary<string, TypeInfo> CollectGenericClassMembers(TypeInfo.GenericClass gc, List<TypeInfo> args)
+    private Dictionary<string, TypeInfo> CollectGenericClassMembers(TypeInfo.GenericClass gc, List<TypeInfo> args, bool includeNonPublic = false)
     {
         var subs = GenericClassSubs(gc, args);
         Dictionary<string, TypeInfo> members = [];
         var core = gc.Core;
         foreach (var (name, type) in core.FieldTypes)
-            if (IsPublicMember(core.FieldAccess, name) && !members.ContainsKey(name))
+            if ((includeNonPublic || IsPublicMember(core.FieldAccess, name)) && !members.ContainsKey(name))
                 members[name] = Substitute(type, subs);
         foreach (var (name, type) in core.Methods)
-            if (name != "constructor" && IsPublicMember(core.MethodAccess, name) && !members.ContainsKey(name))
+            if (name != "constructor" && (includeNonPublic || IsPublicMember(core.MethodAccess, name)) && !members.ContainsKey(name))
                 members[name] = Substitute(type, subs);
         foreach (var (name, type) in core.Getters)
             if (!members.ContainsKey(name))
                 members[name] = Substitute(type, subs);
         if (gc.Superclass is TypeInfo.Class sc)
-            foreach (var (name, type) in CollectPublicInstanceMembers(sc))
+            foreach (var (name, type) in (includeNonPublic ? CollectAllInstanceMembers(sc) : CollectPublicInstanceMembers(sc)))
                 members.TryAdd(name, type);
         // A generic superclass (`class Sub<U> extends Base<U>`): compose substitutions down the chain
         // by substituting this class's type arguments into the base's, then collect the base's
@@ -739,7 +749,7 @@ public partial class TypeChecker
         else if (gc.Superclass is TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass baseGc } baseIg)
         {
             var baseArgs = baseIg.TypeArguments.Select(a => Substitute(a, subs)).ToList();
-            foreach (var (name, type) in CollectGenericClassMembers(baseGc, baseArgs))
+            foreach (var (name, type) in CollectGenericClassMembers(baseGc, baseArgs, includeNonPublic))
                 members.TryAdd(name, type);
         }
         return members;

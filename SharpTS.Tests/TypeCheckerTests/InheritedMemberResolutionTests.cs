@@ -105,4 +105,53 @@ public class InheritedMemberResolutionTests
             """;
         Assert.Equal("x\n", TestHarness.RunInterpreted(source));
     }
+
+    // ---- #639: the BRANDED-target collector (CollectAllInstanceMembers) also walks a
+    //            generic-instantiation superclass. A target class branded by a private/protected
+    //            member is matched over ALL its members; the inherited generic-base members must be
+    //            in that required set (with the base's type arguments substituted), so a same-origin
+    //            source whose inherited members have incompatible instantiated types is rejected. ----
+
+    [Fact]
+    public void BrandedTarget_GenericBase_SiblingInstantiationSource_Rejected()
+    {
+        // Source and Target share the protected `brand` from Base (same declaration → they pass the
+        // nominal accessibility gate), and have identical OWN members (`ownField: number`). They differ
+        // only in the base instantiation: Target extends Base<number>, Source extends Base<string>.
+        // The inherited `brand`/`baseField` resolve to number on Target but string on Source, so Source
+        // is not assignable to Target — but only once the inherited generic-base members are part of
+        // Target's required set. Before #639 that set omitted them and the assignment was accepted.
+        var source = """
+            class Base<T> {
+                protected brand: T;
+                baseField: T;
+                constructor(v: T) { this.brand = v; this.baseField = v; }
+            }
+            class Target extends Base<number> { ownField: number = 0; }
+            class Source extends Base<string> { ownField: number = 0; constructor() { super("x"); } }
+            const t: Target = new Source();
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void BrandedTarget_GenericBase_MatchingInstantiationSource_Accepted()
+    {
+        // Non-vacuity companion: a source extending the SAME instantiation (Base<number>) inherits
+        // number-typed brand/baseField, matching the target, so the assignment is accepted. This
+        // differs from the rejected case ONLY in the base's type argument, proving the inherited
+        // generic-base members are what the check now consults.
+        var source = """
+            class Base<T> {
+                protected brand: T;
+                baseField: T;
+                constructor(v: T) { this.brand = v; this.baseField = v; }
+            }
+            class Target extends Base<number> { ownField: number = 0; }
+            class Match extends Base<number> { ownField: number = 0; constructor() { super(1); } }
+            const t: Target = new Match();
+            console.log("ok");
+            """;
+        Assert.Equal("ok\n", TestHarness.RunInterpreted(source));
+    }
 }

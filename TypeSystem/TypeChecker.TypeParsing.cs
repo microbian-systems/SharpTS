@@ -40,8 +40,14 @@ public partial class TypeChecker
     private TypeInfo ToTypeInfoCore(string typeName)
     {
         // `readonly` array/tuple modifier (preserved by ParseTypeAnnotation): mark the underlying
-        // array/tuple readonly. Other inner types ignore the modifier.
-        if (typeName.StartsWith("readonly ", StringComparison.Ordinal))
+        // array/tuple readonly. Other inner types ignore the modifier. The modifier binds tighter
+        // than `|`/`&`, so it applies only to the array/tuple that immediately follows it: skip this
+        // branch when the remainder still carries a top-level union/intersection operator
+        // (`readonly number[] | number[]` is `(readonly number[]) | number[]`, NOT
+        // `readonly (number[] | number[])`) and let the union/intersection split below own it — each
+        // part then re-enters here and marks its own array/tuple readonly (#594).
+        if (typeName.StartsWith("readonly ", StringComparison.Ordinal)
+            && !HasTopLevelUnionOrIntersection(typeName.AsSpan()))
         {
             var inner = ToTypeInfo(typeName["readonly ".Length..].Trim());
             return inner switch
@@ -385,6 +391,26 @@ public partial class TypeChecker
         }
 
         return new TypeInfo.Any();
+    }
+
+    /// <summary>
+    /// True when <paramref name="typeName"/> contains a top-level (depth-0) union <c>|</c> or
+    /// intersection <c>&amp;</c> separator — i.e. it splits into more than one union/intersection
+    /// part. Allocation-free; mirrors the depth/`=&gt;` handling of <see cref="SplitUnionParts"/>.
+    /// </summary>
+    private static bool HasTopLevelUnionOrIntersection(ReadOnlySpan<char> typeName)
+    {
+        int depth = 0;
+        for (int i = 0; i < typeName.Length; i++)
+        {
+            char c = typeName[i];
+            if (c == '(' || c == '<' || c == '[' || c == '{') depth++;
+            else if (c == ')' || c == ']' || c == '}') depth--;
+            else if (c == '>' && (i == 0 || typeName[i - 1] != '=')) depth--;  // Skip > in =>
+            else if ((c == '|' || c == '&') && depth == 0 && i > 0 && typeName[i - 1] == ' ')
+                return true;
+        }
+        return false;
     }
 
     private List<string> SplitUnionParts(ReadOnlySpan<char> typeName)
