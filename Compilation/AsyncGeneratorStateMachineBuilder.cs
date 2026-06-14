@@ -47,6 +47,11 @@ public class AsyncGeneratorStateMachineBuilder
     // Flag set by return() to trigger finally blocks during MoveNextAsync resume
     public FieldBuilder ReturnRequestedField { get; private set; } = null!;
 
+    // Re-entrancy flag: true only while next()/return() synchronously drives MoveNextAsync. A guest
+    // next()/return()/throw() observing it means the generator body is advancing itself; without the
+    // guard the synchronous drive recurses into MoveNextAsync until the stack overflows (#542).
+    public FieldBuilder ExecutingField { get; private set; } = null!;
+
     // Constructor
     public ConstructorBuilder Constructor { get; private set; } = null!;
 
@@ -133,6 +138,13 @@ public class AsyncGeneratorStateMachineBuilder
             "__returnRequested",
             _types.Boolean,
             FieldAttributes.Public
+        );
+
+        // Define the re-entrancy guard flag (#542); see EmitThrowIfExecutingAsync.
+        ExecutingField = _stateMachineType.DefineField(
+            "<>5__executing",
+            _types.Boolean,
+            FieldAttributes.Private
         );
 
         // Define delegated enumerator field for yield* expressions (typed as object to hold either sync or async enumerators)
@@ -364,29 +376,31 @@ public class AsyncGeneratorStateMachineBuilder
         var doneLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
-        // Call MoveNextAsync() and await it
-        // var moveNextTask = this.MoveNextAsync();
+        // Reject a re-entrant next() — the body advancing itself — before driving MoveNextAsync (#542).
+        EmitThrowIfExecutingAsync(il);
+
+        // Drive the body with the executing flag set so a re-entrant next()/return()/throw() from inside
+        // it hits the guard instead of recursing into MoveNextAsync (which overflowed the stack). The
+        // try/finally clears the flag on suspension/completion AND on an uncaught body throw (GetResult
+        // rethrowing) — a leaked flag would make later calls falsely report "already running".
+        var movedLocal = il.DeclareLocal(_types.Boolean);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, ExecutingField);
+        il.BeginExceptionBlock();
+
+        // Call MoveNextAsync(), convert ValueTask<bool> → Task<bool>, then block for the result.
+        // (This works for already-completed awaits — the common case; a pending await blocks the calling
+        // thread until the continuation drives MoveNextAsync to completion.)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, MoveNextAsyncMethod);
-
-        // Convert ValueTask<bool> to Task<bool> via AsTask()
         var vtLocal = il.DeclareLocal(_types.ValueTaskOfBool);
         il.Emit(OpCodes.Stloc, vtLocal);
         il.Emit(OpCodes.Ldloca, vtLocal);
         var asTaskMethod = _types.GetMethodNoParams(_types.ValueTaskOfBool, "AsTask");
         il.Emit(OpCodes.Call, asTaskMethod);
-
-        // Now we have Task<bool> on stack
-        // We need to create a continuation that builds the result dictionary
-        // For simplicity, we'll use ContinueWith pattern
-
-        // Store Task<bool>
         var taskBoolLocal = il.DeclareLocal(_types.MakeGenericType(_types.TaskOpen, _types.Boolean));
         il.Emit(OpCodes.Stloc, taskBoolLocal);
-
-        // For a simpler initial implementation, we'll just get the result synchronously
-        // (This works for already-completed tasks which is the common case for generators)
-        // A full implementation would use async continuation
 
         // Get the result: task.GetAwaiter().GetResult()
         il.Emit(OpCodes.Ldloc, taskBoolLocal);
@@ -398,8 +412,16 @@ public class AsyncGeneratorStateMachineBuilder
         il.Emit(OpCodes.Ldloca, awaiterLocal);
         var getResultMethod = _types.GetMethodNoParams(awaiterType, "GetResult");
         il.Emit(OpCodes.Call, getResultMethod);
+        il.Emit(OpCodes.Stloc, movedLocal);
 
-        // Stack now has bool (true = has value, false = done)
+        il.BeginFinallyBlock();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, ExecutingField);
+        il.EndExceptionBlock();
+
+        // movedLocal: true = has value, false = done
+        il.Emit(OpCodes.Ldloc, movedLocal);
         il.Emit(OpCodes.Brfalse, doneLabel);
 
         // Not done: create { value: Current, done: false }
@@ -441,6 +463,9 @@ public class AsyncGeneratorStateMachineBuilder
     {
         var il = ReturnMethod.GetILGenerator();
 
+        // Reject a re-entrant return() before mutating state (#542; see EmitThrowIfExecutingAsync).
+        EmitThrowIfExecutingAsync(il);
+
         // If state >= 0 (suspended at a yield point), we need to trigger finally blocks
         // by setting __returnRequested and calling MoveNextAsync
         var simpleReturnLabel = il.DefineLabel();
@@ -458,6 +483,14 @@ public class AsyncGeneratorStateMachineBuilder
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Stfld, CurrentField);
+
+        // Drive MoveNextAsync to run the finally blocks, with the executing flag set so a re-entrant
+        // call from inside a finally hits the guard (#542). The try/finally clears it even if a finally
+        // throws.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, ExecutingField);
+        il.BeginExceptionBlock();
 
         // Call MoveNextAsync() to resume the generator and trigger finally blocks
         il.Emit(OpCodes.Ldarg_0);
@@ -479,6 +512,12 @@ public class AsyncGeneratorStateMachineBuilder
         il.Emit(OpCodes.Ldloca, awaiterLocal);
         il.Emit(OpCodes.Call, getResult);
         il.Emit(OpCodes.Pop); // Discard result
+
+        il.BeginFinallyBlock();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, ExecutingField);
+        il.EndExceptionBlock();
 
         il.MarkLabel(simpleReturnLabel);
 
@@ -509,6 +548,10 @@ public class AsyncGeneratorStateMachineBuilder
     {
         var il = ThrowMethod.GetILGenerator();
 
+        // Reject a re-entrant throw() before mutating state (#542). throw() does not itself drive
+        // MoveNextAsync, so it only needs the entry guard, not the executing flag.
+        EmitThrowIfExecutingAsync(il);
+
         // Set state to -2 (completed)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4, -2);
@@ -534,6 +577,35 @@ public class AsyncGeneratorStateMachineBuilder
         var fromExceptionMethod = typeof(Task).GetMethod("FromException", 1, [typeof(Exception)])!.MakeGenericMethod(_types.Object);
         il.Emit(OpCodes.Call, fromExceptionMethod);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits, at the head of next()/return()/throw(), a guard that rejects a re-entrant call — the
+    /// generator body advancing itself — by returning a faulted Task&lt;object&gt; carrying a TypeError.
+    /// ECMA-262 §27.6.3 (AsyncGeneratorEnqueue) actually *queues* such a request, but this
+    /// synchronous-drive state machine (next() blocks on MoveNextAsync via GetResult) cannot queue
+    /// without deadlocking the only case re-entrancy is reachable in — the body awaiting its own
+    /// request. So it rejects rather than recurse into MoveNextAsync until the stack overflows (#542).
+    /// The error is wrapped via CreateException so the guest observes a catchable TypeError, and is
+    /// surfaced as a rejected promise (not a synchronous throw) since next() returns a Task. _runtime
+    /// is non-null here — DefineAsyncGeneratorMethods only runs when the runtime is present.
+    /// </summary>
+    private void EmitThrowIfExecutingAsync(ILGenerator il)
+    {
+        var okLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, ExecutingField);
+        il.Emit(OpCodes.Brfalse, okLabel);
+
+        // return Task.FromException<object>(CreateException(new TypeError("...")));
+        il.Emit(OpCodes.Ldstr, "Async generator is already running");
+        il.Emit(OpCodes.Newobj, _runtime!.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, _runtime!.CreateException);
+        var fromException = typeof(Task).GetMethod("FromException", 1, [typeof(Exception)])!.MakeGenericMethod(_types.Object);
+        il.Emit(OpCodes.Call, fromException);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(okLabel);
     }
 
     /// <summary>
