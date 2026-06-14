@@ -599,6 +599,65 @@ public class GeneratorTryFinallyTests
         Assert.Equal("1/false\nf\n5/true\nundefined/true\n", TestHarness.Run(source, mode));
     }
 
+    // ---- #599: an exception propagating through a YIELDING finally must not be lost ----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void UncaughtThrow_ThroughYieldingFinally_StillPropagates(ExecutionMode mode)
+    {
+        // The exact #599 repro: the try throws after a yield, and the (catch-less) finally yields.
+        // The finally's suspension previously wiped the IL local holding the captured exception, so
+        // the post-finally rethrow saw null and the throw was swallowed. The exception must survive
+        // the suspension and surface to the consumer after the finally completes.
+        var source = """
+            function* g() { try { yield 1; throw "boom"; } finally { yield 2; } }
+            const it = g();
+            console.log(JSON.stringify(it.next()));
+            console.log(JSON.stringify(it.next()));
+            try { console.log(JSON.stringify(it.next())); } catch (e) { console.log("caught:" + e); }
+            """;
+
+        Assert.Equal(
+            "{\"value\":1,\"done\":false}\n{\"value\":2,\"done\":false}\ncaught:boom\n",
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RethrownFromInnerCatch_ThroughYieldingFinally_StillPropagates(ExecutionMode mode)
+    {
+        // #599's second shape: an inner try/catch (a sync segment of the outer try body) rethrows;
+        // the captured exception must survive the outer yielding finally and propagate.
+        var source = """
+            function* g() {
+              try { try { throw new Error("e1"); } catch (e) { throw new Error("e2"); } }
+              finally { yield 7; }
+            }
+            const it = g();
+            console.log(JSON.stringify(it.next()));
+            try { it.next(); } catch (e) { console.log("caught:" + e.message); }
+            """;
+
+        Assert.Equal("{\"value\":7,\"done\":false}\ncaught:e2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void UncaughtThrow_ThroughNestedYieldingFinally_NotClobbered(ExecutionMode mode)
+    {
+        // A finally that yields and itself contains a (separate) try/finally that also yields. Each
+        // construct gets its own caught-exception field, so the inner construct's persistence cannot
+        // clobber the outer's captured exception — it must still rethrow after both finallys run.
+        var source = """
+            function* g() { try { throw "e"; } finally { try {} finally { yield 1; } } }
+            const it = g();
+            console.log(JSON.stringify(it.next()));
+            try { it.next(); } catch (e) { console.log("caught:" + e); }
+            """;
+
+        Assert.Equal("{\"value\":1,\"done\":false}\ncaught:e\n", TestHarness.Run(source, mode));
+    }
+
     // ---- IL-verification guards (the heart of #477: emitted IL must verify) ----
 
     [Theory]
@@ -633,6 +692,10 @@ public class GeneratorTryFinallyTests
     [InlineData("function* g() { while (true) { try { yield 1; try { break; } finally { console.log('x'); } } finally { yield 2; } } } for (const v of g()) {}")]
     // #555: a `return <value>` whose finally yields.
     [InlineData("function* g() { try { return 5; } finally { yield 9; } } for (const v of g()) {}")]
+    // #599: an exception crossing a yielding finally — the captured exception is persisted to a field.
+    [InlineData("function* g() { try { yield 1; throw 'boom'; } finally { yield 2; } } try { for (const v of g()) {} } catch (e) {}")]
+    [InlineData("function* g() { try { try { throw 'e1'; } catch (e) { throw 'e2'; } } finally { yield 7; } } try { for (const v of g()) {} } catch (e) {}")]
+    [InlineData("function* g() { try { throw 'e'; } finally { try {} finally { yield 1; } } } try { for (const v of g()) {} } catch (e) {}")]
     public void GeneratorTryFinallyWithYield_EmitsVerifiableIL(string source)
     {
         var errors = TestHarness.CompileAndVerifyOnly(source);

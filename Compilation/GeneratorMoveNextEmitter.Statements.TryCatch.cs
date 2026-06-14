@@ -96,6 +96,18 @@ public partial class GeneratorMoveNextEmitter
         _pendingReturnValueField ??= _builder.StateMachineType.DefineField(
             "<>pendingReturnValue", typeof(object), FieldAttributes.Private);
 
+    // Per-construct fields holding a try-body exception across a *yielding* finally in a try/finally
+    // with no catch (#599). The exception is captured into an IL local during the try body, but that
+    // local resets when the yielding finally suspends MoveNext, so the post-finally rethrow would see
+    // null and silently drop it. Persisting to a field before the finally keeps it alive. Each
+    // qualifying construct gets its own field rather than sharing one: a nested persisting construct
+    // inside the finally body would otherwise clobber the outer's captured exception.
+    private int _caughtExceptionFieldCounter;
+
+    private FieldBuilder DefineCaughtExceptionField() =>
+        _builder.StateMachineType.DefineField(
+            $"<>caughtException{_caughtExceptionFieldCounter++}", typeof(object), FieldAttributes.Private);
+
     // ---- Loop-scope methods (override the base stack to use `_exitScopes`) -----------------------
 
     protected override void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
@@ -435,6 +447,28 @@ public partial class GeneratorMoveNextEmitter
         var caughtExceptionLocal = _il.DeclareLocal(typeof(object));
         var afterTryBodyLabel = _il.DefineLabel();
 
+        // #599: in a try/finally with no catch whose finally can yield, the captured try-body
+        // exception must survive the finally's suspension. The IL local resets on MoveNext re-entry,
+        // so persist it to a dedicated field before the finally and read that field in the
+        // post-finally rethrow. Allocated only for that shape; null means "use the local".
+        FieldBuilder? caughtExceptionField =
+            t.CatchBlock == null && t.FinallyBlock != null && ContainsYield(t.FinallyBlock)
+                ? DefineCaughtExceptionField()
+                : null;
+
+        void EmitLoadCaughtException()
+        {
+            if (caughtExceptionField != null)
+            {
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldfld, caughtExceptionField);
+            }
+            else
+            {
+                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+            }
+        }
+
         // No exception captured yet.
         _il.Emit(OpCodes.Ldnull);
         _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
@@ -492,6 +526,15 @@ public partial class GeneratorMoveNextEmitter
         // Finally: always runs — on normal completion, after a caught exception, or on a routed exit.
         if (t.FinallyBlock != null)
         {
+            // #599: persist the captured exception (null on the normal/routed-exit paths) before the
+            // finally so a suspension inside it does not wipe the IL local out from under the rethrow.
+            if (caughtExceptionField != null)
+            {
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                _il.Emit(OpCodes.Stfld, caughtExceptionField);
+            }
+
             _inHandlerBody = true;
             foreach (var stmt in t.FinallyBlock)
                 EmitStatement(stmt);
@@ -505,14 +548,14 @@ public partial class GeneratorMoveNextEmitter
         if (t.CatchBlock == null)
         {
             var noExceptionLabel = _il.DefineLabel();
-            _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+            EmitLoadCaughtException();
             _il.Emit(OpCodes.Brfalse, noExceptionLabel);
 
             // Mark the generator done before the exception leaves MoveNext.
             _il.Emit(OpCodes.Ldarg_0);
             _il.Emit(OpCodes.Ldc_I4, -2);
             _il.Emit(OpCodes.Stfld, _builder.StateField);
-            _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+            EmitLoadCaughtException();
             _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateException);
             _il.Emit(OpCodes.Throw);
 
