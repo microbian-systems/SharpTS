@@ -29,7 +29,9 @@ public static class AsyncGeneratorBuiltIns
             {
                 if (receiver is SharpTSAsyncGenerator gen)
                 {
-                    object? value = args.Count > 0 ? args[0] : null;
+                    // An omitted argument is undefined, not null — return() reports { value: undefined }
+                    // (ECMA-262 §27.6.1.3); an explicit return(null) still reports null (#618).
+                    object? value = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
                     return await gen.Return(value);
                 }
                 throw new Exception("Runtime Error: return() called on non-async-generator.");
@@ -38,7 +40,8 @@ public static class AsyncGeneratorBuiltIns
             {
                 if (receiver is SharpTSAsyncGenerator gen)
                 {
-                    object? error = args.Count > 0 ? args[0] : null;
+                    // An omitted argument is the undefined sentinel, not null (#618).
+                    object? error = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
                     return await gen.Throw(error);
                 }
                 throw new Exception("Runtime Error: throw() called on non-async-generator.");

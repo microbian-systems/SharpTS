@@ -523,11 +523,33 @@ public partial class AsyncGeneratorMoveNextEmitter
         // 8. Continue point (if was already completed)
         _il.MarkLabel(continueLabel);
 
-        // 9. Get result: awaiter.GetResult()
-        _il.Emit(OpCodes.Ldarg_0);
-        _il.Emit(OpCodes.Ldflda, _builder.AwaiterField);
+        // 9. Get result: awaiter.GetResult(). A rejected awaited task throws here.
         var getResultMethod = _types.TaskAwaiterOfObject.GetMethod("GetResult")!;
-        _il.Emit(OpCodes.Call, getResultMethod);
+        if (_currentTryExceptionLocal != null)
+        {
+            // Inside a flag-based try: capture the rejection into the try's exception flag (as a sync
+            // segment would) and `Leave` to the try's catch/finally, rather than letting it escape
+            // MoveNextAsync unhandled (#617). The eval stack is empty here — the resume/continue labels
+            // are state-switch targets — so opening a protected region is legal.
+            var resultTemp = _il.DeclareLocal(typeof(object));
+            _il.BeginExceptionBlock();
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldflda, _builder.AwaiterField);
+            _il.Emit(OpCodes.Call, getResultMethod);
+            _il.Emit(OpCodes.Stloc, resultTemp);
+            _il.BeginCatchBlock(typeof(Exception));
+            _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
+            _il.Emit(OpCodes.Stloc, _currentTryExceptionLocal);
+            _il.Emit(OpCodes.Leave, _currentTryCleanupLabel); // skip the rest of the try body → catch/finally
+            _il.EndExceptionBlock();
+            _il.Emit(OpCodes.Ldloc, resultTemp); // normal path: push the awaited value
+        }
+        else
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldflda, _builder.AwaiterField);
+            _il.Emit(OpCodes.Call, getResultMethod);
+        }
 
         // Result is now on stack
         SetStackUnknown();

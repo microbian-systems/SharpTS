@@ -380,14 +380,18 @@ public class AsyncGeneratorStateMachineBuilder
         EmitThrowIfExecutingAsync(il);
 
         // Drive the body with the executing flag set so a re-entrant next()/return()/throw() from inside
-        // it hits the guard instead of recursing into MoveNextAsync (which overflowed the stack). The
-        // try/finally clears the flag on suspension/completion AND on an uncaught body throw (GetResult
-        // rethrowing) — a leaked flag would make later calls falsely report "already running".
+        // it hits the guard instead of recursing into MoveNextAsync (which overflowed the stack). An
+        // outer try/finally clears the flag on suspension/completion AND on an uncaught body throw;
+        // an inner try/catch captures that throw into exLocal so next() returns a *rejected* Task
+        // rather than throwing synchronously out of the call — `await it.next()` must be catchable
+        // (ECMA-262 §27.6.1.2: next() returns a promise that rejects on an uncaught body throw) (#566).
         var movedLocal = il.DeclareLocal(_types.Boolean);
+        var exLocal = il.DeclareLocal(_types.Exception);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, ExecutingField);
-        il.BeginExceptionBlock();
+        il.BeginExceptionBlock();   // outer: finally clears the executing flag
+        il.BeginExceptionBlock();   // inner: catch captures a body throw into exLocal
 
         // Call MoveNextAsync(), convert ValueTask<bool> → Task<bool>, then block for the result.
         // (This works for already-completed awaits — the common case; a pending await blocks the calling
@@ -414,12 +418,28 @@ public class AsyncGeneratorStateMachineBuilder
         il.Emit(OpCodes.Call, getResultMethod);
         il.Emit(OpCodes.Stloc, movedLocal);
 
+        // inner catch: stash the exception. The outer finally still clears the flag; the conversion to
+        // a faulted Task happens after both blocks close, so the throw never escapes synchronously (#566).
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Stloc, exLocal);
+        il.EndExceptionBlock();   // end inner try/catch
+
         il.BeginFinallyBlock();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, ExecutingField);
-        il.EndExceptionBlock();
+        il.EndExceptionBlock();   // end outer try/finally
 
+        // A body throw was captured → return Task.FromException<object>(ex), i.e. a rejected promise.
+        var buildResultLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, exLocal);
+        il.Emit(OpCodes.Brfalse, buildResultLabel);
+        il.Emit(OpCodes.Ldloc, exLocal);
+        var fromExceptionNext = typeof(Task).GetMethod("FromException", 1, [typeof(Exception)])!.MakeGenericMethod(_types.Object);
+        il.Emit(OpCodes.Call, fromExceptionNext);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(buildResultLabel);
         // movedLocal: true = has value, false = done
         il.Emit(OpCodes.Ldloc, movedLocal);
         il.Emit(OpCodes.Brfalse, doneLabel);
