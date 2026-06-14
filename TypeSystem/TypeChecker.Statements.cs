@@ -929,15 +929,18 @@ public partial class TypeChecker
                     InvalidateNarrowingsFor(assignedPath);
                 }
 
-                // Apply condition narrowings (if not affected by assignments)
+                // Apply the loop-condition narrowings. The condition is re-evaluated at the top of
+                // every iteration, so its narrowing holds at the top of the body even when the body
+                // reassigns the guarded variable later: the reassignment is on a downstream flow edge
+                // and is handled by the normal in-body flow analysis (CheckAssign invalidates the
+                // narrowing at the assignment point, so uses *after* it widen back). Suppressing the
+                // narrowing whenever the variable is assigned *anywhere* in the body over-invalidated
+                // uses that precede the reassignment, diverging from tsc (#556).
                 if (conditionNarrowings != null)
                 {
                     foreach (var (condPath, narrowedType, _) in conditionNarrowings)
                     {
-                        if (!IsPathAffectedByAssignments(condPath, assignedPaths))
-                        {
-                            AddNarrowing(condPath, narrowedType);
-                        }
+                        AddNarrowing(condPath, narrowedType);
                     }
                 }
 

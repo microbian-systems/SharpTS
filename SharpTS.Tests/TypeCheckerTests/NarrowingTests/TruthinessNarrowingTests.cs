@@ -241,4 +241,118 @@ public class TruthinessNarrowingTests
 
         Assert.Throws<TypeCheckException>(() => TestHarness.RunInterpreted(source));
     }
+
+    // ----- #557: a general `boolean` narrows to `true`/`false` under a truthiness guard -----
+    // (the only general primitive tsc narrows this way; `string`/`number` stay intact).
+
+    [Fact]
+    public void Truthiness_GeneralBoolean_NarrowsToTrueInThen()
+    {
+        // The exact repro from #557. The `: true` return slot proves `b` narrows to `true`.
+        var source = """
+            function f(b: boolean): true {
+                if (b) { return b; }
+                throw new Error("unreachable");
+            }
+            console.log(f(true));
+            """;
+
+        Assert.Equal("true\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void Truthiness_GeneralBoolean_NarrowsToFalseInFalsyBranch()
+    {
+        // The falsy branch narrows `boolean` to `false`. After a terminating truthy branch the
+        // fall-through sees `false`.
+        var source = """
+            function g(b: boolean): false {
+                if (b) { throw new Error("no"); }
+                return b;
+            }
+            console.log(g(false));
+            """;
+
+        Assert.Equal("false\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void Truthiness_GeneralBoolean_Negation_NarrowsToTrueAfterEarlyThrow()
+    {
+        // `if (!b) throw` leaves `b` as `true` for the code that follows.
+        var source = """
+            function f(b: boolean): true {
+                if (!b) { throw new Error("no"); }
+                return b;
+            }
+            console.log(f(true));
+            """;
+
+        Assert.Equal("true\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void Truthiness_BooleanOrUndefined_NarrowsBothBranches()
+    {
+        // With a union, the truthy branch narrows to `true`; the falsy branch keeps
+        // `false | undefined` (both are falsy).
+        var source = """
+            function truthy(b: boolean | undefined): true {
+                if (b) { return b; }
+                throw new Error("no");
+            }
+            function falsy(b: boolean | undefined): false | undefined {
+                if (b) { throw new Error("no"); }
+                return b;
+            }
+            console.log(truthy(true));
+            console.log(falsy(false));
+            console.log(falsy(undefined));
+            """;
+
+        Assert.Equal("true\nfalse\nundefined\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void Truthiness_GeneralBoolean_WhileBodyNarrowsToTrue()
+    {
+        // The shared guard analyzer narrows `boolean` to `true` inside a loop body too.
+        var source = """
+            function f(b: boolean): true[] {
+                const out: true[] = [];
+                while (b) { out.push(b); break; }
+                return out;
+            }
+            console.log(f(true).length);
+            """;
+
+        Assert.Equal("1\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void Truthiness_GeneralBoolean_UnguardedReturnAsTrue_StillErrors()
+    {
+        // Sanity: the narrowing is guard-gated — an unguarded `boolean` is not assignable to `true`.
+        var source = """
+            function f(b: boolean): true {
+                return b;
+            }
+            """;
+
+        Assert.Throws<TypeMismatchException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void Truthiness_GeneralBoolean_Compiled_MatchesInterpreted()
+    {
+        var source = """
+            function f(b: boolean): true {
+                if (b) { return b; }
+                throw new Error("no");
+            }
+            console.log(f(true));
+            """;
+
+        Assert.Equal("true\n", TestHarness.RunCompiled(source));
+    }
 }

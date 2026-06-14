@@ -349,5 +349,145 @@ public class ControlFlowNarrowingTests
         Assert.Equal("2\n2\n2\n3\n", result);
     }
 
+    // ----- #556: loop-condition narrowing holds for uses that precede a later body reassignment.
+    // The condition is re-evaluated at the top of every iteration, so the narrowing is valid at
+    // the top of the body regardless of a downstream reassignment. (Contrast with
+    // AssignmentInvalidationTests.AssignmentInLoop_InvalidatesNarrowing, where the narrowing
+    // flows in from *before* the loop and is correctly invalidated.)
+
+    [Fact]
+    public void WhileCondition_NarrowsUseBeforeLaterReassignment()
+    {
+        // The exact repro from #556: `x.length` precedes `x = undefined`, so it sees `string`.
+        var source = """
+            function f(x: string | undefined): number {
+                let total = 0;
+                while (x !== undefined) {
+                    total += x.length;
+                    x = undefined;
+                }
+                return total;
+            }
+            console.log(f("hello"));
+            """;
+
+        Assert.Equal("5\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void WhileCondition_Truthiness_NarrowsUseBeforeLaterReassignment()
+    {
+        // #556 truthiness variant: `while (x)` narrows the use before the reassignment.
+        var source = """
+            function f(x: string | undefined): number {
+                let total = 0;
+                while (x) {
+                    total += x.length;
+                    x = undefined;
+                }
+                return total;
+            }
+            console.log(f("hi"));
+            """;
+
+        Assert.Equal("2\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void WhileCondition_Typeof_NarrowsUseBeforeLaterReassignment()
+    {
+        // #556 typeof variant.
+        var source = """
+            function f(x: string | undefined): number {
+                let total = 0;
+                while (typeof x === "string") {
+                    total += x.length;
+                    x = undefined;
+                }
+                return total;
+            }
+            console.log(f("abc"));
+            """;
+
+        Assert.Equal("3\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void ForCondition_NarrowsUseBeforeIncrementReassignment()
+    {
+        // #556 for-loop variant: the increment reassigns the guarded var, but the body use still
+        // sees the narrowing because the condition is re-checked after the increment.
+        var source = """
+            function f(x: string | undefined): number {
+                let total = 0;
+                for (; x !== undefined; x = undefined) {
+                    total += x.length;
+                }
+                return total;
+            }
+            console.log(f("data"));
+            """;
+
+        Assert.Equal("4\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void WhileCondition_UseAfterReassignment_StillWidens()
+    {
+        // #556 soundness counterpart: a use AFTER the reassignment widens back to the declared
+        // type — the reassignment invalidates the narrowing at that flow point, matching tsc.
+        var source = """
+            function f(x: string | undefined): number {
+                while (x !== undefined) {
+                    x = undefined;
+                    return x.length;
+                }
+                return 0;
+            }
+            """;
+
+        Assert.Throws<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void WhileCondition_NestedReassignment_StillInvalidates()
+    {
+        // #556 soundness: a reassignment in a nested branch invalidates the narrowing for the use
+        // that follows the branch (the join may carry the reassigned value), matching tsc.
+        var source = """
+            function f(x: string | undefined, foo: boolean): number {
+                while (x !== undefined) {
+                    if (foo) { x = undefined; }
+                    return x.length;
+                }
+                return 0;
+            }
+            """;
+
+        Assert.Throws<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void WhileCondition_NarrowsUseBeforeLaterReassignment_Compiled()
+    {
+        // #556 compiled parity. Uses a local (not a parameter) for the guarded `string | undefined`
+        // value to avoid the unrelated pre-existing bug where a `string | undefined` *parameter*
+        // reassigned to `undefined` is compiled with a non-nullable `String` slot (#568).
+        var source = """
+            function f(s: string): number {
+                let x: string | undefined = s;
+                let total = 0;
+                while (x !== undefined) {
+                    total += x.length;
+                    x = undefined;
+                }
+                return total;
+            }
+            console.log(f("hello"));
+            """;
+
+        Assert.Equal("5\n", TestHarness.RunCompiled(source));
+    }
+
     #endregion
 }
