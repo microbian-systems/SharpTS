@@ -2020,6 +2020,13 @@ public partial class Interpreter : IDisposable
             // Execute initializer once (defines loop variable in loopEnv)
             if (forStmt.Initializer != null)
                 Execute(forStmt.Initializer);
+            // ECMA-262 13.7.4: a `for (let/const …)` loop gives each iteration its
+            // own bindings for the loop variables, so closures created in different
+            // iterations capture distinct values (#633). `var`/expression
+            // initializers share a single binding and keep the no-copy fast path.
+            var perIterationNames = CollectPerIterationBindings(forStmt.Initializer);
+            if (perIterationNames != null)
+                CreatePerIterationEnvironment(loopEnv, perIterationNames);
             // Loop with proper continue handling - increment always runs
             while (forStmt.Condition == null || IsTruthy(Evaluate(forStmt.Condition)))
             {
@@ -2029,6 +2036,8 @@ public partial class Interpreter : IDisposable
                 // On continue (unlabeled or to this loop), execute increment then re-test
                 if (shouldContinue)
                 {
+                    if (perIterationNames != null)
+                        CreatePerIterationEnvironment(loopEnv, perIterationNames);
                     if (forStmt.Increment != null)
                         Evaluate(forStmt.Increment);
                     // Yield to allow timer callbacks and other threads to execute
@@ -2036,7 +2045,9 @@ public partial class Interpreter : IDisposable
                     continue;
                 }
                 if (abruptResult.HasValue) return abruptResult.Value;
-                // Normal completion: execute increment
+                // Normal completion: fresh per-iteration binding, then increment
+                if (perIterationNames != null)
+                    CreatePerIterationEnvironment(loopEnv, perIterationNames);
                 if (forStmt.Increment != null)
                     Evaluate(forStmt.Increment);
                 // Process any pending timer callbacks
@@ -2044,6 +2055,50 @@ public partial class Interpreter : IDisposable
             }
             return ExecutionResult.Success();
         }
+    }
+
+    /// <summary>
+    /// Returns the variable names a <c>for</c> initializer binds that require a
+    /// fresh binding per iteration (ECMA-262 13.7.4): <c>let</c>/<c>const</c>
+    /// declarations. Returns <c>null</c> for <c>var</c> or expression
+    /// initializers, which share a single binding across the whole loop.
+    /// </summary>
+    private static List<string>? CollectPerIterationBindings(Stmt? initializer)
+    {
+        switch (initializer)
+        {
+            // `let`/`const` in a for-initializer parse to Stmt.Var with IsVar=false.
+            case Stmt.Var v when !v.IsVar:
+                return [v.Name.Lexeme];
+            case Stmt.Const c:
+                return [c.Name.Lexeme];
+            // Multi-declarator initializers (`for (let i = 0, j = 10; …)`).
+            case Stmt.Sequence seq:
+                List<string>? names = null;
+                foreach (var s in seq.Statements)
+                {
+                    var sub = CollectPerIterationBindings(s);
+                    if (sub != null) (names ??= []).AddRange(sub);
+                }
+                return names;
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// ECMA-262 13.7.4.8 CreatePerIterationEnvironment: copies the current value
+    /// of each loop variable into a fresh environment that is a sibling of the
+    /// loop environment (same enclosing scope, so the resolver's static scope
+    /// distances stay valid) and makes it the active scope. Closures created in
+    /// the next iteration capture this distinct binding rather than a shared slot.
+    /// </summary>
+    private void CreatePerIterationEnvironment(RuntimeEnvironment loopEnv, List<string> names)
+    {
+        var iterationEnv = new RuntimeEnvironment(loopEnv.Enclosing);
+        foreach (var name in names)
+            iterationEnv.Define(name, _environment.GetAt(0, name));
+        _environment = iterationEnv;
     }
 
     internal ExecutionResult VisitForOf(Stmt.ForOf forOf) => ExecuteForOf(forOf);

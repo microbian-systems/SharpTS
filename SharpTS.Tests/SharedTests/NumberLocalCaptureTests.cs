@@ -38,16 +38,19 @@ public class NumberLocalCaptureTests
         Assert.Equal("6\n", TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void NumberLoopLocal_CapturedByArrow_CompiledIsConformant()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NumberLoopVar_CapturedByArrow_IsPerIteration(ExecutionMode mode)
     {
-        // Compiled mode snapshots the loop variable per iteration, so capturing the `let` binding
-        // itself (not a fresh per-iteration const) is also conformant: 0,1,2.
+        // Capturing the `let` loop binding itself (not a fresh per-iteration const). Both modes
+        // give each iteration its own binding: compiled snapshots per iteration; the interpreter
+        // creates a per-iteration environment after #633. See ForLoopPerIterationBindingTests for
+        // the full per-iteration-binding suite.
         var source = """
             const fns: any[] = [];
             for (let k = 0; k < 3; k++) { fns.push(() => k); }
             console.log(fns.map((f: any) => f()).join(","));
             """;
-        Assert.Equal("0,1,2\n", TestHarness.RunCompiled(source));
+        Assert.Equal("0,1,2\n", TestHarness.Run(source, mode));
     }
 }

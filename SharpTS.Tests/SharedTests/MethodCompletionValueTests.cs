@@ -19,10 +19,10 @@ namespace SharpTS.Tests.SharedTests;
 /// goes through <c>EmitReturn</c> (untouched) and is asserted to be preserved.</para>
 ///
 /// <para>Public instance/static methods are invoked through the interpreter's boxing-free
-/// <c>CallV2</c> path, which is already spec-correct, so those cases assert cross-mode
-/// parity. Getters and private methods are invoked through the interpreter's legacy boxed
-/// <c>Call</c> path, which still returns <c>null</c> off the end (a separate, pre-existing
-/// gap tracked by #603); those cases are therefore compiled-only here.</para>
+/// <c>CallV2</c> path, which is already spec-correct. Getters and private methods are invoked
+/// through the interpreter's legacy boxed <c>Call</c> path; #603 fixed that path to return the
+/// <c>undefined</c> sentinel off the end as well (mirroring <c>CallV2</c>), so every case below
+/// now asserts cross-mode parity.</para>
 /// </summary>
 public class MethodCompletionValueTests
 {
@@ -186,14 +186,14 @@ public class MethodCompletionValueTests
         Assert.Equal("42,42\n", TestHarness.Run(source, mode));
     }
 
-    // ---- Compiled-only: getters & private methods ----
-    // The interpreter invokes these through the legacy boxed `Call`, which still returns
-    // null off the end (pre-existing gap #603). After #588 the compiled output is correct,
-    // so these assert the compiled behavior; the interpreter side is tracked by #603.
+    // ---- Getters & private methods (interpreter boxed `Call` path) ----
+    // The interpreter invokes these through the legacy boxed `Call`. #588 fixed the compiled
+    // epilogue; #603 fixed the interpreter's boxed `Call` to return the `undefined` sentinel
+    // off the end, so these now assert cross-mode parity (previously compiled-only).
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
-    public void OffEndGetter_IsUndefined_Compiled(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OffEndGetter_IsUndefined(ExecutionMode mode)
     {
         var source = """
             class C { get gv() {} }
@@ -203,8 +203,8 @@ public class MethodCompletionValueTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
-    public void OffEndStaticGetter_IsUndefined_Compiled(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OffEndStaticGetter_IsUndefined(ExecutionMode mode)
     {
         var source = """
             class C { static get gv() {} }
@@ -214,8 +214,8 @@ public class MethodCompletionValueTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
-    public void GetterFallingOffEndAfterBranch_IsUndefined_Compiled(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GetterFallingOffEndAfterBranch_IsUndefined(ExecutionMode mode)
     {
         var source = """
             class C {
@@ -228,8 +228,8 @@ public class MethodCompletionValueTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
-    public void OffEndPrivateMethod_IsUndefined_Compiled(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OffEndPrivateMethod_IsUndefined(ExecutionMode mode)
     {
         var source = """
             class C {
@@ -242,8 +242,8 @@ public class MethodCompletionValueTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
-    public void OffEndPrivateStaticMethod_IsUndefined_Compiled(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OffEndPrivateStaticMethod_IsUndefined(ExecutionMode mode)
     {
         var source = """
             class C {
@@ -256,14 +256,57 @@ public class MethodCompletionValueTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
-    public void OffEndClassExpressionGetter_IsUndefined_Compiled(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OffEndClassExpressionGetter_IsUndefined(ExecutionMode mode)
     {
         var source = """
             const C = class { get ev() {} };
             console.log(typeof new C().ev);
             """;
         Assert.Equal("undefined\n", TestHarness.Run(source, mode));
+    }
+
+    // Off-the-end getter/private completion must be `undefined`, not CLR `null` — assert via
+    // arithmetic (undefined + 10 === NaN, but null + 10 === 10) so it can't pass by `typeof`
+    // coincidence. This is the #603 distinguisher on the interpreter's boxed `Call` path.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OffEndGetter_InArithmetic_IsNaN(ExecutionMode mode)
+    {
+        var source = """
+            class C { get gv() {} }
+            console.log((new C().gv as any) + 10);
+            """;
+        Assert.Equal("NaN\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OffEndPrivateMethod_StrictlyEqualsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            class C {
+                #secret() {}
+                call() { return this.#secret() === undefined; }
+            }
+            console.log(new C().call());
+            """;
+        Assert.Equal("true\n", TestHarness.Run(source, mode));
+    }
+
+    // Regression for #603: only the *off-the-end* completion becomes `undefined`. A getter with
+    // an explicit `return null` must still observe CLR `null` (boxed `Call` returns via the
+    // Return branch, untouched by the fix).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GetterExplicitReturnNull_StaysNull(ExecutionMode mode)
+    {
+        var source = """
+            class C { get gv() { return null; } }
+            console.log(typeof new C().gv);
+            console.log(new C().gv === null);
+            """;
+        Assert.Equal("object\ntrue\n", TestHarness.Run(source, mode));
     }
 
     // ---- @lock decorator: the deferred-return default ----

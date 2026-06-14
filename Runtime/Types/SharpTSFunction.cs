@@ -234,7 +234,11 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             throw ThrowException.FromResult(result.Value.ToObject());
         }
 
-        return null;
+        // A function that completes without an explicit `return <expr>` evaluates
+        // to JS `undefined`, not `null`. Return the sentinel (matching CallV2's
+        // RuntimeValue.Undefined) so getters/private methods invoked via this
+        // boxed path observe `undefined` for off-the-end completion (#603).
+        return SharpTSUndefined.Instance;
     }
 
     /// <summary>
