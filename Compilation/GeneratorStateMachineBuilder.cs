@@ -36,6 +36,18 @@ public class GeneratorStateMachineBuilder
     // the $IGenerator methods are emitted (see DefineGeneratorMethods).
     public FieldBuilder? ExecutingField { get; private set; }
 
+    // An external return()/throw() on a *suspended* generator injects an abrupt completion at the
+    // yield point so active try/finally(/catch) run (ECMA-262 §27.5.3.4, #526). return()/throw() set
+    // these and drive MoveNext, which the yield-resume code consults: InjectKindReturn behaves as a
+    // `return InjectedValue`, InjectKindThrow as a `throw InjectedValue`, routed through the
+    // flag-based try machinery. Defined alongside the $IGenerator methods. Null kind = InjectKindNone.
+    public const int InjectKindNone = 0;
+    public const int InjectKindReturn = 1;
+    public const int InjectKindThrow = 2;
+
+    public FieldBuilder? InjectedKindField { get; private set; }
+    public FieldBuilder? InjectedValueField { get; private set; }
+
     // Hoisted variables (become struct fields) - delegated to HoistingManager.
     // Captured outer-scope variables are intentionally NOT hoisted: a generator reads them
     // live from their enclosing storage (entry-point display class / top-level static fields)
@@ -432,6 +444,12 @@ public class GeneratorStateMachineBuilder
             FieldAttributes.Private);
         ExecutingField = executingField;
 
+        // Injection state for external return()/throw() on a suspended generator (#526).
+        InjectedKindField = _stateMachineType.DefineField(
+            "<>6__injectedKind", _types.Int32, FieldAttributes.Private);
+        InjectedValueField = _stateMachineType.DefineField(
+            "<>6__injectedValue", _types.Object, FieldAttributes.Private);
+
         // next() method - wraps MoveNext/Current into iterator result
         // Using lowercase to match JavaScript API
         NextMethod = _stateMachineType.DefineMethod(
@@ -523,7 +541,18 @@ public class GeneratorStateMachineBuilder
         // Reject a re-entrant return() (ECMA-262 §27.5.3.3) before mutating state.
         EmitThrowIfExecuting(returnIL, executingField);
 
-        // Set state to -2 (completed)
+        // Suspended at a yield (state >= 0): inject a return so the body resumes there as an abrupt
+        // completion, running active finally(s), then settle from the resulting state (#526).
+        var returnNotSuspended = returnIL.DefineLabel();
+        returnIL.Emit(OpCodes.Ldarg_0);
+        returnIL.Emit(OpCodes.Ldfld, StateField);
+        returnIL.Emit(OpCodes.Ldc_I4_0);
+        returnIL.Emit(OpCodes.Blt, returnNotSuspended);
+        EmitInjectAndResume(returnIL, InjectKindReturn);
+
+        // Not started or already completed: close without running the body — its finally never runs
+        // (ECMA-262 §27.5.3.4) — and report { value: arg, done: true }.
+        returnIL.MarkLabel(returnNotSuspended);
         returnIL.Emit(OpCodes.Ldarg_0);
         returnIL.Emit(OpCodes.Ldc_I4, -2);
         returnIL.Emit(OpCodes.Stfld, StateField);
@@ -558,7 +587,18 @@ public class GeneratorStateMachineBuilder
         // takes precedence over injecting the caller's error into the running body.
         EmitThrowIfExecuting(throwIL, executingField);
 
-        // Set state to -2 (completed)
+        // Suspended at a yield (state >= 0): inject the error so the body resumes there as a throw,
+        // giving an enclosing catch/finally a chance to run (#526). If nothing handles it, MoveNext
+        // rethrows and the error propagates out of throw() — exactly the not-suspended behaviour below.
+        var throwNotSuspended = throwIL.DefineLabel();
+        throwIL.Emit(OpCodes.Ldarg_0);
+        throwIL.Emit(OpCodes.Ldfld, StateField);
+        throwIL.Emit(OpCodes.Ldc_I4_0);
+        throwIL.Emit(OpCodes.Blt, throwNotSuspended);
+        EmitInjectAndResume(throwIL, InjectKindThrow);
+
+        // Not started or already completed: close and throw without running the body.
+        throwIL.MarkLabel(throwNotSuspended);
         throwIL.Emit(OpCodes.Ldarg_0);
         throwIL.Emit(OpCodes.Ldc_I4, -2);
         throwIL.Emit(OpCodes.Stfld, StateField);
@@ -603,5 +643,57 @@ public class GeneratorStateMachineBuilder
         il.Emit(OpCodes.Call, _runtime!.CreateException);
         il.Emit(OpCodes.Throw);
         il.MarkLabel(okLabel);
+    }
+
+    /// <summary>
+    /// Emits the suspended-generator arm of return()/throw() (#526): stash the injected kind and the
+    /// argument (arg1), drive MoveNext under the executing guard (so the resumed body sees the
+    /// injection at its yield point and runs active finally/catch), then settle as
+    /// <c>{ value: Current, done: !moved }</c>. A finally that yields makes MoveNext return true, so
+    /// the abrupt completion is reported as a non-done yield and finished on a later call — mirroring
+    /// the interpreter. If MoveNext rethrows an uncaught injected throw, it propagates out unchanged.
+    /// Ends with <c>ret</c>; only called when <see cref="InjectedKindField"/> et al. are defined.
+    /// </summary>
+    private void EmitInjectAndResume(ILGenerator il, int injectKind)
+    {
+        // injectedValue = arg1; injectedKind = injectKind
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, InjectedValueField!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, injectKind);
+        il.Emit(OpCodes.Stfld, InjectedKindField!);
+
+        // executing = true; try { moved = MoveNext(); } finally { executing = false; }
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, ExecutingField!);
+        var movedLocal = il.DeclareLocal(_types.Boolean);
+        il.BeginExceptionBlock();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, MoveNextMethod);
+        il.Emit(OpCodes.Stloc, movedLocal);
+        il.BeginFinallyBlock();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stfld, ExecutingField!);
+        il.EndExceptionBlock();
+
+        // return { value: Current, done: (moved ? false : true) }
+        var setItem = _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "value");
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, CurrentField);
+        il.Emit(OpCodes.Callvirt, setItem);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldstr, "done");
+        il.Emit(OpCodes.Ldloc, movedLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ceq);   // !moved
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Callvirt, setItem);
+        il.Emit(OpCodes.Ret);
     }
 }

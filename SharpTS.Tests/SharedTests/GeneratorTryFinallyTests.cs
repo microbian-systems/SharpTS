@@ -811,6 +811,11 @@ public class GeneratorTryFinallyTests
     [InlineData("function* g() { for (let i=0;i<2;i++){ yield i; try {} finally { continue; } } } for (const v of g()) {}")]
     [InlineData("function* g() { yield 0; outer: while(true){ while(true){ try {} finally { break outer; } } } } for (const v of g()) {}")]
     [InlineData("function* g() { yield 0; try { try {} finally { return 1; } } finally { console.log('o'); } } for (const v of g()) {}")]
+    // #526: the external return()/throw() injection check is emitted at every yield resume, and the
+    // yield* forwarding check at every yield* resume — both must verify across these shapes.
+    [InlineData("function* inner(){ try { yield 1; } finally { console.log('x'); } } function* g(){ yield* inner(); } for (const v of g()) {}")]
+    [InlineData("function* inner(){ try { yield 1; } finally {} } function* mid(){ try { yield* inner(); } finally {} } function* g(){ yield* mid(); } for (const v of g()) {}")]
+    [InlineData("function* g(){ try { yield 1; } catch (e) { yield 2; } finally { yield 3; } } for (const v of g()) {}")]
     public void GeneratorTryFinallyWithYield_EmitsVerifiableIL(string source)
     {
         var errors = TestHarness.CompileAndVerifyOnly(source);

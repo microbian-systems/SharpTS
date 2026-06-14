@@ -56,6 +56,10 @@ public partial class GeneratorMoveNextEmitter
         // Restore spill temps from their fields on the resumed path.
         _helpers.RehydrateLiveSpillsAfterResume();
 
+        // 5a. An external return()/throw() on the suspended generator injects an abrupt completion
+        // here, running active try/finally(/catch) (#526). With nothing pending this falls through.
+        EmitResumeInjectionCheck();
+
         // 6. The yield expression evaluates to the value passed to next(v), which
         // next() stashed in SentField before driving MoveNext (ECMA-262 §27.5.3.3, #452).
         // A bare next()/for-of resume leaves it as the caller's sent value (undefined) — so
@@ -274,7 +278,19 @@ public partial class GeneratorMoveNextEmitter
         {
             driveViaGeneratorLabel = _il.DefineLabel();
             genDoneLabel = _il.DefineLabel();
+        }
 
+        // #526: an external return()/throw() injected while suspended at this yield* is forwarded
+        // into the delegate (ECMA-262 §14.4.14): return() runs the delegate's finally, then the outer
+        // returns (or, if the delegate's finally yields, the outer yields and stays delegating);
+        // throw() lets the delegate catch (then the outer continues past yield*) or, uncaught,
+        // re-raises here. Emits nothing that transfers control when no injection is pending.
+        EmitYieldStarResumeInjectionCheck(
+            delegatedField, generatorInterfaceType, genResultLocal, valueTemp,
+            yieldStarResultLocal, haveValueLabel, genDoneLabel, doneCleanupLabel);
+
+        if (generatorInterfaceType != null)
+        {
             _il.Emit(OpCodes.Ldarg_0);
             _il.Emit(OpCodes.Ldfld, delegatedField);
             _il.Emit(OpCodes.Isinst, generatorInterfaceType);
@@ -389,6 +405,159 @@ public partial class GeneratorMoveNextEmitter
         // yield* evaluates to the delegated iterator's return value (captured above).
         _il.Emit(OpCodes.Ldloc, yieldStarResultLocal);
         SetStackUnknown();
+    }
+
+    /// <summary>
+    /// At a <c>yield*</c> resume point, forwards an external return()/throw() injected on the outer
+    /// generator into the delegated iterator (ECMA-262 §14.4.14, #526). Only an <c>$IGenerator</c>
+    /// delegate carries return/throw; a plain iterable (array, string, Map/Set) has neither, so the
+    /// outer simply returns the value / re-raises the error after closing the delegate. Emits nothing
+    /// that transfers control when no injection is pending, so the normal per-element drive runs.
+    /// </summary>
+    private void EmitYieldStarResumeInjectionCheck(
+        FieldBuilder delegatedField,
+        Type? generatorInterfaceType,
+        LocalBuilder genResultLocal,
+        LocalBuilder valueTemp,
+        LocalBuilder yieldStarResultLocal,
+        Label haveValueLabel,
+        Label genDoneLabel,
+        Label doneCleanupLabel)
+    {
+        var kindField = _builder.InjectedKindField;
+        var valueField = _builder.InjectedValueField;
+        if (kindField == null || valueField == null) return;
+
+        void LoadInjectedValue()
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, valueField);
+        }
+
+        // ---- return(v) forwarding ----
+        var afterReturn = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, kindField);
+        _il.Emit(OpCodes.Ldc_I4, GeneratorStateMachineBuilder.InjectKindReturn);
+        _il.Emit(OpCodes.Bne_Un, afterReturn);
+        ClearInjectedKind();
+
+        if (generatorInterfaceType != null)
+        {
+            var notGenReturn = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, delegatedField);
+            _il.Emit(OpCodes.Isinst, generatorInterfaceType);
+            _il.Emit(OpCodes.Brfalse, notGenReturn);
+
+            // result = delegate.return(injectedValue) — runs the delegate's finally(s).
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, delegatedField);
+            _il.Emit(OpCodes.Castclass, generatorInterfaceType);
+            LoadInjectedValue();
+            _il.Emit(OpCodes.Callvirt, _ctx!.Runtime!.GeneratorReturnMethod);
+            _il.Emit(OpCodes.Stloc, genResultLocal);
+
+            // result.done → the outer returns result.value (§14.4.14 c.7); else the delegate's
+            // finally yielded, so the outer yields result.value and stays delegating.
+            var innerReturnNotDone = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldloc, genResultLocal);
+            _il.Emit(OpCodes.Call, _ctx.Runtime.GetIteratorDone);
+            _il.Emit(OpCodes.Brfalse, innerReturnNotDone);
+            ClearDelegateField(delegatedField);
+            EmitRoutedReturn(() =>
+            {
+                _il.Emit(OpCodes.Ldloc, genResultLocal);
+                _il.Emit(OpCodes.Call, _ctx.Runtime.GetIteratorValue);
+            });
+
+            _il.MarkLabel(innerReturnNotDone);
+            _il.Emit(OpCodes.Ldloc, genResultLocal);
+            _il.Emit(OpCodes.Call, _ctx.Runtime.GetIteratorValue);
+            _il.Emit(OpCodes.Stloc, valueTemp);
+            _il.Emit(OpCodes.Br, haveValueLabel);
+
+            _il.MarkLabel(notGenReturn);
+        }
+
+        // Plain iterable: no return() to forward — close it and the outer returns the value.
+        ClearDelegateField(delegatedField);
+        EmitRoutedReturn(LoadInjectedValue);
+
+        _il.MarkLabel(afterReturn);
+
+        // ---- throw(e) forwarding ----
+        var afterThrow = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, kindField);
+        _il.Emit(OpCodes.Ldc_I4, GeneratorStateMachineBuilder.InjectKindThrow);
+        _il.Emit(OpCodes.Bne_Un, afterThrow);
+        ClearInjectedKind();
+
+        if (generatorInterfaceType != null)
+        {
+            var notGenThrow = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, delegatedField);
+            _il.Emit(OpCodes.Isinst, generatorInterfaceType);
+            _il.Emit(OpCodes.Brfalse, notGenThrow);
+
+            // Drive delegate.throw(injectedValue) in a mini try/catch so an inner rethrow (the
+            // delegate has no handler, §14.4.14 b.ii) is captured and re-raised at this point —
+            // running the outer's own catch/finally — rather than escaping MoveNext directly.
+            var caughtLocal = _il.DeclareLocal(typeof(object));
+            _il.Emit(OpCodes.Ldnull);
+            _il.Emit(OpCodes.Stloc, caughtLocal);
+            _il.BeginExceptionBlock();
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, delegatedField);
+            _il.Emit(OpCodes.Castclass, generatorInterfaceType);
+            LoadInjectedValue();
+            _il.Emit(OpCodes.Callvirt, _ctx!.Runtime!.GeneratorThrowMethod);
+            _il.Emit(OpCodes.Stloc, genResultLocal);
+            _il.BeginCatchBlock(typeof(Exception));
+            _il.Emit(OpCodes.Call, _ctx.Runtime.WrapException);
+            _il.Emit(OpCodes.Stloc, caughtLocal);
+            _il.EndExceptionBlock();
+
+            // Inner rethrew → re-raise at this point (runs the outer's catch/finally).
+            var innerHandled = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldloc, caughtLocal);
+            _il.Emit(OpCodes.Brfalse, innerHandled);
+            ClearDelegateField(delegatedField);
+            EmitRoutedThrow(() => _il.Emit(OpCodes.Ldloc, caughtLocal));
+
+            // Inner handled it: done → yield* value as a normal completion, the outer continues past
+            // yield* (§14.4.14 b.5); else the delegate yielded again, so the outer yields and stays.
+            _il.MarkLabel(innerHandled);
+            var innerThrowNotDone = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldloc, genResultLocal);
+            _il.Emit(OpCodes.Call, _ctx.Runtime.GetIteratorDone);
+            _il.Emit(OpCodes.Brfalse, innerThrowNotDone);
+            _il.Emit(OpCodes.Br, genDoneLabel);
+
+            _il.MarkLabel(innerThrowNotDone);
+            _il.Emit(OpCodes.Ldloc, genResultLocal);
+            _il.Emit(OpCodes.Call, _ctx.Runtime.GetIteratorValue);
+            _il.Emit(OpCodes.Stloc, valueTemp);
+            _il.Emit(OpCodes.Br, haveValueLabel);
+
+            _il.MarkLabel(notGenThrow);
+        }
+
+        // Plain iterable: no throw() to forward — close it and re-raise the error at this point.
+        ClearDelegateField(delegatedField);
+        EmitRoutedThrow(LoadInjectedValue);
+
+        _il.MarkLabel(afterThrow);
+    }
+
+    /// <summary>Clears the delegated-enumerator field once a <c>yield*</c> delegation has ended.</summary>
+    private void ClearDelegateField(FieldBuilder delegatedField)
+    {
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldnull);
+        _il.Emit(OpCodes.Stfld, delegatedField);
     }
 
     private static System.Reflection.FieldInfo? _currentStackDepthField;

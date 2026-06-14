@@ -685,11 +685,12 @@ public class GeneratorTests
 
     #region return()/throw() resume suspended generator (ECMA-262 §27.5.3.4) — issue #478
 
-    // These are interpreter-only: a try/finally combined with yield currently emits invalid
-    // IL in compiled mode (tracked in issue #477), so the compiled path can't be observed yet.
+    // Run in both modes: the interpreter implemented this in #478; the compiled analog (an external
+    // return()/throw() injecting an abrupt completion at the suspended yield, so active try/finally/
+    // catch run) landed in #526. They double as a cross-mode parity guard.
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_Return_RunsFinally_AndReportsValue(ExecutionMode mode)
     {
         // The repro from issue #478: return(v) on a suspended generator resumes it as an
@@ -718,7 +719,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_Throw_CaughtByTryCatch_Continues(ExecutionMode mode)
     {
         // throw(e) injects the error at the yield point; an enclosing catch handles it and
@@ -746,7 +747,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_Throw_RunsFinally_ThenPropagates(ExecutionMode mode)
     {
         // throw(e) with only a finally (no catch): the finally runs, then the error propagates
@@ -773,7 +774,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_Return_RunsNestedFinallyInnerToOuter(ExecutionMode mode)
     {
         var source = """
@@ -799,7 +800,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_Return_FinallyThatYields_DefersCompletion(ExecutionMode mode)
     {
         // A finally that yields suspends the pending return; the return value is delivered
@@ -825,7 +826,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_Return_FinallyReturnOverridesValue(ExecutionMode mode)
     {
         // A finally that returns its own value overrides the value passed to return().
@@ -848,7 +849,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_Return_FinallyThrowOverridesReturn(ExecutionMode mode)
     {
         // A finally that throws overrides the pending return with the thrown error.
@@ -874,7 +875,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_ReturnAndThrow_OnNotStarted_DoNotRunBody(ExecutionMode mode)
     {
         // return()/throw() on a generator that hasn't started close it without running the
@@ -903,7 +904,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_NextAfterCompletion_ReportsUndefined(ExecutionMode mode)
     {
         // Once a generator finishes, its completion value is delivered exactly once; further
@@ -926,7 +927,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_UncaughtThrowInBody_PropagatesToNext(ExecutionMode mode)
     {
         // An uncaught throw inside the body surfaces to the next() caller rather than being
@@ -950,7 +951,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Generator_BareReturn_ReportsUndefinedValue(ExecutionMode mode)
     {
         // A no-argument return() resumes with undefined.
@@ -973,13 +974,12 @@ public class GeneratorTests
 
     #region yield* forwards return()/throw() to the delegated iterator (ECMA-262 §14.4.14) — issue #514
 
-    // Interpreter-only: these build on the return()/throw() resumption from #478 (above). In
-    // compiled mode, an external return()/throw() on a suspended generator does not inject the
-    // abrupt completion at all (finally/catch skipped) — the compiled analog of #478 — so the
-    // compiled EmitYieldStar likewise can't forward it. Both are tracked as issue #526.
+    // Run in both modes: the interpreter implemented yield* forwarding of return()/throw() in #514;
+    // the compiled EmitYieldStar gained the same forwarding (driving the delegate via return()/throw()
+    // instead of next()) once the compiled injection landed in #526.
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void YieldStar_Return_ForwardsToInnerFinally_ThenOuterReturns(ExecutionMode mode)
     {
         // The repro from #514: return(v) on the outer while suspended inside yield* must run the
@@ -1000,7 +1000,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void YieldStar_Throw_NoInnerCatch_RunsInnerFinally_ThenPropagates(ExecutionMode mode)
     {
         // throw(e) is forwarded to the delegate; with only a finally (no catch) the delegate's
@@ -1019,7 +1019,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void YieldStar_Throw_CaughtByInner_KeepsDelegating(ExecutionMode mode)
     {
         // The delegate catches the injected error and yields again; the outer stays in the
@@ -1039,7 +1039,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void YieldStar_Throw_CaughtByInnerThenReturns_OuterContinuesNormally(ExecutionMode mode)
     {
         // The delegate catches the error and returns: per §14.4.14 step b.5 the yield* evaluates
@@ -1063,7 +1063,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void YieldStar_Return_InnerFinallyYields_DefersCompletion(ExecutionMode mode)
     {
         // The delegate's finally itself yields: the outer suspends there (reporting the
@@ -1091,7 +1091,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void YieldStar_Return_InnerFinallyReturnOverridesValue(ExecutionMode mode)
     {
         // A finally in the delegate that returns its own value overrides the value passed to the
@@ -1111,7 +1111,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void YieldStar_Return_RunsInnerThenOuterFinally(ExecutionMode mode)
     {
         // When the outer also wraps the yield* in try/finally, the abrupt return runs the
@@ -1133,7 +1133,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void YieldStar_Nested_Return_ReachesInnermostFinally(ExecutionMode mode)
     {
         // Two levels of delegation (outer → middle → inner): return() must thread through both
@@ -1156,7 +1156,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void YieldStar_Nested_Throw_RunsAllFinallys_ThenPropagates(ExecutionMode mode)
     {
         // throw() through two levels of delegation with no catch anywhere: each finally runs
@@ -1178,7 +1178,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void YieldStar_Return_InnerWithoutFinally_TerminatesCleanly(ExecutionMode mode)
     {
         // return() forwarded to a delegate that has no finally: the delegate just closes, the
@@ -1197,7 +1197,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void YieldStar_Return_ForwardsIntoGeneratorExpressionDelegate(ExecutionMode mode)
     {
         // The delegate is a generator function EXPRESSION (a distinct runtime type from a
@@ -1217,7 +1217,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void YieldStar_Return_FromGeneratorExpressionOuter(ExecutionMode mode)
     {
         // The OUTER is a generator function expression delegating to a declaration; the suspend

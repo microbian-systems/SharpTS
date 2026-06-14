@@ -943,22 +943,29 @@ public partial class RuntimeEmitter
             // ((​$IGenerator)recv).next(args.Length > 0 ? args[0] : undefined)
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Castclass, runtime.GeneratorInterfaceType);
-            var sentArgLabel = il.DefineLabel();
-            var sentDoneLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Ldlen);
-            il.Emit(OpCodes.Conv_I4);
-            il.Emit(OpCodes.Brtrue, sentArgLabel);
-            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
-            il.Emit(OpCodes.Br, sentDoneLabel);
-            il.MarkLabel(sentArgLabel);
-            il.Emit(OpCodes.Ldarg_2);
-            il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Ldelem_Ref);
-            il.MarkLabel(sentDoneLabel);
+            EmitArgZeroOrUndefined(il, runtime);
             il.Emit(OpCodes.Callvirt, runtime.GeneratorNextMethod);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notGeneratorNextLabel);
+
+            // return(v): forward to $IGenerator.return with the same undefined-default for a missing
+            // argument as next — a bare return() must inject `undefined`, not the null a missing
+            // reflected argument would pad (#526). User iterators with their own return() keep the
+            // GetProperty path below (they do not implement $IGenerator).
+            var notGeneratorReturnLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "return");
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, notGeneratorReturnLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.GeneratorInterfaceType);
+            il.Emit(OpCodes.Brfalse, notGeneratorReturnLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.GeneratorInterfaceType);
+            EmitArgZeroOrUndefined(il, runtime);
+            il.Emit(OpCodes.Callvirt, runtime.GeneratorReturnMethod);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notGeneratorReturnLabel);
         }
 
         // Resolve the JS-level member first. Generators and user-defined
@@ -1095,6 +1102,28 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, setItem);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Pushes <c>args.Length &gt; 0 ? args[0] : $Undefined</c> for the single-argument generator
+    /// protocol methods, so a bare <c>next()</c>/<c>return()</c> injects <c>undefined</c> rather than
+    /// the null a missing reflected argument would pad (#452/#526). Expects the args array in arg2.
+    /// </summary>
+    private void EmitArgZeroOrUndefined(ILGenerator il, EmittedRuntime runtime)
+    {
+        var hasArg = il.DefineLabel();
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brtrue, hasArg);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Br, done);
+        il.MarkLabel(hasArg);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.MarkLabel(done);
     }
 
     private void EmitGetSuperMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
