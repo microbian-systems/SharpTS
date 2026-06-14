@@ -664,6 +664,7 @@ public partial class TypeChecker
         bool previousRecoveryMode = _recoveryMode;
 
         var previousInferredReturnTypes = _inferredReturnTypes;
+        var previousInferredYieldTypes = _inferredYieldTypes;
 
         _environment = funcEnv;
         if (inferringReturnType)
@@ -675,6 +676,9 @@ public partial class TypeChecker
         {
             _currentFunctionReturnType = returnType;
         }
+        // Collect yield operand types only while inferring a generator's type (#548). Set to null otherwise
+        // so a nested explicitly-typed generator's yields cannot leak into an enclosing inferred one.
+        _inferredYieldTypes = inferringReturnType && funcStmt.IsGenerator ? new List<TypeInfo>() : null;
         _currentFunctionThisType = thisType;
         _inAsyncFunction = funcStmt.IsAsync;
         _inGeneratorFunction = funcStmt.IsGenerator;
@@ -755,16 +759,13 @@ public partial class TypeChecker
                     inferredReturn = CollapseOrCreateUnion(distinct);
                 }
 
-                // Apply async/generator wrapping
-                if (funcStmt.IsAsync && inferredReturn is not TypeInfo.Void)
-                    inferredReturn = new TypeInfo.Promise(inferredReturn);
+                // Apply async/generator wrapping. A generator's type argument is its YIELD type (collected
+                // above), not the `return`-derived inferredReturn (#548); a non-generator async function
+                // wraps its return type in a Promise.
                 if (funcStmt.IsGenerator)
-                {
-                    if (funcStmt.IsAsync)
-                        inferredReturn = new TypeInfo.AsyncGenerator(inferredReturn);
-                    else
-                        inferredReturn = new TypeInfo.Generator(inferredReturn);
-                }
+                    inferredReturn = BuildInferredGeneratorType(_inferredYieldTypes!, funcStmt.IsAsync);
+                else if (funcStmt.IsAsync && inferredReturn is not TypeInfo.Void)
+                    inferredReturn = new TypeInfo.Promise(inferredReturn);
 
                 returnType = inferredReturn;
 
@@ -818,6 +819,7 @@ public partial class TypeChecker
             _environment = previousEnv;
             _currentFunctionReturnType = previousReturn;
             _inferredReturnTypes = previousInferredReturnTypes;
+            _inferredYieldTypes = previousInferredYieldTypes;
             _currentFunctionThisType = previousThisType;
             _inAsyncFunction = previousInAsync;
             _inGeneratorFunction = previousInGenerator;
@@ -832,6 +834,30 @@ public partial class TypeChecker
                 _suppressDiagnostics--;
             }
         }
+    }
+
+    /// <summary>
+    /// Builds the inferred type of a generator function from the operand types of its <c>yield</c> /
+    /// <c>yield*</c> expressions (collected in <see cref="_inferredYieldTypes"/> during body checking),
+    /// wrapped in <see cref="TypeInfo.Generator"/> or <see cref="TypeInfo.AsyncGenerator"/>. The type
+    /// argument is the YIELD type, not the function's <c>return</c> value (#548 — previously the inferred
+    /// return type was reused, so a generator with no <c>return</c> always inferred <c>void</c>). A
+    /// generator that yields nothing infers <c>never</c>, matching tsc's <c>Generator&lt;never, …&gt;</c>.
+    /// </summary>
+    private TypeInfo BuildInferredGeneratorType(IReadOnlyList<TypeInfo> collectedYields, bool isAsync)
+    {
+        TypeInfo yieldType;
+        if (collectedYields.Count == 0)
+        {
+            yieldType = new TypeInfo.Never();
+        }
+        else
+        {
+            var distinct = collectedYields.Distinct(TypeInfoEqualityComparer.Instance).ToList();
+            yieldType = CollapseOrCreateUnion(distinct);
+        }
+
+        return isAsync ? new TypeInfo.AsyncGenerator(yieldType) : new TypeInfo.Generator(yieldType);
     }
 
     /// <summary>

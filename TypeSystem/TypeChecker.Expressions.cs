@@ -268,13 +268,21 @@ public partial class TypeChecker
             if (yieldExpr.IsDelegating)
             {
                 // yield* requires an iterable (array, generator, etc.)
-                return GetIterableElementType(valueType);
+                TypeInfo delegatedElement = GetIterableElementType(valueType);
+                // The delegated iterable's element type flows into the enclosing generator's yield type
+                // (#548): `function* g() { yield* [1, 2]; }` yields `number`, so it must infer
+                // Generator<number>, not Generator<void>. Collected only while that type is being inferred.
+                _inferredYieldTypes?.Add(delegatedElement);
+                return delegatedElement;
             }
 
+            _inferredYieldTypes?.Add(valueType);
             return valueType;
         }
 
-        // Bare yield returns undefined (void type for simplicity)
+        // Bare `yield` yields `undefined`; it contributes `undefined` to the inferred yield type (#548).
+        _inferredYieldTypes?.Add(new TypeInfo.Undefined());
+        // The yield EXPRESSION still evaluates to the (modeled) void type for an operand-less yield.
         return new TypeInfo.Void();
     }
 

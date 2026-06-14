@@ -277,22 +277,36 @@ public class TypeMapper
 
     private Type MapArrayTypeStrict(TypeInfo.Array arr)
     {
-        Type elementType = MapTypeInfoStrict(arr.ElementType);
+        Type elementType = MapCollectionElementStrict(arr.ElementType);
         // Use List<T> for typed arrays
         return _types.MakeGenericType(_types.ListOpen, elementType);
     }
 
     private Type MapMapTypeStrict(TypeInfo.Map map)
     {
-        Type keyType = MapTypeInfoStrict(map.KeyType);
-        Type valueType = MapTypeInfoStrict(map.ValueType);
+        Type keyType = MapCollectionElementStrict(map.KeyType);
+        Type valueType = MapCollectionElementStrict(map.ValueType);
         return _types.MakeGenericType(_types.DictionaryOpen, keyType, valueType);
     }
 
     private Type MapSetTypeStrict(TypeInfo.Set set)
     {
-        Type elementType = MapTypeInfoStrict(set.ElementType);
+        Type elementType = MapCollectionElementStrict(set.ElementType);
         return _types.MakeGenericType(_types.HashSetOpen, elementType);
+    }
+
+    /// <summary>
+    /// Maps a collection element/key/value type for a strict <c>List&lt;T&gt;</c> / <c>Dictionary&lt;,&gt;</c>
+    /// / <c>HashSet&lt;T&gt;</c> slot, substituting <c>object</c> when the element maps to <c>System.Void</c>.
+    /// A <c>never</c>/<c>void</c> element (e.g. an empty generator's <c>never</c> yield type spread into an
+    /// array — <c>function* g() {}</c> then <c>[...g()]</c>) would otherwise make <c>MakeGenericType</c>
+    /// throw "System.Void may not be used as a type argument", and such a collection is an empty dynamic
+    /// <c>$Array</c>/<c>TSMap</c>/<c>TSSet</c> carried as <c>object</c> at runtime regardless (#548).
+    /// </summary>
+    private Type MapCollectionElementStrict(TypeInfo element)
+    {
+        Type mapped = MapTypeInfoStrict(element);
+        return _types.IsVoid(mapped) ? _types.Object : mapped;
     }
 
     /// <summary>

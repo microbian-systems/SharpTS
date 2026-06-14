@@ -166,4 +166,26 @@ public partial class TypeChecker
                 return false;
         }
     }
+
+    /// <summary>
+    /// The element type of any async-iterable source — the dedicated <see cref="TypeInfo.AsyncIterable"/>,
+    /// <see cref="TypeInfo.AsyncIterator"/> (= AsyncIterableIterator) and <see cref="TypeInfo.AsyncGenerator"/>
+    /// records. Drives the <c>AsyncIterable&lt;T&gt;</c> assignment target and the async arm of
+    /// <c>for await...of</c> (#483). The async mirror of <see cref="TryGetIterableElementType"/>; sync
+    /// iterables are intentionally excluded (a sync iterable is not an async iterable). Returns false for
+    /// non-async-iterable types (callers decide between an error and a fall-through to <c>any</c>).
+    /// </summary>
+    private static bool TryGetAsyncIterableElementType(TypeInfo type, out TypeInfo elementType)
+    {
+        switch (type)
+        {
+            case TypeInfo.AsyncIterable ai: elementType = ai.ElementType; return true;
+            case TypeInfo.AsyncIterator ait: elementType = ait.ElementType; return true;
+            case TypeInfo.AsyncGenerator ag: elementType = ag.YieldType; return true;
+            case TypeInfo.Any: elementType = new TypeInfo.Any(); return true;
+            default:
+                elementType = null!;
+                return false;
+        }
+    }
 }

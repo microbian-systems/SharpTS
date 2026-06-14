@@ -117,6 +117,11 @@ public partial class TypeChecker
     private TypeInfo? _currentFunctionReturnType = null;
     // When non-null, VisitReturn collects return expression types here instead of validating (for inference)
     private List<TypeInfo>? _inferredReturnTypes = null;
+    // When non-null (set only while inferring a generator's return type), CheckYield collects the operand
+    // types of `yield` / `yield*` here. A generator's inferred type argument is the union of these YIELD
+    // types, NOT the function's `return` value — `return` is the (discarded) TReturn (#548). Distinct from
+    // _inferredReturnTypes so a generator with `return x` still type-checks x without polluting the yield type.
+    private List<TypeInfo>? _inferredYieldTypes = null;
     private TypeInfo.Class? _currentClass = null;
     private bool _inStaticMethod = false;
     private bool _inStaticBlock = false;

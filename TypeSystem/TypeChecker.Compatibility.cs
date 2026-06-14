@@ -902,6 +902,35 @@ public partial class TypeChecker
             return IsCompatible(expAsyncGen.YieldType, actAsyncGen.YieldType);
         }
 
+        // AsyncIterator<T1>/AsyncIterableIterator<T1> (#483, async parallel of the sync Iterator arm above):
+        // an AsyncIterator source (self) and an AsyncGenerator (which structurally IS an AsyncIterator)
+        // satisfy it when the element types relate, so a strict `let it: AsyncIterableIterator<number> =
+        // agen()` does not regress. An AsyncIterable (only `[Symbol.asyncIterator]`, no `next`) is NOT an
+        // AsyncIterator and falls through to rejection — the async mirror of Iterable ↛ Iterator.
+        if (expected is TypeInfo.AsyncIterator expAsyncIter)
+        {
+            TypeInfo? asyncIterSrcElem = actual switch
+            {
+                TypeInfo.AsyncIterator a => a.ElementType,
+                TypeInfo.AsyncGenerator g => g.YieldType,
+                _ => null
+            };
+            if (asyncIterSrcElem is not null)
+                return IsCompatible(expAsyncIter.ElementType, asyncIterSrcElem);
+            // Not async-iterator-shaped: fall through to the remaining (ultimately rejecting) rules.
+        }
+
+        // AsyncIterable<T1> (#483, async parallel of the sync Iterable arm below): the dedicated async
+        // records — AsyncIterable (self), the AsyncIterator record (= AsyncIterableIterator, which IS an
+        // AsyncIterable) and AsyncGenerator — satisfy it when their element types relate. A sync iterable
+        // is NOT an AsyncIterable and falls through to rejection.
+        if (expected is TypeInfo.AsyncIterable expAsyncIterable)
+        {
+            if (TryGetAsyncIterableElementType(actual, out var asyncIterableSrcElem))
+                return IsCompatible(expAsyncIterable.ElementType, asyncIterableSrcElem);
+            // Not async-iterable: fall through to the remaining (ultimately rejecting) rules.
+        }
+
         // Iterable<T1> (#485): a sync-iterable source satisfies it when its element type relates to T1 —
         // arrays, sets, maps ([K, V]), strings, the dedicated iterator/generator records, and structural
         // objects exposing [Symbol.iterator]. Covariant in the element, like the other container records.

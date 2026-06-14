@@ -503,6 +503,7 @@ public partial class TypeChecker
         "Array" or "ReadonlyArray" or "Promise" or "Generator" or "AsyncGenerator" or
         "Map" or "Set" or "WeakMap" or "WeakSet" or
         "Iterator" or "IterableIterator" or "Iterable" or
+        "AsyncIterator" or "AsyncIterableIterator" or "AsyncIterable" or
         "IteratorResult" or "IteratorYieldResult" or "IteratorReturnResult" or
         "WeakRef" or "FinalizationRegistry" or
         "Partial" or "Required" or "Readonly" or "Record" or "Pick" or "Omit" or

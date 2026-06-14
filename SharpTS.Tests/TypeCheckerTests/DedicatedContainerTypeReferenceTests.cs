@@ -82,9 +82,11 @@ public class DedicatedContainerTypeReferenceTests
     [Fact]
     public void Iterator_TooManyTypeArgs_Rejected()
     {
+        // The lib signature defaults TReturn/TNext, so an over-arity reference is the range error TS2707
+        // ("requires between …"), the code tsc uses for a defaulted range — not the exact-count TS2314 (#487).
         var source = "let it: Iterator<number, void, undefined, string> = [1].values();";
         var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
-        Assert.Equal("TS2314", ex.Diagnostic.TsCode);
+        Assert.Equal("TS2707", ex.Diagnostic.TsCode);
     }
 
     // ---- Generator <-> Iterator direction (a sync Generator IS an IterableIterator) ----
