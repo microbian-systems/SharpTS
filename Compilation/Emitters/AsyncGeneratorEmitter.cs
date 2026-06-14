@@ -39,7 +39,8 @@ public sealed class AsyncGeneratorEmitter : ITypeEmitterStrategy
                 emitter.EmitBoxIfNeeded(receiver);
                 // Cast to $IAsyncGenerator interface
                 il.Emit(OpCodes.Castclass, ctx.Runtime.AsyncGeneratorInterfaceType);
-                // Emit value argument (or null if not provided)
+                // Emit value argument; an omitted argument is undefined, not null, so return() reports
+                // { value: undefined } — an explicit return(null) still reports null (#618).
                 if (arguments.Count > 0)
                 {
                     emitter.EmitExpression(arguments[0]);
@@ -47,7 +48,7 @@ public sealed class AsyncGeneratorEmitter : ITypeEmitterStrategy
                 }
                 else
                 {
-                    il.Emit(OpCodes.Ldnull);
+                    il.Emit(OpCodes.Ldsfld, ctx.Runtime.UndefinedInstance);
                 }
                 // Call return(value) which returns Task<object>
                 il.Emit(OpCodes.Callvirt, ctx.Runtime.AsyncGeneratorReturnMethod);
@@ -59,7 +60,7 @@ public sealed class AsyncGeneratorEmitter : ITypeEmitterStrategy
                 emitter.EmitBoxIfNeeded(receiver);
                 // Cast to $IAsyncGenerator interface
                 il.Emit(OpCodes.Castclass, ctx.Runtime.AsyncGeneratorInterfaceType);
-                // Emit error argument (or null if not provided)
+                // Emit error argument; an omitted argument is the undefined sentinel, not null (#618).
                 if (arguments.Count > 0)
                 {
                     emitter.EmitExpression(arguments[0]);
@@ -67,7 +68,7 @@ public sealed class AsyncGeneratorEmitter : ITypeEmitterStrategy
                 }
                 else
                 {
-                    il.Emit(OpCodes.Ldnull);
+                    il.Emit(OpCodes.Ldsfld, ctx.Runtime.UndefinedInstance);
                 }
                 // Call throw(error) which returns Task<object>
                 il.Emit(OpCodes.Callvirt, ctx.Runtime.AsyncGeneratorThrowMethod);

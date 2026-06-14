@@ -1063,7 +1063,7 @@ public partial class Interpreter
     /// </summary>
     /// <param name="ex">The host exception to translate.</param>
     /// <returns>The guest error value (ThrowException value, NodeError object, or message string).</returns>
-    private object? TranslateException(Exception ex)
+    internal object? TranslateException(Exception ex)
     {
         if (ex is ThrowException tex)
             return tex.Value;

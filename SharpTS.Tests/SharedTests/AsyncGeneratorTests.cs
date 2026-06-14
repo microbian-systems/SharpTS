@@ -391,8 +391,10 @@ public class AsyncGeneratorTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void AsyncGenerator_ReturnWithoutValue_ReturnsNull(ExecutionMode mode)
+    public void AsyncGenerator_ReturnWithoutValue_ReturnsUndefined(ExecutionMode mode)
     {
+        // ECMA-262 §27.6.1.3: AsyncGenerator.prototype.return(value) with value absent resolves to
+        // { value: undefined, done: true } — an omitted argument is undefined, not null (#618).
         var source = """
             async function* gen() {
                 yield 1;
@@ -410,7 +412,111 @@ public class AsyncGeneratorTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("null true\n", output);
+        Assert.Equal("undefined true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ThrowWithoutValue_RejectsWithUndefined(ExecutionMode mode)
+    {
+        // throw() with no argument rejects with undefined, not null (#618).
+        var source = """
+            async function* gen() { yield 1; yield 2; }
+            async function main() {
+                const g = gen();
+                await g.next();
+                try { await g.throw(); } catch (e) { console.log("rejected " + e); }
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("rejected undefined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_BareReturn_CompletesWithUndefined(ExecutionMode mode)
+    {
+        // A value-less `return;` completes with undefined, not null; `return null;` still reports null (#540).
+        var source = """
+            async function* bare() { yield 1; return; }
+            async function* retNull() { yield 1; return null; }
+            async function main() {
+                const a = bare();
+                await a.next();
+                console.log("bare " + (await a.next()).value);
+                const b = retNull();
+                await b.next();
+                console.log("retNull " + (await b.next()).value);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("bare undefined\nretNull null\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ManualNextOnThrowingGenerator_RejectsCatchably(ExecutionMode mode)
+    {
+        // A throwing async generator settles its final next() as a rejection (catchable via await),
+        // delivering the preceding yields first, rather than propagating unhandled (#566).
+        var source = """
+            async function* g() { yield 1; throw "b"; }
+            async function main() {
+                const it = g();
+                const r1 = await it.next();
+                let err = "none";
+                try { await it.next(); } catch (e) { err = "" + e; }
+                console.log(r1.value + " err=" + err);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1 err=b\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_RejectedAwaitInTry_CaughtByOwnCatch(ExecutionMode mode)
+    {
+        // A rejected await inside a try in an async generator is caught by that try's catch, which
+        // binds the rejection reason; the generator then continues to its next yield (#617).
+        var source = """
+            async function* g() {
+                try { await Promise.reject("boom"); } catch (e: any) { console.log("caught " + e); }
+                yield 1;
+            }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("caught boom\nv1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ThrowInTryAfterYield_CatchBindsValue(ExecutionMode mode)
+    {
+        // A throw in a flag-based try (one containing a yield) is caught and the catch parameter binds
+        // the thrown value, not null — the catch param is stored to its hoisted field (#617/#477 analog).
+        // The caught value is *yielded* (not logged) so the assertion is independent of the interpreter's
+        // eager-drain side-effect ordering (#564): yielded values keep their order in both modes.
+        var source = """
+            async function* g() {
+                try { yield 0; throw "x"; } catch (e: any) { yield "caught:" + e; }
+                yield 1;
+            }
+            async function main() { for await (const v of g()) console.log(v); }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\ncaught:x\n1\n", output);
     }
 
     #endregion

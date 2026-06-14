@@ -35,6 +35,11 @@ public class SharpTSAsyncGenerator : ITypeCategorized
     // (or the generator is closed), the completion value is reported exactly once; every later next()
     // reports undefined (ECMA-262 §27.6.1.2 → CreateIterResultObject(undefined, true), #540).
     private bool _completionDelivered = false;
+    // A throw (an uncaught guest `throw` or a rejected `await`) raised by the eagerly-drained body.
+    // The body runs to completion on the first next(), but the throw must be observed from the next()
+    // that follows the values yielded before it — so it is buffered here and rethrown by Next() once
+    // those values are exhausted, rejecting that call's promise (#566). Null when the body did not throw.
+    private Exception? _pendingException = null;
 
     public SharpTSAsyncGenerator(Stmt.Function declaration, RuntimeEnvironment environment, Interpreter interpreter)
     {
@@ -76,9 +81,21 @@ public class SharpTSAsyncGenerator : ITypeCategorized
             return new SharpTSIteratorResult(_values[_index++], done: false);
         }
 
-        // Body fully drained. Deliver the completion value once (the body's `return X`, or undefined
-        // when it ran off the end), then undefined on every later call — the stale completion / last
-        // yielded value must not replay forever (#540; mirrors the sync generator's done semantics).
+        // Body fully drained. If it threw after the values above, surface that now so this next()'s
+        // promise rejects — the throw is delivered after the preceding values, then the generator is
+        // done (#566). Reported exactly once.
+        if (_pendingException != null)
+        {
+            var ex = _pendingException;
+            _pendingException = null;
+            _closed = true;
+            _completionDelivered = true;
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex).Throw();
+        }
+
+        // Deliver the completion value once (the body's `return X`, or undefined when it ran off the
+        // end), then undefined on every later call — the stale completion / last yielded value must
+        // not replay forever (#540; mirrors the sync generator's done semantics).
         if (_completionDelivered)
         {
             return new SharpTSIteratorResult(SharpTSUndefined.Instance, done: true);
@@ -98,6 +115,9 @@ public class SharpTSAsyncGenerator : ITypeCategorized
         // consistent even if the body had already run off the end before this return().
         _closed = true;
         _completionDelivered = true;
+        // return() closes the generator and wins over a not-yet-observed body throw: the code after
+        // the last yield never "runs" observably, so discard any buffered exception (#566).
+        _pendingException = null;
         return Task.FromResult<object?>(new SharpTSIteratorResult(value, done: true));
     }
 
@@ -138,10 +158,17 @@ public class SharpTSAsyncGenerator : ITypeCategorized
             }
             else if (result.Type == ExecutionResult.ResultType.Throw)
             {
-                // Propagate the original throw value through ThrowException —
-                // see SharpTSFunction.Call for the full rationale.
-                throw ThrowException.FromResult(result.Value.ToObject());
+                // Buffer rather than throw now: the body drains eagerly, so a throw after some yields
+                // must surface from the next() that follows those values, not the first one (#566).
+                // The original throw value is preserved through ThrowException (see SharpTSFunction.Call).
+                _pendingException = ThrowException.FromResult(result.Value.ToObject());
             }
+        }
+        catch (Exception ex) when (ex is not YieldException)
+        {
+            // A host exception escaped the body — a rejected `await`, or a `throw` surfaced as a C#
+            // exception. Buffer it so the post-drain next() rejects its promise with it (#566).
+            _pendingException = ex;
         }
         finally
         {
@@ -363,7 +390,9 @@ public class SharpTSAsyncGenerator : ITypeCategorized
                 return ExecutionResult.Success();
 
             case Stmt.Return returnStmt:
-                object? returnValue = null;
+                // A value-less `return;` (or running off the end) completes with undefined, not C#
+                // null; only an explicit `return null;` reports null (#540, mirrors the sync gen).
+                object? returnValue = SharpTSUndefined.Instance;
                 if (returnStmt.Value != null)
                 {
                     try
@@ -378,29 +407,53 @@ public class SharpTSAsyncGenerator : ITypeCategorized
                 return ExecutionResult.Return(returnValue);
 
             case Stmt.TryCatch tryCatch:
-                ExecutionResult tryResult = await ExecuteStatementsAsync(tryCatch.TryBlock);
-                if (tryResult.Type == ExecutionResult.ResultType.Throw)
+                ExecutionResult tryResult;
+                try
                 {
-                    if (tryCatch.CatchBlock != null && tryCatch.CatchParam != null)
+                    tryResult = await ExecuteStatementsAsync(tryCatch.TryBlock);
+                }
+                catch (Exception ex) when (ex is not YieldException)
+                {
+                    // A host exception escaped the try body — most often a rejected `await`
+                    // (SharpTSPromiseRejectedException) or a guest `throw` surfaced as a C#
+                    // exception. Convert it to a guest Throw so this try's catch/finally run (#617).
+                    tryResult = ExecutionResult.Throw(_interpreter.TranslateException(ex));
+                }
+
+                if (tryResult.Type == ExecutionResult.ResultType.Throw && tryCatch.CatchBlock != null)
+                {
+                    var catchEnv = new RuntimeEnvironment(_interpreter.Environment);
+                    // `catch {}` (no binding) is valid — only define the param when present, and bind
+                    // the unwrapped guest value rather than the boxed RuntimeValue struct.
+                    if (tryCatch.CatchParam != null)
+                        catchEnv.Define(tryCatch.CatchParam.Lexeme, tryResult.Value.ToObject());
+                    RuntimeEnvironment prevEnv = _interpreter.Environment;
+                    _interpreter.SetEnvironment(catchEnv);
+                    try
                     {
-                        var catchEnv = new RuntimeEnvironment(_interpreter.Environment);
-                        catchEnv.Define(tryCatch.CatchParam.Lexeme, tryResult.Value);
-                        RuntimeEnvironment prevEnv = _interpreter.Environment;
-                        _interpreter.SetEnvironment(catchEnv);
-                        try
-                        {
-                            tryResult = await ExecuteStatementsAsync(tryCatch.CatchBlock);
-                        }
-                        finally
-                        {
-                            _interpreter.SetEnvironment(prevEnv);
-                        }
+                        tryResult = await ExecuteStatementsAsync(tryCatch.CatchBlock);
+                    }
+                    catch (Exception ex) when (ex is not YieldException)
+                    {
+                        tryResult = ExecutionResult.Throw(_interpreter.TranslateException(ex));
+                    }
+                    finally
+                    {
+                        _interpreter.SetEnvironment(prevEnv);
                     }
                 }
 
                 if (tryCatch.FinallyBlock != null)
                 {
-                    var finallyResult = await ExecuteStatementsAsync(tryCatch.FinallyBlock);
+                    ExecutionResult finallyResult;
+                    try
+                    {
+                        finallyResult = await ExecuteStatementsAsync(tryCatch.FinallyBlock);
+                    }
+                    catch (Exception ex) when (ex is not YieldException)
+                    {
+                        finallyResult = ExecutionResult.Throw(_interpreter.TranslateException(ex));
+                    }
                     if (finallyResult.IsAbrupt) return finallyResult;
                 }
                 return tryResult;

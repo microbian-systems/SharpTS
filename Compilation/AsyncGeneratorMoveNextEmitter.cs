@@ -41,6 +41,15 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
     // Set to the afterTryBody label of the enclosing try/finally block (if any).
     private Label? _returnCleanupLabel;
 
+    // While emitting a flag-based try BODY (EmitTryCatchWithSuspensions), these carry that try's
+    // exception-capture target down to suspension points, which are emitted at the top level —
+    // outside the sync segments' mini try/catch. A rejected `await` inside the try captures its
+    // exception into _currentTryExceptionLocal (exactly as a sync segment does) and `Leave`s to
+    // _currentTryCleanupLabel so the try's catch/finally run, instead of escaping MoveNextAsync
+    // unhandled (#617). Null when not inside such a try body (the common case → GetResult is plain).
+    private LocalBuilder? _currentTryExceptionLocal;
+    private Label _currentTryCleanupLabel;
+
     // Compilation context for access to functions, classes, etc.
     private CompilationContext? _ctx;
 

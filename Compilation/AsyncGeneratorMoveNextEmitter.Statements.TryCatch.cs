@@ -467,7 +467,16 @@ public partial class AsyncGeneratorMoveNextEmitter
         // Throws in the try body are captured by their sync segments, not routed.
         bool previousInHandler = _inHandlerBody;
         _inHandlerBody = false;
+        // Carry this try's capture target down to the suspension points emitted at the top level, so a
+        // rejected `await` inside the try routes its exception into the same flag + catch/finally
+        // instead of escaping MoveNextAsync (#617). Saved/restored for correct nesting.
+        var previousTryExceptionLocal = _currentTryExceptionLocal;
+        var previousTryCleanupLabel = _currentTryCleanupLabel;
+        _currentTryExceptionLocal = caughtExceptionLocal;
+        _currentTryCleanupLabel = afterTryBodyLabel;
         EmitTryBodyWithSuspensions(t.TryBlock, caughtExceptionLocal, afterTryBodyLabel);
+        _currentTryExceptionLocal = previousTryExceptionLocal;
+        _currentTryCleanupLabel = previousTryCleanupLabel;
         _inHandlerBody = previousInHandler;
 
         // Restore the enclosing try's cleanup label (its yields must route to it, not ours).
@@ -486,6 +495,7 @@ public partial class AsyncGeneratorMoveNextEmitter
             // Bind the captured value to the catch param, honouring a hoisted field when the param is
             // read across a suspension in the catch body (#569). Storing to a fresh local
             // unconditionally lost the value whenever the param was hoisted (reads resolve the field).
+            // This binding is also what lets a rejected await routed here (#617) surface its reason.
             if (t.CatchParam != null)
             {
                 _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
