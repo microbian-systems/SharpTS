@@ -827,10 +827,11 @@ public partial class TypeChecker
     {
         TypeInfo iterableType = CheckExpr(stmt.Iterable);
 
-        // For `for await...of`, an AsyncIterable<T> yields T.
-        // (Generator/AsyncGenerator yield types are intentionally NOT extracted here — generator yield-type
-        // inference does not yet account for `yield*` delegation, so a delegating-only generator infers a
-        // `void` yield; binding `any` preserves that flexibility. Tracked separately.)
+        // Now that generator yield-type inference draws from the `yield` / `yield*` operands (#548), the
+        // Generator/AsyncGenerator yield type is real (a delegating-only generator infers its delegate's
+        // element type, not `void`), so `for...of` can bind it directly instead of falling to `any`. A sync
+        // generator is also a valid `for await...of` source (each yield is awaited), so its arm is unguarded;
+        // the async-only records bind only under `for await`.
         TypeInfo elementType = iterableType switch
         {
             TypeInfo.Array arr => arr.ElementType,
@@ -838,14 +839,18 @@ public partial class TypeChecker
             TypeInfo.Set setType => setType.ElementType,
             TypeInfo.Iterator iterType => iterType.ElementType,
             TypeInfo.Iterable iterableElem => iterableElem.ElementType,
+            TypeInfo.Generator genType => genType.YieldType,
+            TypeInfo.AsyncGenerator asyncGenType when stmt.IsAsync => asyncGenType.YieldType,
+            TypeInfo.AsyncIterator asyncItType when stmt.IsAsync => asyncItType.ElementType,
             TypeInfo.AsyncIterable asyncIter when stmt.IsAsync => asyncIter.ElementType,
             // A hand-written object exposing [Symbol.iterator] is iterable structurally (#485). Limited to
-            // sync `for...of`; the async iterable protocol resolution is tracked separately (#483).
+            // sync `for...of`; structural async-iterable objects ([Symbol.asyncIterator]) are not yet
+            // element-typed (the dedicated async records above are — #483) and stay lenient below (#662).
             _ when !stmt.IsAsync && TryGetStructuralIterableElement(iterableType, out var structuralElem) => structuralElem,
             // A structural object with no [Symbol.iterator] is an iterator-only or plain object, not an
             // Iterable — tsc rejects the loop with TS2488 rather than binding `any` (#550). Gated to types
             // SharpTS can prove non-iterable so it never rejects code tsc accepts (see the helper). Async
-            // sources stay lenient — the async-iterable protocol is resolved separately (#483).
+            // sources stay lenient — structural async-iterable typing is a separate gap (#662).
             _ when !stmt.IsAsync && IsProvablyNonIterableStructuralObject(iterableType) =>
                 throw new TypeCheckException(
                     $" Type '{iterableType}' must have a '[Symbol.iterator]()' method that returns an iterator.",

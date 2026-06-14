@@ -628,6 +628,7 @@ public partial class TypeChecker
                 TypeEnvironment previousEnvFunc = _environment;
                 TypeInfo? previousReturnFunc = _currentFunctionReturnType;
                 var previousInferredFunc = _inferredReturnTypes;
+                var previousInferredYieldFunc = _inferredYieldTypes;
                 bool previousInStatic = _inStaticMethod;
                 bool previousInAsyncFunc = _inAsyncFunction;
                 bool previousInGeneratorFunc = _inGeneratorFunction;
@@ -646,6 +647,8 @@ public partial class TypeChecker
                 {
                     _currentFunctionReturnType = methodType.ReturnType;
                 }
+                // Collect yield operand types only while inferring a generator method's type (#548).
+                _inferredYieldTypes = inferringMethodReturn && method.IsGenerator ? new List<TypeInfo>() : null;
                 _inStaticMethod = method.IsStatic;
                 _inAsyncFunction = method.IsAsync;
                 _inGeneratorFunction = method.IsGenerator;
@@ -687,15 +690,16 @@ public partial class TypeChecker
                             inferredReturn = CollapseOrCreateUnion(distinct);
                         }
 
-                        if (method.IsAsync && inferredReturn is not TypeInfo.Void)
-                            inferredReturn = new TypeInfo.Promise(inferredReturn);
+                        // A generator method's type argument is its YIELD type (#548), not the
+                        // `return`-derived inferredReturn; a non-generator async method wraps in Promise.
+                        // (The inferred result is not yet observable at a call site — `new C().m()` reads an
+                        // inferred method return as `<inferred>` regardless of generator-ness, a separate
+                        // method-return-inference propagation gap, #658 — but computing it correctly here
+                        // keeps the method path consistent with the function path for when that is fixed.)
                         if (method.IsGenerator)
-                        {
-                            if (method.IsAsync)
-                                inferredReturn = new TypeInfo.AsyncGenerator(inferredReturn);
-                            else
-                                inferredReturn = new TypeInfo.Generator(inferredReturn);
-                        }
+                            inferredReturn = BuildInferredGeneratorType(_inferredYieldTypes!, method.IsAsync);
+                        else if (method.IsAsync && inferredReturn is not TypeInfo.Void)
+                            inferredReturn = new TypeInfo.Promise(inferredReturn);
 
                         // Update the method type in the class
                         var updatedMethodType = new TypeInfo.Function(methodType.ParamTypes, inferredReturn, methodType.RequiredParams, methodType.HasRestParam, methodType.ThisType, methodType.ParamNames);
@@ -718,6 +722,7 @@ public partial class TypeChecker
                     _environment = previousEnvFunc;
                     _currentFunctionReturnType = previousReturnFunc;
                     _inferredReturnTypes = previousInferredFunc;
+                    _inferredYieldTypes = previousInferredYieldFunc;
                     _inStaticMethod = previousInStatic;
                     _inAsyncFunction = previousInAsyncFunc;
                     _inGeneratorFunction = previousInGeneratorFunc;

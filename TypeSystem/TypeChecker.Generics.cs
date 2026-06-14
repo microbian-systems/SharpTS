@@ -112,19 +112,24 @@ public partial class TypeChecker
             }
             result = new TypeInfo.Promise(valueType);
         }
+        // The lib signatures are Generator<T = unknown, TReturn = any, TNext = unknown> and
+        // AsyncGenerator<T = unknown, TReturn = any, TNext = unknown> — TReturn/TNext are defaulted, so a
+        // reference may carry 1–3 arguments. SharpTS models only the yield type (T), so the extra two are
+        // accepted and dropped, exactly like the Iterator arm below. Out-of-range is TS2707 (the code tsc
+        // uses for a defaulted-arity range), not the exact-count TS2314 (#487).
         else if (baseName == "Generator")
         {
-            if (typeArgs.Count != 1)
+            if (typeArgs.Count is < 1 or > 3)
             {
-                throw new TypeCheckException($" Generator requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
+                throw new TypeCheckException($" Generator requires between 1 and 3 type arguments, got {typeArgs.Count}.", tsCode: "TS2707");
             }
             result = new TypeInfo.Generator(typeArgs[0]);
         }
         else if (baseName == "AsyncGenerator")
         {
-            if (typeArgs.Count != 1)
+            if (typeArgs.Count is < 1 or > 3)
             {
-                throw new TypeCheckException($" AsyncGenerator requires exactly 1 type argument, got {typeArgs.Count}.", tsCode: "TS2314");
+                throw new TypeCheckException($" AsyncGenerator requires between 1 and 3 type arguments, got {typeArgs.Count}.", tsCode: "TS2707");
             }
             result = new TypeInfo.AsyncGenerator(typeArgs[0]);
         }
@@ -165,18 +170,36 @@ public partial class TypeChecker
         else if (baseName is "Iterator" or "IterableIterator")
         {
             if (typeArgs.Count is < 1 or > 3)
-                throw new TypeCheckException($" {baseName} requires between 1 and 3 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
+                throw new TypeCheckException($" {baseName} requires between 1 and 3 type arguments, got {typeArgs.Count}.", tsCode: "TS2707");
             result = new TypeInfo.Iterator(typeArgs[0]);
+        }
+        // The async iterator-protocol references mirror their sync counterparts (#483, async parallel of
+        // #456): AsyncIterator<T> / AsyncIterableIterator<T> collapse onto the dedicated AsyncIterator
+        // record (as Iterator/IterableIterator collapse onto Iterator), and AsyncIterable<T> resolves to
+        // the AsyncIterable record — all previously degraded to `any`. The lib signatures default
+        // TReturn/TNext (AsyncIterator<T, TReturn = any, TNext = any>), so 1–3 arguments are accepted and
+        // only the element type is kept; out-of-range is TS2707.
+        else if (baseName is "AsyncIterator" or "AsyncIterableIterator")
+        {
+            if (typeArgs.Count is < 1 or > 3)
+                throw new TypeCheckException($" {baseName} requires between 1 and 3 type arguments, got {typeArgs.Count}.", tsCode: "TS2707");
+            result = new TypeInfo.AsyncIterator(typeArgs[0]);
+        }
+        else if (baseName == "AsyncIterable")
+        {
+            if (typeArgs.Count is < 1 or > 3)
+                throw new TypeCheckException($" AsyncIterable requires between 1 and 3 type arguments, got {typeArgs.Count}.", tsCode: "TS2707");
+            result = new TypeInfo.AsyncIterable(typeArgs[0]);
         }
         // Iterable<T> references resolve to the dedicated Iterable record so the annotation is element-typed
         // (for...of/spread/yield* and assignment) rather than degrading to `any` (#485). The newer lib
         // signature is Iterable<T, TReturn = void, TNext = undefined> — only the element type is modeled, so
-        // 1–3 arguments are accepted and the rest are dropped, mirroring the Iterator arm above. The async
-        // parallel (AsyncIterable/AsyncIterableIterator references) is tracked separately in #483.
+        // 1–3 arguments are accepted and the rest are dropped, mirroring the Iterator arm above. (The async
+        // parallel — AsyncIterable/AsyncIterator/AsyncIterableIterator — is handled by the arms above, #483.)
         else if (baseName == "Iterable")
         {
             if (typeArgs.Count is < 1 or > 3)
-                throw new TypeCheckException($" Iterable requires between 1 and 3 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
+                throw new TypeCheckException($" Iterable requires between 1 and 3 type arguments, got {typeArgs.Count}.", tsCode: "TS2707");
             result = new TypeInfo.Iterable(typeArgs[0]);
         }
         // IteratorResult<T, TReturn = any> and its IteratorYieldResult/IteratorReturnResult arms are
@@ -187,7 +210,7 @@ public partial class TypeChecker
         else if (baseName == "IteratorResult")
         {
             if (typeArgs.Count is < 1 or > 2)
-                throw new TypeCheckException($" IteratorResult requires 1 or 2 type arguments, got {typeArgs.Count}.", tsCode: "TS2314");
+                throw new TypeCheckException($" IteratorResult requires 1 or 2 type arguments, got {typeArgs.Count}.", tsCode: "TS2707");
             result = BuildIteratorResultType(typeArgs[0]);
         }
         else if (baseName is "IteratorYieldResult" or "IteratorReturnResult")

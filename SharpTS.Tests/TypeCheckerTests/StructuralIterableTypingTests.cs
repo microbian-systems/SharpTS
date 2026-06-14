@@ -75,7 +75,8 @@ public class StructuralIterableTypingTests
     {
         var source = "let r: IteratorResult<number, string, boolean> = { value: 1 };";
         var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
-        Assert.Equal("TS2314", ex.Diagnostic.TsCode);
+        // Defaulted-arity range (TReturn defaults) → TS2707, the code tsc uses for a range (#487).
+        Assert.Equal("TS2707", ex.Diagnostic.TsCode);
     }
 
     // ---- Iterable<T> reference is element-typed (#485 gap 4) and relates structurally ----
@@ -164,7 +165,8 @@ public class StructuralIterableTypingTests
     {
         var source = "let a: Iterable<number, void, undefined, string> = [1];";
         var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
-        Assert.Equal("TS2314", ex.Diagnostic.TsCode);
+        // Defaulted-arity range (newer lib Iterable<T, TReturn, TNext>) → TS2707 (#487).
+        Assert.Equal("TS2707", ex.Diagnostic.TsCode);
     }
 
     [Fact]

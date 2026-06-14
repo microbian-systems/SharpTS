@@ -46,6 +46,7 @@ public static class TypeCategoryResolver
         TypeInfo.Generator => TypeCategory.Generator,
         TypeInfo.AsyncGenerator => TypeCategory.AsyncGenerator,
         TypeInfo.AsyncIterable => TypeCategory.AsyncGenerator,
+        TypeInfo.AsyncIterator => TypeCategory.AsyncGenerator,
 
         // User-defined types
         TypeInfo.Class or TypeInfo.GenericClass or TypeInfo.MutableClass => TypeCategory.Class,

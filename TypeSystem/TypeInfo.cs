@@ -1126,6 +1126,18 @@ public abstract record TypeInfo
     }
 
     /// <summary>
+    /// Represents the async iterator-protocol type — an object exposing <c>next(): Promise&lt;IteratorResult&lt;T&gt;&gt;</c>.
+    /// <c>AsyncIterator&lt;T&gt;</c> and <c>AsyncIterableIterator&lt;T&gt;</c> both collapse onto this record,
+    /// exactly as the sync <see cref="Iterator"/> record carries both <c>Iterator&lt;T&gt;</c> and
+    /// <c>IterableIterator&lt;T&gt;</c>. Kept distinct from <see cref="AsyncIterable"/> (which only exposes
+    /// <c>[Symbol.asyncIterator]</c>) so the two annotations are not interchangeable (#483).
+    /// </summary>
+    public record AsyncIterator(TypeInfo ElementType) : TypeInfo
+    {
+        public override string ToString() => $"AsyncIterableIterator<{ElementType}>";
+    }
+
+    /// <summary>
     /// Represents the sync Iterable&lt;T&gt; type — an object exposing <c>[Symbol.iterator](): Iterator&lt;T&gt;</c>.
     /// This is the supertype of arrays, sets, maps, strings, generators and the dedicated iterator record;
     /// it is what <c>for...of</c>, spread and <c>yield*</c> consume. Modeled nominally (parallel to
