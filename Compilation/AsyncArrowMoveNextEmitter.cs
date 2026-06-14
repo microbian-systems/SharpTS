@@ -158,8 +158,8 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
             EmitStatement(stmt);
         }
 
-        // Default return null
-        EmitReturnNull();
+        // Implicit completion: a body that runs off the end resolves with `undefined`.
+        EmitImplicitReturnUndefined();
 
         // Catch block
         _il.BeginCatchBlock(_types.Exception);
@@ -226,7 +226,9 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
         }
         else
         {
-            _il.Emit(OpCodes.Ldnull);
+            // Bare `return;` resolves the promise with `undefined`, not null (#587).
+            // A genuine `return null;` takes the branch above and still resolves with null.
+            _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
         }
         EmitSetResult();
         _il.Emit(OpCodes.Leave, _exitLabel);
