@@ -247,8 +247,11 @@ public partial class ILCompiler
         }
         else
         {
-            // Default return null
-            il.Emit(OpCodes.Ldnull);
+            // A getter that falls off the end completes with `undefined` (ECMA-262).
+            // Route through EmitDefaultReturnValue so the `object` slot materializes the
+            // `$Undefined` sentinel instead of CLR null. Setters also return `object`
+            // here (their value is discarded by callers), so this is correct for both. (#588)
+            EmitDefaultReturnValue(il, methodBuilder.ReturnType);
             il.Emit(OpCodes.Ret);
         }
     }
