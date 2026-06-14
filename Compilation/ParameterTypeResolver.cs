@@ -77,7 +77,8 @@ public static class ParameterTypeResolver
                     return typeof(object);
                 }
 
-                return WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap);
+                return CoerceParamSlotType(
+                    WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap), pt, typeMapper);
             })
             .ToArray();
     }
@@ -99,6 +100,48 @@ public static class ParameterTypeResolver
     }
 
     /// <summary>
+    /// Adjusts the strict CLR slot type for a parameter so it can hold the value's actual runtime
+    /// representation, falling back to <c>object</c> when the strict slot would be unsound. Mirrors
+    /// the equivalent fallbacks already applied to return slots in <see cref="ResolveReturnType"/>;
+    /// the asymmetry (return slots widened, parameter slots not) was the root cause of #568/#573.
+    /// </summary>
+    /// <remarks>
+    /// Three families need an object slot:
+    /// <list type="bullet">
+    /// <item>Date/RegExp/array/Map/Set — strictly mapped to DateTime/Regex/List/Dictionary/HashSet,
+    /// but their runtime values are $TSDate/$RegExp/$Array/$Map/$Set carried as object; a typed slot
+    /// fails ILVerify (StackUnexpected) and a castclass throws at the call/use site. (#573)</item>
+    /// <item>A union admitting <c>undefined</c> (e.g. <c>string | undefined</c>): the runtime
+    /// $Undefined sentinel is not a CLR instance of the non-nullish member's slot, so storing/reading
+    /// it throws InvalidCastException. A value-type union additionally maps to <c>Nullable&lt;T&gt;</c>,
+    /// which the emitter has no store path for. Locals already use object here; parameters must
+    /// too. (#568)</item>
+    /// <item><c>symbol</c> — strictly mapped to String, but a runtime symbol is a $Symbol reference,
+    /// so a String slot can't hold it. (#573 scope)</item>
+    /// </list>
+    /// Primitives, plain strings, and class instances keep their sound strict slot.
+    /// </remarks>
+    private static Type CoerceParamSlotType(Type mapped, TSTypeInfo source, TypeMapper typeMapper)
+    {
+        if (typeMapper.IsDynamicRuntimeType(mapped))
+            return typeof(object);
+        if (Nullable.GetUnderlyingType(mapped) != null)
+            return typeof(object);
+        if (source is TSTypeInfo.Symbol)
+            return typeof(object);
+        if (UnionAdmitsUndefined(source))
+            return typeof(object);
+        return mapped;
+    }
+
+    /// <summary>
+    /// True when <paramref name="type"/> is a union one of whose members is the <c>undefined</c>
+    /// type, so its runtime values include the $Undefined sentinel.
+    /// </summary>
+    private static bool UnionAdmitsUndefined(TSTypeInfo type) =>
+        type is TSTypeInfo.Union u && u.FlattenedTypes.Any(t => t is TSTypeInfo.Undefined);
+
+    /// <summary>
     /// Resolves a single parameter's type from its annotation or defaults to object.
     /// </summary>
     private static Type ResolveParameterType(Stmt.Parameter param, TypeMapper typeMapper)
@@ -108,7 +151,7 @@ public static class ParameterTypeResolver
 
         // Parse the type annotation and map to .NET type
         var typeInfo = ParseTypeAnnotation(param.Type);
-        return typeMapper.MapTypeInfoStrict(typeInfo);
+        return CoerceParamSlotType(typeMapper.MapTypeInfoStrict(typeInfo), typeInfo, typeMapper);
     }
 
     /// <summary>
@@ -193,13 +236,13 @@ public static class ParameterTypeResolver
                 baseType = typeof(object);
             }
 
-            // Typed array/map/set returns map to List<T>/Dictionary<,>/HashSet<> (the strict
-            // collection types), but their runtime representation is a dynamic $Array/TSMap/TSSet
-            // carried as object — not CLR-assignable to the declared collection slot. Returning
-            // that value into a List<T> slot raises ILVerify StackUnexpected (and a castclass to
-            // the collection would throw InvalidCastException at runtime). Fall back to object so
-            // the dynamic value is returned directly. (#278)
-            if (typeMapper.IsDynamicRuntimeCollection(baseType))
+            // Typed array/map/set returns map to List<T>/Dictionary<,>/HashSet<> and Date/RegExp
+            // returns map to DateTime/Regex, but their runtime representation is a dynamic
+            // $Array/$Map/$Set/$TSDate/$RegExp carried as object — not CLR-assignable to the
+            // declared slot. Returning that value into the typed slot raises ILVerify
+            // StackUnexpected (and a castclass would throw InvalidCastException at runtime). Fall
+            // back to object so the dynamic value is returned directly. (#278, #573)
+            if (typeMapper.IsDynamicRuntimeType(baseType))
             {
                 baseType = typeof(object);
             }
@@ -298,8 +341,8 @@ public static class ParameterTypeResolver
                 }
 
                 return i < parameters.Count
-                    ? WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap)
-                    : mappedType;
+                    ? CoerceParamSlotType(WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap), pt, typeMapper)
+                    : CoerceParamSlotType(mappedType, pt, typeMapper);
             })
             .ToArray();
     }
@@ -396,8 +439,8 @@ public static class ParameterTypeResolver
                 }
 
                 return i < parameters.Count
-                    ? WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap)
-                    : mappedType;
+                    ? CoerceParamSlotType(WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap), pt, typeMapper)
+                    : CoerceParamSlotType(mappedType, pt, typeMapper);
             })
             .ToArray();
     }
