@@ -73,7 +73,8 @@ public partial class TypeChecker
                 }
                 return new TypeInfo.Any();
             }
-            return CheckGetIndexOnType(evaluated, indexType, getIndex);
+            return CheckGetIndexOnType(evaluated, indexType, getIndex)
+                ?? throw new TypeCheckException($" Index type '{indexType}' is not valid for indexing '{evaluated}'.", tsCode: "TS7053");
         }
 
         // Optional bracket access: strip null/undefined from object type

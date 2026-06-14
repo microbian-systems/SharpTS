@@ -240,8 +240,10 @@ public partial class RuntimeEmitter
             il.MarkLabel(notThisRcvLabel);
         }
         EmitProtoSymbolFallback(_types.ListOfObject, runtime.ArrayPrototypeField, runtime.ArrayPrototypePopulateMethod);
-        if (runtime.TSArrayType != null)
-            EmitProtoSymbolFallback(runtime.TSArrayType, runtime.ArrayPrototypeField, runtime.ArrayPrototypePopulateMethod);
+        // TSArrayType is non-null here by contract: the dispatch above (Isinst TSArrayType)
+        // already passed it to il.Emit, which throws on null. A redundant != null guard here
+        // would only poison nullable flow analysis for the unconditional casts further down.
+        EmitProtoSymbolFallback(runtime.TSArrayType, runtime.ArrayPrototypeField, runtime.ArrayPrototypePopulateMethod);
 
         // ECMA-262 §21.3.2.34 / §25.5.4: Math[@@toStringTag] = "Math",
         // JSON[@@toStringTag] = "JSON". Singletons aren't populated via a
