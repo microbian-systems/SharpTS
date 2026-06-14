@@ -253,6 +253,44 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Invalidates only the property/element narrowings rooted at <paramref name="basePath"/> (paths
+    /// strictly deeper than it), leaving the base path's OWN narrowing intact. Used when a variable is
+    /// reassigned to a value that stays within its narrowing: the variable itself is still narrowed,
+    /// but its old property narrowings describe a now-replaced value, so they are dropped (#570).
+    /// </summary>
+    private void InvalidatePropertyNarrowingsFor(Narrowing.NarrowingPath basePath)
+    {
+        if (_narrowingContextStack.Count > 0)
+        {
+            var current = _narrowingContextStack.Pop();
+            _narrowingContextStack.Push(current.InvalidatePropertiesOf(basePath));
+        }
+    }
+
+    /// <summary>
+    /// Resets any active lexical (<see cref="TypeEnvironment"/>) narrowing of <paramref name="name"/>
+    /// in the ENCLOSING scope that holds it back to <paramref name="declaredType"/>. <c>if</c>-guard
+    /// variable narrowing is applied by redefining the variable in the guard's child environment; when
+    /// a reassignment that escapes the narrowing happens inside a further-nested block, that block's
+    /// environment is discarded at the join, so the outer guard narrowing would otherwise survive into
+    /// later statements (the #570 soundness gap). Widening the guard's environment closes that gap.
+    /// The reassignment's own (current) scope is widened separately by the caller's
+    /// <c>_environment.Define</c>; this walks strictly OUTWARD to the nearest enclosing scope that
+    /// rebound the name, which for an outer guard is its narrowing override.
+    /// </summary>
+    private void WidenEnclosingNarrowing(string name, TypeInfo declaredType)
+    {
+        for (TypeEnvironment? env = _environment.Enclosing; env != null; env = env.Enclosing)
+        {
+            if (env.IsDefinedLocally(name))
+            {
+                env.Define(name, declaredType);
+                return;
+            }
+        }
+    }
+
+    /// <summary>
     /// Pushes a new scope for declared variable types (called when entering a function).
     /// </summary>
     private void PushDeclaredVariableScope()
@@ -1149,6 +1187,10 @@ public partial class TypeChecker
                     // Check all statements with error recovery
                     foreach (var stmt in module.Statements)
                     {
+                        // Fallback line for diagnostics whose throw-site doesn't carry one, mirroring
+                        // the script path (CheckWithRecovery). Without it, module-mode errors render
+                        // with no location (#468).
+                        _currentStatementLine = TryGetStmtLine(stmt);
                         try
                         {
                             CheckStmt(stmt);
@@ -1197,6 +1239,10 @@ public partial class TypeChecker
                     // Third pass: check all statements with error recovery
                     foreach (var stmt in module.Statements)
                     {
+                        // Fallback line for diagnostics whose throw-site doesn't carry one, mirroring
+                        // the script path (CheckWithRecovery). Without it, module-mode errors render
+                        // with no location (#468).
+                        _currentStatementLine = TryGetStmtLine(stmt);
                         try
                         {
                             CheckStmt(stmt);
@@ -1214,6 +1260,7 @@ public partial class TypeChecker
 
         _currentModule = null;
         _filePath = null;
+        _currentStatementLine = null;
         return _typeMap;
     }
 
@@ -1297,52 +1344,65 @@ public partial class TypeChecker
             // Hoist let/const declarations (pre-define as any for forward reference support — #533)
             HoistLexicalDeclarations(module.Statements);
 
-            // Then, process all declarations to populate the environment
-            foreach (var stmt in module.Statements)
+            // Then, process all declarations to populate the environment. This is a PREPARATORY
+            // pass: it registers declaration/export types so forward references and exports resolve.
+            // The authoritative body type-check (with source-location attribution) runs in
+            // CheckModules' second pass, which re-checks every statement — so suppress diagnostics
+            // here to avoid reporting each error twice, once in this pass and once in the second
+            // (#468). The per-statement catch still lets collection continue past a faulty statement.
+            _suppressDiagnostics++;
+            try
             {
-                try
+                foreach (var stmt in module.Statements)
                 {
-                    // Skip imports - already bound above
-                    if (stmt is Stmt.Import)
+                    try
                     {
-                        continue;
-                    }
+                        // Skip imports - already bound above
+                        if (stmt is Stmt.Import)
+                        {
+                            continue;
+                        }
 
-                    // For exports, process the underlying declaration
-                    if (stmt is Stmt.Export export)
-                    {
-                        if (export.ExportAssignment != null)
+                        // For exports, process the underlying declaration
+                        if (stmt is Stmt.Export export)
                         {
-                            // CommonJS-style export = value
-                            var type = CheckExpr(export.ExportAssignment);
-                            module.HasExportAssignment = true;
-                            module.ExportAssignmentType = type;
+                            if (export.ExportAssignment != null)
+                            {
+                                // CommonJS-style export = value
+                                var type = CheckExpr(export.ExportAssignment);
+                                module.HasExportAssignment = true;
+                                module.ExportAssignmentType = type;
+                            }
+                            else if (export.Declaration != null)
+                            {
+                                CheckStmt(export.Declaration);
+                            }
+                            else if (export.DefaultExpr != null)
+                            {
+                                var type = CheckExpr(export.DefaultExpr);
+                                module.DefaultExportType = type;
+                            }
+                            else if (export.NamedExports != null && export.FromModulePath == null)
+                            {
+                                // Named exports like `export { x, y }` need the declarations to be processed first
+                                // They'll be resolved in the second pass
+                            }
                         }
-                        else if (export.Declaration != null)
+                        else
                         {
-                            CheckStmt(export.Declaration);
-                        }
-                        else if (export.DefaultExpr != null)
-                        {
-                            var type = CheckExpr(export.DefaultExpr);
-                            module.DefaultExportType = type;
-                        }
-                        else if (export.NamedExports != null && export.FromModulePath == null)
-                        {
-                            // Named exports like `export { x, y }` need the declarations to be processed first
-                            // They'll be resolved in the second pass
+                            // Regular declarations
+                            CheckStmt(stmt);
                         }
                     }
-                    else
+                    catch (TypeCheckException ex)
                     {
-                        // Regular declarations
-                        CheckStmt(stmt);
+                        RecordTypeError(ex);
                     }
                 }
-                catch (TypeCheckException ex)
-                {
-                    RecordTypeError(ex);
-                }
+            }
+            finally
+            {
+                _suppressDiagnostics--;
             }
 
         // Now collect exports

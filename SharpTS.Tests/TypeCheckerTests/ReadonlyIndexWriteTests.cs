@@ -66,9 +66,39 @@ public class ReadonlyIndexWriteTests
         AssertTsCode("TS2542", "const a: readonly number[] = [1]; a[\"0\"] = 5;");
     }
 
-    // Note: readonly arrays reached through a *union* (`readonly number[] | number[]`) are a separate,
-    // pre-existing gap — the union collapses the readonly and mutable members during construction — and
-    // are tracked in their own follow-up rather than here, to keep this change scoped to direct writes.
+    // ---- readonly arrays/tuples reached through a *union* reject index writes (#594) ----
+
+    [Fact]
+    public void ReadonlyOrMutableArrayUnion_IndexWrite_RejectedTS2542()
+    {
+        // `readonly number[] | number[]` must keep BOTH members distinct (the string resolver used to
+        // mis-parse it as `readonly (number[] | number[])`, dropping the readonly member). With both
+        // present, the write is invalid for the readonly member, so the whole union write is TS2542.
+        AssertTsCode("TS2542", "function f(u: readonly number[] | number[]): void { u[0] = 1; }");
+    }
+
+    [Fact]
+    public void MutableOrReadonlyArrayUnion_IndexWrite_RejectedTS2542()
+    {
+        // Order-independent: the readonly member rejects the write regardless of its position.
+        AssertTsCode("TS2542", "function f(u: number[] | readonly number[]): void { u[0] = 1; }");
+    }
+
+    [Fact]
+    public void ReadonlyOrMutableTupleUnion_IndexWrite_RejectedTS2542()
+    {
+        // The union-distribution helper previously did not handle tuples at all; a readonly tuple
+        // member now rejects the write too.
+        AssertTsCode("TS2542", "function f(u: readonly [number, number] | [number, number]): void { u[0] = 1; }");
+    }
+
+    [Fact]
+    public void MutableArrayTupleUnion_IndexWrite_Accepted()
+    {
+        // A union of mutable members (array + tuple), where the write is valid for every member,
+        // still accepts — the new tuple/readonly guards must not over-reject writable members.
+        TestHarness.RunInterpreted("function f(u: number[] | [number, number]): void { u[0] = 1; }\nf([1, 2]);");
+    }
 
     // ---- mutable receivers and reads stay accepted (no over-rejection) ----
 

@@ -1542,9 +1542,28 @@ public partial class TypeChecker
             throw new TypeCheckException($" Cannot assign type '{valueType}' to variable '{assign.Name.Lexeme}' of type '{declaredType}'.", tsCode: AssignmentDiagnosticCode(declaredType, valueType));
         }
 
-        // Invalidate any narrowings affected by this assignment
+        // A reassignment widens the variable's OWN narrowing only when the assigned value falls
+        // OUTSIDE it: tsc keeps `x` narrowed after `x = stillNarrowValue` (a value the guard still
+        // admits) but widens it after a value the guard excluded. The variable's PROPERTY narrowings,
+        // however, describe the now-replaced value and are always stale, so they are dropped either
+        // way. (#570 — and incidentally the loop over-invalidation where a reassign-to-narrow widened
+        // a still-valid loop-condition narrowing.)
         var assignedPath = new Narrowing.NarrowingPath.Variable(assign.Name.Lexeme);
-        InvalidateNarrowingsFor(assignedPath);
+        var currentNarrowedType = GetNarrowing(assignedPath) ?? _environment.Get(assign.Name.Lexeme) ?? declaredType;
+        if (IsCompatible(currentNarrowedType, valueType))
+        {
+            InvalidatePropertyNarrowingsFor(assignedPath);
+        }
+        else
+        {
+            // The value escapes the narrowing: drop the variable's own (context-stack) narrowing and
+            // its descendants, AND widen any enclosing lexical narrowing the context stack can't reach.
+            // `if`-guard variable narrowing lives in a child TypeEnvironment that a nested block's own
+            // env shadows-then-discards, so without WidenEnclosingNarrowing a reassignment inside a
+            // nested branch leaves the outer guard's narrowing in place for later statements (#570).
+            InvalidateNarrowingsFor(assignedPath);
+            WidenEnclosingNarrowing(assign.Name.Lexeme, declaredType);
+        }
 
         // Also restore the declared type in the environment to undo any variable narrowing
         // that was applied via TypeEnvironment.Define() in control flow statements.
