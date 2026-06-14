@@ -91,10 +91,9 @@ public partial class Interpreter
             });
             var bound = userFn.BindThis(newThis);
             var result = bound.Call(this, fnArgs);
-            // JS spec: if constructor returns an object, use it; otherwise use the new `this`.
-            return result is SharpTSObject or SharpTSInstance or SharpTSArray
-                ? result
-                : newThis;
+            // JS spec: if the constructor returns an object (incl. a function), use
+            // it; otherwise use the new `this` (#446).
+            return IsConstructorReturnObject(result) ? result : newThis;
         }
 
         // Function expressions (named or anonymous) used as constructors:
@@ -124,9 +123,7 @@ public partial class Interpreter
             });
             var bound = userArrowFn.Bind(newThis);
             var result = bound.Call(this, arrowArgs);
-            return result is SharpTSObject or SharpTSInstance or SharpTSArray
-                ? result
-                : newThis;
+            return IsConstructorReturnObject(result) ? result : newThis;
         }
 
         // Prototype-method wrappers and Object.prototype unbound methods are
@@ -210,9 +207,7 @@ public partial class Interpreter
             });
             var bound = userFn.BindThis(newThis);
             var result = bound.Call(this, [.. args]);
-            return result is SharpTSObject or SharpTSInstance or SharpTSArray
-                or SharpTSRegExp or SharpTSDate or SharpTSMap or SharpTSSet
-                ? result : newThis;
+            return IsConstructorReturnObject(result) ? result : newThis;
         }
         if (callable is SharpTSArrowFunction arrowFn && arrowFn.HasOwnThis)
         {
@@ -228,9 +223,7 @@ public partial class Interpreter
             });
             var bound = arrowFn.Bind(newThis);
             var result = bound.Call(this, [.. args]);
-            return result is SharpTSObject or SharpTSInstance or SharpTSArray
-                or SharpTSRegExp or SharpTSDate or SharpTSMap or SharpTSSet
-                ? result : newThis;
+            return IsConstructorReturnObject(result) ? result : newThis;
         }
         // Built-in constructor (e.g. RegExp via SharpTSBuiltInConstructor).
         // BuiltInConstructorFactory handles the factory dispatch.
@@ -245,6 +238,28 @@ public partial class Interpreter
         }
         throw new InterpreterException("TypeError: Construct called on non-callable.");
     }
+
+    /// <summary>
+    /// ECMA-262 §10.2.2 [[Construct]]: when a constructor body returns a value,
+    /// <c>new</c> yields that value only if it is an <em>Object</em>; a primitive
+    /// return (number, string, boolean, symbol, bigint, null, undefined) is ignored
+    /// and the freshly-constructed <c>this</c> is used instead. Functions and arrays
+    /// are ordinary objects, so a returned function/arrow wins (#446) — matching
+    /// tsc/node and the compiled <c>NewOnFunction</c> path. Centralizes the decision
+    /// so every construct-return site stays consistent.
+    /// </summary>
+    private static bool IsConstructorReturnObject(object? result) => result switch
+    {
+        null => false,
+        SharpTSUndefined => false,
+        double => false,
+        bool => false,
+        string => false,
+        SharpTSSymbol => false,
+        SharpTSBigInt => false,
+        System.Numerics.BigInteger => false,
+        _ => true,
+    };
 
     private RuntimeValue EvaluateNew(Expr.New newExpr)
     {
@@ -315,10 +330,7 @@ public partial class Interpreter
             });
             var bound = userFn.BindThis(newThis);
             var result = bound.Call(this, fnArgs);
-            return RuntimeValue.FromBoxed(result is SharpTSObject or SharpTSInstance or SharpTSArray
-                or SharpTSRegExp or SharpTSDate or SharpTSMap or SharpTSSet
-                ? result
-                : newThis);
+            return RuntimeValue.FromBoxed(IsConstructorReturnObject(result) ? result : newThis);
         }
 
         // Function expressions used as constructors — same shape as
@@ -344,10 +356,7 @@ public partial class Interpreter
             });
             var bound = userArrowFn.Bind(newThis);
             var result = bound.Call(this, arrowArgs);
-            return RuntimeValue.FromBoxed(result is SharpTSObject or SharpTSInstance or SharpTSArray
-                or SharpTSRegExp or SharpTSDate or SharpTSMap or SharpTSSet
-                ? result
-                : newThis);
+            return RuntimeValue.FromBoxed(IsConstructorReturnObject(result) ? result : newThis);
         }
 
         // Prototype-method wrappers and Object.prototype unbound methods are

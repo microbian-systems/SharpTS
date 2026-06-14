@@ -414,18 +414,28 @@ public partial class Interpreter
         {
             if (forStmt.Initializer != null)
                 await ExecuteStatementAsync(forStmt.Initializer);
+            // ECMA-262 13.7.4 per-iteration bindings for `for (let/const …)`, so
+            // closures capture distinct values across iterations (#633). Mirrors
+            // the synchronous VisitFor path.
+            var perIterationNames = CollectPerIterationBindings(forStmt.Initializer);
+            if (perIterationNames != null)
+                CreatePerIterationEnvironment(loopEnv, perIterationNames);
             while (forStmt.Condition == null || IsTruthy(await EvaluateAsync(forStmt.Condition)))
             {
                 var result = await ExecuteStatementAsync(forStmt.Body);
                 if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == null) break;
                 if (result.Type == ExecutionResult.ResultType.Continue && result.TargetLabel == null)
                 {
+                    if (perIterationNames != null)
+                        CreatePerIterationEnvironment(loopEnv, perIterationNames);
                     if (forStmt.Increment != null)
                         await EvaluateAsync(forStmt.Increment);
                     await Task.Yield();
                     continue;
                 }
                 if (result.IsAbrupt) return result;
+                if (perIterationNames != null)
+                    CreatePerIterationEnvironment(loopEnv, perIterationNames);
                 if (forStmt.Increment != null)
                     await EvaluateAsync(forStmt.Increment);
                 ProcessPendingCallbacks();
@@ -514,7 +524,12 @@ public partial class Interpreter
                 case OperatorDescriptor.Comparison:
                     return RuntimeValue.FromBoolean(EvaluateComparison(binary.Operator.Type, l, r));
                 case OperatorDescriptor.Equality eq:
-                    bool equal = l.Equals(r);
+                    // ECMA-262 7.2.16: NaN is never strictly equal to anything
+                    // (including itself). Use IEEE 754 `==` which returns false
+                    // for NaN comparisons; Double.Equals is .NET-specific and
+                    // treats NaN as equal to itself. Mirrors the sync fast path
+                    // in EvaluateBinary (Interpreter.Calls.cs).
+                    bool equal = l == r;
                     return RuntimeValue.FromBoolean(eq.IsNegated ? !equal : equal);
                 case OperatorDescriptor.Bitwise or OperatorDescriptor.BitwiseShift:
                     return RuntimeValue.FromNumber(EvaluateBitwise(binary.Operator.Type, (int)l, (int)r));
