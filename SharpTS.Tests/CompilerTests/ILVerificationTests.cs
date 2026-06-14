@@ -1235,4 +1235,68 @@ public class ILVerificationTests
         Assert.Equal("hi\na!\n", output);
         Assert.Equal(output, TestHarness.RunInterpreted(source));
     }
+
+    // #537: single-double-argument Date setters (setTime/setDate/setMilliseconds/setUTCDate/
+    // setUTCMilliseconds/setYear) used as a bare statement or assigned to a number previously left
+    // the tracked stack type as Double, so the caller boxed the already-boxed result a second time
+    // (StackUnexpected). The DateEmitter now records the boxed result as a reference type.
+    [Fact]
+    public void DateSingleArgSetters_PassILVerification()
+    {
+        var source = """
+            const d = new Date(2024, 5, 15);
+            d.setDate(10);                  // bare statement (local)
+            d.setMilliseconds(500);         // bare statement
+            d.setUTCDate(3);                // bare statement (UTC)
+            d.setYear(99);                  // bare statement (Annex B)
+            const n: number = d.setTime(0); // assigned to a number
+            console.log(n);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("0\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #536 / #538: multi-argument setters (object[] form) and the Date.UTC/Date.parse statics emit
+    // verifiable IL and match the interpreter.
+    [Fact]
+    public void DateMultiArgSettersAndStatics_PassILVerification()
+    {
+        var source = """
+            const d = new Date(0);
+            d.setUTCFullYear(2020, 5, 15);
+            d.setUTCHours(13, 30, 45, 500);
+            const t: number = Date.UTC(2024, 0, 1);
+            const p: number = Date.parse('2024-01-15T10:30:00Z');
+            console.log(d.getUTCMonth(), d.getUTCMinutes(), t, p);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("5 30 1704067200000 1705314600000\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #539: toLocale* with locale/options emits verifiable IL (the reflection-based options path)
+    // and matches the interpreter. Exact locale-formatted output is host-dependent, so assert on
+    // stable localized substrings (see IntlDateTimeFormatTests) plus interpreter parity.
+    [Fact]
+    public void DateToLocaleWithOptions_PassesILVerification()
+    {
+        var source = """
+            const d = new Date(Date.UTC(2024, 0, 15, 12, 0, 0));
+            const s = d.toLocaleDateString('en-US', { dateStyle: 'full', timeZone: 'UTC' });
+            console.log(s.includes('Monday'), s.includes('January'), s.includes('2024'));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("true true true\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
 }

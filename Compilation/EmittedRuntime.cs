@@ -1045,6 +1045,10 @@ public class EmittedRuntime
     public ConstructorBuilder TSDateCtorString { get; set; } = null!;
     public ConstructorBuilder TSDateCtorComponents { get; set; } = null!;
     public MethodBuilder TSDateNowStatic { get; set; } = null!;
+    /// <summary>$TSDate.UTC(object[]) static — backs Date.UTC (#538). Null when UsesDate is off.</summary>
+    public MethodBuilder? TSDateUTCStatic { get; set; }
+    /// <summary>$TSDate.Parse(object) static — backs Date.parse (#538). Null when UsesDate is off.</summary>
+    public MethodBuilder? TSDateParseStatic { get; set; }
     /// <summary>
     /// Dictionary of $TSDate instance methods by name. Used to lookup methods before CreateType().
     /// </summary>
@@ -1101,6 +1105,13 @@ public class EmittedRuntime
     public MethodBuilder DateToLocaleDateString { get; set; } = null!;
     public MethodBuilder DateToLocaleTimeString { get; set; } = null!;
     public MethodBuilder DateToLocaleString { get; set; } = null!;
+    /// <summary>
+    /// $Runtime.DateToLocaleWithOptions(object receiver, int kind, object[] args) → string.
+    /// Reflects to RuntimeTypes.FormatDateToLocale to honor locale/options (#539); emitted only when
+    /// UsesDate is on, and reached only by toLocale* calls that actually pass arguments (soft SharpTS
+    /// dependency recorded at those call sites).
+    /// </summary>
+    public MethodBuilder? DateToLocaleWithOptions { get; set; }
     public MethodBuilder DateGetYear { get; set; } = null!;
     public MethodBuilder DateSetYear { get; set; } = null!;
 

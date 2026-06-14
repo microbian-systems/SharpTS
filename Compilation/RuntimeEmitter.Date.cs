@@ -27,12 +27,14 @@ public partial class RuntimeEmitter
         EmitDateGetMilliseconds(typeBuilder, runtime);
         EmitDateGetTimezoneOffset(typeBuilder, runtime);
         EmitDateSetTime(typeBuilder, runtime);
-        EmitDateSetFullYear(typeBuilder, runtime);
-        EmitDateSetMonth(typeBuilder, runtime);
+        // Multi-argument setters package args as object[] and honor every supplied
+        // component (#536); single-argument setters take a direct double.
+        runtime.DateSetFullYear = EmitDateArgsArraySetter(typeBuilder, runtime, "DateSetFullYear", "SetFullYear");
+        runtime.DateSetMonth = EmitDateArgsArraySetter(typeBuilder, runtime, "DateSetMonth", "SetMonth");
         EmitDateSetDate(typeBuilder, runtime);
-        EmitDateSetHours(typeBuilder, runtime);
-        EmitDateSetMinutes(typeBuilder, runtime);
-        EmitDateSetSeconds(typeBuilder, runtime);
+        runtime.DateSetHours = EmitDateArgsArraySetter(typeBuilder, runtime, "DateSetHours", "SetHours");
+        runtime.DateSetMinutes = EmitDateArgsArraySetter(typeBuilder, runtime, "DateSetMinutes", "SetMinutes");
+        runtime.DateSetSeconds = EmitDateArgsArraySetter(typeBuilder, runtime, "DateSetSeconds", "SetSeconds");
         EmitDateSetMilliseconds(typeBuilder, runtime);
         EmitDateToISOString(typeBuilder, runtime);
         EmitDateToDateString(typeBuilder, runtime);
@@ -67,6 +69,101 @@ public partial class RuntimeEmitter
         runtime.DateToLocaleDateString = EmitDateStringMethod(typeBuilder, runtime, "DateToLocaleDateString", "ToLocaleDateString");
         runtime.DateToLocaleTimeString = EmitDateStringMethod(typeBuilder, runtime, "DateToLocaleTimeString", "ToLocaleTimeString");
         runtime.DateToLocaleString = EmitDateStringMethod(typeBuilder, runtime, "DateToLocaleString", "ToLocaleString");
+        // toLocale* with locale/options (#538-family follow-up #539). Emitted unconditionally but
+        // only reached by toLocale* calls that pass arguments — those call sites record the soft
+        // SharpTS dependency, so argument-less toLocale* programs stay standalone.
+        EmitDateToLocaleWithOptions(typeBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Emits <c>$Runtime.DateToLocaleWithOptions(object receiver, int kind, object[] args) → string</c>,
+    /// which reflects to <c>RuntimeTypes.FormatDateToLocale</c> so the locale/options-aware formatting
+    /// lives in SharpTS (a soft dependency). <paramref name="kind"/> is 0/1/2 = date/time/both.
+    /// </summary>
+    private void EmitDateToLocaleWithOptions(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "DateToLocaleWithOptions",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object, _types.Int32, _types.ObjectArray]
+        );
+        runtime.DateToLocaleWithOptions = method;
+
+        var il = method.GetILGenerator();
+        var invalidLabel = il.DefineLabel();
+        var epochMs = il.DeclareLocal(_types.Double);
+        var localeLoc = il.DeclareLocal(_types.Object);
+        var optionsLoc = il.DeclareLocal(_types.Object);
+
+        // Non-$TSDate receiver -> "Invalid Date" (unreachable for type-checked code).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSDateType);
+        il.Emit(OpCodes.Brfalse, invalidLabel);
+
+        // epochMs = ((($TSDate)receiver).GetTime();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSDateType);
+        il.Emit(OpCodes.Callvirt, runtime.TSDateMethods["GetTime"]);
+        il.Emit(OpCodes.Stloc, epochMs);
+
+        // locale = args.Length > 0 ? args[0] : null;  options = args.Length > 1 ? args[1] : null;
+        EmitArgOrNull(il, 0, localeLoc);
+        EmitArgOrNull(il, 1, optionsLoc);
+
+        // return (string)RuntimeTypes.FormatDateToLocale(epochMs, kind, locale, options);  (reflected)
+        il.Emit(OpCodes.Ldstr, "SharpTS.Compilation.RuntimeTypes, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Ldstr, "FormatDateToLocale");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        il.Emit(OpCodes.Ldnull); // static target
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, epochMs);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldarg_1); // kind
+        il.Emit(OpCodes.Box, _types.Int32);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Ldloc, localeLoc);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_3);
+        il.Emit(OpCodes.Ldloc, optionsLoc);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(invalidLabel);
+        il.Emit(OpCodes.Ldstr, "Invalid Date");
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>Stores <c>args.Length &gt; index ? args[index] : null</c> (args = arg2) into <paramref name="target"/>.</summary>
+    private void EmitArgOrNull(ILGenerator il, int index, LocalBuilder target)
+    {
+        var has = il.DefineLabel();
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4, index);
+        il.Emit(OpCodes.Bgt, has); // args.Length > index
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Br, done);
+        il.MarkLabel(has);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4, index);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.MarkLabel(done);
+        il.Emit(OpCodes.Stloc, target);
     }
 
     /// <summary>
@@ -118,9 +215,10 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits a static $Runtime helper for a multi-arg $TSDate setter whose arguments are
-    /// packaged as object[]; only the primary argument (index 0) is honored, matching the
-    /// other compiled Date setters (#536) (NaN when the receiver is not a $TSDate). Returns the method.
+    /// Emits a static $Runtime helper for a multi-argument $TSDate setter. The arguments are
+    /// passed through as the object[] supplied at the call site (its length tells $TSDate how
+    /// many optional trailing components were provided — #536), so all supplied components are
+    /// honored. Returns NaN when the receiver is not a $TSDate. Returns the emitted method.
     /// </summary>
     private MethodBuilder EmitDateArgsArraySetter(TypeBuilder typeBuilder, EmittedRuntime runtime, string runtimeName, string instanceMethodName)
     {
@@ -140,10 +238,7 @@ public partial class RuntimeEmitter
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSDateType);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Ldarg_1); // the full object[] — $TSDate reads each supplied component
         il.Emit(OpCodes.Callvirt, runtime.TSDateMethods[instanceMethodName]);
         il.Emit(OpCodes.Ret);
 
@@ -492,70 +587,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitDateSetFullYear(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "DateSetFullYear",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Double,
-            [_types.Object, _types.ObjectArray]
-        );
-        runtime.DateSetFullYear = method;
-
-        var il = method.GetILGenerator();
-        var invalidLabel = il.DefineLabel();
-
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSDateType);
-        il.Emit(OpCodes.Brfalse, invalidLabel);
-
-        // Call SetFullYear with args[0] as the year
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.TSDateType);
-        il.Emit(OpCodes.Ldarg_1);  // args array
-        il.Emit(OpCodes.Ldc_I4_0);  // index 0
-        il.Emit(OpCodes.Ldelem_Ref);  // args[0]
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Callvirt, runtime.TSDateMethods["SetFullYear"]);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(invalidLabel);
-        il.Emit(OpCodes.Ldc_R8, double.NaN);
-        il.Emit(OpCodes.Ret);
-    }
-
-    private void EmitDateSetMonth(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "DateSetMonth",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Double,
-            [_types.Object, _types.ObjectArray]
-        );
-        runtime.DateSetMonth = method;
-
-        var il = method.GetILGenerator();
-        var invalidLabel = il.DefineLabel();
-
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSDateType);
-        il.Emit(OpCodes.Brfalse, invalidLabel);
-
-        // Call SetMonth with args[0]
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.TSDateType);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Callvirt, runtime.TSDateMethods["SetMonth"]);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(invalidLabel);
-        il.Emit(OpCodes.Ldc_R8, double.NaN);
-        il.Emit(OpCodes.Ret);
-    }
-
     private void EmitDateSetDate(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
@@ -578,102 +609,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Castclass, runtime.TSDateType);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, runtime.TSDateMethods["SetDate"]);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(invalidLabel);
-        il.Emit(OpCodes.Ldc_R8, double.NaN);
-        il.Emit(OpCodes.Ret);
-    }
-
-    private void EmitDateSetHours(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "DateSetHours",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Double,
-            [_types.Object, _types.ObjectArray]
-        );
-        runtime.DateSetHours = method;
-
-        var il = method.GetILGenerator();
-        var invalidLabel = il.DefineLabel();
-
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSDateType);
-        il.Emit(OpCodes.Brfalse, invalidLabel);
-
-        // Call SetHours with args[0]
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.TSDateType);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Callvirt, runtime.TSDateMethods["SetHours"]);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(invalidLabel);
-        il.Emit(OpCodes.Ldc_R8, double.NaN);
-        il.Emit(OpCodes.Ret);
-    }
-
-    private void EmitDateSetMinutes(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "DateSetMinutes",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Double,
-            [_types.Object, _types.ObjectArray]
-        );
-        runtime.DateSetMinutes = method;
-
-        var il = method.GetILGenerator();
-        var invalidLabel = il.DefineLabel();
-
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSDateType);
-        il.Emit(OpCodes.Brfalse, invalidLabel);
-
-        // Call SetMinutes with args[0]
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.TSDateType);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Callvirt, runtime.TSDateMethods["SetMinutes"]);
-        il.Emit(OpCodes.Ret);
-
-        il.MarkLabel(invalidLabel);
-        il.Emit(OpCodes.Ldc_R8, double.NaN);
-        il.Emit(OpCodes.Ret);
-    }
-
-    private void EmitDateSetSeconds(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "DateSetSeconds",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.Double,
-            [_types.Object, _types.ObjectArray]
-        );
-        runtime.DateSetSeconds = method;
-
-        var il = method.GetILGenerator();
-        var invalidLabel = il.DefineLabel();
-
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSDateType);
-        il.Emit(OpCodes.Brfalse, invalidLabel);
-
-        // Call SetSeconds with args[0]
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.TSDateType);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Unbox_Any, _types.Double);
-        il.Emit(OpCodes.Callvirt, runtime.TSDateMethods["SetSeconds"]);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(invalidLabel);

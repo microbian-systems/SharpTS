@@ -774,6 +774,81 @@ public class SharpTSDate : ITypeCategorized
         return _utcDateTime.ToLocalTime().ToString("G", CultureInfo.CurrentCulture);
     }
 
+    /// <summary>Default component set for <see cref="FormatToLocale"/> (which toLocale* method called it).</summary>
+    public const int LocaleKindDate = 0;
+    public const int LocaleKindTime = 1;
+    public const int LocaleKindDateTime = 2;
+
+    // Date/time formatting keys (Intl.DateTimeFormat options) whose presence suppresses the
+    // ToDateTimeOptions defaults. Calendar/numberingSystem/timeZone/hour12/hourCycle don't count.
+    private static readonly HashSet<string> LocaleFormatComponentKeys =
+    [
+        "dateStyle", "timeStyle", "weekday", "year", "month", "day",
+        "hour", "minute", "second", "fractionalSecondDigits", "dayPeriod", "era"
+    ];
+
+    /// <summary>
+    /// Formats this instant for one of the toLocale* methods (#539), honoring the BCP 47
+    /// <paramref name="locale"/> and Intl.DateTimeFormat <paramref name="options"/>. When the caller
+    /// supplies explicit date/time components or a dateStyle/timeStyle, formatting routes through
+    /// <see cref="SharpTSIntlDateTimeFormat"/>; otherwise the instant is formatted with the requested
+    /// locale's culture using this method's default pattern (<paramref name="kind"/>: date / time /
+    /// both — a pragmatic form of ECMA-402 ToDateTimeOptions). Static so the compiled standalone path
+    /// can reach the same logic by reflection (see RuntimeTypes.FormatDateToLocale).
+    /// </summary>
+    public static string FormatToLocale(double epochMs, int kind, object? locale, object? options)
+    {
+        if (double.IsNaN(epochMs)) return "Invalid Date";
+        // The formatter applies an explicit timeZone option itself; otherwise format in local time.
+        var local = UnixEpoch.AddMilliseconds(epochMs).ToLocalTime();
+        try
+        {
+            if (HasFormatComponents(options))
+                return new SharpTSIntlDateTimeFormat(locale, options).FormatDate(local);
+
+            // No explicit components: use the requested locale's culture (SharpTSIntlDateTimeFormat's
+            // component formatter does not reorder y/m/d to locale convention, so the culture's own
+            // standard pattern gives the better default).
+            var pattern = kind switch
+            {
+                LocaleKindTime => "T",
+                LocaleKindDateTime => "G",
+                _ => "d",
+            };
+            return local.ToString(pattern, ResolveCulture(locale));
+        }
+        catch
+        {
+            return "Invalid Date";
+        }
+    }
+
+    /// <summary>True if the options bag requests an explicit date/time component or style.</summary>
+    private static bool HasFormatComponents(object? options)
+    {
+        IEnumerable<KeyValuePair<string, object?>>? entries = options switch
+        {
+            SharpTSObject obj => obj.Fields,
+            IDictionary<string, object?> dict => dict,
+            _ => null
+        };
+        if (entries == null) return false;
+        foreach (var kv in entries)
+            if (LocaleFormatComponentKeys.Contains(kv.Key)) return true;
+        return false;
+    }
+
+    /// <summary>Resolves a BCP 47 locale (extensions stripped) to a CultureInfo, falling back gracefully.</summary>
+    private static CultureInfo ResolveCulture(object? locale)
+    {
+        var s = locale?.ToString();
+        if (string.IsNullOrWhiteSpace(s)) return CultureInfo.CurrentCulture;
+        var baseLocale = Bcp47Extensions.Parse(s.Replace('_', '-')).BaseLocale;
+        if (string.IsNullOrEmpty(baseLocale)) return CultureInfo.CurrentCulture;
+        try { return CultureInfo.GetCultureInfo(baseLocale); }
+        catch { return CultureInfo.InvariantCulture; }
+    }
+
     /// <summary>
     /// Returns the primitive value (timestamp) of the date.
     /// </summary>
@@ -813,4 +888,58 @@ public class SharpTSDate : ITypeCategorized
     {
         return (DateTime.UtcNow - UnixEpoch).TotalMilliseconds;
     }
+
+    /// <summary>
+    /// ECMA-262 §21.4.3.4 (Date.UTC): interprets the components as a UTC date and returns the
+    /// corresponding timestamp in milliseconds since the Unix epoch. Month is 0-indexed; years
+    /// 0-99 map to 1900-1999. Absent components default to month 0, date 1, and 0 for the time
+    /// parts. Returns NaN if any supplied component is non-finite or the date is out of range.
+    /// </summary>
+    public static double UTC(double year, double? month = null, double? date = null,
+                             double? hours = null, double? minutes = null,
+                             double? seconds = null, double? milliseconds = null)
+    {
+        // A non-finite component (NaN/Infinity) yields NaN, matching ECMA-262 MakeDay/MakeTime;
+        // note (int)NaN would otherwise collapse to 0, so the check must precede truncation.
+        if (!double.IsFinite(year)) return double.NaN;
+        if (month is { } moV && !double.IsFinite(moV)) return double.NaN;
+        if (date is { } dV && !double.IsFinite(dV)) return double.NaN;
+        if (hours is { } hV && !double.IsFinite(hV)) return double.NaN;
+        if (minutes is { } miV && !double.IsFinite(miV)) return double.NaN;
+        if (seconds is { } sV && !double.IsFinite(sV)) return double.NaN;
+        if (milliseconds is { } msV && !double.IsFinite(msV)) return double.NaN;
+
+        int y = (int)year;
+        if (y >= 0 && y <= 99) y += 1900;
+        int mo = month.HasValue ? (int)month.Value : 0;
+        int d = date.HasValue ? (int)date.Value : 1;
+        int h = hours.HasValue ? (int)hours.Value : 0;
+        int mi = minutes.HasValue ? (int)minutes.Value : 0;
+        int s = seconds.HasValue ? (int)seconds.Value : 0;
+        int ms = milliseconds.HasValue ? (int)milliseconds.Value : 0;
+
+        try
+        {
+            // Build directly in UTC, mirroring SetFromComponents' overflow handling.
+            var utc = new DateTime(y, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+                .AddMonths(mo)
+                .AddDays(d - 1)
+                .AddHours(h)
+                .AddMinutes(mi)
+                .AddSeconds(s)
+                .AddMilliseconds(ms);
+            return (utc - UnixEpoch).TotalMilliseconds;
+        }
+        catch
+        {
+            return double.NaN;
+        }
+    }
+
+    /// <summary>
+    /// ECMA-262 §21.4.3.2 (Date.parse): parses a date string and returns the corresponding
+    /// timestamp in milliseconds since the Unix epoch, or NaN if it cannot be parsed. Uses the
+    /// same parsing as the string constructor (ISO 8601).
+    /// </summary>
+    public static double Parse(string s) => new SharpTSDate(s).GetTime();
 }

@@ -191,6 +191,12 @@ public partial class RuntimeEmitter
         // Null when UsesDate is off — Date can't be referenced then anyway.
         if (runtime.DateNow != null)
             EmitLookup(runtime.TSDateType, "now", runtime.DateNow, 0);
+        // Date.UTC / Date.parse value-form (`const f = Date.UTC; f(...)`) — #538. The wrapper
+        // packs the JS args into the backing methods' object[] / object parameter.
+        if (runtime.TSDateUTCStatic != null)
+            EmitLookup(runtime.TSDateType, "UTC", runtime.TSDateUTCStatic, 7);
+        if (runtime.TSDateParseStatic != null)
+            EmitLookup(runtime.TSDateType, "parse", runtime.TSDateParseStatic, 1);
 
         // Math.* deliberately not handled here — bare `Math` emits the null
         // pseudo-variable (not a Type token), so its value-form access goes

@@ -333,6 +333,12 @@ public static class BuiltInTypes
         return name switch
         {
             "now" => new TypeInfo.Function([], NumberType),
+            // Date.UTC(year, monthIndex?, date?, hours?, minutes?, seconds?, ms?): number (lib.es5)
+            "UTC" => new TypeInfo.Function(
+                [NumberType, NumberType, NumberType, NumberType, NumberType, NumberType, NumberType],
+                NumberType, RequiredParams: 1),
+            // Date.parse(s: string): number (lib.es5)
+            "parse" => new TypeInfo.Function([StringType], NumberType),
             _ => null
         };
     }
