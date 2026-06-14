@@ -80,15 +80,19 @@ public partial class ILEmitter
                 break;
 
             case Stmt.Var varStmt:
-                // Emit variable declaration
+                // Emit variable declaration (creates a local for same-namespace-init reads),
+                // publish to the namespace object (external `N.x`), and mirror into the static
+                // backing field so functions in the namespace can resolve the bare name (#567).
                 EmitStatement(varStmt);
                 StoreLocalInNamespaceField(nsField, memberName!);
+                StoreLocalInNamespaceStaticField(nsPath, memberName!);
                 break;
 
             case Stmt.Const constStmt:
-                // Emit const declaration
+                // Emit const declaration (see Stmt.Var above for the three storage targets).
                 EmitStatement(constStmt);
                 StoreLocalInNamespaceField(nsField, memberName!);
+                StoreLocalInNamespaceStaticField(nsPath, memberName!);
                 break;
 
             case Stmt.Class classStmt:
@@ -227,6 +231,33 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Box, memberLocal.LocalType);
             }
             IL.Emit(OpCodes.Call, _ctx.Runtime!.TSNamespaceSet);
+        }
+    }
+
+    /// <summary>
+    /// Mirrors a namespace-level variable's value from its emitted local into the namespace's
+    /// static backing field, so functions declared in the namespace resolve the bare name via
+    /// the standard top-level-static-var path (#567). No-op when no backing field was defined
+    /// (e.g. a non-variable member).
+    /// </summary>
+    private void StoreLocalInNamespaceStaticField(string nsPath, string memberName)
+    {
+        if (_ctx.NamespaceVarFields == null ||
+            !_ctx.NamespaceVarFields.TryGetValue(nsPath, out var fields) ||
+            !fields.TryGetValue(memberName, out var nsVarField))
+        {
+            return;
+        }
+
+        var memberLocal = _ctx.Locals.GetLocal(memberName);
+        if (memberLocal != null)
+        {
+            IL.Emit(OpCodes.Ldloc, memberLocal);
+            if (memberLocal.LocalType.IsValueType)
+            {
+                IL.Emit(OpCodes.Box, memberLocal.LocalType);
+            }
+            IL.Emit(OpCodes.Stsfld, nsVarField);
         }
     }
 }

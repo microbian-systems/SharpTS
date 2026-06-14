@@ -75,11 +75,16 @@ internal sealed class NestedFunctionLifter
     /// </summary>
     public static List<Stmt> Lift(List<Stmt> module)
     {
-        // Cheap structural pre-scan: collect declarations whose SHAPE qualifies (case A/B), without
-        // running closure analysis. The overwhelmingly common module has none, so we return early.
-        var shapeCandidates = new List<Stmt.Function>();
-        CollectShapeCandidates(module, enclosingIsStateMachine: false, insideFunction: false, shapeCandidates);
-        if (shapeCandidates.Count == 0) return module;
+        // Cheap structural pre-scan: collect declarations whose SHAPE qualifies (case A/B, or a
+        // declaration inside a module-level block/loop), without running closure analysis. The
+        // overwhelmingly common module has none, so we return early. We iterate the module statements
+        // directly (not via CollectShapeCandidates) because module top-level declarations are NOT
+        // block/loop bindings — they stay reachable after a lift — so they must not seed the
+        // enclosing-binding set the capture guard checks against.
+        var scan = new ShapeScan();
+        foreach (var stmt in module)
+            CollectShapeCandidatesStmt(stmt, enclosingIsStateMachine: false, insideFunction: false, insideModuleBlock: false, enclosingBlockBindings: [], scan);
+        if (scan.Candidates.Count == 0) return module;
 
         // Capture analysis is needed to tell a safe (module/global) reference from an unsafe
         // enclosing-scope capture. Run our own pass on the original AST; the main pipeline
@@ -91,10 +96,17 @@ internal sealed class NestedFunctionLifter
         // not collide with a top-level binding (which would hijack the injected alias).
         var reservedTopLevelNames = CollectTopLevelBindingNames(module);
         var safe = new HashSet<Stmt.Function>(ReferenceEqualityComparer.Instance);
-        foreach (var f in shapeCandidates)
+        foreach (var f in scan.Candidates)
         {
             if (!IsNonCapturing(analyzer, f)) continue;
             if (reservedTopLevelNames.Contains(f.Name.Lexeme)) continue;
+            // A module-level-block candidate that captures a binding declared in an enclosing
+            // block/loop scope (e.g. a generator in a `for` reading the loop variable) cannot be
+            // lifted: that name does not exist at module top level, so the relocated body would
+            // read the wrong slot. Leaving it nested is a clean failure, never a miscompile (#605).
+            if (scan.ModuleBlockEnclosingBindings.TryGetValue(f, out var blockBindings) &&
+                CapturesAnyOf(analyzer, f, blockBindings))
+                continue;
             safe.Add(f);
         }
         if (safe.Count == 0) return module;
@@ -135,79 +147,156 @@ internal sealed class NestedFunctionLifter
         return true;
     }
 
-    #region Structural candidate collection (read-only, no closure analysis)
-
-    private static void CollectShapeCandidates(List<Stmt> body, bool enclosingIsStateMachine, bool insideFunction, List<Stmt.Function> output)
+    /// <summary>True if <paramref name="f"/> captures any name in <paramref name="names"/> (its own
+    /// name excluded — recursion is handled by the self-alias, not a captured binding).</summary>
+    private static bool CapturesAnyOf(ClosureAnalyzer analyzer, Stmt.Function f, HashSet<string> names)
     {
-        foreach (var stmt in body)
-            CollectShapeCandidatesStmt(stmt, enclosingIsStateMachine, insideFunction, output);
+        foreach (var captured in analyzer.GetCaptures(f))
+        {
+            if (captured == f.Name.Lexeme) continue;
+            if (names.Contains(captured)) return true;
+        }
+        return false;
     }
 
-    private static void CollectShapeCandidatesStmt(Stmt stmt, bool enclosingIsStateMachine, bool insideFunction, List<Stmt.Function> output)
+    /// <summary>Accumulates the structural candidate scan results.</summary>
+    private sealed class ShapeScan
+    {
+        public readonly List<Stmt.Function> Candidates = [];
+        /// <summary>For module-level-block candidates only: the block/loop-scoped binding names in
+        /// scope around the declaration. A candidate capturing any of these can't be lifted to
+        /// module scope (the names don't exist there).</summary>
+        public readonly Dictionary<Stmt.Function, HashSet<string>> ModuleBlockEnclosingBindings = new(ReferenceEqualityComparer.Instance);
+    }
+
+    #region Structural candidate collection (read-only, no closure analysis)
+
+    private static void CollectShapeCandidates(List<Stmt> body, bool enclosingIsStateMachine, bool insideFunction, bool insideModuleBlock, HashSet<string> enclosingBlockBindings, ShapeScan scan)
+    {
+        // A statement list opens a lexical scope: its own declarations are visible to nested
+        // functions, so add them to the enclosing-binding set used by the module-block capture
+        // guard. Only tracked at module level — inside a function the inner-function machinery
+        // resolves captures itself.
+        var bindings = !insideFunction ? WithBlockBindings(enclosingBlockBindings, body) : enclosingBlockBindings;
+        foreach (var stmt in body)
+            CollectShapeCandidatesStmt(stmt, enclosingIsStateMachine, insideFunction, insideModuleBlock, bindings, scan);
+    }
+
+    private static void CollectShapeCandidatesStmt(Stmt stmt, bool enclosingIsStateMachine, bool insideFunction, bool insideModuleBlock, HashSet<string> enclosingBlockBindings, ShapeScan scan)
     {
         switch (stmt)
         {
             case Stmt.Function f when f.Body != null:
-                // Only lift declarations nested INSIDE a function-like. A declaration that is only
-                // inside a module-level block/loop is left alone: the closure analyzer attributes
-                // block/loop-scoped captures to an enclosing function, but at module scope there is
-                // none, so such a capture looks (falsely) module-global. Lifting it out of its block
-                // would silently break the reference (e.g. a generator in a `for` capturing the loop
-                // variable). Inside a function those captures are tracked correctly and blocked.
+                // (1) A declaration nested INSIDE a function-like whose shape needs the top-level
+                // state-machine pipeline (gen/async, or a plain fn inside a state machine). Captures
+                // into the enclosing function are tracked correctly and blocked by IsNonCapturing.
                 if (insideFunction && IsCandidateShape(f, enclosingIsStateMachine))
-                    output.Add(f);
+                    scan.Candidates.Add(f);
+                // (2) Any function/generator/async declared directly inside a module-level block,
+                // loop, or `if` (no enclosing function): it is bound by neither the top-level
+                // definition pass (which doesn't recurse into blocks) nor the inner-function pass
+                // (which only fires inside a function), so a reference throws "Undefined variable"
+                // in compiled mode (#605). Record it with the block/loop bindings in scope so Lift
+                // can drop it if it captures one of them (a clean failure, never a miscompile).
+                else if (!insideFunction && insideModuleBlock)
+                {
+                    scan.Candidates.Add(f);
+                    scan.ModuleBlockEnclosingBindings[f] = enclosingBlockBindings;
+                }
                 // A nested function's own body establishes a fresh enclosing kind for its children.
-                CollectShapeCandidates(f.Body, f.IsGenerator || f.IsAsync, insideFunction: true, output);
+                CollectShapeCandidates(f.Body, f.IsGenerator || f.IsAsync, insideFunction: true, insideModuleBlock: false, enclosingBlockBindings, scan);
                 break;
             case Stmt.Block b:
-                CollectShapeCandidates(b.Statements, enclosingIsStateMachine, insideFunction, output);
+                CollectShapeCandidates(b.Statements, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, enclosingBlockBindings, scan);
                 break;
             case Stmt.Sequence s:
-                CollectShapeCandidates(s.Statements, enclosingIsStateMachine, insideFunction, output);
+                CollectShapeCandidates(s.Statements, enclosingIsStateMachine, insideFunction, insideModuleBlock, enclosingBlockBindings, scan);
                 break;
             case Stmt.If i:
-                CollectShapeCandidatesStmt(i.ThenBranch, enclosingIsStateMachine, insideFunction, output);
-                if (i.ElseBranch != null) CollectShapeCandidatesStmt(i.ElseBranch, enclosingIsStateMachine, insideFunction, output);
+                CollectShapeCandidatesStmt(i.ThenBranch, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, enclosingBlockBindings, scan);
+                if (i.ElseBranch != null) CollectShapeCandidatesStmt(i.ElseBranch, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, enclosingBlockBindings, scan);
                 break;
             case Stmt.While w:
-                CollectShapeCandidatesStmt(w.Body, enclosingIsStateMachine, insideFunction, output);
+                CollectShapeCandidatesStmt(w.Body, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, enclosingBlockBindings, scan);
                 break;
             case Stmt.DoWhile d:
-                CollectShapeCandidatesStmt(d.Body, enclosingIsStateMachine, insideFunction, output);
+                CollectShapeCandidatesStmt(d.Body, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, enclosingBlockBindings, scan);
                 break;
             case Stmt.For fo:
-                if (fo.Initializer != null) CollectShapeCandidatesStmt(fo.Initializer, enclosingIsStateMachine, insideFunction, output);
-                CollectShapeCandidatesStmt(fo.Body, enclosingIsStateMachine, insideFunction, output);
+                // The loop variable is scoped to the loop body — add it to the bindings so a body
+                // declaration that captures it (the #605 `for (let k…) { function* g(){ yield k } }`
+                // case) is recognized as capturing and left nested.
+                var forBindings = !insideFunction ? WithDeclaration(enclosingBlockBindings, fo.Initializer) : enclosingBlockBindings;
+                if (fo.Initializer != null) CollectShapeCandidatesStmt(fo.Initializer, enclosingIsStateMachine, insideFunction, insideModuleBlock, enclosingBlockBindings, scan);
+                CollectShapeCandidatesStmt(fo.Body, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, forBindings, scan);
                 break;
             case Stmt.ForOf fof:
-                CollectShapeCandidatesStmt(fof.Body, enclosingIsStateMachine, insideFunction, output);
+                var forOfBindings = !insideFunction ? WithName(enclosingBlockBindings, fof.Variable.Lexeme) : enclosingBlockBindings;
+                CollectShapeCandidatesStmt(fof.Body, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, forOfBindings, scan);
                 break;
             case Stmt.ForIn fin:
-                CollectShapeCandidatesStmt(fin.Body, enclosingIsStateMachine, insideFunction, output);
+                var forInBindings = !insideFunction ? WithName(enclosingBlockBindings, fin.Variable.Lexeme) : enclosingBlockBindings;
+                CollectShapeCandidatesStmt(fin.Body, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, forInBindings, scan);
                 break;
             case Stmt.LabeledStatement l:
-                CollectShapeCandidatesStmt(l.Statement, enclosingIsStateMachine, insideFunction, output);
+                CollectShapeCandidatesStmt(l.Statement, enclosingIsStateMachine, insideFunction, insideModuleBlock, enclosingBlockBindings, scan);
                 break;
             case Stmt.TryCatch t:
-                CollectShapeCandidates(t.TryBlock, enclosingIsStateMachine, insideFunction, output);
-                if (t.CatchBlock != null) CollectShapeCandidates(t.CatchBlock, enclosingIsStateMachine, insideFunction, output);
-                if (t.FinallyBlock != null) CollectShapeCandidates(t.FinallyBlock, enclosingIsStateMachine, insideFunction, output);
+                CollectShapeCandidates(t.TryBlock, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, enclosingBlockBindings, scan);
+                if (t.CatchBlock != null)
+                {
+                    var catchBindings = !insideFunction ? WithName(enclosingBlockBindings, t.CatchParam?.Lexeme) : enclosingBlockBindings;
+                    CollectShapeCandidates(t.CatchBlock, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, catchBindings, scan);
+                }
+                if (t.FinallyBlock != null) CollectShapeCandidates(t.FinallyBlock, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, enclosingBlockBindings, scan);
                 break;
             case Stmt.Switch sw:
-                foreach (var c in sw.Cases) CollectShapeCandidates(c.Body, enclosingIsStateMachine, insideFunction, output);
-                if (sw.DefaultBody != null) CollectShapeCandidates(sw.DefaultBody, enclosingIsStateMachine, insideFunction, output);
+                foreach (var c in sw.Cases) CollectShapeCandidates(c.Body, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, enclosingBlockBindings, scan);
+                if (sw.DefaultBody != null) CollectShapeCandidates(sw.DefaultBody, enclosingIsStateMachine, insideFunction, insideModuleBlock: !insideFunction, enclosingBlockBindings, scan);
                 break;
             case Stmt.Class cls:
                 // Method bodies are function-likes regardless of where the class sits.
                 foreach (var m in cls.Methods)
-                    if (m.Body != null) CollectShapeCandidates(m.Body, m.IsGenerator || m.IsAsync, insideFunction: true, output);
+                    if (m.Body != null) CollectShapeCandidates(m.Body, m.IsGenerator || m.IsAsync, insideFunction: true, insideModuleBlock: false, enclosingBlockBindings, scan);
                 break;
             case Stmt.Export ex when ex.Declaration != null:
-                CollectShapeCandidatesStmt(ex.Declaration, enclosingIsStateMachine, insideFunction, output);
+                CollectShapeCandidatesStmt(ex.Declaration, enclosingIsStateMachine, insideFunction, insideModuleBlock, enclosingBlockBindings, scan);
                 break;
             // Stmt.Namespace is intentionally NOT traversed (#583 §3 lift barrier).
         }
     }
+
+    /// <summary>Returns <paramref name="current"/> extended with the names declared directly in
+    /// <paramref name="blockStmts"/> (a new set only when something is added).</summary>
+    private static HashSet<string> WithBlockBindings(HashSet<string> current, List<Stmt> blockStmts)
+    {
+        HashSet<string>? added = null;
+        foreach (var s in blockStmts)
+        {
+            var name = DeclaredName(s);
+            if (name != null && !current.Contains(name))
+                (added ??= new HashSet<string>(current)).Add(name);
+        }
+        return added ?? current;
+    }
+
+    private static HashSet<string> WithDeclaration(HashSet<string> current, Stmt? decl)
+        => decl == null ? current : WithName(current, DeclaredName(decl));
+
+    private static HashSet<string> WithName(HashSet<string> current, string? name)
+        => name == null || current.Contains(name) ? current : new HashSet<string>(current) { name };
+
+    /// <summary>The single binding name a declaration statement introduces, or null.</summary>
+    private static string? DeclaredName(Stmt stmt) => stmt switch
+    {
+        Stmt.Function f => f.Name.Lexeme,
+        Stmt.Class c => c.Name.Lexeme,
+        Stmt.Var v => v.Name.Lexeme,
+        Stmt.Const co => co.Name.Lexeme,
+        Stmt.Enum e => e.Name.Lexeme,
+        Stmt.Export { Declaration: not null } ex => DeclaredName(ex.Declaration),
+        _ => null
+    };
 
     #endregion
 

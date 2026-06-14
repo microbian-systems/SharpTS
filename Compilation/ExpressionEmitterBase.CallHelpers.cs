@@ -113,7 +113,34 @@ public abstract partial class ExpressionEmitterBase
             // Imported functions must go through TopLevelStaticVars (cross-module tokens don't work)
             bool isImportedFunction = Ctx.TopLevelStaticVars?.ContainsKey(funcVar.Name.Lexeme) == true;
 
-            if (!isImportedFunction && Ctx.Functions.TryGetValue(resolvedFuncName, out var methodBuilder))
+            // A more-local binding of the same name (parameter, local, captured var, or a
+            // hoisted nested function declaration) must shadow a module top-level function,
+            // matching JS lexical scoping and the interpreter (#607). The variable-read path
+            // (EmitVariable) already resolves the local binding before the top-level Functions
+            // branch; the direct-call path bypasses the resolver, so without this guard a call
+            // `h()` would silently hit the top-level `h` instead of the in-scope `h`. Defer to
+            // the inner-function direct call (below) or the function-value call (fallback),
+            // both of which honor the resolver's precedence.
+            bool shadowedByLocalBinding = Resolver.HasVariable(funcVar.Name.Lexeme);
+
+            // Exception: a same-module top-level function referenced from within a nested
+            // closure is materialized into a display-class capture field, so HasVariable
+            // reports it — but it is the function itself, not a shadowing binding. Routing it
+            // through the value-call path would drop the direct call's typed-parameter
+            // conversions (e.g. the `path` stdlib's `posix.join` method calls module helper
+            // `posixJoin(parts: string[])`, whose List<string> parameter a value call cannot
+            // satisfy from a List<object>). Keep the direct call unless a genuine parameter or
+            // local of the same name actually shadows it.
+            if (shadowedByLocalBinding &&
+                Ctx.Functions.ContainsKey(resolvedFuncName) &&
+                Ctx.CapturedFields?.ContainsKey(funcVar.Name.Lexeme) == true &&
+                !Ctx.TryGetParameter(funcVar.Name.Lexeme, out _) &&
+                !Ctx.Locals.HasLocal(funcVar.Name.Lexeme))
+            {
+                shadowedByLocalBinding = false;
+            }
+
+            if (!shadowedByLocalBinding && !isImportedFunction && Ctx.Functions.TryGetValue(resolvedFuncName, out var methodBuilder))
             {
                 MethodInfo targetMethod = methodBuilder;
 

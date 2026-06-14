@@ -143,8 +143,32 @@ public partial class CompilationContext
     /// </summary>
     public bool IsStaticConstructorContext { get; set; }
 
+    /// <summary>
+    /// True only when emitting the module's top-level statements (entry-point Main,
+    /// module/script <c>$Initialize</c>). A <c>var</c>/<c>let</c>/<c>const</c> declared
+    /// here is a genuine module-level binding and is routed to its static field
+    /// (<see cref="TopLevelStaticVars"/>) or entry-point display-class field
+    /// (<see cref="CapturedTopLevelVars"/>) so all functions can read it.
+    /// <para>
+    /// Function/method/arrow bodies receive those same dictionaries for READ access
+    /// but set this flag to <c>false</c>: a same-named declaration inside a function
+    /// body is a function-local that must shadow the module binding, not overwrite its
+    /// storage. Without this gate a function-local <c>const x</c> whose name collides
+    /// with a module-level <c>x</c> silently writes through to the module slot and the
+    /// real local binding is never created (#562).
+    /// </para>
+    /// </summary>
+    public bool IsModuleTopLevel { get; set; }
+
     // Namespace support: namespace path -> static field
     public Dictionary<string, FieldBuilder>? NamespaceFields { get; set; }
+
+    // Namespace-level var/let/const backing fields: namespace path -> var name -> static field.
+    // A namespace member variable is stored in its namespace object (for external `N.x` access)
+    // AND in a static field so functions declared in the namespace can resolve the bare name —
+    // the namespace object is not visible inside the function bodies (#567). Mirrors how
+    // module top-level vars use TopLevelStaticVars.
+    public Dictionary<string, Dictionary<string, FieldBuilder>>? NamespaceVarFields { get; set; }
 
     // Top-level variables captured by async functions (stored as static fields)
     public Dictionary<string, FieldBuilder>? TopLevelStaticVars { get; set; }

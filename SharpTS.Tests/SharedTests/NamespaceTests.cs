@@ -10,6 +10,77 @@ namespace SharpTS.Tests.SharedTests;
 /// </summary>
 public class NamespaceTests
 {
+    #region Namespace-level variable access from member functions (#567)
+
+    // A function declared in a namespace must be able to read namespace-level var/let/const members.
+    // Compiled mode previously stored those only as runtime members of the namespace object, invisible
+    // to the member function body, throwing "Undefined variable". The fix also backs each with a static
+    // field surfaced to the function's resolver. These pin every variant from the issue.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceFunction_ReadsNamespaceConst(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { const val = 7; export function f() { return val; } export const result = f(); }
+            console.log(N.result);
+        ";
+        Assert.Equal("7\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceFunction_ReadsNamespaceLet(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { let val = 7; export function f() { return val; } export const r = f(); }
+            console.log(N.r);
+        ";
+        Assert.Equal("7\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceFunction_ReadsNamespaceVar(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { export var val = 7; export function f() { return val; } export const r = f(); }
+            console.log(N.r);
+        ";
+        Assert.Equal("7\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceFunction_ReadsExportedConst_AndExternalAccessStillWorks(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { export const val = 7; export function f() { return val; } export const r = f(); }
+            console.log(N.r + "","" + N.val);
+        ";
+        Assert.Equal("7,7\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedNamespaceFunction_ReadsOuterAndInnerVars(ExecutionMode mode)
+    {
+        var code = @"
+            namespace Out {
+                const a = 1;
+                export namespace In {
+                    const b = 2;
+                    export function g() { return a + b; }
+                    export const r = g();
+                }
+            }
+            console.log(Out.In.r);
+        ";
+        Assert.Equal("3\n", TestHarness.Run(code, mode));
+    }
+
+    #endregion
+
     #region Basic Namespace Features (Both Modes)
 
     [Theory]

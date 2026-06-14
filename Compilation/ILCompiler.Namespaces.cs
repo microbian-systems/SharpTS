@@ -10,6 +10,19 @@ namespace SharpTS.Compilation;
 public partial class ILCompiler
 {
     /// <summary>
+    /// Namespace-level var/let/const backing fields: namespace path -> var name -> static field.
+    /// See <see cref="CompilationContext.NamespaceVarFields"/> for the rationale (#567).
+    /// </summary>
+    private readonly Dictionary<string, Dictionary<string, FieldBuilder>> _namespaceVarFields = [];
+
+    /// <summary>
+    /// The namespace path whose member bodies are currently being emitted, or null when
+    /// not inside a namespace. Set by <see cref="EmitNamespaceMemberBodies"/> so a namespace
+    /// function body can surface its enclosing namespaces' var fields to its resolver (#567).
+    /// </summary>
+    private string? _currentNamespacePath;
+
+    /// <summary>
     /// Defines static fields for a namespace and its nested namespaces.
     /// Called during the definition phase to create module-level fields.
     /// </summary>
@@ -59,39 +72,111 @@ public partial class ILCompiler
                     // Define enums inside namespace
                     DefineEnum(enumStmt);
                     break;
+
+                // A namespace-level variable needs a static backing field so functions
+                // declared in the namespace can resolve the bare name (#567).
+                case Stmt.Var varStmt:
+                    DefineNamespaceVarField(path, varStmt.Name.Lexeme);
+                    break;
+
+                case Stmt.Const constStmt:
+                    DefineNamespaceVarField(path, constStmt.Name.Lexeme);
+                    break;
             }
         }
+    }
+
+    /// <summary>
+    /// Defines (once) the static backing field for a namespace-level variable.
+    /// </summary>
+    private void DefineNamespaceVarField(string nsPath, string varName)
+    {
+        if (!_namespaceVarFields.TryGetValue(nsPath, out var fields))
+        {
+            fields = [];
+            _namespaceVarFields[nsPath] = fields;
+        }
+        if (!fields.ContainsKey(varName))
+        {
+            fields[varName] = _programType.DefineField(
+                $"$nsvar_{nsPath.Replace(".", "_")}_{varName}",
+                _types.Object,
+                FieldAttributes.Public | FieldAttributes.Static);
+        }
+    }
+
+    /// <summary>
+    /// Returns module top-level static vars augmented with the static backing fields of every
+    /// namespace enclosing <paramref name="nsPath"/> (innermost wins). Used to make a namespace
+    /// function body resolve bare references to namespace-level variables (#567).
+    /// </summary>
+    private Dictionary<string, FieldBuilder>? BuildNamespaceScopedStaticVars(
+        Dictionary<string, FieldBuilder>? moduleVars, string nsPath)
+    {
+        var merged = moduleVars != null
+            ? new Dictionary<string, FieldBuilder>(moduleVars)
+            : [];
+
+        // Walk outermost → innermost ("N", then "N.M") so an inner namespace's binding
+        // shadows an outer one, and any namespace binding shadows a same-named module var.
+        string prefix = "";
+        foreach (var part in nsPath.Split('.'))
+        {
+            prefix = prefix.Length == 0 ? part : $"{prefix}.{part}";
+            if (_namespaceVarFields.TryGetValue(prefix, out var fields))
+            {
+                foreach (var (name, field) in fields)
+                    merged[name] = field;
+            }
+        }
+
+        return merged;
     }
 
     /// <summary>
     /// Emits method bodies for functions and classes inside a namespace.
     /// Called during Phase 7 (method body emission).
     /// </summary>
-    private void EmitNamespaceMemberBodies(Stmt.Namespace ns)
+    private void EmitNamespaceMemberBodies(Stmt.Namespace ns, string parentPath = "")
     {
-        foreach (var member in ns.Members)
+        string path = string.IsNullOrEmpty(parentPath)
+            ? ns.Name.Lexeme
+            : $"{parentPath}.{ns.Name.Lexeme}";
+
+        // Record the enclosing namespace so EmitFunctionBody can surface this namespace's
+        // var fields to the function's resolver (#567). Saved/restored to support nesting.
+        var savedNamespacePath = _currentNamespacePath;
+        _currentNamespacePath = path;
+        try
         {
-            var actualMember = member;
-            // Unwrap export
-            if (member is Stmt.Export { Declaration: not null } exp)
+            foreach (var member in ns.Members)
             {
-                actualMember = exp.Declaration;
+                var actualMember = member;
+                // Unwrap export
+                if (member is Stmt.Export { Declaration: not null } exp)
+                {
+                    actualMember = exp.Declaration;
+                }
+
+                switch (actualMember)
+                {
+                    case Stmt.Namespace nested:
+                        EmitNamespaceMemberBodies(nested, path);
+                        break;
+
+                    case Stmt.Function funcStmt when funcStmt.Body != null:
+                        EmitFunctionBody(funcStmt);
+                        break;
+
+                    case Stmt.Class classStmt:
+                        EmitClassMethods(classStmt);
+                        break;
+                }
             }
-
-            switch (actualMember)
-            {
-                case Stmt.Namespace nested:
-                    EmitNamespaceMemberBodies(nested);
-                    break;
-
-                case Stmt.Function funcStmt when funcStmt.Body != null:
-                    EmitFunctionBody(funcStmt);
-                    break;
-
-                case Stmt.Class classStmt:
-                    EmitClassMethods(classStmt);
-                    break;
-            }
+        }
+        finally
+        {
+            _currentNamespacePath = savedNamespacePath;
         }
     }
 
