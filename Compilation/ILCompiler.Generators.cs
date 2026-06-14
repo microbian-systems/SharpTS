@@ -12,6 +12,68 @@ namespace SharpTS.Compilation;
 public partial class ILCompiler
 {
     /// <summary>
+    /// Top-level (module-scope) function names, keyed by module path ("" for single-file).
+    /// A generator references a top-level function by treating its name as a captured outer variable
+    /// (it is not declared inside the generator). Generators wrongly materialise such captures as
+    /// state-machine fields that the kickoff never populates for functions — leaving them null, so a
+    /// value-use (<c>const h = helper; h()</c> / <c>yield helper</c>) reads null and throws "object
+    /// is not a function". Async/async-generator bodies don't create these fields and instead resolve
+    /// the name through the normal function-value path. Excluding such names from the generator's
+    /// captured fields lets its MoveNext resolver fall through to <c>TryEmitGlobalVariable</c>'s
+    /// function path too.
+    ///
+    /// <para>Keyed PER MODULE, not unioned: a name that is a top-level function in one module may be
+    /// a genuinely-captured binding (e.g. a module-level <c>const</c>, whose captured field IS
+    /// populated) in another. Excluding it there would strip a needed field. Only a name that is a
+    /// top-level function in the GENERATOR'S OWN module resolves correctly through the function-value
+    /// fallback, so only those are excluded.</para>
+    /// </summary>
+    private readonly Dictionary<string, HashSet<string>> _topLevelFunctionNamesByModule = new();
+
+    /// <summary>
+    /// Records the top-level function names in <paramref name="statements"/> under
+    /// <paramref name="moduleKey"/> (<c>""</c> for single-file). Called once per module after
+    /// nested-function lifting, so relocated functions (now top-level) are included.
+    /// </summary>
+    private void CollectTopLevelFunctionNames(IEnumerable<Stmt> statements, string moduleKey)
+    {
+        if (!_topLevelFunctionNamesByModule.TryGetValue(moduleKey, out var set))
+        {
+            set = new HashSet<string>();
+            _topLevelFunctionNamesByModule[moduleKey] = set;
+        }
+        foreach (var stmt in statements)
+        {
+            switch (stmt)
+            {
+                case Stmt.Function f when f.Body != null:
+                    set.Add(f.Name.Lexeme);
+                    break;
+                case Stmt.Export { Declaration: Stmt.Function ef } when ef.Body != null:
+                    set.Add(ef.Name.Lexeme);
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns <paramref name="analysis"/> with the current module's top-level function names removed
+    /// from its captured variables, so the generator state machine does not define (never-populated)
+    /// fields for them. See <see cref="_topLevelFunctionNamesByModule"/>.
+    /// </summary>
+    private GeneratorStateAnalyzer.GeneratorFunctionAnalysis ExcludeTopLevelFunctionsFromCaptures(
+        GeneratorStateAnalyzer.GeneratorFunctionAnalysis analysis)
+    {
+        if (!_topLevelFunctionNamesByModule.TryGetValue(_modules.CurrentPath ?? "", out var names)
+            || names.Count == 0)
+            return analysis;
+        if (!analysis.CapturedVariables.Overlaps(names)) return analysis;
+        var filtered = new HashSet<string>(analysis.CapturedVariables);
+        filtered.ExceptWith(names);
+        return analysis with { CapturedVariables = filtered };
+    }
+
+    /// <summary>
     /// Defines a generator function and its state machine.
     /// </summary>
     private void DefineGeneratorFunction(Stmt.Function funcStmt)
@@ -29,7 +91,7 @@ public partial class ILCompiler
 
         // Create the state machine builder
         var smBuilder = new GeneratorStateMachineBuilder(_moduleBuilder, _types, _generators.StateMachineCounter++);
-        smBuilder.DefineStateMachine(funcName, analysis, isInstanceMethod: false, runtime: _runtime);
+        smBuilder.DefineStateMachine(funcName, ExcludeTopLevelFunctionsFromCaptures(analysis), isInstanceMethod: false, runtime: _runtime);
 
         _generators.StateMachines[qualifiedName] = smBuilder;
         _generators.Functions[qualifiedName] = funcStmt;
@@ -219,7 +281,7 @@ public partial class ILCompiler
         var smBuilder = new GeneratorStateMachineBuilder(_moduleBuilder, _types, _generators.StateMachineCounter++);
         smBuilder.DefineStateMachine(
             $"{methodBuilder.DeclaringType!.Name}_{method.Name.Lexeme}",
-            analysis,
+            ExcludeTopLevelFunctionsFromCaptures(analysis),
             isInstanceMethod: true,  // This is an instance method
             runtime: _runtime
         );
