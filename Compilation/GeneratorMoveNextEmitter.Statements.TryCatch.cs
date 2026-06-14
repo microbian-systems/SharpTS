@@ -86,6 +86,16 @@ public partial class GeneratorMoveNextEmitter
         _pendingExceptionField ??= _builder.StateMachineType.DefineField(
             "<>pendingException", typeof(object), FieldAttributes.Private);
 
+    // `<>pendingReturnValue` (object): the completion value of a `return` being routed through
+    // finally(s). A finally that yields overwrites `<>2__current` with its yielded value, so the
+    // return value is stashed here at the `return` and restored to Current by the return terminal,
+    // after the finally has run (#555). Held across any suspension in those finallys.
+    private FieldBuilder? _pendingReturnValueField;
+
+    private FieldBuilder GetPendingReturnValueField() =>
+        _pendingReturnValueField ??= _builder.StateMachineType.DefineField(
+            "<>pendingReturnValue", typeof(object), FieldAttributes.Private);
+
     // ---- Loop-scope methods (override the base stack to use `_exitScopes`) -----------------------
 
     protected override void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
@@ -139,16 +149,17 @@ public partial class GeneratorMoveNextEmitter
         var loop = b.Label != null ? FindLabeledLoopScope(b.Label.Lexeme) : CurrentLoopScope();
         if (loop == null) return; // matches the base: a break with no resolvable target is a no-op
 
-        if (_protectedRegionDepth == 0)
+        var chain = FinallyFramesAbove(loop);
+        if (chain.Count > 0)
         {
-            var chain = FinallyFramesAbove(loop);
-            if (chain.Count > 0)
-            {
-                int code = loop.BreakCode ??= _nextExitCode++;
-                _exitTerminals.TryAdd(code, () => _il.Emit(OpCodes.Br, loop.BreakLabel));
-                RouteThroughFinallys(chain, code);
-                return;
-            }
+            // Flag-based finally(s) lie between the break and its loop; run them before jumping out.
+            // From inside a real IL block, `Leave` to the innermost flag cleanup (running the real,
+            // no-yield finally(s) on the way — a real try never encloses a flag try, so they are all
+            // innermore); otherwise branch there directly.
+            int code = loop.BreakCode ??= _nextExitCode++;
+            _exitTerminals.TryAdd(code, () => _il.Emit(OpCodes.Br, loop.BreakLabel));
+            RouteThroughFinallys(chain, code, _protectedRegionDepth > 0 ? OpCodes.Leave : OpCodes.Br);
+            return;
         }
 
         EmitBranchToLabel(loop.BreakLabel);
@@ -163,16 +174,15 @@ public partial class GeneratorMoveNextEmitter
         var loop = c.Label != null ? FindLabeledLoopScope(c.Label.Lexeme) : CurrentLoopScope();
         if (loop == null) return;
 
-        if (_protectedRegionDepth == 0)
+        var chain = FinallyFramesAbove(loop);
+        if (chain.Count > 0)
         {
-            var chain = FinallyFramesAbove(loop);
-            if (chain.Count > 0)
-            {
-                int code = loop.ContinueCode ??= _nextExitCode++;
-                _exitTerminals.TryAdd(code, () => _il.Emit(OpCodes.Br, loop.ContinueLabel));
-                RouteThroughFinallys(chain, code);
-                return;
-            }
+            // As in EmitBreak: run the intervening flag-based finally(s) first, `Leave`-ing out of any
+            // real IL block we are inside so its no-yield finally runs and the IL stays legal.
+            int code = loop.ContinueCode ??= _nextExitCode++;
+            _exitTerminals.TryAdd(code, () => _il.Emit(OpCodes.Br, loop.ContinueLabel));
+            RouteThroughFinallys(chain, code, _protectedRegionDepth > 0 ? OpCodes.Leave : OpCodes.Br);
+            return;
         }
 
         EmitBranchToLabel(loop.ContinueLabel);
@@ -199,7 +209,7 @@ public partial class GeneratorMoveNextEmitter
                 _il.Emit(OpCodes.Stfld, GetPendingExceptionField());
 
                 RegisterThrowTerminal();
-                RouteThroughFinallys(chain, ExitCodeThrow);
+                RouteThroughFinallys(chain, ExitCodeThrow, OpCodes.Br);
                 return;
             }
         }
@@ -238,7 +248,14 @@ public partial class GeneratorMoveNextEmitter
     /// the innermost finally. The caller must have prepared any value the terminal needs (e.g. the
     /// thrown value, or the Current/return state) beforehand.
     /// </summary>
-    private void RouteThroughFinallys(List<FinallyScope> chain, int code)
+    /// <param name="branch">
+    /// <c>Br</c> when the exit is at the top level, or <c>Leave</c> when it is emitted inside a real IL
+    /// exception block (EmitSimpleTryCatch) nested in the flag-based finally(s): the <c>Leave</c> exits
+    /// that block — running its no-yield finally — straight to the innermost flag cleanup label, then
+    /// the flag machinery runs the remaining (outer) finally(s). A real try never encloses a flag try,
+    /// so every real finally is innermore than every flag one and this ordering is correct (#554).
+    /// </param>
+    private void RouteThroughFinallys(List<FinallyScope> chain, int code, OpCode branch)
     {
         for (int i = 0; i < chain.Count; i++)
         {
@@ -250,7 +267,7 @@ public partial class GeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, code);
         _il.Emit(OpCodes.Stfld, GetPendingExitField());
-        _il.Emit(OpCodes.Br, chain[0].CleanupLabel);
+        _il.Emit(branch, chain[0].CleanupLabel);
     }
 
     /// <summary>
@@ -289,6 +306,14 @@ public partial class GeneratorMoveNextEmitter
 
     private void RegisterReturnTerminal() => _exitTerminals.TryAdd(ExitCodeReturn, () =>
     {
+        // Restore the completion value into Current: a yielding finally between the `return` and this
+        // point overwrote Current with its yielded value, so re-load the value stashed at the `return`
+        // (#555). With no yielding finally this is a no-op (Current still holds the same value).
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, GetPendingReturnValueField());
+        _il.Emit(OpCodes.Stfld, _builder.CurrentField);
+
         // The generator completes. State -2 is re-asserted here because a yielding finally between the
         // `return` and this point overwrote it with the finally's resume state.
         _il.Emit(OpCodes.Ldarg_0);
@@ -334,9 +359,15 @@ public partial class GeneratorMoveNextEmitter
     /// </summary>
     private void EmitSimpleTryCatch(Stmt.TryCatch t)
     {
-        // A real IL protected region is open: a routed `br`/`ret` out of it would be illegal, so
-        // exits emitted inside fall back to their per-path handling (see the exit overrides).
+        // A real IL protected region is open. A `br`/`ret` directly out of it is illegal, so a
+        // non-local exit crossing it must use `Leave` instead — which also runs this (no-yield)
+        // finally. _protectedRegionDepth tells the exit overrides a real block is open (so they pick
+        // `Leave` and, when also inside flag-based finally(s), route out via the innermost flag
+        // cleanup); ExceptionBlockDepth drives the Leave-vs-Br choice in EmitBranchToLabel. The latter
+        // is incremented only here (not in the flag path's sync segments) so internal branches inside
+        // a sync segment stay `Br` and do not illegally leave the mini try/catch.
         _protectedRegionDepth++;
+        _ctx!.ExceptionBlockDepth++;
         _il.BeginExceptionBlock();
 
         foreach (var stmt in t.TryBlock)
@@ -369,6 +400,7 @@ public partial class GeneratorMoveNextEmitter
         }
 
         _il.EndExceptionBlock();
+        _ctx!.ExceptionBlockDepth--;
         _protectedRegionDepth--;
     }
 
