@@ -74,6 +74,52 @@ public sealed class DateEmitter : ITypeEmitterStrategy
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;
 
+            // UTC getters + legacy getYear (no arguments, return double)
+            case "getUTCFullYear":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateGetUTCFullYear);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "getUTCMonth":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateGetUTCMonth);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "getUTCDate":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateGetUTCDate);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "getUTCDay":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateGetUTCDay);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "getUTCHours":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateGetUTCHours);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "getUTCMinutes":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateGetUTCMinutes);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "getUTCSeconds":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateGetUTCSeconds);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "getUTCMilliseconds":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateGetUTCMilliseconds);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "getYear":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateGetYear);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
             // Simple setters (single argument, return double)
             case "setTime":
                 EmitSingleDoubleArgOrNaN(emitter, arguments);
@@ -90,6 +136,25 @@ public sealed class DateEmitter : ITypeEmitterStrategy
             case "setMilliseconds":
                 EmitSingleDoubleArgOrNaN(emitter, arguments);
                 il.Emit(OpCodes.Call, ctx.Runtime!.DateSetMilliseconds);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            // UTC simple setters + legacy setYear (single argument, return double)
+            case "setUTCDate":
+                EmitSingleDoubleArgOrNaN(emitter, arguments);
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateSetUTCDate);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "setUTCMilliseconds":
+                EmitSingleDoubleArgOrNaN(emitter, arguments);
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateSetUTCMilliseconds);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "setYear":
+                EmitSingleDoubleArgOrNaN(emitter, arguments);
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateSetYear);
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;
 
@@ -124,6 +189,37 @@ public sealed class DateEmitter : ITypeEmitterStrategy
                 il.Emit(OpCodes.Box, ctx.Types.Double);
                 return true;
 
+            // UTC multi-argument setters (variadic, packaged as object[])
+            case "setUTCFullYear":
+                EmitArgsArray(emitter, arguments);
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateSetUTCFullYear);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "setUTCMonth":
+                EmitArgsArray(emitter, arguments);
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateSetUTCMonth);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "setUTCHours":
+                EmitArgsArray(emitter, arguments);
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateSetUTCHours);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "setUTCMinutes":
+                EmitArgsArray(emitter, arguments);
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateSetUTCMinutes);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
+            case "setUTCSeconds":
+                EmitArgsArray(emitter, arguments);
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateSetUTCSeconds);
+                il.Emit(OpCodes.Box, ctx.Types.Double);
+                return true;
+
             // Conversion methods (no arguments, return string)
             case "toISOString":
                 il.Emit(OpCodes.Call, ctx.Runtime!.DateToISOString);
@@ -135,6 +231,23 @@ public sealed class DateEmitter : ITypeEmitterStrategy
 
             case "toTimeString":
                 il.Emit(OpCodes.Call, ctx.Runtime!.DateToTimeString);
+                return true;
+
+            case "toUTCString":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateToUTCString);
+                return true;
+
+            // toLocale* (locale/options args accepted by the type checker but ignored at runtime)
+            case "toLocaleDateString":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateToLocaleDateString);
+                return true;
+
+            case "toLocaleTimeString":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateToLocaleTimeString);
+                return true;
+
+            case "toLocaleString":
+                il.Emit(OpCodes.Call, ctx.Runtime!.DateToLocaleString);
                 return true;
 
             // toJSON (no arguments, returns string | null as object)

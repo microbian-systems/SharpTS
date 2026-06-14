@@ -356,25 +356,54 @@ public static class BuiltInTypes
             "getMilliseconds" => new TypeInfo.Function([], NumberType),
             "getTimezoneOffset" => new TypeInfo.Function([], NumberType),
 
-            // Setters - all return number (the new timestamp)
+            // UTC getters - all return number
+            "getUTCFullYear" => new TypeInfo.Function([], NumberType),
+            "getUTCMonth" => new TypeInfo.Function([], NumberType),
+            "getUTCDate" => new TypeInfo.Function([], NumberType),
+            "getUTCDay" => new TypeInfo.Function([], NumberType),
+            "getUTCHours" => new TypeInfo.Function([], NumberType),
+            "getUTCMinutes" => new TypeInfo.Function([], NumberType),
+            "getUTCSeconds" => new TypeInfo.Function([], NumberType),
+            "getUTCMilliseconds" => new TypeInfo.Function([], NumberType),
+
+            // Setters - all return number (the new timestamp). Trailing components
+            // are optional per lib.es5 (e.g. setFullYear(year, month?, date?)).
             "setTime" => new TypeInfo.Function([NumberType], NumberType),
-            "setFullYear" => new TypeInfo.Function([NumberType], NumberType),  // month, date optional
-            "setMonth" => new TypeInfo.Function([NumberType], NumberType),     // date optional
+            "setFullYear" => new TypeInfo.Function([NumberType, NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setMonth" => new TypeInfo.Function([NumberType, NumberType], NumberType, RequiredParams: 1),
             "setDate" => new TypeInfo.Function([NumberType], NumberType),
-            "setHours" => new TypeInfo.Function([NumberType], NumberType),     // min, sec, ms optional
-            "setMinutes" => new TypeInfo.Function([NumberType], NumberType),   // sec, ms optional
-            "setSeconds" => new TypeInfo.Function([NumberType], NumberType),   // ms optional
+            "setHours" => new TypeInfo.Function([NumberType, NumberType, NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setMinutes" => new TypeInfo.Function([NumberType, NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setSeconds" => new TypeInfo.Function([NumberType, NumberType], NumberType, RequiredParams: 1),
             "setMilliseconds" => new TypeInfo.Function([NumberType], NumberType),
+
+            // UTC setters - mirror the local setters' optional-trailing-component shape
+            "setUTCFullYear" => new TypeInfo.Function([NumberType, NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setUTCMonth" => new TypeInfo.Function([NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setUTCDate" => new TypeInfo.Function([NumberType], NumberType),
+            "setUTCHours" => new TypeInfo.Function([NumberType, NumberType, NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setUTCMinutes" => new TypeInfo.Function([NumberType, NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setUTCSeconds" => new TypeInfo.Function([NumberType, NumberType], NumberType, RequiredParams: 1),
+            "setUTCMilliseconds" => new TypeInfo.Function([NumberType], NumberType),
 
             // Conversion methods
             "toString" => new TypeInfo.Function([], StringType),
             "toISOString" => new TypeInfo.Function([], StringType),
             "toDateString" => new TypeInfo.Function([], StringType),
             "toTimeString" => new TypeInfo.Function([], StringType),
+            "toUTCString" => new TypeInfo.Function([], StringType),
+            // toLocale* accept optional (locales?, options?) per lib.es2020.date.
+            "toLocaleDateString" => new TypeInfo.Function([AnyType, AnyType], StringType, RequiredParams: 0),
+            "toLocaleTimeString" => new TypeInfo.Function([AnyType, AnyType], StringType, RequiredParams: 0),
+            "toLocaleString" => new TypeInfo.Function([AnyType, AnyType], StringType, RequiredParams: 0),
             // lib.es5: `toJSON(key?: any): string` (used by JSON.stringify and matched by
             // `T extends { toJSON(): infer R }`, see #491). Runtime impl in DateBuiltIns.
             "toJSON" => new TypeInfo.Function([], StringType),
             "valueOf" => new TypeInfo.Function([], NumberType),
+
+            // Legacy methods (ECMA-262 Annex B), declared on Date in lib.es5.
+            "getYear" => new TypeInfo.Function([], NumberType),
+            "setYear" => new TypeInfo.Function([NumberType], NumberType),
 
             _ => null
         };
@@ -1180,4 +1209,43 @@ public static class BuiltInTypes
         TypeInfo.Iterator or TypeInfo.Generator or TypeInfo.AsyncGenerator => IteratorMemberNames,
         _ => null
     };
+
+    // ============ KEYOF NAMES FOR INDEX-SIGNATURE BUILT-INS: string, Array, Tuple (#527) ============
+    //
+    // Unlike the dedicated records above, these built-ins ALSO carry a numeric index signature, which
+    // keyof must surface as a `number` key. GetInstanceMemberNames deliberately excludes them (they are
+    // resolved structurally through GetStringMemberType / GetArrayMemberType, not the apparent-members
+    // model); the lists below supply just their NAMED members so keyof can emit those alongside the
+    // `number` index key (the index-key emission lives in TypeChecker's ExtractKeys). Each list mirrors
+    // its GetXxxMemberType switch — BuiltInApparentMembersTests asserts every listed name resolves there.
+
+    private static readonly string[] StringMemberNames =
+    [
+        "length", "charAt", "substring", "indexOf", "toUpperCase", "toLowerCase", "trim", "replace",
+        "split", "includes", "startsWith", "endsWith", "slice", "substr", "repeat", "padStart",
+        "padEnd", "charCodeAt", "codePointAt", "concat", "lastIndexOf", "trimStart", "trimEnd",
+        "replaceAll", "at", "normalize", "localeCompare", "toString", "match", "matchAll", "search",
+    ];
+
+    private static readonly string[] ArrayMemberNames =
+    [
+        "length", "push", "pop", "shift", "unshift", "slice", "map", "filter", "forEach", "find",
+        "findIndex", "some", "every", "reduce", "reduceRight", "includes", "indexOf", "lastIndexOf",
+        "join", "concat", "reverse", "flat", "flatMap", "sort", "toSorted", "splice", "toSpliced",
+        "findLast", "findLastIndex", "toReversed", "with", "at", "fill", "copyWithin", "entries",
+        "keys", "values", "toString", "toLocaleString",
+    ];
+
+    /// <summary>
+    /// Named members of the <c>string</c> primitive (its String.prototype members), for <c>keyof string</c>.
+    /// Mirrors <see cref="GetStringMemberType"/>; keyof emits the numeric index key separately.
+    /// </summary>
+    public static IReadOnlyList<string> StringApparentMemberNames => StringMemberNames;
+
+    /// <summary>
+    /// Named members shared by arrays and tuples (Array.prototype members plus <c>length</c>), for
+    /// <c>keyof T[]</c> and <c>keyof [a, b]</c>. Mirrors <see cref="GetArrayMemberType"/>; keyof emits the
+    /// numeric index key (and, for tuples, the literal element indices) separately.
+    /// </summary>
+    public static IReadOnlyList<string> ArrayApparentMemberNames => ArrayMemberNames;
 }

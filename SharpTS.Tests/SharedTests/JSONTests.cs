@@ -520,4 +520,83 @@ public class JSONTests
     }
 
     #endregion
+
+    #region JSON.stringify boxed primitive wrappers (#524)
+
+    // ECMA-262 25.5.2.3 step 4: a boxed primitive wrapper (new Number/String/Boolean) serializes
+    // as its underlying primitive, not as an object exposing the internal slots. The interpreter
+    // previously emitted the wrapper's __primitiveType/__primitiveValue marker fields; compiled
+    // mode was already correct, so these run in both modes as a parity check.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_BoxedPrimitives_TopLevel(ExecutionMode mode)
+    {
+        var source = """
+            console.log(JSON.stringify(new Number(5)));
+            console.log(JSON.stringify(new String("hi")));
+            console.log(JSON.stringify(new Boolean(true)));
+            """;
+        Assert.Equal("5\n\"hi\"\ntrue\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_BoxedPrimitives_AsObjectProperties(ExecutionMode mode)
+    {
+        var source = """
+            console.log(JSON.stringify({ a: new Number(5), b: new String("x"), c: new Boolean(false) }));
+            """;
+        Assert.Equal("{\"a\":5,\"b\":\"x\",\"c\":false}\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_BoxedPrimitives_AsArrayElements(ExecutionMode mode)
+    {
+        var source = """
+            console.log(JSON.stringify([new Number(1), new String("y"), new Boolean(false)]));
+            """;
+        Assert.Equal("[1,\"y\",false]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_BoxedNumber_AsSpace_Indents(ExecutionMode mode)
+    {
+        // ECMA-262 25.5.2.1 step 5: a boxed Number `space` contributes its primitive value (2 → 2
+        // spaces). A float is floored to an integer count by the existing space handling.
+        var source = """
+            console.log(JSON.stringify([7], null, new Number(2)));
+            """;
+        Assert.Equal("[\n  7\n]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_BoxedString_AsSpace_Indents(ExecutionMode mode)
+    {
+        // A boxed String `space` contributes its primitive value as the literal indent string.
+        var source = """
+            console.log(JSON.stringify({ k: 1 }, null, new String("--")));
+            """;
+        Assert.Equal("{\n--\"k\": 1\n}\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_PlainObjectWithPrimitiveValueField_NotUnwrapped(ExecutionMode mode)
+    {
+        // An ordinary object that merely has a __primitiveValue field (but no __primitiveType) is
+        // NOT a boxed wrapper and must serialize verbatim — the interpreter gates the unwrap on
+        // __primitiveType, matching the sibling NumberPrototypeMethodWrapper et al. (and the spec's
+        // [[NumberData]]/[[StringData]]/[[BooleanData]] internal-slot semantics). Compiled mode
+        // unwraps on __primitiveValue alone, so it diverges here (too loose) — tracked by #565.
+        var source = """
+            console.log(JSON.stringify({ __primitiveValue: 7 }));
+            """;
+        Assert.Equal("{\"__primitiveValue\":7}\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
 }

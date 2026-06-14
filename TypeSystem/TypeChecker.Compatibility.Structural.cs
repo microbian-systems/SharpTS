@@ -166,6 +166,15 @@ public partial class TypeChecker
             return BuiltInTypes.GetArrayMemberType(name, ComputeTupleElementUnion(tuple));
         }
 
+        // Handle dedicated Error types (Error, TypeError, …) - name/message/stack/cause and toString.
+        // Mirrors the String/Array/Tuple handling so a built-in error can structurally satisfy an
+        // object type like `{ message: string }` (#528). keyof Error still needs the apparent-members
+        // projection (#530); this is the structural-source-member half only.
+        if (type is TypeInfo.Error errType)
+        {
+            return BuiltInTypes.GetErrorMemberType(name, errType.Name);
+        }
+
         // Handle TypeParameter with constraint - delegate to constraint
         if (type is TypeInfo.TypeParameter tp && tp.Constraint != null)
         {

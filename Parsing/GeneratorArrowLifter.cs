@@ -9,23 +9,39 @@ namespace SharpTS.Parsing;
 /// that infrastructure for the relatively rare generator-expression case, this pass rewrites
 /// each occurrence so the existing declaration path handles it. Example:
 /// <code>
+/// let limit = 3;
 /// Yallist.prototype[Symbol.iterator] = function* () {
 ///     for (let w = this.head; w; w = w.next) yield w.value;
 /// }
 /// </code>
 /// becomes:
 /// <code>
+/// let limit = 3;
+/// Yallist.prototype[Symbol.iterator] = __genArrow_0;
 /// function __genArrow_0() {
 ///     for (let w = this.head; w; w = w.next) yield w.value;
 /// }
-/// Yallist.prototype[Symbol.iterator] = __genArrow_0;
 /// </code>
 ///
-/// The generator body's only non-local reference in the common prototype-iterator idiom is
-/// <c>this</c>, which binds from the call site — not from the surrounding lexical scope — so
-/// it is preserved across the lift. The rewriter returns the original AST node whenever no
-/// change was required, which keeps downstream passes (e.g. the type checker) from seeing
-/// fresh reference identities for untouched subtrees.
+/// <para>Lifted declarations are APPENDED to the end of the module body, not prepended. Function
+/// declarations hoist, so placing them last is runtime-equivalent in both the interpreter and the
+/// compiler (verified: a declaration is usable before its textual position). The end position
+/// matters for the type checker, which checks function bodies in source order: appending means the
+/// lifted body is checked AFTER the surrounding module-level <c>let</c>/<c>const</c> bindings have
+/// been defined, so a generator expression closing over such a binding type-checks rather than
+/// failing with "Undefined variable" (issue #522). Prepending placed the body before those
+/// declarations and broke that closure.</para>
+///
+/// <para>Limitation: only module/global-scope bindings (and <c>this</c>, which binds from the call
+/// site) survive the lift. A generator expression nested inside another function that closes over
+/// that function's LOCALS is still moved out of its lexical scope (#534); lifting it into the
+/// enclosing function instead is not viable because the compiler's nested-generator-declaration
+/// path is itself incomplete (#501) and the type checker infers a nested generator's yield type
+/// as <c>void</c> (#532).</para>
+///
+/// The rewriter returns the original AST node whenever no change was required, which keeps
+/// downstream passes (e.g. the type checker) from seeing fresh reference identities for untouched
+/// subtrees.
 /// </summary>
 internal sealed class GeneratorArrowLifter
 {
@@ -48,9 +64,12 @@ internal sealed class GeneratorArrowLifter
         }
         if (lifter._liftedFunctions.Count == 0) return body;
 
+        // Append (not prepend) the lifted declarations: function declarations hoist, so the trailing
+        // position is runtime-equivalent, and it lets the source-order type checker see any
+        // module-level let/const the generator body closes over before that body is checked (#522).
         var result = new List<Stmt>(lifter._liftedFunctions.Count + rewritten.Count);
-        result.AddRange(lifter._liftedFunctions);
         result.AddRange(rewritten);
+        result.AddRange(lifter._liftedFunctions);
         return result;
     }
 

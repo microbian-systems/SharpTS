@@ -797,6 +797,20 @@ public partial class TypeChecker
         if (expected is TypeInfo.Date && actual is TypeInfo.Date) return true;
         if (expected is TypeInfo.RegExp && actual is TypeInfo.RegExp) return true;
 
+        // Error-family compatibility (reachable since Error/TypeError/… stopped resolving to `any`,
+        // #528). Every built-in error shares the same structural shape (name/message/stack/cause), so
+        // any error satisfies a non-aggregate error target — tsc treats the empty `interface TypeError
+        // extends Error {}` declarations as mutually assignable. AggregateError additionally carries
+        // `errors`, so only an AggregateError satisfies an AggregateError target. A user class that
+        // extends a built-in error (class MyError extends Error) is a nominal subtype of it.
+        if (expected is TypeInfo.Error expErr)
+        {
+            if (actual is TypeInfo.Error actErr)
+                return expErr.Name != "AggregateError" || actErr.Name == "AggregateError";
+            if (expErr.Name != "AggregateError" && actual is TypeInfo.Instance errInst && ExtendsBuiltInError(errInst))
+                return true;
+        }
+
         // Promise type compatibility - Promise<A> is compatible with Promise<B> if A is compatible with B
         if (expected is TypeInfo.Promise expPromise && actual is TypeInfo.Promise actPromise)
         {

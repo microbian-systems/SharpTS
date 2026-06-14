@@ -124,7 +124,7 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     /// Default: pushes onto an internal stack. ILEmitter overrides to use CompilationContext.
     /// </summary>
     protected virtual void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
-        => _loopLabels.Push((breakLabel, continueLabel, labelName));
+        => _loopLabels.Push((breakLabel, continueLabel, labelName ?? Ctx.TakePendingLoopLabel()));
 
     /// <summary>
     /// Exits the current loop context.
@@ -631,21 +631,38 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     /// </summary>
     protected virtual void EmitLabeledStatement(Stmt.LabeledStatement ls)
     {
+        if (IsLabelableLoop(ls.Statement))
+        {
+            // Direct loop: park the label so the loop attaches it to its OWN break/continue
+            // targets. A for registers continue at its increment, a while at its condition, etc.;
+            // marking a continue label here (ahead of the initializer) would re-run it (#558).
+            Ctx.PendingLoopLabel = ls.Label.Lexeme;
+            EmitStatement(ls.Statement);
+            // Defensive: the loop's EnterLoop consumes the label; clear it if somehow it didn't.
+            Ctx.PendingLoopLabel = null;
+            return;
+        }
+
+        // Non-loop labeled statement (a block, etc.) or a chained label (a: b: loop) whose inner
+        // labeled statement owns the loop. Mark the continue target before the statement: it is
+        // harmless for a block, and for a chained while/for-of/for-in/do-while it re-enters at the
+        // loop head. (A chained label on a `for` re-runs its initializer — a pre-existing
+        // limitation, not regressed here; single-label `for` continue is fixed above.)
         var breakLabel = IL.DefineLabel();
         var continueLabel = IL.DefineLabel();
-
-        // Mark continue label at the start
         IL.MarkLabel(continueLabel);
-
         EnterLoop(breakLabel, continueLabel, ls.Label.Lexeme);
-
         EmitStatement(ls.Statement);
-
         ExitLoop();
-
-        // Mark break label at the end
         IL.MarkLabel(breakLabel);
     }
+
+    /// <summary>
+    /// True when a labeled statement directly wraps an iteration statement, so the label
+    /// belongs on the loop's own break/continue targets rather than a wrapper.
+    /// </summary>
+    protected static bool IsLabelableLoop(Stmt stmt)
+        => stmt is Stmt.While or Stmt.DoWhile or Stmt.For or Stmt.ForOf or Stmt.ForIn;
 
     /// <summary>
     /// Emits a switch statement.

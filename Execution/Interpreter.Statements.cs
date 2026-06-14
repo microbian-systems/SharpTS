@@ -293,51 +293,59 @@ public partial class Interpreter
     }
 
     /// <summary>
-    /// Executes a labeled statement, catching break/continue exceptions that target this label.
+    /// Executes a labeled statement, resolving break/continue that target this label.
     /// </summary>
     /// <param name="labeledStmt">The labeled statement AST node.</param>
     /// <remarks>
-    /// Labeled statements allow break and continue to target specific enclosing statements.
-    /// For loops, both break and continue are handled. For non-loop statements (blocks),
-    /// only break is valid. Labeled exceptions targeting this label are caught; others propagate.
+    /// When the label directly wraps an iteration statement, the label is handed to the loop so a
+    /// <c>continue &lt;label&gt;</c> runs the loop's own step (increment / re-test / advance) rather
+    /// than restarting it — restarting a <c>for</c> would re-run its initializer forever (#558).
+    /// Chained labels (<c>a: b: for …</c>) all attach to the same loop. For a non-loop labeled
+    /// statement (a block, etc.) only <c>break &lt;label&gt;</c> is meaningful.
     /// </remarks>
     private ExecutionResult ExecuteLabeledStatement(Stmt.LabeledStatement labeledStmt)
     {
-        string labelName = labeledStmt.Label.Lexeme;
-        bool isLoop = labeledStmt.Statement is Stmt.While
-                   or Stmt.DoWhile
-                   or Stmt.ForOf
-                   or Stmt.ForIn
-                   or Stmt.LabeledStatement; // Chained labels
+        // Flatten a chain of labels (a: b: stmt) down to the statement they wrap.
+        List<string> labels = [];
+        Stmt inner = labeledStmt;
+        while (inner is Stmt.LabeledStatement ls)
+        {
+            labels.Add(ls.Label.Lexeme);
+            inner = ls.Statement;
+        }
+
+        bool isLoop = inner is Stmt.While or Stmt.DoWhile or Stmt.For or Stmt.ForOf or Stmt.ForIn;
 
         if (isLoop)
         {
-            // For loops, labeled continue means restart the loop
-            while (true)
+            // Park the labels for the loop; it drains them at entry and handles a matching
+            // continue/break itself. Restore on the way out so an undrained label can't leak
+            // into a sibling loop (defensive — the loop normally consumes them all).
+            int baseCount = _pendingLoopLabels.Count;
+            _pendingLoopLabels.AddRange(labels);
+            ExecutionResult result;
+            try
             {
-                var result = Execute(labeledStmt.Statement);
-                if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == labelName)
-                {
-                    return ExecutionResult.Success();
-                }
-                if (result.Type == ExecutionResult.ResultType.Continue && result.TargetLabel == labelName)
-                {
-                    continue;
-                }
-                if (result.IsAbrupt) return result;
-                return ExecutionResult.Success();
+                result = Execute(inner);
             }
-        }
-        else
-        {
-            // For non-loop statements, only handle break
-            var result = Execute(labeledStmt.Statement);
-            if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == labelName)
+            finally
             {
-                return ExecutionResult.Success();
+                if (_pendingLoopLabels.Count > baseCount)
+                    _pendingLoopLabels.RemoveRange(baseCount, _pendingLoopLabels.Count - baseCount);
             }
+            // The loop absorbs continue/break for its labels; guard a matching break defensively.
+            if (result.Type == ExecutionResult.ResultType.Break &&
+                result.TargetLabel != null && labels.Contains(result.TargetLabel))
+                return ExecutionResult.Success();
             return result;
         }
+
+        // Non-loop labeled statement: only `break <label>` is meaningful.
+        var r = Execute(inner);
+        if (r.Type == ExecutionResult.ResultType.Break &&
+            r.TargetLabel != null && labels.Contains(r.TargetLabel))
+            return ExecutionResult.Success();
+        return r;
     }
 
     /// <summary>
@@ -687,13 +695,16 @@ public partial class Interpreter
     /// <seealso href="https://www.typescriptlang.org/docs/handbook/iterators-and-generators.html#forof-statements">TypeScript for...of</seealso>
     private ExecutionResult ExecuteForOf(Stmt.ForOf forOf)
     {
+        // Drain before evaluating the iterable so a labeled loop produced by the iterable
+        // expression (e.g. an IIFE) can't steal this loop's label.
+        var labels = TakePendingLoopLabels();
         object? iterable = Evaluate(forOf.Iterable);
 
         // First, check for Symbol.iterator protocol on objects/instances
         IEnumerable<object?>? customIterator = TryGetSymbolIterator(iterable);
         if (customIterator != null)
         {
-            return IterateWithBreakContinue(customIterator, forOf.Variable.Lexeme, forOf.Body);
+            return IterateWithBreakContinue(customIterator, forOf.Variable.Lexeme, forOf.Body, labels);
         }
 
         // Get elements based on iterable type
@@ -711,7 +722,7 @@ public partial class Interpreter
             _ => throw new InterpreterException("for...of requires an iterable (array, Map, Set, or iterator).")
         };
 
-        return IterateWithBreakContinue(elements, forOf.Variable.Lexeme, forOf.Body);
+        return IterateWithBreakContinue(elements, forOf.Variable.Lexeme, forOf.Body, labels);
     }
 
     /// <summary>
@@ -725,6 +736,7 @@ public partial class Interpreter
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/for...in">MDN for...in</seealso>
     private ExecutionResult ExecuteForIn(Stmt.ForIn forIn)
     {
+        var labels = TakePendingLoopLabels();
         object? obj = Evaluate(forIn.Object);
 
         IEnumerable<string> keys = obj switch
@@ -750,7 +762,7 @@ public partial class Interpreter
             _ => throw new InterpreterException("for...in requires an object.")
         };
 
-        return IterateWithBreakContinue(keys.Cast<object?>(), forIn.Variable.Lexeme, forIn.Body);
+        return IterateWithBreakContinue(keys.Cast<object?>(), forIn.Variable.Lexeme, forIn.Body, labels);
     }
 
     /// <summary>
@@ -933,7 +945,7 @@ public partial class Interpreter
     /// <summary>
     /// Iterates over elements with proper break/continue handling.
     /// </summary>
-    private ExecutionResult IterateWithBreakContinue(IEnumerable<object?> elements, string variableName, Stmt body)
+    private ExecutionResult IterateWithBreakContinue(IEnumerable<object?> elements, string variableName, Stmt body, IReadOnlyList<string>? labels = null)
     {
         foreach (var element in elements)
         {
@@ -943,7 +955,7 @@ public partial class Interpreter
             using (PushScope(loopEnv))
             {
                 var result = Execute(body);
-                var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, null);
+                var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
                 if (shouldBreak) return ExecutionResult.Success();
                 if (shouldContinue) continue;
                 if (abruptResult.HasValue) return abruptResult.Value;
@@ -961,12 +973,12 @@ public partial class Interpreter
     /// </summary>
     /// <param name="evaluateCondition">Function to evaluate the loop condition.</param>
     /// <param name="executeBody">Function to execute the loop body.</param>
-    /// <param name="label">Optional label for labeled break/continue support.</param>
+    /// <param name="labels">Labels wrapping this loop, for labeled break/continue support.</param>
     /// <returns>The execution result (Success or propagated abrupt completion).</returns>
     private ExecutionResult ExecuteWhileCore(
         Func<bool> evaluateCondition,
         Func<ExecutionResult> executeBody,
-        string? label = null)
+        IReadOnlyList<string>? labels = null)
     {
         while (evaluateCondition())
         {
@@ -976,7 +988,7 @@ public partial class Interpreter
                     new Runtime.Types.SharpTSError("Script execution timed out."));
 
             var result = executeBody();
-            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, label);
+            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             if (shouldBreak) return ExecutionResult.Success();
             if (shouldContinue) continue;
             if (abruptResult.HasValue) return abruptResult.Value;
@@ -993,20 +1005,56 @@ public partial class Interpreter
     /// Processes ExecutionResult to determine break, continue, or propagation behavior.
     /// </summary>
     /// <param name="result">The execution result from the loop body.</param>
-    /// <param name="label">The label of the current loop (null for unlabeled loops).</param>
+    /// <param name="labels">
+    /// The labels that directly wrap this loop (empty/null for an unlabeled loop). A labeled
+    /// break/continue is handled here only when its target is one of these.
+    /// </param>
     /// <returns>A tuple indicating: (shouldBreak, shouldContinue, abruptResultToPropagate).</returns>
     private (bool shouldBreak, bool shouldContinue, ExecutionResult? abruptResult)
-        HandleLoopResult(ExecutionResult result, string? label)
+        HandleLoopResult(ExecutionResult result, IReadOnlyList<string>? labels)
     {
         if (result.Type == ExecutionResult.ResultType.Break &&
-            (result.TargetLabel == null || result.TargetLabel == label))
+            TargetsThisLoop(result.TargetLabel, labels))
             return (true, false, null);
         if (result.Type == ExecutionResult.ResultType.Continue &&
-            (result.TargetLabel == null || result.TargetLabel == label))
+            TargetsThisLoop(result.TargetLabel, labels))
             return (false, true, null);
         if (result.IsAbrupt)
             return (false, false, result);
         return (false, false, null);
+    }
+
+    /// <summary>
+    /// True when an unlabeled break/continue (targets the innermost loop) or a labeled one whose
+    /// target is among the labels wrapping this loop. A non-matching labeled target propagates.
+    /// </summary>
+    private static bool TargetsThisLoop(string? targetLabel, IReadOnlyList<string>? labels)
+    {
+        if (targetLabel == null) return true;
+        if (labels == null) return false;
+        for (int i = 0; i < labels.Count; i++)
+            if (labels[i] == targetLabel) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Labels parked by <see cref="ExecuteLabeledStatement"/> for the loop it directly wraps.
+    /// The loop drains these at entry via <see cref="TakePendingLoopLabels"/> and treats a
+    /// <c>continue</c>/<c>break</c> to any of them as targeting itself, running the loop's own
+    /// step (a for's increment, a while's re-test) instead of restarting it from scratch — which
+    /// for a <c>for</c> would re-run the initializer forever (#558).
+    /// </summary>
+    private readonly List<string> _pendingLoopLabels = new();
+
+    private static readonly string[] _noLoopLabels = [];
+
+    /// <summary>Returns the labels parked for the loop now being entered, and clears them.</summary>
+    private string[] TakePendingLoopLabels()
+    {
+        if (_pendingLoopLabels.Count == 0) return _noLoopLabels;
+        var labels = _pendingLoopLabels.ToArray();
+        _pendingLoopLabels.Clear();
+        return labels;
     }
 
     /// <summary>

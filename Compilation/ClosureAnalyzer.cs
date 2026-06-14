@@ -145,6 +145,16 @@ public class ClosureAnalyzer : AstVisitorBase
             // and the compiled inner function body emits a runtime ReferenceError fallback.
             else if (stmt is Stmt.Var vr && vr.IsVar)
                 DeclareVariable(vr.Name.Lexeme);
+            // Pre-declare block-scoped let/const for the same reason (#533): an inner function
+            // declared BEFORE a let/const in this scope must still capture it, because the function
+            // only runs after the binding is initialized. This method is called per-scope (module,
+            // block, function body, arrow body), so each binding is declared in its own scope.
+            // Unlike var, no source-order initialization is implied — capture analysis only needs to
+            // know which scope OWNS the name so the inner function shares the binding's slot.
+            else if (stmt is Stmt.Var lt && !lt.IsVar)
+                DeclareVariable(lt.Name.Lexeme);
+            else if (stmt is Stmt.Const ct)
+                DeclareVariable(ct.Name.Lexeme);
         }
     }
 

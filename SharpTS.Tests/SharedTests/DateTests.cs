@@ -345,4 +345,152 @@ public class DateTests
     }
 
     #endregion
+
+    #region UTC, Locale, and Legacy Methods (issue #516)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_UTCGetters_ReadEpochInUTC(ExecutionMode mode)
+    {
+        // UTC getters read the stored instant directly, so the result is timezone-independent.
+        var source = @"
+            let d = new Date(0);
+            console.log(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCDay());
+            console.log(d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1970 0 1 4\n0 0 0 0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_UTCSetters_MutateInUTC(ExecutionMode mode)
+    {
+        // Single-argument setters behave identically in both modes (no optional args dropped).
+        var source = @"
+            let d = new Date(0);
+            d.setUTCFullYear(2020);
+            d.setUTCMonth(5);
+            d.setUTCDate(15);
+            d.setUTCHours(13);
+            d.setUTCMinutes(30);
+            d.setUTCSeconds(45);
+            d.setUTCMilliseconds(500);
+            console.log(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+            console.log(d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2020 5 15\n13 30 45 500\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_SetUTCMonth_RollsOver(ExecutionMode mode)
+    {
+        // setUTCMonth(13) advances into the next year (month 1 = February).
+        var source = @"
+            let d = new Date(0);
+            d.setUTCFullYear(2024);
+            d.setUTCMonth(13);
+            console.log(d.getUTCFullYear(), d.getUTCMonth());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2025 1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_ToUTCString_FormatsInRFC7231(ExecutionMode mode)
+    {
+        var source = @"
+            let d = new Date(0);
+            console.log(d.toUTCString());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Thu, 01 Jan 1970 00:00:00 GMT\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_ToLocaleMethods_ReturnStrings(ExecutionMode mode)
+    {
+        // Output is locale/host-defined, so assert only that they return non-empty strings.
+        var source = @"
+            let d = new Date(0);
+            console.log(typeof d.toLocaleDateString(), d.toLocaleDateString().length > 0);
+            console.log(typeof d.toLocaleTimeString(), d.toLocaleTimeString().length > 0);
+            console.log(typeof d.toLocaleString(), d.toLocaleString().length > 0);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("string true\nstring true\nstring true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_GetYearAndSetYear_AnnexB(ExecutionMode mode)
+    {
+        // getYear/setYear operate in local time; constructing and reading locally is TZ-independent.
+        // setYear maps 0-99 to 1900-1999 but leaves four-digit years unchanged.
+        var source = @"
+            let d = new Date(2024, 5, 15);
+            console.log(d.getYear());
+            d.setYear(99);
+            console.log(d.getFullYear());
+            d.setYear(2005);
+            console.log(d.getFullYear());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("124\n1999\n2005\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_InvalidDate_NewMembersDegradeGracefully(ExecutionMode mode)
+    {
+        var source = @"
+            let d = new Date(NaN);
+            console.log(d.toUTCString());
+            console.log(d.toLocaleDateString());
+            console.log(Number.isNaN(d.getUTCFullYear()));
+            console.log(Number.isNaN(d.setUTCSeconds(30)));
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Invalid Date\nInvalid Date\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Date_SetMinutesAndSeconds_MutateInBothModes(ExecutionMode mode)
+    {
+        // Regression guard: compiled setMinutes/setSeconds/setMilliseconds were previously
+        // no-op stubs (issue #516 fix). Local get/set round-trips are timezone-independent.
+        var source = @"
+            let d = new Date(2024, 0, 1, 10, 20, 30, 40);
+            d.setMinutes(45);
+            d.setSeconds(50);
+            d.setMilliseconds(123);
+            console.log(d.getMinutes(), d.getSeconds(), d.getMilliseconds());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("45 50 123\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Date_UTCSetters_OptionalArgs_Interpreted(ExecutionMode mode)
+    {
+        // The interpreter honors the optional trailing arguments of the multi-argument UTC
+        // setters. (Compiled mode currently honors only the primary argument — tracked separately.)
+        var source = @"
+            let d = new Date(0);
+            d.setUTCFullYear(2020, 5, 15);
+            d.setUTCHours(13, 30, 45, 500);
+            console.log(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+            console.log(d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2020 5 15\n13 30 45 500\n", output);
+    }
+
+    #endregion
 }
