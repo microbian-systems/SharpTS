@@ -77,11 +77,37 @@ public class BuiltInApparentMembersTests
     [Fact]
     public void NonDecomposableTypesReturnNull()
     {
-        // Types without a dedicated apparent-members model are not decomposable here; keyof/assignability
-        // handle them through their own paths (records, interfaces, classes, string/array index sigs).
+        // string/Array are NOT part of the dedicated apparent-members projection (it models the
+        // index-signature-free records); keyof handles them through their own ExtractKeys cases, which
+        // read the StringApparentMemberNames / ArrayApparentMemberNames lists guarded below (#527).
         Assert.Null(BuiltInTypes.GetInstanceMemberNames(new TypeInfo.String()));
         Assert.Null(BuiltInTypes.GetInstanceMemberNames(new TypeInfo.Array(Any)));
         Assert.Null(BuiltInTypes.GetInstanceMemberNames(Any));
         Assert.Null(BuiltInTypes.GetInstanceMemberType(new TypeInfo.String(), "length"));
+    }
+
+    /// <summary>
+    /// The keyof member-name lists for the index-signature built-ins (#527) must stay in sync with their
+    /// GetXxxMemberType resolvers: every advertised name must resolve, or <c>keyof string</c> /
+    /// <c>keyof T[]</c> would surface a key whose <c>T[K]</c> cannot be resolved.
+    /// </summary>
+    [Fact]
+    public void StringApparentMemberNames_AllResolve()
+    {
+        Assert.NotEmpty(BuiltInTypes.StringApparentMemberNames);
+        foreach (var name in BuiltInTypes.StringApparentMemberNames)
+            Assert.True(
+                BuiltInTypes.GetStringMemberType(name) is not null,
+                $"keyof string advertises member '{name}' but GetStringMemberType could not resolve it.");
+    }
+
+    [Fact]
+    public void ArrayApparentMemberNames_AllResolve()
+    {
+        Assert.NotEmpty(BuiltInTypes.ArrayApparentMemberNames);
+        foreach (var name in BuiltInTypes.ArrayApparentMemberNames)
+            Assert.True(
+                BuiltInTypes.GetArrayMemberType(name, Any) is not null,
+                $"keyof T[] advertises member '{name}' but GetArrayMemberType could not resolve it.");
     }
 }

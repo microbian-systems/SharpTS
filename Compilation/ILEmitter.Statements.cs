@@ -481,6 +481,11 @@ public partial class ILEmitter
 
     protected override void EmitForOf(Stmt.ForOf f)
     {
+        // A for-of emits several alternative runtime paths (iterator protocol, index-based, …),
+        // each registering its own loop scope. Capture any labeled-loop name once up front and
+        // hand it to every path, so `continue`/`break <label>` resolve no matter which path runs
+        // at runtime (#558 — consuming it in only the first-emitted path left the others bare).
+        var labelName = _ctx.TakePendingLoopLabel();
         _ctx.Locals.EnterScope();
         var builder = _ctx.ILBuilder;
 
@@ -506,7 +511,7 @@ public partial class ILEmitter
             var genStartLabel = builder.DefineLabel("forof_gen_start");
             var genEndLabel = builder.DefineLabel("forof_gen_end");
             var genContinueLabel = builder.DefineLabel("forof_gen_continue");
-            _ctx.EnterLoop(genEndLabel, genContinueLabel);
+            _ctx.EnterLoop(genEndLabel, genContinueLabel, labelName);
             EmitForOfEnumerator(f, genStartLabel, genEndLabel, genContinueLabel);
             return;
         }
@@ -517,7 +522,7 @@ public partial class ILEmitter
             var iterStartLabel = builder.DefineLabel("forof_iter_start");
             var iterEndLabel = builder.DefineLabel("forof_iter_end");
             var iterContinueLabel = builder.DefineLabel("forof_iter_continue");
-            _ctx.EnterLoop(iterEndLabel, iterContinueLabel);
+            _ctx.EnterLoop(iterEndLabel, iterContinueLabel, labelName);
             EmitForOfNormalizedEnumerator(f, iterStartLabel, iterEndLabel, iterContinueLabel);
             return;
         }
@@ -537,7 +542,7 @@ public partial class ILEmitter
         var arrayDesc = ArrayElements.Resolve(iterableType);
         if (arrayDesc != null && arrayDesc.Kind == ArrayElementsKind.Object)
         {
-            EmitForOfArrayDirect(f, iterableLocal, arrayDesc);
+            EmitForOfArrayDirect(f, iterableLocal, arrayDesc, labelName);
             _ctx.Locals.ExitScope();
             return;
         }
@@ -561,7 +566,7 @@ public partial class ILEmitter
             var iterStartLabel = builder.DefineLabel("forof_iter_start");
             var iterEndLabel = builder.DefineLabel("forof_iter_end");
             var iterContinueLabel = builder.DefineLabel("forof_iter_continue");
-            _ctx.EnterLoop(iterEndLabel, iterContinueLabel);
+            _ctx.EnterLoop(iterEndLabel, iterContinueLabel, labelName);
 
             // Call the iterator function to get the iterator object
             // Use InvokeMethodValue to properly bind 'this' to the iterable object
@@ -632,7 +637,7 @@ public partial class ILEmitter
             var startLabel = builder.DefineLabel("forof_idx_start");
             var endLabel = builder.DefineLabel("forof_idx_end");
             var continueLabel = builder.DefineLabel("forof_idx_continue");
-            _ctx.EnterLoop(endLabel, continueLabel);
+            _ctx.EnterLoop(endLabel, continueLabel, labelName);
 
             // Create index variable
             var indexLocal = IL.DeclareLocal(_ctx.Types.Int32);
@@ -690,7 +695,7 @@ public partial class ILEmitter
     /// for Object kind, or routed to a fallback iterator-helper for
     /// typed kinds.
     /// </summary>
-    private void EmitForOfArrayDirect(Stmt.ForOf f, LocalBuilder iterableLocal, ArrayElementsDescriptor desc)
+    private void EmitForOfArrayDirect(Stmt.ForOf f, LocalBuilder iterableLocal, ArrayElementsDescriptor desc, string? labelName = null)
     {
         var builder = _ctx.ILBuilder;
         var listType = desc.GetListType(_ctx.Types);
@@ -760,7 +765,7 @@ public partial class ILEmitter
         // Loop entry: listLocal holds the list.
         builder.MarkLabel(loopHeadLabel);
 
-        _ctx.EnterLoop(endLabel, continueLabel);
+        _ctx.EnterLoop(endLabel, continueLabel, labelName);
 
         // var i = 0
         var indexLocal = IL.DeclareLocal(_ctx.Types.Int32);
@@ -1206,8 +1211,19 @@ public partial class ILEmitter
             {
                 // Void functions: no value on stack; ret takes nothing.
             }
-            else if (returnType == _ctx.Types.Object || !returnType.IsValueType)
+            else if (returnType == _ctx.Types.Object)
             {
+                // ECMA-262: a bare `return;` completes with undefined, not null. Emit the
+                // $Undefined sentinel for untyped object returns — mirrors EmitDefaultReturnValue
+                // (the off-the-end path) and the interpreter's VisitReturn — so a plain function
+                // returning no value is `undefined`. `return null;` (the r.Value != null branch
+                // above) still yields null. #563
+                EmitUndefinedConstant();
+            }
+            else if (!returnType.IsValueType)
+            {
+                // Specific reference-typed returns keep their null default (matches
+                // EmitDefaultReturnValue): the checker treats an explicit `T | null` return as null.
                 IL.Emit(OpCodes.Ldnull);
             }
             else if (_ctx.Types.IsDouble(returnType))
@@ -1278,30 +1294,43 @@ public partial class ILEmitter
     protected override void EmitLabeledStatement(Stmt.LabeledStatement labeledStmt)
     {
         string labelName = labeledStmt.Label.Lexeme;
+
+        if (IsLabelableLoop(labeledStmt.Statement))
+        {
+            // Direct loop: park the label so the inner loop attaches it to its OWN break/continue
+            // targets (a for-loop's increment, a while's condition, …). Marking a continue label
+            // here — ahead of the for initializer — would re-run the initializer forever (#558).
+            _ctx.PendingLoopLabel = labelName;
+            try
+            {
+                EmitStatement(labeledStmt.Statement);
+            }
+            finally
+            {
+                // The loop's EnterLoop consumes the label; clear it if somehow it didn't.
+                _ctx.PendingLoopLabel = null;
+            }
+            return;
+        }
+
+        // Non-loop labeled statement (a block, etc.) or a chained label (a: b: loop) whose inner
+        // labeled statement owns the loop. Mark the continue target before the statement: harmless
+        // for a block, and for a chained while/for-of/for-in/do-while it re-enters at the loop
+        // head. (A chained label on a `for` re-runs its initializer — a pre-existing limitation,
+        // not regressed here; single-label `for` continue is fixed above.)
         var builder = _ctx.ILBuilder;
         var breakLabel = builder.DefineLabel($"labeled_{labelName}_break");
         var continueLabel = builder.DefineLabel($"labeled_{labelName}_continue");
-
-        // For labeled statements, we need to handle both loops and non-loop statements.
-        // For loops, the inner loop will use its own labels for unlabeled break/continue,
-        // but labeled break/continue should use the labels registered here.
-
-        // Mark continue label at the start (for labeled continue, restart from here)
         builder.MarkLabel(continueLabel);
-
         _ctx.EnterLoop(breakLabel, continueLabel, labelName);
         try
         {
-            // If this is directly a loop, the loop itself will handle its own unlabeled labels
-            // But for labeled break/continue, it will use the labeled entry we just pushed
             EmitStatement(labeledStmt.Statement);
         }
         finally
         {
             _ctx.ExitLoop();
         }
-
-        // Mark the break label (after the statement, for labeled break)
         builder.MarkLabel(breakLabel);
     }
 

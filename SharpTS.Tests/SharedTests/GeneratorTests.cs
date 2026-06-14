@@ -971,6 +971,273 @@ public class GeneratorTests
 
     #endregion
 
+    #region yield* forwards return()/throw() to the delegated iterator (ECMA-262 §14.4.14) — issue #514
+
+    // Interpreter-only: these build on the return()/throw() resumption from #478 (above). In
+    // compiled mode, an external return()/throw() on a suspended generator does not inject the
+    // abrupt completion at all (finally/catch skipped) — the compiled analog of #478 — so the
+    // compiled EmitYieldStar likewise can't forward it. Both are tracked as issue #526.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Return_ForwardsToInnerFinally_ThenOuterReturns(ExecutionMode mode)
+    {
+        // The repro from #514: return(v) on the outer while suspended inside yield* must run the
+        // delegated generator's finally, then the outer returns with the delegate's value.
+        var source = """
+            function* inner() {
+                try { yield 1; yield 2; } finally { console.log("inner finally"); }
+            }
+            function* outer() { yield* inner(); }
+            const it = outer();
+            console.log(it.next().value);
+            const r = it.return(42);
+            console.log(r.value, r.done);
+            """;
+
+        // Node: 1 / inner finally / 42 true
+        Assert.Equal("1\ninner finally\n42 true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Throw_NoInnerCatch_RunsInnerFinally_ThenPropagates(ExecutionMode mode)
+    {
+        // throw(e) is forwarded to the delegate; with only a finally (no catch) the delegate's
+        // finally runs, then the error propagates out of yield* to the outer's caller.
+        var source = """
+            function* inner() {
+                try { yield 1; } finally { console.log("inner finally"); }
+            }
+            function* outer() { yield* inner(); }
+            const it = outer();
+            console.log(it.next().value);
+            try { it.throw("boom"); } catch (e) { console.log("caught " + e); }
+            """;
+
+        Assert.Equal("1\ninner finally\ncaught boom\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Throw_CaughtByInner_KeepsDelegating(ExecutionMode mode)
+    {
+        // The delegate catches the injected error and yields again; the outer stays in the
+        // delegation, so the next() after that resumes the delegate to completion.
+        var source = """
+            function* inner() {
+                try { yield 1; } catch (e) { console.log("inner caught " + e); yield 99; }
+            }
+            function* outer() { yield* inner(); }
+            const it = outer();
+            console.log(it.next().value);
+            console.log(it.throw("boom").value);
+            console.log(it.next().done);
+            """;
+
+        Assert.Equal("1\ninner caught boom\n99\ntrue\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Throw_CaughtByInnerThenReturns_OuterContinuesNormally(ExecutionMode mode)
+    {
+        // The delegate catches the error and returns: per §14.4.14 step b.5 the yield* evaluates
+        // to the delegate's value as a NORMAL completion, so the outer continues past yield*.
+        var source = """
+            function* inner() {
+                try { yield 1; } catch (e) { return "recovered"; }
+            }
+            function* outer() {
+                const x = yield* inner();
+                console.log("after yield* " + x);
+                yield "outer";
+            }
+            const it = outer();
+            console.log(it.next().value);
+            const r = it.throw("boom");
+            console.log(r.value, r.done);
+            """;
+
+        Assert.Equal("1\nafter yield* recovered\nouter false\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Return_InnerFinallyYields_DefersCompletion(ExecutionMode mode)
+    {
+        // The delegate's finally itself yields: the outer suspends there (reporting the
+        // finally's yielded value, not done). A later next() drives the finally to completion;
+        // the delegate's deferred return value (7) then resurfaces as the yield* result — a
+        // NORMAL completion — so the outer continues and `x` is 7. With nothing after yield*,
+        // the outer then falls off its end and completes with undefined.
+        var source = """
+            function* inner() {
+                try { yield 1; } finally { yield "from finally"; }
+            }
+            function* outer() {
+                const x = yield* inner();
+                console.log("x=" + x);
+            }
+            const it = outer();
+            console.log(it.next().value);
+            const a = it.return(7);
+            console.log(a.value, a.done);
+            const b = it.next();
+            console.log(b.value, b.done);
+            """;
+
+        Assert.Equal("1\nfrom finally false\nx=7\nundefined true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Return_InnerFinallyReturnOverridesValue(ExecutionMode mode)
+    {
+        // A finally in the delegate that returns its own value overrides the value passed to the
+        // outer's return(); the outer returns the delegate's overriding value.
+        var source = """
+            function* inner() {
+                try { yield 1; } finally { return 99; }
+            }
+            function* outer() { yield* inner(); }
+            const it = outer();
+            console.log(it.next().value);
+            const r = it.return(7);
+            console.log(r.value, r.done);
+            """;
+
+        Assert.Equal("1\n99 true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Return_RunsInnerThenOuterFinally(ExecutionMode mode)
+    {
+        // When the outer also wraps the yield* in try/finally, the abrupt return runs the
+        // delegate's finally first, then unwinds the outer's own finally (inner before outer).
+        var source = """
+            function* inner() {
+                try { yield 1; } finally { console.log("inner finally"); }
+            }
+            function* outer() {
+                try { yield* inner(); } finally { console.log("outer finally"); }
+            }
+            const it = outer();
+            console.log(it.next().value);
+            const r = it.return(5);
+            console.log(r.value, r.done);
+            """;
+
+        Assert.Equal("1\ninner finally\nouter finally\n5 true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Nested_Return_ReachesInnermostFinally(ExecutionMode mode)
+    {
+        // Two levels of delegation (outer → middle → inner): return() must thread through both
+        // delegations and run the innermost finally first, then the middle's.
+        var source = """
+            function* inner() {
+                try { yield 1; } finally { console.log("inner finally"); }
+            }
+            function* middle() {
+                try { yield* inner(); } finally { console.log("middle finally"); }
+            }
+            function* outer() { yield* middle(); }
+            const it = outer();
+            console.log(it.next().value);
+            const r = it.return(3);
+            console.log(r.value, r.done);
+            """;
+
+        Assert.Equal("1\ninner finally\nmiddle finally\n3 true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Nested_Throw_RunsAllFinallys_ThenPropagates(ExecutionMode mode)
+    {
+        // throw() through two levels of delegation with no catch anywhere: each finally runs
+        // (innermost first), then the error surfaces to the throw() caller.
+        var source = """
+            function* inner() {
+                try { yield 1; } finally { console.log("inner finally"); }
+            }
+            function* middle() {
+                try { yield* inner(); } finally { console.log("middle finally"); }
+            }
+            function* outer() { yield* middle(); }
+            const it = outer();
+            console.log(it.next().value);
+            try { it.throw("kaboom"); } catch (e) { console.log("caught " + e); }
+            """;
+
+        Assert.Equal("1\ninner finally\nmiddle finally\ncaught kaboom\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Return_InnerWithoutFinally_TerminatesCleanly(ExecutionMode mode)
+    {
+        // return() forwarded to a delegate that has no finally: the delegate just closes, the
+        // outer returns the value, and the statement after yield* never runs.
+        var source = """
+            function* inner() { yield 1; yield 2; }
+            function* outer() { yield* inner(); yield 3; }
+            const it = outer();
+            console.log(it.next().value);
+            const r = it.return(11);
+            console.log(r.value, r.done);
+            console.log(it.next().done);
+            """;
+
+        Assert.Equal("1\n11 true\ntrue\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Return_ForwardsIntoGeneratorExpressionDelegate(ExecutionMode mode)
+    {
+        // The delegate is a generator function EXPRESSION (a distinct runtime type from a
+        // declaration); return() forwarding must reach its finally too.
+        var source = """
+            const inner = function* () {
+                try { yield 1; } finally { console.log("inner finally"); }
+            };
+            function* outer() { yield* inner(); }
+            const it = outer();
+            console.log(it.next().value);
+            const r = it.return(8);
+            console.log(r.value, r.done);
+            """;
+
+        Assert.Equal("1\ninner finally\n8 true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void YieldStar_Return_FromGeneratorExpressionOuter(ExecutionMode mode)
+    {
+        // The OUTER is a generator function expression delegating to a declaration; the suspend
+        // side of the delegation loop is the expression-generator runtime type here.
+        var source = """
+            function* inner() {
+                try { yield 1; } finally { console.log("inner finally"); }
+            }
+            const outer = function* () { yield* inner(); };
+            const it = outer();
+            console.log(it.next().value);
+            const r = it.return(8);
+            console.log(r.value, r.done);
+            """;
+
+        Assert.Equal("1\ninner finally\n8 true\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
+
     #region Generator function EXPRESSION closes over block-scoped outer variables — issue #522
 
     // A generator function expression (`const g = function*() {...}`) is lifted to a top-level

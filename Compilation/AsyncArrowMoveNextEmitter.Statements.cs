@@ -6,9 +6,12 @@ public partial class AsyncArrowMoveNextEmitter
 {
     // Statement dispatch is now inherited from StatementEmitterBase
 
-    private void EmitReturnNull()
+    // Falling off the end of a block-bodied async arrow completes with `undefined`, not null
+    // (#587). Explicit returns are handled by EmitReturn; this is only the implicit-completion
+    // fall-through emitted after the body.
+    private void EmitImplicitReturnUndefined()
     {
-        _il.Emit(OpCodes.Ldnull);
+        _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
         EmitSetResult();
         _il.Emit(OpCodes.Leave, _exitLabel);
     }

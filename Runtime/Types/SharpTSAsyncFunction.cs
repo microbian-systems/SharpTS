@@ -96,7 +96,11 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable
             throw ThrowException.FromResult(result.Value.ToObject());
         }
 
-        return null;
+        // Falling off the end of the body completes the async function with `undefined`, not
+        // null (#587). A bare `return;` and `return <expr>` both take the ResultType.Return
+        // path above (ExecuteReturnAsyncVT maps a value-less return to the undefined sentinel),
+        // so `return null;` still resolves with null and `return;` with undefined.
+        return SharpTSUndefined.Instance;
     }
 
     public SharpTSAsyncFunction Bind(SharpTSInstance instance)
@@ -230,7 +234,10 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable
             }
         }
 
-        return null;
+        // A block-bodied async arrow that runs off the end completes with `undefined`, not null
+        // (#587). Bare/expression returns take the ResultType.Return path above; expression-
+        // bodied arrows always return their value above, so this is the off-the-end default.
+        return SharpTSUndefined.Instance;
     }
 
     public SharpTSAsyncArrowFunction Bind(object thisObject)

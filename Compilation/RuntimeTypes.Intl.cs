@@ -61,6 +61,16 @@ public static partial class RuntimeTypes
     }
 
     /// <summary>
+    /// Formats a timestamp for Date.prototype.toLocale*{Date,Time,}String with locale/options (#539).
+    /// Called from compiled code via reflection (soft SharpTS dependency) so arg-less toLocale* stays
+    /// standalone. Delegates to the shared SharpTSDate.FormatToLocale logic.
+    /// </summary>
+    public static object FormatDateToLocale(double epochMs, int kind, object? locale, object? options)
+    {
+        return SharpTSDate.FormatToLocale(epochMs, kind, locale, options);
+    }
+
+    /// <summary>
     /// Calls format() on an Intl.DateTimeFormat instance.
     /// </summary>
     public static object? IntlDateTimeFormatFormat(object? formatter, object? date)

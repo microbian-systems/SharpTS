@@ -40,7 +40,7 @@ public partial class RuntimeEmitter
         EmitTSDateCtorString(typeBuilder, runtime);
         EmitTSDateCtorComponents(typeBuilder, runtime);
 
-        // Static Now method
+        // Static Now method (UTC/parse are emitted after the instance members they reuse)
         EmitTSDateNowStatic(typeBuilder, runtime);
 
         // Instance getter methods
@@ -67,24 +67,26 @@ public partial class RuntimeEmitter
         // Legacy getYear: local-time year minus 1900 (Annex B, #516)
         EmitSimpleDateGetter(typeBuilder, runtime, "GetYear", "Year", subtractAfter: 1900);
 
-        // Instance setter methods (all route through the shared component setter)
+        // Instance setter methods (all route through the shared component setter). The
+        // multi-component setters list the contiguous run they may write — index 0 is the
+        // primary, the rest are optional trailing components honored when supplied (#536).
         EmitTSDateSetTime(typeBuilder, runtime);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetFullYear", DateComponent.Year, utc: false);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetMonth", DateComponent.Month, utc: false);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetDate", DateComponent.Day, utc: false);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetHours", DateComponent.Hour, utc: false);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetMinutes", DateComponent.Minute, utc: false);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetSeconds", DateComponent.Second, utc: false);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetMilliseconds", DateComponent.Millisecond, utc: false);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetFullYear", [DateComponent.Year, DateComponent.Month, DateComponent.Day], utc: false);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetMonth", [DateComponent.Month, DateComponent.Day], utc: false);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetDate", [DateComponent.Day], utc: false);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetHours", [DateComponent.Hour, DateComponent.Minute, DateComponent.Second, DateComponent.Millisecond], utc: false);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetMinutes", [DateComponent.Minute, DateComponent.Second, DateComponent.Millisecond], utc: false);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetSeconds", [DateComponent.Second, DateComponent.Millisecond], utc: false);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetMilliseconds", [DateComponent.Millisecond], utc: false);
 
         // UTC setter methods (#516)
-        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCFullYear", DateComponent.Year, utc: true);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCMonth", DateComponent.Month, utc: true);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCDate", DateComponent.Day, utc: true);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCHours", DateComponent.Hour, utc: true);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCMinutes", DateComponent.Minute, utc: true);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCSeconds", DateComponent.Second, utc: true);
-        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCMilliseconds", DateComponent.Millisecond, utc: true);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCFullYear", [DateComponent.Year, DateComponent.Month, DateComponent.Day], utc: true);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCMonth", [DateComponent.Month, DateComponent.Day], utc: true);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCDate", [DateComponent.Day], utc: true);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCHours", [DateComponent.Hour, DateComponent.Minute, DateComponent.Second, DateComponent.Millisecond], utc: true);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCMinutes", [DateComponent.Minute, DateComponent.Second, DateComponent.Millisecond], utc: true);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCSeconds", [DateComponent.Second, DateComponent.Millisecond], utc: true);
+        EmitDateComponentSetter(typeBuilder, runtime, "SetUTCMilliseconds", [DateComponent.Millisecond], utc: true);
         // Legacy setYear (Annex B, #516) — emitted after SetFullYear, which it delegates to.
         EmitTSDateSetYear(typeBuilder, runtime);
 
@@ -99,6 +101,11 @@ public partial class RuntimeEmitter
         EmitTSDateLocaleString(typeBuilder, runtime, "ToLocaleTimeString", "T");
         EmitTSDateLocaleString(typeBuilder, runtime, "ToLocaleString", "G");
         EmitTSDateValueOf(typeBuilder, runtime);
+
+        // Static Date.UTC / Date.parse (#538) — emitted last as they reuse the string ctor and
+        // GetTime defined above.
+        EmitTSDateUTCStatic(typeBuilder, runtime);
+        EmitTSDateParseStatic(typeBuilder, runtime);
 
         typeBuilder.CreateType();
     }
@@ -447,6 +454,189 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    // ECMA-262 §21.4.3.4 (Date.UTC): builds a UTC instant from the supplied components (packaged
+    // as object[]) and returns the timestamp in ms since the epoch, or NaN if a supplied component
+    // is non-finite or the date is out of range. Mirrors SharpTSDate.UTC. The components are read
+    // and validated up front (outside the try) so a non-finite branch is a plain jump; the instant
+    // is then built inside a try/catch (out-of-range -> NaN), matching the constructor.
+    private void EmitTSDateUTCStatic(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "UTC",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.ObjectArray]
+        );
+        runtime.TSDateUTCStatic = method;
+
+        var il = method.GetILGenerator();
+        var nanLabel = il.DefineLabel();
+        var afterTry = il.DefineLabel();
+        var tmp = il.DeclareLocal(_types.Double);
+        var result = il.DeclareLocal(_types.Double);
+        var yLocal = il.DeclareLocal(_types.Int32);
+        var moLocal = il.DeclareLocal(_types.Int32);
+        var dLocal = il.DeclareLocal(_types.Int32);
+        var hLocal = il.DeclareLocal(_types.Int32);
+        var miLocal = il.DeclareLocal(_types.Int32);
+        var sLocal = il.DeclareLocal(_types.Int32);
+        var msLocal = il.DeclareLocal(_types.Int32);
+
+        // Date.UTC() with no arguments -> NaN (year is required).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Brfalse, nanLabel);
+
+        // Read & finite-validate each component into a local (defaults: month 0, date 1, time 0).
+        PushUtcComponentInt(il, 0, 0, nanLabel, tmp); il.Emit(OpCodes.Stloc, yLocal);
+
+        // Two-digit year mapping: if (y >= 0 && y <= 99) y += 1900;
+        var skipMap = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, yLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Blt, skipMap);
+        il.Emit(OpCodes.Ldloc, yLocal);
+        il.Emit(OpCodes.Ldc_I4, 99);
+        il.Emit(OpCodes.Bgt, skipMap);
+        il.Emit(OpCodes.Ldloc, yLocal);
+        il.Emit(OpCodes.Ldc_I4, 1900);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, yLocal);
+        il.MarkLabel(skipMap);
+
+        PushUtcComponentInt(il, 1, 0, nanLabel, tmp); il.Emit(OpCodes.Stloc, moLocal);
+        PushUtcComponentInt(il, 2, 1, nanLabel, tmp); il.Emit(OpCodes.Stloc, dLocal);
+        PushUtcComponentInt(il, 3, 0, nanLabel, tmp); il.Emit(OpCodes.Stloc, hLocal);
+        PushUtcComponentInt(il, 4, 0, nanLabel, tmp); il.Emit(OpCodes.Stloc, miLocal);
+        PushUtcComponentInt(il, 5, 0, nanLabel, tmp); il.Emit(OpCodes.Stloc, sLocal);
+        PushUtcComponentInt(il, 6, 0, nanLabel, tmp); il.Emit(OpCodes.Stloc, msLocal);
+
+        il.BeginExceptionBlock();
+        var cur = il.DeclareLocal(_types.DateTime);
+        // cur = new DateTime(y, 1, 1, 0, 0, 0, DateTimeKind.Utc)
+        il.Emit(OpCodes.Ldloc, yLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldc_I4_1); // DateTimeKind.Utc
+        il.Emit(OpCodes.Newobj, _types.DateTime.GetConstructor([
+            _types.Int32, _types.Int32, _types.Int32, _types.Int32, _types.Int32, _types.Int32, _types.DateTimeKind
+        ])!);
+        il.Emit(OpCodes.Stloc, cur);
+        // AddMonths takes an int; AddDays/AddHours/AddMinutes/AddSeconds/AddMilliseconds take a double.
+        EmitAddIntComponent(il, cur, moLocal, "AddMonths", subtractOne: false, asDouble: false);
+        EmitAddIntComponent(il, cur, dLocal, "AddDays", subtractOne: true, asDouble: true);
+        EmitAddIntComponent(il, cur, hLocal, "AddHours", subtractOne: false, asDouble: true);
+        EmitAddIntComponent(il, cur, miLocal, "AddMinutes", subtractOne: false, asDouble: true);
+        EmitAddIntComponent(il, cur, sLocal, "AddSeconds", subtractOne: false, asDouble: true);
+        EmitAddIntComponent(il, cur, msLocal, "AddMilliseconds", subtractOne: false, asDouble: true);
+
+        // result = (cur - UnixEpoch).TotalMilliseconds
+        il.Emit(OpCodes.Ldloc, cur);
+        il.Emit(OpCodes.Ldsfld, _tsDateUnixEpochField);
+        il.Emit(OpCodes.Call, _types.DateTime.GetMethod("op_Subtraction", [_types.DateTime, _types.DateTime])!);
+        var tsLocal = il.DeclareLocal(_types.TimeSpan);
+        il.Emit(OpCodes.Stloc, tsLocal);
+        il.Emit(OpCodes.Ldloca, tsLocal);
+        il.Emit(OpCodes.Call, _types.TimeSpan.GetProperty("TotalMilliseconds")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, result);
+        il.Emit(OpCodes.Leave, afterTry);
+
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Stloc, result);
+        il.Emit(OpCodes.Leave, afterTry);
+        il.EndExceptionBlock();
+
+        il.MarkLabel(afterTry);
+        il.Emit(OpCodes.Ldloc, result);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(nanLabel);
+        il.Emit(OpCodes.Ldc_R8, double.NaN);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Pushes <c>cur = cur.&lt;addMethod&gt;(component[- 1])</c> onto the in-progress UTC instant rebuild
+    /// for <see cref="EmitTSDateUTCStatic"/>. <paramref name="subtractOne"/> turns the 1-indexed JS day
+    /// into a day offset (AddDays(day - 1)). <paramref name="asDouble"/> converts the int component to a
+    /// double for the Add* overloads that take a double (only AddMonths takes an int).
+    /// </summary>
+    private void EmitAddIntComponent(ILGenerator il, LocalBuilder cur, LocalBuilder component, string addMethod, bool subtractOne, bool asDouble)
+    {
+        il.Emit(OpCodes.Ldloca, cur);
+        il.Emit(OpCodes.Ldloc, component);
+        if (subtractOne)
+        {
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Sub);
+        }
+        if (asDouble)
+            il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Call, _types.DateTime.GetMethod(addMethod)!);
+        il.Emit(OpCodes.Stloc, cur);
+    }
+
+    /// <summary>
+    /// Pushes the int value of Date.UTC argument <paramref name="index"/> from the object[] parameter:
+    /// the truncated (int) of the boxed double when present, or <paramref name="defaultInt"/> when the
+    /// argument was not supplied. A non-finite supplied value jumps to <paramref name="nanLabel"/>.
+    /// </summary>
+    private void PushUtcComponentInt(ILGenerator il, int index, int defaultInt, Label nanLabel, LocalBuilder tmp)
+    {
+        var present = il.DefineLabel();
+        var done = il.DefineLabel();
+
+        // if (index < args.Length) goto present;
+        il.Emit(OpCodes.Ldc_I4, index);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Blt, present);
+        // absent -> default
+        il.Emit(OpCodes.Ldc_I4, defaultInt);
+        il.Emit(OpCodes.Br, done);
+
+        il.MarkLabel(present);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, index);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Stloc, tmp);
+        il.Emit(OpCodes.Ldloc, tmp);
+        il.Emit(OpCodes.Call, _types.Double.GetMethod("IsFinite", [_types.Double])!);
+        il.Emit(OpCodes.Brfalse, nanLabel);
+        il.Emit(OpCodes.Ldloc, tmp);
+        il.Emit(OpCodes.Conv_I4);
+        il.MarkLabel(done);
+    }
+
+    // ECMA-262 §21.4.3.2 (Date.parse): parse a date string to a timestamp (ms since epoch) or NaN.
+    // Reuses the $TSDate string constructor + GetTime, mirroring SharpTSDate.Parse.
+    private void EmitTSDateParseStatic(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "Parse",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.Object]
+        );
+        runtime.TSDateParseStatic = method;
+
+        var il = method.GetILGenerator();
+        // return new $TSDate((string)s).GetTime();  — invalid strings yield an Invalid date => NaN.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Newobj, runtime.TSDateCtorString);
+        il.Emit(OpCodes.Call, _tsDateGetTimeMethod);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitTSDateGetTime(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         // public double GetTime() { if (_isInvalid) return NaN; return (_utcDateTime - UnixEpoch).TotalMilliseconds; }
@@ -660,18 +850,25 @@ public partial class RuntimeEmitter
     private enum DateComponent { Year, Month, Day, Hour, Minute, Second, Millisecond }
 
     /// <summary>
-    /// Emits a $TSDate setter that replaces a single date component (keeping the others) and
-    /// returns the new timestamp. The instant is rebuilt with DateTime.Add* from a normalized
-    /// base so overflowing components roll over per JavaScript semantics (e.g. setMonth(13)
-    /// advances the year); an out-of-range result (e.g. a year beyond DateTime's domain) is
-    /// caught and marks the date Invalid, mirroring <see cref="Runtime.Types.SharpTSDate"/>.
-    /// When <paramref name="utc"/> is true the instant is read and written directly in UTC;
-    /// otherwise it round-trips through local time. Only the primary argument is honored —
-    /// optional trailing arguments are dropped in compiled mode (tracked in #536).
+    /// Emits a $TSDate setter that replaces a contiguous run of date components (keeping the
+    /// rest) and returns the new timestamp. <paramref name="settable"/> lists those components
+    /// in canonical order: index 0 is the primary (always written); the remainder are the
+    /// optional trailing components. A multi-component setter receives its arguments as an
+    /// <c>object[]</c> whose length is the number of arguments actually supplied, so absent
+    /// trailing components keep their current value (matching the interpreter — #536); a
+    /// single-component setter takes a plain <c>double</c>.
+    /// The instant is rebuilt with DateTime.Add* from a normalized base so overflowing
+    /// components roll over per JavaScript semantics (e.g. setMonth(13) advances the year);
+    /// an out-of-range result (e.g. a year beyond DateTime's domain) is caught and marks the
+    /// date Invalid, mirroring <see cref="Runtime.Types.SharpTSDate"/>. When <paramref name="utc"/>
+    /// is true the instant is read and written directly in UTC; otherwise it round-trips through
+    /// local time.
     /// </summary>
-    private void EmitDateComponentSetter(TypeBuilder typeBuilder, EmittedRuntime runtime, string methodName, DateComponent component, bool utc)
+    private void EmitDateComponentSetter(TypeBuilder typeBuilder, EmittedRuntime runtime, string methodName, DateComponent[] settable, bool utc)
     {
-        var method = typeBuilder.DefineMethod(methodName, MethodAttributes.Public, _types.Double, [_types.Double]);
+        bool multi = settable.Length > 1;
+        var method = typeBuilder.DefineMethod(methodName, MethodAttributes.Public, _types.Double,
+            multi ? [_types.ObjectArray] : [_types.Double]);
         runtime.TSDateMethods[methodName] = method;
 
         var il = method.GetILGenerator();
@@ -708,7 +905,7 @@ public partial class RuntimeEmitter
         il.BeginExceptionBlock();
 
         // cur = new DateTime(year, 1, 1, 0, 0, 0, kind)
-        PushDateComponentValue(il, dtLocal, component, DateComponent.Year, "Year", 0);
+        PushDateComponentValue(il, dtLocal, settable, multi, DateComponent.Year, "Year", 0);
         il.Emit(OpCodes.Ldc_I4_1); // month
         il.Emit(OpCodes.Ldc_I4_1); // day
         il.Emit(OpCodes.Ldc_I4_0); // hour
@@ -722,13 +919,13 @@ public partial class RuntimeEmitter
 
         // cur = cur.AddMonths(month0)   (month0 = 0-indexed month to add)
         il.Emit(OpCodes.Ldloca, cur);
-        PushDateComponentValue(il, dtLocal, component, DateComponent.Month, "Month", 1);
+        PushDateComponentValue(il, dtLocal, settable, multi, DateComponent.Month, "Month", 1);
         il.Emit(OpCodes.Call, _types.DateTime.GetMethod("AddMonths")!);
         il.Emit(OpCodes.Stloc, cur);
 
         // cur = cur.AddDays(day - 1)
         il.Emit(OpCodes.Ldloca, cur);
-        PushDateComponentValue(il, dtLocal, component, DateComponent.Day, "Day", 0);
+        PushDateComponentValue(il, dtLocal, settable, multi, DateComponent.Day, "Day", 0);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Sub);
         il.Emit(OpCodes.Conv_R8);
@@ -737,28 +934,28 @@ public partial class RuntimeEmitter
 
         // cur = cur.AddHours(hour)
         il.Emit(OpCodes.Ldloca, cur);
-        PushDateComponentValue(il, dtLocal, component, DateComponent.Hour, "Hour", 0);
+        PushDateComponentValue(il, dtLocal, settable, multi, DateComponent.Hour, "Hour", 0);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Call, _types.DateTime.GetMethod("AddHours")!);
         il.Emit(OpCodes.Stloc, cur);
 
         // cur = cur.AddMinutes(minute)
         il.Emit(OpCodes.Ldloca, cur);
-        PushDateComponentValue(il, dtLocal, component, DateComponent.Minute, "Minute", 0);
+        PushDateComponentValue(il, dtLocal, settable, multi, DateComponent.Minute, "Minute", 0);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Call, _types.DateTime.GetMethod("AddMinutes")!);
         il.Emit(OpCodes.Stloc, cur);
 
         // cur = cur.AddSeconds(second)
         il.Emit(OpCodes.Ldloca, cur);
-        PushDateComponentValue(il, dtLocal, component, DateComponent.Second, "Second", 0);
+        PushDateComponentValue(il, dtLocal, settable, multi, DateComponent.Second, "Second", 0);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Call, _types.DateTime.GetMethod("AddSeconds")!);
         il.Emit(OpCodes.Stloc, cur);
 
         // cur = cur.AddMilliseconds(millisecond)
         il.Emit(OpCodes.Ldloca, cur);
-        PushDateComponentValue(il, dtLocal, component, DateComponent.Millisecond, "Millisecond", 0);
+        PushDateComponentValue(il, dtLocal, settable, multi, DateComponent.Millisecond, "Millisecond", 0);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Call, _types.DateTime.GetMethod("AddMilliseconds")!);
         il.Emit(OpCodes.Stloc, cur);
@@ -793,27 +990,74 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Pushes the int value for one slot of the DateTime rebuilt by <see cref="EmitDateComponentSetter"/>:
-    /// the setter argument (truncated toward zero, matching <c>(int)value</c> in SharpTSDate) when this
-    /// slot is the one being set, otherwise the current component read from <paramref name="dtLocal"/>
-    /// (minus <paramref name="subtract"/>, e.g. 1 to convert .NET's 1-indexed month to 0-indexed).
+    /// Pushes the int value for one <paramref name="slot"/> of the DateTime rebuilt by
+    /// <see cref="EmitDateComponentSetter"/>. If the slot is not in <paramref name="settable"/>
+    /// it keeps the current component (read from <paramref name="dtLocal"/>, minus
+    /// <paramref name="subtract"/> — e.g. 1 to convert .NET's 1-indexed month to 0-indexed).
+    /// Otherwise it uses the matching setter argument (truncated toward zero, matching
+    /// <c>(int)value</c> in SharpTSDate): the lone <c>double</c> parameter for a single-component
+    /// setter, or — for a multi-component setter whose args arrive as an <c>object[]</c> — element
+    /// k, where the primary (k == 0) is always present and an optional trailing component
+    /// (k &gt; 0) is used only when <c>args.Length &gt; k</c>, otherwise the current value is kept.
     /// </summary>
-    private void PushDateComponentValue(ILGenerator il, LocalBuilder dtLocal, DateComponent target, DateComponent slot, string propertyName, int subtract)
+    private void PushDateComponentValue(ILGenerator il, LocalBuilder dtLocal, DateComponent[] settable, bool multi, DateComponent slot, string propertyName, int subtract)
     {
-        if (target == slot)
+        int k = Array.IndexOf(settable, slot);
+        if (k < 0)
         {
+            // Not written by this setter — keep the current component.
+            PushCurrentDateComponent(il, dtLocal, propertyName, subtract);
+            return;
+        }
+
+        if (!multi)
+        {
+            // Single-component setter: the lone double parameter (already 0-indexed where the
+            // caller expects it, so no subtract is applied to a supplied argument).
             il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Conv_I4);
+            return;
         }
-        else
+
+        if (k == 0)
         {
-            il.Emit(OpCodes.Ldloca, dtLocal);
-            il.Emit(OpCodes.Call, _types.DateTime.GetProperty(propertyName)!.GetGetMethod()!);
-            if (subtract != 0)
-            {
-                il.Emit(OpCodes.Ldc_I4, subtract);
-                il.Emit(OpCodes.Sub);
-            }
+            // Primary argument is always supplied (arity >= 1): (int)(double)args[0].
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldelem_Ref);
+            il.Emit(OpCodes.Unbox_Any, _types.Double);
+            il.Emit(OpCodes.Conv_I4);
+            return;
+        }
+
+        // Optional trailing argument: args.Length > k ? (int)(double)args[k] : current.
+        var useCurrent = il.DefineLabel();
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldc_I4, k);
+        il.Emit(OpCodes.Ble, useCurrent); // args.Length <= k → component not supplied
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4, k);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Br, done);
+        il.MarkLabel(useCurrent);
+        PushCurrentDateComponent(il, dtLocal, propertyName, subtract);
+        il.MarkLabel(done);
+    }
+
+    /// <summary>Pushes the current value of a DateTime component (minus <paramref name="subtract"/>) as an int.</summary>
+    private void PushCurrentDateComponent(ILGenerator il, LocalBuilder dtLocal, string propertyName, int subtract)
+    {
+        il.Emit(OpCodes.Ldloca, dtLocal);
+        il.Emit(OpCodes.Call, _types.DateTime.GetProperty(propertyName)!.GetGetMethod()!);
+        if (subtract != 0)
+        {
+            il.Emit(OpCodes.Ldc_I4, subtract);
+            il.Emit(OpCodes.Sub);
         }
     }
 
@@ -855,10 +1099,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, yLocal);
 
         il.MarkLabel(skipMapLabel);
-        // return SetFullYear((double)y);
+        // return SetFullYear(new object[] { (double)y });  — SetFullYear takes the multi-arg
+        // object[] form; a single element sets only the year, keeping month and day (#536).
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldloc, yLocal);
         il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Call, runtime.TSDateMethods["SetFullYear"]);
         il.Emit(OpCodes.Ret);
     }

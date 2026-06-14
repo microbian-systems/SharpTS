@@ -14,6 +14,17 @@ public static class DateBuiltIns
     private static readonly BuiltInStaticMemberLookup _staticLookup =
         BuiltInStaticBuilder.Create()
             .MethodV2("now", 0, (_, _, _) => RuntimeValue.FromNumber(SharpTSDate.Now()))
+            // Date.UTC(year, month?, date?, hours?, minutes?, seconds?, ms?) — UTC timestamp (#538)
+            .MethodV2("UTC", 1, 7, (_, _, args) => RuntimeValue.FromNumber(SharpTSDate.UTC(
+                args[0].AsNumber(),
+                args.Length > 1 && args[1].Kind != ValueKind.Undefined ? (double?)args[1].AsNumber() : null,
+                args.Length > 2 && args[2].Kind != ValueKind.Undefined ? (double?)args[2].AsNumber() : null,
+                args.Length > 3 && args[3].Kind != ValueKind.Undefined ? (double?)args[3].AsNumber() : null,
+                args.Length > 4 && args[4].Kind != ValueKind.Undefined ? (double?)args[4].AsNumber() : null,
+                args.Length > 5 && args[5].Kind != ValueKind.Undefined ? (double?)args[5].AsNumber() : null,
+                args.Length > 6 && args[6].Kind != ValueKind.Undefined ? (double?)args[6].AsNumber() : null)))
+            // Date.parse(s) — timestamp from a date string, or NaN if unparseable (#538)
+            .MethodV2("parse", 1, (_, _, args) => RuntimeValue.FromNumber(SharpTSDate.Parse(args[0].AsString())))
             .Build();
 
     // Instance method lookup for Date instances
@@ -105,11 +116,21 @@ public static class DateBuiltIns
             .MethodV2("toDateString", 0, (_, date, _) => RuntimeValue.FromString(date.ToDateString()))
             .MethodV2("toTimeString", 0, (_, date, _) => RuntimeValue.FromString(date.ToTimeString()))
             .MethodV2("toUTCString", 0, (_, date, _) => RuntimeValue.FromString(date.ToUTCString()))
-            // toLocale* accept optional (locales, options) per lib.es2020.date; the runtime
-            // ignores them (formats with the host culture) — see SharpTSDate for rationale.
-            .MethodV2("toLocaleDateString", 0, 2, (_, date, _) => RuntimeValue.FromString(date.ToLocaleDateString()))
-            .MethodV2("toLocaleTimeString", 0, 2, (_, date, _) => RuntimeValue.FromString(date.ToLocaleTimeString()))
-            .MethodV2("toLocaleString", 0, 2, (_, date, _) => RuntimeValue.FromString(date.ToLocaleString()))
+            // toLocale* accept optional (locales, options) per lib.es2020.date. With no arguments
+            // they use the fast host-culture BCL path; when locale/options are supplied they route
+            // through SharpTSIntlDateTimeFormat to honor them (#539).
+            .MethodV2("toLocaleDateString", 0, 2, (_, date, args) => RuntimeValue.FromString(
+                args.Length == 0
+                    ? date.ToLocaleDateString()
+                    : SharpTSDate.FormatToLocale(date.GetTime(), SharpTSDate.LocaleKindDate, LocaleArg(args, 0), LocaleArg(args, 1))))
+            .MethodV2("toLocaleTimeString", 0, 2, (_, date, args) => RuntimeValue.FromString(
+                args.Length == 0
+                    ? date.ToLocaleTimeString()
+                    : SharpTSDate.FormatToLocale(date.GetTime(), SharpTSDate.LocaleKindTime, LocaleArg(args, 0), LocaleArg(args, 1))))
+            .MethodV2("toLocaleString", 0, 2, (_, date, args) => RuntimeValue.FromString(
+                args.Length == 0
+                    ? date.ToLocaleString()
+                    : SharpTSDate.FormatToLocale(date.GetTime(), SharpTSDate.LocaleKindDateTime, LocaleArg(args, 0), LocaleArg(args, 1))))
             // ECMA-262 §21.4.4.37: toJSON returns the ISO string, or null for a non-finite
             // (Invalid) date — guard so we never reach ToISOString's RangeError throw.
             .MethodV2("toJSON", 0, (_, date, _) => double.IsNaN(date.GetTime())
@@ -121,6 +142,13 @@ public static class DateBuiltIns
             .MethodV2("setYear", 1, (_, date, args) =>
                 RuntimeValue.FromNumber(date.SetYear(args[0].AsNumber())))
             .Build();
+
+    /// <summary>
+    /// Extracts the locale/options argument at <paramref name="index"/> as a boxed object for
+    /// <see cref="SharpTSDate.FormatToLocale"/>, treating absent/undefined as null (#539).
+    /// </summary>
+    private static object? LocaleArg(ReadOnlySpan<RuntimeValue> args, int index)
+        => index < args.Length && args[index].Kind != ValueKind.Undefined ? args[index].ToObject() : null;
 
     /// <summary>
     /// Gets a static member (method) from the Date namespace.

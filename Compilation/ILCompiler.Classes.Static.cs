@@ -443,9 +443,11 @@ public partial class ILCompiler
         if (hasLock && prevReentrancyLocal != null && lockTakenLocal != null &&
             staticSyncLockField != null && staticReentrancyField != null)
         {
-            // Store default return value if no explicit return was emitted
-            // ReturnValueLocal is guaranteed non-null here (set up earlier in hasLock block)
-            il.Emit(OpCodes.Ldnull);
+            // Store the implicit completion value if no explicit return was emitted.
+            // ReturnValueLocal is guaranteed non-null here (set up earlier in hasLock
+            // block) and is always typed `object`, so the default is the `$Undefined`
+            // sentinel — a method falling off the end completes with `undefined`. (#588)
+            EmitDefaultReturnValue(il, ctx.ReturnValueLocal!.LocalType);
             il.Emit(OpCodes.Stloc, ctx.ReturnValueLocal!);
             ctx.ILBuilder.Emit_Leave(ctx.ReturnLabel);
 
@@ -485,8 +487,10 @@ public partial class ILCompiler
         }
         else
         {
-            // Default return null
-            il.Emit(OpCodes.Ldnull);
+            // Falling off the end completes with `undefined` (ECMA-262). Route through
+            // EmitDefaultReturnValue so an `object` slot materializes the `$Undefined`
+            // sentinel instead of CLR null. (#588)
+            EmitDefaultReturnValue(il, methodBuilder.ReturnType);
             il.Emit(OpCodes.Ret);
         }
     }

@@ -31,6 +31,7 @@ public class StandaloneDllTests
         "Compilation/RuntimeEmitter.Json.Proxy.cs",   // JSON.stringify Proxy materialization via TrapOwnKeys/TrapGet (requires SharpTS.dll at runtime)
         "Compilation/RuntimeEmitter.Json.ParseReviver.cs", // JSON.parse reviver Proxy trap dispatch (TrapOwnKeys/TrapGet/TrapSet/TrapDeleteProperty)
         "Compilation/RuntimeEmitter.Intl.cs",         // Intl.NumberFormat runtime dispatch via RuntimeTypes
+        "Compilation/RuntimeEmitter.Date.cs",         // Date.prototype.toLocale* with locale/options via RuntimeTypes.FormatDateToLocale (#539); only reached by toLocale* calls that pass arguments
         "Compilation/RuntimeEmitter.AbortController.cs", // AbortSignal.any() via RuntimeTypes.AbortSignalAnyCompiled
         "Compilation/RuntimeEmitter.ChildProcessHelpers.cs", // exec/spawn async delegation to interpreter module
         "Compilation/RuntimeEmitter.ProcessHelpers.cs",      // ProcessEventEmitterCall and ProcessEmitExit fallback

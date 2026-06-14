@@ -472,6 +472,133 @@ public class GeneratorTryFinallyTests
         Assert.Equal("0\nboom\n", TestHarness.Run(source, mode));
     }
 
+    // ---- #554: return/break/continue inside a NO-yield try (real IL exception block) ----
+    // When no yield crosses the protected region, EmitSimpleTryCatch opens a *real* IL exception
+    // block. A `return`/`break`/`continue` leaving it must therefore use `Leave` (which runs the
+    // finally) rather than an illegal `ret`/`br` — previously these crashed MoveNext with
+    // InvalidProgramException (return → ReturnFromTry, break/continue → BranchOutOfTry).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BareReturnInNoYieldTryFinally_RunsFinally(ExecutionMode mode)
+    {
+        // The exact #554 repro: a yield precedes the try, but the try itself contains no yield.
+        var source = """
+            function* g() { yield 0; try { return; } finally { console.log("f"); } }
+            for (const v of g()) console.log(v);
+            """;
+
+        Assert.Equal("0\nf\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ValueReturnInNoYieldTryFinally_RunsFinallyThenCompletesWithValue(ExecutionMode mode)
+    {
+        // The finally runs on the return path, and the returned value is the completion value.
+        var source = """
+            function* g() { yield 0; try { return 7; } finally { console.log("f"); } }
+            const it = g();
+            let r = it.next(); console.log(r.value + "/" + r.done);
+            r = it.next(); console.log(r.value + "/" + r.done);
+            r = it.next(); console.log(r.value + "/" + r.done);
+            """;
+
+        Assert.Equal("0/false\nf\n7/true\nundefined/true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BreakInNoYieldTryFinally_RunsFinallyBeforeBreaking(ExecutionMode mode)
+    {
+        // The second #554 repro: break leaves a no-yield try, running its finally first.
+        var source = """
+            function* g() { yield 0; while (true) { try { break; } finally { console.log("f"); } } }
+            for (const v of g()) console.log(v);
+            """;
+
+        Assert.Equal("0\nf\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ContinueInNoYieldTryFinally_RunsFinallyEachIteration(ExecutionMode mode)
+    {
+        // The yield sits outside the try, so the try (holding the continue) takes the real-IL path.
+        var source = """
+            function* g() {
+              for (let i = 0; i < 3; i++) {
+                yield i;
+                try { continue; } finally { console.log("f" + i); }
+              }
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v0\nf0\nv1\nf1\nv2\nf2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ReturnInNoYieldTry_NestedInYieldingFinally_RunsAllThenKeepsValue(ExecutionMode mode)
+    {
+        // The inner try has no yield (real IL block); it is nested in an outer try whose finally
+        // yields (flag-based). The inner return must `Leave` the real block — running its no-yield
+        // finally — into the outer flag cleanup, drive the outer yielding finally, then complete with
+        // the returned value (a real try never encloses a flag try, so the finally ordering holds).
+        var source = """
+            function* g() {
+              try {
+                yield 1;
+                try { return 5; } finally { console.log("x"); }
+              } finally { yield 2; }
+            }
+            const it = g();
+            let r = it.next(); console.log(r.value + "/" + r.done);
+            r = it.next(); console.log(r.value + "/" + r.done);
+            r = it.next(); console.log(r.value + "/" + r.done);
+            """;
+
+        Assert.Equal("1/false\nx\n2/false\n5/true\n", TestHarness.Run(source, mode));
+    }
+
+    // ---- #555: a `return <value>` whose finally yields must keep its completion value ----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ReturnValueWithYieldingFinally_RestoresCompletionValue(ExecutionMode mode)
+    {
+        // The exact #555 repro: the finally yields 9 (overwriting Current), but the final next() must
+        // still report the returned 5 — the value is stashed at the return and restored after the
+        // finally has run. (Compiled previously reported the yielded 9 as the completion value.)
+        var source = """
+            function* g() { try { return 5; } finally { yield 9; } }
+            const it = g();
+            let r = it.next(); console.log(r.value + "/" + r.done);
+            r = it.next(); console.log(r.value + "/" + r.done);
+            r = it.next(); console.log(r.value + "/" + r.done);
+            """;
+
+        Assert.Equal("9/false\n5/true\nundefined/true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ReturnValueInYieldingTry_NonYieldingFinally_KeepsValue(ExecutionMode mode)
+    {
+        // Sibling of #555: the try yields (flag-based path) and returns a value; the finally does not
+        // yield. The completion value must be the returned 5, not the last yielded value.
+        var source = """
+            function* g() { try { yield 1; return 5; } finally { console.log("f"); } }
+            const it = g();
+            let r = it.next(); console.log(r.value + "/" + r.done);
+            r = it.next(); console.log(r.value + "/" + r.done);
+            r = it.next(); console.log(r.value + "/" + r.done);
+            """;
+
+        Assert.Equal("1/false\nf\n5/true\nundefined/true\n", TestHarness.Run(source, mode));
+    }
+
     // ---- IL-verification guards (the heart of #477: emitted IL must verify) ----
 
     [Theory]
@@ -493,6 +620,19 @@ public class GeneratorTryFinallyTests
     [InlineData("function* g() { outer: for(let i=0;i<2;i++){ for(let j=0;j<2;j++){ try { yield j; break outer; } finally { console.log('f'); } } } } for (const v of g()) {}")]
     [InlineData("function* g() { try { for(let i=0;i<2;i++){ try { yield i; break; } finally { console.log('a'); } } } finally { console.log('b'); } } for (const v of g()) {}")]
     [InlineData("function* g() { while (true) { try { yield 1; break; } finally { yield 2; } } } for (const v of g()) {}")]
+    // #554: return/break/continue inside a NO-yield try (real IL exception block) — must `Leave`, not
+    // `ret`/`br`. The yield lives elsewhere in the body so it is still a generator state machine.
+    [InlineData("function* g() { yield 0; try { return; } finally { console.log('f'); } } for (const v of g()) {}")]
+    [InlineData("function* g() { yield 0; try { return 7; } finally { console.log('f'); } } for (const v of g()) {}")]
+    [InlineData("function* g() { yield 0; while (true) { try { break; } finally { console.log('f'); } } } for (const v of g()) {}")]
+    [InlineData("function* g() { for (let i=0;i<2;i++){ yield i; try { continue; } finally { console.log('f'); } } } for (const v of g()) {}")]
+    [InlineData("function* g() { yield 0; try { return 3; } catch (e) {} } for (const v of g()) {}")]
+    [InlineData("function* g() { yield 0; try { try { return 1; } finally { console.log('a'); } } finally { console.log('b'); } } for (const v of g()) {}")]
+    // #554/#555: a no-yield (real IL) inner try nested in an outer yielding (flag-based) finally.
+    [InlineData("function* g() { try { yield 1; try { return 5; } finally { console.log('x'); } } finally { yield 2; } } for (const v of g()) {}")]
+    [InlineData("function* g() { while (true) { try { yield 1; try { break; } finally { console.log('x'); } } finally { yield 2; } } } for (const v of g()) {}")]
+    // #555: a `return <value>` whose finally yields.
+    [InlineData("function* g() { try { return 5; } finally { yield 9; } } for (const v of g()) {}")]
     public void GeneratorTryFinallyWithYield_EmitsVerifiableIL(string source)
     {
         var errors = TestHarness.CompileAndVerifyOnly(source);

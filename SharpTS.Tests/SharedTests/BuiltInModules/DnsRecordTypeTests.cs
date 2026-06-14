@@ -13,6 +13,27 @@ namespace SharpTS.Tests.SharedTests.BuiltInModules;
 /// </summary>
 public class DnsRecordTypeTests
 {
+    /// <summary>
+    /// Runs a DNS test module, skipping (rather than failing) when the live query hung.
+    /// <para>
+    /// The network tests below issue a real query to the system resolver. The bodies already
+    /// tolerate a resolver <i>error</i> (callback err / promise reject), but a <i>hang</i> —
+    /// the resolver never answering, common on CI agents and especially macOS — drains the
+    /// event loop with no output, so the harness returns "" and the test false-reds (tracked by
+    /// #495/#387; the deep fix is a query timeout in the compiled dns runtime). Empty output is
+    /// the unambiguous hang signature: each test prints at least one line on success or
+    /// tolerated error, and a genuine regression surfaces as wrong output (still asserted). Skip
+    /// on that signature so the suite stays deterministic without masking real breakage. The
+    /// behavioral assertions are pinned by the deterministic fake-server suites regardless.
+    /// </para>
+    /// </summary>
+    private static string RunDns(Dictionary<string, string> files, string entryPoint, ExecutionMode mode)
+    {
+        var output = TestHarness.RunModules(files, entryPoint, mode);
+        Skip.If(output.Length == 0, "live DNS query timed out on this agent (flaky CI resolver); see #495/#387");
+        return output;
+    }
+
     #region Live smoke tests (network-tolerant)
 
     // A single callback-based and a single promise-based live query. Success
@@ -20,7 +41,7 @@ public class DnsRecordTypeTests
     // treated as a skip — live DNS on CI runners is a known flake source, and
     // the behavioral assertions are pinned by the fake-server suites.
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void LiveSmoke_ResolveMx_Callback(ExecutionMode mode)
     {
@@ -45,11 +66,11 @@ public class DnsRecordTypeTests
                 """
         };
 
-        var output = TestHarness.RunModules(files, "main.ts", mode);
+        var output = RunDns(files, "main.ts", mode);
         Assert.Equal("true\ntrue\ntrue\ntrue\n", output);
     }
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void LiveSmoke_ResolveNs_Promise(ExecutionMode mode)
     {
@@ -74,7 +95,7 @@ public class DnsRecordTypeTests
                 """
         };
 
-        var output = TestHarness.RunModules(files, "main.ts", mode);
+        var output = RunDns(files, "main.ts", mode);
         Assert.Equal("true\ntrue\ntrue\n", output);
     }
 
@@ -82,7 +103,7 @@ public class DnsRecordTypeTests
 
     #region Error Handling Tests
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ResolveMx_InvalidDomain_CallsBackWithError(ExecutionMode mode)
     {
@@ -97,11 +118,11 @@ public class DnsRecordTypeTests
                 """
         };
 
-        var output = TestHarness.RunModules(files, "main.ts", mode);
+        var output = RunDns(files, "main.ts", mode);
         Assert.Equal("true\ntrue\n", output);
     }
 
-    [Theory]
+    [SkippableTheory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ResolveNs_InvalidDomain_Promise_Rejects(ExecutionMode mode)
     {
@@ -121,7 +142,7 @@ public class DnsRecordTypeTests
                 """
         };
 
-        var output = TestHarness.RunModules(files, "main.ts", mode);
+        var output = RunDns(files, "main.ts", mode);
         Assert.Equal("error caught\n", output);
     }
 

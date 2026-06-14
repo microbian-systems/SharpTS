@@ -170,6 +170,26 @@ public partial class CompilationContext
     // Loop control labels (with optional label name for labeled statements)
     public Stack<(Label BreakLabel, Label ContinueLabel, string? LabelName)> LoopLabels { get; } = new();
 
+    /// <summary>
+    /// Label name awaiting attachment to the next loop's own break/continue targets.
+    /// Set by <c>EmitLabeledStatement</c> when the labeled statement is a loop, and consumed
+    /// by that loop's <c>EnterLoop</c> (here or in an emitter override). This lets
+    /// <c>continue &lt;label&gt;</c> branch to the loop's real continue point — a for-loop's
+    /// increment, a while's condition — instead of a point ahead of the loop's initializer,
+    /// which would re-run it forever (#558).
+    /// </summary>
+    public string? PendingLoopLabel { get; set; }
+
+    /// <summary>
+    /// Returns the pending labeled-loop name and clears it, so it attaches to exactly one loop.
+    /// </summary>
+    public string? TakePendingLoopLabel()
+    {
+        var label = PendingLoopLabel;
+        PendingLoopLabel = null;
+        return label;
+    }
+
     // Hoisted array type caches: stack of per-loop dictionaries mapping
     // variable name → (typed local, descriptor) for arrays whose isinst
     // check has been hoisted to the loop preamble.
@@ -275,7 +295,9 @@ public partial class CompilationContext
 
     public void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
     {
-        LoopLabels.Push((breakLabel, continueLabel, labelName));
+        // An unlabeled EnterLoop call adopts any label parked by an enclosing labeled
+        // statement, so the loop's own continue/break targets carry the label (#558).
+        LoopLabels.Push((breakLabel, continueLabel, labelName ?? TakePendingLoopLabel()));
     }
 
     public void ExitLoop()

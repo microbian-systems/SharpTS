@@ -1982,17 +1982,22 @@ public partial class Interpreter : IDisposable
         return ExecutionResult.Success();
     }
 
-    internal ExecutionResult VisitWhile(Stmt.While whileStmt) =>
-        ExecuteWhileCore(
+    internal ExecutionResult VisitWhile(Stmt.While whileStmt)
+    {
+        var labels = TakePendingLoopLabels();
+        return ExecuteWhileCore(
             () => IsTruthy(Evaluate(whileStmt.Condition)),
-            () => Execute(whileStmt.Body));
+            () => Execute(whileStmt.Body),
+            labels);
+    }
 
     internal ExecutionResult VisitDoWhile(Stmt.DoWhile doWhileStmt)
     {
+        var labels = TakePendingLoopLabels();
         do
         {
             var result = Execute(doWhileStmt.Body);
-            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, null);
+            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             if (shouldBreak) return ExecutionResult.Success();
             if (shouldContinue) continue;
             if (abruptResult.HasValue) return abruptResult.Value;
@@ -2004,6 +2009,9 @@ public partial class Interpreter : IDisposable
 
     internal ExecutionResult VisitFor(Stmt.For forStmt)
     {
+        // Drain labels parked by an enclosing labeled statement before running the initializer,
+        // so `continue <label>`/`break <label>` resolve to this loop (#558).
+        var labels = TakePendingLoopLabels();
         // Create scope for loop variables (ES6 let/const block scoping)
         // Variables declared with let/const in the initializer are scoped to the loop
         RuntimeEnvironment loopEnv = new(_environment);
@@ -2016,9 +2024,10 @@ public partial class Interpreter : IDisposable
             while (forStmt.Condition == null || IsTruthy(Evaluate(forStmt.Condition)))
             {
                 var result = Execute(forStmt.Body);
-                if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == null) break;
-                // On continue, execute increment then continue the loop
-                if (result.Type == ExecutionResult.ResultType.Continue && result.TargetLabel == null)
+                var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
+                if (shouldBreak) break;
+                // On continue (unlabeled or to this loop), execute increment then re-test
+                if (shouldContinue)
                 {
                     if (forStmt.Increment != null)
                         Evaluate(forStmt.Increment);
@@ -2026,7 +2035,7 @@ public partial class Interpreter : IDisposable
                     Thread.Sleep(0);
                     continue;
                 }
-                if (result.IsAbrupt) return result;
+                if (abruptResult.HasValue) return abruptResult.Value;
                 // Normal completion: execute increment
                 if (forStmt.Increment != null)
                     Evaluate(forStmt.Increment);
@@ -2523,9 +2532,14 @@ public partial class Interpreter : IDisposable
 
     internal ExecutionResult VisitReturn(Stmt.Return returnStmt)
     {
-        object? returnValue = null;
-        if (returnStmt.Value != null) returnValue = Evaluate(returnStmt.Value);
-        return ExecutionResult.Return(returnValue);
+        // A bare `return;` completes with `undefined` — distinct from `return null;`. Emitting the
+        // undefined sentinel here (rather than C# null, which represents JS null) is what makes a
+        // generator's completion value and a plain function's return value `undefined` instead of
+        // conflating them with null (#480). `return <expr>` preserves whatever the expression
+        // evaluates to, so an explicit `return null;` still yields null.
+        if (returnStmt.Value == null)
+            return ExecutionResult.Return(RuntimeValue.Undefined);
+        return ExecutionResult.Return(Evaluate(returnStmt.Value));
     }
 
     internal ExecutionResult VisitPrint(Stmt.Print printStmt)

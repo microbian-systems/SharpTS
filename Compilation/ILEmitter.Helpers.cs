@@ -36,9 +36,10 @@ public partial class ILEmitter
     {
         if (returnType == typeof(void))
         {
-            // Void returns don't leave a value on the stack
-            IL.Emit(OpCodes.Ldnull);
-            SetStackUnknown();
+            // A void-returning method used in a value context yields `undefined`, not C# null
+            // (= JS null) — mirrors BoxReturnValueIfNeeded in ExpressionEmitterBase. The helper
+            // pushes the $Undefined sentinel (null fallback for standalone) and sets stack type. #563
+            EmitUndefinedConstant();
         }
         else if (_ctx.Types.IsDouble(returnType))
         {

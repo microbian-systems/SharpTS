@@ -837,7 +837,10 @@ public partial class ILCompiler
         }
         else
         {
-            il.Emit(OpCodes.Ldnull);
+            // Falling off the end completes with `undefined` (ECMA-262). Route through
+            // EmitDefaultReturnValue so an `object` slot materializes the `$Undefined`
+            // sentinel instead of CLR null. (#588)
+            EmitDefaultReturnValue(il, methodBuilder.ReturnType);
             il.Emit(OpCodes.Ret);
         }
     }
@@ -887,7 +890,10 @@ public partial class ILCompiler
         }
         else
         {
-            il.Emit(OpCodes.Ldnull);
+            // Falling off the end completes with `undefined` (ECMA-262). Route through
+            // EmitDefaultReturnValue so an `object` slot materializes the `$Undefined`
+            // sentinel instead of CLR null. (#588)
+            EmitDefaultReturnValue(il, methodBuilder.ReturnType);
             il.Emit(OpCodes.Ret);
         }
     }
@@ -932,7 +938,9 @@ public partial class ILCompiler
                 emitter.FinalizeReturns();
             else
             {
-                il.Emit(OpCodes.Ldnull);
+                // Falling off the end completes with `undefined` (ECMA-262); the slot is
+                // `object`, so emit the `$Undefined` sentinel instead of CLR null. (#588)
+                EmitDefaultReturnValue(il, methodBuilder.ReturnType);
                 il.Emit(OpCodes.Ret);
             }
         }
@@ -976,7 +984,10 @@ public partial class ILCompiler
         }
         else
         {
-            il.Emit(OpCodes.Ldnull);
+            // Falling off the end completes with `undefined` (ECMA-262). Route through
+            // EmitDefaultReturnValue so an `object` slot materializes the `$Undefined`
+            // sentinel instead of CLR null. (#588)
+            EmitDefaultReturnValue(il, methodBuilder.ReturnType);
             il.Emit(OpCodes.Ret);
         }
     }
