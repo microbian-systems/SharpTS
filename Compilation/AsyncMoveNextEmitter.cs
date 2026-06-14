@@ -153,6 +153,9 @@ public partial class AsyncMoveNextEmitter : StatementEmitterBase, IEmitterContex
         if (body == null) return;
 
         _ctx = ctx;
+        // Wire the runtime into the helper now that the context is bound, so MoveNext uses the
+        // $Undefined sentinel and JS-spec coercion/comparison helpers rather than null/Convert (#600).
+        if (ctx.Runtime != null) _helpers.SetRuntime(ctx.Runtime);
         _hasReturnValue = returnType != _types.Void;
 
         // Create variable resolver for hoisted fields and non-hoisted locals

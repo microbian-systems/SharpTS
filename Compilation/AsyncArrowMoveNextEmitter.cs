@@ -131,6 +131,9 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
     {
         // Note: _il is initialized in constructor via GetILGenerator()
         _ctx = ctx;
+        // Wire the runtime into the helper now that the context is bound, so MoveNext uses the
+        // $Undefined sentinel and JS-spec coercion/comparison helpers rather than null/Convert (#600).
+        if (ctx.Runtime != null) _helpers.SetRuntime(ctx.Runtime);
 
         // Create variable resolver for hoisted fields, locals, and captured variables
         _resolver = new AsyncArrowVariableResolver(_il, _builder, _locals);
