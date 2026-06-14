@@ -139,6 +139,43 @@ public class CliCommonJsCompiledTests
         Assert.Contains("86400000", output);
     }
 
+    /// <summary>
+    /// Regression for #541: a generator method that captures a <c>require()</c>'d import
+    /// whose binding name collides with a same-named top-level function in ANOTHER module
+    /// must resolve to the import, not the cross-module function. This is the yaml
+    /// composer shape (<c>const composeDoc = require('./compose-doc.js')</c> referenced as
+    /// <c>composeDoc.composeDoc(...)</c> inside <c>*next()</c>).
+    ///
+    /// <para>The captured variable is dropped from the per-module static-var map (captured
+    /// vars live on the entry-point display class), so the generator's live read fell through
+    /// to the global Functions registry and picked up the wrong module's function, throwing
+    /// "object is not a function". A captured variable binding must shadow a cross-module
+    /// function of the same name.</para>
+    /// </summary>
+    [Fact]
+    public void Compiled_Generator_CapturedImportShadowsCrossModuleFunction()
+    {
+        using var tempDir = CliTestHelper.CreateTempDirectory();
+        tempDir.CreateFile("compose-doc.cjs", """
+            function composeDoc(opts, token) { return { v: token }; }
+            module.exports = { composeDoc };
+            """);
+        var entry = tempDir.CreateFile("composer.cjs", """
+            const composeDoc = require("./compose-doc.cjs");
+            class Composer {
+              *next(token) { yield composeDoc.composeDoc(this.opts, token).v; }
+              *compose(tokens) { for (const t of tokens) yield* this.next(t); }
+            }
+            const out = [];
+            for (const v of new Composer().compose([1, 2, 3])) out.push(v);
+            console.log(out.join(","));
+            """);
+
+        var (exit, output) = CompileAndRun(tempDir, entry);
+        Assert.Equal(0, exit);
+        Assert.Contains("1,2,3", output);
+    }
+
     [Fact]
     public void Compiled_CjsFile_CircularRequire_PartialExportsVisible()
     {

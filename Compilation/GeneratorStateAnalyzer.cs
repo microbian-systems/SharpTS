@@ -28,7 +28,6 @@ public class GeneratorStateAnalyzer : AstVisitorBase
         HashSet<string> HoistedParameters,
         bool UsesThis,
         bool HasYieldStar,
-        HashSet<string> CapturedVariables,  // Variables from outer scopes that need to be captured
         List<Stmt.ForOf> ForOfLoopsWithYield  // for...of loops containing yields that need enumerator hoisting
     );
 
@@ -37,7 +36,6 @@ public class GeneratorStateAnalyzer : AstVisitorBase
     private readonly HashSet<string> _declaredVariables = [];
     private readonly HashSet<string> _variablesUsedAfterYield = [];
     private readonly HashSet<string> _variablesDeclaredBeforeYield = [];
-    private readonly HashSet<string> _capturedVariables = [];  // Variables from outer scopes
     private readonly List<Stmt.ForOf> _forOfLoopsWithYield = [];  // for...of loops containing yields (enumerator hoisting)
     // Loop bodies currently being analyzed (innermost on top). A loop whose body contains a
     // yield re-executes after the yield resumes, so every local used anywhere in it is live
@@ -93,7 +91,6 @@ public class GeneratorStateAnalyzer : AstVisitorBase
             HoistedParameters: parameters,
             UsesThis: _usesThis,
             HasYieldStar: _hasYieldStar,
-            CapturedVariables: [.. _capturedVariables],
             ForOfLoopsWithYield: [.. _forOfLoopsWithYield]
         );
     }
@@ -104,7 +101,6 @@ public class GeneratorStateAnalyzer : AstVisitorBase
         _declaredVariables.Clear();
         _variablesUsedAfterYield.Clear();
         _variablesDeclaredBeforeYield.Clear();
-        _capturedVariables.Clear();
         _forOfLoopsWithYield.Clear();
         _loopStack.Clear();
         _yieldCounter = 0;
@@ -273,12 +269,6 @@ public class GeneratorStateAnalyzer : AstVisitorBase
     protected override void VisitVariable(Expr.Variable expr)
     {
         var name = expr.Name.Lexeme;
-
-        // Detect outer scope capture - variable not declared in this function
-        if (!_declaredVariables.Contains(name))
-        {
-            _capturedVariables.Add(name);
-        }
 
         // Track variables used in any enclosing loop body (hoisted when the loop contains a yield).
         foreach (var scope in _loopStack)

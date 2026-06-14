@@ -73,10 +73,9 @@ public partial class ILCompiler
             }
             var funcStmt = _generators.Functions[funcName];
             var methodBuilder = _functions.Builders[funcName];
-            var analysis = _generators.Analyzer.Analyze(funcStmt);
 
             // Emit the stub method body (creates and returns the state machine)
-            EmitGeneratorStubMethod(methodBuilder, smBuilder, funcStmt, analysis);
+            EmitGeneratorStubMethod(methodBuilder, smBuilder, funcStmt);
 
             // Emit the MoveNext method body
             EmitGeneratorMoveNextBody(smBuilder, funcStmt);
@@ -93,8 +92,7 @@ public partial class ILCompiler
     private void EmitGeneratorStubMethod(
         MethodBuilder methodBuilder,
         GeneratorStateMachineBuilder smBuilder,
-        Stmt.Function funcStmt,
-        GeneratorStateAnalyzer.GeneratorFunctionAnalysis analysis)
+        Stmt.Function funcStmt)
     {
         var il = methodBuilder.GetILGenerator();
 
@@ -114,38 +112,11 @@ public partial class ILCompiler
             }
         }
 
-        // Copy captured outer scope variables to state machine fields
-        var moduleCapturedVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath);
-        var moduleEntryPointFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath);
-        foreach (var capturedVar in analysis.CapturedVariables)
-        {
-            var capturedField = smBuilder.CapturedVariables.GetValueOrDefault(capturedVar);
-            if (capturedField == null) continue;
-
-            // Try to load from entry-point display class (captured top-level variables)
-            if (moduleCapturedVars?.Contains(capturedVar) == true &&
-                moduleEntryPointFields?.TryGetValue(capturedVar, out var entryPointField) == true)
-            {
-                il.Emit(OpCodes.Dup);  // Keep state machine reference on stack
-                if (_closures.EntryPointDisplayClassStaticField != null)
-                {
-                    il.Emit(OpCodes.Ldsfld, _closures.EntryPointDisplayClassStaticField);
-                    il.Emit(OpCodes.Ldfld, entryPointField);
-                }
-                else
-                {
-                    il.Emit(OpCodes.Ldnull);
-                }
-                il.Emit(OpCodes.Stfld, capturedField);
-            }
-            // Try to load from top-level static vars (non-captured module-level variables)
-            else if (_topLevelStaticVars.TryGetValue(capturedVar, out var staticField))
-            {
-                il.Emit(OpCodes.Dup);  // Keep state machine reference on stack
-                il.Emit(OpCodes.Ldsfld, staticField);
-                il.Emit(OpCodes.Stfld, capturedField);
-            }
-        }
+        // Captured outer-scope variables are NOT copied into the state machine here. Doing so
+        // snapshotted their value at creation time, so a later mutation of the outer variable
+        // was invisible to the running body (#541). MoveNext instead reads/writes them live
+        // from their enclosing storage (top-level statics / entry-point display class), which
+        // requires the corresponding fields to be set on the MoveNext CompilationContext below.
 
         // Return the state machine (which implements IEnumerable<object>)
         il.Emit(OpCodes.Ret);
@@ -195,7 +166,14 @@ public partial class ILCompiler
             // Check for function-level "use strict" directive
             IsStrictMode = _isStrictMode || CheckForUseStrict(funcStmt.Body),
             // Registry services
-            ClassRegistry = GetClassRegistry()
+            ClassRegistry = GetClassRegistry(),
+            // Captured outer variables are read live (by reference) rather than snapshotted (#541).
+            // These mirror the async-generator MoveNext context so reads/writes of top-level
+            // variables go straight to their backing storage instead of a stale state-machine field.
+            EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
+            CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
+            EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath)
         };
 
         // Use the new emitter for full generator body emission
@@ -225,7 +203,7 @@ public partial class ILCompiler
         );
 
         // Emit stub method body (creates state machine and returns it)
-        EmitGeneratorInstanceStubMethod(methodBuilder, smBuilder, method.Parameters, analysis);
+        EmitGeneratorInstanceStubMethod(methodBuilder, smBuilder, method.Parameters);
 
         // Create context for MoveNext emission
         var il = smBuilder.MoveNextMethod.GetILGenerator();
@@ -268,10 +246,12 @@ public partial class ILCompiler
             CurrentClassBuilder = methodBuilder.DeclaringType as TypeBuilder,
             // Registry services
             ClassRegistry = GetClassRegistry(),
-            // Entry-point display class for captured top-level variables
+            // Captured outer variables are read live (by reference), not snapshotted (#541).
+            // TopLevelStaticVars covers module-level vars that aren't in the entry-point display class.
             EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
-            EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
+            EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+            TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath)
         };
 
         // Emit MoveNext body
@@ -292,8 +272,7 @@ public partial class ILCompiler
     private void EmitGeneratorInstanceStubMethod(
         MethodBuilder methodBuilder,
         GeneratorStateMachineBuilder smBuilder,
-        List<Stmt.Parameter> parameters,
-        GeneratorStateAnalyzer.GeneratorFunctionAnalysis analysis)
+        List<Stmt.Parameter> parameters)
     {
         var il = methodBuilder.GetILGenerator();
 
@@ -336,38 +315,9 @@ public partial class ILCompiler
             }
         }
 
-        // Copy captured outer scope variables to state machine fields
-        var moduleCapturedVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath);
-        var moduleEntryPointFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath);
-        foreach (var capturedVar in analysis.CapturedVariables)
-        {
-            var capturedField = smBuilder.CapturedVariables.GetValueOrDefault(capturedVar);
-            if (capturedField == null) continue;
-
-            // Try to load from entry-point display class (captured top-level variables)
-            if (moduleCapturedVars?.Contains(capturedVar) == true &&
-                moduleEntryPointFields?.TryGetValue(capturedVar, out var entryPointField) == true)
-            {
-                il.Emit(OpCodes.Dup);  // Keep state machine reference on stack
-                if (_closures.EntryPointDisplayClassStaticField != null)
-                {
-                    il.Emit(OpCodes.Ldsfld, _closures.EntryPointDisplayClassStaticField);
-                    il.Emit(OpCodes.Ldfld, entryPointField);
-                }
-                else
-                {
-                    il.Emit(OpCodes.Ldnull);
-                }
-                il.Emit(OpCodes.Stfld, capturedField);
-            }
-            // Try to load from top-level static vars (non-captured module-level variables)
-            else if (_topLevelStaticVars.TryGetValue(capturedVar, out var staticField))
-            {
-                il.Emit(OpCodes.Dup);  // Keep state machine reference on stack
-                il.Emit(OpCodes.Ldsfld, staticField);
-                il.Emit(OpCodes.Stfld, capturedField);
-            }
-        }
+        // Captured outer-scope variables are NOT copied into the state machine (#541): see the
+        // free-function stub above. MoveNext reads/writes them live from their backing storage,
+        // wired through the CompilationContext in EmitGeneratorMethodBody.
 
         // Return the state machine (which implements IEnumerable<object>)
         il.Emit(OpCodes.Ret);

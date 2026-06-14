@@ -30,10 +30,12 @@ public class GeneratorStateMachineBuilder
     // §27.5.3.3 — `yield expr` evaluates to the argument of the resuming next).
     public FieldBuilder SentField { get; private set; } = null!;
 
-    // Hoisted variables (become struct fields) - delegated to HoistingManager
+    // Hoisted variables (become struct fields) - delegated to HoistingManager.
+    // Captured outer-scope variables are intentionally NOT hoisted: a generator reads them
+    // live from their enclosing storage (entry-point display class / top-level static fields)
+    // in MoveNext, mirroring JS closure semantics and the async-generator path (#541).
     public Dictionary<string, FieldBuilder> HoistedParameters => _hoisting.HoistedParameters;
     public Dictionary<string, FieldBuilder> HoistedLocals => _hoisting.HoistedLocals;
-    public Dictionary<string, FieldBuilder> CapturedVariables => _hoisting.CapturedVariables;
 
     // 'this' field for instance generator methods
     public FieldBuilder? ThisField { get; private set; }
@@ -131,11 +133,14 @@ public class GeneratorStateMachineBuilder
         DefineCurrentField();
         DefineSentField();
 
-        // Define hoisted variables using HoistingManager
+        // Define hoisted variables using HoistingManager.
+        // Captured outer-scope variables are deliberately not hoisted into state-machine
+        // fields: doing so snapshotted their value at generator-creation time, diverging
+        // from JS closure semantics (#541). They are instead read live from their enclosing
+        // storage in MoveNext, the same way the async-generator path already works.
         _hoisting = new HoistingManager(_stateMachineType, _types.Object);
         _hoisting.DefineHoistedParameters(analysis.HoistedParameters);
         _hoisting.DefineHoistedLocals(analysis.HoistedLocals);
-        _hoisting.DefineHoistedCapturedVariables(analysis.CapturedVariables);
         _hoisting.DefineHoistedEnumerators(analysis.ForOfLoopsWithYield, _types.IEnumerator);
 
         // Define 'this' field for instance methods that use 'this'
