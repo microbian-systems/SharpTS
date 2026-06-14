@@ -224,4 +224,84 @@ public class AwaitDeferredSpillTests
             """;
         Assert.Equal("concat: 6\n", TestHarness.Run(source, mode));
     }
+
+    // #436: a fixed-arity (non-rest) top-level function call where an earlier argument precedes a
+    // deferred await. The direct-call path spilled earlier args to *parameter-typed* IL locals,
+    // which do not survive a deferred MoveNext re-entry (only registered field-backed spills do),
+    // so the earlier arg read back as null (`nullB`) and the typed reload also failed IL verify.
+    // The earlier args are now spilled to registered, boxed locals and coerced back to their
+    // declared parameter slot (string / number / boolean) on load.
+    private const string FixedArityScaffold =
+        "function concat2(x: string, y: string): string { return x + y; }\n" +
+        "function add3(a: number, b: number, c: number): number { return a + b + c; }\n" +
+        "function pick(flag: boolean, a: string, b: string): string { return flag ? a : b; }\n";
+
+    private static string RunFns(string body, ExecutionMode mode)
+        => TestHarness.Run(Defer + FixedArityScaffold + "async function m() {\n" + body + "\n}\nm();\n", mode);
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FixedArityCall_EarlierStringArgSurvivesDeferredAwait(ExecutionMode mode)
+    {
+        // The exact #436 repro shape: f("A", await ...) lost "A" → "nullB".
+        Assert.Equal("AB\n", RunFns("""console.log(concat2("A", await defer("B", 5)));""", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FixedArityCall_NumericArgsSurviveDeferredAwait(ExecutionMode mode)
+    {
+        // Numeric (double) parameters: earlier args boxed across the await, unboxed back on load.
+        Assert.Equal("6\n", RunFns("""console.log(add3(1, await defer(2, 5), 3));""", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FixedArityCall_TwoDeferredAwaitArgs(ExecutionMode mode)
+    {
+        Assert.Equal("12\n", RunFns("""console.log(add3(await defer(3, 5), 4, await defer(5, 5)));""", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FixedArityCall_BooleanArgBeforeDeferredAwait(ExecutionMode mode)
+    {
+        Assert.Equal("yes\n", RunFns("""console.log(pick(true, await defer("yes", 5), "no"));""", mode));
+    }
+
+    // #439: a method call (instance, static, optional-chain) where an earlier argument precedes a
+    // deferred await. These dispatch paths emitted the receiver and earlier args onto the IL stack
+    // (or into unregistered temps) across the suspension — invalid IL and a runtime crash. The
+    // receiver and arguments are now spilled to registered locals and coerced to their slots.
+    private const string MethodScaffold =
+        "class Calc {\n" +
+        "  join(a: string, b: string): string { return a + b; }\n" +
+        "  static mul(a: number, b: number): number { return a * b; }\n" +
+        "}\n";
+
+    private static string RunMethods(string body, ExecutionMode mode)
+        => TestHarness.Run(Defer + MethodScaffold + "async function m() {\n" + body + "\n}\nm();\n", mode);
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InstanceMethodCall_EarlierArgSurvivesDeferredAwait(ExecutionMode mode)
+    {
+        Assert.Equal("AB\n", RunMethods("""const c = new Calc(); console.log(c.join("A", await defer("B", 5)));""", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticMethodCall_EarlierArgSurvivesDeferredAwait(ExecutionMode mode)
+    {
+        Assert.Equal("42\n", RunMethods("""console.log(Calc.mul(6, await defer(7, 5)));""", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OptionalChainMethodCall_EarlierArgSurvivesDeferredAwait(ExecutionMode mode)
+    {
+        Assert.Equal("AB\n", RunMethods(
+            """const o: any = { go(a: string, b: string): string { return a + b; } }; console.log(o?.go("A", await defer("B", 5)));""",
+            mode));
+    }
 }

@@ -5,38 +5,16 @@ namespace SharpTS.Compilation;
 
 public partial class AsyncArrowMoveNextEmitter
 {
-    // EmitExpression dispatch is inherited from ExpressionEmitterBase
-
-    protected override void EmitLiteral(Expr.Literal lit)
-    {
-        if (lit.Value == null)
-        {
-            _il.Emit(OpCodes.Ldnull);
-            SetStackType(StackType.Null);
-        }
-        else if (lit.Value is double d)
-        {
-            _il.Emit(OpCodes.Ldc_R8, d);
-            _il.Emit(OpCodes.Box, typeof(double));
-            SetStackUnknown();
-        }
-        else if (lit.Value is string s)
-        {
-            _il.Emit(OpCodes.Ldstr, s);
-            SetStackType(StackType.String);
-        }
-        else if (lit.Value is bool b)
-        {
-            _il.Emit(b ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
-            _il.Emit(OpCodes.Box, typeof(bool));
-            SetStackUnknown();
-        }
-        else
-        {
-            _il.Emit(OpCodes.Ldnull);
-            SetStackType(StackType.Null);
-        }
-    }
+    // EmitExpression dispatch is inherited from ExpressionEmitterBase.
+    // EmitLiteral is inherited from the base too: it leaves value-type literals (number/boolean)
+    // UNBOXED with a tracked StackType (Double/Boolean), the convention the shared expression
+    // framework — EnsureBoxed, EmitConversionForParameter — is built around. A previous override
+    // here eagerly boxed numbers/booleans and set StackType=Unknown; that desynced the literal
+    // fast-path in EmitConversionForParameter (which assumes an unboxed double for a `double`
+    // parameter), so a call to a function with a numeric parameter stored a boxed object into a
+    // double IL slot and failed IL verification (#441). The base storage paths here
+    // (EmitVarDeclaration, EmitReturn, …) already EnsureBoxed before storing, so no eager boxing
+    // is needed.
 
     protected override void EmitThis()
     {

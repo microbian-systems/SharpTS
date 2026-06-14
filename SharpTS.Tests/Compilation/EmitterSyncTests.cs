@@ -72,7 +72,10 @@ public class EmitterSyncTests
             "SharpTS.Compilation.Emitters.IEmitterContext.get_IL",           // IEmitterContext impl
             "SharpTS.Compilation.Emitters.IEmitterContext.SetStackUnknown", // IEmitterContext impl
             "SharpTS.Compilation.Emitters.IEmitterContext.SetStackType",   // IEmitterContext impl
-            "EmitLiteral",          // Literal optimization for capture context
+            // EmitLiteral is NO LONGER overridden (#441): the old override eagerly boxed numeric/
+            // boolean literals and set StackType=Unknown, which desynced EmitConversionForParameter's
+            // unboxed-double fast path and produced unverifiable IL for calls with numeric params.
+            // The base EmitLiteral (unboxed value types + tracked StackType) is now used.
             // --- Genuinely different behavior ---
             "EmitReturn",           // Async arrow return: store result + SetResult
             "EmitTryCatch",         // Await-aware exception handling
