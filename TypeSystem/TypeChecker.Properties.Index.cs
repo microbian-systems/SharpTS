@@ -466,6 +466,15 @@ public partial class TypeChecker
             // Tuple index assignment
             if (objType is TypeInfo.Tuple tupleType)
             {
+                // A readonly tuple (`[1, 2] as const`, `readonly [number, number]`) permits reading
+                // only — reject the write before the element-type checks so a same-type write is
+                // TS2542 ("only permits reading") rather than slipping through, and a wrong-type
+                // write is TS2542 rather than TS2322 (#509). Keys off the tuple's own IsReadonly,
+                // not its element types: `[{ n: 1 } as const]` has a writable array/tuple with a
+                // readonly element, and that element-only readonly must not reject the slot write.
+                if (tupleType.IsReadonly)
+                    throw new TypeCheckException($" Index signature in type '{objType}' only permits reading.", tsCode: "TS2542");
+
                 // Literal index -> check against specific element type
                 if (setIndex.Index is Expr.Literal { Value: double idx })
                 {
@@ -495,6 +504,14 @@ public partial class TypeChecker
 
             if (objType is TypeInfo.Array arrayType)
             {
+                // A readonly array (`readonly number[]`, `as const` array) permits reading only —
+                // reject every numeric-index write with TS2542, ahead of (and regardless of) the
+                // ECMA array-index range carve-out below, since a readonly index signature has no
+                // writable slot at any key. ReadonlyArray<T> already routes through the interface
+                // ReadonlyNumberIndex guard above; this covers the `readonly T[]` array form (#509).
+                if (arrayType.IsReadonly)
+                    throw new TypeCheckException($" Index signature in type '{objType}' only permits reading.", tsCode: "TS2542");
+
                 // ECMA-262 array indices are integers in [0, 2^32 - 2]. Numeric
                 // literals outside that range (e.g. 4294967295, -1) are regular
                 // property assignments, not array-element writes — element-type
@@ -514,6 +531,10 @@ public partial class TypeChecker
         if ((IsString(indexType) || indexType is TypeInfo.StringLiteral)
             && objType is TypeInfo.Array arrayWithStringIndex)
         {
+            // A canonical numeric-string key (`a["0"] = v`) is an element write too, so a readonly
+            // array rejects it with TS2542 just like the numeric-index form above (#509).
+            if (arrayWithStringIndex.IsReadonly)
+                throw new TypeCheckException($" Index signature in type '{objType}' only permits reading.", tsCode: "TS2542");
             if (!IsCompatible(arrayWithStringIndex.ElementType, valueType))
                 throw new TypeCheckException($" Cannot assign '{valueType}' to array of '{arrayWithStringIndex.ElementType}'.", tsCode: "TS2322");
             return valueType;
