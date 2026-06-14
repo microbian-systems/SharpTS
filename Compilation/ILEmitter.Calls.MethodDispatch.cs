@@ -142,16 +142,18 @@ public partial class ILEmitter
             return;
         }
 
-        // Iterator protocol (.next() / .return()) for any/unknown receivers.
+        // Iterator protocol (.next() / .return() / .throw()) for any/unknown receivers.
         // Array .values()/.keys()/.entries() return a bare IEnumerator<object>
         // that has no JS-shaped next/value/done members, so the generic
         // GetProperty+InvokeMethodValue fallback below would resolve `next` to
         // undefined and yield null. IteratorProtocolCall synthesizes the result
         // object for enumerator receivers and falls back to the normal dynamic
-        // dispatch for everything else (generators, user iterators). Typed
-        // iterators are already handled by the type-first dispatch above, so
-        // only any/unknown receivers reach here.
-        if (methodName is "next" or "return")
+        // dispatch for everything else (generators, user iterators). Routing
+        // `throw` here too gives a bare it.throw() the same undefined default as
+        // next/return for generator receivers (#619), instead of the null the
+        // generic path would pad. Typed iterators are already handled by the
+        // type-first dispatch above, so only any/unknown receivers reach here.
+        if (methodName is "next" or "return" or "throw")
         {
             EmitExpression(methodGet.Object);
             EmitBoxIfNeeded(methodGet.Object);

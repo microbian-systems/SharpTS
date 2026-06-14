@@ -488,6 +488,45 @@ public class AsyncGeneratorTryFinallyTests
         Assert.Equal("v0\nfin0\nv1\nfin1\n", TestHarness.Run(source, mode));
     }
 
+    // ---- #569: an async-generator catch parameter read after a suspension in the catch body ----
+    // The parameter is hoisted to a state-machine field because it lives across the suspension, but the
+    // catch binding stored it only to a fresh IL local, so the post-resume read resolved the unset field
+    // and came back null. The binding is now field-aware (mirrors the plain-generator fix in #477/#500).
+    // CompiledOnly: the interpreter eagerly drains the async generator body, so its internal logs
+    // interleave out of Node order (a separate concern, #564).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void CatchParamAfterYieldInCatchBody_PreservesValue(ExecutionMode mode)
+    {
+        // The exact #569 repro: `e` is read after the `yield 0` inside the catch.
+        var source = """
+            async function* g() {
+              try { yield 1; throw "boom"; } catch (e) { yield 0; console.log("caught " + e); }
+            }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v1\nv0\ncaught boom\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void CatchParamAfterAwaitInCatchBody_PreservesValue(ExecutionMode mode)
+    {
+        // The await sibling: `e` is read after an `await` suspension inside the catch.
+        var source = """
+            async function* g() {
+              try { yield 1; throw "boom"; } catch (e) { await Promise.resolve(0); console.log("caught " + e); yield 9; }
+            }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v1\ncaught boom\nv9\n", TestHarness.Run(source, mode));
+    }
+
     // ---- IL-verification guards (the heart of #559: emitted IL must verify) ----
 
     [Theory]
@@ -521,6 +560,9 @@ public class AsyncGeneratorTryFinallyTests
     [InlineData("async function* g() { try { return 5; } finally { yield 9; } } async function main(){ for await (const v of g()) {} } main();")]
     [InlineData("async function* g() { while (true) { try { yield 0; try { break; } catch (e) {} } finally { console.log('f'); } } } async function main(){ for await (const v of g()) {} } main();")]
     [InlineData("async function* g() { for (let i=0;i<2;i++) { try { yield i; try { continue; } catch (e) {} } finally { console.log('f'); } } } async function main(){ for await (const v of g()) {} } main();")]
+    // #569: catch parameter read after a suspension (yield / await) in the catch body — hoisted-field binding.
+    [InlineData("async function* g() { try { yield 1; throw 'boom'; } catch (e) { yield 0; console.log(e); } } async function main(){ for await (const v of g()) {} } main();")]
+    [InlineData("async function* g() { try { yield 1; throw 'boom'; } catch (e) { await Promise.resolve(0); console.log(e); } } async function main(){ for await (const v of g()) {} } main();")]
     public void AsyncGeneratorTryFinallyWithSuspension_EmitsVerifiableIL(string source)
     {
         var errors = TestHarness.CompileAndVerifyOnly(source);

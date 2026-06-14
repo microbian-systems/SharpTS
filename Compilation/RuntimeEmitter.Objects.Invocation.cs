@@ -966,6 +966,25 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Callvirt, runtime.GeneratorReturnMethod);
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notGeneratorReturnLabel);
+
+            // throw(e): forward to $IGenerator.throw with the same undefined-default for a missing
+            // argument as next/return — a bare throw() must inject `undefined`, not the null a missing
+            // reflected argument would pad (#619, counterpart of the bare-return() fix in #526). User
+            // iterators with their own throw() keep the GetProperty path below (no $IGenerator).
+            var notGeneratorThrowLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "throw");
+            il.Emit(OpCodes.Call, _types.StringOpEquality);
+            il.Emit(OpCodes.Brfalse, notGeneratorThrowLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.GeneratorInterfaceType);
+            il.Emit(OpCodes.Brfalse, notGeneratorThrowLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.GeneratorInterfaceType);
+            EmitArgZeroOrUndefined(il, runtime);
+            il.Emit(OpCodes.Callvirt, runtime.GeneratorThrowMethod);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notGeneratorThrowLabel);
         }
 
         // Resolve the JS-level member first. Generators and user-defined
@@ -1013,6 +1032,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(synthLabel);
+
+        // throw() on a bare BCL enumerator (no throw member) → TypeError, as in JS — `fn` is the
+        // null/undefined member here, so InvokeMethodValue throws "undefined is not a function". Without
+        // this guard the next()-synth below would wrongly advance the iterator. Only reachable for an
+        // any-typed array iterator; real generators take the $IGenerator throw branch above (#619).
+        var notThrowSynthLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "throw");
+        il.Emit(OpCodes.Call, _types.StringOpEquality);
+        il.Emit(OpCodes.Brfalse, notThrowSynthLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, fn);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notThrowSynthLabel);
+
         // result = new Dictionary<string, object>()
         il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.DictionaryStringObject, _types.EmptyTypes));
         il.Emit(OpCodes.Stloc, resultLocal);
