@@ -193,35 +193,13 @@ public partial class TypeChecker
 
         if (type is TypeInfo.Instance instance)
         {
-            // Handle InstantiatedGeneric
-            if (instance.ClassType is TypeInfo.InstantiatedGeneric ig &&
-                ig.GenericDefinition is TypeInfo.GenericClass gc)
+            // A class instance — possibly a generic instantiation and/or extending a generic-class
+            // instantiation. Walk the hierarchy substituting each instantiation's type arguments so an
+            // own OR inherited generic member (e.g. `value: T` on `Base<number>`) surfaces with its
+            // instantiated type, matching member-access resolution (#506).
+            if (instance.ClassType is TypeInfo.InstantiatedGeneric or TypeInfo.Class)
             {
-                // Check fields first, then methods
-                if (gc.FieldTypes.TryGetValue(name, out var fieldType)) return fieldType;
-                if (gc.Methods.TryGetValue(name, out var methodType)) return methodType;
-                TypeInfo? current = gc.Superclass;
-                while (current != null)
-                {
-                    var fields = GetFieldTypes(current);
-                    if (fields != null && fields.TryGetValue(name, out var superField)) return superField;
-                    var methods = GetMethods(current);
-                    if (methods != null && methods.TryGetValue(name, out var superMethod)) return superMethod;
-                    current = GetSuperclass(current);
-                }
-            }
-            else if (instance.ClassType is TypeInfo.Class classType)
-            {
-                TypeInfo? current = classType;
-                while (current != null)
-                {
-                    // Check fields first, then methods
-                    var fields = GetFieldTypes(current);
-                    if (fields != null && fields.TryGetValue(name, out var fieldType)) return fieldType;
-                    var methods = GetMethods(current);
-                    if (methods != null && methods.TryGetValue(name, out var methodType)) return methodType;
-                    current = GetSuperclass(current);
-                }
+                return ResolveClassMemberTypeSubstituted(instance.ClassType, name);
             }
             // Handle MutableClass (during signature collection)
             else if (instance.ClassType is TypeInfo.MutableClass mutableClass)
@@ -243,6 +221,55 @@ public partial class TypeChecker
                     }
                 }
             }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Resolves an instance member type by walking a class-like type (a <see cref="TypeInfo.Class"/> or
+    /// generic-class <see cref="TypeInfo.InstantiatedGeneric"/>) from most-derived to base, substituting
+    /// each generic instantiation's type arguments — composed down the chain — into the resolved member.
+    /// So <c>value: T</c> declared on <c>Base&lt;T&gt;</c> surfaces as <c>number</c> for an instance of
+    /// <c>class Sub extends Base&lt;number&gt;</c> (and for <c>new Box&lt;number&gt;()</c> directly),
+    /// keeping structural assignability and type guards consistent with member-access resolution (#506).
+    /// Fields shadow methods at the same level; derived levels shadow base ones. A non-generic level
+    /// performs no substitution (the accumulated map, if any, can only be a no-op on its members).
+    /// Returns null when the member is absent.
+    /// </summary>
+    private TypeInfo? ResolveClassMemberTypeSubstituted(TypeInfo? classLike, string name)
+    {
+        Dictionary<string, TypeInfo>? subs = null;
+        TypeInfo? current = classLike;
+        for (int guard = 0; current != null && guard < 256; guard++)
+        {
+            FrozenDictionary<string, TypeInfo>? fields;
+            FrozenDictionary<string, TypeInfo>? methods;
+            TypeInfo? next;
+            if (current is TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig)
+            {
+                // Re-express this instantiation's arguments in terms of the original instance (apply the
+                // substitution accumulated from derived levels), then map the generic def's parameters —
+                // e.g. `class Sub<U> extends Base<U>` instantiated Sub<number> composes U:=number into
+                // Base's T:=number.
+                var args = subs is null
+                    ? ig.TypeArguments
+                    : ig.TypeArguments.Select(a => Substitute(a, subs)).ToList();
+                subs = GenericClassSubs(gc, args);
+                fields = gc.FieldTypes;
+                methods = gc.Methods;
+                next = gc.Superclass;
+            }
+            else
+            {
+                fields = GetFieldTypes(current);
+                methods = GetMethods(current);
+                next = GetSuperclass(current);
+            }
+            if (fields is not null && fields.TryGetValue(name, out var fieldType))
+                return subs is null ? fieldType : Substitute(fieldType, subs);
+            if (methods is not null && methods.TryGetValue(name, out var methodType))
+                return subs is null ? methodType : Substitute(methodType, subs);
+            current = next;
         }
         return null;
     }

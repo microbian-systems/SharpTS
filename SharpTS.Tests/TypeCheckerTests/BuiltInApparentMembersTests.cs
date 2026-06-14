@@ -32,6 +32,14 @@ public class BuiltInApparentMembersTests
         yield return ["Iterator", new TypeInfo.Iterator(Any)];
         yield return ["Generator", new TypeInfo.Generator(Any)];
         yield return ["AsyncGenerator", new TypeInfo.AsyncGenerator(Any)];
+        // #530 follow-up: the remaining GetXxxMemberType-backed built-ins.
+        yield return ["Error", new TypeInfo.Error()];
+        yield return ["AggregateError", new TypeInfo.Error("AggregateError")];
+        yield return ["Timeout", new TypeInfo.Timeout()];
+        yield return ["Buffer", new TypeInfo.Buffer()];
+        yield return ["EventEmitter", new TypeInfo.EventEmitter()];
+        yield return ["AbortController", new TypeInfo.AbortController()];
+        yield return ["AbortSignal", new TypeInfo.AbortSignal()];
     }
 
     [Theory]
@@ -74,6 +82,17 @@ public class BuiltInApparentMembersTests
 
         Assert.Equal(iterator, generator);
         Assert.Equal(iterator, asyncGenerator);
+    }
+
+    [Fact]
+    public void AggregateErrorSurfacesErrorsMemberButPlainErrorDoesNot()
+    {
+        // GetErrorMemberType exposes `errors` only for AggregateError, so the apparent-member name
+        // list must be name-aware: AggregateError advertises it, a plain Error does not (#530).
+        Assert.Contains("errors", BuiltInTypes.GetInstanceMemberNames(new TypeInfo.Error("AggregateError"))!);
+        Assert.DoesNotContain("errors", BuiltInTypes.GetInstanceMemberNames(new TypeInfo.Error())!);
+        Assert.NotNull(BuiltInTypes.GetInstanceMemberType(new TypeInfo.Error("AggregateError"), "errors"));
+        Assert.Null(BuiltInTypes.GetInstanceMemberType(new TypeInfo.Error(), "errors"));
     }
 
     [Fact]
