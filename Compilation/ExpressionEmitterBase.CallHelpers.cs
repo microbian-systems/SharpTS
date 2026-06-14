@@ -1677,8 +1677,12 @@ public abstract partial class ExpressionEmitterBase
     {
         if (returnType == typeof(void))
         {
-            IL.Emit(OpCodes.Ldnull);
-            SetStackUnknown();
+            // A void-returning method used in a value context yields `undefined` (ECMA-262),
+            // not C# null (= JS null): a TS `void` function still produces `undefined` when its
+            // result is read — e.g. an off-the-end function compiled to a void slot. The helper
+            // pushes the $Undefined sentinel (with a null fallback for standalone) and sets the
+            // stack type to Unknown. #563
+            EmitUndefinedConstant();
         }
         else if (Types.IsDouble(returnType))
         {

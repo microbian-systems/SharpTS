@@ -2532,9 +2532,14 @@ public partial class Interpreter : IDisposable
 
     internal ExecutionResult VisitReturn(Stmt.Return returnStmt)
     {
-        object? returnValue = null;
-        if (returnStmt.Value != null) returnValue = Evaluate(returnStmt.Value);
-        return ExecutionResult.Return(returnValue);
+        // A bare `return;` completes with `undefined` — distinct from `return null;`. Emitting the
+        // undefined sentinel here (rather than C# null, which represents JS null) is what makes a
+        // generator's completion value and a plain function's return value `undefined` instead of
+        // conflating them with null (#480). `return <expr>` preserves whatever the expression
+        // evaluates to, so an explicit `return null;` still yields null.
+        if (returnStmt.Value == null)
+            return ExecutionResult.Return(RuntimeValue.Undefined);
+        return ExecutionResult.Return(Evaluate(returnStmt.Value));
     }
 
     internal ExecutionResult VisitPrint(Stmt.Print printStmt)
