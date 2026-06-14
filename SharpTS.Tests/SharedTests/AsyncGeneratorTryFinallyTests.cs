@@ -196,6 +196,30 @@ public class AsyncGeneratorTryFinallyTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void LabeledContinueToOuterLoop_RunsInterveningFinally(ExecutionMode mode)
+    {
+        // The labeled-`continue` sibling of LabeledBreakToOuterLoop (#586/#589). `continue outer` must
+        // run the inner loop's finally and then advance the *outer* loop — skipping the rest of the
+        // inner loop — rather than continuing the inner loop. The same EnterLoop pending-label adoption
+        // (#586) that resolves the labeled break drives this path; without behavioral coverage the
+        // continue direction could regress silently (the labeled-break test alone would not catch it).
+        var source = """
+            async function* g() {
+              outer: for (let i = 0; i < 2; i++) {
+                for (let j = 0; j < 3; j++) {
+                  try { yield i * 10 + j; if (j === 0) continue outer; } finally { console.log("fin" + i + j); }
+                }
+              }
+            }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v0\nfin00\nv10\nfin10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
     public void BreakToLoopBetweenTwoTrys_RunsOnlyInnerFinally(ExecutionMode mode)
     {
         // The break targets a loop that sits *between* two trys: only the finally inside that loop
@@ -389,12 +413,14 @@ public class AsyncGeneratorTryFinallyTests
     [InlineData("async function* g() { while (true) { try { yield 1; break; } finally { console.log('f'); } } } async function main(){ for await (const v of g()) {} } main();")]
     [InlineData("async function* inner(){ yield 2; } async function* g() { try { yield 1; yield* inner(); } finally { console.log('f'); } } async function main(){ for await (const v of g()) {} } main();")]
     // #559 control-flow shapes: continue, throw-from-catch, return-from-catch, nested-finally break,
-    // labeled break, break to a loop sitting between two trys, and a yielding finally on the break path.
+    // labeled break, labeled continue (#586/#589), break to a loop sitting between two trys, and a
+    // yielding finally on the break path.
     [InlineData("async function* g() { for (let i=0;i<2;i++){ try { yield i; continue; } finally { console.log('f'); } } } async function main(){ for await (const v of g()) {} } main();")]
     [InlineData("async function* g() { try { yield 1; throw 'a'; } catch (e) { throw 'b'; } finally { console.log('f'); } } async function main(){ try { for await (const v of g()) {} } catch (e) {} } main();")]
     [InlineData("async function* g() { try { yield 1; throw 'a'; } catch (e) { return; } finally { console.log('f'); } } async function main(){ for await (const v of g()) {} } main();")]
     [InlineData("async function* g() { while (true) { try { try { yield 1; break; } finally { console.log('a'); } } finally { console.log('b'); } } } async function main(){ for await (const v of g()) {} } main();")]
     [InlineData("async function* g() { outer: for(let i=0;i<2;i++){ for(let j=0;j<2;j++){ try { yield j; break outer; } finally { console.log('f'); } } } } async function main(){ for await (const v of g()) {} } main();")]
+    [InlineData("async function* g() { outer: for(let i=0;i<2;i++){ for(let j=0;j<2;j++){ try { yield j; continue outer; } finally { console.log('f'); } } } } async function main(){ for await (const v of g()) {} } main();")]
     [InlineData("async function* g() { try { for(let i=0;i<2;i++){ try { yield i; break; } finally { console.log('a'); } } } finally { console.log('b'); } } async function main(){ for await (const v of g()) {} } main();")]
     [InlineData("async function* g() { while (true) { try { yield 1; break; } finally { yield 2; } } } async function main(){ for await (const v of g()) {} } main();")]
     // await suspensions crossing the protected region alongside the non-local exits.
