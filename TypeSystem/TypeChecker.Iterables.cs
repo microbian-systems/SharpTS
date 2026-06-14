@@ -114,6 +114,33 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// True when <paramref name="source"/> is a structural object SharpTS can prove is NOT iterable, so a
+    /// sync <c>for...of</c> over it is the TS2488 tsc reports rather than a silent <c>any</c> binding
+    /// (#550). Call only after <see cref="TryGetStructuralIterableElement"/> has already failed to find a
+    /// <c>[Symbol.iterator]</c>. Conservative by design — it must never report a type tsc accepts as
+    /// iterable:
+    /// <list type="bullet">
+    /// <item><b>Record</b> (object literal / inline object type): never inherits iterability, so a missing
+    ///   <c>[Symbol.iterator]</c> is conclusive — this is the issue's headline iterator-only object, and a
+    ///   plain object. A numeric index signature on a record (<c>{ [n: number]: T }</c>) is not iterable
+    ///   in tsc either, so no carve-out is needed.</item>
+    /// <item><b>Interface</b> WITHOUT a numeric index signature: an <c>interface I extends Array&lt;T&gt;</c>
+    ///   is modeled as a numeric index — its inherited <c>[Symbol.iterator]</c> is not retained as an
+    ///   <c>@@iterator</c> member (see TypeChecker.Statements.Interfaces) — so an interface carrying a
+    ///   number index might be iterable-via-Array and is spared to avoid a false TS2488. A genuine
+    ///   <c>[Symbol.iterator]()</c> interface member is caught earlier by the structural probe.</item>
+    /// </list>
+    /// Class instances are intentionally excluded: a class may <c>extends Array</c> (iterable) yet that
+    /// base is a name-only placeholder here, so non-iterability can't be proven — tracked separately.
+    /// </summary>
+    private static bool IsProvablyNonIterableStructuralObject(TypeInfo source) => source switch
+    {
+        TypeInfo.Record => true,
+        TypeInfo.Interface { NumberIndexType: null } => true,
+        _ => false
+    };
+
+    /// <summary>
     /// The element type of any sync-iterable source, unifying the dedicated records, strings and
     /// structural iterables. Drives <c>for...of</c>, spread and <c>yield*</c> element binding and the
     /// <c>Iterable&lt;T&gt;</c> assignment target. Returns false for non-iterable types (callers decide
