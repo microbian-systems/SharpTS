@@ -280,6 +280,12 @@ public partial class ILCompiler
         // module's bindings plus global imports.
         Dictionary<string, FieldBuilder>? topLevelVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath);
 
+        // A function declared inside a namespace must also resolve that namespace's
+        // var/let/const members by their bare names (#567). Surface their static backing
+        // fields through the same resolver path as module top-level vars.
+        if (_currentNamespacePath != null)
+            topLevelVars = BuildNamespaceScopedStaticVars(topLevelVars, _currentNamespacePath);
+
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
         {
             ClosureAnalyzer = _closures.Analyzer,
@@ -950,6 +956,7 @@ public partial class ILCompiler
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
             NamespaceFields = _namespaceFields,
+            NamespaceVarFields = _namespaceVarFields,
             TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             Runtime = _runtime,
             FunctionGenericParams = _functions.GenericParams,
@@ -984,7 +991,9 @@ public partial class ILCompiler
             ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
             // Program type for GetMethodFromHandle resolution
-            ProgramType = _programType
+            ProgramType = _programType,
+            // Top-level statements run here: var/let/const are module-level bindings (#562).
+            IsModuleTopLevel = true
         };
 
         // Create entry-point display class instance if there are captured top-level variables
@@ -1108,6 +1117,7 @@ public partial class ILCompiler
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
             NamespaceFields = _namespaceFields,
+            NamespaceVarFields = _namespaceVarFields,
             TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             Runtime = _runtime,
             FunctionGenericParams = _functions.GenericParams,
@@ -1138,7 +1148,9 @@ public partial class ILCompiler
             EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
-            EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
+            EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+            // Top-level statements run here: var/let/const are module-level bindings (#562).
+            IsModuleTopLevel = true
         };
 
         // Create entry-point display class instance if there are captured top-level variables

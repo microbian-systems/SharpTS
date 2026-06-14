@@ -99,14 +99,16 @@ public class LexicalForwardReferenceTests
         Assert.Equal("99", TestHarness.Run(source, mode).Trim());
     }
 
-    [Fact]
-    public void ShadowingConst_BindsToInnerDeclaration_Interpreted()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ShadowingConst_BindsToInnerDeclaration(ExecutionMode mode)
     {
         // The inner `const x` shadows the outer one throughout `wrapper`, including in f's closure.
         // Hoisting the inner binding makes f resolve to it (value "shadow"), which is what runs.
-        // Interpreted-only: compiled mode mis-binds a captured *shadowing* block-scoped name to the
-        // wrong display-class slot (resolves to null) — a pre-existing defect, orthogonal to #533
-        // (it reproduces with f declared AFTER the inner const, i.e. no forward reference). See #562.
+        // #562: compiled mode previously routed a function-local declaration whose name collides with
+        // a module-level binding to the MODULE slot (a captured copy that f then read as null, and the
+        // module variable was clobbered). Fixed by gating module-level storage on the actual
+        // module-top-level emission context, so the inner binding gets its own display-class slot.
         var source = """
             const x = 99;
             function wrapper() {
@@ -117,7 +119,26 @@ public class LexicalForwardReferenceTests
             console.log(wrapper());
             """;
 
-        Assert.Equal("shadow", TestHarness.RunInterpreted(source).Trim());
+        Assert.Equal("shadow", TestHarness.Run(source, mode).Trim());
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ShadowingConst_DoesNotClobberOuterModuleBinding(ExecutionMode mode)
+    {
+        // The companion to #562: the function-local shadow must not write through to the module
+        // binding's storage. Before the fix the inner `const x` overwrote the module-level `x`.
+        var source = """
+            const x = "outer";
+            function wrapper() {
+                const x = "inner";
+                return x;
+            }
+            const inner = wrapper();
+            console.log(inner + " " + x);
+            """;
+
+        Assert.Equal("inner outer", TestHarness.Run(source, mode).Trim());
     }
 
     [Theory]
@@ -136,13 +157,15 @@ public class LexicalForwardReferenceTests
         Assert.Equal("true true", TestHarness.Run(source, mode).Trim());
     }
 
-    [Fact]
-    public void NamespaceMemberFunction_ReferencesLaterConst_Interpreted()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceMemberFunction_ReferencesLaterConst(ExecutionMode mode)
     {
-        // A namespace member function declared before a namespace-level const now type-checks the
-        // same way the in-order variant already did. Interpreted-only: compiled mode cannot resolve
-        // a namespace-level variable from a namespace member function at all (any order, var/let/const)
-        // — a pre-existing, orthogonal namespace-emission defect tracked in #567.
+        // A namespace member function declared before a namespace-level const type-checks the same way
+        // the in-order variant does. #567: compiled mode previously could not resolve a namespace-level
+        // variable from a namespace member function (any order, var/let/const) because the variable was
+        // only a runtime member of the namespace object, invisible to the function body. Fixed by also
+        // backing each namespace-level variable with a static field surfaced to the function's resolver.
         var source = """
             namespace N {
                 export function f() { return val; }
@@ -152,7 +175,7 @@ public class LexicalForwardReferenceTests
             console.log(N.result);
             """;
 
-        Assert.Equal("7", TestHarness.RunInterpreted(source).Trim());
+        Assert.Equal("7", TestHarness.Run(source, mode).Trim());
     }
 
     [Fact]

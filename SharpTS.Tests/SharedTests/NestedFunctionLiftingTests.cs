@@ -221,6 +221,65 @@ public class NestedFunctionLiftingTests
         Assert.Equal("function 1\n", TestHarness.Run(source, mode));
     }
 
+    // ── #605: function/generator declared inside a MODULE-LEVEL block/loop/if ────────────────────
+    // No enclosing function exists, so these are bound by neither the top-level definition pass nor
+    // the inner-function pass and previously threw "Undefined variable" in compiled mode. The lifter
+    // now relocates the non-capturing ones to the module top level.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PlainFunction_InTopLevelBlock_IsCallable(ExecutionMode mode)
+    {
+        var source = """
+            { function f() { return 1; } console.log(f()); }
+            """;
+        Assert.Equal("1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_InTopLevelBlock_IsCallable(ExecutionMode mode)
+    {
+        var source = """
+            { function* g() { yield 1; yield 2; } console.log([...g()].join(",")); }
+            """;
+        Assert.Equal("1,2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BlockFunction_ReferencingModuleBinding_IsCallable(ExecutionMode mode)
+    {
+        // A block function that references a module-level binding (not a block/loop-scoped one) is
+        // safe to lift — the reference still resolves after relocation. Guards the capture-guard from
+        // over-rejecting safe references (it must only block enclosing block/loop captures).
+        var source = """
+            const base = 10;
+            { function addBase(n: number): number { return n + base; } console.log(addBase(5)); }
+            """;
+        Assert.Equal("15\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RecursiveBlockFunction_IsCallable(ExecutionMode mode)
+    {
+        var source = """
+            { function fact(n: number): number { return n <= 1 ? 1 : n * fact(n - 1); } console.log(fact(5)); }
+            """;
+        Assert.Equal("120\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Function_InTopLevelIfBlock_IsCallable(ExecutionMode mode)
+    {
+        var source = """
+            if (true) { function inIf(): string { return "yes"; } console.log(inIf()); }
+            """;
+        Assert.Equal("yes\n", TestHarness.Run(source, mode));
+    }
+
     // ── Documented limitation #583 §1: capturing nested function-likes are NOT lifted ────────────
     // The interpreter handles them via real closures; the compiler still cannot lower a nested
     // state-machine function that captures an enclosing local (it stays nested and fails to compile,

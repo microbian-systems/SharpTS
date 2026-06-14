@@ -32,9 +32,15 @@ public partial class ILEmitter
 
     protected override void EmitVarDeclaration(Stmt.Var v)
     {
-        // If we're in a nested scope, always create a local variable to support shadowing.
-        // This allows inner scopes to declare variables with the same name as outer/top-level vars.
-        if (!_ctx.Locals.IsInNestedScope)
+        // Module-level storage (static field / entry-point display class) is only the right
+        // target when this declaration IS a module-level binding: we are emitting the module
+        // top-level statements (IsModuleTopLevel) and not inside a nested block. Inside a
+        // function body the same dictionaries are present for READ access, but a same-named
+        // declaration there is a function-local that must shadow — not overwrite — the module
+        // binding; falling into this block wrote a function-local through to the module slot
+        // and never created the real local, so captured reads saw null and the module var was
+        // clobbered (#562). A nested block at top level likewise shadows via a fresh local.
+        if (_ctx.IsModuleTopLevel && !_ctx.Locals.IsInNestedScope)
         {
             // Check if this is a captured top-level variable - use entry-point display class
             if (_ctx.CapturedTopLevelVars?.Contains(v.Name.Lexeme) == true &&

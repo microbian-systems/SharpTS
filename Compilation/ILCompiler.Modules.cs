@@ -713,6 +713,7 @@ public partial class ILCompiler
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
             NamespaceFields = _namespaceFields,
+            NamespaceVarFields = _namespaceVarFields,
             // Scope top-level static vars to the current module to prevent
             // cross-module name collisions (e.g. `const foo` in main.ts
             // shadowing `export function foo()` in lib.ts).
@@ -746,7 +747,10 @@ public partial class ILCompiler
             EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
-            EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
+            EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+            // This context emits the module/script top-level statements, so var/let/const
+            // declarations here are genuine module-level bindings (#562).
+            IsModuleTopLevel = true
         };
     }
 
