@@ -194,9 +194,19 @@ public abstract partial class ExpressionEmitterBase
                     }
 
                     // Store each converted arg to a temp for await-safety
-                    // (async emitters may yield during EmitExpression)
+                    // (async emitters may yield during EmitExpression).
+                    //
+                    // When a later argument can suspend (await/yield), spill each earlier argument
+                    // to a *registered, boxed* object local: a parameter-typed IL local does not
+                    // survive a deferred MoveNext re-entry (only state-machine fields do, #400), so
+                    // the earlier arg would read back as null and the typed reload also fails IL
+                    // verify (#436). Without a suspending argument — every call in the synchronous
+                    // ILEmitter, and await-free calls in async/generator bodies — keep the cheaper
+                    // parameter-typed locals (the JIT collapses the store/load and value-typed args
+                    // stay unboxed).
                     var targetParams = targetMethod.GetParameters();
-                    List<(LocalBuilder Local, Type ParamType)> callArgTemps = [];
+                    bool awaitSafe = AnyContainsSuspension(c.Arguments);
+                    List<(LocalBuilder Local, Type ParamType, bool Boxed)> callArgTemps = [];
 
                     for (int i = 0; i < c.Arguments.Count; i++)
                     {
@@ -204,9 +214,20 @@ public abstract partial class ExpressionEmitterBase
                         Type paramType = i < targetParams.Length ? targetParams[i].ParameterType : Types.Object;
                         if (arg is Expr.Spread spread)
                         {
+                            // A spread in a fixed-arity (non-rest) call is passed as one boxed value.
+                            if (awaitSafe)
+                            {
+                                callArgTemps.Add((SpillBoxed(spread.Expression), Types.Object, true));
+                                continue;
+                            }
                             EmitExpression(spread.Expression);
                             EnsureBoxed();
                             paramType = Types.Object;
+                        }
+                        else if (awaitSafe)
+                        {
+                            callArgTemps.Add((SpillConvertedArg(arg, paramType), paramType, true));
+                            continue;
                         }
                         else
                         {
@@ -218,7 +239,7 @@ public abstract partial class ExpressionEmitterBase
                         }
                         var temp = IL.DeclareLocal(paramType);
                         IL.Emit(OpCodes.Stloc, temp);
-                        callArgTemps.Add((temp, paramType));
+                        callArgTemps.Add((temp, paramType, false));
                     }
 
                     for (int i = c.Arguments.Count; i < paramCount; i++)
@@ -233,9 +254,11 @@ public abstract partial class ExpressionEmitterBase
                         {
                             EmitDefaultForType(pType);
                         }
+                        // Defaults are emitted after every real argument, so no suspension can
+                        // follow — a plain parameter-typed local is sufficient (Boxed = false).
                         var temp = IL.DeclareLocal(pType);
                         IL.Emit(OpCodes.Stloc, temp);
-                        callArgTemps.Add((temp, pType));
+                        callArgTemps.Add((temp, pType, false));
                     }
 
                     // If the callee's body references JS `arguments`, publish the raw
@@ -256,7 +279,9 @@ public abstract partial class ExpressionEmitterBase
                             IL.Emit(OpCodes.Dup);
                             IL.Emit(OpCodes.Ldc_I4, i);
                             IL.Emit(OpCodes.Ldloc, callArgTemps[i].Local);
-                            if (callArgTemps[i].ParamType.IsValueType)
+                            // Await-safe temps are already boxed objects; only parameter-typed
+                            // value-type temps need boxing for the object[] arguments array.
+                            if (!callArgTemps[i].Boxed && callArgTemps[i].ParamType.IsValueType)
                                 IL.Emit(OpCodes.Box, callArgTemps[i].ParamType);
                             IL.Emit(OpCodes.Stelem_Ref);
                         }
@@ -272,7 +297,13 @@ public abstract partial class ExpressionEmitterBase
                     // (#65, prerequisite for #64's zero-declared-param shape).
                     int loadCount = Math.Min(callArgTemps.Count, paramCount);
                     for (int i = 0; i < loadCount; i++)
+                    {
                         IL.Emit(OpCodes.Ldloc, callArgTemps[i].Local);
+                        // Await-safe temps hold a boxed object — coerce back to the declared
+                        // parameter slot (unbox value types / downcast reference types).
+                        if (callArgTemps[i].Boxed)
+                            EmitCoerceBoxedToType(callArgTemps[i].ParamType);
+                    }
                 }
 
                 IL.Emit(OpCodes.Call, targetMethod);
@@ -537,6 +568,90 @@ public abstract partial class ExpressionEmitterBase
     }
 
     /// <summary>
+    /// Emits <paramref name="arg"/>, converts it to <paramref name="paramType"/> (preserving
+    /// <see cref="EmitConversionForParameter"/>'s union/implicit-conversion semantics), then boxes
+    /// the result and spills it to a <em>registered</em> object local so a suspension (await/yield)
+    /// in a <em>later</em> argument persists it across the MoveNext re-entry (#400/#436/#439). Load
+    /// it back with <c>Ldloc</c> + <see cref="EmitCoerceBoxedToType"/>(paramType). Value types are
+    /// boxed explicitly (not via <c>EnsureBoxed</c>) because the conversion leaves them unboxed with
+    /// an untracked stack type after an <c>unbox.any</c>.
+    /// </summary>
+    private LocalBuilder SpillConvertedArg(Expr arg, Type paramType)
+    {
+        EmitExpression(arg);
+        EmitConversionForParameter(arg, paramType);
+        if (paramType.IsValueType)
+            IL.Emit(OpCodes.Box, paramType);
+        return _helpers.SpillStoreObject();
+    }
+
+    /// <summary>
+    /// True when evaluating any of <paramref name="exprs"/> can suspend the enclosing state machine
+    /// (contains an <c>await</c> or <c>yield</c>). Used to gate await-safe argument spilling: the
+    /// fast typed-local call path is only unsafe when a later argument can suspend, so non-suspending
+    /// calls (every call in the synchronous ILEmitter, and await-free calls in async/generator
+    /// bodies) keep their cheaper codegen (#436).
+    /// </summary>
+    protected static bool AnyContainsSuspension(IEnumerable<Expr> exprs)
+    {
+        foreach (var e in exprs)
+            if (ExprContainsSuspension(e))
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// True when evaluating <paramref name="expr"/> can suspend the enclosing state machine. Only
+    /// <see cref="Expr.Await"/>/<see cref="Expr.Yield"/> suspend; this walks every composite that
+    /// can nest one. Nested function/arrow and class-expression bodies are NOT traversed — their
+    /// <c>await</c>/<c>yield</c> belong to their own state machine, not the one being emitted. New
+    /// expression containers must be added here (an unhandled type conservatively reports "no
+    /// suspension", which would re-expose the spill bug if it can actually nest one).
+    /// </summary>
+    protected static bool ExprContainsSuspension(Expr expr) => expr switch
+    {
+        Expr.Await or Expr.Yield => true,
+        Expr.Comma c => ExprContainsSuspension(c.Left) || ExprContainsSuspension(c.Right),
+        Expr.Binary b => ExprContainsSuspension(b.Left) || ExprContainsSuspension(b.Right),
+        Expr.Logical l => ExprContainsSuspension(l.Left) || ExprContainsSuspension(l.Right),
+        Expr.NullishCoalescing n => ExprContainsSuspension(n.Left) || ExprContainsSuspension(n.Right),
+        Expr.Ternary t => ExprContainsSuspension(t.Condition) || ExprContainsSuspension(t.ThenBranch) || ExprContainsSuspension(t.ElseBranch),
+        Expr.Grouping g => ExprContainsSuspension(g.Expression),
+        Expr.Unary u => ExprContainsSuspension(u.Right),
+        Expr.Delete d => ExprContainsSuspension(d.Operand),
+        Expr.Call call => ExprContainsSuspension(call.Callee) || AnyContainsSuspension(call.Arguments),
+        Expr.New nw => ExprContainsSuspension(nw.Callee) || AnyContainsSuspension(nw.Arguments),
+        Expr.CallPrivate cp => ExprContainsSuspension(cp.Object) || AnyContainsSuspension(cp.Arguments),
+        Expr.Get get => ExprContainsSuspension(get.Object),
+        Expr.GetPrivate gp => ExprContainsSuspension(gp.Object),
+        Expr.Set s => ExprContainsSuspension(s.Object) || ExprContainsSuspension(s.Value),
+        Expr.SetPrivate sp => ExprContainsSuspension(sp.Object) || ExprContainsSuspension(sp.Value),
+        Expr.GetIndex gi => ExprContainsSuspension(gi.Object) || ExprContainsSuspension(gi.Index),
+        Expr.SetIndex si => ExprContainsSuspension(si.Object) || ExprContainsSuspension(si.Index) || ExprContainsSuspension(si.Value),
+        Expr.Assign a => ExprContainsSuspension(a.Value),
+        Expr.CompoundAssign ca => ExprContainsSuspension(ca.Value),
+        Expr.CompoundSet cs => ExprContainsSuspension(cs.Object) || ExprContainsSuspension(cs.Value),
+        Expr.CompoundSetIndex csi => ExprContainsSuspension(csi.Object) || ExprContainsSuspension(csi.Index) || ExprContainsSuspension(csi.Value),
+        Expr.LogicalAssign la => ExprContainsSuspension(la.Value),
+        Expr.LogicalSet lst => ExprContainsSuspension(lst.Object) || ExprContainsSuspension(lst.Value),
+        Expr.LogicalSetIndex lsi => ExprContainsSuspension(lsi.Object) || ExprContainsSuspension(lsi.Index) || ExprContainsSuspension(lsi.Value),
+        Expr.PrefixIncrement pi => ExprContainsSuspension(pi.Operand),
+        Expr.PostfixIncrement pi => ExprContainsSuspension(pi.Operand),
+        Expr.ArrayLiteral al => AnyContainsSuspension(al.Elements),
+        Expr.ObjectLiteral ol => ol.Properties.Any(p =>
+            (p.Key is Expr.ComputedKey ck && ExprContainsSuspension(ck.Expression)) || ExprContainsSuspension(p.Value)),
+        Expr.TemplateLiteral tl => AnyContainsSuspension(tl.Expressions),
+        Expr.Spread sp => ExprContainsSuspension(sp.Expression),
+        Expr.TypeAssertion ta => ExprContainsSuspension(ta.Expression),
+        Expr.Satisfies sa => ExprContainsSuspension(sa.Expression),
+        Expr.NonNullAssertion nn => ExprContainsSuspension(nn.Expression),
+        Expr.DynamicImport di => ExprContainsSuspension(di.PathExpression),
+        // Leaves (Literal/Variable/This/Super/ImportMeta/RegexLiteral) and lambda/class
+        // boundaries (ArrowFunction/ClassExpr) cannot surface a suspension to the current frame.
+        _ => false
+    };
+
+    /// <summary>
     /// Emits the ExpandCallArgs call with Symbol.iterator and runtime type arguments.
     /// Expects args array and isSpread array on the stack.
     /// </summary>
@@ -588,13 +703,37 @@ public abstract partial class ExpressionEmitterBase
                 var staticMethodParams = callableMethod!.GetParameters();
                 var paramCount = staticMethodParams.Length;
 
-                for (int i = 0; i < c.Arguments.Count; i++)
+                // When a later argument can suspend, spill each argument to a registered, boxed
+                // object local first — emitting them directly onto the IL stack would leave the
+                // earlier args (and partial evaluation) stacked across the await/yield, which is
+                // invalid IL and loses values across the MoveNext re-entry (#439). Await-free calls
+                // (all of synchronous mode) keep the direct on-stack emission.
+                if (AnyContainsSuspension(c.Arguments))
                 {
-                    EmitExpression(c.Arguments[i]);
-                    if (i < staticMethodParams.Length)
-                        EmitConversionForParameter(c.Arguments[i], staticMethodParams[i].ParameterType);
-                    else
-                        EnsureBoxed();
+                    var argLocals = new LocalBuilder[c.Arguments.Count];
+                    for (int i = 0; i < c.Arguments.Count; i++)
+                    {
+                        Type pType = i < staticMethodParams.Length ? staticMethodParams[i].ParameterType : Types.Object;
+                        argLocals[i] = i < staticMethodParams.Length
+                            ? SpillConvertedArg(c.Arguments[i], pType)
+                            : SpillBoxed(c.Arguments[i]);
+                    }
+                    for (int i = 0; i < c.Arguments.Count; i++)
+                    {
+                        IL.Emit(OpCodes.Ldloc, argLocals[i]);
+                        EmitCoerceBoxedToType(i < staticMethodParams.Length ? staticMethodParams[i].ParameterType : Types.Object);
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < c.Arguments.Count; i++)
+                    {
+                        EmitExpression(c.Arguments[i]);
+                        if (i < staticMethodParams.Length)
+                            EmitConversionForParameter(c.Arguments[i], staticMethodParams[i].ParameterType);
+                        else
+                            EnsureBoxed();
+                    }
                 }
 
                 for (int i = c.Arguments.Count; i < paramCount; i++)
@@ -912,10 +1051,16 @@ public abstract partial class ExpressionEmitterBase
         if (c.Optional || c.Callee is not Expr.Get g || !HasOptionalLink(g))
             return false;
 
+        // When an argument can suspend, the receiver and resolved fn are live across that
+        // suspension, so spill them to *registered* locals (which persist to fields across the
+        // MoveNext re-entry, #400) and assemble the args array from pre-spilled locals rather than
+        // inline (#439). Synchronous mode never suspends, so SpillStoreObject is a plain local and
+        // the inline array build is kept.
+        bool awaitSafe = AnyContainsSuspension(c.Arguments);
+
         EmitExpression(g.Object);
         EnsureBoxed();
-        var recvLocal = IL.DeclareLocal(Types.Object);
-        IL.Emit(OpCodes.Stloc, recvLocal);
+        var recvLocal = _helpers.SpillStoreObject();
 
         var nullishLabel = IL.DefineLabel();
         var endLabel = IL.DefineLabel();
@@ -944,8 +1089,7 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Ldloc, recvLocal);
         IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
-        var fnLocal = IL.DeclareLocal(Types.Object);
-        IL.Emit(OpCodes.Stloc, fnLocal);
+        var fnLocal = _helpers.SpillStoreObject();
         IL.Emit(OpCodes.Ldloc, fnLocal);
         IL.Emit(OpCodes.Brfalse, nullishLabel);
         IL.Emit(OpCodes.Ldloc, fnLocal);
@@ -954,17 +1098,38 @@ public abstract partial class ExpressionEmitterBase
 
         // InvokeMethodValue(recv, fn, args) — args evaluated only on the
         // non-nullish path, per spec.
-        IL.Emit(OpCodes.Ldloc, recvLocal);
-        IL.Emit(OpCodes.Ldloc, fnLocal);
-        IL.Emit(OpCodes.Ldc_I4, c.Arguments.Count);
-        IL.Emit(OpCodes.Newarr, Types.Object);
-        for (int i = 0; i < c.Arguments.Count; i++)
+        if (awaitSafe)
         {
-            IL.Emit(OpCodes.Dup);
-            IL.Emit(OpCodes.Ldc_I4, i);
-            EmitExpression(c.Arguments[i]);
-            EnsureBoxed();
-            IL.Emit(OpCodes.Stelem_Ref);
+            // Spill args first so an await in a later arg doesn't suspend with the receiver, fn,
+            // and the partially-built array all stacked (invalid IL). Reached only on the
+            // non-nullish path, so args stay unevaluated when the chain short-circuits.
+            var argLocals = c.Arguments.Select(SpillBoxed).ToList();
+            IL.Emit(OpCodes.Ldloc, recvLocal);
+            IL.Emit(OpCodes.Ldloc, fnLocal);
+            IL.Emit(OpCodes.Ldc_I4, c.Arguments.Count);
+            IL.Emit(OpCodes.Newarr, Types.Object);
+            for (int i = 0; i < c.Arguments.Count; i++)
+            {
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldc_I4, i);
+                IL.Emit(OpCodes.Ldloc, argLocals[i]);
+                IL.Emit(OpCodes.Stelem_Ref);
+            }
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldloc, recvLocal);
+            IL.Emit(OpCodes.Ldloc, fnLocal);
+            IL.Emit(OpCodes.Ldc_I4, c.Arguments.Count);
+            IL.Emit(OpCodes.Newarr, Types.Object);
+            for (int i = 0; i < c.Arguments.Count; i++)
+            {
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldc_I4, i);
+                EmitExpression(c.Arguments[i]);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Stelem_Ref);
+            }
         }
         IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeMethodValue);
         IL.Emit(OpCodes.Br, endLabel);
@@ -1129,31 +1294,47 @@ public abstract partial class ExpressionEmitterBase
         var methodParams = methodBuilder.GetParameters();
         int expectedParamCount = methodParams.Length;
 
-        List<LocalBuilder> argTemps = [];
-        foreach (var arg in arguments)
+        // Spill the receiver and every argument to object locals, then load from the locals. When
+        // any argument can suspend (await/yield), spill through SpillBoxed so the locals are
+        // *registered* and persist across the MoveNext re-entry — otherwise an await in a later
+        // argument loses the earlier values and crashes (#400/#439). The suspending path spills the
+        // receiver first (JS left-to-right: receiver before arguments); the non-suspending path
+        // keeps the prior args-then-receiver order so observable side-effect ordering is unchanged.
+        LocalBuilder recvLocal;
+        var argLocals = new LocalBuilder[arguments.Count];
+        if (AnyContainsSuspension(arguments))
         {
-            EmitExpression(arg);
+            recvLocal = SpillBoxed(receiver);
+            for (int i = 0; i < arguments.Count; i++)
+                argLocals[i] = SpillBoxed(arguments[i]);
+        }
+        else
+        {
+            for (int i = 0; i < arguments.Count; i++)
+            {
+                EmitExpression(arguments[i]);
+                EnsureBoxed();
+                var temp = IL.DeclareLocal(typeof(object));
+                IL.Emit(OpCodes.Stloc, temp);
+                argLocals[i] = temp;
+            }
+            EmitExpression(receiver);
             EnsureBoxed();
-            var temp = IL.DeclareLocal(typeof(object));
-            IL.Emit(OpCodes.Stloc, temp);
-            argTemps.Add(temp);
+            recvLocal = IL.DeclareLocal(typeof(object));
+            IL.Emit(OpCodes.Stloc, recvLocal);
         }
 
-        EmitExpression(receiver);
-        EnsureBoxed();
+        IL.Emit(OpCodes.Ldloc, recvLocal);
         IL.Emit(OpCodes.Castclass, castType);
-
-        for (int i = 0; i < argTemps.Count; i++)
+        // Coerce each boxed argument to its declared parameter slot: unbox value types AND downcast
+        // reference types. The previous unbox-only logic left a bare object on the stack for a typed
+        // reference parameter (e.g. `string`), which the JIT tolerated but `--verify` rejected with
+        // StackUnexpected (#439) — both the await and the plain call shapes.
+        for (int i = 0; i < argLocals.Length; i++)
         {
-            IL.Emit(OpCodes.Ldloc, argTemps[i]);
+            IL.Emit(OpCodes.Ldloc, argLocals[i]);
             if (i < methodParams.Length)
-            {
-                var targetType = methodParams[i].ParameterType;
-                if (targetType.IsValueType && targetType != typeof(object))
-                {
-                    IL.Emit(OpCodes.Unbox_Any, targetType);
-                }
-            }
+                EmitCoerceBoxedToType(methodParams[i].ParameterType);
         }
 
         for (int i = arguments.Count; i < expectedParamCount; i++)

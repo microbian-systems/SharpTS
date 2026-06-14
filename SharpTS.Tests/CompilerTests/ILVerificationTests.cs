@@ -386,6 +386,115 @@ public class ILVerificationTests
     }
 
     [Fact]
+    public void AwaitInFixedArityCallArg_PassesILVerification()
+    {
+        // #436: a fixed-arity (non-rest) call where an earlier argument precedes an await. The
+        // direct-call path spilled earlier args to parameter-typed IL locals; a typed local does
+        // not survive a deferred MoveNext re-entry and the spilled-then-reloaded value mismatched
+        // its declared slot under the verifier (StackUnexpected). Earlier args are now spilled to
+        // registered, boxed locals and coerced back to their declared slot (string / number).
+        var source = """
+            function concat2(x: string, y: string): string { return x + y; }
+            function add3(a: number, b: number, c: number): number { return a + b + c; }
+            async function m() {
+                console.log(concat2("A", await new Promise<string>(r => setTimeout(() => r("B"), 5))));
+                console.log(add3(1, await new Promise<number>(r => setTimeout(() => r(2), 5)), 3));
+            }
+            m();
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void AwaitInMethodCallArg_PassesILVerification()
+    {
+        // #439: a method call (instance, static, optional-chain) with an await in an argument that
+        // follows an earlier argument. These dispatch paths left the receiver and earlier args on
+        // the IL stack (or in unregistered temps) across the suspension — StackUnexpected /
+        // PathStackDepth, plus a runtime crash. Receiver and args are now spilled to registered
+        // locals and each loaded argument is coerced to its declared parameter slot.
+        var source = """
+            class C {
+                m(a: string, b: string): string { return a + b; }
+                static s(a: string, b: string): string { return a + b; }
+            }
+            const o: any = { m(a: string, b: string): string { return a + b; } };
+            async function main() {
+                const c = new C();
+                console.log(c.m("A", await new Promise<string>(r => setTimeout(() => r("B"), 5))));
+                console.log(C.s("A", await new Promise<string>(r => setTimeout(() => r("B"), 5))));
+                console.log(o?.m("A", await new Promise<string>(r => setTimeout(() => r("B"), 5))));
+            }
+            main();
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void AsyncArrowAwaitOfCall_PassesILVerification()
+    {
+        // #441: `await <functionCall>` inside an async arrow emitted invalid IL (StackUnexpected in
+        // the arrow's MoveNext) while the same shape in a regular async function verified. Root
+        // cause: the arrow's EmitLiteral override boxed numeric literals and set StackType=Unknown,
+        // desyncing EmitConversionForParameter's unboxed-double fast-path, so calling a function
+        // with a numeric parameter (e.g. defer's `ms`) stored a boxed object into a double IL slot.
+        // The arrow now inherits the base EmitLiteral (unboxed value types with a tracked StackType).
+        var source = """
+            function defer(v: any, ms: number): Promise<any> { return new Promise(r => setTimeout(() => r(v), ms)); }
+            const f = async () => { const x = await defer(1, 5); console.log(x); };
+            f();
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void AsyncArrowCallWithNumericArgument_PassesILVerification()
+    {
+        // #441 root cause in isolation (no await): calling any function with a `number` parameter
+        // from inside an async arrow stored a boxed double into a double IL slot under the old
+        // eager-boxing EmitLiteral override.
+        var source = """
+            function inc(n: number): number { return n + 1; }
+            const f = async () => { console.log(inc(5)); };
+            f();
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void NewPromiseInsideFunctionBody_PassesILVerification()
+    {
+        // #442 (already fixed by #393's non-async Promise<T> return-slot fix): `new Promise(executor)`
+        // inside a function/arrow body verifies. Guards the exact constructor-with-executor shape
+        // (closure/delegate construction + Promise newobj) that #393's `Promise.resolve(...)` tests
+        // did not cover. A non-async function returning Promise<T> previously mapped its return slot
+        // to Task<T> while the body produced the runtime $TSPromise (object) → StackUnexpected.
+        var source = """
+            function p(): Promise<number> { return new Promise<number>(r => r(1)); }
+            const q = (n: number): Promise<number> => new Promise<number>(r => setTimeout(() => r(n), 5));
+            const z = p();
+            const w = q(2);
+            console.log("made");
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
     public void Closures_PassesILVerification()
     {
         var source = """
