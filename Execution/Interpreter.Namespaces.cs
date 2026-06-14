@@ -118,6 +118,18 @@ public partial class Interpreter
                 {
                     object? value = _environment.Get(token).ToObject();
                     nsObj.Set(memberName, value);
+
+                    // An exported mutable variable is a live view of the namespace binding,
+                    // not a snapshot taken here: a member function that reassigns it must be
+                    // visible through external `N.x` access too (#623). Capture the namespace
+                    // scope so external reads resolve the current value. const/function/class/
+                    // enum members never reassign, so they keep the snapshot stored above.
+                    if (member is Stmt.Var)
+                    {
+                        var bindingEnv = _environment;
+                        var bindingToken = token;
+                        nsObj.SetLiveBinding(memberName, () => bindingEnv.Get(bindingToken).ToObject());
+                    }
                 }
                 else if (member is Stmt.ImportAlias ia)
                 {

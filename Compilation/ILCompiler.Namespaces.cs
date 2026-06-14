@@ -16,11 +16,25 @@ public partial class ILCompiler
     private readonly Dictionary<string, Dictionary<string, FieldBuilder>> _namespaceVarFields = [];
 
     /// <summary>
-    /// The namespace path whose member bodies are currently being emitted, or null when
-    /// not inside a namespace. Set by <see cref="EmitNamespaceMemberBodies"/> so a namespace
-    /// function body can surface its enclosing namespaces' var fields to its resolver (#567).
+    /// The namespace path whose members are currently being defined or emitted, or null when
+    /// not inside a namespace. Set by <see cref="DefineNamespaceFields"/> (define phase) and
+    /// <see cref="EmitNamespaceMemberBodies"/> (emit phase) so a namespace member body can
+    /// surface its enclosing namespaces' var fields to its resolver (#567). Read by
+    /// <see cref="BuildTopLevelStaticVarsForModule"/>, which augments the static-var view with
+    /// those fields whenever it is non-null.
     /// </summary>
     private string? _currentNamespacePath;
+
+    /// <summary>
+    /// Qualified state-machine function name -> enclosing namespace path, recorded at define
+    /// time for generators / async / async-generators declared in a namespace. Their MoveNext
+    /// bodies are emitted in dedicated later phases (<see cref="EmitGeneratorStateMachineBodies"/>
+    /// et al.) that iterate by qualified name, long after <see cref="_currentNamespacePath"/> has
+    /// been cleared — so those phases restore it from this map to keep namespace var resolution
+    /// working for state-machine members (#567). Plain sync functions and class methods don't
+    /// need this: they are emitted inline while <see cref="_currentNamespacePath"/> is still live.
+    /// </summary>
+    private readonly Dictionary<string, string> _functionDefinitionNamespace = [];
 
     /// <summary>
     /// Defines static fields for a namespace and its nested namespaces.
@@ -42,47 +56,60 @@ public partial class ILCompiler
             _namespaceFields[path] = field;
         }
 
-        // Define namespace members (functions, classes, enums, nested namespaces)
-        foreach (var member in ns.Members)
+        // Record the enclosing namespace during the define phase too: DefineFunction routes
+        // generators/async/async-generators through RegisterStateMachineFunctionModule, which
+        // captures _currentNamespacePath into _functionDefinitionNamespace so the later
+        // state-machine emission phases can restore it (#567). Saved/restored for nesting.
+        var savedNamespacePath = _currentNamespacePath;
+        _currentNamespacePath = path;
+        try
         {
-            var actualMember = member;
-            // Unwrap export
-            if (member is Stmt.Export { Declaration: not null } exp)
+            // Define namespace members (functions, classes, enums, nested namespaces)
+            foreach (var member in ns.Members)
             {
-                actualMember = exp.Declaration;
+                var actualMember = member;
+                // Unwrap export
+                if (member is Stmt.Export { Declaration: not null } exp)
+                {
+                    actualMember = exp.Declaration;
+                }
+
+                switch (actualMember)
+                {
+                    case Stmt.Namespace nested:
+                        DefineNamespaceFields(nested, path);
+                        break;
+
+                    case Stmt.Function funcStmt when funcStmt.Body != null:
+                        // Define functions inside namespace
+                        DefineFunction(funcStmt);
+                        break;
+
+                    case Stmt.Class classStmt:
+                        // Define classes inside namespace
+                        DefineClass(classStmt);
+                        break;
+
+                    case Stmt.Enum enumStmt:
+                        // Define enums inside namespace
+                        DefineEnum(enumStmt);
+                        break;
+
+                    // A namespace-level variable needs a static backing field so functions
+                    // declared in the namespace can resolve the bare name (#567).
+                    case Stmt.Var varStmt:
+                        DefineNamespaceVarField(path, varStmt.Name.Lexeme);
+                        break;
+
+                    case Stmt.Const constStmt:
+                        DefineNamespaceVarField(path, constStmt.Name.Lexeme);
+                        break;
+                }
             }
-
-            switch (actualMember)
-            {
-                case Stmt.Namespace nested:
-                    DefineNamespaceFields(nested, path);
-                    break;
-
-                case Stmt.Function funcStmt when funcStmt.Body != null:
-                    // Define functions inside namespace
-                    DefineFunction(funcStmt);
-                    break;
-
-                case Stmt.Class classStmt:
-                    // Define classes inside namespace
-                    DefineClass(classStmt);
-                    break;
-
-                case Stmt.Enum enumStmt:
-                    // Define enums inside namespace
-                    DefineEnum(enumStmt);
-                    break;
-
-                // A namespace-level variable needs a static backing field so functions
-                // declared in the namespace can resolve the bare name (#567).
-                case Stmt.Var varStmt:
-                    DefineNamespaceVarField(path, varStmt.Name.Lexeme);
-                    break;
-
-                case Stmt.Const constStmt:
-                    DefineNamespaceVarField(path, constStmt.Name.Lexeme);
-                    break;
-            }
+        }
+        finally
+        {
+            _currentNamespacePath = savedNamespacePath;
         }
     }
 

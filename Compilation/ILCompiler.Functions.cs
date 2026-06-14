@@ -197,10 +197,18 @@ public partial class ILCompiler
     /// </summary>
     private void RegisterStateMachineFunctionModule(Stmt.Function funcStmt)
     {
+        string qualifiedName = GetDefinitionContext().GetQualifiedFunctionName(funcStmt.Name.Lexeme);
+
+        // A state-machine function declared in a namespace must resolve namespace-level
+        // var/let/const from its MoveNext body, which is emitted in a dedicated later phase
+        // after _currentNamespacePath is cleared. Record the namespace here (independent of
+        // module path, so single-file namespaces work) so that phase can restore it (#567).
+        if (_currentNamespacePath != null)
+            _functionDefinitionNamespace[qualifiedName] = _currentNamespacePath;
+
         if (_modules.CurrentPath == null)
             return;
 
-        string qualifiedName = GetDefinitionContext().GetQualifiedFunctionName(funcStmt.Name.Lexeme);
         _functionDefinitionModule[qualifiedName] = _modules.CurrentPath;
         _modules.FunctionToModule[funcStmt.Name.Lexeme] = _modules.CurrentPath;
     }
@@ -277,14 +285,11 @@ public partial class ILCompiler
         var capturedLocals = hasFunctionDC ? _closures.Analyzer.GetCapturedLocals(funcStmt) : null;
 
         // Build module-scoped top-level vars so this function only sees its own
-        // module's bindings plus global imports.
+        // module's bindings plus global imports. When emitting a namespace member body this
+        // also surfaces the enclosing namespace's var/let/const backing fields (#567) — the
+        // augmentation now lives in BuildTopLevelStaticVarsForModule so every emission site
+        // (state machines, class methods) gets it uniformly, not just this plain-function path.
         Dictionary<string, FieldBuilder>? topLevelVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath);
-
-        // A function declared inside a namespace must also resolve that namespace's
-        // var/let/const members by their bare names (#567). Surface their static backing
-        // fields through the same resolver path as module top-level vars.
-        if (_currentNamespacePath != null)
-            topLevelVars = BuildNamespaceScopedStaticVars(topLevelVars, _currentNamespacePath);
 
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
         {

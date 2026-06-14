@@ -464,12 +464,16 @@ public partial class ILCompiler
     private void EmitAsyncStateMachineBodies()
     {
         var savedPath = _modules.CurrentPath;
+        var savedNamespacePath = _currentNamespacePath;
         foreach (var (funcName, smBuilder) in _async.StateMachines)
         {
             if (_functionDefinitionModule.TryGetValue(funcName, out var fnModule))
             {
                 _modules.CurrentPath = NormalizeToEmissionPath(fnModule);
             }
+            // Restore the enclosing namespace (null for non-namespace functions) so the
+            // MoveNext body resolves namespace-level var/let/const by bare name (#567).
+            _currentNamespacePath = _functionDefinitionNamespace.GetValueOrDefault(funcName);
             var func = _async.Functions[funcName];
             var stubMethod = _functions.Builders[funcName];
             var analysis = _async.Analyzer.Analyze(func);
@@ -561,6 +565,7 @@ public partial class ILCompiler
             smBuilder.CreateType();
         }
         _modules.CurrentPath = savedPath;
+        _currentNamespacePath = savedNamespacePath;
 
         // Finalize nested async arrow state machine types. Standalone (top-level) arrows are
         // finalized in EmitTopLevelAsyncArrowBodies AFTER their MoveNext is emitted — creating

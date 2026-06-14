@@ -1615,6 +1615,16 @@ public partial class ILCompiler
             result = new Dictionary<string, FieldBuilder>(_topLevelStaticVars);
         }
 
+        // A body emitted for a namespace member (function, generator, async, async-generator,
+        // class method/accessor/static) must also resolve its enclosing namespace's
+        // var/let/const members by bare name (#567). _currentNamespacePath is non-null only
+        // while EmitNamespaceMemberBodies is emitting such a body, so this augments exactly
+        // those emissions and nothing else. Centralizing here covers every emission site that
+        // routes through this helper (state machines, class methods) rather than just the plain
+        // function path.
+        if (_currentNamespacePath != null)
+            result = BuildNamespaceScopedStaticVars(result, _currentNamespacePath);
+
         return result;
     }
 

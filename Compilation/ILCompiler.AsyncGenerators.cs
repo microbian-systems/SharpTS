@@ -64,12 +64,16 @@ public partial class ILCompiler
     private void EmitAsyncGeneratorStateMachineBodies()
     {
         var savedPath = _modules.CurrentPath;
+        var savedNamespacePath = _currentNamespacePath;
         foreach (var (funcName, smBuilder) in _asyncGenerators.StateMachines)
         {
             if (_functionDefinitionModule.TryGetValue(funcName, out var fnModule))
             {
                 _modules.CurrentPath = NormalizeToEmissionPath(fnModule);
             }
+            // Restore the enclosing namespace (null for non-namespace functions) so the
+            // MoveNext body resolves namespace-level var/let/const by bare name (#567).
+            _currentNamespacePath = _functionDefinitionNamespace.GetValueOrDefault(funcName);
             var funcStmt = _asyncGenerators.Functions[funcName];
             var methodBuilder = _functions.Builders[funcName];
 
@@ -83,6 +87,7 @@ public partial class ILCompiler
             smBuilder.CreateType();
         }
         _modules.CurrentPath = savedPath;
+        _currentNamespacePath = savedNamespacePath;
     }
 
     /// <summary>

@@ -15,6 +15,50 @@ namespace SharpTS.Compilation;
 /// </summary>
 public partial class ILEmitter
 {
+    /// <summary>
+    /// Emits a read of a namespace-level variable through its static backing field when
+    /// <paramref name="g"/> is <c>N.x</c> (or nested <c>N.M.x</c>) and <c>x</c> is a known
+    /// namespace var/let/const. This makes external access observe the live binding that member
+    /// functions mutate, rather than the snapshot stored in the namespace object at declaration
+    /// (#623). Returns false (leaving the normal property-get path) when the object is not a
+    /// namespace path or the member is not a namespace variable.
+    /// </summary>
+    private bool TryEmitNamespaceVarGet(Expr.Get g)
+    {
+        if (_ctx.NamespaceVarFields == null) return false;
+
+        string? nsPath = ResolveNamespacePathForGet(g.Object);
+        if (nsPath == null) return false;
+
+        if (_ctx.NamespaceVarFields.TryGetValue(nsPath, out var fields) &&
+            fields.TryGetValue(g.Name.Lexeme, out var field))
+        {
+            IL.Emit(OpCodes.Ldsfld, field);
+            SetStackUnknown();
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves an expression to the dotted path of the namespace it denotes (e.g. <c>N</c> or
+    /// <c>N.M</c>), or null if it is not a reference to a known namespace. Used by
+    /// <see cref="TryEmitNamespaceVarGet"/> to locate a namespace var's backing field.
+    /// </summary>
+    private string? ResolveNamespacePathForGet(Expr obj)
+    {
+        switch (obj)
+        {
+            case Expr.Variable v when _ctx.NamespaceFields?.ContainsKey(v.Name.Lexeme) == true:
+                return v.Name.Lexeme;
+            case Expr.Get get when ResolveNamespacePathForGet(get.Object) is { } parent:
+                string candidate = $"{parent}.{get.Name.Lexeme}";
+                return _ctx.NamespaceFields?.ContainsKey(candidate) == true ? candidate : null;
+            default:
+                return null;
+        }
+    }
+
     protected override void EmitGet(Expr.Get g)
     {
         // CommonJS: `module.exports` reads → ldsfld $exports
@@ -126,6 +170,13 @@ public partial class ILEmitter
             }
             return;
         }
+
+        // External read of a namespace-level mutable variable must observe the live binding,
+        // not the declaration-time snapshot stored in the namespace object (#623). Redirect
+        // `N.x` (and nested `N.M.x`) to the var's static backing field — the same field member
+        // functions read and write (#567) — so a mutation made through a member function is
+        // visible here. Mirrors the interpreter's live-binding exposure.
+        if (TryEmitNamespaceVarGet(g)) return;
 
         // Handle static member access via 'this' in static context (static blocks, static methods)
         // In static blocks, 'this' refers to the class constructor, so this.property accesses static members
