@@ -304,4 +304,62 @@ public class AwaitDeferredSpillTests
             """const o: any = { go(a: string, b: string): string { return a + b; } }; console.log(o?.go("A", await defer("B", 5)));""",
             mode));
     }
+
+    // #614: an await in an argument of a call to a *runtime-dispatchable string method*
+    // (substring/substr/charAt/…) on an any-typed receiver. The string fast path
+    // (EmitRuntimeStringMethod) and the generic GetProperty path are mutually exclusive at runtime
+    // but both contained the arguments at emit time, so each await was emitted twice — desyncing the
+    // await-state counter and crashing the compiler with "The given key 'N' was not present in the
+    // dictionary." The arguments are now spilled once before the string-vs-generic split.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OptionalChainStringMethod_DeferredAwaitArg(ExecutionMode mode)
+    {
+        // The exact #614 repro shape: substring (a direct runtime string method) on `any?.`.
+        Assert.Equal("ell\n", Run("""const s: any = "hello"; console.log(s?.substring(await defer(1, 5), 4));""", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OptionalChainStringMethod_TwoDeferredAwaits(ExecutionMode mode)
+    {
+        Assert.Equal("hel\n", Run("""const s: any = "hello"; console.log(s?.substring(await defer(0, 5), await defer(3, 5)));""", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OptionalChainStringMethod_DefaultCasePath_DeferredAwaitArg(ExecutionMode mode)
+    {
+        // charAt is dispatchable but not one of the direct switch cases, so it routes through the
+        // default → GetProperty+Invoke fallback, which must also read the pre-spilled args.
+        Assert.Equal("e\n", Run("""const s: any = "hello"; console.log(s?.charAt(await defer(1, 5)));""", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DynamicDispatchStringMethod_DeferredAwaitArg(ExecutionMode mode)
+    {
+        // Non-optional dynamic dispatch (EmitDynamicMethodCallPreservingThis) has the same
+        // dual-emission shape and was the latent sibling gap called out in #614.
+        Assert.Equal("ell\n", Run("""const s: any = "hello"; console.log(s.substring(await defer(1, 5), 4));""", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OptionalChainStringMethod_NonStringReceiverWithOwnMethod_DeferredAwaitArg(ExecutionMode mode)
+    {
+        // Receiver is not a string at runtime, so the generic (non-string) branch runs, reading the
+        // same pre-spilled args — the user's own `substring` is invoked, not the string built-in.
+        Assert.Equal("OBJ:2,7\n", Run(
+            """const o: any = { substring(a: number, b: number): string { return "OBJ:" + a + "," + b; } }; console.log(o?.substring(await defer(2, 5), 7));""",
+            mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OptionalChainStringMethod_NullishReceiverShortCircuits(ExecutionMode mode)
+    {
+        Assert.Equal("undefined\n", Run("""const n: any = null; console.log(n?.substring(await defer(1, 5), 4));""", mode));
+    }
 }

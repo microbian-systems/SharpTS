@@ -437,6 +437,32 @@ public class ILVerificationTests
     }
 
     [Fact]
+    public void AwaitInDispatchableStringMethodArg_PassesILVerification()
+    {
+        // #614: an await in an argument of a call to a runtime-dispatchable string method
+        // (substring/substr/charAt/…) on an any-typed receiver. The string fast path and the generic
+        // GetProperty path are mutually exclusive at runtime but both contained the arguments at emit
+        // time, so each await was emitted twice — desyncing the await-state counter and crashing the
+        // compiler ("key 'N' was not present in the dictionary"). Covers the optional-chain branch
+        // (direct switch case + default fallback) and the non-optional dynamic-dispatch sibling.
+        var source = """
+            const s: any = "hello";
+            const o: any = { substring(a: number, b: number): string { return "" + a + b; } };
+            async function main() {
+                console.log(s?.substring(await new Promise<number>(r => setTimeout(() => r(1), 5)), 4));
+                console.log(s?.charAt(await new Promise<number>(r => setTimeout(() => r(1), 5))));
+                console.log(s.substring(await new Promise<number>(r => setTimeout(() => r(1), 5)), 4));
+                console.log(o?.substring(await new Promise<number>(r => setTimeout(() => r(2), 5)), 7));
+            }
+            main();
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
     public void AsyncArrowAwaitOfCall_PassesILVerification()
     {
         // #441: `await <functionCall>` inside an async arrow emitted invalid IL (StackUnexpected in
