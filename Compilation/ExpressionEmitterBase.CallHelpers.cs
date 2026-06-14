@@ -339,8 +339,9 @@ public abstract partial class ExpressionEmitterBase
     {
         EmitExpression(obj);
         EnsureBoxed();
-        var objLocal = IL.DeclareLocal(Types.Object);
-        IL.Emit(OpCodes.Stloc, objLocal);
+        // SpillStoreObject (not a plain local) so the receiver survives a MoveNext re-entry when a
+        // later argument suspends (#400/#614); in the synchronous emitter it is just a plain local.
+        var objLocal = _helpers.SpillStoreObject();
 
         // Fast path: if receiver is a string at runtime, dispatch to the string-strategy path
         // directly. GetProperty(str, methodName) returns null for everything except "length",
@@ -349,17 +350,25 @@ public abstract partial class ExpressionEmitterBase
         // receiver is a string.
         if (IsRuntimeDispatchableStringMethod(methodName))
         {
+            // The string fast path and the generic GetProperty path both contain the arguments and
+            // are mutually exclusive at runtime. When an argument can suspend, spill the arguments
+            // once here so each `await`/`yield` is emitted exactly once — emitting them in both
+            // branches would emit the suspension twice and desync the await-state counter (#614).
+            LocalBuilder[]? argLocals = AnyContainsSuspension(arguments)
+                ? arguments.Select(SpillBoxed).ToArray()
+                : null;
+
             var notStringLabel = IL.DefineLabel();
             var endLabel = IL.DefineLabel();
             IL.Emit(OpCodes.Ldloc, objLocal);
             IL.Emit(OpCodes.Isinst, Types.String);
             IL.Emit(OpCodes.Brfalse, notStringLabel);
 
-            EmitRuntimeStringMethod(objLocal, methodName, arguments);
+            EmitRuntimeStringMethod(objLocal, methodName, arguments, argLocals);
             IL.Emit(OpCodes.Br, endLabel);
 
             IL.MarkLabel(notStringLabel);
-            EmitGetPropertyAndInvoke(objLocal, methodName, arguments);
+            EmitGetPropertyAndInvoke(objLocal, methodName, arguments, argLocals);
             IL.MarkLabel(endLabel);
             SetStackUnknown();
             return;
@@ -369,23 +378,53 @@ public abstract partial class ExpressionEmitterBase
         SetStackUnknown();
     }
 
-    private void EmitGetPropertyAndInvoke(LocalBuilder objLocal, string methodName, List<Expr> arguments)
+    private void EmitGetPropertyAndInvoke(LocalBuilder objLocal, string methodName, List<Expr> arguments, LocalBuilder[]? argLocals = null)
     {
-        IL.Emit(OpCodes.Ldloc, objLocal);                // receiver for Invoke
-        IL.Emit(OpCodes.Ldloc, objLocal);                // receiver for GetProperty
+        // Resolve the method first (property lookup precedes argument evaluation, per spec) and
+        // store it, so the receiver and resolved fn aren't left on the IL stack while arguments are
+        // evaluated — a later argument can suspend (await/yield), which requires a clear stack.
+        IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Ldstr, methodName);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty); // → fn
+        var fnLocal = _helpers.SpillStoreObject();
+
+        // When the caller hasn't pre-spilled the arguments and one can suspend, spill them now
+        // (after the lookup) so the suspension happens with a clear stack (#614/#413).
+        argLocals ??= AnyContainsSuspension(arguments)
+            ? arguments.Select(SpillBoxed).ToArray()
+            : null;
+
+        IL.Emit(OpCodes.Ldloc, objLocal);                // receiver for InvokeMethodValue
+        IL.Emit(OpCodes.Ldloc, fnLocal);                 // resolved fn
+        EmitBoxedArgsArray(arguments, argLocals);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeMethodValue);
+    }
+
+    /// <summary>
+    /// Builds an <c>object[]</c> of the boxed call arguments on the stack. Stack: [] -&gt; [object[]].
+    /// When <paramref name="argLocals"/> is non-null each element is loaded from those pre-spilled,
+    /// already-boxed locals (await-safe: the arguments were evaluated and spilled by the caller, so
+    /// no suspension is re-emitted here); otherwise each argument expression is emitted inline.
+    /// </summary>
+    private void EmitBoxedArgsArray(List<Expr> arguments, LocalBuilder[]? argLocals)
+    {
         IL.Emit(OpCodes.Ldc_I4, arguments.Count);
         IL.Emit(OpCodes.Newarr, Types.Object);
         for (int i = 0; i < arguments.Count; i++)
         {
             IL.Emit(OpCodes.Dup);
             IL.Emit(OpCodes.Ldc_I4, i);
-            EmitExpression(arguments[i]);
-            EnsureBoxed();
+            if (argLocals != null)
+            {
+                IL.Emit(OpCodes.Ldloc, argLocals[i]);
+            }
+            else
+            {
+                EmitExpression(arguments[i]);
+                EnsureBoxed();
+            }
             IL.Emit(OpCodes.Stelem_Ref);
         }
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeMethodValue);
     }
 
     private static bool IsRuntimeDispatchableStringMethod(string methodName) => methodName is
@@ -393,7 +432,12 @@ public abstract partial class ExpressionEmitterBase
         or "trim" or "trimStart" or "trimEnd" or "startsWith" or "endsWith"
         or "repeat" or "padStart" or "padEnd" or "at";
 
-    private void EmitRuntimeStringMethod(LocalBuilder objLocal, string methodName, List<Expr> arguments)
+    /// <param name="argLocals">
+    /// Pre-spilled, already-boxed argument locals to read from instead of re-emitting the argument
+    /// expressions. The caller passes these when an argument can suspend so the <c>await</c>/<c>yield</c>
+    /// is emitted exactly once (#614); null means emit the arguments inline.
+    /// </param>
+    private void EmitRuntimeStringMethod(LocalBuilder objLocal, string methodName, List<Expr> arguments, LocalBuilder[]? argLocals = null)
     {
         // Stack entry: (nothing — objLocal is the receiver). Push the string, then args, then call.
         IL.Emit(OpCodes.Ldloc, objLocal);
@@ -403,30 +447,12 @@ public abstract partial class ExpressionEmitterBase
         {
             case "substring":
                 // StringSubstring takes (string, object[]): pack args into object[].
-                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
-                IL.Emit(OpCodes.Newarr, Types.Object);
-                for (int i = 0; i < arguments.Count; i++)
-                {
-                    IL.Emit(OpCodes.Dup);
-                    IL.Emit(OpCodes.Ldc_I4, i);
-                    EmitExpression(arguments[i]);
-                    EnsureBoxed();
-                    IL.Emit(OpCodes.Stelem_Ref);
-                }
+                EmitBoxedArgsArray(arguments, argLocals);
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.StringSubstring);
                 break;
 
             case "substr":
-                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
-                IL.Emit(OpCodes.Newarr, Types.Object);
-                for (int i = 0; i < arguments.Count; i++)
-                {
-                    IL.Emit(OpCodes.Dup);
-                    IL.Emit(OpCodes.Ldc_I4, i);
-                    EmitExpression(arguments[i]);
-                    EnsureBoxed();
-                    IL.Emit(OpCodes.Stelem_Ref);
-                }
+                EmitBoxedArgsArray(arguments, argLocals);
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.StringSubstr);
                 break;
 
@@ -446,7 +472,7 @@ public abstract partial class ExpressionEmitterBase
                 // Other known methods: fall back to GetProperty+Invoke; the caller still
                 // returns a value, just not via the direct runtime method.
                 IL.Emit(OpCodes.Pop); // pop the cast-to-string receiver we pushed
-                EmitGetPropertyAndInvoke(objLocal, methodName, arguments);
+                EmitGetPropertyAndInvoke(objLocal, methodName, arguments, argLocals);
                 break;
         }
     }
@@ -1071,15 +1097,28 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
         IL.Emit(OpCodes.Brtrue, nullishLabel);
 
+        // Pre-spilled, already-boxed argument locals shared by the string fast path and the generic
+        // path below. Stays null unless an argument can suspend.
+        LocalBuilder[]? argLocals = null;
+
         // GetProperty can't resolve most string prototype methods (see
         // EmitDynamicMethodCallPreservingThis) — keep its string fast path.
         if (IsRuntimeDispatchableStringMethod(g.Name.Lexeme))
         {
+            // The string fast path and the generic path below both contain the arguments and are
+            // mutually exclusive at runtime. When an argument can suspend, spill the arguments once
+            // here — before the string-vs-generic split — so each await/yield is emitted exactly
+            // once; emitting them in both branches would desync the await-state counter (#614). The
+            // spill is reached only on the non-nullish receiver path, so the arguments stay
+            // unevaluated when the chain short-circuits.
+            if (awaitSafe)
+                argLocals = c.Arguments.Select(SpillBoxed).ToArray();
+
             var notStringLabel = IL.DefineLabel();
             IL.Emit(OpCodes.Ldloc, recvLocal);
             IL.Emit(OpCodes.Isinst, Types.String);
             IL.Emit(OpCodes.Brfalse, notStringLabel);
-            EmitRuntimeStringMethod(recvLocal, g.Name.Lexeme, c.Arguments);
+            EmitRuntimeStringMethod(recvLocal, g.Name.Lexeme, c.Arguments, argLocals);
             IL.Emit(OpCodes.Br, endLabel);
             IL.MarkLabel(notStringLabel);
         }
@@ -1096,41 +1135,16 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
         IL.Emit(OpCodes.Brtrue, nullishLabel);
 
-        // InvokeMethodValue(recv, fn, args) — args evaluated only on the
-        // non-nullish path, per spec.
-        if (awaitSafe)
-        {
-            // Spill args first so an await in a later arg doesn't suspend with the receiver, fn,
-            // and the partially-built array all stacked (invalid IL). Reached only on the
-            // non-nullish path, so args stay unevaluated when the chain short-circuits.
-            var argLocals = c.Arguments.Select(SpillBoxed).ToList();
-            IL.Emit(OpCodes.Ldloc, recvLocal);
-            IL.Emit(OpCodes.Ldloc, fnLocal);
-            IL.Emit(OpCodes.Ldc_I4, c.Arguments.Count);
-            IL.Emit(OpCodes.Newarr, Types.Object);
-            for (int i = 0; i < c.Arguments.Count; i++)
-            {
-                IL.Emit(OpCodes.Dup);
-                IL.Emit(OpCodes.Ldc_I4, i);
-                IL.Emit(OpCodes.Ldloc, argLocals[i]);
-                IL.Emit(OpCodes.Stelem_Ref);
-            }
-        }
-        else
-        {
-            IL.Emit(OpCodes.Ldloc, recvLocal);
-            IL.Emit(OpCodes.Ldloc, fnLocal);
-            IL.Emit(OpCodes.Ldc_I4, c.Arguments.Count);
-            IL.Emit(OpCodes.Newarr, Types.Object);
-            for (int i = 0; i < c.Arguments.Count; i++)
-            {
-                IL.Emit(OpCodes.Dup);
-                IL.Emit(OpCodes.Ldc_I4, i);
-                EmitExpression(c.Arguments[i]);
-                EnsureBoxed();
-                IL.Emit(OpCodes.Stelem_Ref);
-            }
-        }
+        // InvokeMethodValue(recv, fn, args) — args evaluated only on the non-nullish path, per spec.
+        // For a non-string method (or when the string path didn't pre-spill) spill the args here,
+        // after the method lookup, so an await in a later arg doesn't suspend with the receiver, fn,
+        // and the partially-built array all stacked (#439); this preserves the lookup-before-args
+        // evaluation order. String methods reuse the locals pre-spilled above.
+        if (awaitSafe && argLocals == null)
+            argLocals = c.Arguments.Select(SpillBoxed).ToArray();
+        IL.Emit(OpCodes.Ldloc, recvLocal);
+        IL.Emit(OpCodes.Ldloc, fnLocal);
+        EmitBoxedArgsArray(c.Arguments, argLocals);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeMethodValue);
         IL.Emit(OpCodes.Br, endLabel);
 
