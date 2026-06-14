@@ -388,22 +388,17 @@ public class StateMachineEmitHelpers
         _stackType = StackType.Null;
     }
 
-    public void EmitUndefinedConstant(EmittedRuntime? runtime = null)
+    public void EmitUndefinedConstant()
     {
-        // $Undefined.Instance is the sentinel emitted INTO the output module (not a SharpTS.dll
-        // reference), so loading it is standalone-safe — it's exactly what ILEmitter emits. The four
-        // state-machine MoveNext emitters build their helpers without a runtime, so callers pass
-        // Ctx.Runtime here; fall back to the constructor-injected _runtime, and only to a raw null
-        // when no runtime is available at all. Without a runtime the undefined literal collapsed to
-        // CLR null inside async/generator bodies (typeof "object", `x === undefined` like a null
-        // check). (#600)
-        var rt = runtime ?? _runtime;
-        if (rt != null)
+        // Load $Undefined.Instance static field from the emitted runtime
+        if (_runtime != null)
         {
-            _il.Emit(OpCodes.Ldsfld, rt.UndefinedInstance);
+            _il.Emit(OpCodes.Ldsfld, _runtime.UndefinedInstance);
         }
         else
         {
+            // Fallback: emit null for standalone execution compatibility
+            // This avoids a dependency on SharpTS.dll at runtime
             _il.Emit(OpCodes.Ldnull);
         }
         _stackType = StackType.Unknown;  // Treat as boxed object
