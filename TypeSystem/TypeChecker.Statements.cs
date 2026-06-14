@@ -840,9 +840,16 @@ public partial class TypeChecker
             TypeInfo.Iterable iterableElem => iterableElem.ElementType,
             TypeInfo.AsyncIterable asyncIter when stmt.IsAsync => asyncIter.ElementType,
             // A hand-written object exposing [Symbol.iterator] is iterable structurally (#485). Limited to
-            // sync `for...of`; the async iterable protocol resolution is tracked separately (#483). A
-            // non-iterable still binds `any` (no new TS2488) to avoid regressing previously-accepted code.
+            // sync `for...of`; the async iterable protocol resolution is tracked separately (#483).
             _ when !stmt.IsAsync && TryGetStructuralIterableElement(iterableType, out var structuralElem) => structuralElem,
+            // A structural object with no [Symbol.iterator] is an iterator-only or plain object, not an
+            // Iterable — tsc rejects the loop with TS2488 rather than binding `any` (#550). Gated to types
+            // SharpTS can prove non-iterable so it never rejects code tsc accepts (see the helper). Async
+            // sources stay lenient — the async-iterable protocol is resolved separately (#483).
+            _ when !stmt.IsAsync && IsProvablyNonIterableStructuralObject(iterableType) =>
+                throw new TypeCheckException(
+                    $" Type '{iterableType}' must have a '[Symbol.iterator]()' method that returns an iterator.",
+                    tsCode: "TS2488"),
             _ => new TypeInfo.Any()
         };
 

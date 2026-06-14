@@ -323,6 +323,93 @@ public class StructuralIterableTypingTests
         TestHarness.RunInterpreted(source);
     }
 
+    // ---- A structural object with no [Symbol.iterator] is not iterable: TS2488, not `any` (#550) ----
+
+    [Fact]
+    public void ForOf_IteratorOnlyObject_RejectedTS2488()
+    {
+        // The issue's headline: an object with next() but no [Symbol.iterator] is an Iterator, not an
+        // Iterable. Before #550 the loop variable bound `any` silently; tsc reports TS2488.
+        var source = """
+            const it = { next() { return { value: 1, done: false }; } };
+            for (const x of it) { console.log(x); }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2488", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void ForOf_PlainObjectLiteral_RejectedTS2488()
+    {
+        var source = """
+            const o = { a: 1 };
+            for (const x of o) { console.log(x); }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2488", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void ForOf_NonIterableInterface_RejectedTS2488()
+    {
+        var source = """
+            interface P { x: number; }
+            function f(p: P): void { for (const v of p) { console.log(v); } }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2488", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void YieldStar_IteratorOnlyObject_RejectedTS2488()
+    {
+        // The yield* half of #550 — already rejected before #550, locked in here. A bare iterator
+        // (next() only) cannot be delegated to with yield*.
+        var source = """
+            const it = { next() { return { value: 1, done: false }; } };
+            function* g() { yield* it; }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2488", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void ForOf_InterfaceExtendingArray_StillAccepted()
+    {
+        // `interface I extends Array<T>` is iterable in tsc (inherits Array's [Symbol.iterator]) but is
+        // modeled here as a numeric index signature, not an @@iterator member. It must NOT be a false
+        // TS2488 — the #550 guard spares interfaces carrying a number index.
+        var source = """
+            interface IA extends Array<number> {}
+            function f(x: IA): void { for (const v of x) { console.log(v); } }
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void ForOf_NumberIndexInterface_StillAccepted()
+    {
+        // A bare numeric index interface is indistinguishable from the extends-Array shape above, so it
+        // stays lenient (binds `any`) rather than risk rejecting an iterable-via-Array interface.
+        var source = """
+            interface NI { [n: number]: string; }
+            function f(x: NI): void { for (const v of x) { console.log(v); } }
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void ForOf_ClassInstanceExtendingArray_StillAccepted()
+    {
+        // A class may `extends Array` (iterable); its base is a name-only placeholder here, so class
+        // instances are excluded from the TS2488 rule entirely — this must keep type-checking.
+        var source = """
+            class C extends Array<number> {}
+            function f(x: C): void { for (const v of x) { console.log(v); } }
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
     // ---- Runtime regression guard: the new type modeling does not perturb execution in either mode ----
 
     [Theory]
