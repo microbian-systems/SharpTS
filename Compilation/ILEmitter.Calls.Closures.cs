@@ -468,6 +468,15 @@ public partial class ILEmitter
                 if (local != null)
                 {
                     IL.Emit(OpCodes.Ldloc, local);
+                    // The capture field is object-typed, so a value-type local (e.g. a
+                    // number stored in an unboxed `double` slot via CanUseUnboxedLocal)
+                    // must be boxed before Stfld. The captured-parameter path above
+                    // already does this; omitting it here left a float64 where the
+                    // verifier expects a reference, corrupting the stack (#431).
+                    if (local.LocalType.IsValueType)
+                    {
+                        IL.Emit(OpCodes.Box, local.LocalType);
+                    }
                 }
                 else
                 {
