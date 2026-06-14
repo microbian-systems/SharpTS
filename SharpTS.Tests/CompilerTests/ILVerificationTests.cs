@@ -1434,4 +1434,95 @@ public class ILVerificationTests
         Assert.Equal("true true true\n", output);
         Assert.Equal(output, TestHarness.RunInterpreted(source));
     }
+
+    // #573: a `Date`-typed parameter used to emit a System.DateTime slot, but the runtime value is the
+    // emitted $TSDate reference carried as object — a DateTime slot fails ILVerify (StackUnexpected)
+    // and throws InvalidCastException at the call site. The slot now falls back to object.
+    [Fact]
+    public void DateTypedParameter_UsesObjectSlot_PassesILVerification()
+    {
+        var source = """
+            function f(d: Date): number { return d.getUTCFullYear(); }
+            console.log(f(new Date(0)));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("1970\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #573: a `Date` return slot has the same DateTime-vs-$TSDate mismatch — previously it silently
+    // produced NaN on a subsequent method call. The slot now falls back to object.
+    [Fact]
+    public void DateTypedReturn_UsesObjectSlot_PassesILVerification()
+    {
+        var source = """
+            function g(): Date { return new Date(0); }
+            console.log(g().getUTCFullYear());
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("1970\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #573: RegExp/Map/Set parameters mapped to Regex/Dictionary/HashSet slots — the runtime values are
+    // $RegExp/$Map/$Set carried as object, so the strict slots fail ILVerify (the JIT tolerated the
+    // reference store, but --verify rejected it). The slots now fall back to object.
+    [Fact]
+    public void RegExpMapSetTypedParameters_UseObjectSlots_PassILVerification()
+    {
+        var source = """
+            function r(x: RegExp): boolean { return x.test("a"); }
+            function m(x: Map<string, number>): number { return x.size; }
+            function s(x: Set<number>): number { return x.size; }
+            console.log(r(/a/), m(new Map<string, number>()), s(new Set<number>()));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("true 0 0\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #568: a `string | undefined` parameter resolved to a non-nullable String slot; reassigning the
+    // $Undefined sentinel threw InvalidCastException. A union admitting undefined now uses an object slot.
+    [Fact]
+    public void StringOrUndefinedParam_ReassignUndefined_UsesObjectSlot()
+    {
+        var source = """
+            function f(x: string | undefined): number { x = undefined; return x === undefined ? 1 : 0; }
+            console.log(f("hi"));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("1\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    // #568: the value-type analogue — `number | undefined` mapped to Nullable<double> and produced
+    // unverifiable IL / a CLR crash. `number | null` (Nullable too) was likewise broken. Both now use
+    // an object slot.
+    [Fact]
+    public void NumberOrUndefinedAndNumberOrNullParams_ReassignNullish_UseObjectSlots()
+    {
+        var source = """
+            function a(x: number | undefined): number { x = undefined; return 1; }
+            function b(x: number | null): number { x = null; return 2; }
+            console.log(a(3), b(5));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("1 2\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
 }

@@ -46,13 +46,6 @@ public static class ParameterTypeResolver
             {
                 var mappedType = typeMapper.MapTypeInfoStrict(pt);
 
-                // BigInteger parameters need to stay as object because BigInt operations
-                // in the emitter expect boxed values
-                if (mappedType == typeof(System.Numerics.BigInteger))
-                {
-                    return typeof(object);
-                }
-
                 // If parameter is optional (no explicit default), use object so undefined
                 // can be passed as the missing-argument sentinel (JS spec)
                 if (i < parameters.Count &&
@@ -62,20 +55,19 @@ public static class ParameterTypeResolver
                     return typeof(object);
                 }
 
-                // Rest parameter — dispatch helper expects List<object> as the marker.
+                // Rest parameter — dispatch helper expects List<object> as the marker. Must precede
+                // the runtime-slot fallback below, which would otherwise rewrite this List<object>
+                // marker to object as a "dynamic runtime collection".
                 if (i < parameters.Count && parameters[i].IsRest)
                 {
                     return typeof(List<object>);
                 }
 
-                // Function-typed params: runtime values are $TSFunction or other
-                // callable classes (e.g. PromisifyCallback), not .NET Delegate
-                // subclasses. Signatures that demand Delegate reject them at
-                // MethodInfo.Invoke time.
-                if (mappedType == typeof(Delegate) || mappedType.IsSubclassOf(typeof(Delegate)))
-                {
-                    return typeof(object);
-                }
+                // Fall back to object for any slot whose runtime value is carried as a boxed object:
+                // BigInteger, $TSFunction (mapped Delegate), Date/RegExp, $Array/$Map/$Set, Nullable,
+                // Union_* structs, and `T | undefined` unions that can hold the $Undefined sentinel.
+                // (#278/#568/#573)
+                mappedType = SoundRuntimeSlotType(mappedType, typeMapper, pt);
 
                 return WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap);
             })
@@ -99,6 +91,66 @@ public static class ParameterTypeResolver
     }
 
     /// <summary>
+    /// Adjusts a CLR type produced by <see cref="TypeMapper.MapTypeInfoStrict"/> so the slot can hold
+    /// the boxed SharpTS runtime value that a compiled TS parameter or return actually carries.
+    /// <c>MapTypeInfoStrict</c> yields precise CLR types for typed .NET interop (e.g. <c>DateTime</c>,
+    /// <c>Regex</c>, <c>List&lt;T&gt;</c>, <c>Nullable&lt;T&gt;</c>, <c>Union_*</c> structs), but the
+    /// runtime representation of those TS values is a reference object (<c>$TSDate</c>, <c>$RegExp</c>,
+    /// <c>$Array</c>, the <c>$Undefined</c> sentinel, ...) carried as <see cref="object"/>. Storing the
+    /// runtime value into the precise slot fails ILVerify (<c>StackUnexpected</c>) and either throws
+    /// <see cref="InvalidCastException"/> (value types / <c>castclass</c>) or silently corrupts the
+    /// value, so those slots fall back to <see cref="object"/>. Slots whose mapped type already matches
+    /// the runtime value (<c>double</c>/<c>bool</c>/<c>string</c>/user classes) are returned unchanged.
+    /// (#278/#568/#573)
+    /// </summary>
+    /// <param name="declaredType">The static TS type of the slot, when known. Used to detect cases the
+    /// mapped CLR type alone cannot distinguish — e.g. <c>string | undefined</c> maps to the same
+    /// <c>System.String</c> as a plain <c>string</c>, but only the union can carry the <c>$Undefined</c>
+    /// sentinel and therefore needs an object slot.</param>
+    private static Type SoundRuntimeSlotType(Type mapped, TypeMapper typeMapper, TSTypeInfo? declaredType)
+    {
+        // A union that admits `undefined` can hold the $Undefined sentinel object, which is neither a
+        // CLR null nor an instance of the non-nullish member's mapped type. The mapped type alone can't
+        // reveal this (`string | undefined` and `string` both map to System.String), so consult the
+        // declared type: a `string` slot throws InvalidCastException when the sentinel is stored, and a
+        // `number | undefined` -> Nullable<double> slot produces unverifiable IL. (#568)
+        if (declaredType is TSTypeInfo.Union { ContainsUndefined: true })
+            return typeof(object);
+
+        // BigInt operations in the emitter expect boxed values.
+        if (mapped == typeof(System.Numerics.BigInteger))
+            return typeof(object);
+
+        // Function slots hold $TSFunction / other callable classes, not a .NET Delegate subclass.
+        if (mapped == typeof(Delegate) || mapped.IsSubclassOf(typeof(Delegate)))
+            return typeof(object);
+
+        // Nullable<T> (e.g. `number | null` -> double?) has no emitter support; the runtime value is a
+        // boxed primitive or null carried as object.
+        if (Nullable.GetUnderlyingType(mapped) != null)
+            return typeof(object);
+
+        // Discriminated union structs (Union_*) are boxed opaquely by MethodInfo.Invoke; truthiness,
+        // equality and member access can't see the underlying value.
+        if (mapped.IsValueType && mapped.Name.StartsWith("Union_", StringComparison.Ordinal))
+            return typeof(object);
+
+        // Date/RegExp map (strictly) to the BCL DateTime/Regex, but the runtime values are the emitted
+        // $TSDate/$RegExp reference types carried as object. A DateTime (value type) slot throws
+        // InvalidCastException at the call site and StackUnexpected when a `$Runtime.DateGet*` helper
+        // (declared `(object)`) is invoked on it; a Regex slot fails ILVerify the same way. (#573)
+        if (mapped == typeMapper.Types.DateTime || mapped == typeMapper.Types.Regex)
+            return typeof(object);
+
+        // Typed array/map/set slots map to List<T>/Dictionary<,>/HashSet<>, but the runtime values are
+        // dynamic $Array/$Map/$Set carried as object — not CLR-assignable to the declared collection. (#278)
+        if (typeMapper.IsDynamicRuntimeCollection(mapped))
+            return typeof(object);
+
+        return mapped;
+    }
+
+    /// <summary>
     /// Resolves a single parameter's type from its annotation or defaults to object.
     /// </summary>
     private static Type ResolveParameterType(Stmt.Parameter param, TypeMapper typeMapper)
@@ -106,9 +158,10 @@ public static class ParameterTypeResolver
         if (param.Type == null)
             return typeof(object);
 
-        // Parse the type annotation and map to .NET type
+        // Parse the type annotation and map to .NET type, falling back to object for slots whose
+        // runtime value is carried as a boxed object (Date/RegExp/collections/Nullable/`T | undefined`).
         var typeInfo = ParseTypeAnnotation(param.Type);
-        return typeMapper.MapTypeInfoStrict(typeInfo);
+        return SoundRuntimeSlotType(typeMapper.MapTypeInfoStrict(typeInfo), typeMapper, typeInfo);
     }
 
     /// <summary>
@@ -150,19 +203,6 @@ public static class ParameterTypeResolver
                 baseType = typeof(object);
             }
 
-            // BigInteger returns need to stay as object because BigInt operations
-            // in the emitter expect boxed values
-            if (baseType == typeof(System.Numerics.BigInteger))
-            {
-                baseType = typeof(object);
-            }
-
-            // Function types return $TSFunction objects, not Delegate, so use object
-            if (baseType == typeof(Delegate) || baseType.IsSubclassOf(typeof(Delegate)))
-            {
-                baseType = typeof(object);
-            }
-
             // String return slots are unsound. TS inference admits `undefined` in a
             // `string`-typed expression (e.g. `cond ? "x" : undefined` infers `string`;
             // an explicit `: string` annotation is rejected for `return undefined`, so
@@ -172,37 +212,19 @@ public static class ParameterTypeResolver
             // into null/"undefined" (observable through Map keys, typeof, ===). Unlike
             // `double`/`bool` slots there is no boxing to avoid — strings are reference
             // types — so a `string` slot buys nothing. Fall back to object. (#318)
+            //
+            // (This is return-specific: an explicit `: string` *parameter* genuinely holds a
+            // System.String and keeps its slot; only inferred `string` returns admit undefined.)
             if (baseType == typeof(string))
             {
                 baseType = typeof(object);
             }
 
-            // Nullable value types (like number | null -> double?) need to stay as object
-            // because the emitter doesn't have special handling for Nullable<T>
-            if (Nullable.GetUnderlyingType(baseType) != null)
-            {
-                baseType = typeof(object);
-            }
-
-            // Discriminated union structs (Union_*) don't work as method return types
-            // because MethodInfo.Invoke boxes them opaquely — IsTruthy, equality comparers,
-            // and property access can't see the underlying value. Fall back to object so
-            // the raw primitives/strings are returned directly.
-            if (baseType.IsValueType && baseType.Name.StartsWith("Union_"))
-            {
-                baseType = typeof(object);
-            }
-
-            // Typed array/map/set returns map to List<T>/Dictionary<,>/HashSet<> (the strict
-            // collection types), but their runtime representation is a dynamic $Array/TSMap/TSSet
-            // carried as object — not CLR-assignable to the declared collection slot. Returning
-            // that value into a List<T> slot raises ILVerify StackUnexpected (and a castclass to
-            // the collection would throw InvalidCastException at runtime). Fall back to object so
-            // the dynamic value is returned directly. (#278)
-            if (typeMapper.IsDynamicRuntimeCollection(baseType))
-            {
-                baseType = typeof(object);
-            }
+            // Fall back to object for any return whose runtime value is carried as a boxed object:
+            // BigInteger, $TSFunction (mapped Delegate), Date/RegExp, $Array/$Map/$Set collections,
+            // Nullable<T>, Union_* structs, and `T | undefined` unions. Shared with the parameter
+            // slot resolution so both stay consistent. (#278/#568/#573)
+            baseType = SoundRuntimeSlotType(baseType, typeMapper, returnTypeInfo);
 
             // A non-async function/arrow declared to return `Promise<T>` maps (strictly) to
             // Task<T>/Task, but its body never produces a real CLR Task — it returns the runtime
@@ -281,13 +303,6 @@ public static class ParameterTypeResolver
                     return typeof(object);
                 }
 
-                // BigInteger parameters need to stay as object because BigInt operations
-                // in the emitter expect boxed values
-                if (mappedType == typeof(System.Numerics.BigInteger))
-                {
-                    return typeof(object);
-                }
-
                 // If parameter is optional (no explicit default), use object so undefined
                 // can be passed as the missing-argument sentinel (JS spec)
                 if (i < parameters.Count &&
@@ -296,6 +311,13 @@ public static class ParameterTypeResolver
                 {
                     return typeof(object);
                 }
+
+                // Fall back to object for slots whose runtime value is carried as a boxed object
+                // (BigInteger, $TSFunction, Date/RegExp, collections, Nullable, Union_* structs, and
+                // `T | undefined` unions). Rest params carry their own dispatch marker — leave them
+                // untouched. (#278/#568/#573)
+                if (i >= parameters.Count || !parameters[i].IsRest)
+                    mappedType = SoundRuntimeSlotType(mappedType, typeMapper, pt);
 
                 return i < parameters.Count
                     ? WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap)
@@ -378,12 +400,6 @@ public static class ParameterTypeResolver
                     return typeof(object);
                 }
 
-                // BigInteger parameters need to stay as object
-                if (mappedType == typeof(System.Numerics.BigInteger))
-                {
-                    return typeof(object);
-                }
-
                 // Optional parameters without defaults should use object for null-checking
                 if (i < parameters.Count &&
                     parameters[i].DefaultValue == null &&
@@ -394,6 +410,13 @@ public static class ParameterTypeResolver
                         return typeof(object);
                     }
                 }
+
+                // Fall back to object for slots whose runtime value is carried as a boxed object
+                // (BigInteger, $TSFunction, Date/RegExp, collections, Nullable, Union_* structs, and
+                // `T | undefined` unions). Rest params carry their own dispatch marker — leave them
+                // untouched. (#278/#568/#573)
+                if (i >= parameters.Count || !parameters[i].IsRest)
+                    mappedType = SoundRuntimeSlotType(mappedType, typeMapper, pt);
 
                 return i < parameters.Count
                     ? WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap)

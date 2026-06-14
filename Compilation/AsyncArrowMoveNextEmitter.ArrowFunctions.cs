@@ -102,11 +102,37 @@ public partial class AsyncArrowMoveNextEmitter
                 "Nested async arrow function not registered with state machine builder.");
         }
 
-        // For nested arrows, we need to pass the current arrow's boxed state machine
-        // as the "outer" reference for the nested arrow.
-        // The nested arrow's stub expects (outer state machine boxed, params...)
+        // A *standalone* nested async arrow — one whose enclosing scope is itself a top-level async
+        // arrow rather than an async function — has no outer state machine to thread. Its stub takes
+        // only its own (captures…, params…); there is no self-boxed instance to share. Emit it as a
+        // plain TSFunction over its stub with a null target, exactly like a non-capturing arrow value.
+        // This is the path the #615 repro hits: a top-level async arrow whose nested async arrows are
+        // all registered standalone, so without this branch they fell through to the SelfBoxedField
+        // guard below and the compile failed. (#615)
+        if (nestedBuilder.IsStandalone)
+        {
+            if (nestedBuilder.StandaloneCaptureFields.Count > 0)
+            {
+                // A standalone nested async arrow that closes over the enclosing arrow's locals needs
+                // those captured values threaded into its stub args; that wiring isn't in place yet.
+                // Fail with a clear message instead of silently passing the wrong target. (#641)
+                throw new CompileException(
+                    "Compiled mode does not yet support a capturing async arrow nested directly inside " +
+                    "a top-level async arrow. Move the inner arrow to a named binding or a regular async " +
+                    "function as a workaround.");
+            }
 
-        // Load the current arrow's self-boxed reference
+            _il.Emit(OpCodes.Ldnull);
+            _il.Emit(OpCodes.Ldtoken, nestedBuilder.StubMethod);
+            _il.Emit(OpCodes.Call, Types.MethodBaseGetMethodFromHandle);
+            _il.Emit(OpCodes.Castclass, typeof(MethodInfo));
+            _il.Emit(OpCodes.Newobj, _ctx!.Runtime!.TSFunctionCtor);
+            SetStackUnknown();
+            return;
+        }
+
+        // Non-standalone (nested inside an async function): the nested arrow's stub expects the
+        // enclosing scope's boxed state machine as its outer reference (for by-reference captures).
         if (_builder.SelfBoxedField != null)
         {
             _il.Emit(OpCodes.Ldarg_0);

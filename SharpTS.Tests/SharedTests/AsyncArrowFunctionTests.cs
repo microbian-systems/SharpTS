@@ -476,4 +476,56 @@ public class AsyncArrowFunctionTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("50\n", output);
     }
+
+    // #615: a top-level async arrow whose body directly nests another async-arrow expression failed
+    // to compile ("Async arrow with nested arrows does not have SelfBoxedField set"). The nested
+    // arrow is registered standalone, so it is emitted as a plain TSFunction over its stub.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncArrow_NestsAsyncArrowIife_Compiles(ExecutionMode mode)
+    {
+        var source = """
+            const f = async () => { const x = await (async () => 9)(); console.log(x); };
+            f();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("9\n", output);
+    }
+
+    // #615 follow-up: a parameterized nested async arrow inside a top-level async arrow. Earlier the
+    // self-boxed instance was (wrongly) prepended as the inner arrow's first argument; the standalone
+    // emit path passes a null target so the call's own args map to the parameters.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncArrow_NestsParameterizedAsyncArrow_Compiles(ExecutionMode mode)
+    {
+        var source = """
+            const f = async () => {
+                const g = async (z: number) => z * 2;
+                console.log(await g(21));
+            };
+            f();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    // #615: deep nesting of standalone async arrows (each its own state machine) resolves correctly.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncArrow_TripleNestedAsyncArrow_Compiles(ExecutionMode mode)
+    {
+        var source = """
+            const f = async () => {
+                const x = await (async () => await (async () => 7)())();
+                console.log(x);
+            };
+            f();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("7\n", output);
+    }
 }
