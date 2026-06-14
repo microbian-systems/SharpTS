@@ -184,6 +184,205 @@ public class LabeledStatementTests
 
     #endregion
 
+    #region Labeled `continue` to a for / iteration loop (issue #558)
+
+    // Before the fix, `continue <label>` targeting a labeled `for` branched ahead of the loop's
+    // initializer, re-running it forever (compiled hung; the interpreter treated `for` as a
+    // non-loop label and escaped). These pin the correct behavior: continue runs the loop's own
+    // step. Note the pre-existing suite only exercised labeled while/for-of/do-while continue.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void LabeledFor_ContinueOuter_RunsIncrementNotInitializer(ExecutionMode mode)
+    {
+        // The exact #558 repro: continue to the outer `for` must advance i (not reset it).
+        var source = """
+            let result: string = "";
+            outer: for (let i = 0; i < 2; i++) {
+                for (let j = 0; j < 2; j++) {
+                    if (result !== "") { result = result + ","; }
+                    result = result + (i * 10 + j);
+                    if (j === 0) { continue outer; }
+                }
+            }
+            console.log(result);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0,10\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void LabeledFor_ContinueSelf_SkipsIteration(ExecutionMode mode)
+    {
+        var source = """
+            let result: string = "";
+            lbl: for (let i = 0; i < 4; i++) {
+                if (i === 2) { continue lbl; }
+                result = result + i;
+            }
+            console.log(result);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("013\n", output);  // skips 2, but keeps advancing
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void LabeledFor_BreakOuter_ExitsBoth(ExecutionMode mode)
+    {
+        var source = """
+            let sum: number = 0;
+            outer: for (let i = 0; i < 3; i++) {
+                for (let j = 0; j < 3; j++) {
+                    if (i === 1 && j === 1) { break outer; }
+                    sum = sum + (i * 10 + j);
+                }
+            }
+            console.log(sum);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("13\n", output);  // 0+1+2 (i=0) + 10 (i=1,j=0), then break
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void LabeledForOf_ContinueOuter_SkipsRestOfInner(ExecutionMode mode)
+    {
+        var source = """
+            let result: string = "";
+            outer: for (const x of [1, 2, 3]) {
+                for (const y of [10, 20]) {
+                    result = result + (x + y) + ";";
+                    if (y === 10) { continue outer; }
+                }
+            }
+            console.log(result);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("11;12;13;\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void LabeledForIn_ContinueOuter_SkipsRestOfInner(ExecutionMode mode)
+    {
+        var source = """
+            let result: string = "";
+            const obj = { a: 1, b: 2 };
+            outer: for (const k1 in obj) {
+                for (const k2 in obj) {
+                    result = result + k1 + k2 + ";";
+                    continue outer;
+                }
+            }
+            console.log(result);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("aa;ba;\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void LabeledDoWhile_ContinueOuter_RetestsCondition(ExecutionMode mode)
+    {
+        var source = """
+            let result: string = "";
+            let i: number = 0;
+            outer: do {
+                i = i + 1;
+                let j: number = 0;
+                do {
+                    j = j + 1;
+                    if (j === 2) { continue outer; }
+                    result = result + (i * 10 + j) + ";";
+                } while (j < 3);
+            } while (i < 3);
+            console.log(result);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("11;21;31;\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_LabeledContinueOuterFor_YieldsAcrossIterations(ExecutionMode mode)
+    {
+        // #558 generator repro: the yield suspends inside the inner loop; continue outer must
+        // advance the outer `for` rather than restart it (compiled looped forever on the first
+        // value before the fix).
+        var source = """
+            function* g() {
+                outer: for (let i = 0; i < 2; i++) {
+                    for (let j = 0; j < 2; j++) {
+                        yield i * 10 + j;
+                        if (j === 0) { continue outer; }
+                    }
+                }
+            }
+            let result: string = "";
+            for (const v of g()) { result = result + v + ";"; }
+            console.log(result);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0;10;\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ChainedLabels_While_ContinueOuter(ExecutionMode mode)
+    {
+        // Both labels wrap the same while; `continue a` re-tests the outer condition.
+        var source = """
+            let sum: number = 0;
+            let i: number = 0;
+            a: b: while (i < 3) {
+                i = i + 1;
+                let j: number = 0;
+                while (j < 3) {
+                    j = j + 1;
+                    if (j === 2) { continue a; }
+                    sum = sum + (i * 10 + j);
+                }
+            }
+            console.log(sum);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("63\n", output);  // 11 + 21 + 31
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void ChainedLabels_For_ContinueOuter_Interpreted(ExecutionMode mode)
+    {
+        // A chain of labels on a `for` (a: b: for) — `continue p` must advance the outer for.
+        // The interpreter handles this; the compiled path is a known follow-up gap (it would
+        // re-run the for initializer), so this is interpreter-only.
+        var source = """
+            let sum: number = 0;
+            p: q: for (let x = 0; x < 3; x++) {
+                for (let y = 0; y < 3; y++) {
+                    if (y === 1) { continue p; }
+                    sum = sum + (x * 10 + y);
+                }
+            }
+            console.log(sum);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("30\n", output);  // 0 + 10 + 20
+    }
+
+    #endregion
+
     #region Labeled Block Tests
 
     [Theory]

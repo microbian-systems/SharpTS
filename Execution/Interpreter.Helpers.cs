@@ -234,7 +234,10 @@ public partial class Interpreter
     /// <summary>Increments a variable l-value, returning the old or new value.</summary>
     private RuntimeValue IncrementVariable(Expr.Variable variable, double delta, bool returnOld)
     {
-        double current = _environment.Get(variable.Name).AsNumber();
+        // ECMA-262 13.4 (postfix)/13.5.7 (prefix): apply ToNumber to the operand's current
+        // value before adding ±1. A widened (`any`) variable can hold a non-number — a numeric
+        // string ("5"→5), undefined (→NaN), etc. — so coerce rather than asserting a boxed double.
+        double current = CoerceToNumber(_environment.Get(variable.Name));
         double newValue = current + delta;
         _environment.Assign(variable.Name, RuntimeValue.FromNumber(newValue));
         return RuntimeValue.FromNumber(returnOld ? current : newValue);
@@ -248,7 +251,10 @@ public partial class Interpreter
     {
         if (TryGetProperty(obj, name, out object? currentObj))
         {
-            double current = (double)currentObj!;
+            // ECMA-262 ToNumber on the member's current value (matches the variable path and
+            // compiled mode's ConvertToNumber): a non-numeric `any` member ("5"→5, undefined→NaN)
+            // follows JS semantics instead of throwing on a failed hard cast (#471).
+            double current = CoerceToNumber(currentObj);
             double newValue = current + delta;
             if (TrySetProperty(obj, name, newValue))
             {
@@ -267,7 +273,10 @@ public partial class Interpreter
     {
         if (TryGetIndex(obj, index, out object? currentObj))
         {
-            double current = (double)currentObj!;
+            // ECMA-262 ToNumber on the element's current value (see IncrementProperty): a
+            // non-numeric element in an `any[]` ("7"→7, undefined→NaN) follows JS semantics
+            // instead of throwing on a failed hard cast (#471).
+            double current = CoerceToNumber(currentObj);
             double newValue = current + delta;
             if (TrySetIndex(obj, index, newValue))
             {

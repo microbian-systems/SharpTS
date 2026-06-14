@@ -129,6 +129,14 @@ public class EmitterSyncTests
             "EmitAwait",            // Core: suspend/resume state machine
             "EmitArrowFunction",    // Display class in async generator context
             "EmitSuper",            // This field indirection
+            // --- #559: non-local exits must run an enclosing flag-based finally first (async #500) ---
+            "EmitBreak",            // Route a break leaving a try through its finally(s)
+            "EmitContinue",         // Route a continue leaving a try through its finally(s)
+            "EmitThrow",            // Route a throw in a catch/finally body through the finally(s)
+            "EnterLoop",            // Loops share the unified _exitScopes stack with finally scopes
+            "ExitLoop",             // (so break/continue can find the finallys between them and the loop)
+            "get_CurrentLoop",      // Loop lookups read _exitScopes instead of the base loop stack
+            "FindLabeledLoop",      // Labeled loop lookups read _exitScopes
         },
     };
 

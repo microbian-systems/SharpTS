@@ -1274,6 +1274,16 @@ public partial class TypeChecker
         foreach (var t in constituents)
         {
             if (t is TypeInfo.Never) continue;       // bottom type inhabits neither branch
+            // A general `boolean` is the only general primitive tsc narrows for truthiness: it
+            // splits into `true` (truthy branch) and `false` (falsy branch). Equivalent to expanding
+            // it to `true | false` and running the filters below, but without the per-constituent
+            // allocation. (`string`/`number` stay intact — no single literal models "non-empty".)
+            if (t is TypeInfo.Primitive { Type: TokenType.TYPE_BOOLEAN })
+            {
+                truthy.Add(new TypeInfo.BooleanLiteral(true));
+                falsy.Add(new TypeInfo.BooleanLiteral(false));
+                continue;
+            }
             if (!IsAlwaysFalsy(t)) truthy.Add(t);    // can be truthy → keep in the truthy branch
             if (!IsAlwaysTruthy(t)) falsy.Add(t);    // can be falsy  → keep in the falsy branch
         }

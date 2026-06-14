@@ -253,20 +253,6 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Checks if a narrowing path would be affected by any of the assigned paths.
-    /// A path is affected if any assignment is to the path itself or to a prefix of the path.
-    /// </summary>
-    private static bool IsPathAffectedByAssignments(Narrowing.NarrowingPath path, HashSet<Narrowing.NarrowingPath> assignedPaths)
-    {
-        foreach (var assigned in assignedPaths)
-        {
-            if (path.IsAffectedByAssignmentTo(assigned))
-                return true;
-        }
-        return false;
-    }
-
-    /// <summary>
     /// Pushes a new scope for declared variable types (called when entering a function).
     /// </summary>
     private void PushDeclaredVariableScope()
@@ -802,6 +788,10 @@ public partial class TypeChecker
         // Hoist var declarations (pre-define as any for forward reference support)
         HoistVarDeclarations(statements);
 
+        // Hoist let/const declarations (pre-define as any so an earlier function body can
+        // forward-reference a later block-scoped binding — #533)
+        HoistLexicalDeclarations(statements);
+
         foreach (Stmt statement in statements)
         {
             CheckStmt(statement);
@@ -843,6 +833,10 @@ public partial class TypeChecker
 
         // Hoist var declarations (pre-define as any for forward reference support)
         HoistVarDeclarations(statements);
+
+        // Hoist let/const declarations (pre-define as any so an earlier function body can
+        // forward-reference a later block-scoped binding — #533)
+        HoistLexicalDeclarations(statements);
 
         foreach (Stmt statement in statements)
         {
@@ -1149,6 +1143,9 @@ public partial class TypeChecker
                     // Hoist var declarations (pre-define as any for forward reference support)
                     HoistVarDeclarations(module.Statements);
 
+                    // Hoist let/const declarations (pre-define as any for forward reference support — #533)
+                    HoistLexicalDeclarations(module.Statements);
+
                     // Check all statements with error recovery
                     foreach (var stmt in module.Statements)
                     {
@@ -1194,6 +1191,9 @@ public partial class TypeChecker
                     // Hoist var declarations (pre-define as any for forward reference support)
                     HoistVarDeclarations(module.Statements);
 
+                    // Hoist let/const declarations (pre-define as any for forward reference support — #533)
+                    HoistLexicalDeclarations(module.Statements);
+
                     // Third pass: check all statements with error recovery
                     foreach (var stmt in module.Statements)
                     {
@@ -1233,6 +1233,9 @@ public partial class TypeChecker
 
             // Hoist var declarations (pre-define as any for forward reference support)
             HoistVarDeclarations(script.Statements);
+
+            // Hoist let/const declarations (pre-define as any for forward reference support — #533)
+            HoistLexicalDeclarations(script.Statements);
 
             // Process all declarations to populate the environment
             foreach (var stmt in script.Statements)
@@ -1290,6 +1293,9 @@ public partial class TypeChecker
 
             // Hoist var declarations (pre-define as any for forward reference support)
             HoistVarDeclarations(module.Statements);
+
+            // Hoist let/const declarations (pre-define as any for forward reference support — #533)
+            HoistLexicalDeclarations(module.Statements);
 
             // Then, process all declarations to populate the environment
             foreach (var stmt in module.Statements)

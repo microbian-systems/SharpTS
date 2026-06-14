@@ -209,6 +209,12 @@ public static class JSONBuiltIns
         var replacer = args.Length > 1 ? args[1].ToObject() : null;
         var space = args.Length > 2 ? args[2].ToObject() : null;
 
+        // ECMA-262 25.5.2.1 step 5: a boxed Number/String wrapper passed as `space`
+        // contributes its primitive value before the numeric/string indent rules below.
+        // (Compiled mode does the same — RuntimeEmitter.Json.StringifyFull.cs.)
+        if (TryUnwrapBoxedPrimitive(space, out var unwrappedSpace))
+            space = unwrappedSpace;
+
         // Handle space parameter: number = spaces, string = literal indent string
         string indentStr = "";
         switch (space)
@@ -262,6 +268,13 @@ public static class JSONBuiltIns
 
         // Check for toJSON() method before serializing
         value = CallToJsonIfExists(interp, value);
+
+        // ECMA-262 25.5.2.3 step 4: a boxed primitive wrapper (new Number/String/Boolean)
+        // serializes as its underlying primitive — not as an object exposing the internal
+        // __primitiveType/__primitiveValue marker slots. Applied after toJSON/replacer,
+        // before the type switch. (Compiled mode does the same — RuntimeEmitter.Json.Stringify.cs.)
+        if (TryUnwrapBoxedPrimitive(value, out var unwrappedPrimitive))
+            value = unwrappedPrimitive;
 
         switch (value)
         {
@@ -322,6 +335,32 @@ public static class JSONBuiltIns
                 return callable.Call(interp, []);
         }
         return value;
+    }
+
+    /// <summary>
+    /// ECMA-262 25.5.2.3 SerializeJSONProperty step 4: a boxed primitive wrapper —
+    /// <c>new Number()</c>/<c>new String()</c>/<c>new Boolean()</c>, modeled as a
+    /// <see cref="SharpTSObject"/> carrying <c>__primitiveType</c>/<c>__primitiveValue</c>
+    /// marker slots (see <see cref="BuiltInConstructorFactory"/>) — serializes as its
+    /// underlying primitive value, not as an object exposing those internal slots.
+    /// Returns <c>true</c> with the primitive in <paramref name="primitive"/> when
+    /// <paramref name="value"/> is such a wrapper. Gating on <c>__primitiveType</c> (which
+    /// only the boxed-primitive constructors set) keeps an ordinary user object that merely
+    /// happens to have a <c>__primitiveValue</c> field from being unwrapped — i.e. only the
+    /// objects with a genuine [[NumberData]]/[[StringData]]/[[BooleanData]] slot are unwrapped.
+    /// Compiled mode performs the equivalent unwrap (RuntimeEmitter.Json.Stringify*.cs).
+    /// </summary>
+    private static bool TryUnwrapBoxedPrimitive(object? value, out object? primitive)
+    {
+        if (value is SharpTSObject obj
+            && obj.GetProperty("__primitiveType") is string tag
+            && tag is "Number" or "String" or "Boolean")
+        {
+            primitive = obj.GetProperty("__primitiveValue");
+            return true;
+        }
+        primitive = null;
+        return false;
     }
 
     private static string FormatJsonNumber(double d)

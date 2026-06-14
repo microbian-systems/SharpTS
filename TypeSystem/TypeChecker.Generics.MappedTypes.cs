@@ -84,6 +84,37 @@ public partial class TypeChecker
                 keys.AddRange(ExtractKeys(inst.ClassType));
                 break;
 
+            // Index-signature built-ins (string, Array, Tuple). Unlike the dedicated records handled
+            // by the GetInstanceMemberNames fallback below, these carry a numeric index signature that
+            // keyof must surface as a `number` key, alongside their prototype member names (#527).
+            case TypeInfo.String:
+                // keyof string = number | "length" | "charAt" | … (the index signature plus members).
+                keys.Add(new TypeInfo.Primitive(Parsing.TokenType.TYPE_NUMBER));
+                foreach (var name in Runtime.BuiltIns.BuiltInTypes.StringApparentMemberNames)
+                    keys.Add(new TypeInfo.StringLiteral(name));
+                break;
+
+            case TypeInfo.Array:
+                // keyof T[] = number | "length" | "push" | … (element type is irrelevant to the keys).
+                keys.Add(new TypeInfo.Primitive(Parsing.TokenType.TYPE_NUMBER));
+                foreach (var name in Runtime.BuiltIns.BuiltInTypes.ArrayApparentMemberNames)
+                    keys.Add(new TypeInfo.StringLiteral(name));
+                break;
+
+            case TypeInfo.Tuple tup:
+                // A tuple is an Array subtype, so keyof yields the literal element indices ("0" | "1" | …)
+                // on top of the array members and the `number` index signature — the same composition the
+                // tsc idiom `Exclude<keyof T, keyof any[]>` relies on to isolate just those indices (#527).
+                for (int i = 0; i < tup.Elements.Count; i++)
+                {
+                    if (tup.Elements[i].IsSpread) break; // positions after a variadic spread aren't fixed
+                    keys.Add(new TypeInfo.StringLiteral(i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                }
+                keys.Add(new TypeInfo.Primitive(Parsing.TokenType.TYPE_NUMBER));
+                foreach (var name in Runtime.BuiltIns.BuiltInTypes.ArrayApparentMemberNames)
+                    keys.Add(new TypeInfo.StringLiteral(name));
+                break;
+
             case TypeInfo.InstantiatedGeneric ig:
                 // Expand the instantiated generic and extract from that
                 var expanded = ExpandInstantiatedGenericForKeyOf(ig);

@@ -1215,4 +1215,43 @@ public static class BuiltInTypes
         TypeInfo.Iterator or TypeInfo.Generator or TypeInfo.AsyncGenerator => IteratorMemberNames,
         _ => null
     };
+
+    // ============ KEYOF NAMES FOR INDEX-SIGNATURE BUILT-INS: string, Array, Tuple (#527) ============
+    //
+    // Unlike the dedicated records above, these built-ins ALSO carry a numeric index signature, which
+    // keyof must surface as a `number` key. GetInstanceMemberNames deliberately excludes them (they are
+    // resolved structurally through GetStringMemberType / GetArrayMemberType, not the apparent-members
+    // model); the lists below supply just their NAMED members so keyof can emit those alongside the
+    // `number` index key (the index-key emission lives in TypeChecker's ExtractKeys). Each list mirrors
+    // its GetXxxMemberType switch — BuiltInApparentMembersTests asserts every listed name resolves there.
+
+    private static readonly string[] StringMemberNames =
+    [
+        "length", "charAt", "substring", "indexOf", "toUpperCase", "toLowerCase", "trim", "replace",
+        "split", "includes", "startsWith", "endsWith", "slice", "substr", "repeat", "padStart",
+        "padEnd", "charCodeAt", "codePointAt", "concat", "lastIndexOf", "trimStart", "trimEnd",
+        "replaceAll", "at", "normalize", "localeCompare", "toString", "match", "matchAll", "search",
+    ];
+
+    private static readonly string[] ArrayMemberNames =
+    [
+        "length", "push", "pop", "shift", "unshift", "slice", "map", "filter", "forEach", "find",
+        "findIndex", "some", "every", "reduce", "reduceRight", "includes", "indexOf", "lastIndexOf",
+        "join", "concat", "reverse", "flat", "flatMap", "sort", "toSorted", "splice", "toSpliced",
+        "findLast", "findLastIndex", "toReversed", "with", "at", "fill", "copyWithin", "entries",
+        "keys", "values", "toString", "toLocaleString",
+    ];
+
+    /// <summary>
+    /// Named members of the <c>string</c> primitive (its String.prototype members), for <c>keyof string</c>.
+    /// Mirrors <see cref="GetStringMemberType"/>; keyof emits the numeric index key separately.
+    /// </summary>
+    public static IReadOnlyList<string> StringApparentMemberNames => StringMemberNames;
+
+    /// <summary>
+    /// Named members shared by arrays and tuples (Array.prototype members plus <c>length</c>), for
+    /// <c>keyof T[]</c> and <c>keyof [a, b]</c>. Mirrors <see cref="GetArrayMemberType"/>; keyof emits the
+    /// numeric index key (and, for tuples, the literal element indices) separately.
+    /// </summary>
+    public static IReadOnlyList<string> ArrayApparentMemberNames => ArrayMemberNames;
 }
