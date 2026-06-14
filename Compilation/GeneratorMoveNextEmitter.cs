@@ -26,6 +26,13 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
     private readonly Dictionary<int, Label> _stateLabels = [];
     private Label _returnFalseLabel;
 
+    // Landing pad for a `return` emitted inside a real IL try/finally (EmitSimpleTryCatch) that has no
+    // enclosing flag-based finally (#554). Such a return cannot `ret` directly, so it sets Current/state
+    // then `Leave`s here — running the enclosing no-yield finally(s) — to perform the actual `ret false`.
+    // Marked only when used; Current already holds the completion value, so it is not reset here.
+    private Label _deferredReturnLabel;
+    private bool _deferredReturnUsed;
+
     // Current yield point being processed
     private int _currentYieldState = 0;
 
@@ -80,6 +87,7 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
             _stateLabels[yieldPoint.StateNumber] = _il.DefineLabel();
         }
         _returnFalseLabel = _il.DefineLabel();
+        _deferredReturnLabel = _il.DefineLabel();
 
         // Check if generator is already completed (state == -2)
         _il.Emit(OpCodes.Ldarg_0);
@@ -112,6 +120,16 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
         _il.Emit(OpCodes.Stfld, _builder.StateField);
         _il.Emit(OpCodes.Ldc_I4_0);
         _il.Emit(OpCodes.Ret);
+
+        // Deferred-return landing pad (#554): a `return` inside a real IL try/finally `Leave`s here
+        // after its enclosing no-yield finally(s) have run. Current and state were already set at the
+        // `return`, so just `ret false`. Marked only if such a return was emitted.
+        if (_deferredReturnUsed)
+        {
+            _il.MarkLabel(_deferredReturnLabel);
+            _il.Emit(OpCodes.Ldc_I4_0);
+            _il.Emit(OpCodes.Ret);
+        }
 
         // Return false label — re-entry on an already-completed generator (state == -2):
         // `gen.next()` called after the generator finished, or after `gen.return(v)`.

@@ -44,29 +44,58 @@ public partial class GeneratorMoveNextEmitter
             _il.Emit(OpCodes.Stfld, _builder.CurrentField);
         }
 
-        // Generator return - set state to completed (the fast path below rets immediately; a routed
-        // return re-asserts this at its terminal, since a yielding finally would overwrite it).
+        // Generator return - set state to completed. The direct `ret` path below returns immediately;
+        // a routed or deferred return re-asserts this at its terminal / landing pad, since a yielding
+        // finally between here and there would overwrite it with the finally's resume state.
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, -2);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
 
-        // Inside a flag-based try/finally, the enclosing finally(s) must run before the generator
-        // actually completes. Route the return through them instead of `ret` (which is also illegal
-        // here — this return is emitted outside the protected segment, but a finally is emitted after
-        // it). See the exit-routing machinery in GeneratorMoveNextEmitter.Statements.TryCatch.cs.
-        if (_protectedRegionDepth == 0)
+        // A non-local `return` must run any enclosing finally(s) before the generator completes. See
+        // the exit-routing machinery in GeneratorMoveNextEmitter.Statements.TryCatch.cs.
+        var chain = ActiveFinallyFrames();
+        if (chain.Count > 0)
         {
-            var chain = ActiveFinallyFrames();
-            if (chain.Count > 0)
-            {
-                RegisterReturnTerminal();
-                RouteThroughFinallys(chain, ExitCodeReturn);
-                return;
-            }
+            // Flag-based finally(s) are open. Stash the completion value: a finally that yields
+            // overwrites Current with its yielded value, and the return terminal restores it from here
+            // after the finally has run (#555). From inside a real IL block the route uses `Leave`
+            // (running that block's no-yield finally) to reach the innermost flag cleanup label (#554).
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.CurrentField);
+            _il.Emit(OpCodes.Stfld, GetPendingReturnValueField());
+
+            RegisterReturnTerminal();
+            RouteThroughFinallys(chain, ExitCodeReturn, _protectedRegionDepth > 0 ? OpCodes.Leave : OpCodes.Br);
+            return;
+        }
+
+        if (_protectedRegionDepth > 0)
+        {
+            // Inside a real IL try/finally with no enclosing flag finally: a bare `ret` here is illegal
+            // (it leaves a protected region). Current/state are set above; `Leave` the deferred-return
+            // landing pad, which runs the enclosing no-yield finally(s) and rets false (#554).
+            _deferredReturnUsed = true;
+            _il.Emit(OpCodes.Leave, _deferredReturnLabel);
+            return;
         }
 
         _il.Emit(OpCodes.Ldc_I4_0);
         _il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Branch out to <paramref name="target"/>. Inside a real IL exception block a `br` out is illegal,
+    /// so use `Leave` — which exits the block legally and runs its (no-yield) finally. ExceptionBlockDepth
+    /// counts only real blocks (EmitSimpleTryCatch), not the flag-based path's sync segments, so branches
+    /// internal to a sync segment stay `Br` and do not illegally leave the mini try/catch (#554).
+    /// </summary>
+    protected override void EmitBranchToLabel(Label target)
+    {
+        if (_ctx!.ExceptionBlockDepth > 0)
+            _il.Emit(OpCodes.Leave, target);
+        else
+            _il.Emit(OpCodes.Br, target);
     }
 
     // EmitTryCatch lives in GeneratorMoveNextEmitter.Statements.TryCatch.cs — it needs

@@ -110,6 +110,8 @@ public class EmitterSyncTests
             "ExitLoop",             // (so break/continue can find the finallys between them and the loop)
             "get_CurrentLoop",      // Loop lookups read _exitScopes instead of the base loop stack
             "FindLabeledLoop",      // Labeled loop lookups read _exitScopes
+            // --- #554: a non-local exit leaving a real IL try (no yield in it) must Leave, not Br ---
+            "EmitBranchToLabel",    // Leave instead of Br when inside a real IL exception block
         },
         [typeof(AsyncGeneratorMoveNextEmitter)] = new()
         {
