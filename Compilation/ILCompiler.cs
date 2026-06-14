@@ -411,7 +411,6 @@ public partial class ILCompiler
         // to the module top level so the mature top-level state-machine pipeline can lower them
         // (#470, #501). Compile-path only — the interpreter handles nested declarations natively.
         statements = NestedFunctionLifter.Lift(statements);
-        CollectTopLevelFunctionNames(statements, _modules.CurrentPath ?? "");
 
         // Walk the AST to determine which runtime feature categories the program
         // actually needs, so Phase 1 can skip emitting unused helper types.
@@ -874,7 +873,7 @@ public partial class ILCompiler
         // Relocate non-capturing nested generator/async/state-machine-nested function declarations
         // to each module's top level (#470, #501). Compile-path only. The Statements property is
         // read-only but the underlying list is shared by reference across all phases, so mutate it
-        // in place. CollectTopLevelFunctionNames builds a cross-module union (over-inclusion is safe).
+        // in place.
         foreach (var m in modules)
         {
             var lifted = NestedFunctionLifter.Lift(m.Statements);
@@ -883,7 +882,6 @@ public partial class ILCompiler
                 m.Statements.Clear();
                 m.Statements.AddRange(lifted);
             }
-            CollectTopLevelFunctionNames(m.Statements, m.Path);
         }
 
         var allStatements = modules.SelectMany(m => m.Statements).ToList();
