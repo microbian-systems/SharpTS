@@ -15,9 +15,10 @@ namespace SharpTS.Tests.TypeCheckerTests;
 /// Each test pins the resolved conditional via an annotation: if <c>J&lt;C&gt;</c> resolves to the
 /// true branch (the inferred member type) the matching-typed assignment is accepted and the
 /// mismatched one throws; if it wrongly took the false branch (<c>"no"</c>) the expectations invert.
-/// Regular (non-<c>declare</c>) classes are used deliberately — <c>declare class</c> currently drops
-/// its <c>extends</c> clause entirely (a separate, broader bug tracked outside this fix), which would
-/// mask the member-source behavior under test here.
+///
+/// Most tests use regular (non-<c>declare</c>) classes, but <c>declare class</c> inheritance is now
+/// covered too: #505 fixed <c>declare class</c> dropping its <c>extends</c> clause, and #506 fixed the
+/// member collectors stopping at a generic-instantiation superclass (<c>extends Base&lt;number&gt;</c>).
 /// </summary>
 public class InheritedInferMatchTests
 {
@@ -256,14 +257,83 @@ public class InheritedInferMatchTests
     [Fact]
     public void DeclareClass_OwnMethod_Matches()
     {
-        // An OWN method on a `declare class` matches — own members are unaffected by the separate
-        // declare-class-superclass-drop bug (#505); only inheritance is. This is the exact repro
-        // form from #461 / PR #498.
+        // An OWN method on a `declare class` matches. This is the exact repro form from #461 / PR #498.
         var source = """
             declare class MyClass { toJSON(): "correct"; }
             type J<T> = T extends { toJSON(): infer R } ? R : "no";
             const z: J<MyClass> = "correct";
             """;
         TestHarness.RunInterpreted(source);
+    }
+
+    // ---- #506: generic-instantiation superclass (`class Sub extends Base<number>`) ----
+
+    [Fact]
+    public void GenericSuperclass_NonGenericSub_InheritedFieldInfers()
+    {
+        // Sub's superclass is Base<number> (an InstantiatedGeneric, not a bare Class). The member
+        // collectors must walk into it and substitute T:=number, so R binds to number. The verbatim
+        // repro #2 from #506.
+        var source = """
+            class Base<T> { value: T; constructor(v: T) { this.value = v; } }
+            class Sub extends Base<number> { extra(): void {} }
+            type J<T> = T extends { value: infer R } ? R : "no";
+            let x: J<Sub> = 123;
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void GenericSuperclass_NonGenericSub_WrongAssignment_IsTypeError()
+    {
+        var source = """
+            class Base<T> { value: T; constructor(v: T) { this.value = v; } }
+            class Sub extends Base<number> { extra(): void {} }
+            type J<T> = T extends { value: infer R } ? R : "no";
+            let x: J<Sub> = "nope";
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void GenericSuperclass_GenericSub_ComposesSubstitutionDownTheChain()
+    {
+        // class Sub<U> extends Base<U>, instantiated as Sub<string>: the substitution composes
+        // (U:=string, then Base's T:=U), so value resolves to string.
+        var source = """
+            class Base<T> { value: T; constructor(v: T) { this.value = v; } }
+            class Sub<U> extends Base<U> { constructor(v: U) { super(v); } }
+            type J<T> = T extends { value: infer R } ? R : "no";
+            let x: J<Sub<string>> = "ok";
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    // ---- #505: declare-class inheritance (the `extends` clause is no longer dropped) ----
+
+    [Fact]
+    public void DeclareClass_InheritedField_Matches()
+    {
+        // declare class Sub extends Base {} — val is inherited from Base. Before #505 the superclass
+        // was dropped, so val was invisible and J<Sub> wrongly took the false branch.
+        var source = """
+            declare class Base { val: "correct"; }
+            declare class Sub extends Base {}
+            type J<T> = T extends { val: infer R } ? R : "no";
+            const z: J<Sub> = "correct";
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void DeclareClass_InheritedField_WrongAssignment_IsTypeError()
+    {
+        var source = """
+            declare class Base { val: "correct"; }
+            declare class Sub extends Base {}
+            type J<T> = T extends { val: infer R } ? R : "no";
+            const z: J<Sub> = 42;
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
     }
 }

@@ -626,6 +626,17 @@ public partial class TypeChecker
                 foreach (var (name, type) in CollectPublicInstanceMembers(c))
                     yield return (name, type, false);
                 break;
+            default:
+                // Built-in object types (Date, RegExp, Map, …, Error, Buffer, …) model their members
+                // through the shared apparent-members projection, not a member dictionary. Surface them
+                // so the weak-type check (TS2559) sees a built-in source's properties (#529); a built-in
+                // sharing no member with an all-optional target is rejected, matching tsc. Built-in
+                // instance members are never optional.
+                if (BuiltInTypes.GetInstanceMemberNames(t) is { } builtInNames)
+                    foreach (var builtInName in builtInNames)
+                        yield return (builtInName,
+                            BuiltInTypes.GetInstanceMemberType(t, builtInName) ?? new TypeInfo.Any(), false);
+                break;
         }
     }
 
@@ -652,7 +663,7 @@ public partial class TypeChecker
     /// superclasses into a structural member map. Derived members shadow inherited ones.
     /// Used to check structural assignability against an unbranded target class.
     /// </summary>
-    private static Dictionary<string, TypeInfo> CollectPublicInstanceMembers(TypeInfo.Class cls)
+    private Dictionary<string, TypeInfo> CollectPublicInstanceMembers(TypeInfo.Class cls)
     {
         Dictionary<string, TypeInfo> members = [];
         TypeInfo? current = cls;
@@ -672,6 +683,13 @@ public partial class TypeChecker
                     members[name] = type;
             current = GetSuperclass(current);
         }
+        // A generic-instantiation superclass (`class Sub extends Base<number>`) is not a
+        // TypeInfo.Class, so the walk above stops at it. Fold in the generic base's members with its
+        // type arguments substituted; CollectGenericClassMembers recurses through the rest of the
+        // chain. Already-collected derived members shadow these. (#506)
+        if (current is TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass baseGc } baseIg)
+            foreach (var (name, type) in CollectGenericClassMembers(baseGc, baseIg.TypeArguments))
+                members.TryAdd(name, type);
         return members;
     }
 
@@ -715,6 +733,15 @@ public partial class TypeChecker
         if (gc.Superclass is TypeInfo.Class sc)
             foreach (var (name, type) in CollectPublicInstanceMembers(sc))
                 members.TryAdd(name, type);
+        // A generic superclass (`class Sub<U> extends Base<U>`): compose substitutions down the chain
+        // by substituting this class's type arguments into the base's, then collect the base's
+        // members under the resulting instantiation (`Sub<number>` → `Base<number>`). (#506)
+        else if (gc.Superclass is TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass baseGc } baseIg)
+        {
+            var baseArgs = baseIg.TypeArguments.Select(a => Substitute(a, subs)).ToList();
+            foreach (var (name, type) in CollectGenericClassMembers(baseGc, baseArgs))
+                members.TryAdd(name, type);
+        }
         return members;
     }
 
