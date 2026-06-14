@@ -57,7 +57,9 @@ public class BuiltInApparentMembersTests
     {
         // The resolver must not over-match: a name that is not a real member resolves to null, so an
         // infer-match / structural check against it correctly fails.
-        Assert.Null(BuiltInTypes.GetInstanceMemberType(type, "definitelyNotARealMember"));
+        Assert.True(
+            BuiltInTypes.GetInstanceMemberType(type, "definitelyNotARealMember") is null,
+            $"{label} resolved a member type for the absent name 'definitelyNotARealMember' — the resolver over-matches.");
         Assert.DoesNotContain("definitelyNotARealMember", BuiltInTypes.GetInstanceMemberNames(type)!);
     }
 
