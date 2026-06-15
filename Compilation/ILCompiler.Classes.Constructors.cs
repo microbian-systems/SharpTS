@@ -45,7 +45,7 @@ public partial class ILCompiler
         }
 
         var il = ctorBuilder.GetILGenerator();
-        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
@@ -75,6 +75,7 @@ public partial class ILCompiler
             UnionGenerator = _unionGenerator,
             // Module support for multi-module compilation
             CurrentModulePath = _modules.CurrentPath,
+            CurrentNamespacePath = _currentNamespacePath,
             ClassToModule = _modules.ClassToModule,
             FunctionToModule = _modules.FunctionToModule,
             EnumToModule = _modules.EnumToModule,

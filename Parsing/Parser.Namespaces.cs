@@ -113,7 +113,10 @@ public partial class Parser
             {
                 return WrapIfExported(EnumDeclaration(isConst: true), isExported);
             }
-            return WrapIfExported(VarDeclaration(), isExported);
+            // A namespace-scoped `const` must parse as Stmt.Const (not the default mutable
+            // Stmt.Var) so const-ness — literal-type narrowing and reassignment checks — is
+            // preserved, mirroring the module-export path fixed in #428 (#467).
+            return WrapIfExported(VarDeclaration(isConst: true), isExported);
         }
         if (Match(TokenType.ENUM))
         {

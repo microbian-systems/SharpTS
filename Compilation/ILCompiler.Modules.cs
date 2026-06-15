@@ -699,7 +699,7 @@ public partial class ILCompiler
     /// </summary>
     private CompilationContext CreateCompilationContext(ILGenerator il)
     {
-        return new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+        return new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
@@ -712,8 +712,6 @@ public partial class ILCompiler
             EnumMembers = _enums.Members,
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
-            NamespaceFields = _namespaceFields,
-            NamespaceVarFields = _namespaceVarFields,
             // Scope top-level static vars to the current module to prevent
             // cross-module name collisions (e.g. `const foo` in main.ts
             // shadowing `export function foo()` in lib.ts).

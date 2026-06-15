@@ -227,6 +227,20 @@ public partial class TypeChecker
                 }
                 break;
 
+            // A namespace-scoped `const` (since #467) registers its binding in the namespace's
+            // values exactly like `Stmt.Var`, but carries the narrowed literal type from const
+            // checking (e.g. `export const x = 5` ⇒ `N.x` has type `5`, matching tsc). Without
+            // this arm the const fell to `default` and was type-checked but never registered,
+            // so `N.x` was not a visible member.
+            case Stmt.Const constStmt:
+                CheckStmt(constStmt);
+                var constType = _environment.Get(constStmt.Name.Lexeme);
+                if (constType != null)
+                {
+                    values[constStmt.Name.Lexeme] = constType;
+                }
+                break;
+
             case Stmt.Class:
             case Stmt.Namespace:
             case Stmt.Interface:

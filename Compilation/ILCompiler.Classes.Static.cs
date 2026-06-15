@@ -62,7 +62,7 @@ public partial class ILCompiler
         );
 
         var il = cctor.GetILGenerator();
-        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
@@ -86,6 +86,7 @@ public partial class ILCompiler
             AsyncMethods = null,
             // Module support for multi-module compilation
             CurrentModulePath = _modules.CurrentPath,
+            CurrentNamespacePath = _currentNamespacePath,
             ClassToModule = _modules.ClassToModule,
             FunctionToModule = _modules.FunctionToModule,
             EnumToModule = _modules.EnumToModule,
@@ -313,7 +314,7 @@ public partial class ILCompiler
         bool hasLock = HasLockDecorator(method);
 
         var il = methodBuilder.GetILGenerator();
-        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             IsInstanceMethod = false,
             ClosureAnalyzer = _closures.Analyzer,
@@ -337,6 +338,7 @@ public partial class ILCompiler
             AsyncMethods = null,
             // Module support for multi-module compilation
             CurrentModulePath = _modules.CurrentPath,
+            CurrentNamespacePath = _currentNamespacePath,
             ClassToModule = _modules.ClassToModule,
             FunctionToModule = _modules.FunctionToModule,
             EnumToModule = _modules.EnumToModule,
@@ -542,7 +544,7 @@ public partial class ILCompiler
 
         // Create context for MoveNext emission
         var il = smBuilder.MoveNextMethod.GetILGenerator();
-        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             IsInstanceMethod = false,  // Static method!
             ClosureAnalyzer = _closures.Analyzer,
@@ -569,6 +571,7 @@ public partial class ILCompiler
             AsyncArrowParentBuilders = _async.ArrowParentBuilders,
             // Module support for multi-module compilation
             CurrentModulePath = _modules.CurrentPath,
+            CurrentNamespacePath = _currentNamespacePath,
             ClassToModule = _modules.ClassToModule,
             FunctionToModule = _modules.FunctionToModule,
             EnumToModule = _modules.EnumToModule,

@@ -484,4 +484,201 @@ public class NamespaceTests
     }
 
     #endregion
+
+    #region Compiled namespace member fixes (#656, #657, #659, #660, #467)
+
+    // #656 — a namespace must be resolvable by its bare name from a NON-member function body.
+    // Compiled mode previously only carried the namespace static field on a subset of emission
+    // contexts, so a top-level function reading `N.c` threw "Undefined variable 'N'".
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Namespace_ResolvableByBareName_FromTopLevelFunction(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { export const c = 5; }
+            function f() { return N.c; }
+            console.log(f());
+        ";
+        Assert.Equal("5\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Namespace_MemberCall_FromTopLevelFunction(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { export function ping() { return 9; } }
+            function f() { return N.ping(); }
+            console.log(f());
+        ";
+        Assert.Equal("9\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Namespace_ExportedVar_IsLiveBinding_FromAsyncFunctionBody(ExecutionMode mode)
+    {
+        // The async function reads N.count AFTER two mutations; it must observe the live
+        // binding (2), not the declaration-time snapshot (0). The #623 redirect now lives in
+        // the shared ExpressionEmitterBase so state-machine bodies pick it up too (#656).
+        var code = @"
+            namespace N { export let count = 0; export function inc() { count++; } }
+            async function f() { return N.count; }
+            N.inc(); N.inc();
+            f().then(v => console.log(v));
+        ";
+        Assert.Equal("2\n", TestHarness.Run(code, mode));
+    }
+
+    // #657 — namespace var/function members must not collide with module-level or
+    // sibling-namespace bindings of the same name.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceVar_DoesNotClobber_ModuleVar(ExecutionMode mode)
+    {
+        var code = @"
+            const v = 100;
+            namespace N { const v = 5; export const w = v; }
+            console.log(v, N.w);
+        ";
+        Assert.Equal("100 5\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SiblingNamespaceFunctions_SameName_DoNotCollide(ExecutionMode mode)
+    {
+        var code = @"
+            namespace A { export function f() { return 1; } }
+            namespace B { export function f() { return 2; } }
+            console.log(A.f(), B.f());
+        ";
+        Assert.Equal("1 2\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceFunction_CallsNonExportedSibling(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { function helper() { return 41; } export function f() { return helper() + 1; } }
+            console.log(N.f());
+        ";
+        Assert.Equal("42\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceFunction_Recursive(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { export function fib(n: number): number { return n < 2 ? n : fib(n-1) + fib(n-2); } }
+            console.log(N.fib(10));
+        ";
+        Assert.Equal("55\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceFunction_FallsBackToTopLevelFunction(ExecutionMode mode)
+    {
+        var code = @"
+            function g() { return 9; }
+            namespace N { export function f() { return g(); } }
+            console.log(N.f());
+        ";
+        Assert.Equal("9\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceFunction_ShadowsTopLevelFunctionOfSameName(ExecutionMode mode)
+    {
+        // A namespace member function with the same simple name as a top-level function must
+        // stay distinct: N.f() is 5, the bare top-level f() is 100. A sibling reference inside
+        // the namespace resolves to the namespace's own helper, shadowing the top-level one.
+        var code = @"
+            function helper() { return 100; }
+            namespace N { function helper() { return 5; } export function f() { return helper(); } }
+            console.log(N.f(), helper());
+        ";
+        Assert.Equal("5 100\n", TestHarness.Run(code, mode));
+    }
+
+    // #659 — arrow-function and async-generator namespace members must be callable via N.member.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ArrowFunctionNamespaceMember_IsCallable(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N { export const f = () => 42; }
+            console.log(N.f());
+        ";
+        Assert.Equal("42\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorNamespaceMember_IsCallableAndIterable(ExecutionMode mode)
+    {
+        // The async-generator member is callable and iterable via `for await` inside an async
+        // FUNCTION. (The same loop inside an async ARROW trips a separate, pre-existing async-
+        // arrow `for await` lowering bug tracked by #430/#645, independent of namespaces.)
+        var code = @"
+            namespace N { export async function* g() { yield 1; yield 2; } }
+            async function run() { for await (const x of N.g()) console.log(x); }
+            run();
+        ";
+        Assert.Equal("1\n2\n", TestHarness.Run(code, mode));
+    }
+
+    // #660 — a nested function declaration inside a namespace member function must be callable.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedFunctionDeclaration_InsideNamespaceMemberFunction(ExecutionMode mode)
+    {
+        var code = @"
+            namespace N {
+                export function f() {
+                    function inner() { return 1; }
+                    return inner();
+                }
+            }
+            console.log(N.f());
+        ";
+        Assert.Equal("1\n", TestHarness.Run(code, mode));
+    }
+
+    // #467 — a namespace-scoped `export const` parses as Stmt.Const, so it carries the narrowed
+    // literal type (and reassignment is rejected), matching tsc and the module-export fix #428.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamespaceExportConst_HasLiteralType(ExecutionMode mode)
+    {
+        // Before #467 this raised TS2322 ("Type 'number' is not assignable to type '5'") because
+        // the namespace const was parsed as a mutable Stmt.Var and its type widened to number.
+        var code = @"
+            namespace N { export const x = 5; }
+            const exact: 5 = N.x;
+            console.log(exact);
+        ";
+        Assert.Equal("5\n", TestHarness.Run(code, mode));
+    }
+
+    [Fact]
+    public void NamespaceExportConst_ReassignmentIsRejected()
+    {
+        var code = @"
+            namespace N { export const x = 5; }
+            N.x = 6;
+        ";
+        Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(code));
+    }
+
+    #endregion
 }

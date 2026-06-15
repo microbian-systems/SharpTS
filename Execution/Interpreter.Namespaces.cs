@@ -93,6 +93,7 @@ public partial class Interpreter
                 Stmt.Function f => f.Name.Lexeme,
                 Stmt.Class c => c.Name.Lexeme,
                 Stmt.Var v => v.Name.Lexeme,
+                Stmt.Const ct => ct.Name.Lexeme,  // namespace-scoped const (#467)
                 Stmt.Enum e => e.Name.Lexeme,
                 Stmt.Namespace n => n.Name.Lexeme,
                 Stmt.Interface => null,  // Type-only, no runtime value
@@ -109,6 +110,7 @@ public partial class Interpreter
                     Stmt.Function f => f.Name,
                     Stmt.Class c => c.Name,
                     Stmt.Var v => v.Name,
+                    Stmt.Const ct => ct.Name,  // namespace-scoped const (#467)
                     Stmt.Enum e => e.Name,
                     Stmt.Namespace n => n.Name,
                     _ => null

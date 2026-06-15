@@ -329,7 +329,7 @@ public partial class ILCompiler
     /// </summary>
     private CompilationContext GetDefinitionContext()
     {
-        _definitionContext ??= new CompilationContext(null!, _typeMapper, _functions.Builders, _classes.Builders, _types)
+        _definitionContext ??= new CompilationContext(null!, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             ClassToModule = _modules.ClassToModule,
             FunctionToModule = _modules.FunctionToModule,
@@ -338,6 +338,9 @@ public partial class ILCompiler
             // Note: ClassRegistry intentionally not set here - definition context uses raw dictionaries
         };
         _definitionContext.CurrentModulePath = _modules.CurrentPath;
+        // Keep the definition context's namespace in sync so GetQualifiedFunctionName produces
+        // namespace-qualified keys while a namespace's members are being defined/collected (#657).
+        _definitionContext.CurrentNamespacePath = _currentNamespacePath;
         _definitionContext.DotNetNamespace = _modules.CurrentDotNetNamespace;
         _definitionContext.IsStrictMode = _isStrictMode;
         return _definitionContext;
@@ -624,6 +627,10 @@ public partial class ILCompiler
         {
             DefineDeclarationFromStatement(stmt);
         }
+
+        // Alias namespace function import aliases to their targets now that every namespace
+        // member function is in the registry (#657).
+        ResolveNamespaceImportAliasFunctions();
 
         // Define static fields for top-level variables captured by async functions
         DefineTopLevelCapturedVariables(statements);
@@ -973,6 +980,10 @@ public partial class ILCompiler
         }
         _modules.CurrentPath = null;
         _modules.CurrentDotNetNamespace = null;
+
+        // Alias namespace function import aliases to their targets now that every namespace
+        // member function is in the registry (#657).
+        ResolveNamespaceImportAliasFunctions();
     }
 
     /// <summary>

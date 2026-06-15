@@ -44,10 +44,43 @@ public partial class CompilationContext
     public HashSet<string>? FunctionsCapturingArguments { get; set; }
 
     /// <summary>
+    /// Applies the namespace prefix to an already module-qualified function name. A namespace
+    /// member function lives in its own registry slot keyed by the namespace path, so two
+    /// namespaces declaring a same-named function (and a same-named module/global function) no
+    /// longer collide on the simple/module name (#657). Kept distinct from the namespace FIELD
+    /// name (<c>$ns_…</c>) and var-backing field (<c>$nsvar_…</c>) by its own <c>$nsfn_</c> prefix.
+    /// </summary>
+    private static string ApplyNamespacePrefix(string namespacePath, string baseName)
+        => $"$nsfn_{namespacePath.Replace('.', '_')}_{baseName}";
+
+    private string ModuleQualify(string simpleFunctionName)
+        => CurrentModulePath == null
+            ? simpleFunctionName
+            : $"$M_{SanitizeModuleName(Path.GetFileNameWithoutExtension(CurrentModulePath))}_{simpleFunctionName}";
+
+    /// <summary>
     /// Resolves a simple function name to its qualified name for lookup in the Functions dictionary.
     /// </summary>
     public string ResolveFunctionName(string simpleFunctionName)
     {
+        // Namespace-scoped resolution: a function declared in the current namespace (or an
+        // enclosing one) shadows a same-named module/global function. Walk innermost → outermost
+        // and return the first namespace-qualified key that actually exists, so a sibling/self
+        // call inside a namespace member body reaches its own namespace's function (#657). When
+        // none matches (the name is a plain module/global function), fall through.
+        if (CurrentNamespacePath != null)
+        {
+            string moduleBase = ModuleQualify(simpleFunctionName);
+            var parts = CurrentNamespacePath.Split('.');
+            for (int i = parts.Length; i >= 1; i--)
+            {
+                string nsPrefix = string.Join('.', parts.Take(i));
+                string key = ApplyNamespacePrefix(nsPrefix, moduleBase);
+                if (Functions.ContainsKey(key))
+                    return key;
+            }
+        }
+
         if (FunctionToModule != null && FunctionToModule.TryGetValue(simpleFunctionName, out var modulePath))
         {
             string sanitizedModule = SanitizeModuleName(Path.GetFileNameWithoutExtension(modulePath));
@@ -57,14 +90,16 @@ public partial class CompilationContext
     }
 
     /// <summary>
-    /// Gets the qualified function name for the current module context.
+    /// Gets the qualified function name for the current module + namespace context. Module
+    /// qualification (#418) keeps same-named functions in different modules distinct; namespace
+    /// qualification (#657) keeps same-named members of different namespaces distinct. Both are
+    /// gated: a plain top-level function in single-file compilation keeps its simple name.
     /// </summary>
     public string GetQualifiedFunctionName(string simpleFunctionName)
     {
-        if (CurrentModulePath == null)
-            return simpleFunctionName;
-
-        string sanitizedModule = SanitizeModuleName(Path.GetFileNameWithoutExtension(CurrentModulePath));
-        return $"$M_{sanitizedModule}_{simpleFunctionName}";
+        string baseName = ModuleQualify(simpleFunctionName);
+        return CurrentNamespacePath == null
+            ? baseName
+            : ApplyNamespacePrefix(CurrentNamespacePath, baseName);
     }
 }

@@ -27,11 +27,59 @@ public partial class ILEmitter
             return;
         }
 
-        // Emit namespace members
-        foreach (var member in ns.Members)
+        // Emit members under namespace-scoped resolution (#657): set CurrentNamespacePath so
+        // member function lookups (ResolveFunctionName) resolve to namespace-qualified registry
+        // keys, and augment TopLevelStaticVars with the namespace's var backing fields so member
+        // var initializers and sibling references read/write the namespace's own field rather
+        // than a same-named module-level binding. Saved/restored to support nesting and the
+        // surrounding module scope.
+        var savedNsPath = _ctx.CurrentNamespacePath;
+        var savedTopLevel = _ctx.TopLevelStaticVars;
+        _ctx.CurrentNamespacePath = path;
+        _ctx.TopLevelStaticVars = BuildNamespaceScopedTopLevelVars(savedTopLevel, path);
+        try
         {
-            EmitNamespaceMember(member, nsField, path);
+            foreach (var member in ns.Members)
+            {
+                EmitNamespaceMember(member, nsField, path);
+            }
         }
+        finally
+        {
+            _ctx.CurrentNamespacePath = savedNsPath;
+            _ctx.TopLevelStaticVars = savedTopLevel;
+        }
+    }
+
+    /// <summary>
+    /// Returns <paramref name="moduleVars"/> augmented with the static var backing fields of
+    /// every namespace enclosing <paramref name="nsPath"/> (innermost wins). Used while emitting
+    /// a namespace's member initializers so a bare reference to a namespace var resolves to its
+    /// backing field, shadowing a same-named module binding (#657). Mirrors
+    /// <c>ILCompiler.BuildNamespaceScopedStaticVars</c>, which does the same for function bodies.
+    /// </summary>
+    private Dictionary<string, FieldBuilder>? BuildNamespaceScopedTopLevelVars(
+        Dictionary<string, FieldBuilder>? moduleVars, string nsPath)
+    {
+        if (_ctx.NamespaceVarFields == null)
+            return moduleVars;
+
+        var merged = moduleVars != null
+            ? new Dictionary<string, FieldBuilder>(moduleVars)
+            : [];
+
+        string prefix = "";
+        foreach (var part in nsPath.Split('.'))
+        {
+            prefix = prefix.Length == 0 ? part : $"{prefix}.{part}";
+            if (_ctx.NamespaceVarFields.TryGetValue(prefix, out var fields))
+            {
+                foreach (var (name, field) in fields)
+                    merged[name] = field;
+            }
+        }
+
+        return merged;
     }
 
     /// <summary>
@@ -80,19 +128,11 @@ public partial class ILEmitter
                 break;
 
             case Stmt.Var varStmt:
-                // Emit variable declaration (creates a local for same-namespace-init reads),
-                // publish to the namespace object (external `N.x`), and mirror into the static
-                // backing field so functions in the namespace can resolve the bare name (#567).
-                EmitStatement(varStmt);
-                StoreLocalInNamespaceField(nsField, memberName!);
-                StoreLocalInNamespaceStaticField(nsPath, memberName!);
+                EmitNamespaceMemberVar(nsField, nsPath, memberName!, varStmt.Initializer, varStmt.TypeAnnotation);
                 break;
 
             case Stmt.Const constStmt:
-                // Emit const declaration (see Stmt.Var above for the three storage targets).
-                EmitStatement(constStmt);
-                StoreLocalInNamespaceField(nsField, memberName!);
-                StoreLocalInNamespaceStaticField(nsPath, memberName!);
+                EmitNamespaceMemberVar(nsField, nsPath, memberName!, constStmt.Initializer, constStmt.TypeAnnotation);
                 break;
 
             case Stmt.Class classStmt:
@@ -235,29 +275,54 @@ public partial class ILEmitter
     }
 
     /// <summary>
-    /// Mirrors a namespace-level variable's value from its emitted local into the namespace's
-    /// static backing field, so functions declared in the namespace resolve the bare name via
-    /// the standard top-level-static-var path (#567). No-op when no backing field was defined
-    /// (e.g. a non-variable member).
+    /// Emits a namespace member variable (var/let/const). The initializer is evaluated once —
+    /// reads inside it resolve to namespace backing fields via the namespace-scoped
+    /// <see cref="CompilationContext.TopLevelStaticVars"/> augmentation set up in
+    /// <see cref="EmitNamespace"/> — then published to BOTH the static backing field
+    /// (<c>$nsvar_…</c>, which member functions resolve the bare name through, #567) and the
+    /// namespace object (external <c>N.x</c>). Crucially it does NOT route through the
+    /// module-top-level var path, so a namespace member whose name collides with a module-level
+    /// binding no longer clobbers that binding's slot (#657).
     /// </summary>
-    private void StoreLocalInNamespaceStaticField(string nsPath, string memberName)
+    private void EmitNamespaceMemberVar(FieldBuilder nsField, string nsPath, string memberName, Expr? initializer, string? typeAnnotation)
     {
-        if (_ctx.NamespaceVarFields == null ||
-            !_ctx.NamespaceVarFields.TryGetValue(nsPath, out var fields) ||
-            !fields.TryGetValue(memberName, out var nsVarField))
+        // Locate the backing field (DefineNamespaceVarField created one for every namespace var).
+        FieldBuilder? backingField = null;
+        if (_ctx.NamespaceVarFields != null &&
+            _ctx.NamespaceVarFields.TryGetValue(nsPath, out var fields))
         {
-            return;
+            fields.TryGetValue(memberName, out backingField);
         }
 
-        var memberLocal = _ctx.Locals.GetLocal(memberName);
-        if (memberLocal != null)
+        // Evaluate the initializer (or the type-driven / undefined default), boxed to object.
+        if (initializer != null)
         {
-            IL.Emit(OpCodes.Ldloc, memberLocal);
-            if (memberLocal.LocalType.IsValueType)
-            {
-                IL.Emit(OpCodes.Box, memberLocal.LocalType);
-            }
-            IL.Emit(OpCodes.Stsfld, nsVarField);
+            EmitExpression(initializer);
+            EmitBoxIfNeeded(initializer);
         }
+        else if (typeAnnotation == "number")
+        {
+            IL.Emit(OpCodes.Ldc_R8, 0.0);
+            IL.Emit(OpCodes.Box, _ctx.Types.Double);
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.UndefinedInstance);
+        }
+
+        // Stash once, then publish to the backing field and the namespace object.
+        var valueLocal = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, valueLocal);
+
+        if (backingField != null)
+        {
+            IL.Emit(OpCodes.Ldloc, valueLocal);
+            IL.Emit(OpCodes.Stsfld, backingField);
+        }
+
+        IL.Emit(OpCodes.Ldsfld, nsField);
+        IL.Emit(OpCodes.Ldstr, memberName);
+        IL.Emit(OpCodes.Ldloc, valueLocal);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.TSNamespaceSet);
     }
 }

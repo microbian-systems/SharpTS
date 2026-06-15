@@ -2094,10 +2094,62 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// Default implementation handles Symbol well-known properties, static field access,
     /// and falls back to dynamic property access via GetProperty.
     /// </summary>
+    /// <summary>
+    /// Emits a read of a namespace-level variable through its static backing field when
+    /// <paramref name="g"/> is <c>N.x</c> (or nested <c>N.M.x</c>) and <c>x</c> is a known
+    /// namespace var/let/const. This makes external access observe the live binding that member
+    /// functions mutate, rather than the snapshot stored in the namespace object at declaration
+    /// (#623). Returns false (leaving the normal property-get path) when the object is not a
+    /// namespace path or the member is not a namespace variable. Shared by ILEmitter and the
+    /// state-machine emitters so async/generator bodies see live bindings too (#656).
+    /// </summary>
+    protected bool TryEmitNamespaceVarGet(Expr.Get g)
+    {
+        if (Ctx.NamespaceVarFields == null) return false;
+
+        string? nsPath = ResolveNamespacePathForGet(g.Object);
+        if (nsPath == null) return false;
+
+        if (Ctx.NamespaceVarFields.TryGetValue(nsPath, out var fields) &&
+            fields.TryGetValue(g.Name.Lexeme, out var field))
+        {
+            IL.Emit(OpCodes.Ldsfld, field);
+            SetStackUnknown();
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves an expression to the dotted path of the namespace it denotes (e.g. <c>N</c> or
+    /// <c>N.M</c>), or null if it is not a reference to a known namespace. Used by
+    /// <see cref="TryEmitNamespaceVarGet"/> to locate a namespace var's backing field.
+    /// </summary>
+    private string? ResolveNamespacePathForGet(Expr obj)
+    {
+        switch (obj)
+        {
+            case Expr.Variable v when Ctx.NamespaceFields?.ContainsKey(v.Name.Lexeme) == true:
+                return v.Name.Lexeme;
+            case Expr.Get get when ResolveNamespacePathForGet(get.Object) is { } parent:
+                string candidate = $"{parent}.{get.Name.Lexeme}";
+                return Ctx.NamespaceFields?.ContainsKey(candidate) == true ? candidate : null;
+            default:
+                return null;
+        }
+    }
+
     protected virtual void EmitGet(Expr.Get g)
     {
         // CommonJS: `module.exports` reads → ldsfld $exports.
         if (TryEmitCjsGet(g)) return;
+
+        // Namespace var live-binding redirect (#623): external `N.x` reads of a namespace
+        // var/let/const go to the var's static backing field — the same field member functions
+        // write — so external access observes the live binding, not the declaration-time
+        // snapshot. Lives here in the shared base (not just ILEmitter) so state-machine bodies
+        // (async/generator MoveNext emitters) observe live bindings too (#656).
+        if (TryEmitNamespaceVarGet(g)) return;
 
         if (TryEmitSymbolWellKnown(g)) return;
         if (TryEmitStaticFieldAccess(g)) return;

@@ -26,6 +26,16 @@ public partial class ILCompiler
     private string? _currentNamespacePath;
 
     /// <summary>
+    /// Namespace function import aliases (<c>import alias = Target.member</c> where the member is
+    /// a function), collected during the define phase as (consumer namespace path, alias stmt)
+    /// and resolved in <see cref="ResolveNamespaceImportAliasFunctions"/> after every namespace is
+    /// defined. Deferring lets the alias point at a sibling namespace's function declared later in
+    /// source. Once namespace member functions are namespace-qualified (#657) the alias can no
+    /// longer ride the simple-name registry, so it is explicitly aliased to the target's builder.
+    /// </summary>
+    private readonly List<(string ConsumerPath, Stmt.ImportAlias Alias)> _pendingNamespaceImportAliasFunctions = [];
+
+    /// <summary>
     /// Qualified state-machine function name -> enclosing namespace path, recorded at define
     /// time for generators / async / async-generators declared in a namespace. Their MoveNext
     /// bodies are emitted in dedicated later phases (<see cref="EmitGeneratorStateMachineBodies"/>
@@ -104,12 +114,58 @@ public partial class ILCompiler
                     case Stmt.Const constStmt:
                         DefineNamespaceVarField(path, constStmt.Name.Lexeme);
                         break;
+
+                    // Function import aliases are resolved after every namespace is defined so the
+                    // target (possibly in a sibling namespace declared later) is already in the
+                    // function registry. See _pendingNamespaceImportAliasFunctions (#657).
+                    case Stmt.ImportAlias importAlias:
+                        _pendingNamespaceImportAliasFunctions.Add((path, importAlias));
+                        break;
                 }
             }
         }
         finally
         {
             _currentNamespacePath = savedNamespacePath;
+        }
+    }
+
+    /// <summary>
+    /// Resolves namespace function import aliases collected during the define phase: for each
+    /// <c>import alias = Target.member</c> whose target is a namespace member function, aliases the
+    /// consumer namespace's qualified key to the target's <see cref="System.Reflection.Emit.MethodBuilder"/>
+    /// (plus its rest/overload metadata) so a call to <c>alias()</c> inside the consumer
+    /// namespace's bodies dispatches to the target. Runs after all namespaces are defined (#657).
+    /// </summary>
+    private void ResolveNamespaceImportAliasFunctions()
+    {
+        foreach (var (consumerPath, importAlias) in _pendingNamespaceImportAliasFunctions)
+        {
+            var qpath = importAlias.QualifiedPath;
+            if (qpath.Count < 2)
+                continue; // need at least Namespace.member to denote a namespace function
+
+            string targetNsPath = string.Join(".", qpath.Take(qpath.Count - 1).Select(t => t.Lexeme));
+            string targetMember = qpath[^1].Lexeme;
+
+            // Qualify the target member under the target namespace, and the alias name under the
+            // consumer namespace, reusing GetQualifiedFunctionName via the definition context.
+            var savedNs = _currentNamespacePath;
+            _currentNamespacePath = targetNsPath;
+            string targetKey = GetDefinitionContext().GetQualifiedFunctionName(targetMember);
+            _currentNamespacePath = consumerPath;
+            string aliasKey = GetDefinitionContext().GetQualifiedFunctionName(importAlias.AliasName.Lexeme);
+            _currentNamespacePath = savedNs;
+
+            if (_functions.Builders.TryGetValue(targetKey, out var targetBuilder)
+                && !_functions.Builders.ContainsKey(aliasKey))
+            {
+                _functions.Builders[aliasKey] = targetBuilder;
+                if (_functions.RestParams.TryGetValue(targetKey, out var rp))
+                    _functions.RestParams[aliasKey] = rp;
+                if (_functions.Overloads.TryGetValue(targetKey, out var ov))
+                    _functions.Overloads[aliasKey] = ov;
+            }
         }
     }
 
