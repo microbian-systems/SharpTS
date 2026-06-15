@@ -559,6 +559,25 @@ public partial class ILCompiler
                 foreach (var binding in u.Bindings)
                     CollectArrowsFromExpr(binding.Initializer);
                 break;
+            case Stmt.Namespace ns:
+                // Recurse into namespace members so arrows and nested function declarations
+                // inside namespace member functions get collected. Without this the collection
+                // never enters namespace bodies, so a `function* `/arrow member's method is never
+                // registered (arrow `export const f = () => …` left non-callable, #659) and a
+                // nested `function inner(){}` inside a member function is never lifted, throwing
+                // "Undefined variable 'inner'" (#660). Setting _currentNamespacePath keeps the
+                // enclosing-function-name qualification symmetric with the define/emit phases
+                // (DefineNamespaceFields / EmitNamespaceMemberBodies). Members may be wrapped in
+                // Stmt.Export, which the Export arm unwraps. Depth is unchanged: a direct member
+                // function is a top-level (depth-0) function, exactly like a module-scoped one.
+                var savedNsPath = _currentNamespacePath;
+                _currentNamespacePath = string.IsNullOrEmpty(_currentNamespacePath)
+                    ? ns.Name.Lexeme
+                    : $"{_currentNamespacePath}.{ns.Name.Lexeme}";
+                foreach (var member in ns.Members)
+                    CollectArrowsFromStmt(member);
+                _currentNamespacePath = savedNsPath;
+                break;
             case Stmt.Export exp:
                 // Recurse into the wrapped declaration so arrows inside
                 // `export const X = () => …` or `export function …` get
@@ -1055,7 +1074,7 @@ public partial class ILCompiler
         _closures.ArrowReturnTypes.TryGetValue(arrow, out var arrowReturnType);
         arrowReturnType ??= _types.Object;
 
-        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
@@ -1079,6 +1098,7 @@ public partial class ILCompiler
             TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             // Module support for multi-module compilation
             CurrentModulePath = _modules.CurrentPath,
+            CurrentNamespacePath = _currentNamespacePath,
             ClassToModule = _modules.ClassToModule,
             FunctionToModule = _modules.FunctionToModule,
             EnumToModule = _modules.EnumToModule,

@@ -163,6 +163,17 @@ public partial class CompilationContext
     // Namespace support: namespace path -> static field
     public Dictionary<string, FieldBuilder>? NamespaceFields { get; set; }
 
+    /// <summary>
+    /// The dotted path (e.g. <c>N</c> or <c>N.M</c>) of the namespace whose member body this
+    /// context emits, or null outside any namespace. Threaded onto every namespace-member body
+    /// context so <see cref="GetQualifiedFunctionName"/> / <see cref="ResolveFunctionName"/>
+    /// namespace-qualify member functions — keeping <c>A.f</c> and <c>B.f</c> (and a top-level
+    /// <c>f</c>) in distinct registry slots instead of colliding (#657). Also set on the
+    /// namespace-emission context so member var initializers and sibling references resolve to
+    /// the namespace's own backing fields rather than same-named module bindings.
+    /// </summary>
+    public string? CurrentNamespacePath { get; set; }
+
     // Namespace-level var/let/const backing fields: namespace path -> var name -> static field.
     // A namespace member variable is stored in its namespace object (for external `N.x` access)
     // AND in a static field so functions declared in the namespace can resolve the bare name —
@@ -247,12 +258,22 @@ public partial class CompilationContext
         TypeMapper typeMapper,
         Dictionary<string, MethodBuilder> functions,
         Dictionary<string, TypeBuilder> classes,
+        Dictionary<string, FieldBuilder>? namespaceFields,
+        Dictionary<string, Dictionary<string, FieldBuilder>>? namespaceVarFields,
         TypeProvider? types = null)
     {
         IL = il;
         TypeMapper = typeMapper;
         Functions = functions;
         Classes = classes;
+        // Namespace registries are whole-compilation globals (like Functions/Classes), so they
+        // are threaded through the constructor — every emission context can resolve a bare
+        // namespace name and a namespace-var backing field, not just the subset that used to set
+        // these via object initializers. That subset gap was #656 (a non-member function body
+        // threw "Undefined variable 'N'"). The maps are shared references, populated during the
+        // define phase and observed live here.
+        NamespaceFields = namespaceFields;
+        NamespaceVarFields = namespaceVarFields;
         Types = types ?? TypeProvider.Runtime;
         Locals = new LocalsManager(il);
         ILBuilder = new ValidatedILBuilder(il, Types);

@@ -291,7 +291,7 @@ public partial class ILCompiler
         // (state machines, class methods) gets it uniformly, not just this plain-function path.
         Dictionary<string, FieldBuilder>? topLevelVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath);
 
-        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
@@ -315,6 +315,7 @@ public partial class ILCompiler
             TopLevelStaticVars = topLevelVars,
             // Module support for multi-module compilation
             CurrentModulePath = _modules.CurrentPath,
+            CurrentNamespacePath = _currentNamespacePath,
             ClassToModule = _modules.ClassToModule,
             FunctionToModule = _modules.FunctionToModule,
             EnumToModule = _modules.EnumToModule,
@@ -945,7 +946,7 @@ public partial class ILCompiler
 
         var il = mainMethod.GetILGenerator();
         EmitInstallEventLoopSyncContext(il);
-        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
@@ -960,8 +961,6 @@ public partial class ILCompiler
             EnumMembers = _enums.Members,
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
-            NamespaceFields = _namespaceFields,
-            NamespaceVarFields = _namespaceVarFields,
             TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             Runtime = _runtime,
             FunctionGenericParams = _functions.GenericParams,
@@ -1106,7 +1105,7 @@ public partial class ILCompiler
 
         var il = mainMethod.GetILGenerator();
         EmitInstallEventLoopSyncContext(il);
-        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
@@ -1121,8 +1120,6 @@ public partial class ILCompiler
             EnumMembers = _enums.Members,
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
-            NamespaceFields = _namespaceFields,
-            NamespaceVarFields = _namespaceVarFields,
             TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             Runtime = _runtime,
             FunctionGenericParams = _functions.GenericParams,
@@ -1373,7 +1370,7 @@ public partial class ILCompiler
             var il = overload.GetILGenerator();
 
             // Create a minimal context just for emitting default value expressions
-            var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+            var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
             {
                 ClassRegistry = GetClassRegistry(),
                 Runtime = _runtime,

@@ -483,7 +483,7 @@ public partial class ILCompiler
 
             // Create context for MoveNext emission
             var il = smBuilder.MoveNextMethod.GetILGenerator();
-            var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+            var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
             {
                 Runtime = _runtime,
                 ClosureAnalyzer = _closures.Analyzer,
@@ -495,7 +495,6 @@ public partial class ILCompiler
                 EnumMembers = _enums.Members,
                 EnumReverse = _enums.Reverse,
                 EnumKinds = _enums.Kinds,
-                NamespaceFields = _namespaceFields,
                 TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
                 FunctionRestParams = _functions.RestParams,
                 FunctionsCapturingArguments = _functions.CapturingArguments,
@@ -509,6 +508,7 @@ public partial class ILCompiler
                 AsyncArrowParentBuilders = _async.ArrowParentBuilders,
                 // Module support for multi-module compilation
                 CurrentModulePath = _modules.CurrentPath,
+                CurrentNamespacePath = _currentNamespacePath,
                 ModuleResolver = _modules.Resolver,
                 CommonJsExportFields = _modules.CommonJsExportFields,
                 CommonJsGetExportsMethods = _modules.CommonJsGetExportsMethods,
@@ -595,7 +595,7 @@ public partial class ILCompiler
         );
 
         // Create a new context for arrow MoveNext emission
-        var ctx = new CompilationContext(il, parentCtx.TypeMapper, parentCtx.Functions, parentCtx.Classes, parentCtx.Types)
+        var ctx = new CompilationContext(il, parentCtx.TypeMapper, parentCtx.Functions, parentCtx.Classes, parentCtx.NamespaceFields, parentCtx.NamespaceVarFields, parentCtx.Types)
         {
             Runtime = parentCtx.Runtime,
             ClosureAnalyzer = parentCtx.ClosureAnalyzer,
@@ -607,7 +607,6 @@ public partial class ILCompiler
             EnumMembers = parentCtx.EnumMembers,
             EnumReverse = parentCtx.EnumReverse,
             EnumKinds = parentCtx.EnumKinds,
-            NamespaceFields = parentCtx.NamespaceFields,
             TopLevelStaticVars = parentCtx.TopLevelStaticVars,
             FunctionRestParams = parentCtx.FunctionRestParams,
             FunctionGenericParams = parentCtx.FunctionGenericParams,
@@ -858,7 +857,7 @@ public partial class ILCompiler
 
         // Create context for MoveNext emission
         var il = smBuilder.MoveNextMethod.GetILGenerator();
-        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+        var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             FieldsField = fieldsField,
             IsInstanceMethod = true,
@@ -873,7 +872,6 @@ public partial class ILCompiler
             EnumMembers = _enums.Members,
             EnumReverse = _enums.Reverse,
             EnumKinds = _enums.Kinds,
-            NamespaceFields = _namespaceFields,
             TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
             Runtime = _runtime,
             FunctionGenericParams = _functions.GenericParams,
@@ -886,6 +884,7 @@ public partial class ILCompiler
             AsyncArrowParentBuilders = _async.ArrowParentBuilders,
             // Module support for multi-module compilation
             CurrentModulePath = _modules.CurrentPath,
+            CurrentNamespacePath = _currentNamespacePath,
             ClassToModule = _modules.ClassToModule,
             FunctionToModule = _modules.FunctionToModule,
             EnumToModule = _modules.EnumToModule,
@@ -1065,7 +1064,7 @@ public partial class ILCompiler
             }
 
             // Create context for MoveNext emission
-            var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _types)
+            var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
             {
                 Runtime = _runtime,
                 ClosureAnalyzer = _closures.Analyzer,
@@ -1077,7 +1076,6 @@ public partial class ILCompiler
                 EnumMembers = _enums.Members,
                 EnumReverse = _enums.Reverse,
                 EnumKinds = _enums.Kinds,
-                NamespaceFields = _namespaceFields,
                 TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath),
                 FunctionRestParams = _functions.RestParams,
                 FunctionsCapturingArguments = _functions.CapturingArguments,
@@ -1090,6 +1088,7 @@ public partial class ILCompiler
                 AsyncArrowOuterBuilders = _async.ArrowOuterBuilders,
                 AsyncArrowParentBuilders = _async.ArrowParentBuilders,
                 CurrentModulePath = _modules.CurrentPath,
+                CurrentNamespacePath = _currentNamespacePath,
                 ClassToModule = _modules.ClassToModule,
                 FunctionToModule = _modules.FunctionToModule,
                 EnumToModule = _modules.EnumToModule,
