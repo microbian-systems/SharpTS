@@ -439,7 +439,11 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitGetFunctionMethod(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // GetFunctionMethod(object func, string methodName) -> object or null
+        // GetFunctionMethod(object func, string methodName) -> object
+        // Functions/arrows are ordinary objects: a missing property reads as JS
+        // `undefined`, not CLR null (#651). The miss path below returns the
+        // undefined sentinel so `typeof fn.absent === "undefined"` matches both
+        // the interpreter and plain compiled objects.
         var method = typeBuilder.DefineMethod(
             "GetFunctionMethod",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -449,16 +453,17 @@ public partial class RuntimeEmitter
         runtime.GetFunctionMethod = method;
 
         var il = method.GetILGenerator();
-        var nullLabel = il.DefineLabel();
+        var missLabel = il.DefineLabel();
         var bindLabel = il.DefineLabel();
         var callLabel = il.DefineLabel();
         var applyLabel = il.DefineLabel();
         var lengthLabel = il.DefineLabel();
         var nameLabel = il.DefineLabel();
 
-        // if (func == null) return null
+        // if (func == null) treat as a miss (returns undefined) — defensive;
+        // callers only reach here after an Isinst confirms a function receiver.
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, nullLabel);
+        il.Emit(OpCodes.Brfalse, missLabel);
 
         // Check for "bind"
         il.Emit(OpCodes.Ldarg_1);
@@ -581,7 +586,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Stloc, tsfuncLocal);
-        il.Emit(OpCodes.Brfalse, nullLabel);
+        il.Emit(OpCodes.Brfalse, missLabel);
 
         // methodKey = tsfuncLocal.GetMethodInfo()  (public getter — avoids
         // field-access violation from accessing private _method across
@@ -771,12 +776,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, fpSlotLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "TryGetValue",
             _types.String, _types.Object.MakeByRefType()));
-        il.Emit(OpCodes.Brfalse, nullLabel);
+        il.Emit(OpCodes.Brfalse, missLabel);
         il.Emit(OpCodes.Ldloc, fpSlotLocal);
         il.Emit(OpCodes.Ret);
 
-        il.MarkLabel(nullLabel);
-        il.Emit(OpCodes.Ldnull);
+        // Miss: a function/arrow has no such property. JS functions are
+        // ordinary objects, so an absent key reads as `undefined`, not null
+        // (#651). Reached for a generic missing property, `prototype` on a
+        // prototype-less callable (bound functions / built-in method wrappers),
+        // and the defensive null-func guard.
+        il.MarkLabel(missLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
     }
 
