@@ -107,9 +107,12 @@ public class ForLoopPerIterationBindingTests
     // ---- Mutating the loop var inside the body is reflected in that iteration's capture ----
     // i becomes i+10 at capture time, then i-10 before the iteration ends, so the per-iteration
     // binding settles back to the loop value; the per-iteration copy then carries that forward.
-    // Interpreted-only: compiled mode snapshots the loop var at a different point and yields
-    // 10,11,12 here (a pre-existing per-iteration-snapshot timing gap, tracked by #650). The
-    // interpreter reads the live binding slot, matching node (0,1,2).
+    // Interpreted-only: compiled mode SNAPSHOTS the loop var's value at closure-creation time
+    // (i+10 == 10/11/12) rather than reference-capturing the per-iteration binding (whose end-of-
+    // body value is 0/1/2). This snapshot-timing gap is uniform across compiled contexts (top
+    // level, sync/async function bodies) and is tracked by #650; a full fix needs a per-iteration
+    // binding cell that closures reference-capture. The interpreter reads the live binding slot,
+    // matching node (0,1,2).
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void BodyMutatesLoopVar_CapturesLiveSlot(ExecutionMode mode)
@@ -165,12 +168,30 @@ public class ForLoopPerIterationBindingTests
         Assert.Equal("0,2,4\n", TestHarness.Run(source, mode));
     }
 
-    // ---- Async function body exercises the ExecuteForAsyncVT per-iteration path ----
-    // Interpreted-only: compiled async-function state machines don't create per-iteration display
-    // classes for a `for (let …)`, so the capture reads the final value (3,3,3) — a pre-existing
-    // compiled gap (the #431 per-iteration box fix doesn't reach async bodies), tracked by #649.
+    // ---- Closures over a loop `let` inside a FUNCTION body are per-iteration in both modes (#649) ----
+    // Before #649 the compiler promoted a captured `for (let …)` loop variable to the function's
+    // single shared display class, so every closure read the loop's final value (3,3,3) inside any
+    // function body — sync OR async. (Top level already stayed correct because the loop variable
+    // remained a local that each closure snapshots.) The fix keeps these per-iteration loop bindings
+    // out of the function display class, so they are snapshotted per iteration like the top-level case.
+
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SyncFunctionBody_PerIteration(ExecutionMode mode)
+    {
+        var source = """
+            function main(): string {
+                const fns: any[] = [];
+                for (let k = 0; k < 3; k++) { fns.push(() => k); }
+                return fns.map((f: any) => f()).join(",");
+            }
+            console.log(main());
+            """;
+        Assert.Equal("0,1,2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncFunctionBody_PerIteration(ExecutionMode mode)
     {
         var source = """
@@ -182,5 +203,75 @@ public class ForLoopPerIterationBindingTests
             main();
             """;
         Assert.Equal("0,1,2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassMethodBody_PerIteration(ExecutionMode mode)
+    {
+        var source = """
+            class C {
+                run(): string {
+                    const fns: any[] = [];
+                    for (let k = 0; k < 3; k++) { fns.push(() => k); }
+                    return fns.map((f: any) => f()).join(",");
+                }
+            }
+            console.log(new C().run());
+            """;
+        Assert.Equal("0,1,2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ArrowBody_PerIteration(ExecutionMode mode)
+    {
+        var source = """
+            const outer = () => {
+                const fns: any[] = [];
+                for (let k = 0; k < 3; k++) { fns.push(() => k); }
+                return fns.map((f: any) => f()).join(",");
+            };
+            console.log(outer());
+            """;
+        Assert.Equal("0,1,2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InnerFunctionBody_PerIteration(ExecutionMode mode)
+    {
+        var source = """
+            function host(): string {
+                function inner(): string {
+                    const fns: any[] = [];
+                    for (let k = 0; k < 3; k++) { fns.push(() => k); }
+                    return fns.map((f: any) => f()).join(",");
+                }
+                return inner();
+            }
+            console.log(host());
+            """;
+        Assert.Equal("0,1,2\n", TestHarness.Run(source, mode));
+    }
+
+    // A function-scoped binding declared OUTSIDE the loop stays SHARED (one binding) even when a
+    // loop-body closure also captures the per-iteration loop variable: the per-iteration exclusion
+    // must apply only to the loop binding, not to ordinary captured locals. `outer` ends at 3 for
+    // every closure; `k` is per-iteration.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FunctionBody_OuterCapturedVarStaysShared(ExecutionMode mode)
+    {
+        var source = """
+            function f(): string {
+                let outer = 0;
+                const fns: any[] = [];
+                for (let k = 0; k < 3; k++) { fns.push(() => outer + ":" + k); outer++; }
+                return fns.map((g: any) => g()).join(",");
+            }
+            console.log(f());
+            """;
+        Assert.Equal("3:0,3:1,3:2\n", TestHarness.Run(source, mode));
     }
 }

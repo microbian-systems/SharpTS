@@ -224,6 +224,21 @@ public partial class ILCompiler
         if (capturedLocals.Count == 0)
             return;
 
+        // Per-iteration `for (let/const …)` loop bindings must NOT share the function
+        // display class (a single instance per call): each iteration gets its own
+        // binding (ECMA-262 13.7.4), so closures created in different iterations must
+        // capture distinct values. Keeping them out of the function DC leaves them as
+        // locals / state-machine fields that closures snapshot per iteration — matching
+        // the already-correct top-level case (#649).
+        var perIterationBindings = _closures.Analyzer.GetPerIterationLoopBindings(funcStmt);
+        if (perIterationBindings.Count > 0)
+        {
+            capturedLocals = new HashSet<string>(capturedLocals);
+            capturedLocals.ExceptWith(perIterationBindings);
+            if (capturedLocals.Count == 0)
+                return;
+        }
+
         // For async functions, exclude variables that are also captured by async arrows.
         // Those use the hoisted field mechanism and would conflict with the function DC.
         if (_closures.AsyncCapturedVarsExclusion.TryGetValue(qualifiedFunctionName, out var exclusions))
@@ -280,9 +295,15 @@ public partial class ILCompiler
         var methodBuilder = _functions.Builders[qualifiedFunctionName];
         var il = methodBuilder.GetILGenerator();
 
-        // Check if this function has captured locals that need a display class
+        // Check if this function has captured locals that need a display class.
+        // Derive the captured-local set from the display class's actual field map
+        // (not the raw analyzer set) so per-iteration loop bindings excluded by
+        // DefineFunctionDisplayClass (#649) are also excluded here — otherwise
+        // CapturedFunctionLocals would claim a loop var the DC has no field for.
         var hasFunctionDC = _closures.FunctionDisplayClasses.TryGetValue(qualifiedFunctionName, out var functionDCType);
-        var capturedLocals = hasFunctionDC ? _closures.Analyzer.GetCapturedLocals(funcStmt) : null;
+        var capturedLocals = hasFunctionDC && _closures.FunctionDisplayClassFields.TryGetValue(qualifiedFunctionName, out var hasFuncDCFields)
+            ? new HashSet<string>(hasFuncDCFields.Keys)
+            : null;
 
         // Build module-scoped top-level vars so this function only sees its own
         // module's bindings plus global imports. When emitting a namespace member body this

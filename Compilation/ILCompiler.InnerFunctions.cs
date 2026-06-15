@@ -595,7 +595,9 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Stloc, ownScopeDCLocal);
                 ctx.ArrowScopeDisplayClassLocal = ownScopeDCLocal;
                 ctx.ArrowScopeDisplayClassFields = _closures.ArrowScopeDisplayClassFields[func];
-                ctx.CapturedArrowLocals = _closures.Analyzer.GetCapturedLocals(func);
+                // Derive from the DC's actual field map so per-iteration loop bindings
+                // excluded by DefineScopeDisplayClass (#649) are also excluded here.
+                ctx.CapturedArrowLocals = [.. _closures.ArrowScopeDisplayClassFields[func].Keys];
             }
 
             var emitter = new ILEmitter(ctx);
