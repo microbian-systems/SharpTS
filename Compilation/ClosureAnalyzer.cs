@@ -51,6 +51,23 @@ public class ClosureAnalyzer : AstVisitorBase
     // name-matching across unrelated scopes (which aliases shadowed names).
     private readonly Dictionary<object, Dictionary<string, object>> _captureSources = [];
 
+    // Maps function/arrow node → names it declares as `for (let/const …)` loop
+    // bindings. Each iteration of such a loop gets its OWN binding (ECMA-262
+    // 13.7.4 CreatePerIterationEnvironment), so a closure created in one iteration
+    // must capture a value distinct from other iterations. The shared function
+    // display class is a SINGLE instance per call, so routing a per-iteration loop
+    // binding through it makes every closure read the loop's final value (#649).
+    // Excluding these from the function DC keeps them as locals / state-machine
+    // fields that closures snapshot per iteration — matching the top-level case,
+    // which already stays correct for the same reason.
+    private readonly Dictionary<object, HashSet<string>> _functionLoopBindings = [];
+
+    // Names declared by a NON-loop binding in a function/arrow (params, plain
+    // `let`/`const`/`var`). Used to keep the per-iteration exclusion shadow-safe:
+    // a name that is also an ordinary captured-and-mutated local must keep its
+    // shared function-DC slot, so it is excluded from the loop-binding set.
+    private readonly Dictionary<object, HashSet<string>> _functionNonLoopDecls = [];
+
     // ============================================
     // Performance optimization: Inverse index
     // ============================================
@@ -94,6 +111,26 @@ public class ClosureAnalyzer : AstVisitorBase
     public bool HasCapturedLocals(object functionNode)
     {
         return _functionCapturedLocals.TryGetValue(functionNode, out var locals) && locals.Count > 0;
+    }
+
+    /// <summary>
+    /// Returns the names that <paramref name="functionNode"/> declares EXCLUSIVELY as
+    /// <c>for (let/const …)</c> loop bindings (never also as an ordinary local/param).
+    /// These must be kept out of the shared function display class so closures created
+    /// in different iterations capture distinct per-iteration values (ECMA-262 13.7.4;
+    /// #649). Callers intersect this with the captured-locals set.
+    /// </summary>
+    public HashSet<string> GetPerIterationLoopBindings(object functionNode)
+    {
+        if (!_functionLoopBindings.TryGetValue(functionNode, out var bindings) || bindings.Count == 0)
+            return [];
+        var result = new HashSet<string>(bindings);
+        // Shadow-safety: a name that is ALSO an ordinary declaration in this function
+        // keeps its shared slot (an ordinary captured-and-mutated local must stay in
+        // the function DC). Only purely-loop bindings are eligible for exclusion.
+        if (_functionNonLoopDecls.TryGetValue(functionNode, out var nonLoop))
+            result.ExceptWith(nonLoop);
+        return result;
     }
 
     /// <summary>
@@ -171,7 +208,22 @@ public class ClosureAnalyzer : AstVisitorBase
         // Track local variables for the current function
         if (_currentFunction != null && _localVars.TryGetValue(_currentFunction, out var locals))
             locals.Add(name);
+
+        // Record every NON-loop declaration so the per-iteration exclusion stays
+        // shadow-safe (see _functionNonLoopDecls). A for-let/const loop binding is
+        // declared with its name parked in _pendingLoopBindings, so it is skipped
+        // here and counts only as a loop binding.
+        if (_currentFunction != null && !_pendingLoopBindings.Contains(name))
+        {
+            if (!_functionNonLoopDecls.TryGetValue(_currentFunction, out var nonLoop))
+                _functionNonLoopDecls[_currentFunction] = nonLoop = [];
+            nonLoop.Add(name);
+        }
     }
+
+    // Loop-binding names currently being declared by a for-initializer, so
+    // DeclareVariable records them as loop bindings rather than ordinary locals.
+    private readonly HashSet<string> _pendingLoopBindings = [];
 
     private void ReferenceVariable(string name)
     {
@@ -357,13 +409,58 @@ public class ClosureAnalyzer : AstVisitorBase
         // For loops create a scope for the loop variable (e.g., let i in "for (let i = 0; ...)")
         EnterScope();
         if (stmt.Initializer != null)
-            Visit(stmt.Initializer);
+        {
+            // Record `for (let/const …)` loop bindings for the enclosing function so the
+            // per-iteration exclusion can keep them out of the shared function display
+            // class (#649). Parked in _pendingLoopBindings across the initializer visit
+            // so DeclareVariable classifies them as loop bindings, not ordinary locals.
+            var loopNames = CollectLoopBindingNames(stmt.Initializer);
+            if (loopNames != null && _currentFunction != null)
+            {
+                if (!_functionLoopBindings.TryGetValue(_currentFunction, out var bindings))
+                    _functionLoopBindings[_currentFunction] = bindings = [];
+                foreach (var n in loopNames) { bindings.Add(n); _pendingLoopBindings.Add(n); }
+                Visit(stmt.Initializer);
+                foreach (var n in loopNames) _pendingLoopBindings.Remove(n);
+            }
+            else
+            {
+                Visit(stmt.Initializer);
+            }
+        }
         if (stmt.Condition != null)
             Visit(stmt.Condition);
         if (stmt.Increment != null)
             Visit(stmt.Increment);
         Visit(stmt.Body);
         ExitScope();
+    }
+
+    /// <summary>
+    /// Returns the names a for-initializer binds per iteration (ECMA-262 13.7.4):
+    /// <c>let</c>/<c>const</c> declarations. Returns <c>null</c> for <c>var</c> or
+    /// expression initializers, which share one binding across the whole loop.
+    /// Mirrors <c>Interpreter.CollectPerIterationBindings</c>.
+    /// </summary>
+    private static List<string>? CollectLoopBindingNames(Stmt? initializer)
+    {
+        switch (initializer)
+        {
+            case Stmt.Var v when !v.IsVar:
+                return [v.Name.Lexeme];
+            case Stmt.Const c:
+                return [c.Name.Lexeme];
+            case Stmt.Sequence seq:
+                List<string>? names = null;
+                foreach (var s in seq.Statements)
+                {
+                    var sub = CollectLoopBindingNames(s);
+                    if (sub != null) (names ??= []).AddRange(sub);
+                }
+                return names;
+            default:
+                return null;
+        }
     }
 
     protected override void VisitTryCatch(Stmt.TryCatch stmt)

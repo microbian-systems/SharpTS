@@ -899,6 +899,21 @@ public partial class ILCompiler
         if (capturedLocals.Count == 0)
             return;
 
+        // Per-iteration `for (let/const …)` loop bindings must NOT share this scope
+        // display class (a single instance per arrow/inner-function call): each
+        // iteration gets its own binding (ECMA-262 13.7.4), so a closure created in
+        // one iteration must capture a value distinct from other iterations. Keeping
+        // them out of the scope DC leaves them as locals that nested closures snapshot
+        // per iteration — mirroring the function-DC exclusion (#649).
+        var perIterationBindings = _closures.Analyzer.GetPerIterationLoopBindings(callable);
+        if (perIterationBindings.Count > 0)
+        {
+            capturedLocals = new HashSet<string>(capturedLocals);
+            capturedLocals.ExceptWith(perIterationBindings);
+            if (capturedLocals.Count == 0)
+                return;
+        }
+
         var displayClass = _moduleBuilder.DefineType(
             $"<>c__{nameSuffix}{_closures.DisplayClassCounter++}",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
@@ -1268,7 +1283,11 @@ public partial class ILCompiler
             il.Emit(OpCodes.Stloc, arrowScopeDCLocal);
             ctx.ArrowScopeDisplayClassLocal = arrowScopeDCLocal;
             ctx.ArrowScopeDisplayClassFields = _closures.ArrowScopeDisplayClassFields[arrow];
-            ctx.CapturedArrowLocals = _closures.Analyzer.GetCapturedLocals(arrow);
+            // Derive from the DC's actual field map (not the raw analyzer set) so
+            // per-iteration loop bindings excluded by DefineScopeDisplayClass (#649)
+            // are also excluded here — keeping CapturedArrowLocals consistent with
+            // the fields the DC actually has.
+            ctx.CapturedArrowLocals = [.. _closures.ArrowScopeDisplayClassFields[arrow].Keys];
         }
 
         var emitter = new ILEmitter(ctx);
