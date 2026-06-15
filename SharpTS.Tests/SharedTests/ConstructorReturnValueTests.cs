@@ -32,12 +32,14 @@ public class ConstructorReturnValueTests
             const f: any = new (Make as any)("X");
             console.log(typeof f);
             console.log(typeof f === "function" ? f() : "NOT CALLABLE");
+            console.log(typeof f.v);
             """;
         // f is the returned arrow: it's a function and is callable (it is NOT the constructed
-        // `this`, which would not be callable). (We avoid asserting `typeof f.v` here: reading a
-        // missing property off a function value returns null in compiled mode — an unrelated gap
-        // tracked by #651 — so it isn't a clean cross-mode signal for #446.)
-        Assert.Equal("function\nfn-result:X\n", TestHarness.Run(source, mode));
+        // `this`, which would not be callable). Reading the missing `v` off the arrow is now a
+        // clean cross-mode signal — `undefined` in both modes (functions are ordinary objects)
+        // since #651 fixed compiled-mode missing-property reads off function/arrow values. If f
+        // were the constructed `this`, `f.v` would be "X".
+        Assert.Equal("function\nfn-result:X\nundefined\n", TestHarness.Run(source, mode));
     }
 
     [Theory]
