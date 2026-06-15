@@ -1526,18 +1526,36 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     #region Global Variable Resolution Helpers
 
     /// <summary>
+    /// Emits the JavaScript global constants that are not real bindings: <c>NaN</c>,
+    /// <c>Infinity</c>, and <c>undefined</c>. Every variable-emission path must consult this
+    /// before falling back to a null load — otherwise a bare <c>NaN</c>/<c>Infinity</c>
+    /// reference compiles to a null load, so e.g. <c>NaN === NaN</c> silently degrades to
+    /// <c>null === null</c> → <c>true</c> (that was the #648 async-arrow gap). Callers must run
+    /// their local/parameter/capture resolver first so a same-named user binding still shadows
+    /// the global, matching ECMA-262 lexical lookup.
+    /// </summary>
+    /// <returns><c>true</c> if <paramref name="name"/> is a global constant and was emitted.</returns>
+    protected bool TryEmitJsGlobalConstant(string name)
+    {
+        switch (name)
+        {
+            case "NaN": EmitDoubleConstant(double.NaN); return true;
+            case "Infinity": EmitDoubleConstant(double.PositiveInfinity); return true;
+            case "undefined": EmitUndefinedConstant(); return true;
+            default: return false;
+        }
+    }
+
+    /// <summary>
     /// Tries to emit a global variable load (after resolver fails).
     /// Checks TopLevelStaticVars → Functions → NamespaceFields → CapturedTopLevelVars.
     /// </summary>
     protected virtual bool TryEmitGlobalVariable(string name)
     {
-        // JavaScript global constants — must be checked before user-defined variables
-        // ILEmitter.EmitVariable handles these too, but state machine emitters
-        // (Async/Generator/AsyncGenerator MoveNextEmitter, AsyncArrowMoveNextEmitter)
-        // inherit from this base class and need them here.
-        if (name == "NaN") { EmitDoubleConstant(double.NaN); return true; }
-        if (name == "Infinity") { EmitDoubleConstant(double.PositiveInfinity); return true; }
-        if (name == "undefined") { EmitUndefinedConstant(); return true; }
+        // JavaScript global constants — must be checked before user-defined variables. State
+        // machine emitters (Async/Generator/AsyncGenerator MoveNextEmitter) reach this via the
+        // base EmitVariable; ILEmitter and AsyncArrowMoveNextEmitter call the helper directly.
+        if (TryEmitJsGlobalConstant(name)) return true;
 
         if (Ctx.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
         {

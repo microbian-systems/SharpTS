@@ -16,6 +16,15 @@ namespace SharpTS.Tests.SharedTests;
 /// tests assert the corrected NaN behavior in every async/generator state-machine context and pin
 /// the already-correct contexts as cross-mode parity, plus guard that ordinary number equality is
 /// unaffected by the change.</para>
+///
+/// <para>Also covers #648, the compiled-mode analog. There the equality machinery was already
+/// NaN-aware; the real defect was narrower and broader at once: <c>AsyncArrowMoveNextEmitter</c>
+/// reimplements variable resolution and never consulted the JS global constants, so a bare
+/// <c>NaN</c>/<c>Infinity</c> inside a compiled <c>async</c> arrow compiled to a <c>null</c> load.
+/// <c>NaN === NaN</c> therefore degraded to <c>null === null</c> → <c>true</c>, and any other use
+/// (value, <c>typeof</c>, arithmetic) was equally wrong. The fix routes that emitter through the
+/// shared <c>TryEmitJsGlobalConstant</c> helper, so the <see cref="AsyncArrow_NaNStrictEquality"/>
+/// and <see cref="AsyncArrow_GlobalConstantsResolve"/> cases below now run cross-mode.</para>
 /// </summary>
 public class AsyncNaNStrictEqualityTests
 {
@@ -67,14 +76,14 @@ public class AsyncNaNStrictEqualityTests
         Assert.Equal("false\n", TestHarness.Run(source, mode));
     }
 
-    // Interpreted-only: this issue (#642) is the interpreter async path. Compiled async ARROWS
-    // still evaluate NaN strict equality with loose/Double.Equals semantics (NaN === NaN → true) —
-    // a gap in #600's compiled coverage that does NOT affect compiled async *functions* or async
-    // *generators* (both correct). Tracked by #648.
+    // #648: previously interpreted-only because a bare NaN/Infinity inside a compiled async arrow
+    // resolved to null (NaN === NaN → null === null → true). Now cross-mode after the
+    // AsyncArrowMoveNextEmitter global-constant fix.
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    public void AsyncArrow_NaNStrictEquality_Interpreted(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncArrow_NaNStrictEquality(ExecutionMode mode)
     {
+        // The exact repro from #648.
         var source = """
             const r = async () => {
                 console.log(NaN === NaN);
@@ -83,6 +92,49 @@ public class AsyncNaNStrictEqualityTests
             r();
             """;
         Assert.Equal("false\ntrue\n", TestHarness.Run(source, mode));
+    }
+
+    // #648 root cause (broader than the equality symptom): the JS global constants NaN/Infinity
+    // must resolve to real values inside a compiled async arrow, not a null load. A param named
+    // `NaN` must still shadow the global (resolver runs before the constant check), matching
+    // ECMA-262 lexical lookup.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncArrow_GlobalConstantsResolve(ExecutionMode mode)
+    {
+        var source = """
+            const r = async () => {
+                console.log(NaN);
+                console.log(typeof NaN);
+                console.log(Infinity);
+                console.log(-Infinity);
+                console.log(NaN + 1);
+                console.log(Number.isNaN(NaN));
+                console.log(Infinity > 1e308);
+            };
+            r();
+            const shadow = async (NaN: any) => NaN === NaN;
+            shadow(5).then((v: boolean) => console.log(v));
+            """;
+        Assert.Equal("NaN\nnumber\nInfinity\n-Infinity\nNaN\ntrue\ntrue\ntrue\n", TestHarness.Run(source, mode));
+    }
+
+    // After an await the arrow body runs from a resumed state-machine label; the global constants
+    // must still resolve there too (the suspend/resume path is where #648's null load was most
+    // surprising).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncArrow_AfterAwait_NaNStillNotEqual(ExecutionMode mode)
+    {
+        var source = """
+            const r = async () => {
+                await Promise.resolve(0);
+                console.log(NaN === NaN);
+                console.log(NaN);
+            };
+            r();
+            """;
+        Assert.Equal("false\nNaN\n", TestHarness.Run(source, mode));
     }
 
     [Theory]

@@ -130,24 +130,8 @@ public partial class ILEmitter
             return;
         }
 
-        // JavaScript global constants
-        if (name == "NaN")
-        {
-            EmitDoubleConstant(double.NaN);
-            return;
-        }
-
-        if (name == "Infinity")
-        {
-            EmitDoubleConstant(double.PositiveInfinity);
-            return;
-        }
-
-        if (name == "undefined")
-        {
-            EmitUndefinedConstant();
-            return;
-        }
+        // JavaScript global constants (NaN/Infinity/undefined)
+        if (TryEmitJsGlobalConstant(name)) return;
 
         // Global fetch function - use cached TSFunction for reference equality with globalThis.fetch
         if (name == "fetch")

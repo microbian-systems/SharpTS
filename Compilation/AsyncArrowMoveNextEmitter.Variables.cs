@@ -18,6 +18,13 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
+        // JavaScript global constants (NaN/Infinity/undefined). The base EmitVariable reaches
+        // these through TryEmitGlobalVariable, but this override reimplements resolution and so
+        // must check them explicitly — otherwise a bare NaN/Infinity compiled to a null load,
+        // e.g. `NaN === NaN` degraded to `null === null` → true (#648). Checked after the
+        // resolver so a same-named local/param/capture still shadows the global.
+        if (TryEmitJsGlobalConstant(name)) return;
+
         // Check if it's an imported value (from another module) - must check BEFORE Functions
         // because cross-module function references need to go through the import field
         if (_ctx?.TopLevelStaticVars?.TryGetValue(name, out var topLevelField) == true)
