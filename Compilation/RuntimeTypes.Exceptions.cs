@@ -1,3 +1,5 @@
+using SharpTS.Runtime.Types;
+
 namespace SharpTS.Compilation;
 
 public static partial class RuntimeTypes
@@ -20,11 +22,11 @@ public static partial class RuntimeTypes
             if (reason != null) return reason;
         }
 
-        return new Dictionary<string, object?>
-        {
-            ["message"] = ex.Message,
-            ["name"] = ex.GetType().Name
-        };
+        // Wrap a host-originated exception as a real Error so guest `catch` sees a
+        // proper Error instance (`e instanceof Error`, `e.name === "Error"`) rather than
+        // a bare { message, name=<.NET type> } object. Mirrors the emitted
+        // $Runtime.WrapException standard fallback. (#700)
+        return new SharpTSError(ex.Message);
     }
 
     #endregion

@@ -517,7 +517,7 @@ public partial class Interpreter
             RuntimeEnvironment catchEnv = new(_environment);
             if (tryCatch.CatchParam != null)
             {
-                catchEnv.Define(tryCatch.CatchParam.Lexeme, errorValue);
+                catchEnv.Define(tryCatch.CatchParam.Lexeme, CoerceCaughtValueForBinding(errorValue));
             }
 
             using (PushScope(catchEnv))
@@ -637,7 +637,7 @@ public partial class Interpreter
             RuntimeEnvironment catchEnv = new(_environment);
             if (tryCatch.CatchParam != null)
             {
-                catchEnv.Define(tryCatch.CatchParam.Lexeme, errorValue);
+                catchEnv.Define(tryCatch.CatchParam.Lexeme, CoerceCaughtValueForBinding(errorValue));
             }
 
             using (PushScope(catchEnv))
@@ -1085,7 +1085,74 @@ public partial class Interpreter
                 ["errno"] = nodeError.Errno.HasValue ? (double)nodeError.Errno.Value : null
             });
 
+        // Host exceptions surface as their raw message string. Built-ins signal JS errors
+        // via `throw new Exception("RangeError: ...")`, but the typed-error synthesis is
+        // deferred to CoerceCaughtValueForBinding — applied only when a value is bound to a
+        // guest `catch` parameter (#694). Doing it here instead would also convert errors
+        // on the *propagation* path, where ThrowException.FromResult relies on host errors
+        // staying strings so an uncaught strict-mode/internal error keeps propagating to the
+        // host as a plain Exception rather than becoming a top-level-swallowed guest throw.
         return ex.Message;
+    }
+
+    /// <summary>
+    /// Known JS error-name prefixes that built-ins prepend to host <see cref="Exception"/>
+    /// messages (e.g. "RangeError: ..."). Used by <see cref="CoerceCaughtValueForBinding"/>
+    /// to reconstruct a typed guest error when one is caught (#694). AggregateError is
+    /// intentionally excluded — it requires an errors array, not a bare message.
+    /// </summary>
+    private static readonly (string Prefix, string Name)[] JsErrorMessagePrefixes =
+    {
+        ("TypeError: ", "TypeError"),
+        ("RangeError: ", "RangeError"),
+        ("ReferenceError: ", "ReferenceError"),
+        ("SyntaxError: ", "SyntaxError"),
+        ("EvalError: ", "EvalError"),
+        ("URIError: ", "URIError"),
+    };
+
+    /// <summary>
+    /// Coerces a value about to be bound to a guest <c>catch</c> parameter (#694).
+    /// Built-ins signal JS errors as host exceptions whose message carries a
+    /// "&lt;Name&gt;Error: " prefix; <see cref="TranslateException"/> surfaces these as the
+    /// raw message string. When guest code catches one, present it as the matching typed
+    /// Error so <c>instanceof</c>, <c>.name</c>, and <c>.message</c> hold — parity with
+    /// compiled mode, which throws a real <c>$RangeError</c>/<c>$TypeError</c>/etc.
+    /// Non-prefixed strings and non-string values pass through unchanged, so
+    /// <c>throw "msg"</c> and <c>throw new Error()</c> keep their exact caught value.
+    /// </summary>
+    /// <remarks>
+    /// Applied only at the catch binding, never on the propagation path: an UNcaught
+    /// host error must stay a string so <see cref="ThrowException.FromResult"/> lets it
+    /// surface to the host as a plain <see cref="Exception"/> (e.g. an uncaught strict-mode
+    /// violation), rather than a top-level-swallowed guest throw.
+    /// Known limitation: a guest <c>throw "RangeError: ..."</c> — a bare string that
+    /// happens to match a runtime error-message shape — is also coerced to a typed Error.
+    /// This is indistinguishable from a host error once stringified and is not exercised by
+    /// any real code (nobody throws an error-prefixed string instead of <c>new RangeError</c>).
+    /// </remarks>
+    internal object? CoerceCaughtValueForBinding(object? value)
+        => value is string s && TryCreateGuestErrorFromMessage(s) is { } typedError
+            ? typedError
+            : value;
+
+    /// <summary>
+    /// If <paramref name="message"/> begins with a known JS error-name prefix
+    /// (e.g. "RangeError: "), returns the matching guest <see cref="SharpTSError"/>
+    /// carrying the remainder as its message; otherwise returns <c>null</c> (#694).
+    /// </summary>
+    private static SharpTSError? TryCreateGuestErrorFromMessage(string? message)
+    {
+        if (message is null) return null;
+        foreach (var (prefix, name) in JsErrorMessagePrefixes)
+        {
+            if (message.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                var detail = message.Substring(prefix.Length);
+                return ErrorBuiltIns.CreateError(name, new List<object?> { detail });
+            }
+        }
+        return null;
     }
 
     /// <summary>

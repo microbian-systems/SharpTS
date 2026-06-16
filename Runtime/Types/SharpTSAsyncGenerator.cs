@@ -426,7 +426,8 @@ public class SharpTSAsyncGenerator : ITypeCategorized
                     // `catch {}` (no binding) is valid — only define the param when present, and bind
                     // the unwrapped guest value rather than the boxed RuntimeValue struct.
                     if (tryCatch.CatchParam != null)
-                        catchEnv.Define(tryCatch.CatchParam.Lexeme, tryResult.Value.ToObject());
+                        catchEnv.Define(tryCatch.CatchParam.Lexeme,
+                            _interpreter.CoerceCaughtValueForBinding(tryResult.Value.ToObject()));
                     RuntimeEnvironment prevEnv = _interpreter.Environment;
                     _interpreter.SetEnvironment(catchEnv);
                     try
