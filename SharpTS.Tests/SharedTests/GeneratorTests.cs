@@ -1311,6 +1311,240 @@ public class GeneratorTests
 
     #endregion
 
+    #region Generator function EXPRESSION in call/IIFE position — issue #488
+
+    // A generator function expression invoked inline as an IIFE establishes a generator context.
+    // The GeneratorArrowLifter must descend through the grouped callee so the expression is lifted
+    // (otherwise the type checker rejects its `yield` because the generator context is never set).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_IifeCallPosition(ExecutionMode mode)
+    {
+        // The exact repro from issue #488.
+        var source = """
+            const it = (function* () { yield 1; })();
+            console.log(it.next().value);
+            """;
+
+        Assert.Equal("1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_IifeSpreadIntoArray(ExecutionMode mode)
+    {
+        var source = """
+            const arr = [...(function* () { yield 1; yield 2; yield 3; })()];
+            console.log(arr.join(","));
+            """;
+
+        Assert.Equal("1,2,3\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
+
+    #region Generator function EXPRESSION inside loop/try/switch/labeled bodies — issue #634
+
+    // GeneratorArrowLifter.RewriteStmt must descend into for / for-of / for-in / do-while /
+    // try-catch-finally / switch / labeled statement bodies, or a generator function expression
+    // declared there is never lifted and its `yield` is rejected at type-check time.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_InsideForLoop(ExecutionMode mode)
+    {
+        // The exact repro from issue #634.
+        var source = """
+            for (let k = 0; k < 1; k++) {
+              const g = function* () { yield 99; };
+              console.log(g().next().value);
+            }
+            """;
+
+        Assert.Equal("99\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_InsideForOf(ExecutionMode mode)
+    {
+        // The generator yields a constant (not the loop variable): #634 is about the lifter reaching
+        // the for-of body, not closure capture. Capturing the block-scoped loop variable is a
+        // separate, unsupported case (the lift would move the body outside the loop's scope).
+        var source = """
+            for (const n of [10, 20]) {
+              const g = function* () { yield 1; };
+              console.log(g().next().value);
+            }
+            """;
+
+        Assert.Equal("1\n1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_InsideForIn(ExecutionMode mode)
+    {
+        var source = """
+            const obj = { a: 1 };
+            for (const k in obj) {
+              const g = function* () { yield 2; };
+              console.log(g().next().value);
+            }
+            """;
+
+        Assert.Equal("2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_InsideLoopClosesOverModuleScope(ExecutionMode mode)
+    {
+        // A generator expression inside a loop body may still close over a MODULE-scope binding;
+        // the lift carries it to module scope, where `factor` is visible (both modes).
+        var source = """
+            const factor = 7;
+            for (const n of [1, 2]) {
+              const g = function* () { yield factor; };
+              console.log(g().next().value);
+            }
+            """;
+
+        Assert.Equal("7\n7\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_InsideDoWhile(ExecutionMode mode)
+    {
+        var source = """
+            let i = 0;
+            do {
+              const g = function* () { yield 7; };
+              console.log(g().next().value);
+              i++;
+            } while (i < 1);
+            """;
+
+        Assert.Equal("7\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_InsideTryCatchFinally(ExecutionMode mode)
+    {
+        var source = """
+            try {
+              const g = function* () { yield 1; };
+              console.log(g().next().value);
+            } catch (e) {
+              const g = function* () { yield 2; };
+              console.log(g().next().value);
+            } finally {
+              const g = function* () { yield 3; };
+              console.log(g().next().value);
+            }
+            """;
+
+        Assert.Equal("1\n3\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_InsideSwitchCase(ExecutionMode mode)
+    {
+        var source = """
+            switch (1) {
+              case 1: {
+                const g = function* () { yield 42; };
+                console.log(g().next().value);
+                break;
+              }
+              default:
+                console.log("none");
+            }
+            """;
+
+        Assert.Equal("42\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_InsideLabeledStatement(ExecutionMode mode)
+    {
+        var source = """
+            outer: {
+              const g = function* () { yield 5; };
+              console.log(g().next().value);
+            }
+            """;
+
+        Assert.Equal("5\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
+
+    #region Generator function EXPRESSION closing over an enclosing function's local — issue #534
+
+    // The interpreter handles a generator expression that closes over an enclosing FUNCTION local:
+    // the lifter relocates it to the end of that function's body (keeping the local in lexical
+    // scope) rather than to module scope. The compiler's nested-generator lowering is incomplete
+    // (#501), so these run interpreted only — the compiler reports a clear "Yield not supported in
+    // this context" error for the same source (verified separately).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_ClosesOverFunctionLocal(ExecutionMode mode)
+    {
+        // The exact repro from issue #534.
+        var source = """
+            function outer() {
+              let y = 5;
+              const g = function*() { yield y; };
+              return [...g()];
+            }
+            console.log(outer());
+            """;
+
+        Assert.Equal("[5]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_ClosesOverFunctionParameter(ExecutionMode mode)
+    {
+        var source = """
+            function make(seed: number) {
+              const g = function*() { yield seed; yield seed * 2; };
+              return [...g()];
+            }
+            console.log(make(3));
+            """;
+
+        Assert.Equal("[3, 6]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_ClosesOverLocalCapturesByReference(ExecutionMode mode)
+    {
+        // Closures bind the variable, so a mutation before iteration is observed (not a snapshot).
+        var source = """
+            function outer() {
+              let c = 1;
+              const g = function*() { yield c; };
+              c = 99;
+              return [...g()];
+            }
+            console.log(outer());
+            """;
+
+        Assert.Equal("[99]\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
+
     #region Re-entrant next()/return()/throw() — "already running" (ECMA-262 §27.5.3.3) — issues #515, #521
 
     // ECMA-262 §27.5.3.3 (GeneratorValidate): calling next/return/throw on a generator whose state
