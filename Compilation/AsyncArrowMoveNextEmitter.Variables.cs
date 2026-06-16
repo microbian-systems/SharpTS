@@ -6,8 +6,21 @@ namespace SharpTS.Compilation;
 
 public partial class AsyncArrowMoveNextEmitter
 {
+    // Per-binding storage names for block-scoped let/const shadows (#766), shared with the analyzer via
+    // the analysis. Empty for the common no-shadow case (and for expression-bodied arrows).
+    private static readonly IReadOnlyDictionary<object, string> NoRenames = new Dictionary<object, string>();
+    private IReadOnlyDictionary<object, string> BlockScopeRenames => _analysis.BlockScopeRenames ?? NoRenames;
+
+    private static Token RenameToken(Token original, string lexeme) =>
+        new(original.Type, lexeme, original.Literal, original.Line, original.Start);
+
     protected override void EmitVariable(Expr.Variable v)
     {
+        // Resolve a shadowing block-scoped binding to its own storage before resolution (#766); a renamed
+        // binding is never a captured/DC name, so the capture checks below correctly fall through.
+        if (BlockScopeRenames.TryGetValue(v, out var renamed))
+            v = v with { Name = RenameToken(v.Name, renamed) };
+
         string name = v.Name.Lexeme;
 
         // A capture promoted into the enclosing function's display class (#625) is read through
@@ -90,6 +103,9 @@ public partial class AsyncArrowMoveNextEmitter
 
     protected override void EmitAssign(Expr.Assign a)
     {
+        if (BlockScopeRenames.TryGetValue(a, out var renamed))
+            a = a with { Name = RenameToken(a.Name, renamed) };
+
         string name = a.Name.Lexeme;
 
         EmitExpression(a.Value);
@@ -353,5 +369,46 @@ public partial class AsyncArrowMoveNextEmitter
         _il.Emit(OpCodes.Ldfld, _builder.OuterStateMachineField!);
         _il.Emit(OpCodes.Unbox, _builder.OuterStateMachineType!);
         _il.Emit(OpCodes.Ldfld, _ctx!.OuterFunctionDCField!);
+    }
+
+    // Const declarations, compound/logical assignment, and increment/decrement reach the variable
+    // through the operator node's name token (or the increment operand). Rewriting that token to the
+    // shadowing binding's storage name before delegating to the base routes both the read and the
+    // write to the right field/local (#766). The base re-enters EmitVarDeclaration / EmitVariable /
+    // EmitStoreVariable (all of which resolve by name here), so the rename flows through consistently.
+
+    protected override void EmitConstDeclaration(Stmt.Const c)
+    {
+        if (BlockScopeRenames.TryGetValue(c, out var renamed))
+            c = c with { Name = RenameToken(c.Name, renamed) };
+        base.EmitConstDeclaration(c);
+    }
+
+    protected override void EmitCompoundAssign(Expr.CompoundAssign ca)
+    {
+        if (BlockScopeRenames.TryGetValue(ca, out var renamed))
+            ca = ca with { Name = RenameToken(ca.Name, renamed) };
+        base.EmitCompoundAssign(ca);
+    }
+
+    protected override void EmitLogicalAssign(Expr.LogicalAssign la)
+    {
+        if (BlockScopeRenames.TryGetValue(la, out var renamed))
+            la = la with { Name = RenameToken(la.Name, renamed) };
+        base.EmitLogicalAssign(la);
+    }
+
+    protected override void EmitPrefixIncrement(Expr.PrefixIncrement pi)
+    {
+        if (pi.Operand is Expr.Variable v && BlockScopeRenames.TryGetValue(v, out var renamed))
+            pi = pi with { Operand = v with { Name = RenameToken(v.Name, renamed) } };
+        base.EmitPrefixIncrement(pi);
+    }
+
+    protected override void EmitPostfixIncrement(Expr.PostfixIncrement poi)
+    {
+        if (poi.Operand is Expr.Variable v && BlockScopeRenames.TryGetValue(v, out var renamed))
+            poi = poi with { Operand = v with { Name = RenameToken(v.Name, renamed) } };
+        base.EmitPostfixIncrement(poi);
     }
 }

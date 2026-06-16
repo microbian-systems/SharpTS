@@ -53,7 +53,10 @@ public partial class AsyncGeneratorStateAnalyzer : AstVisitorBase
         bool HasYieldStar,
         bool HasTryCatch,
         List<TryBlockInfo> TryBlocks,
-        List<Stmt.ForOf> ForOfLoopsWithSuspension  // for...of loops containing yields/awaits that need enumerator hoisting
+        List<Stmt.ForOf> ForOfLoopsWithSuspension,  // for...of loops containing yields/awaits that need enumerator hoisting
+        // Per-binding storage names for block-scoped let/const declarations that shadow an enclosing
+        // binding, keyed by declaration/reference AST node (see GeneratorBlockScopeRenamer, #766/#711).
+        IReadOnlyDictionary<object, string>? BlockScopeRenames = null
     )
     {
         /// <summary>
@@ -104,12 +107,27 @@ public partial class AsyncGeneratorStateAnalyzer : AstVisitorBase
     // Reusable visitor for analyzing captures
     private readonly CaptureAnalysisVisitor _captureVisitor = new();
 
+    // Block-scope shadow renames for this function (#766). Maps a declaration/reference AST node to the
+    // disambiguated storage name its binding uses; nodes absent from the map keep their source lexeme.
+    private IReadOnlyDictionary<object, string> _renames = new Dictionary<object, string>();
+
+    /// <summary>
+    /// Translates a declaration/reference node's source lexeme to its disambiguated storage name (#766),
+    /// or returns the lexeme unchanged when the binding is not a renamed shadow.
+    /// </summary>
+    private string StorageName(object node, string lexeme) =>
+        _renames.TryGetValue(node, out var renamed) ? renamed : lexeme;
+
     /// <summary>
     /// Analyzes an async generator function to determine suspension points and hoisted variables.
     /// </summary>
     public AsyncGeneratorFunctionAnalysis Analyze(Stmt.Function func)
     {
         Reset();
+
+        // Disambiguate block-scoped let/const declarations that shadow an enclosing binding so the
+        // hoisting decision below is made per-binding rather than per-name (#766, async analog of #711).
+        _renames = GeneratorBlockScopeRenamer.Compute(func);
 
         // Collect parameters as variables that need hoisting
         HashSet<string> parameters = [];
@@ -147,7 +165,8 @@ public partial class AsyncGeneratorStateAnalyzer : AstVisitorBase
             HasYieldStar: _hasYieldStar,
             HasTryCatch: _hasTryCatch,
             TryBlocks: tryBlocks,
-            ForOfLoopsWithSuspension: [.. _forOfLoopsWithSuspension]
+            ForOfLoopsWithSuspension: [.. _forOfLoopsWithSuspension],
+            BlockScopeRenames: _renames
         );
     }
 

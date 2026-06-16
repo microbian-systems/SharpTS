@@ -88,7 +88,8 @@ public partial class AsyncGeneratorStateAnalyzer
 
     protected override void VisitVariable(Expr.Variable expr)
     {
-        var name = expr.Name.Lexeme;
+        // Resolve to the binding's (possibly disambiguated) storage name (#766).
+        var name = StorageName(expr, expr.Name.Lexeme);
 
         // Track variables used in for...of loop bodies (for hoisting when loop contains suspension)
         foreach (var loop in _forOfStack)
@@ -104,22 +105,25 @@ public partial class AsyncGeneratorStateAnalyzer
 
     protected override void VisitAssign(Expr.Assign expr)
     {
-        if (_seenSuspension && _declaredVariables.Contains(expr.Name.Lexeme))
-            _variablesUsedAfterSuspension.Add(expr.Name.Lexeme);
+        var name = StorageName(expr, expr.Name.Lexeme);
+        if (_seenSuspension && _declaredVariables.Contains(name))
+            _variablesUsedAfterSuspension.Add(name);
         base.VisitAssign(expr);
     }
 
     protected override void VisitCompoundAssign(Expr.CompoundAssign expr)
     {
-        if (_seenSuspension && _declaredVariables.Contains(expr.Name.Lexeme))
-            _variablesUsedAfterSuspension.Add(expr.Name.Lexeme);
+        var name = StorageName(expr, expr.Name.Lexeme);
+        if (_seenSuspension && _declaredVariables.Contains(name))
+            _variablesUsedAfterSuspension.Add(name);
         base.VisitCompoundAssign(expr);
     }
 
     protected override void VisitLogicalAssign(Expr.LogicalAssign expr)
     {
-        if (_seenSuspension && _declaredVariables.Contains(expr.Name.Lexeme))
-            _variablesUsedAfterSuspension.Add(expr.Name.Lexeme);
+        var name = StorageName(expr, expr.Name.Lexeme);
+        if (_seenSuspension && _declaredVariables.Contains(name))
+            _variablesUsedAfterSuspension.Add(name);
         base.VisitLogicalAssign(expr);
     }
 

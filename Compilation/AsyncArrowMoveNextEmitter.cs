@@ -270,6 +270,10 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
 
     protected override void EmitVarDeclaration(Stmt.Var v)
     {
+        // Route a shadowing block-scoped binding to its own storage (#766).
+        if (BlockScopeRenames.TryGetValue(v, out var renamed))
+            v = v with { Name = RenameToken(v.Name, renamed) };
+
         if (v.Initializer != null)
         {
             EmitExpression(v.Initializer);

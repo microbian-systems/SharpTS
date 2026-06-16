@@ -8,20 +8,22 @@ public partial class AsyncStateAnalyzer
 
     protected override void VisitVar(Stmt.Var stmt)
     {
-        // Track variable declaration
-        _declaredVariables.Add(stmt.Name.Lexeme);
+        // Track variable declaration under its (possibly disambiguated) storage name (#766).
+        var name = StorageName(stmt, stmt.Name.Lexeme);
+        _declaredVariables.Add(name);
         if (!_seenAwait)
-            _variablesDeclaredBeforeAwait.Add(stmt.Name.Lexeme);
+            _variablesDeclaredBeforeAwait.Add(name);
 
         base.VisitVar(stmt);
     }
 
     protected override void VisitConst(Stmt.Const stmt)
     {
-        // Track const variable declaration
-        _declaredVariables.Add(stmt.Name.Lexeme);
+        // Track const variable declaration under its (possibly disambiguated) storage name (#766).
+        var name = StorageName(stmt, stmt.Name.Lexeme);
+        _declaredVariables.Add(name);
         if (!_seenAwait)
-            _variablesDeclaredBeforeAwait.Add(stmt.Name.Lexeme);
+            _variablesDeclaredBeforeAwait.Add(name);
 
         base.VisitConst(stmt);
     }

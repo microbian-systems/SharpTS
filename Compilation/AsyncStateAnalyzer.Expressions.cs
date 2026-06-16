@@ -53,31 +53,35 @@ public partial class AsyncStateAnalyzer
 
     protected override void VisitVariable(Expr.Variable expr)
     {
-        // Track variable usage after await
-        if (_seenAwait && _declaredVariables.Contains(expr.Name.Lexeme))
-            _variablesUsedAfterAwait.Add(expr.Name.Lexeme);
+        // Track variable usage after await, under its (possibly disambiguated) storage name (#766).
+        var name = StorageName(expr, expr.Name.Lexeme);
+        if (_seenAwait && _declaredVariables.Contains(name))
+            _variablesUsedAfterAwait.Add(name);
         // No base call needed - leaf node
     }
 
     protected override void VisitAssign(Expr.Assign expr)
     {
-        // Track assignment to variable after await
-        if (_seenAwait && _declaredVariables.Contains(expr.Name.Lexeme))
-            _variablesUsedAfterAwait.Add(expr.Name.Lexeme);
+        // Track assignment to variable after await, under its storage name (#766).
+        var name = StorageName(expr, expr.Name.Lexeme);
+        if (_seenAwait && _declaredVariables.Contains(name))
+            _variablesUsedAfterAwait.Add(name);
         base.VisitAssign(expr);
     }
 
     protected override void VisitCompoundAssign(Expr.CompoundAssign expr)
     {
-        if (_seenAwait && _declaredVariables.Contains(expr.Name.Lexeme))
-            _variablesUsedAfterAwait.Add(expr.Name.Lexeme);
+        var name = StorageName(expr, expr.Name.Lexeme);
+        if (_seenAwait && _declaredVariables.Contains(name))
+            _variablesUsedAfterAwait.Add(name);
         base.VisitCompoundAssign(expr);
     }
 
     protected override void VisitLogicalAssign(Expr.LogicalAssign expr)
     {
-        if (_seenAwait && _declaredVariables.Contains(expr.Name.Lexeme))
-            _variablesUsedAfterAwait.Add(expr.Name.Lexeme);
+        var name = StorageName(expr, expr.Name.Lexeme);
+        if (_seenAwait && _declaredVariables.Contains(name))
+            _variablesUsedAfterAwait.Add(name);
         base.VisitLogicalAssign(expr);
     }
 
