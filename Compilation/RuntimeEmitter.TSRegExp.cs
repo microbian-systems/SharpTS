@@ -42,6 +42,8 @@ public partial class RuntimeEmitter
     private MethodBuilder _tsRegExpFindGroupCloseMethod = null!;
     private FieldBuilder _tsRegExpCompileCacheField = null!;
     private MethodBuilder _tsRegExpGetCachedRegexMethod = null!;
+    private MethodBuilder _tsRegExpRewriteShorthandsMethod = null!;
+    private MethodBuilder _tsRegExpExpandShorthandMethod = null!;
     private MethodBuilder _tsRegExpSetLastIndexStrictMethod = null!;
     private MethodBuilder _tsRegExpResolveLastIndexMethod = null!;
 
@@ -79,6 +81,11 @@ public partial class RuntimeEmitter
         _tsRegExpCompileCacheField = typeBuilder.DefineField(
             "_compileCache", cdType, FieldAttributes.Private | FieldAttributes.Static);
         EmitTSRegExpCompileCacheCctor(typeBuilder, cdType);
+        // JS→.NET shorthand rewrite (\d \w \s and negations) — emitted before
+        // _GetCachedRegex, whose cache-miss branch compiles the rewritten
+        // pattern. ExpandShorthand must precede the rewriter that calls it.
+        EmitTSRegExpExpandShorthand(typeBuilder);
+        EmitTSRegExpRewriteShorthands(typeBuilder);
         EmitTSRegExpGetCachedRegex(typeBuilder, cdType);
 
         // Helper method for normalizing flags
@@ -219,8 +226,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, cdType.GetMethod("TryGetValue")!);
         il.Emit(OpCodes.Brtrue, hitLabel);
 
-        // var fresh = new Regex(pattern, options); _compileCache.TryAdd(key, fresh); return fresh
+        // var fresh = new Regex(RewriteEcmaScriptShorthands(pattern), options);
+        // _compileCache.TryAdd(key, fresh); return fresh
+        // The key (built above from the raw pattern) is unchanged, so the
+        // rewrite runs only on a cache miss — never on the hot cache-hit path.
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _tsRegExpRewriteShorthandsMethod);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Newobj, typeof(Regex).GetConstructor([_types.String, typeof(RegexOptions)])!);
         il.Emit(OpCodes.Stloc, freshLocal);
@@ -235,6 +246,176 @@ public partial class RuntimeEmitter
         il.MarkLabel(hitLabel);
         il.Emit(OpCodes.Ldloc, cachedLocal);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits <c>static string ExpandShorthand(char esc, bool inClass)</c> — the
+    /// per-escape replacement table consumed by
+    /// <see cref="EmitTSRegExpRewriteShorthands"/>. Returns the explicit class
+    /// for a positive shorthand (<c>\d \w \s</c>, inside or outside a class) or
+    /// its bracketed/negated form (<c>\D \W \S</c>, outside a class only);
+    /// returns <c>null</c> for a non-shorthand letter or a negated shorthand
+    /// inside a class (both pass through unchanged). Mirrors
+    /// <c>SharpTSRegExp.ExpandShorthand</c> (interp).
+    /// </summary>
+    private void EmitTSRegExpExpandShorthand(TypeBuilder typeBuilder)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ExpandShorthand", MethodAttributes.Private | MethodAttributes.Static,
+            _types.String, [_types.Char, _types.Boolean]);
+        _tsRegExpExpandShorthandMethod = method;
+        var il = method.GetILGenerator();
+
+        // The whitespace class inner is baked in straight from the interp
+        // constant, so both modes match the exact same set (one source of truth).
+        var ws = Runtime.Types.SharpTSRegExp.WhitespaceClassInner;
+
+        var ld = il.DefineLabel(); var lD = il.DefineLabel();
+        var lw = il.DefineLabel(); var lW = il.DefineLabel();
+        var ls = il.DefineLabel(); var lS = il.DefineLabel();
+
+        // switch (esc) { ... default: return null; }
+        void Dispatch(char ch, Label lbl)
+        {
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldc_I4, (int)ch); il.Emit(OpCodes.Beq, lbl);
+        }
+        Dispatch('d', ld); Dispatch('D', lD); Dispatch('w', lw);
+        Dispatch('W', lW); Dispatch('s', ls); Dispatch('S', lS);
+        il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Ret);
+
+        // return inClass ? inside : outside  (inside == null → Ldnull)
+        void Case(Label lbl, string? inside, string outside)
+        {
+            il.MarkLabel(lbl);
+            var inLbl = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Brtrue, inLbl);
+            il.Emit(OpCodes.Ldstr, outside); il.Emit(OpCodes.Ret);
+            il.MarkLabel(inLbl);
+            if (inside == null) il.Emit(OpCodes.Ldnull);
+            else il.Emit(OpCodes.Ldstr, inside);
+            il.Emit(OpCodes.Ret);
+        }
+        Case(ld, "0-9", "[0-9]");
+        Case(lD, null, "[^0-9]");
+        Case(lw, "A-Za-z0-9_", "[A-Za-z0-9_]");
+        Case(lW, null, "[^A-Za-z0-9_]");
+        Case(ls, ws, "[" + ws + "]");
+        Case(lS, null, "[^" + ws + "]");
+    }
+
+    /// <summary>
+    /// Emits <c>static string RewriteEcmaScriptShorthands(string pattern)</c> —
+    /// the compiled mirror of <c>SharpTSRegExp.RewriteEcmaScriptShorthands</c>.
+    /// Rewrites the JS shorthand escapes to explicit ECMAScript-exact sets so the
+    /// compiled .NET matcher follows JS semantics (sidesteps .NET's <c>\w</c>
+    /// U+0130 over-match and its narrow <c>\s</c>). Single forward pass tracking
+    /// <c>[…]</c> context and honoring backslash escapes; lazily allocates a
+    /// StringBuilder so a pattern with no rewritable shorthand returns the
+    /// original reference. Self-contained (BCL-only) — no SharpTS.dll reference.
+    /// </summary>
+    private void EmitTSRegExpRewriteShorthands(TypeBuilder typeBuilder)
+    {
+        var method = typeBuilder.DefineMethod(
+            "RewriteEcmaScriptShorthands", MethodAttributes.Private | MethodAttributes.Static,
+            _types.String, [_types.String]);
+        _tsRegExpRewriteShorthandsMethod = method;
+        var il = method.GetILGenerator();
+
+        var getLen = _types.String.GetProperty("Length")!.GetGetMethod()!;
+        var getChars = _types.String.GetMethod("get_Chars", [_types.Int32])!;
+        var sbCtorInt = _types.StringBuilder.GetConstructor([_types.Int32])!;
+        var sbAppendStr = _types.StringBuilder.GetMethod("Append", [_types.String])!;
+        var sbAppendChar = _types.StringBuilder.GetMethod("Append", [_types.Char])!;
+        var sbAppendSub = _types.StringBuilder.GetMethod("Append", [_types.String, _types.Int32, _types.Int32])!;
+        var sbToString = _types.StringBuilder.GetMethod("ToString", Type.EmptyTypes)!;
+
+        var sbLocal = il.DeclareLocal(_types.StringBuilder);
+        var inClassLocal = il.DeclareLocal(_types.Boolean);
+        var nLocal = il.DeclareLocal(_types.Int32);
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var cLocal = il.DeclareLocal(_types.Char);
+        var nextLocal = il.DeclareLocal(_types.Char);
+        var replLocal = il.DeclareLocal(_types.String);
+
+        var loopCond = il.DefineLabel();
+        var normalChar = il.DefineLabel();
+        var replNull = il.DefineLabel();
+        var haveSb = il.DefineLabel();
+        var replNullAdvance = il.DefineLabel();
+        var chkClose = il.DefineLabel();
+        var appendC = il.DefineLabel();
+        var incr = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+        var retSb = il.DefineLabel();
+
+        // sb = null; inClass = false; n = pattern.Length; i = 0
+        il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Stloc, sbLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, inClassLocal);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Callvirt, getLen); il.Emit(OpCodes.Stloc, nLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(loopCond);
+        // if (i >= n) goto end
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, endLabel);
+        // c = pattern[i]
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Callvirt, getChars); il.Emit(OpCodes.Stloc, cLocal);
+        // if (c != '\\') goto normalChar
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)'\\'); il.Emit(OpCodes.Bne_Un, normalChar);
+        // if (i + 1 >= n) goto normalChar   (lone trailing backslash → literal)
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Bge, normalChar);
+
+        // --- escape branch ---
+        // next = pattern[i + 1]
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Callvirt, getChars); il.Emit(OpCodes.Stloc, nextLocal);
+        // repl = ExpandShorthand(next, inClass)
+        il.Emit(OpCodes.Ldloc, nextLocal); il.Emit(OpCodes.Ldloc, inClassLocal); il.Emit(OpCodes.Call, _tsRegExpExpandShorthandMethod); il.Emit(OpCodes.Stloc, replLocal);
+        // if (repl == null) goto replNull
+        il.Emit(OpCodes.Ldloc, replLocal); il.Emit(OpCodes.Brfalse, replNull);
+        //   if (sb != null) goto haveSb
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Brtrue, haveSb);
+        //     sb = new StringBuilder(n + 16); sb.Append(pattern, 0, i)
+        il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Ldc_I4, 16); il.Emit(OpCodes.Add); il.Emit(OpCodes.Newobj, sbCtorInt); il.Emit(OpCodes.Stloc, sbLocal);
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Callvirt, sbAppendSub); il.Emit(OpCodes.Pop);
+        il.MarkLabel(haveSb);
+        //   sb.Append(repl)
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Ldloc, replLocal); il.Emit(OpCodes.Callvirt, sbAppendStr); il.Emit(OpCodes.Pop);
+        //   i += 2; goto loopCond
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopCond);
+
+        il.MarkLabel(replNull);
+        //   if (sb == null) goto replNullAdvance   (nothing buffered yet)
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Brfalse, replNullAdvance);
+        //   sb.Append('\\'); sb.Append(next)
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Ldc_I4, (int)'\\'); il.Emit(OpCodes.Callvirt, sbAppendChar); il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Ldloc, nextLocal); il.Emit(OpCodes.Callvirt, sbAppendChar); il.Emit(OpCodes.Pop);
+        il.MarkLabel(replNullAdvance);
+        //   i += 2; goto loopCond
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopCond);
+
+        il.MarkLabel(normalChar);
+        // if (c == '[') inClass = true; else if (c == ']') inClass = false;
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)'['); il.Emit(OpCodes.Bne_Un, chkClose);
+        il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Stloc, inClassLocal); il.Emit(OpCodes.Br, appendC);
+        il.MarkLabel(chkClose);
+        il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Ldc_I4, (int)']'); il.Emit(OpCodes.Bne_Un, appendC);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, inClassLocal);
+        il.MarkLabel(appendC);
+        // if (sb != null) sb.Append(c)
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Brfalse, incr);
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Ldloc, cLocal); il.Emit(OpCodes.Callvirt, sbAppendChar); il.Emit(OpCodes.Pop);
+        il.MarkLabel(incr);
+        // i += 1; goto loopCond
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopCond);
+
+        il.MarkLabel(endLabel);
+        // return sb == null ? pattern : sb.ToString()
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Brtrue, retSb);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ret);
+        il.MarkLabel(retSb);
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Callvirt, sbToString); il.Emit(OpCodes.Ret);
     }
 
     private void EmitTSRegExpNormalizeFlags(TypeBuilder typeBuilder, EmittedRuntime runtime)

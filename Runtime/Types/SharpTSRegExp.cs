@@ -207,8 +207,13 @@ public class SharpTSRegExp : ITypeCategorized
 
         try
         {
+            // Rewrite the JS shorthand escapes (\d \w \s and negations) to
+            // explicit ECMAScript-exact sets before compiling — see
+            // RewriteEcmaScriptShorthands. The cache key stays the *original*
+            // pattern, so the rewrite runs only on a cache miss (once per
+            // distinct literal) and never on the hot cache-hit path.
             _regex = _compileCache.GetOrAdd((pattern, options),
-                static key => new Regex(key.Pattern, key.Options));
+                static key => new Regex(RewriteEcmaScriptShorthands(key.Pattern), key.Options));
         }
         catch (ArgumentException ex)
         {
@@ -224,6 +229,93 @@ public class SharpTSRegExp : ITypeCategorized
                 new SharpTSSyntaxError($"Invalid regular expression: {ex.Message}"));
         }
     }
+
+    // ECMA-262 §22.2.2.10 WhiteSpace + LineTerminator — the exact set JS `\s`
+    // matches: [ \t\n\v\f\r] plus the Unicode space separators (Zs) and the
+    // line/paragraph separators. Written as the *inner* of a character class so
+    // it can be spliced into `[…]` (positive) or `[^…]` (negated). The emitted
+    // `$RegExp` mirror bakes this exact value in via Ldstr (RuntimeEmitter.TSRegExp.cs),
+    // so there is a single source of truth for the set.
+    internal const string WhitespaceClassInner =
+        @"\t\n\x0B\f\r\x20\xA0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF";
+
+    /// <summary>
+    /// Rewrites the ECMAScript shorthand class escapes (<c>\d \D \w \W \s \S</c>)
+    /// to explicit character sets before the pattern is handed to .NET, so the
+    /// compiled matcher follows JS semantics rather than .NET's. This sidesteps
+    /// two divergences in <see cref="RegexOptions.ECMAScript"/> mode:
+    /// <list type="bullet">
+    /// <item>.NET's <c>\w</c> matches U+0130 (İ); JS's does not.</item>
+    /// <item>.NET's <c>\s</c> is just <c>[ \t\n\v\f\r]</c> — missing the Unicode
+    /// WhiteSpace/LineTerminator chars JS includes (U+00A0, U+1680,
+    /// U+2000–U+200A, U+2028, U+2029, U+202F, U+205F, U+3000, U+FEFF).</item>
+    /// </list>
+    /// In the non-ECMAScript fallback (named groups / <c>s</c> flag) the same
+    /// shorthands are Unicode-broad in .NET, so pinning them to the JS sets there
+    /// is also a fix, not a regression. The rewrite is context-aware: the
+    /// positive forms expand both inside and outside <c>[…]</c> classes; the
+    /// negated forms (<c>\D \W \S</c>) expand only *outside* a class — a negated
+    /// shorthand inside a class can't be expressed without engine-level class
+    /// nesting, so those pass through unchanged (tracked by #749). Backslash
+    /// escapes are respected, so <c>\\d</c>, <c>\cd</c>, backreferences, etc. are
+    /// left untouched. <c>iu</c>-mode case-folding edge cases (K U+212A, ſ U+017F
+    /// folding into <c>\w</c>) remain out of scope.
+    /// The RegExp's <c>source</c> keeps the original pattern; only the internal
+    /// matcher sees the rewrite.
+    /// </summary>
+    internal static string RewriteEcmaScriptShorthands(string pattern)
+    {
+        StringBuilder? sb = null;
+        bool inClass = false;
+        int n = pattern.Length;
+        for (int i = 0; i < n; i++)
+        {
+            char c = pattern[i];
+            if (c == '\\' && i + 1 < n)
+            {
+                char next = pattern[i + 1];
+                string? repl = ExpandShorthand(next, inClass);
+                if (repl != null)
+                {
+                    // Lazily allocate, back-filling the untouched prefix.
+                    if (sb == null)
+                    {
+                        sb = new StringBuilder(n + 16);
+                        sb.Append(pattern, 0, i);
+                    }
+                    sb.Append(repl);
+                }
+                else
+                {
+                    // Not a rewritable shorthand (or a negated form inside a
+                    // class) — copy the escape pair through verbatim.
+                    sb?.Append('\\').Append(next);
+                }
+                i++; // also consume the escaped char
+                continue;
+            }
+            if (c == '[') inClass = true;
+            else if (c == ']') inClass = false;
+            sb?.Append(c);
+        }
+        return sb == null ? pattern : sb.ToString();
+    }
+
+    /// <summary>
+    /// Returns the explicit replacement for a shorthand escape letter, or
+    /// <c>null</c> when the letter is not a shorthand or is a negated shorthand
+    /// inside a character class (which must pass through unchanged).
+    /// </summary>
+    private static string? ExpandShorthand(char esc, bool inClass) => esc switch
+    {
+        'd' => inClass ? "0-9" : "[0-9]",
+        'D' => inClass ? null : "[^0-9]",
+        'w' => inClass ? "A-Za-z0-9_" : "[A-Za-z0-9_]",
+        'W' => inClass ? null : "[^A-Za-z0-9_]",
+        's' => inClass ? WhitespaceClassInner : "[" + WhitespaceClassInner + "]",
+        'S' => inClass ? null : "[^" + WhitespaceClassInner + "]",
+        _ => null,
+    };
 
     /// <summary>
     /// ECMA-262 §22.2.3.3 flag validation: throws SyntaxError if a flag is not
