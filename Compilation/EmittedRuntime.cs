@@ -765,6 +765,7 @@ public class EmittedRuntime
     public MethodBuilder InvokeTaggedTemplateWithThis { get; set; } = null!;
     public MethodBuilder StringRaw { get; set; } = null!;
     public MethodBuilder ObjectRest { get; set; } = null!;
+    public MethodBuilder ArrayDestructureSource { get; set; } = null!;  // #685: normalize array binding-pattern source via the iterator protocol
 
     // JSON methods
     public MethodBuilder JsonParse { get; set; } = null!;

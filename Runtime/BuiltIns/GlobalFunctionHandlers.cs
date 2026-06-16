@@ -52,6 +52,7 @@ internal static class GlobalFunctionHandlers
 
         // Internal helper
         registry.RegisterV2(BuiltInNames.ObjectRest, HandleObjectRest);
+        registry.RegisterV2(BuiltInNames.ArrayDestructure, HandleArrayDestructure);
 
         // Note: Error constructors are handled by SharpTSErrorClass (registered as globals).
         // Error() without 'new' resolves to SharpTSErrorClass.Call() via the general
@@ -371,6 +372,18 @@ internal static class GlobalFunctionHandlers
             return RuntimeValue.FromBoxed(ObjectBuiltIns.ObjectRest(source, (IEnumerable<object?>?)excludeKeys ?? []));
         }
         throw new Exception($"{BuiltInNames.ObjectRest} requires 2 arguments");
+    }
+
+    private static async ValueTask<RuntimeValue> HandleArrayDestructure(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
+        IReadOnlyList<Expr> arguments,
+        Interpreter interpreter)
+    {
+        if (arguments.Count != 1)
+            throw new Exception($"{BuiltInNames.ArrayDestructure} requires 1 argument");
+
+        var source = (await evaluateArg(arguments[0])).ToObject();
+        return RuntimeValue.FromBoxed(interpreter.NormalizeArrayDestructureSource(source));
     }
 
     /// <summary>

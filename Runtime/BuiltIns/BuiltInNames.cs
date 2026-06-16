@@ -216,5 +216,16 @@ public static class BuiltInNames
     /// </summary>
     public const string ObjectRest = "__objectRest";
 
+    /// <summary>
+    /// Normalizes an array-destructuring source through the iterator protocol.
+    /// Array binding patterns (<c>const [a, b] = src</c>) desugar to positional
+    /// index access, which only works for index-addressable sources. This helper
+    /// wraps the source so non-indexable iterables (generators, Set, Map, objects
+    /// with <c>[Symbol.iterator]</c>) are materialized into an array first, matching
+    /// JS's iterator-protocol semantics (#685). Index-addressable sources
+    /// (arrays, strings, tuples) pass through unchanged to keep the fast path.
+    /// </summary>
+    public const string ArrayDestructure = "__arrayDestructure";
+
     #endregion
 }
