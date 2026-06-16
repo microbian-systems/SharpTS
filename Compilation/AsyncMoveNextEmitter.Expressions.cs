@@ -10,14 +10,26 @@ public partial class AsyncMoveNextEmitter
 
     protected override void EmitAwait(Expr.Await a)
     {
-        int stateNumber = _currentAwaitState++;
-        var resumeLabel = _stateLabels[stateNumber];
-        var continueLabel = _il.DefineLabel();
-        var awaiterField = _builder.AwaiterFields[stateNumber];
-
         // 1. Emit the awaited expression (should produce Task<object> or $Promise)
         EmitExpression(a.Expression);
         EnsureBoxed();
+
+        // 2+. Coerce to Task<object>, suspend/resume, and leave the awaited result on the stack.
+        EmitAwaitFromValueOnStack(_currentAwaitState++);
+    }
+
+    /// <summary>
+    /// Emits the await of a value already on the evaluation stack (boxed): coerces it to
+    /// <c>Task&lt;object&gt;</c> (unwrapping $Promise / adopting thenables / wrapping plain values),
+    /// suspends the state machine until it settles, and leaves the awaited result on the stack.
+    /// Shared by <see cref="EmitAwait"/> and the <c>for await…of</c> loop's implicit next()/return()
+    /// awaits (#631); <paramref name="stateNumber"/> is the reserved suspension state for this await.
+    /// </summary>
+    internal void EmitAwaitFromValueOnStack(int stateNumber)
+    {
+        var resumeLabel = _stateLabels[stateNumber];
+        var continueLabel = _il.DefineLabel();
+        var awaiterField = _builder.AwaiterFields[stateNumber];
 
         // 2. Convert to Task<object> - handle $Promise, Task<object>, or non-Task values
         var taskLocal = _il.DeclareLocal(typeof(Task<object>));

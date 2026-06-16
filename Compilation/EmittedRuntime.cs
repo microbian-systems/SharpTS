@@ -1393,6 +1393,10 @@ public class EmittedRuntime
     // Async Generator await continuation helper
     public MethodBuilder AsyncGeneratorAwaitContinue { get; set; } = null!;
 
+    // Async Generator next-result builder: awaits a MoveNextAsync ValueTask<bool> and produces the
+    // { value, done } Task<object> for next(), so next() never blocks the event-loop thread (#631/#542).
+    public MethodBuilder AsyncGeneratorBuildResult { get; set; } = null!;
+
     // Iterator helper methods (ES2025 Iterator Helpers)
     public MethodBuilder NormalizeToEnumerator { get; set; } = null!;
     public MethodBuilder IteratorMap { get; set; } = null!;
