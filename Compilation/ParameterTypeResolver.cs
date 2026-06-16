@@ -311,15 +311,21 @@ public static class ParameterTypeResolver
     /// Resolves parameter types for a class method.
     /// </summary>
     /// <remarks>
-    /// Deliberately does NOT widen value-type-defaulted params to <c>object</c> (unlike free
-    /// functions and constructors, which do). Instance methods are <b>virtual</b>: changing a
-    /// defaulted param's slot from <c>double</c>/<c>bool</c> to <c>object</c> would change the CLR
-    /// signature and break override matching against a base method that declares the same param
-    /// without a default (the derived override silently lands in a new vtable slot, so a
-    /// base-typed call dispatches to the base method). Reference-type defaults still fire via the
-    /// entry prologue without any slot change (a reference slot already holds null). Firing
-    /// value-type method defaults override-safely needs hierarchy-consistent widening or bridge
-    /// methods — tracked as #737.
+    /// A parameter with a <b>value-type default</b> (<c>x: number = N</c>) needs an <c>object</c>
+    /// slot so the entry prologue can observe the <c>$Undefined</c> sentinel and fire the default
+    /// (a <c>double</c>/<c>bool</c> slot cannot — it coerces the sentinel to <c>NaN</c>/<c>false</c>).
+    /// <list type="bullet">
+    /// <item><b>Static methods</b> are non-virtual, so widening such a param is always safe — done
+    /// directly (#705/#723).</item>
+    /// <item><b>Instance methods</b> are virtual: widening one override's slot would change its CLR
+    /// signature and silently break override matching (the derived method lands in a new vtable
+    /// slot). So the decision is made <i>hierarchy-consistently</i> — a position is widened across
+    /// the WHOLE override group when any member makes it an optional value-type parameter, keeping
+    /// every override's signature identical (see <see cref="ComputeInstanceMethodWidenMask"/>).
+    /// (#737)</item>
+    /// </list>
+    /// Reference-type defaults need no slot change (a reference slot already holds null, which the
+    /// prologue treats as undefined), so they are left alone in both cases.
     /// </remarks>
     public static Type[] ResolveMethodParameters(
         string className,
@@ -336,6 +342,7 @@ public static class ParameterTypeResolver
             return parameters.Select(p => ResolveParameterType(p, typeMapper)).ToArray();
 
         TSTypeInfo.Function? funcType = null;
+        bool isStatic = false;
 
         // Check instance methods
         if (classType.Methods.TryGetValue(methodName, out var methodType))
@@ -346,48 +353,202 @@ public static class ParameterTypeResolver
         else if (classType.StaticMethods.TryGetValue(methodName, out var staticMethodType))
         {
             funcType = ExtractFunctionType(staticMethodType);
+            isStatic = true;
         }
 
+        Type[] resolved;
         if (funcType == null || funcType.ParamTypes.Count != parameters.Count)
-            return parameters.Select(p => WidenIfUndefinedReachableParam(ResolveParameterType(p, typeMapper), p, typeMap)).ToArray();
+        {
+            resolved = parameters.Select(p => WidenIfUndefinedReachableParam(ResolveParameterType(p, typeMapper), p, typeMap)).ToArray();
+        }
+        else
+        {
+            // Map each parameter type, handling optional parameters and BigInteger
+            resolved = funcType.ParamTypes
+                .Select((pt, i) =>
+                {
+                    Type mappedType;
+                    try
+                    {
+                        mappedType = typeMapper.MapTypeInfoStrict(pt);
+                    }
+                    catch
+                    {
+                        // Union types may throw during early method definition phase
+                        // when TypeBuilder isn't finalized yet. Fall back to object.
+                        return typeof(object);
+                    }
 
-        // Map each parameter type, handling optional parameters and BigInteger
-        return funcType.ParamTypes
-            .Select((pt, i) =>
+                    // BigInteger parameters need to stay as object because BigInt operations
+                    // in the emitter expect boxed values
+                    if (mappedType == typeof(System.Numerics.BigInteger))
+                    {
+                        return typeof(object);
+                    }
+
+                    // If parameter is optional (no explicit default), use object so undefined
+                    // can be passed as the missing-argument sentinel (JS spec)
+                    if (i < parameters.Count &&
+                        parameters[i].DefaultValue == null &&
+                        parameters[i].IsOptional)
+                    {
+                        return typeof(object);
+                    }
+
+                    return i < parameters.Count
+                        ? CoerceParamSlotType(WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap), pt, typeMapper)
+                        : CoerceParamSlotType(mappedType, pt, typeMapper);
+                })
+                .ToArray();
+        }
+
+        WidenValueTypeDefaultedMethodParams(resolved, parameters, className, methodName, isStatic, typeMapper, typeMap);
+        return resolved;
+    }
+
+    /// <summary>
+    /// Widens a method parameter slot to <c>object</c> wherever a value-type default needs to be able
+    /// to hold the <c>$Undefined</c> sentinel — non-virtually for static methods, and
+    /// hierarchy-consistently for (virtual) instance methods. No-op when no value-type defaults are
+    /// involved, so the common method keeps its fast unboxed slots. (#705/#723/#737)
+    /// </summary>
+    private static void WidenValueTypeDefaultedMethodParams(
+        Type[] resolved,
+        List<Stmt.Parameter> parameters,
+        string className,
+        string methodName,
+        bool isStatic,
+        TypeMapper typeMapper,
+        TypeMap typeMap)
+    {
+        if (isStatic)
+        {
+            // Non-virtual: widening a value-type-defaulted param can never break override matching.
+            for (int i = 0; i < parameters.Count && i < resolved.Length; i++)
+                if (parameters[i].DefaultValue != null && !parameters[i].IsRest && resolved[i].IsValueType)
+                    resolved[i] = typeof(object);
+            return;
+        }
+
+        // Virtual: widen each value-type slot the override group needs as object, so every override
+        // keeps an identical CLR signature (preserving vtable dispatch).
+        var mask = ComputeInstanceMethodWidenMask(className, methodName, resolved.Length, typeMapper, typeMap);
+        for (int i = 0; i < resolved.Length; i++)
+            if (mask[i] && resolved[i].IsValueType)
+                resolved[i] = typeof(object);
+    }
+
+    /// <summary>
+    /// Computes, for an instance (virtual) method, which parameter positions must use an
+    /// <c>object</c> slot so a value-type default can fire via the entry prologue. The decision is
+    /// <b>hierarchy-consistent</b>: a position is flagged when ANY member of the method's override
+    /// group (its root declaration plus every class that overrides it) makes that position an
+    /// optional value-type parameter. Flagging the whole group keeps every override's CLR signature
+    /// identical, so a derived override that adds a default still lands in the base's vtable slot
+    /// and a base-typed call dispatches to it correctly. (#737)
+    /// </summary>
+    private static bool[] ComputeInstanceMethodWidenMask(
+        string className, string methodName, int paramCount, TypeMapper typeMapper, TypeMap typeMap)
+    {
+        var mask = new bool[paramCount];
+        if (paramCount == 0)
+            return mask;
+
+        var root = FindMethodRootDeclarer(className, methodName, typeMap);
+        if (root == null)
+            return mask;
+
+        // Union the optional-value-type positions over every class whose method shares this root
+        // declaration (i.e. the override group). A class only declares the method if it is a key in
+        // its OWN Methods map (lookup walks the chain, but Methods holds own-declared entries only).
+        foreach (var (otherName, otherClass) in typeMap.ClassTypes)
+        {
+            if (!otherClass.Methods.TryGetValue(methodName, out var otherMethodType))
+                continue;
+            if (FindMethodRootDeclarer(otherName, methodName, typeMap) != root)
+                continue;
+            if (ExtractFunctionType(otherMethodType) is not { } f)
+                continue;
+
+            int minArity = f.MinArity;
+            int count = Math.Min(paramCount, f.ParamTypes.Count);
+            for (int i = 0; i < count; i++)
             {
-                Type mappedType;
-                try
-                {
-                    mappedType = typeMapper.MapTypeInfoStrict(pt);
-                }
-                catch
-                {
-                    // Union types may throw during early method definition phase
-                    // when TypeBuilder isn't finalized yet. Fall back to object.
-                    return typeof(object);
-                }
+                // Positions below the member's arity are required there — a required param is always
+                // supplied, so it never needs an undefined-capable slot on this member's behalf.
+                if (i < minArity)
+                    continue;
+                if (IsValueTypeParamSlot(typeMapper, f.ParamTypes[i]))
+                    mask[i] = true;
+            }
+        }
 
-                // BigInteger parameters need to stay as object because BigInt operations
-                // in the emitter expect boxed values
-                if (mappedType == typeof(System.Numerics.BigInteger))
-                {
-                    return typeof(object);
-                }
+        return mask;
+    }
 
-                // If parameter is optional (no explicit default), use object so undefined
-                // can be passed as the missing-argument sentinel (JS spec)
-                if (i < parameters.Count &&
-                    parameters[i].DefaultValue == null &&
-                    parameters[i].IsOptional)
-                {
-                    return typeof(object);
-                }
+    /// <summary>
+    /// Returns the name of the topmost class in <paramref name="className"/>'s ancestry (inclusive)
+    /// that declares <paramref name="methodName"/> — the class that owns the method's vtable slot.
+    /// Two classes share an override group iff they have the same root declarer. Returns null if the
+    /// method is not declared anywhere in the chain.
+    /// </summary>
+    private static string? FindMethodRootDeclarer(string className, string methodName, TypeMap typeMap)
+    {
+        var cls = typeMap.GetClassType(className);
+        if (cls == null)
+            return null;
 
-                return i < parameters.Count
-                    ? CoerceParamSlotType(WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap), pt, typeMapper)
-                    : CoerceParamSlotType(mappedType, pt, typeMapper);
-            })
-            .ToArray();
+        string? root = cls.Methods.ContainsKey(methodName) ? className : null;
+        var visited = new HashSet<string>(StringComparer.Ordinal) { className };
+        string? superName = GetSuperclassName(cls);
+        while (superName != null && visited.Add(superName))
+        {
+            var super = typeMap.GetClassType(superName);
+            if (super == null)
+                break;
+            if (super.Methods.ContainsKey(methodName))
+                root = superName;
+            superName = GetSuperclassName(super);
+        }
+        return root;
+    }
+
+    /// <summary>
+    /// Extracts the (simple) name of a class's direct superclass, unwrapping an instantiated generic
+    /// base (<c>extends Box&lt;number&gt;</c>) to its generic definition's name. Returns null when the
+    /// class has no superclass.
+    /// </summary>
+    private static string? GetSuperclassName(TSTypeInfo.Class cls) => cls.Superclass switch
+    {
+        TSTypeInfo.Class c => c.Name,
+        TSTypeInfo.MutableClass mc => mc.Name,
+        TSTypeInfo.GenericClass gc => gc.Name,
+        TSTypeInfo.InstantiatedGeneric ig => ig.GenericDefinition switch
+        {
+            TSTypeInfo.Class c => c.Name,
+            TSTypeInfo.MutableClass mc => mc.Name,
+            TSTypeInfo.GenericClass gc => gc.Name,
+            _ => null
+        },
+        _ => null
+    };
+
+    /// <summary>
+    /// True when a parameter's TS type maps to an unboxed CLR value-type slot (e.g. <c>number</c> →
+    /// <c>double</c>, <c>boolean</c> → <c>bool</c>) — the slots that cannot hold the <c>$Undefined</c>
+    /// sentinel and so must be widened to <c>object</c> when defaulted. Maps defensively (a mapping
+    /// can throw during early definition) and treats failures as non-value-type (do not widen).
+    /// </summary>
+    private static bool IsValueTypeParamSlot(TypeMapper typeMapper, TSTypeInfo paramType)
+    {
+        try
+        {
+            return typeMapper.MapTypeInfoStrict(paramType).IsValueType;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>

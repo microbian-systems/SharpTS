@@ -35,7 +35,7 @@ public class AsyncFunctionCallHandler : ICallHandler
         }
 
         for (int i = call.Arguments.Count; i < paramCount; i++)
-            emitter.EmitDefaultForType(asyncMethodParams[i].ParameterType);
+            emitter.EmitOmittedArgument(asyncMethodParams[i].ParameterType);
 
         il.Emit(OpCodes.Call, asyncMethod);
 

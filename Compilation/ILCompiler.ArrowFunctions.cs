@@ -241,6 +241,9 @@ public partial class ILCompiler
                     methodBuilder.DefineParameter(1, ParameterAttributes.None, "__this");
                     for (int i = 0; i < arrow.Parameters.Count; i++)
                         methodBuilder.DefineParameter(i + 2, ParameterAttributes.None, arrow.Parameters[i].Name.Lexeme);
+                    // Back the name-based __this detection with an attribute that survives a --ref-asm
+                    // parameter-name strip, so a value-call doesn't shift its arguments. (#738)
+                    MarkExpectsThis(methodBuilder);
                 }
                 else
                 {
@@ -395,6 +398,8 @@ public partial class ILCompiler
                     invokeMethod.DefineParameter(1, ParameterAttributes.None, "__this");
                     for (int i = 0; i < arrow.Parameters.Count; i++)
                         invokeMethod.DefineParameter(i + 2, ParameterAttributes.None, arrow.Parameters[i].Name.Lexeme);
+                    // Survive a --ref-asm parameter-name strip (see the sibling site above). (#738)
+                    MarkExpectsThis(invokeMethod);
                 }
                 else
                 {

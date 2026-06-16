@@ -37,6 +37,13 @@ public class TypeMap
     public TypeInfo.Class? GetClassType(string className) => _classTypes.GetValueOrDefault(className);
 
     /// <summary>
+    /// All registered class types, keyed by (simple) class name. Used to walk the inheritance graph
+    /// — e.g. to find every override of a method so the compiler can give them a hierarchy-consistent
+    /// CLR signature (override-safe value-type default-parameter widening, #737).
+    /// </summary>
+    public IReadOnlyDictionary<string, TypeInfo.Class> ClassTypes => _classTypes;
+
+    /// <summary>
     /// Registers a class expression type by expression reference for IL compiler lookup.
     /// </summary>
     public void SetClassExprType(Expr.ClassExpr expr, TypeInfo.Class classType) => _classExprTypes[expr] = classType;

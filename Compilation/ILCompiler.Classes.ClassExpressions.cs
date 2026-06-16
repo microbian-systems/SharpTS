@@ -653,7 +653,7 @@ public partial class ILCompiler
             if (baseCtor != null)
             {
                 foreach (var p in baseCtor.GetParameters())
-                    emitter.EmitDefaultForType(p.ParameterType);
+                    emitter.EmitOmittedArgument(p.ParameterType);
                 il.Emit(OpCodes.Call, baseCtor);
             }
             else

@@ -13,6 +13,35 @@ namespace SharpTS.Tests.CompilerTests;
 public class ReferenceAssemblyTests
 {
     /// <summary>
+    /// #738: a function expression invoked as a value must not shift its arguments under --ref-asm.
+    /// The reference-assembly rewrite strips parameter names, which used to break the runtime
+    /// <c>params[0].Name == "__this"</c> receiver-slot detection — so a value-call mapped the first
+    /// real argument onto the synthetic <c>__this</c> slot, shifting everything by one (e.g.
+    /// <c>f(4)</c> returned the default <c>3</c> instead of <c>7</c>). The <c>$ExpectsThis</c> marker
+    /// attribute survives the rewrite and restores correct detection.
+    /// </summary>
+    [Fact]
+    public void RefAsm_FunctionExpressionValueCall_DoesNotShiftArguments()
+    {
+        var source = """
+            const f = function (x: number, y: number = 3) { return x + y; };
+            console.log(f(4));
+            console.log(f(4, 10));
+            """;
+
+        var (tempDir, dllPath) = TestHarness.CompileWithRefAsm(source);
+        try
+        {
+            var output = TestHarness.ExecuteCompiledDll(dllPath);
+            Assert.Equal("7\n14\n", output.Replace("\r\n", "\n"));
+        }
+        finally
+        {
+            CleanupTempDir(tempDir);
+        }
+    }
+
+    /// <summary>
     /// Verifies that an async function compiled with --ref-asm references System.Runtime.
     /// </summary>
     [Fact]

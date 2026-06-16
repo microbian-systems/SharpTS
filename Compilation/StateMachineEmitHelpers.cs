@@ -807,7 +807,21 @@ public class StateMachineEmitHelpers
         emitLeft();
         EnsureBoxed();
         _il.Emit(OpCodes.Dup);
-        _il.Emit(OpCodes.Brfalse, rightLabel);
+        _il.Emit(OpCodes.Brfalse, rightLabel);     // CLR null → use right
+
+        // The `$Undefined` sentinel is a non-null reference, so `brfalse` does not catch it — test
+        // it explicitly so `undefined ?? right` evaluates the right side. Without this, a state
+        // machine (generator/async) treated the sentinel as a present value and returned it, which a
+        // value omitted from an optional parameter now produces (an omitted arg pads `$Undefined`,
+        // not null) — manifesting e.g. as an infinite `while (x.length) yield* this.pop()` when
+        // `pop(error)` does `error ?? stack.pop()`. Mirrors the non-state-machine ILEmitter override.
+        if (_runtime?.UndefinedType != null)
+        {
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Isinst, _runtime.UndefinedType);
+            _il.Emit(OpCodes.Brtrue, rightLabel);  // undefined → use right
+        }
+
         _il.Emit(OpCodes.Br, endLabel);
 
         MarkLabel(rightLabel);

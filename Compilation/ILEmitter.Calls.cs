@@ -196,7 +196,7 @@ public partial class ILEmitter
                             EmitBoxIfNeeded(c.Arguments[i]);
                     }
                     for (int i = c.Arguments.Count; i < staticMethodParams.Length; i++)
-                        EmitDefaultForType(staticMethodParams[i].ParameterType);
+                        EmitOmittedArgument(staticMethodParams[i].ParameterType);
                     IL.Emit(OpCodes.Call, callableMethod);
                     SetStackUnknown();
                     return;

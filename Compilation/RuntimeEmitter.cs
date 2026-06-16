@@ -67,6 +67,11 @@ public partial class RuntimeEmitter
         // can ldtoken the type for the IsDefined read in AdjustArgs caching. (#640)
         EmitPadUndefinedAttribute(moduleBuilder, runtime);
 
+        // Marker attribute for "this method's first parameter is the synthetic `__this` receiver".
+        // Defined+created before EmitTSFunctionClass so the ctor IL can ldtoken the type for the
+        // IsDefined read that backstops the (ref-asm-fragile) parameter-name check. (#738)
+        EmitExpectsThisAttribute(moduleBuilder, runtime);
+
         // Emit TSFunction class first (other methods depend on it)
         EmitTSFunctionClass(moduleBuilder, runtime);
 

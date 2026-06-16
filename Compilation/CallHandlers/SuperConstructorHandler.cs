@@ -234,7 +234,7 @@ public class SuperConstructorHandler : ICallHandler
         }
 
         for (int i = arguments.Count; i < ctorParams.Length; i++)
-            emitter.EmitDefaultForType(ctorParams[i].ParameterType);
+            emitter.EmitOmittedArgument(ctorParams[i].ParameterType);
 
         System.Reflection.ConstructorInfo ctorToCall = parentCtor;
         Type? baseType = ctx.CurrentClassBuilder?.BaseType;

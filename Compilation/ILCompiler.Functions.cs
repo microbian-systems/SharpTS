@@ -1462,6 +1462,20 @@ public partial class ILCompiler
     }
 
     /// <summary>
+    /// Marks a method whose first emitted parameter is the synthetic <c>__this</c> receiver slot
+    /// (a user function expression or <c>this</c>-bearing arrow) with the <c>$ExpectsThis</c>
+    /// attribute, so <c>$TSFunction</c> can detect that slot via <c>IsDefined</c> instead of the
+    /// parameter name — which a <c>--ref-asm</c> rewrite strips, otherwise shifting value-call
+    /// arguments by one. No-op when the runtime attribute is unavailable. (#738)
+    /// </summary>
+    internal void MarkExpectsThis(MethodBuilder method)
+    {
+        if (_runtime?.ExpectsThisAttrCtor != null)
+            method.SetCustomAttribute(
+                new System.Reflection.Emit.CustomAttributeBuilder(_runtime.ExpectsThisAttrCtor, []));
+    }
+
+    /// <summary>
     /// Gets the index of the first parameter with a default value.
     /// Returns -1 if no default parameters exist.
     /// </summary>

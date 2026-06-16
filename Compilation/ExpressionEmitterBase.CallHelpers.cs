@@ -862,7 +862,7 @@ public abstract partial class ExpressionEmitterBase
                 }
 
                 for (int i = c.Arguments.Count; i < paramCount; i++)
-                    EmitDefaultForType(staticMethodParams[i].ParameterType);
+                    EmitOmittedArgument(staticMethodParams[i].ParameterType);
 
                 IL.Emit(OpCodes.Call, callableMethod);
                 SetStackUnknown();
@@ -1525,7 +1525,7 @@ public abstract partial class ExpressionEmitterBase
 
         for (int i = arguments.Count; i < expectedParamCount; i++)
         {
-            EmitDefaultForType(methodParams[i].ParameterType);
+            EmitOmittedArgument(methodParams[i].ParameterType);
         }
 
         IL.Emit(OpCodes.Callvirt, callTarget);
@@ -1608,7 +1608,7 @@ public abstract partial class ExpressionEmitterBase
 
         for (int i = arguments.Count; i < methodParams.Length; i++)
         {
-            EmitDefaultForType(methodParams[i].ParameterType);
+            EmitOmittedArgument(methodParams[i].ParameterType);
         }
 
         IL.Emit(OpCodes.Call, superTarget);
@@ -1802,7 +1802,7 @@ public abstract partial class ExpressionEmitterBase
         }
 
         for (int i = 1; i < ctorParams.Length; i++)
-            EmitDefaultForType(ctorParams[i].ParameterType);
+            EmitOmittedArgument(ctorParams[i].ParameterType);
 
         IL.Emit(OpCodes.Newobj, ctorToCall);
         SetStackUnknown();
@@ -1984,6 +1984,27 @@ public abstract partial class ExpressionEmitterBase
     }
 
     /// <summary>
+    /// Emits the value for a trailing parameter slot that the call site omits. JS semantics: an
+    /// omitted argument is <c>undefined</c>, so an <c>object</c> slot — which every optional or
+    /// value-type-defaulted parameter uses after widening (#705/#739) — is padded with the
+    /// <c>$Undefined</c> sentinel. That is observable through <c>typeof</c>/<c>=== undefined</c> for a
+    /// plain optional (#739) and fires the default-parameter prologue for a defaulted one
+    /// (#705/#723/#737). A non-<c>object</c> slot (a required value-type slot, or a not-widened
+    /// reference-typed default such as <c>string</c>) takes its CLR default — for a defaulted
+    /// reference slot the prologue still fires on the resulting null. Mirrors the existing
+    /// $TSFunction.Invoke value-call padding and <see cref="EmitPrivateCallUndefinedPadding"/>.
+    /// Public (unlike the sibling <see cref="EmitDefaultForType"/>) so the ILCompiler can pad an
+    /// implicit base-constructor call directly; also satisfies <see cref="IEmitterContext"/>.
+    /// </summary>
+    public void EmitOmittedArgument(Type slotType)
+    {
+        if (slotType == Types.Object)
+            EmitUndefinedConstant();
+        else
+            EmitDefaultForType(slotType);
+    }
+
+    /// <summary>
     /// Emits conversion from the current stack value to the target parameter type.
     /// Handles boxing for object, unboxing for value types, union types, and pass-through for matching types.
     /// </summary>
@@ -2119,7 +2140,7 @@ public abstract partial class ExpressionEmitterBase
         }
 
         for (int i = arguments.Count; i < ctorParams.Length; i++)
-            EmitDefaultForType(ctorParams[i].ParameterType);
+            EmitOmittedArgument(ctorParams[i].ParameterType);
 
         ConstructorInfo ctorToCall = parentCtor;
         Type? baseType = Ctx.CurrentClassBuilder?.BaseType;
@@ -2149,7 +2170,7 @@ public abstract partial class ExpressionEmitterBase
         }
 
         for (int i = arguments.Count; i < paramCount; i++)
-            EmitDefaultForType(asyncMethodParams[i].ParameterType);
+            EmitOmittedArgument(asyncMethodParams[i].ParameterType);
 
         IL.Emit(OpCodes.Call, asyncMethod);
 
@@ -2215,7 +2236,7 @@ public abstract partial class ExpressionEmitterBase
         }
 
         for (int i = arguments.Count; i < parameters.Length; i++)
-            EmitDefaultForType(parameters[i].ParameterType);
+            EmitOmittedArgument(parameters[i].ParameterType);
 
         IL.Emit(isCapturing ? OpCodes.Callvirt : OpCodes.Call, innerMethod);
         SetStackUnknown();
