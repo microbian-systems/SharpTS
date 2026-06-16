@@ -8,61 +8,94 @@ public partial class AsyncMoveNextEmitter
 {
     protected override void EmitLabeledStatement(Stmt.LabeledStatement ls)
     {
-        // For a labeled statement, we need to:
-        // 1. If the inner statement is a loop, add the label name to the loop's entry
-        // 2. If the inner statement is not a loop, just emit it (label is for break only, not loops)
-
-        // Create labels for the labeled statement block
+        // Create the break target shared by every label in this chain (they all wrap the same
+        // statement, so they all break to the same point).
         var breakLabel = _il.DefineLabel();
 
-        // Check if the inner statement is a loop - if so, we handle it specially
-        if (ls.Statement is Stmt.While or Stmt.For or Stmt.ForOf or Stmt.DoWhile or Stmt.ForIn)
+        // Flatten a chain of labels (`p: q: r: loop`) down to the innermost statement, collecting
+        // every label. A chain that bottoms out in a loop must hand ALL of its labels to that loop's
+        // scope so `continue <outerLabel>` resolves to the loop's CONTINUE target. The pre-flatten
+        // code only special-cased a label directly on a loop; an outer label of a chain (whose own
+        // `.Statement` is another labeled statement, not a loop) fell into the non-loop branch below
+        // with continue == break, so `continue p` exited the loop instead of advancing it. Sibling of
+        // the sync #580 fix, which the async labeled-loop subsystem here did not share. (#704)
+        var labelNames = new List<string>();
+        Stmt inner = ls;
+        while (inner is Stmt.LabeledStatement labeled)
         {
-            // Emit the loop with the label name in the loop label stack
-            EmitLabeledLoop(ls.Label.Lexeme, ls.Statement, breakLabel);
+            labelNames.Add(labeled.Label.Lexeme);
+            inner = labeled.Statement;
+        }
+
+        if (inner is Stmt.While or Stmt.For or Stmt.ForOf or Stmt.DoWhile or Stmt.ForIn)
+        {
+            // Emit the loop with every chain label attached to its break/continue targets.
+            EmitLabeledLoop(labelNames, inner, breakLabel);
         }
         else
         {
-            // Non-loop labeled statement - just push a break-only label
-            // (continue doesn't make sense for non-loops)
-            EnterLoop(breakLabel, breakLabel, ls.Label.Lexeme);
-            EmitStatement(ls.Statement);
-            ExitLoop();
+            // Non-loop labeled statement(s) (a labeled block, etc.): each label is a break-only
+            // target (continue == break is unreachable — `continue` to a non-iteration label is a
+            // syntax error). Push every chain label so a `break <anyLabel>` exits the statement.
+            foreach (var name in labelNames)
+                EnterLoop(breakLabel, breakLabel, name);
+            EmitStatement(inner);
+            for (int i = 0; i < labelNames.Count; i++)
+                ExitLoop();
         }
 
         _il.MarkLabel(breakLabel);
     }
 
-    private void EmitLabeledLoop(string labelName, Stmt loopStmt, Label outerBreakLabel)
+    private void EmitLabeledLoop(IReadOnlyList<string> labelNames, Stmt loopStmt, Label outerBreakLabel)
     {
-        // Emit a loop with a specific label name attached
+        // Emit a loop with the chain's label names attached
         switch (loopStmt)
         {
             case Stmt.While w:
-                EmitLabeledWhile(labelName, w, outerBreakLabel);
+                EmitLabeledWhile(labelNames, w, outerBreakLabel);
                 break;
             case Stmt.ForOf f:
-                EmitLabeledForOf(labelName, f, outerBreakLabel);
+                EmitLabeledForOf(labelNames, f, outerBreakLabel);
                 break;
             case Stmt.DoWhile dw:
-                EmitLabeledDoWhile(labelName, dw, outerBreakLabel);
+                EmitLabeledDoWhile(labelNames, dw, outerBreakLabel);
                 break;
             case Stmt.For f:
-                EmitLabeledFor(labelName, f, outerBreakLabel);
+                EmitLabeledFor(labelNames, f, outerBreakLabel);
                 break;
             case Stmt.ForIn fi:
-                EmitLabeledForIn(labelName, fi, outerBreakLabel);
+                EmitLabeledForIn(labelNames, fi, outerBreakLabel);
                 break;
         }
     }
 
-    private void EmitLabeledWhile(string labelName, Stmt.While w, Label outerBreakLabel)
+    /// <summary>
+    /// Pushes one loop-label entry per chain label, all sharing the same break/continue targets, so
+    /// <see cref="StatementEmitterBase.FindLabeledLoop"/> resolves any of the chain's labels to this
+    /// loop. (The async emitter reuses the base single-label loop stack; a chain just registers
+    /// several entries at the same targets — see #704.)
+    /// </summary>
+    private void EnterLabeledLoop(Label breakLabel, Label continueLabel, IReadOnlyList<string> labelNames)
+    {
+        foreach (var name in labelNames)
+            EnterLoop(breakLabel, continueLabel, name);
+    }
+
+    /// <summary>Pops the per-label entries pushed by <see cref="EnterLabeledLoop"/>.</summary>
+    private void ExitLabeledLoop(IReadOnlyList<string> labelNames)
+    {
+        for (int i = 0; i < labelNames.Count; i++)
+            ExitLoop();
+    }
+
+    private void EmitLabeledWhile(IReadOnlyList<string> labelNames, Stmt.While w, Label outerBreakLabel)
     {
         var startLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
 
-        // Push labels with the label name
-        EnterLoop(outerBreakLabel, continueLabel, labelName);
+        // Push labels with the label names
+        EnterLabeledLoop(outerBreakLabel, continueLabel, labelNames);
 
         _il.MarkLabel(startLabel);
         EmitExpression(w.Condition);
@@ -75,10 +108,10 @@ public partial class AsyncMoveNextEmitter
         _il.MarkLabel(continueLabel);
         _il.Emit(OpCodes.Br, startLabel);
 
-        ExitLoop();
+        ExitLabeledLoop(labelNames);
     }
 
-    private void EmitLabeledForOf(string labelName, Stmt.ForOf f, Label outerBreakLabel)
+    private void EmitLabeledForOf(IReadOnlyList<string> labelNames, Stmt.ForOf f, Label outerBreakLabel)
     {
         string varName = f.Variable.Lexeme;
         var varField = _builder.GetVariableField(varName);
@@ -99,7 +132,7 @@ public partial class AsyncMoveNextEmitter
         var startLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
 
-        EnterLoop(outerBreakLabel, continueLabel, labelName);
+        EnterLabeledLoop(outerBreakLabel, continueLabel, labelNames);
 
         _il.MarkLabel(startLabel);
         _il.Emit(OpCodes.Ldloc, enumLocal);
@@ -127,15 +160,15 @@ public partial class AsyncMoveNextEmitter
         _il.MarkLabel(continueLabel);
         _il.Emit(OpCodes.Br, startLabel);
 
-        ExitLoop();
+        ExitLabeledLoop(labelNames);
     }
 
-    private void EmitLabeledDoWhile(string labelName, Stmt.DoWhile dw, Label outerBreakLabel)
+    private void EmitLabeledDoWhile(IReadOnlyList<string> labelNames, Stmt.DoWhile dw, Label outerBreakLabel)
     {
         var startLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
 
-        EnterLoop(outerBreakLabel, continueLabel, labelName);
+        EnterLabeledLoop(outerBreakLabel, continueLabel, labelNames);
 
         _il.MarkLabel(startLabel);
         EmitStatement(dw.Body);
@@ -147,10 +180,10 @@ public partial class AsyncMoveNextEmitter
         EmitTruthyCheck();
         _il.Emit(OpCodes.Brtrue, startLabel);
 
-        ExitLoop();
+        ExitLabeledLoop(labelNames);
     }
 
-    private void EmitLabeledForIn(string labelName, Stmt.ForIn f, Label outerBreakLabel)
+    private void EmitLabeledForIn(IReadOnlyList<string> labelNames, Stmt.ForIn f, Label outerBreakLabel)
     {
         var startLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
@@ -175,7 +208,7 @@ public partial class AsyncMoveNextEmitter
             _ctx!.Locals.RegisterLocal(varName, loopVar);
         }
 
-        EnterLoop(outerBreakLabel, continueLabel, labelName);
+        EnterLabeledLoop(outerBreakLabel, continueLabel, labelNames);
 
         _il.MarkLabel(startLabel);
 
@@ -213,10 +246,10 @@ public partial class AsyncMoveNextEmitter
 
         _il.Emit(OpCodes.Br, startLabel);
 
-        ExitLoop();
+        ExitLabeledLoop(labelNames);
     }
 
-    private void EmitLabeledFor(string labelName, Stmt.For f, Label outerBreakLabel)
+    private void EmitLabeledFor(IReadOnlyList<string> labelNames, Stmt.For f, Label outerBreakLabel)
     {
         // Emit initializer (once, outside the loop)
         if (f.Initializer != null)
@@ -225,8 +258,8 @@ public partial class AsyncMoveNextEmitter
         var startLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();  // Points to increment
 
-        // Push labels with the label name
-        EnterLoop(outerBreakLabel, continueLabel, labelName);
+        // Push labels with the label names
+        EnterLabeledLoop(outerBreakLabel, continueLabel, labelNames);
 
         _il.MarkLabel(startLabel);
 
@@ -253,6 +286,6 @@ public partial class AsyncMoveNextEmitter
 
         _il.Emit(OpCodes.Br, startLabel);
 
-        ExitLoop();
+        ExitLabeledLoop(labelNames);
     }
 }

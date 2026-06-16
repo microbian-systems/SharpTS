@@ -180,23 +180,77 @@ public partial class AsyncMoveNextEmitter
     /// <summary>
     /// Emits the for-await loop body. When the loop sits inside a try-with-awaits (flag-based, so there is
     /// no real IL try around it), a synchronous <c>throw</c> in the body must still reach that try's catch.
-    /// The body can't sit inside a real IL try when it contains awaits (their resume labels would be
-    /// branched into) or top-level break/continue (which the async emitter branches to with <c>Br</c>, not
-    /// <c>Leave</c>); for an await-free, jump-free body we wrap it in a real try that captures the throw
-    /// into the try's exception local and exits the loop to the catch dispatch. Other bodies use the plain
-    /// path — a rejected next()/return() is still caught (that path is suspension-based), only a *synchronous*
-    /// throw inside such a body escapes (a narrow, pre-existing-style limitation). (#631)
+    /// The loop as a whole can't sit in a real IL try (its await resume labels would be branched into), so
+    /// the body is instead segmented around its awaits AND its escaping <c>break</c>/<c>continue</c> — the
+    /// same shape the generator's <c>EmitTryBodyWithYields</c> uses: each await-free, jump-free run is
+    /// wrapped in a real IL try (<see cref="EmitGuardedSyncSegment"/>) that captures a throw into the
+    /// enclosing try's exception local and exits the loop to the catch dispatch, while an await or an
+    /// escaping break/continue is emitted between segments where its resume label / <c>br</c> stays legal.
+    /// This protects a synchronous throw in a body that also awaits or breaks/continues (#691) — the gap
+    /// left when #631 stopped the loop from sitting in a real IL try. (A throw nested *inside* an
+    /// await/break-containing statement remains unguarded, the same accepted limitation the generator
+    /// try-body segmentation has for a throw nested in a yield statement.)
     /// </summary>
     private void EmitForAwaitBody(Stmt body)
     {
-        // An await-free, jump-free body can sit in a real IL try (see EmitGuardedSyncSegment); a body
-        // with awaits (resume labels would be branched into) or break/continue (Br out of the try is
-        // invalid) keeps the plain path — only a *synchronous* throw inside such a body escapes the
-        // enclosing try, a narrow limitation.
-        if (!ContainsAwaitInStmt(body) && !ContainsBreakOrContinue(body))
-            EmitGuardedSyncSegment(() => EmitStatement(body));
-        else
+        // Outside a try-with-awaits there is nothing to route a synchronous throw to: emit the body
+        // plainly (a throw propagates out of MoveNext and rejects the async function's promise; a
+        // break/continue branches directly and a return Leaves — all legal, no real IL try is open here).
+        if (_currentTryCatchExceptionLocal == null || _currentTryCatchSkipLabel == null)
+        {
             EmitStatement(body);
+            return;
+        }
+
+        if (body is Stmt.Block block)
+        {
+            // Emit the block's statements directly so they can be segmented, preserving the ES6 block
+            // scope EmitBlock would otherwise establish for let/const declared in the body.
+            _ctx!.Locals.EnterScope();
+            try { EmitGuardedForAwaitSpan(block.Statements); }
+            finally { _ctx!.Locals.ExitScope(); }
+        }
+        else
+        {
+            EmitGuardedForAwaitSpan([body]);
+        }
+    }
+
+    /// <summary>
+    /// Emits the statements of a for-await body inside the enclosing try-with-awaits, segmenting around
+    /// suspension points and escaping break/continue (see <see cref="EmitForAwaitBody"/>). A run of plain
+    /// statements is wrapped in one <see cref="EmitGuardedSyncSegment"/> — which, on catching a throw,
+    /// branches out of the loop to the enclosing try's catch dispatch, so a later segment/await is not
+    /// reached after a throw and no extra "already threw" gate is needed. A statement that awaits or
+    /// contains an escaping break/continue is emitted directly between segments. A <c>return</c> stays in
+    /// a segment: it lowers to <c>Leave</c>, which legally exits the segment's real IL try (and keeps a
+    /// throw elsewhere in a return-containing statement guarded).
+    /// </summary>
+    private void EmitGuardedForAwaitSpan(IReadOnlyList<Stmt> statements)
+    {
+        List<Stmt> syncRun = [];
+        void FlushSyncRun()
+        {
+            if (syncRun.Count == 0) return;
+            var run = syncRun;
+            EmitGuardedSyncSegment(() => { foreach (var s in run) EmitStatement(s); });
+            syncRun = [];
+        }
+
+        foreach (var stmt in statements)
+        {
+            if (ContainsAwaitInStmt(stmt) || ContainsEscapingBreakOrContinue(stmt, insideLoop: false, insideSwitch: false))
+            {
+                FlushSyncRun();
+                EmitStatement(stmt);
+            }
+            else
+            {
+                syncRun.Add(stmt);
+            }
+        }
+
+        FlushSyncRun();
     }
 
     /// <summary>
@@ -225,30 +279,60 @@ public partial class AsyncMoveNextEmitter
     }
 
     /// <summary>
-    /// True if <paramref name="stmt"/> contains a <c>break</c>/<c>continue</c> anywhere (a conservative
-    /// over-approximation — it does not exclude jumps that target a loop/switch nested in the body). Used
-    /// to keep such bodies off the real-IL-try path in <see cref="EmitForAwaitBody"/>, where a <c>Br</c>
-    /// out of the try would be invalid IL.
+    /// True if <paramref name="stmt"/> contains a <c>break</c>/<c>continue</c> that would transfer control
+    /// out of the for-await body (so it must be emitted between guarded segments, where its <c>br</c> is
+    /// legal — inside a real IL try it would be illegal). Tracks nested loops/switches so a break/continue
+    /// targeting one of them (which stays inside the body) is NOT treated as escaping; a labeled
+    /// break/continue is conservatively always escaping. A <c>return</c> is deliberately excluded: it
+    /// lowers to <c>Leave</c>, which legally exits a guarded segment, so it can stay in a sync run and keep
+    /// any throw in the same statement guarded. Mirrors the generator's <c>ContainsEscapingExit</c>.
     /// </summary>
-    private static bool ContainsBreakOrContinue(Stmt stmt) => stmt switch
+    private static bool ContainsEscapingBreakOrContinue(Stmt stmt, bool insideLoop, bool insideSwitch)
     {
-        Stmt.Break => true,
-        Stmt.Continue => true,
-        Stmt.Block b => b.Statements.Any(ContainsBreakOrContinue),
-        Stmt.Sequence s => s.Statements.Any(ContainsBreakOrContinue),
-        Stmt.If i => ContainsBreakOrContinue(i.ThenBranch) || (i.ElseBranch != null && ContainsBreakOrContinue(i.ElseBranch)),
-        Stmt.While w => ContainsBreakOrContinue(w.Body),
-        Stmt.DoWhile d => ContainsBreakOrContinue(d.Body),
-        Stmt.For f => ContainsBreakOrContinue(f.Body),
-        Stmt.ForOf fo => ContainsBreakOrContinue(fo.Body),
-        Stmt.ForIn fi => ContainsBreakOrContinue(fi.Body),
-        Stmt.LabeledStatement l => ContainsBreakOrContinue(l.Statement),
-        Stmt.Switch sw => sw.Cases.Any(c => c.Body.Any(ContainsBreakOrContinue)) || (sw.DefaultBody?.Any(ContainsBreakOrContinue) ?? false),
-        Stmt.TryCatch t => t.TryBlock.Any(ContainsBreakOrContinue)
-            || (t.CatchBlock?.Any(ContainsBreakOrContinue) ?? false)
-            || (t.FinallyBlock?.Any(ContainsBreakOrContinue) ?? false),
-        _ => false
-    };
+        switch (stmt)
+        {
+            case Stmt.Break b:
+                return b.Label != null || !(insideLoop || insideSwitch);
+            case Stmt.Continue c:
+                return c.Label != null || !insideLoop;
+            case Stmt.If i:
+                return ContainsEscapingBreakOrContinue(i.ThenBranch, insideLoop, insideSwitch)
+                    || (i.ElseBranch != null && ContainsEscapingBreakOrContinue(i.ElseBranch, insideLoop, insideSwitch));
+            case Stmt.Block b:
+                return b.Statements != null && ContainsEscapingBreakOrContinue2(b.Statements, insideLoop, insideSwitch);
+            case Stmt.Sequence seq:
+                return ContainsEscapingBreakOrContinue2(seq.Statements, insideLoop, insideSwitch);
+            case Stmt.While w:
+                return ContainsEscapingBreakOrContinue(w.Body, insideLoop: true, insideSwitch);
+            case Stmt.DoWhile dw:
+                return ContainsEscapingBreakOrContinue(dw.Body, insideLoop: true, insideSwitch);
+            case Stmt.For f:
+                return ContainsEscapingBreakOrContinue(f.Body, insideLoop: true, insideSwitch);
+            case Stmt.ForOf fo:
+                return ContainsEscapingBreakOrContinue(fo.Body, insideLoop: true, insideSwitch);
+            case Stmt.ForIn fi:
+                return ContainsEscapingBreakOrContinue(fi.Body, insideLoop: true, insideSwitch);
+            case Stmt.Switch s:
+                foreach (var c in s.Cases)
+                    if (ContainsEscapingBreakOrContinue2(c.Body, insideLoop, insideSwitch: true)) return true;
+                return s.DefaultBody != null && ContainsEscapingBreakOrContinue2(s.DefaultBody, insideLoop, insideSwitch: true);
+            case Stmt.LabeledStatement ls:
+                return ContainsEscapingBreakOrContinue(ls.Statement, insideLoop, insideSwitch);
+            case Stmt.TryCatch t:
+                return ContainsEscapingBreakOrContinue2(t.TryBlock, insideLoop, insideSwitch)
+                    || (t.CatchBlock != null && ContainsEscapingBreakOrContinue2(t.CatchBlock, insideLoop, insideSwitch))
+                    || (t.FinallyBlock != null && ContainsEscapingBreakOrContinue2(t.FinallyBlock, insideLoop, insideSwitch));
+            default:
+                return false;
+        }
+    }
+
+    private static bool ContainsEscapingBreakOrContinue2(List<Stmt> statements, bool insideLoop, bool insideSwitch)
+    {
+        foreach (var s in statements)
+            if (ContainsEscapingBreakOrContinue(s, insideLoop, insideSwitch)) return true;
+        return false;
+    }
 
     /// <summary>
     /// Produces one async-iterator protocol step into <paramref name="resultLocal"/>, guarding the call
