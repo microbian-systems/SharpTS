@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using SharpTS.Diagnostics;
 using SharpTS.Execution;
 using SharpTS.Modules;
 using SharpTS.Parsing;
@@ -298,7 +299,55 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         // Set up worker globals
         SetupWorkerGlobals(interpreter);
 
-        // Parse and execute the script
+        // Set up message handling loop
+        var messageHandler = new WorkerMessageHandler(this, interpreter);
+        messageHandler.Start();
+
+        try
+        {
+            // A worker whose script uses import/export must run through the same
+            // module pipeline the parent uses — the bare single-file path rejects any
+            // import at type-check ("Import statements require module mode"), which
+            // includes the canonical `import { workerData } from "worker_threads"` (#410).
+            if (UsesModuleSyntax(source, absolutePath))
+            {
+                RunWorkerModule(interpreter, absolutePath);
+            }
+            else
+            {
+                RunWorkerSingleFile(interpreter, source);
+            }
+        }
+        finally
+        {
+            messageHandler.Stop();
+        }
+    }
+
+    /// <summary>
+    /// Decides whether the worker script must be run in module mode. Mirrors the
+    /// trigger the CLI uses for the parent (<c>Program.RunFile</c>): an
+    /// <c>import</c>/<c>export</c> statement, a triple-slash path reference, or a
+    /// CommonJS file using <c>require</c>/<c>module.exports</c>/<c>exports.</c>.
+    /// </summary>
+    private static bool UsesModuleSyntax(string source, string absolutePath)
+    {
+        var lexer = new Lexer(source);
+        lexer.ScanTokens();
+        bool hasPathReferences =
+            lexer.TripleSlashDirectives.Any(d => d.Type == TripleSlashReferenceType.Path);
+
+        bool isCjsFile = CommonJsDetector.Detect(absolutePath) == CommonJsDetector.ModuleKind.CommonJs
+            && (source.Contains("require(") || source.Contains("module.exports") || source.Contains("exports."));
+
+        return hasPathReferences || source.Contains("import ") || source.Contains("export ") || isCjsFile;
+    }
+
+    /// <summary>
+    /// Runs a script-mode worker (no import/export) on a single-file pipeline.
+    /// </summary>
+    private static void RunWorkerSingleFile(Interpreter interpreter, string source)
+    {
         var lexer = new Lexer(source);
         var tokens = lexer.ScanTokens();
         var parser = new Parser(tokens);
@@ -311,23 +360,48 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
 
         // Type check. AsWorkerContext lets the worker-scoped globals (parentPort,
         // postMessage, workerData, threadId, isMainThread) resolve instead of
-        // failing as undefined — they're bound below by SetupWorkerGlobals.
+        // failing as undefined — they're bound by SetupWorkerGlobals.
         var typeChecker = new TypeChecker().AsWorkerContext();
         var typeMap = typeChecker.Check(parseResult.Statements);
 
-        // Set up message handling loop
-        var messageHandler = new WorkerMessageHandler(this, interpreter);
-        messageHandler.Start();
+        interpreter.Interpret(parseResult.Statements, typeMap);
+    }
 
-        try
+    /// <summary>
+    /// Runs a module-mode worker through the same resolver/type-check/interpret
+    /// pipeline the parent uses, so <c>import</c>/<c>export</c> (including
+    /// <c>import { workerData, parentPort } from "worker_threads"</c>) resolve. The
+    /// worker-context module bindings injected by <see cref="SetupWorkerGlobals"/>
+    /// make the imported worker_threads identity exports carry this worker's live
+    /// values (#410).
+    /// </summary>
+    private static void RunWorkerModule(Interpreter interpreter, string absolutePath)
+    {
+        var resolver = new ModuleResolver(absolutePath);
+        var entryModule = resolver.LoadModule(absolutePath);
+        var allModules = resolver.GetModulesInOrder(entryModule);
+
+        // AsWorkerContext keeps the bare worker-scoped globals resolving as `any` in
+        // every module, matching the single-file path.
+        var typeChecker = new TypeChecker().AsWorkerContext();
+        var typeMap = typeChecker.CheckModules(allModules, resolver);
+
+        var firstError = typeChecker.GetDiagnostics()
+            .FirstOrDefault(d => d.Severity == DiagnosticSeverity.Error);
+        if (firstError != null)
         {
-            // Execute the script
-            interpreter.Interpret(parseResult.Statements, typeMap);
+            throw new Exception($"Worker script type error: {firstError}");
         }
-        finally
+
+        // Variable resolution for O(1) lookups (built-in modules have no user statements).
+        var varResolver = new VariableResolver(interpreter);
+        foreach (var module in allModules)
         {
-            messageHandler.Stop();
+            if (!module.IsBuiltIn)
+                varResolver.Resolve(module.Statements);
         }
+
+        interpreter.InterpretModules(allModules, resolver, typeMap);
     }
 
     /// <summary>
@@ -359,6 +433,14 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             PostMessageToParent(args[0].ToObject(), transfer);
             return RuntimeValue.Null;
         }));
+
+        // Mirror the same live values into the worker_threads module exports so a
+        // script that uses the canonical import form — `import { workerData,
+        // parentPort } from "worker_threads"` — sees this worker's inputs (#410).
+        // The very same parentPort instance is reused so a listener attached via the
+        // import receives the messages WorkerMessageHandler delivers to the bare global.
+        interpreter.WorkerThreadsContext =
+            new Interpreter.WorkerThreadsBindings(_workerData, parentPort, ThreadId);
     }
 
     /// <summary>
@@ -822,9 +904,13 @@ public static class WorkerThreads
             ["MessagePort"] = null, // Can't construct directly
             ["receiveMessageOnPort"] = BuiltInMethod.CreateV2("receiveMessageOnPort", 1, static (_, _, args) =>
             {
-                if (args.Length == 0 || args[0].ToObject() is not SharpTSMessagePort port)
-                    throw new Exception("receiveMessageOnPort requires a MessagePort argument");
-                return RuntimeValue.FromBoxed(ReceiveMessageOnPort(port));
+                object? result = (args.Length == 0 ? null : args[0].ToObject()) switch
+                {
+                    SharpTSMessagePort port => ReceiveMessageOnPort(port),
+                    CompiledMessagePortBridge bridge => bridge.ReceiveMessageSync(),
+                    _ => throw new Exception("receiveMessageOnPort requires a MessagePort argument"),
+                };
+                return RuntimeValue.FromBoxed(result);
             }),
         });
     }
