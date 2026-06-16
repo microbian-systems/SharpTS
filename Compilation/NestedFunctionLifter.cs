@@ -108,11 +108,22 @@ internal sealed class NestedFunctionLifter
         var lambdaForwards = new Dictionary<Stmt.Function, List<string>>(ReferenceEqualityComparer.Instance);
         foreach (var f in scan.Candidates)
         {
-            // A reference into an intermediate FUNCTION scope is a real closure capture (#583 §1)
-            // that neither plain relocation nor lambda-lifting can perform — leave it nested.
-            if (!IsNonCapturing(analyzer, f)) continue;
-
             bool isModuleBlock = scan.ModuleBlockEnclosingBindings.TryGetValue(f, out var blockBindings);
+
+            // A reference into an intermediate FUNCTION scope is a real closure capture (#583 §1). Only
+            // an INSIDE-FUNCTION candidate can have one (a module-block candidate has no enclosing
+            // function). Lambda-lift it: the captured function-scope bindings (and the function's own
+            // name when it recurses) become leading parameters of the relocated top-level declaration,
+            // forwarded by an in-place arrow that closes over them. The arrow may sit inside a generator/
+            // async body, which now binds captured display instances correctly (see
+            // GeneratorMoveNextEmitter.EmitArrowFunction). Declines (leaves nested — a clean failure) for
+            // bodies using this/arguments or rest/default params, which the forwarding arrow can't carry.
+            if (!IsNonCapturing(analyzer, f))
+            {
+                if (!isModuleBlock && TryComputeFunctionCaptureForward(analyzer, f, out var fnForwarded))
+                    lambdaForwards[f] = fnForwarded;
+                continue;
+            }
 
             // A module-block candidate that captures an enclosing block/loop binding (e.g. a
             // generator in a `for` reading the loop variable) can't move to module top level as-is —
@@ -223,6 +234,42 @@ internal sealed class NestedFunctionLifter
         // leading parameters and the arrow's leading call arguments.
         forwarded = analyzer.GetCaptures(f)
             .Where(blockBindings.Contains)
+            .OrderBy(c => c, System.StringComparer.Ordinal)
+            .ToList();
+        return forwarded.Count > 0;
+    }
+
+    /// <summary>
+    /// The inside-function analogue of <see cref="TryComputeLambdaForward"/> (#583 §1): produces the
+    /// ordered list of captures to forward as leading parameters when relocating a nested declaration
+    /// that captures an enclosing FUNCTION scope. The forwarded set is every free variable resolving to
+    /// such a scope — including the function's own name when it recurses, so the relocated body's
+    /// self-calls resolve to the forwarded arrow (which closes over its own <c>let</c> binding). Declines
+    /// (returns false → stays nested, a clean failure) on rest/default parameters or a body using
+    /// <c>this</c>/<c>arguments</c>, exactly as the module-block path does.
+    /// </summary>
+    private static bool TryComputeFunctionCaptureForward(
+        ClosureAnalyzer analyzer, Stmt.Function f, out List<string> forwarded)
+    {
+        forwarded = [];
+
+        foreach (var p in f.Parameters)
+            if (p.IsRest || p.DefaultValue != null)
+                return false;
+
+        if (UsesThisOrArguments(f.Body))
+            return false;
+
+        // Self-recursion can't be lambda-lifted here: the relocated body's self-calls must resolve to the
+        // forwarding arrow, but a compiled arrow snapshots its captures by value — and the arrow's own
+        // `let` binding is still in its temporal dead zone when the arrow is created, so it would capture
+        // an unassigned (null) self and crash on the first recursive call. Leave such a declaration nested
+        // (a clean "not supported" failure, never a miscompile). Non-recursive captures lift fine.
+        if (analyzer.GetCaptures(f).Contains(f.Name.Lexeme))
+            return false;
+
+        forwarded = analyzer.GetCaptures(f)
+            .Where(c => analyzer.GetCaptureSource(f, c) != null)
             .OrderBy(c => c, System.StringComparer.Ordinal)
             .ToList();
         return forwarded.Count > 0;
