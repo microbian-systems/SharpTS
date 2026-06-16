@@ -1582,15 +1582,36 @@ public partial class TypeChecker
             // its descendants, AND widen any enclosing lexical narrowing the context stack can't reach.
             // `if`-guard variable narrowing lives in a child TypeEnvironment that a nested block's own
             // env shadows-then-discards, so without WidenEnclosingNarrowing a reassignment inside a
-            // nested branch leaves the outer guard's narrowing in place for later statements (#570).
+            // nested branch leaves the outer guard's narrowing in place for later statements (#570/#654).
             InvalidateNarrowingsFor(assignedPath);
             WidenEnclosingNarrowing(assign.Name.Lexeme, declaredType);
         }
 
-        // Also restore the declared type in the environment to undo any variable narrowing
-        // that was applied via TypeEnvironment.Define() in control flow statements.
-        // This ensures subsequent uses of the variable see the correct (un-narrowed) type.
-        _environment.Define(assign.Name.Lexeme, declaredType);
+        // Restore the environment binding, undoing any control-flow narrowing applied via
+        // TypeEnvironment.Define(). For a tracked (function-local/parameter) variable, restore it to
+        // the post-write flow-narrowed type (#653): subsequent reads see the declared type filtered to
+        // the members the RHS can be, mirroring the property-write narrowing of #48 (`o.x = "s"`
+        // narrows `o.x` to `string`). The narrowed binding lives in the current lexical scope and is
+        // discarded at its block's join, so it does not leak a too-narrow type past a conditional.
+        //
+        // Two guards keep this sound and non-regressive:
+        //   * Only TRACKED (function-local/parameter) variables narrow. Module/top-level variables are
+        //     not in the declared-type stack, so GetDeclaredType falls back to the environment for
+        //     them — narrowing the binding would then corrupt the declared type a later assignment
+        //     checks against.
+        //   * A purely-nullish narrowed slot (`null`/`undefined`) is NOT installed; the variable keeps
+        //     its declared type. Property access on a bare `null`/`undefined` type is not yet flagged
+        //     (only on a union containing them — see CheckGetOnUnion), so narrowing `x = undefined` to
+        //     `undefined` would silently drop the "possibly undefined" error that a later `x.length`
+        //     must still raise (#570/#556). Keeping the declared union preserves that diagnostic.
+        var postAssignType = declaredType;
+        if (IsDeclaredTypeTracked(assign.Name.Lexeme)
+            && NarrowToDeclaredSlot(declaredType, valueType) is { } narrowedSlot
+            && !IsPurelyNullish(narrowedSlot))
+        {
+            postAssignType = narrowedSlot;
+        }
+        _environment.Define(assign.Name.Lexeme, postAssignType);
 
         // tsc narrows a reference whose declared type is a bare type parameter by assignment:
         // the constraint is the narrowing domain, so after `x = y` the reference reads as the
