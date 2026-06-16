@@ -520,6 +520,12 @@ public partial class ILCompiler
             hasLock: hasLock
         );
 
+        // #682: wire a function display class for captures a direct-child async arrow writes (same as
+        // instance methods). The "::static::" infix keeps the key distinct from an instance method of
+        // the same class+name (statics and instance members share a name space in TS).
+        string methodDCKey = SetupAsyncMethodFunctionDC(
+            smBuilder, $"{className}::static::{method.Name.Lexeme}", analysis);
+
         // Build state machines for any async arrows found in this method
         DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder);
 
@@ -540,7 +546,8 @@ public partial class ILCompiler
             method.Parameters,
             isInstanceMethod: false,  // Static method!
             staticAsyncLockField,
-            staticLockReentrancyField);
+            staticLockReentrancyField,
+            functionDCKey: methodDCKey);
 
         // Create context for MoveNext emission
         var il = smBuilder.MoveNextMethod.GetILGenerator();
@@ -596,44 +603,22 @@ public partial class ILCompiler
             ClassRegistry = GetClassRegistry()
         };
 
+        // #682: route promoted captures through the static method's function display class.
+        WireAsyncMethodFunctionDC(ctx, smBuilder, methodDCKey);
+
         // Emit MoveNext body
         var moveNextEmitter = new AsyncMoveNextEmitter(smBuilder, analysis, _types);
         moveNextEmitter.EmitMoveNext(method.Body, ctx, _types.Object, method.Parameters);
 
-        // Emit MoveNext bodies for async arrows
+        // Emit MoveNext bodies for async arrows. Delegate to the shared EmitAsyncArrowMoveNext (which
+        // builds a fresh per-arrow ctx with the arrow's own IL) rather than reusing this method's ctx —
+        // the latter routed strategy emissions via `ctx.IL` into the method's IL stream, producing
+        // invalid IL for any suspending arrow in an async method (see EmitAsyncMethodBody for details).
         foreach (var arrowInfo in analysis.AsyncArrows)
         {
             if (_async.ArrowBuilders.TryGetValue(arrowInfo.Arrow, out var arrowBuilder))
             {
-                var arrowAnalysis = AnalyzeAsyncArrow(arrowInfo.Arrow);
-                var arrow = arrowInfo.Arrow;
-
-                List<Stmt> bodyStatements;
-                if (arrow.BlockBody != null)
-                {
-                    bodyStatements = arrow.BlockBody;
-                }
-                else if (arrow.ExpressionBody != null)
-                {
-                    var returnToken = new Token(TokenType.RETURN, "return", null, 0);
-                    bodyStatements = [new Stmt.Return(returnToken, arrow.ExpressionBody)];
-                }
-                else
-                {
-                    bodyStatements = [];
-                }
-
-                var arrowEmitter = new AsyncArrowMoveNextEmitter(arrowBuilder,
-                    new AsyncStateAnalyzer.AsyncFunctionAnalysis(
-                        arrowAnalysis.AwaitCount,
-                        [],  // AwaitPoints not needed for emission
-                        arrowAnalysis.HoistedLocals,
-                        [],  // HoistedParameters - arrow params are in ParameterFields
-                        false, // HasTryCatch
-                        false, // UsesThis
-                        []     // AsyncArrows - handled separately via _async.ArrowBuilders
-                    ), _types);
-                arrowEmitter.EmitMoveNext(bodyStatements, ctx, _types.Object, arrow.Parameters);
+                EmitAsyncArrowMoveNext(arrowBuilder, arrowInfo.Arrow, ctx);
             }
         }
 
