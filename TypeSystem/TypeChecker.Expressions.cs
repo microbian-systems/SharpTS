@@ -2020,12 +2020,25 @@ public partial class TypeChecker
         // Validate interface implementations (skip for generic - validated at instantiation)
         if (classExpr.Interfaces != null && classTypeParams == null)
         {
-            foreach (var interfaceToken in classExpr.Interfaces)
+            for (int i = 0; i < classExpr.Interfaces.Count; i++)
             {
+                var interfaceToken = classExpr.Interfaces[i];
                 TypeInfo? itfTypeInfo = _environment.Get(interfaceToken.Lexeme);
-                if (itfTypeInfo is not TypeInfo.Interface interfaceType)
+                if (itfTypeInfo is TypeInfo.Interface interfaceType)
+                {
+                    ValidateInterfaceImplementation(classTypeForBody, interfaceType, className);
+                    continue;
+                }
+
+                // Built-in iterable-protocol interface (Iterable<T>, AsyncIterable<T>, …): structural
+                // satisfaction check, since it has no named environment entry to validate against. #756.
+                List<string>? typeArgs = classExpr.InterfaceTypeArgs != null && i < classExpr.InterfaceTypeArgs.Count
+                    ? classExpr.InterfaceTypeArgs[i]
+                    : null;
+                if (TryResolveIterableProtocolInterface(interfaceToken.Lexeme, typeArgs, out var protocolType))
+                    ValidateProtocolInterfaceImplementation(classTypeForBody, protocolType, interfaceToken.Lexeme, className);
+                else
                     throw new TypeCheckException($" '{interfaceToken.Lexeme}' is not an interface.", tsCode: "TS2304");
-                ValidateInterfaceImplementation(classTypeForBody, interfaceType, className);
             }
         }
 

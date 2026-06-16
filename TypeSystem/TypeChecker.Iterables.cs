@@ -243,7 +243,7 @@ public partial class TypeChecker
     /// iterables are intentionally excluded (a sync iterable is not an async iterable). Returns false for
     /// non-async-iterable types (callers decide between an error and a fall-through to <c>any</c>).
     /// </summary>
-    private static bool TryGetAsyncIterableElementType(TypeInfo type, out TypeInfo elementType)
+    private bool TryGetAsyncIterableElementType(TypeInfo type, out TypeInfo elementType)
     {
         switch (type)
         {
@@ -251,9 +251,31 @@ public partial class TypeChecker
             case TypeInfo.AsyncIterator ait: elementType = ait.ElementType; return true;
             case TypeInfo.AsyncGenerator ag: elementType = ag.YieldType; return true;
             case TypeInfo.Any: elementType = new TypeInfo.Any(); return true;
-            default:
-                elementType = null!;
-                return false;
         }
+
+        // Structural async-iterable: an object/class exposing [Symbol.asyncIterator]() — modeled as the
+        // @@asyncIterator member; an object literal's symbol-keyed method lands in the symbol index
+        // signature, so both are probed. Mirrors the sync TryGetStructuralIterableElement, so a class
+        // declaring `async *[Symbol.asyncIterator]()` satisfies AsyncIterable<T> (#756). A sync-only
+        // iterable (no @@asyncIterator) falls through to rejection — a sync iterable is not async.
+        TypeInfo? factory = GetMemberType(type, "@@asyncIterator");
+        if (!IsCallableMember(factory) && type is TypeInfo.Record { SymbolIndexType: { } symIndex })
+            factory = symIndex;
+        if (IsCallableMember(factory))
+        {
+            TypeInfo? asyncIterator = GetCallableReturnType(factory);
+            if (asyncIterator is null) { elementType = new TypeInfo.Any(); return true; }
+            elementType = asyncIterator switch
+            {
+                TypeInfo.AsyncIterator it => it.ElementType,
+                TypeInfo.AsyncGenerator g => g.YieldType,
+                TypeInfo.AsyncIterable ib => ib.ElementType,
+                _ => new TypeInfo.Any(),   // structural next(): Promise<IteratorResult<T>> — keep permissive
+            };
+            return true;
+        }
+
+        elementType = null!;
+        return false;
     }
 }

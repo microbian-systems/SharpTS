@@ -475,6 +475,81 @@ public class ExpressionParsingTests
     }
 
     [Fact]
+    public void ObjectLiteral_GeneratorMethodShorthand()
+    {
+        // `{ *gen() {} }` — a generator method (#757). Generator method bodies are lifted out of
+        // expression position by the GeneratorArrowLifter, so the parser+lift output is a hoisted
+        // generator Stmt.Function plus the object literal referencing it. Assert the generator was
+        // recognized (a generator function appears) and the property key survives.
+        var statements = Parse("({ *gen() { yield 1; } });");
+        Assert.Contains(statements, s => s is Stmt.Function { IsGenerator: true, IsAsync: false });
+        var obj = SingleObjectLiteral(statements);
+        var prop = Assert.Single(obj.Properties);
+        var ik = Assert.IsType<Expr.IdentifierKey>(prop.Key);
+        Assert.Equal("gen", ik.Name.Lexeme);
+    }
+
+    [Fact]
+    public void ObjectLiteral_GeneratorMethodWithComputedKey()
+    {
+        // `{ *[Symbol.iterator]() {} }` — the #757 repro form. The computed key is preserved on the
+        // object-literal property; the generator body lifts to a generator function.
+        var statements = Parse("({ *[Symbol.iterator]() { yield 1; } });");
+        Assert.Contains(statements, s => s is Stmt.Function { IsGenerator: true });
+        var obj = SingleObjectLiteral(statements);
+        var prop = Assert.Single(obj.Properties);
+        Assert.IsType<Expr.ComputedKey>(prop.Key);
+    }
+
+    [Fact]
+    public void ObjectLiteral_AsyncMethodShorthand()
+    {
+        // `{ async foo() {} }` — an async (non-generator) method. Async arrows are not lifted, so the
+        // property value is an async ArrowFunction in place.
+        var expr = ParseExpression("({ async foo() { return 1; } });");
+        var grouping = Assert.IsType<Expr.Grouping>(expr);
+        var obj = Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+        var prop = Assert.Single(obj.Properties);
+        var arrow = Assert.IsType<Expr.ArrowFunction>(prop.Value);
+        Assert.True(arrow.IsAsync);
+        Assert.False(arrow.IsGenerator);
+    }
+
+    [Fact]
+    public void ObjectLiteral_AsyncGeneratorMethodShorthand()
+    {
+        // `{ async *gen() {} }` — an async generator method; lifts to an async generator function.
+        var statements = Parse("({ async *gen() { yield 1; } });");
+        Assert.Contains(statements, s => s is Stmt.Function { IsGenerator: true, IsAsync: true });
+        var obj = SingleObjectLiteral(statements);
+        Assert.Single(obj.Properties);
+    }
+
+    /// <summary>Finds the single object literal expression among parsed statements (it may be
+    /// accompanied by lifted generator function declarations).</summary>
+    private static Expr.ObjectLiteral SingleObjectLiteral(List<Stmt> statements)
+    {
+        var exprStmt = Assert.Single(statements.OfType<Stmt.Expression>());
+        var grouping = Assert.IsType<Expr.Grouping>(exprStmt.Expr);
+        return Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+    }
+
+    [Fact]
+    public void ObjectLiteral_MethodNamedAsync_NotModifier()
+    {
+        // `{ async() {} }` — a method literally named `async`, not an async modifier.
+        var expr = ParseExpression("({ async() { return 1; } });");
+        var grouping = Assert.IsType<Expr.Grouping>(expr);
+        var obj = Assert.IsType<Expr.ObjectLiteral>(grouping.Expression);
+        var prop = Assert.Single(obj.Properties);
+        var ik = Assert.IsType<Expr.IdentifierKey>(prop.Key);
+        Assert.Equal("async", ik.Name.Lexeme);
+        var arrow = Assert.IsType<Expr.ArrowFunction>(prop.Value);
+        Assert.False(arrow.IsAsync);
+        Assert.False(arrow.IsGenerator);
+    }
+
+    [Fact]
     public void ObjectLiteral_GetAndSetAsShorthandProperties()
     {
         // `{ get, set }` must remain valid shorthand (not accessor).

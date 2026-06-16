@@ -65,6 +65,48 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// The built-in iterable-protocol interfaces. Unlike user <c>interface</c>s, these are not
+    /// registered as named entries in the type environment — they resolve only via the generic-type
+    /// path (<see cref="ResolveGenericType"/>) — so the <c>implements</c>-clause interface lookup
+    /// misses them. They are nonetheless implementable (matching <c>tsc</c>:
+    /// <c>class C implements Iterable&lt;number&gt;</c>), validated structurally rather than member-by-member.
+    /// </summary>
+    private static readonly HashSet<string> IterableProtocolInterfaceNames =
+    [
+        "Iterable", "AsyncIterable",
+        "Iterator", "IterableIterator",
+        "AsyncIterator", "AsyncIterableIterator",
+    ];
+
+    /// <summary>
+    /// Resolves a built-in iterable-protocol interface named in an <c>implements</c> clause to its
+    /// <see cref="TypeInfo"/> (#756). Returns false for any other name, leaving the regular
+    /// "not an interface" handling in place. A missing type argument defaults to <c>any</c> so
+    /// <c>implements Iterable</c> (no args) is accepted like <c>tsc</c>'s <c>Iterable&lt;unknown&gt;</c>.
+    /// </summary>
+    private bool TryResolveIterableProtocolInterface(string name, List<string>? typeArgs, out TypeInfo protocolType)
+    {
+        protocolType = null!;
+        if (!IterableProtocolInterfaceNames.Contains(name)) return false;
+        var args = typeArgs is { Count: > 0 }
+            ? typeArgs.Select(ta => ToTypeInfo(ta)).ToList()
+            : [new TypeInfo.Any()];
+        protocolType = ResolveGenericType(name, args);
+        return true;
+    }
+
+    /// <summary>
+    /// Validates that <paramref name="classType"/> structurally satisfies a built-in iterable-protocol
+    /// interface listed in its <c>implements</c> clause (e.g. has a <c>[Symbol.iterator]()</c> yielding a
+    /// compatible element). Throws TS2420 when it does not. #756.
+    /// </summary>
+    private void ValidateProtocolInterfaceImplementation(TypeInfo.Class classType, TypeInfo protocolType, string protocolName, string className)
+    {
+        if (!IsCompatible(protocolType, new TypeInfo.Instance(classType)))
+            throw new TypeCheckException($" Class '{className}' incorrectly implements '{protocolName}'.", tsCode: "TS2420");
+    }
+
+    /// <summary>
     /// Validates that a class method signature is compatible with an interface method signature.
     /// For interface implementation, the class method must:
     /// 1. Accept at least as many required parameters as the interface method requires

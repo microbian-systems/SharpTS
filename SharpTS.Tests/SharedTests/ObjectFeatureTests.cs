@@ -77,6 +77,75 @@ public class ObjectFeatureTests
         Assert.Equal("Hello, Alice\n", output);
     }
 
+    // Generator / async method shorthand in object literals (#757).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_GeneratorMethodShorthand_Works(ExecutionMode mode)
+    {
+        // `{ *gen() {} }` — a named generator method.
+        var source = """
+            const o = { *gen() { yield 1; yield 2; yield 3; } };
+            for (const x of o.gen()) console.log(x);
+            """;
+
+        Assert.Equal("1\n2\n3\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_ComputedGeneratorMethod_IsIterable(ExecutionMode mode)
+    {
+        // #757 repro: `{ *[Symbol.iterator]() {} }` makes the object iterable.
+        var source = """
+            const o = { *[Symbol.iterator]() { yield 1; yield 2; } };
+            for (const x of o) console.log(x);
+            console.log([...o].length);
+            """;
+
+        Assert.Equal("1\n2\n2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_AsyncMethodShorthand_Works(ExecutionMode mode)
+    {
+        // `{ async foo() {} }` — an async method returning a Promise.
+        var source = """
+            const o = { async foo(): Promise<number> { return 42; } };
+            o.foo().then(v => console.log(v));
+            """;
+
+        Assert.Equal("42\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_AsyncGeneratorComputedMethod_ForAwait_Works(ExecutionMode mode)
+    {
+        // `{ async *[Symbol.asyncIterator]() {} }` — async generator + computed key + for-await.
+        var source = """
+            const o = { async *[Symbol.asyncIterator]() { yield 10; yield 20; } };
+            async function main() { for await (const x of o) console.log(x); }
+            main();
+            """;
+
+        Assert.Equal("10\n20\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_MethodNamedAsync_NotTreatedAsModifier(ExecutionMode mode)
+    {
+        // `async` is only a method modifier when a property name / `*` follows it; here it is a
+        // method literally named `async`, and a property literally named `async`.
+        var source = """
+            const o = { async() { return 1; }, b: 2 };
+            console.log(o.async() + o.b);
+            """;
+
+        Assert.Equal("3\n", TestHarness.Run(source, mode));
+    }
+
     // Object Rest Pattern
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
