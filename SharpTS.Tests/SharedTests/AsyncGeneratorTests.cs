@@ -1371,6 +1371,33 @@ public class AsyncGeneratorTests
     }
 
     [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ForAwaitBody_OuterBinding_SurvivesNestedAwaitBody(ExecutionMode mode)
+    {
+        // #689 hardening: a generator body whose await is nested inside a delegated expression
+        // (`yield dbl(await later(n))`) suspends through the interpreter's general async-expression path,
+        // not the generator's own await chokepoint, so the generator alone can't keep its closure from
+        // leaking for that shape. The for-await driver re-asserts the loop's lexical scope after each
+        // next(), so the loop body still reaches the outer `out` binding regardless of the body shape.
+        // (Direct `await it.next()` of such a body is the narrower residual tracked in #752.)
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            function dbl(n: number): number { return n * 2; }
+            async function* g() { yield dbl(await later(1)); yield dbl(await later(2)); }
+            async function main() {
+                let out = "";
+                for await (const v of g()) out += v;
+                console.log(out);
+            }
+            main();
+            """;
+
+        Assert.Equal("24\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
     [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_ForAwaitOf_OverPendingAsyncGenerator_SuspendsNotBlocks(ExecutionMode mode)
     {
