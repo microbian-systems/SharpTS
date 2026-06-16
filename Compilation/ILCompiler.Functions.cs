@@ -249,15 +249,29 @@ public partial class ILCompiler
                 return;
         }
 
-        // Create display class type
+        DefineFunctionDisplayClassType(qualifiedFunctionName, capturedLocals);
+    }
+
+    /// <summary>
+    /// Creates a function display class type holding exactly <paramref name="fieldNames"/> (one
+    /// public <c>object</c> field each) plus a default constructor, and registers it under
+    /// <paramref name="key"/> in the closure registries. Shared by the source-derived path
+    /// (<see cref="DefineFunctionDisplayClass"/>) and the explicit-field-set path used for async
+    /// methods / standalone async arrows, where only the promoted async-written captures (#682)
+    /// belong in the DC rather than the full GetCapturedLocals set.
+    /// </summary>
+    private void DefineFunctionDisplayClassType(string key, IEnumerable<string> fieldNames)
+    {
+        // Create display class type. The counter guarantees a unique type name; ':' and '.' in the
+        // key (method keys are "<Class>::<method>") are sanitized to valid identifier characters.
         var displayClass = _moduleBuilder.DefineType(
-            $"<>c__FuncDisplayClass_{qualifiedFunctionName.Replace(".", "_")}_{_closures.DisplayClassCounter++}",
+            $"<>c__FuncDisplayClass_{key.Replace(".", "_").Replace(":", "_")}_{_closures.DisplayClassCounter++}",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
             _types.Object);
 
         // Define fields for each captured variable
         var fieldMap = new Dictionary<string, FieldBuilder>();
-        foreach (var varName in capturedLocals)
+        foreach (var varName in fieldNames)
         {
             var field = displayClass.DefineField(varName, _types.Object, FieldAttributes.Public);
             fieldMap[varName] = field;
@@ -274,9 +288,9 @@ public partial class ILCompiler
         ctorIl.Emit(OpCodes.Ret);
 
         // Store the display class info
-        _closures.FunctionDisplayClasses[qualifiedFunctionName] = displayClass;
-        _closures.FunctionDisplayClassCtors[qualifiedFunctionName] = ctor;
-        _closures.FunctionDisplayClassFields[qualifiedFunctionName] = fieldMap;
+        _closures.FunctionDisplayClasses[key] = displayClass;
+        _closures.FunctionDisplayClassCtors[key] = ctor;
+        _closures.FunctionDisplayClassFields[key] = fieldMap;
     }
 
     private void EmitFunctionBody(Stmt.Function funcStmt)

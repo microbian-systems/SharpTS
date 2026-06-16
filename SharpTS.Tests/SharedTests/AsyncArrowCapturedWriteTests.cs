@@ -82,6 +82,57 @@ public class AsyncArrowCapturedWriteTests
         Assert.Equal("3 6\n", TestHarness.Run(source, mode));
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncArrow_TwoCapturedStoresAcrossAwait(ExecutionMode mode)
+    {
+        // #673: a nested async arrow with TWO writes to a captured variable straddling an await
+        // (the await is NOT in either store's RHS). Each store must reach the promoted function-DC
+        // field verifiably.
+        var source = """
+            async function noop(): Promise<void> { }
+            async function outer() {
+              let total = 0;
+              const inner = async () => {
+                total += 5;
+                await noop();
+                total += 7;
+              };
+              await inner();
+              console.log(total);
+            }
+            outer();
+            """;
+
+        Assert.Equal("12\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void AsyncArrow_TwoCapturedStoresAcrossAwait_PassesILVerification()
+    {
+        // #673 reported scaling StackUnexpected errors with the number of captured stores; lock the
+        // verifiable result.
+        var source = """
+            async function noop(): Promise<void> { }
+            async function outer() {
+              let total = 0;
+              const inner = async () => {
+                total += 5;
+                await noop();
+                total += 7;
+              };
+              await inner();
+              console.log(total);
+            }
+            outer();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("12\n", output);
+    }
+
     [Fact]
     public void AsyncArrow_WritesCapturedVariable_PassesILVerification()
     {

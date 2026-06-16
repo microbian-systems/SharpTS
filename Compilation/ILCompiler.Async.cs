@@ -63,22 +63,8 @@ public partial class ILCompiler
         // readonly managed pointer, so `stfld` through it fails verification and can drop the write in
         // complex state machines (#625). Routing the write through `outer.functionDC.field` (a class
         // reference) is verifiable. Read-only captures stay on the SM field (the existing, working
-        // load path). Variables also captured by a NESTED async arrow are left as-is — the nested
-        // arrow's DC-access path isn't wired (#673) — so only direct-child writes are promoted.
-        var nestedAsyncArrowCaptures = new HashSet<string>();
-        foreach (var arrowInfo in analysis.AsyncArrows)
-            if (arrowInfo.ParentArrow != null)
-                nestedAsyncArrowCaptures.UnionWith(arrowInfo.Captures);
-
-        var promotedToFunctionDC = new HashSet<string>();
-        foreach (var arrowInfo in analysis.AsyncArrows)
-        {
-            if (arrowInfo.ParentArrow != null) continue; // direct children only
-            var written = CapturedWriteAnalysis.CollectImmediateWrites(arrowInfo.Arrow);
-            written.IntersectWith(arrowInfo.Captures);
-            written.ExceptWith(nestedAsyncArrowCaptures);
-            promotedToFunctionDC.UnionWith(written);
-        }
+        // load path).
+        var promotedToFunctionDC = ComputeArrowWrittenCapturesToPromote(analysis.AsyncArrows);
         asyncCapturedVars.ExceptWith(promotedToFunctionDC);
 
         // Filter out (still-)async-captured vars before creating the DC
@@ -95,6 +81,75 @@ public partial class ILCompiler
 
         // Build state machines for any async arrows found in this function
         DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder);
+    }
+
+    /// <summary>
+    /// Returns the captured variables that a DIRECT-CHILD async arrow WRITES (#625): these must be
+    /// promoted into the enclosing scope's reference-type function display class so the arrow can
+    /// mutate them verifiably through <c>outer.functionDC.field</c> rather than <c>unbox</c>+<c>stfld</c>
+    /// on the boxed value-type state machine (the latter is unverifiable and can drop the write).
+    /// A variable also captured by a NESTED (grandchild) async arrow is excluded — the grandchild's
+    /// DC-access path isn't wired (its outer reference points at the parent arrow, not the function),
+    /// so only direct-child writes are promoted. Shared by free async functions, async methods (#682),
+    /// each of which supplies its own <paramref name="asyncArrows"/> analysis.
+    /// </summary>
+    private static HashSet<string> ComputeArrowWrittenCapturesToPromote(
+        List<AsyncStateAnalyzer.AsyncArrowInfo> asyncArrows)
+    {
+        var nestedAsyncArrowCaptures = new HashSet<string>();
+        foreach (var arrowInfo in asyncArrows)
+            if (arrowInfo.ParentArrow != null)
+                nestedAsyncArrowCaptures.UnionWith(arrowInfo.Captures);
+
+        var promoted = new HashSet<string>();
+        foreach (var arrowInfo in asyncArrows)
+        {
+            if (arrowInfo.ParentArrow != null) continue; // direct children only
+            var written = CapturedWriteAnalysis.CollectImmediateWrites(arrowInfo.Arrow);
+            written.IntersectWith(arrowInfo.Captures);
+            written.ExceptWith(nestedAsyncArrowCaptures);
+            promoted.UnionWith(written);
+        }
+        return promoted;
+    }
+
+    /// <summary>
+    /// #682: builds the method-scoped function display class holding the captures that a direct-child
+    /// async arrow writes (<see cref="ComputeArrowWrittenCapturesToPromote"/>) and adds the DC field to
+    /// the method's state machine. Async methods (instance and static) otherwise have no function-DC
+    /// infrastructure, so a captured write would emit the unverifiable <c>unbox</c>+<c>stfld</c> on the
+    /// boxed value-type state machine. <paramref name="dcKey"/> must be unique per method and disjoint
+    /// from free-function registry keys (which never contain "::"). Returns <paramref name="dcKey"/> so
+    /// the caller can thread it to <see cref="EmitAsyncStubMethod"/> and <see cref="WireAsyncMethodFunctionDC"/>.
+    /// </summary>
+    private string SetupAsyncMethodFunctionDC(AsyncStateMachineBuilder smBuilder, string dcKey,
+        AsyncStateAnalyzer.AsyncFunctionAnalysis analysis)
+    {
+        var promoted = ComputeArrowWrittenCapturesToPromote(analysis.AsyncArrows);
+        if (promoted.Count > 0)
+        {
+            DefineFunctionDisplayClassType(dcKey, promoted);
+            if (_closures.FunctionDisplayClasses.TryGetValue(dcKey, out var dc))
+                smBuilder.DefineFunctionDisplayClassField(dc);
+        }
+        return dcKey;
+    }
+
+    /// <summary>
+    /// #682: wires <paramref name="ctx"/> so the async method body (AsyncMoveNextEmitter) reads/writes
+    /// the promoted captures via <c>this.functionDC.field</c> and a nested async arrow
+    /// (AsyncArrowMoveNextEmitter, sharing this ctx) reaches them via <c>outer.functionDC.field</c>.
+    /// No-op when nothing was promoted (no DC field on the state machine).
+    /// </summary>
+    private void WireAsyncMethodFunctionDC(CompilationContext ctx, AsyncStateMachineBuilder smBuilder, string dcKey)
+    {
+        if (smBuilder.FunctionDCField != null &&
+            _closures.FunctionDisplayClassFields.TryGetValue(dcKey, out var dcFields))
+        {
+            ctx.FunctionDisplayClassFields = dcFields;
+            ctx.CapturedFunctionLocals = new HashSet<string>(dcFields.Keys);
+            ctx.OuterFunctionDCField = smBuilder.FunctionDCField;
+        }
     }
 
     private void DefineAsyncArrowStateMachines(
@@ -702,7 +757,8 @@ public partial class ILCompiler
         List<Stmt.Parameter> parameters,
         bool isInstanceMethod = false,
         FieldBuilder? asyncLockField = null,
-        FieldBuilder? lockReentrancyField = null)
+        FieldBuilder? lockReentrancyField = null,
+        string? functionDCKey = null)
     {
         var il = stubMethod.GetILGenerator();
         var smLocal = il.DeclareLocal(smBuilder.StateMachineType);
@@ -773,12 +829,12 @@ public partial class ILCompiler
         }
 
         // Initialize function display class for closure mutation sharing.
-        // FunctionDCField is only set for top-level async functions, whose stub method
-        // name is already the module-qualified registry/closure key (#418) — use it
-        // directly rather than re-qualifying.
+        // For top-level async functions the stub method name is already the module-qualified
+        // registry/closure key (#418), so it's used directly. Async methods (#682) supply an
+        // explicit key (their stub name is just the bare method name, which isn't a registry key).
         if (smBuilder.FunctionDCField != null)
         {
-            var qualifiedName = stubMethod.Name;
+            var qualifiedName = functionDCKey ?? stubMethod.Name;
             if (_closures.FunctionDisplayClassCtors.TryGetValue(qualifiedName, out var dcCtor))
             {
                 il.Emit(OpCodes.Ldloca, smLocal);
@@ -868,6 +924,12 @@ public partial class ILCompiler
             hasLock: hasLock
         );
 
+        // #682: a direct-child async arrow that WRITES a captured method-local must mutate it through
+        // a reference-type function display class, not the boxed value-type state machine (unverifiable
+        // unbox → readonly pointer). Async instance methods have no function-DC by default; wire one.
+        string methodDCKey = SetupAsyncMethodFunctionDC(
+            smBuilder, $"{methodBuilder.DeclaringType!.Name}::{method.Name.Lexeme}", analysis);
+
         // Build state machines for any async arrows found in this method
         DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder);
 
@@ -888,7 +950,8 @@ public partial class ILCompiler
             method.Parameters,
             isInstanceMethod: true,
             asyncLockField,
-            lockReentrancyField);
+            lockReentrancyField,
+            functionDCKey: methodDCKey);
 
         // Create context for MoveNext emission
         var il = smBuilder.MoveNextMethod.GetILGenerator();
@@ -950,6 +1013,10 @@ public partial class ILCompiler
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
         };
 
+        // #682: route promoted captures through the method's function display class (shared by the
+        // method body and its nested async arrows via this ctx).
+        WireAsyncMethodFunctionDC(ctx, smBuilder, methodDCKey);
+
         // Emit MoveNext body
         // Note: @lock fields are stored directly in the state machine (AsyncLockRefField, LockReentrancyRefField)
         // so the emitter doesn't need external references to the class's lock fields
@@ -958,42 +1025,19 @@ public partial class ILCompiler
         ILLabelValidator.Validate(smBuilder.MoveNextMethod.GetILGenerator(),
             $"async method MoveNext {methodBuilder.DeclaringType?.Name}::{method.Name.Lexeme}");
 
-        // Emit MoveNext bodies for async arrows
+        // Emit MoveNext bodies for async arrows. Delegate to the shared EmitAsyncArrowMoveNext (the
+        // same path free async functions use) rather than emitting inline. The inline path reused this
+        // METHOD's ctx — whose `IL` points at the method's MoveNext, not the arrow's — so any emitter
+        // strategy that emits via `ctx.IL` (e.g. Promise.resolve) wrote into the method's IL stream
+        // after its `ret`, producing invalid IL (InvalidProgramException for any suspending arrow in an
+        // async method). EmitAsyncArrowMoveNext builds a fresh per-arrow ctx whose `IL` is the arrow's,
+        // restoring the `ctx.IL == emitter.IL` invariant the strategies rely on, and it propagates the
+        // #682 function-DC fields we set on `ctx` above.
         foreach (var arrowInfo in analysis.AsyncArrows)
         {
             if (_async.ArrowBuilders.TryGetValue(arrowInfo.Arrow, out var arrowBuilder))
             {
-                var arrowAnalysis = AnalyzeAsyncArrow(arrowInfo.Arrow);
-                var arrow = arrowInfo.Arrow;
-
-                List<Stmt> bodyStatements;
-                if (arrow.BlockBody != null)
-                {
-                    bodyStatements = arrow.BlockBody;
-                }
-                else if (arrow.ExpressionBody != null)
-                {
-                    var returnToken = new Token(TokenType.RETURN, "return", null, 0);
-                    bodyStatements = [new Stmt.Return(returnToken, arrow.ExpressionBody)];
-                }
-                else
-                {
-                    bodyStatements = [];
-                }
-
-                var arrowEmitter = new AsyncArrowMoveNextEmitter(arrowBuilder,
-                    new AsyncStateAnalyzer.AsyncFunctionAnalysis(
-                        arrowAnalysis.AwaitCount,
-                        [],  // AwaitPoints not needed for emission
-                        arrowAnalysis.HoistedLocals,
-                        [],  // HoistedParameters - arrow params are in ParameterFields
-                        false, // HasTryCatch
-                        false, // UsesThis
-                        []     // AsyncArrows - handled separately via _async.ArrowBuilders
-                    ), _types);
-                arrowEmitter.EmitMoveNext(bodyStatements, ctx, _types.Object);
-                ILLabelValidator.Validate(arrowBuilder.MoveNextMethod.GetILGenerator(),
-                    $"async arrow MoveNext in {methodBuilder.DeclaringType?.Name}::{method.Name.Lexeme}");
+                EmitAsyncArrowMoveNext(arrowBuilder, arrowInfo.Arrow, ctx);
             }
         }
 
