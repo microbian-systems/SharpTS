@@ -297,6 +297,18 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
+        // Transitive standalone capture: a variable THIS (enclosing) standalone arrow itself
+        // captured (stored in its own state-machine field) and a nested standalone arrow now
+        // re-captures. Without this the value would fall through to null one level too deep.
+        // Checked after the arrow's own params/locals so a same-named local still shadows it.
+        if (_builder.StandaloneCaptureFields.TryGetValue(name, out var enclosingCaptureField))
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, enclosingCaptureField);
+            SetStackUnknown();
+            return;
+        }
+
         // Handle 'this' capture - in async arrows, 'this' is captured from outer scope
         if (name == "this" && _builder.IsCaptured("this") && _builder.CapturedFieldMap.TryGetValue("this", out var thisField))
         {
