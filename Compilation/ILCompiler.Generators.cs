@@ -333,29 +333,33 @@ public partial class ILCompiler
     /// Emits the body of an instance generator method using a state machine.
     /// Called for class methods marked with IsGenerator = true.
     /// </summary>
-    private void EmitGeneratorMethodBody(MethodBuilder methodBuilder, Stmt.Function method, FieldInfo fieldsField)
+    private void EmitGeneratorMethodBody(MethodBuilder methodBuilder, Stmt.Function method, FieldInfo? fieldsField, bool isInstanceMethod = true)
     {
         // Analyze generator function to determine yield points and hoisted variables
         var analysis = _generators.Analyzer.Analyze(method);
 
-        // Build state machine type for instance method
+        // Build state machine type. A static generator method (#692) has no `this`/instance fields,
+        // so it is set up like a free function (isInstanceMethod: false, static stub).
         var smBuilder = new GeneratorStateMachineBuilder(_moduleBuilder, _types, _generators.StateMachineCounter++);
         smBuilder.DefineStateMachine(
             $"{methodBuilder.DeclaringType!.Name}_{method.Name.Lexeme}",
             analysis,
-            isInstanceMethod: true,  // This is an instance method
+            isInstanceMethod: isInstanceMethod,
             runtime: _runtime
         );
 
         // Emit stub method body (creates state machine and returns it)
-        EmitGeneratorInstanceStubMethod(methodBuilder, smBuilder, method.Parameters);
+        if (isInstanceMethod)
+            EmitGeneratorInstanceStubMethod(methodBuilder, smBuilder, method.Parameters);
+        else
+            EmitGeneratorStaticStubMethod(methodBuilder, smBuilder, method.Parameters);
 
         // Create context for MoveNext emission
         var il = smBuilder.MoveNextMethod.GetILGenerator();
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             FieldsField = fieldsField,
-            IsInstanceMethod = true,
+            IsInstanceMethod = isInstanceMethod,
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
             ConstArrowBindings = _closures.ConstArrowBindings,
@@ -464,6 +468,50 @@ public partial class ILCompiler
         // Captured outer-scope variables are NOT copied into the state machine (#541): see the
         // free-function stub above. MoveNext reads/writes them live from their backing storage,
         // wired through the CompilationContext in EmitGeneratorMethodBody.
+
+        // Return the state machine (which implements IEnumerable<object>)
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits the stub that creates the generator state machine for a STATIC method (#692): like the
+    /// instance stub but with no <c>this</c> and parameters starting at arg 0 (no receiver slot).
+    /// Value-type parameters are boxed into the object-typed state-machine fields.
+    /// </summary>
+    private void EmitGeneratorStaticStubMethod(
+        MethodBuilder methodBuilder,
+        GeneratorStateMachineBuilder smBuilder,
+        List<Stmt.Parameter> parameters)
+    {
+        var il = methodBuilder.GetILGenerator();
+
+        // Create new instance of the state machine
+        il.Emit(OpCodes.Newobj, smBuilder.Constructor);
+
+        string? className = methodBuilder.DeclaringType?.Name;
+        string methodName = methodBuilder.Name;
+        Type[] paramTypes = className != null
+            ? ParameterTypeResolver.ResolveMethodParameters(className, methodName, parameters, _typeMapper, _typeMap)
+            : parameters.Select(_ => typeof(object)).ToArray();
+
+        // Copy parameters to state machine fields (static methods start params at index 0).
+        for (int i = 0; i < parameters.Count; i++)
+        {
+            var field = smBuilder.GetVariableField(parameters[i].Name.Lexeme);
+            if (field != null)
+            {
+                il.Emit(OpCodes.Dup);  // Keep state machine reference on stack
+                il.Emit(OpCodes.Ldarg, i);
+
+                // Box value types since state machine fields are object-typed
+                if (i < paramTypes.Length && paramTypes[i].IsValueType)
+                {
+                    il.Emit(OpCodes.Box, paramTypes[i]);
+                }
+
+                il.Emit(OpCodes.Stfld, field);
+            }
+        }
 
         // Return the state machine (which implements IEnumerable<object>)
         il.Emit(OpCodes.Ret);
