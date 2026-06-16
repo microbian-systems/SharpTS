@@ -202,27 +202,36 @@ public partial class CompilationContext
     // Loop and Exception Block Control
     // ============================================
 
-    // Loop control labels (with optional label name for labeled statements)
-    public Stack<(Label BreakLabel, Label ContinueLabel, string? LabelName)> LoopLabels { get; } = new();
+    // Loop control labels. LabelNames carries every label a labeled break/continue can target —
+    // usually zero or one, but a chain like `a: b: for` hands the loop both, so `continue a` and
+    // `continue b` resolve to the same loop. Empty (NoLabels) for an unlabeled loop.
+    public Stack<(Label BreakLabel, Label ContinueLabel, IReadOnlyList<string> LabelNames)> LoopLabels { get; } = new();
+
+    /// <summary>Shared empty label set for unlabeled loops (avoids per-loop allocation).</summary>
+    public static readonly IReadOnlyList<string> NoLabels = [];
+
+    // Labels parked by EmitLabeledStatement for the loop a chain of them directly wraps. The loop
+    // drains them all at entry via TakePendingLoopLabels and treats a continue/break to any of them
+    // as targeting itself, running the loop's own step (a for's increment, a while's re-test) rather
+    // than restarting it — restarting a `for` would re-run its initializer forever (#558/#580).
+    private readonly List<string> _pendingLoopLabels = [];
+
+    /// <summary>Parks a label for the next loop to adopt. A chain parks several before the loop.</summary>
+    public void AddPendingLoopLabel(string label) => _pendingLoopLabels.Add(label);
+
+    /// <summary>Discards any parked labels the next loop didn't drain (defensive cleanup).</summary>
+    public void ClearPendingLoopLabels() => _pendingLoopLabels.Clear();
 
     /// <summary>
-    /// Label name awaiting attachment to the next loop's own break/continue targets.
-    /// Set by <c>EmitLabeledStatement</c> when the labeled statement is a loop, and consumed
-    /// by that loop's <c>EnterLoop</c> (here or in an emitter override). This lets
-    /// <c>continue &lt;label&gt;</c> branch to the loop's real continue point — a for-loop's
-    /// increment, a while's condition — instead of a point ahead of the loop's initializer,
-    /// which would re-run it forever (#558).
+    /// Returns the labels parked for the loop now being entered, and clears them, so they attach to
+    /// exactly one loop.
     /// </summary>
-    public string? PendingLoopLabel { get; set; }
-
-    /// <summary>
-    /// Returns the pending labeled-loop name and clears it, so it attaches to exactly one loop.
-    /// </summary>
-    public string? TakePendingLoopLabel()
+    public IReadOnlyList<string> TakePendingLoopLabels()
     {
-        var label = PendingLoopLabel;
-        PendingLoopLabel = null;
-        return label;
+        if (_pendingLoopLabels.Count == 0) return NoLabels;
+        var labels = _pendingLoopLabels.ToArray();
+        _pendingLoopLabels.Clear();
+        return labels;
     }
 
     // Hoisted array type caches: stack of per-loop dictionaries mapping
@@ -340,27 +349,38 @@ public partial class CompilationContext
 
     public void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
     {
-        // An unlabeled EnterLoop call adopts any label parked by an enclosing labeled
-        // statement, so the loop's own continue/break targets carry the label (#558).
-        LoopLabels.Push((breakLabel, continueLabel, labelName ?? TakePendingLoopLabel()));
+        // An explicit label names this loop alone; otherwise the loop adopts whatever an enclosing
+        // labeled statement parked — a chain hands it several — so its own continue/break targets
+        // carry every label (#558/#580).
+        var labels = labelName != null ? new[] { labelName } : TakePendingLoopLabels();
+        LoopLabels.Push((breakLabel, continueLabel, labels));
     }
+
+    /// <summary>
+    /// Enters a loop carrying a pre-collected set of label names. Used where the labels are drained
+    /// once up front and handed to each of several alternative runtime paths (e.g. for-of's iterator
+    /// / index-based variants), so every path's break/continue targets resolve no matter which one
+    /// runs at runtime (#558).
+    /// </summary>
+    public void EnterLoop(Label breakLabel, Label continueLabel, IReadOnlyList<string> labelNames)
+        => LoopLabels.Push((breakLabel, continueLabel, labelNames));
 
     public void ExitLoop()
     {
         LoopLabels.Pop();
     }
 
-    public (Label BreakLabel, Label ContinueLabel, string? LabelName)? CurrentLoop =>
+    public (Label BreakLabel, Label ContinueLabel, IReadOnlyList<string> LabelNames)? CurrentLoop =>
         LoopLabels.Count > 0 ? LoopLabels.Peek() : null;
 
     /// <summary>
-    /// Find a loop label by name (for labeled break/continue).
+    /// Find a loop scope that carries the given label name (for labeled break/continue).
     /// </summary>
-    public (Label BreakLabel, Label ContinueLabel, string? LabelName)? FindLabeledLoop(string labelName)
+    public (Label BreakLabel, Label ContinueLabel, IReadOnlyList<string> LabelNames)? FindLabeledLoop(string labelName)
     {
         foreach (var entry in LoopLabels)
         {
-            if (entry.LabelName == labelName)
+            if (entry.LabelNames.Contains(labelName))
                 return entry;
         }
         return null;
