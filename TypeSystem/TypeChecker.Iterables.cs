@@ -208,6 +208,34 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Computes the static type produced by the <c>__arrayDestructure</c> helper (#685), which
+    /// normalizes an array binding-pattern source through the iterator protocol. Index-addressable
+    /// sources (arrays, tuples, strings, <c>any</c>) pass through with their precise type so the
+    /// desugared positional index access stays accurate — notably tuples keep their per-position
+    /// element types. Any other iterable (Set, Map, generators, <c>[Symbol.iterator]</c> objects)
+    /// becomes <c>Array&lt;element&gt;</c>, so the subsequent <c>_dest0[i]</c> reads the element type
+    /// instead of erroring. A non-iterable, non-indexable source is returned unchanged so the existing
+    /// index-access diagnostic still fires.
+    /// </summary>
+    private TypeInfo NormalizeArrayDestructureSourceType(TypeInfo sourceType)
+    {
+        switch (sourceType)
+        {
+            case TypeInfo.Array:
+            case TypeInfo.Tuple:
+            case TypeInfo.String:
+            case TypeInfo.StringLiteral:
+            case TypeInfo.Any:
+                return sourceType;
+        }
+
+        if (TryGetIterableElementType(sourceType, out var elementType))
+            return new TypeInfo.Array(elementType);
+
+        return sourceType;
+    }
+
+    /// <summary>
     /// The element type of any async-iterable source — the dedicated <see cref="TypeInfo.AsyncIterable"/>,
     /// <see cref="TypeInfo.AsyncIterator"/> (= AsyncIterableIterator) and <see cref="TypeInfo.AsyncGenerator"/>
     /// records. Drives the <c>AsyncIterable&lt;T&gt;</c> assignment target and the async arm of
