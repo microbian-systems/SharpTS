@@ -1001,6 +1001,78 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         => stmt is Stmt.While or Stmt.DoWhile or Stmt.For or Stmt.ForOf or Stmt.ForIn;
 
     /// <summary>
+    /// Detects return/break/continue that would transfer control out of the surrounding try
+    /// region. Over-approximates conservatively (labeled break/continue are always treated as
+    /// escaping): a false positive only costs a statement some mini-segment exception coverage,
+    /// whereas a false negative would emit a <c>br</c>/<c>ret</c> inside a protected region (illegal IL).
+    /// Nested function/arrow bodies are not traversed (their returns are their own).
+    /// </summary>
+    /// <remarks>
+    /// Shared by the suspension-aware emitters (generator, async generator, async function): each
+    /// segments a flag-based try body so a suspension point or a non-local exit lands at the top level
+    /// (outside the mini IL try/catch), where its <c>ret</c>/<c>br</c>/<c>Leave</c> is legal.
+    /// </remarks>
+    protected static bool ContainsEscapingExit(Stmt stmt, bool insideLoop, bool insideSwitch)
+    {
+        switch (stmt)
+        {
+            case Stmt.Return:
+                return true;
+            case Stmt.Break b:
+                return b.Label != null || !(insideLoop || insideSwitch);
+            case Stmt.Continue c:
+                return c.Label != null || !insideLoop;
+            case Stmt.If i:
+                return ContainsEscapingExit(i.ThenBranch, insideLoop, insideSwitch)
+                    || (i.ElseBranch != null && ContainsEscapingExit(i.ElseBranch, insideLoop, insideSwitch));
+            case Stmt.Block b:
+                if (b.Statements == null) return false;
+                foreach (var s in b.Statements)
+                    if (ContainsEscapingExit(s, insideLoop, insideSwitch)) return true;
+                return false;
+            case Stmt.Sequence seq:
+                foreach (var s in seq.Statements)
+                    if (ContainsEscapingExit(s, insideLoop, insideSwitch)) return true;
+                return false;
+            case Stmt.While w:
+                return ContainsEscapingExit(w.Body, insideLoop: true, insideSwitch);
+            case Stmt.DoWhile dw:
+                return ContainsEscapingExit(dw.Body, insideLoop: true, insideSwitch);
+            case Stmt.For f:
+                return ContainsEscapingExit(f.Body, insideLoop: true, insideSwitch);
+            case Stmt.ForOf fo:
+                return ContainsEscapingExit(fo.Body, insideLoop: true, insideSwitch);
+            case Stmt.ForIn fi:
+                return ContainsEscapingExit(fi.Body, insideLoop: true, insideSwitch);
+            case Stmt.Switch s:
+                foreach (var c in s.Cases)
+                    foreach (var cs in c.Body)
+                        if (ContainsEscapingExit(cs, insideLoop, insideSwitch: true)) return true;
+                if (s.DefaultBody != null)
+                    foreach (var ds in s.DefaultBody)
+                        if (ContainsEscapingExit(ds, insideLoop, insideSwitch: true)) return true;
+                return false;
+            case Stmt.LabeledStatement ls:
+                return ContainsEscapingExit(ls.Statement, insideLoop, insideSwitch);
+            case Stmt.TryCatch t:
+                if (ContainsEscapingExit2(t.TryBlock, insideLoop, insideSwitch)) return true;
+                if (t.CatchBlock != null && ContainsEscapingExit2(t.CatchBlock, insideLoop, insideSwitch)) return true;
+                if (t.FinallyBlock != null && ContainsEscapingExit2(t.FinallyBlock, insideLoop, insideSwitch)) return true;
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>Any statement in <paramref name="statements"/> contains an escaping exit (see <see cref="ContainsEscapingExit"/>).</summary>
+    protected static bool ContainsEscapingExit2(List<Stmt> statements, bool insideLoop, bool insideSwitch)
+    {
+        foreach (var s in statements)
+            if (ContainsEscapingExit(s, insideLoop, insideSwitch)) return true;
+        return false;
+    }
+
+    /// <summary>
     /// Emits a switch statement.
     /// </summary>
     protected virtual void EmitSwitch(Stmt.Switch s)

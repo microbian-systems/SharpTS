@@ -113,6 +113,17 @@ public partial class AsyncMoveNextEmitter
 
     private void EmitLabeledForOf(IReadOnlyList<string> labelNames, Stmt.ForOf f, Label outerBreakLabel)
     {
+        if (f.IsAsync)
+        {
+            // for await: route to the suspending async-iterator lowering, carrying the chain's labels so
+            // `break`/`continue <label>` target this loop. Its natural end falls through to
+            // outerBreakLabel (marked right after by EmitLabeledStatement), so an early break runs the
+            // iterator's return() cleanup, then exits. The previous synchronous enumeration here ignored
+            // f.IsAsync and left the reserved await-state labels unmarked → compile failure (#728).
+            EmitForAwaitOf(f, labelNames);
+            return;
+        }
+
         string varName = f.Variable.Lexeme;
         var varField = _builder.GetVariableField(varName);
 

@@ -46,6 +46,8 @@ public class EmitterSyncTests
             "EmitForOf",            // for-await-of protocol dispatch
             "EmitForAwaitOf",       // #631: override the shared base to SUSPEND on next()/return() (vs blocking GetResult)
             "EmitLabeledStatement", // Labeled continue for for loops (base doesn't handle correctly)
+            "EmitBranchToLabel",    // #727: Leave instead of Br when a break/continue leaves a real IL exception block
+
             "EmitAwait",            // Core: suspend/resume state machine
             "EmitArrowFunction",    // Display class in state machine context
             "EmitExpressionAsDouble", // Literal optimization

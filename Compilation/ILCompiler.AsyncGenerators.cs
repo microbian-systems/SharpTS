@@ -178,15 +178,17 @@ public partial class ILCompiler
     /// Emits the body of an instance async generator method using a state machine.
     /// Called for class methods marked with both IsAsync and IsGenerator = true.
     /// </summary>
-    private void EmitAsyncGeneratorMethodBody(MethodBuilder methodBuilder, Stmt.Function method, FieldInfo fieldsField)
+    private void EmitAsyncGeneratorMethodBody(MethodBuilder methodBuilder, Stmt.Function method, FieldInfo fieldsField,
+        string? currentClassName = null)
     {
         // Analyze async generator function to determine yield/await points and hoisted variables
         var analysis = _asyncGenerators.Analyzer.Analyze(method);
 
-        // Build state machine type for instance method
+        // Build state machine type for instance method. Use the MethodBuilder's (mangled) name rather
+        // than method.Name.Lexeme so a private async generator's `#p` lexeme doesn't put a `#` in the name.
         var smBuilder = new AsyncGeneratorStateMachineBuilder(_moduleBuilder, _types, _asyncGenerators.StateMachineCounter++);
         smBuilder.DefineStateMachine(
-            $"{methodBuilder.DeclaringType!.Name}_{method.Name.Lexeme}",
+            $"{methodBuilder.DeclaringType!.Name}_{methodBuilder.Name}",
             analysis,
             isInstanceMethod: true,  // This is an instance method
             runtime: _runtime
@@ -232,8 +234,9 @@ public partial class ILCompiler
             ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode || CheckForUseStrict(method.Body),
-            // ES2022 Private Class Elements support for async generator methods
-            CurrentClassName = methodBuilder.DeclaringType?.Name,
+            // ES2022 Private Class Elements support for async generator methods (a private async
+            // generator threads its QUALIFIED class name so nested private member access resolves — #720).
+            CurrentClassName = currentClassName ?? methodBuilder.DeclaringType?.Name,
             CurrentClassBuilder = methodBuilder.DeclaringType as TypeBuilder,
             // Registry services
             ClassRegistry = GetClassRegistry(),
@@ -274,13 +277,11 @@ public partial class ILCompiler
             il.Emit(OpCodes.Stfld, smBuilder.ThisField);
         }
 
-        // Get the typed parameter types for the method
-        // We need to box value types since state machine fields are object-typed
-        string? className = methodBuilder.DeclaringType?.Name;
-        string methodName = methodBuilder.Name;
-        Type[] paramTypes = className != null
-            ? ParameterTypeResolver.ResolveMethodParameters(className, methodName, parameters, _typeMapper, _typeMap)
-            : parameters.Select(_ => typeof(object)).ToArray();
+        // Box value types since state machine fields are object-typed. Decide from the method's ACTUAL
+        // IL signature (methodBuilder.GetParameters()), not the AST-resolved types: a private method's
+        // parameters are all `object` slots, so boxing the AST-resolved value type would mismatch the
+        // `object` argument actually loaded (StackUnexpected). Mirrors EmitAsyncStubMethod.
+        var paramTypes = methodBuilder.GetParameters();
 
         // Copy parameters to state machine fields (instance methods start params at index 1)
         for (int i = 0; i < parameters.Count; i++)
@@ -292,10 +293,9 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Dup);  // Keep state machine reference on stack
                 il.Emit(OpCodes.Ldarg, i + 1);  // +1 because 'this' is at index 0
 
-                // Box value types since state machine fields are object-typed
-                if (i < paramTypes.Length && paramTypes[i].IsValueType)
+                if (i < paramTypes.Length && paramTypes[i].ParameterType.IsValueType)
                 {
-                    il.Emit(OpCodes.Box, paramTypes[i]);
+                    il.Emit(OpCodes.Box, paramTypes[i].ParameterType);
                 }
 
                 il.Emit(OpCodes.Stfld, field);

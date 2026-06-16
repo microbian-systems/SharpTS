@@ -60,6 +60,12 @@ public partial class Interpreter
 
     private async Task<ExecutionResult> ExecuteForOfAsync(Stmt.ForOf forOf)
     {
+        // Drain any labels parked by ExecuteLabeledStatementAsyncVT before evaluating the iterable, so a
+        // `break`/`continue <label>` targeting this loop (including via the async-iterator path below) is
+        // matched here rather than escaping — and so a labeled loop produced by the iterable expression
+        // can't steal this loop's label. TakePendingLoopLabels returns empty when none are parked, so the
+        // unlabeled path is unchanged (#728).
+        var labels = TakePendingLoopLabels();
         object? iterable = (await EvaluateAsync(forOf.Iterable)).ToObject();
 
         // For 'for await...of', check for async iterator protocol first
@@ -68,7 +74,7 @@ public partial class Interpreter
             var asyncIterator = TryGetAsyncIterator(iterable);
             if (asyncIterator != null)
             {
-                return await IterateAsyncIterator(asyncIterator, forOf);
+                return await IterateAsyncIterator(asyncIterator, forOf, labels);
             }
             // Fall through to sync iterator with async unwrap
         }
@@ -83,9 +89,10 @@ public partial class Interpreter
                 object? value = forOf.IsAsync && item is Task<object?> t ? await AwaitPreservingEnvironment(t) : item;
 
                 var result = await ExecuteLoopBodyAsync(forOf.Variable.Lexeme, value, forOf.Body);
-                if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == null) return ExecutionResult.Success();
-                if (result.Type == ExecutionResult.ResultType.Continue && result.TargetLabel == null) continue;
-                if (result.IsAbrupt) return result;
+                var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
+                if (shouldBreak) return ExecutionResult.Success();
+                if (shouldContinue) continue;
+                if (abruptResult.HasValue) return abruptResult.Value;
 
                 // Process any pending timer callbacks
                 ProcessPendingCallbacks();
@@ -111,7 +118,7 @@ public partial class Interpreter
             object? value = forOf.IsAsync && item is Task<object?> t ? await t : item;
 
             var result = await ExecuteLoopBodyAsync(forOf.Variable.Lexeme, value, forOf.Body);
-            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, null);
+            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             if (shouldBreak) return ExecutionResult.Success();
             if (shouldContinue) continue;
             if (abruptResult.HasValue) return abruptResult.Value;
@@ -203,7 +210,7 @@ public partial class Interpreter
     /// <summary>
     /// Iterates an async iterator by repeatedly calling .next() and awaiting results.
     /// </summary>
-    private async Task<ExecutionResult> IterateAsyncIterator(object asyncIterator, Stmt.ForOf forOf)
+    private async Task<ExecutionResult> IterateAsyncIterator(object asyncIterator, Stmt.ForOf forOf, IReadOnlyList<string>? labels = null)
     {
         // The loop body must run in the for-await statement's own lexical scope, regardless of how the
         // iterator's next() mutates the interpreter's ambient environment. The eager-drain async generator
@@ -253,7 +260,7 @@ public partial class Interpreter
             if (done) break;
 
             var result = await ExecuteLoopBodyAsync(forOf.Variable.Lexeme, value, forOf.Body);
-            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, null);
+            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             if (shouldBreak) return ExecutionResult.Success();
             if (shouldContinue) continue;
             if (abruptResult.HasValue) return abruptResult.Value;
@@ -319,6 +326,7 @@ public partial class Interpreter
 
     private async Task<ExecutionResult> ExecuteForInAsync(Stmt.ForIn forIn)
     {
+        var labels = TakePendingLoopLabels();
         object? obj = (await EvaluateAsync(forIn.Object)).ToObject();
 
         IEnumerable<string> keys = obj switch
@@ -336,7 +344,7 @@ public partial class Interpreter
         foreach (var key in keys)
         {
             var result = await ExecuteLoopBodyAsync(forIn.Variable.Lexeme, key, forIn.Body);
-            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, null);
+            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             if (shouldBreak) return ExecutionResult.Success();
             if (shouldContinue) continue;
             if (abruptResult.HasValue) return abruptResult.Value;
@@ -400,10 +408,11 @@ public partial class Interpreter
 
     internal async ValueTask<ExecutionResult> ExecuteWhileAsyncVT(Stmt.While whileStmt)
     {
+        var labels = TakePendingLoopLabels();
         while (IsTruthy(await EvaluateAsync(whileStmt.Condition)))
         {
             var result = await ExecuteStatementAsync(whileStmt.Body);
-            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, null);
+            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             if (shouldBreak) return ExecutionResult.Success();
             if (shouldContinue) continue;
             if (abruptResult.HasValue) return abruptResult.Value;
@@ -414,10 +423,11 @@ public partial class Interpreter
 
     internal async ValueTask<ExecutionResult> ExecuteDoWhileAsyncVT(Stmt.DoWhile doWhileStmt)
     {
+        var labels = TakePendingLoopLabels();
         do
         {
             var result = await ExecuteStatementAsync(doWhileStmt.Body);
-            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, null);
+            var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
             if (shouldBreak) return ExecutionResult.Success();
             if (shouldContinue) continue;
             if (abruptResult.HasValue) return abruptResult.Value;
@@ -428,6 +438,9 @@ public partial class Interpreter
 
     internal async ValueTask<ExecutionResult> ExecuteForAsyncVT(Stmt.For forStmt)
     {
+        // Drain labels parked for this loop so a `break`/`continue <label>` targeting it (e.g. from an
+        // inner `for await`) is matched here instead of escaping. Empty when unlabeled (#728).
+        var labels = TakePendingLoopLabels();
         RuntimeEnvironment loopEnv = new(_environment);
         using (PushScope(loopEnv))
         {
@@ -442,8 +455,8 @@ public partial class Interpreter
             while (forStmt.Condition == null || IsTruthy(await EvaluateAsync(forStmt.Condition)))
             {
                 var result = await ExecuteStatementAsync(forStmt.Body);
-                if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == null) break;
-                if (result.Type == ExecutionResult.ResultType.Continue && result.TargetLabel == null)
+                if (result.Type == ExecutionResult.ResultType.Break && TargetsThisLoop(result.TargetLabel, labels)) break;
+                if (result.Type == ExecutionResult.ResultType.Continue && TargetsThisLoop(result.TargetLabel, labels))
                 {
                     if (perIterationNames != null)
                         CreatePerIterationEnvironment(loopEnv, perIterationNames);
@@ -471,6 +484,57 @@ public partial class Interpreter
     internal async ValueTask<ExecutionResult> ExecuteForInAsyncVT(Stmt.ForIn forIn)
     {
         return await ExecuteForInAsync(forIn);
+    }
+
+    /// <summary>
+    /// Async analog of <see cref="ExecuteLabeledStatement"/>. Parks the chain's labels for the loop it
+    /// wraps (drained by the async loop at entry, so a matching <c>continue</c>/<c>break</c> targets that
+    /// loop) and executes the inner statement through the <em>async</em> path. Registering this is what
+    /// routes a labeled <c>for await</c> to the async-iterator lowering instead of the synchronous
+    /// executor — the latter throws "requires an iterable" on an async iterator (#728).
+    /// </summary>
+    internal async ValueTask<ExecutionResult> ExecuteLabeledStatementAsyncVT(Stmt.LabeledStatement labeledStmt)
+    {
+        // Flatten a chain of labels (a: b: stmt) down to the statement they wrap.
+        List<string> labels = [];
+        Stmt inner = labeledStmt;
+        while (inner is Stmt.LabeledStatement ls)
+        {
+            labels.Add(ls.Label.Lexeme);
+            inner = ls.Statement;
+        }
+
+        bool isLoop = inner is Stmt.While or Stmt.DoWhile or Stmt.For or Stmt.ForOf or Stmt.ForIn;
+
+        if (isLoop)
+        {
+            // Park the labels for the loop; it drains them at entry and handles a matching
+            // continue/break itself. Restore on the way out so an undrained label can't leak.
+            int baseCount = _pendingLoopLabels.Count;
+            _pendingLoopLabels.AddRange(labels);
+            ExecutionResult result;
+            try
+            {
+                result = await ExecuteStatementAsync(inner);
+            }
+            finally
+            {
+                if (_pendingLoopLabels.Count > baseCount)
+                    _pendingLoopLabels.RemoveRange(baseCount, _pendingLoopLabels.Count - baseCount);
+            }
+            // The loop absorbs continue/break for its labels; guard a matching break defensively.
+            if (result.Type == ExecutionResult.ResultType.Break &&
+                result.TargetLabel != null && labels.Contains(result.TargetLabel))
+                return ExecutionResult.Success();
+            return result;
+        }
+
+        // Non-loop labeled statement: only `break <label>` is meaningful.
+        var r = await ExecuteStatementAsync(inner);
+        if (r.Type == ExecutionResult.ResultType.Break &&
+            r.TargetLabel != null && labels.Contains(r.TargetLabel))
+            return ExecutionResult.Success();
+        return r;
     }
 
     internal async ValueTask<ExecutionResult> ExecuteSwitchAsyncVT(Stmt.Switch switchStmt)

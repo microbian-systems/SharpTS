@@ -754,6 +754,40 @@ public partial class ILCompiler
         // pads omitted optional args with the `undefined` sentinel on the value-call path.
         MarkPadsUndefined(methodBuilder);
 
+        // #720: async/generator private methods must be emitted through a state machine, exactly like
+        // their public counterparts — not linearly into __private_<name>, which leaves a bare object on
+        // the stack for an `async` method declared to return Task<object> (invalid IL) and rejects
+        // `yield` ("Yield not supported"). Route by method kind; the parameter-default prologue moves
+        // into the state machine's entry (the state-machine emitters apply EmitDefaultParameters
+        // themselves). The qualified class name is threaded so nested private member access resolves.
+        if (method.IsAsync && method.IsGenerator)
+        {
+            // Static async generators are not yet supported (the async-generator state machine is
+            // instance-only; the public static form fails the same way, #761): fall through to the
+            // linear path, which reports the existing "Yield not supported" error rather than invalid IL.
+            if (!isStatic)
+            {
+                EmitAsyncGeneratorMethodBody(methodBuilder, method, fieldsField, currentClassName: qualifiedClassName);
+                return;
+            }
+        }
+        else if (method.IsAsync)
+        {
+            EmitAsyncMethodBody(methodBuilder, method, isStatic ? null : fieldsField,
+                isInstanceMethod: !isStatic, currentClassName: qualifiedClassName);
+            return;
+        }
+        else if (method.IsGenerator)
+        {
+            // Instance and static (static generator support landed in #692) both route through the
+            // generator state machine; static uses no `this`/fields slot.
+            EmitGeneratorMethodBody(methodBuilder, method, isStatic ? null : fieldsField,
+                isInstanceMethod: !isStatic, currentClassName: qualifiedClassName);
+            return;
+        }
+        // A static async generator falls through to the linear emission below, which reports
+        // "Yield not supported" (the public static async-generator gap, #761), not invalid IL.
+
         var il = methodBuilder.GetILGenerator();
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {

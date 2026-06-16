@@ -39,5 +39,22 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Leave, _setResultLabel);
     }
 
+    /// <summary>
+    /// Branch out to <paramref name="target"/> (a loop's break/continue label). Inside a real IL
+    /// exception block a <c>br</c> out is illegal IL (BranchOutOfTry), so use <c>Leave</c> — which exits
+    /// the block legally and runs its (no-await) finally. <c>ExceptionBlockDepth</c> counts only real
+    /// blocks opened by <see cref="EmitSimpleTryCatch"/>, not the flag-based path's mini try/catch
+    /// segments (EmitSegmentInTry), so an escaping break/continue in a try-with-awaits is pulled out as a
+    /// segment-breaker (emitted at the top level, depth 0 → <c>Br</c>) while a break targeting a loop
+    /// nested inside a segment stays a legal in-segment <c>Br</c>. Mirrors the generator emitters (#727).
+    /// </summary>
+    protected override void EmitBranchToLabel(Label target)
+    {
+        if (_ctx!.ExceptionBlockDepth > 0)
+            _il.Emit(OpCodes.Leave, target);
+        else
+            _il.Emit(OpCodes.Br, target);
+    }
+
     // EmitIf: inherited from StatementEmitterBase (identical logic)
 }

@@ -33,7 +33,16 @@ public partial class AsyncMoveNextEmitter
     /// suspension state for each await (AsyncStateAnalyzer.VisitForOf), consumed below in the same order.
     /// The base lowering still serves async arrows and async generators (the latter tracked by #697).
     /// </summary>
-    protected override void EmitForAwaitOf(Stmt.ForOf f)
+    protected override void EmitForAwaitOf(Stmt.ForOf f) => EmitForAwaitOf(f, labelNames: null);
+
+    /// <summary>
+    /// Emits a <c>for await…of</c> loop, optionally carrying the wrapping statement labels
+    /// <paramref name="labelNames"/> (a chain <c>a: b: for await</c> contributes several) so a labeled
+    /// <c>break</c>/<c>continue &lt;label&gt;</c> targets it. The labeled path delegates here so it gets the
+    /// same suspending async-iterator lowering as the unlabeled case, rather than enumerating the async
+    /// iterator synchronously and leaving the reserved await-state labels unmarked — #728.
+    /// </summary>
+    private void EmitForAwaitOf(Stmt.ForOf f, IReadOnlyList<string>? labelNames)
     {
         // for await…of drives an async iterator: resolve it (Symbol.asyncIterator, else assume the
         // value is itself an async iterator / $IAsyncGenerator), then each iteration await
@@ -122,7 +131,13 @@ public partial class AsyncMoveNextEmitter
         var continueLabel = _il.DefineLabel();
 
         // break → cleanup (await iterator.return()); natural done → endLabel (no return() per spec).
-        EnterLoop(cleanupLabel, continueLabel);
+        // The chain's labels (when present) let `break`/`continue <label>` resolve to this loop; each is
+        // registered as its own scope at the same targets (the #704 multi-label convention).
+        bool labeled = labelNames is { Count: > 0 };
+        if (labeled)
+            EnterLabeledLoop(cleanupLabel, continueLabel, labelNames!);
+        else
+            EnterLoop(cleanupLabel, continueLabel);
 
         _il.MarkLabel(startLabel);
 
@@ -174,7 +189,10 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Pop);
 
         _il.MarkLabel(endLabel);
-        ExitLoop();
+        if (labeled)
+            ExitLabeledLoop(labelNames!);
+        else
+            ExitLoop();
     }
 
     /// <summary>

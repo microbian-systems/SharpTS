@@ -906,7 +906,8 @@ public partial class ILCompiler
         }
     }
 
-    private void EmitAsyncMethodBody(MethodBuilder methodBuilder, Stmt.Function method, FieldInfo fieldsField)
+    private void EmitAsyncMethodBody(MethodBuilder methodBuilder, Stmt.Function method, FieldInfo? fieldsField,
+        bool isInstanceMethod = true, string? currentClassName = null)
     {
         // Analyze async function to determine await points and hoisted variables
         var analysis = _async.Analyzer.Analyze(method);
@@ -914,35 +915,46 @@ public partial class ILCompiler
         // Check if method has @lock decorator
         bool hasLock = HasLockDecorator(method);
 
-        // Build state machine type
+        // Build state machine type. Use the MethodBuilder's (mangled) name, not method.Name.Lexeme: a
+        // private method's lexeme is `#p`, whose `#` would land in the generated state-machine type name.
         var smBuilder = new AsyncStateMachineBuilder(_moduleBuilder, _types, _async.StateMachineCounter++);
         var hasAsyncArrows = analysis.AsyncArrows.Count > 0;
         smBuilder.DefineStateMachine(
-            $"{methodBuilder.DeclaringType!.Name}_{method.Name.Lexeme}",
+            $"{methodBuilder.DeclaringType!.Name}_{methodBuilder.Name}",
             analysis,
             _types.Object,
-            isInstanceMethod: true,  // This is an instance method
+            isInstanceMethod: isInstanceMethod,
             hasAsyncArrows: hasAsyncArrows,
             hasLock: hasLock
         );
 
         // #682: a direct-child async arrow that WRITES a captured method-local must mutate it through
         // a reference-type function display class, not the boxed value-type state machine (unverifiable
-        // unbox → readonly pointer). Async instance methods have no function-DC by default; wire one.
+        // unbox → readonly pointer). Async methods have no function-DC by default; wire one. The
+        // "::static::" infix keeps a static method's key distinct from an instance member of the same name.
+        string dcInfix = isInstanceMethod ? "::" : "::static::";
         string methodDCKey = SetupAsyncMethodFunctionDC(
-            smBuilder, $"{methodBuilder.DeclaringType!.Name}::{method.Name.Lexeme}", analysis);
+            smBuilder, $"{methodBuilder.DeclaringType!.Name}{dcInfix}{methodBuilder.Name}", analysis);
 
         // Build state machines for any async arrows found in this method
         DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder);
 
-        // Get lock fields if @lock decorator is present
+        // Get lock fields if @lock decorator is present (instance vs static field sets)
         FieldBuilder? asyncLockField = null;
         FieldBuilder? lockReentrancyField = null;
         if (hasLock)
         {
             var className = methodBuilder.DeclaringType!.Name;
-            _locks.AsyncLockFields.TryGetValue(className, out asyncLockField);
-            _locks.ReentrancyFields.TryGetValue(className, out lockReentrancyField);
+            if (isInstanceMethod)
+            {
+                _locks.AsyncLockFields.TryGetValue(className, out asyncLockField);
+                _locks.ReentrancyFields.TryGetValue(className, out lockReentrancyField);
+            }
+            else
+            {
+                _locks.StaticAsyncLockFields.TryGetValue(className, out asyncLockField);
+                _locks.StaticReentrancyFields.TryGetValue(className, out lockReentrancyField);
+            }
         }
 
         // Emit stub method body (creates state machine and starts it)
@@ -950,7 +962,7 @@ public partial class ILCompiler
             methodBuilder,
             smBuilder,
             method.Parameters,
-            isInstanceMethod: true,
+            isInstanceMethod: isInstanceMethod,
             asyncLockField,
             lockReentrancyField,
             functionDCKey: methodDCKey);
@@ -960,7 +972,7 @@ public partial class ILCompiler
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             FieldsField = fieldsField,
-            IsInstanceMethod = true,
+            IsInstanceMethod = isInstanceMethod,
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
             ConstArrowBindings = _closures.ConstArrowBindings,
@@ -1003,8 +1015,10 @@ public partial class ILCompiler
                 ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
             IsStrictMode = _isStrictMode,
-            // ES2022 Private Class Elements support for async methods
-            CurrentClassName = methodBuilder.DeclaringType?.Name,
+            // ES2022 Private Class Elements support for async methods. currentClassName lets a private
+            // method pass its QUALIFIED class name (the ClassRegistry keys private members by it), so
+            // nested private member access inside the async body resolves under module compilation.
+            CurrentClassName = currentClassName ?? methodBuilder.DeclaringType?.Name,
             CurrentClassBuilder = methodBuilder.DeclaringType as TypeBuilder,
             // Registry services
             ClassRegistry = GetClassRegistry(),
@@ -1071,6 +1085,18 @@ public partial class ILCompiler
                 continue;
             }
 
+            // #721: an async arrow whose enclosing async function/method builds an async state machine
+            // is given its real (nested) builder by that machine's phase-6 emission — but only AFTER
+            // this earlier pass runs. Free async functions register their arrows before this pass (the
+            // ContainsKey check above already skips those); class async methods do not, so a standalone
+            // builder defined here would be a dead, never-invoked duplicate of the nested one. Skip an
+            // arrow that an enclosing async state machine will claim; an arrow behind a sync arrow/method,
+            // or a genuinely top-level one, is not claimed and still needs the standalone builder.
+            if (IsClaimedByEnclosingAsyncStateMachine(arrow))
+            {
+                continue;
+            }
+
             // Analyze this arrow for await points and hoisted locals
             var arrowAnalysis = AnalyzeAsyncArrow(arrow);
 
@@ -1095,6 +1121,26 @@ public partial class ILCompiler
             // Store the builder
             _async.ArrowBuilders[arrow] = arrowBuilder;
         }
+    }
+
+    /// <summary>
+    /// True when <paramref name="arrow"/> will be given a nested async state machine by an enclosing
+    /// async function/method's phase-6 emission (<see cref="DefineAsyncArrowStateMachines"/>), so this
+    /// pass must not also create a standalone (dead-duplicate) builder for it (#721). An async function's
+    /// state machine claims its async arrow descendants reachable through a chain of <em>async</em>
+    /// arrows; a sync arrow (or sync function) on the way up breaks that chain — arrows behind one get
+    /// their own standalone builder instead. Walks the enclosing-callable chain to decide.
+    /// </summary>
+    private bool IsClaimedByEnclosingAsyncStateMachine(Expr.ArrowFunction arrow)
+    {
+        object? enclosing = _arrowEnclosingCallable.GetValueOrDefault(arrow);
+        while (enclosing is Expr.ArrowFunction parentArrow)
+        {
+            if (!parentArrow.IsAsync)
+                return false; // a sync arrow does not build a state machine to claim descendants
+            enclosing = _arrowEnclosingCallable.GetValueOrDefault(parentArrow);
+        }
+        return enclosing is Stmt.Function { IsAsync: true };
     }
 
     /// <summary>
