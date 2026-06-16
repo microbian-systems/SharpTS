@@ -816,6 +816,17 @@ public partial class ILCompiler
 
         var emitter = new ILEmitter(ctx);
 
+        // Apply parameter defaults at the top of the body. A defaulted (`x = ...`) or optional
+        // (`x?: T`) private-method parameter whose argument was omitted arrives as the `undefined`
+        // sentinel (call sites pad omitted trailing args — see EmitPrivateCallUndefinedPadding);
+        // this fires the default the same way function/public-method bodies do. Private methods are
+        // emitted with all-`object` parameter slots, so none are skipped for being value types. (#696)
+        emitter.EmitDefaultParameters(
+            method.Parameters,
+            isInstanceMethod: !isStatic,
+            hasOwnThis: false,
+            paramTypes: methodParams.Select(p => p.ParameterType).ToArray());
+
         // Emit method body
         if (method.Body != null)
         {

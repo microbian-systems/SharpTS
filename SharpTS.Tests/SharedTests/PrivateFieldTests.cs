@@ -256,6 +256,63 @@ public class PrivateFieldTests
         Assert.Equal("$42.00\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PrivateMethod_MultipleOptionalParameters_PartialApplication(ExecutionMode mode)
+    {
+        // #696: several optional parameters, only some supplied. Omitted trailing arguments read
+        // as `undefined`. Compiled mode must pad the call so the fixed-arity method gets every slot.
+        var source = """
+            class C {
+                #combine(a?: number, b?: number, c?: number): number {
+                    return (a ?? 1) + (b ?? 2) + (c ?? 3);
+                }
+                go(): number { return this.#combine(10); }
+            }
+            console.log(new C().go());
+            """;
+        Assert.Equal("15\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PrivateMethod_DefaultParameter_FiresWhenOmitted(ExecutionMode mode)
+    {
+        // #696: a defaulted private-method parameter fires its default when the argument is omitted,
+        // in compiled mode too. Before the fix the call StackUnderflowed (no padding) and the body
+        // had no default prologue, so this never produced the right value under compilation.
+        var source = """
+            class C {
+                #greet(name: string = "World"): string { return "Hi " + name; }
+                go(): string { return this.#greet(); }
+            }
+            console.log(new C().go());
+            """;
+        Assert.Equal("Hi World\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void PrivateMethod_OptionalAndDefaultParameters_ProduceValidIL()
+    {
+        // #696 regression guard: calling a private method with fewer arguments than it declares
+        // must emit a balanced stack. Covers instance + static, optional + default, omitted +
+        // explicit-undefined — the exact shapes that previously emitted StackUnderflow IL.
+        var source = """
+            class C {
+                #opt(b?: number): number { return b ?? 1; }
+                #def(b: number = 7): number { return b; }
+                static #sopt(b?: string): string { return b ?? "S"; }
+                static #sdef(b: string = "D"): string { return b; }
+                run(): number { return this.#opt() + this.#def(undefined); }
+                static srun(): string { return C.#sopt() + C.#sdef(); }
+            }
+            console.log(new C().run());
+            console.log(C.srun());
+            """;
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+        Assert.Empty(errors);
+    }
+
     #endregion
 
     #region Static Private Methods
@@ -280,6 +337,21 @@ public class PrivateFieldTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("20\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticPrivateMethod_OptionalParameter_Omitted(ExecutionMode mode)
+    {
+        // #696: optional parameter on a *static* private method, invoked with no argument.
+        var source = """
+            class Utils {
+                static #label(text?: string): string { return text ?? "default"; }
+                static go(): string { return Utils.#label(); }
+            }
+            console.log(Utils.go());
+            """;
+        Assert.Equal("default\n", TestHarness.Run(source, mode));
     }
 
     [Theory]
