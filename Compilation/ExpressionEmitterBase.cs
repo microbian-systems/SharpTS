@@ -2090,6 +2090,17 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case TokenType.TILDE:
                 _helpers.EmitUnaryBitwiseNot(() => EmitExpression(u.Right));
                 break;
+            case TokenType.VOID:
+                // void operator: evaluate the operand for its side effects, discard the
+                // result, and yield undefined. EmitExpression handles any nested
+                // yield/await suspension in the operand, so this works inside the
+                // generator/async state machines that inherit this base implementation.
+                EmitExpression(u.Right);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Pop);
+                IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
+                SetStackUnknown();
+                break;
             default:
                 throw new NotImplementedException($"Unary operator {u.Operator.Type} not implemented");
         }
