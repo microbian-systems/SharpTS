@@ -44,11 +44,22 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
     // While emitting a flag-based try BODY (EmitTryCatchWithSuspensions), these carry that try's
     // exception-capture target down to suspension points, which are emitted at the top level —
     // outside the sync segments' mini try/catch. A rejected `await` inside the try captures its
-    // exception into _currentTryExceptionLocal (exactly as a sync segment does) and `Leave`s to
-    // _currentTryCleanupLabel so the try's catch/finally run, instead of escaping MoveNextAsync
-    // unhandled (#617). Null when not inside such a try body (the common case → GetResult is plain).
+    // exception into _currentTryExceptionLocal (exactly as a sync segment does), sets the present
+    // flag, and `Leave`s to _currentTryCleanupLabel so the try's catch/finally run, instead of
+    // escaping MoveNextAsync unhandled (#617). The present flag (not the value's nullness) gates the
+    // catch so a rejected `Promise.reject(null)`/`throw null` still engages it (#628, the async
+    // analog of #619). Saved/restored around the body, so during a catch/finally body these instead
+    // identify the *enclosing* flag-based try — the one whose catch must handle a throw escaping that
+    // handler (#632). Null when not inside such a try body (the common case → GetResult is plain).
     private LocalBuilder? _currentTryExceptionLocal;
+    private LocalBuilder? _currentTryExceptionPresentLocal;
     private Label _currentTryCleanupLabel;
+
+    // `_exitScopes.Count` captured at the start of the current flag-based try's body emission (after
+    // its own finally scope, if any, was pushed). Finally scopes at indices >= this are strictly
+    // *inside* that try; a throw escaping a nested handler runs exactly those before reaching this
+    // try's catch (#632). Meaningful only while _currentTryExceptionLocal is non-null.
+    private int _currentTryScopeDepth;
 
     // Compilation context for access to functions, classes, etc.
     private CompilationContext? _ctx;

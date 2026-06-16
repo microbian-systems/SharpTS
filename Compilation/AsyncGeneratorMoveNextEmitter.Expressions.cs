@@ -540,6 +540,10 @@ public partial class AsyncGeneratorMoveNextEmitter
             _il.BeginCatchBlock(typeof(Exception));
             _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
             _il.Emit(OpCodes.Stloc, _currentTryExceptionLocal);
+            // Record presence with the flag, not the value, so a rejected null/undefined still engages
+            // the catch rather than reading as "no exception" (#628).
+            _il.Emit(OpCodes.Ldc_I4_1);
+            _il.Emit(OpCodes.Stloc, _currentTryExceptionPresentLocal!);
             _il.Emit(OpCodes.Leave, _currentTryCleanupLabel); // skip the rest of the try body → catch/finally
             _il.EndExceptionBlock();
             _il.Emit(OpCodes.Ldloc, resultTemp); // normal path: push the awaited value
