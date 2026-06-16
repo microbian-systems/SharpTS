@@ -220,6 +220,33 @@ public partial class ILCompiler
         il.MarkLabel(skipLabel);
     }
 
+    /// <summary>
+    /// Emits the <c>instance.constructor</c> branch for a class's GetProperty body:
+    /// when the requested name is "constructor", returns the class itself,
+    /// represented — like a bare class identifier in value position
+    /// (see <see cref="ExpressionEmitterBase"/>'s class-token path) — as the
+    /// class's <see cref="System.Type"/>. This makes <c>x.constructor === MyClass</c>
+    /// and <c>x.constructor.staticMember</c> behave as in the interpreter (where an
+    /// instance's <c>constructor</c> resolves to its class). Without it, compiled
+    /// <c>instance.constructor</c> silently returned <c>undefined</c>; benign while
+    /// member reads were lenient, but #701 (a read on <c>undefined</c> now throws)
+    /// surfaced it (e.g. the <c>yaml</c> package reads <c>coll.constructor.tagName</c>).
+    /// Emitted after the own-field lookups so an own data property named
+    /// "constructor" still shadows it, matching JS.
+    /// </summary>
+    private void EmitConstructorPropertyBranch(ILGenerator il, Type classType)
+    {
+        var notCtorLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "constructor");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+        il.Emit(OpCodes.Brfalse, notCtorLabel);
+        il.Emit(OpCodes.Ldtoken, classType);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notCtorLabel);
+    }
+
     private void EmitGetPropertyBody(MethodBuilder method, string className, Stmt.Class classStmt, FieldInfo fieldsField)
     {
         var il = method.GetILGenerator();
@@ -274,6 +301,10 @@ public partial class ILCompiler
             EmitErrorPropertyFallback(il, "message", _runtime.ErrorGetMessage);
             EmitErrorPropertyFallback(il, "stack", _runtime.ErrorGetStack);
         }
+
+        // 2d. `instance.constructor` → the class (a System.Type value). See
+        // EmitConstructorPropertyBranch; after own fields so they can shadow it.
+        EmitConstructorPropertyBranch(il, _classes.Builders[className]);
 
         // 2c. Check instance getters (accessors with `get` keyword). JS semantics: reading
         // `obj.foo` where `foo` is a getter must INVOKE the getter and return its result.
@@ -595,6 +626,11 @@ public partial class ILCompiler
         // backing-field names are already handled (and returned) by section 1, so those entries
         // become dead branches here — matching the class-declaration registry's behavior.
         il.MarkLabel(tryMethodsLabel);
+
+        // 2d. `instance.constructor` → the class (a System.Type value). See
+        // EmitConstructorPropertyBranch; after own fields so they can shadow it.
+        EmitConstructorPropertyBranch(il, _classExprs.Builders[classExpr]);
+
         if (_classExprs.Getters.TryGetValue(classExpr, out var instanceGetters))
         {
             foreach (var (getterPascalName, getterMethod) in instanceGetters)

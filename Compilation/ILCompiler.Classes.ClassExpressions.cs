@@ -802,6 +802,10 @@ public partial class ILCompiler
         if (!_classExprs.InstanceMethods[classExpr].TryGetValue(method.Name.Lexeme, out var methodBuilder))
             return;
 
+        // #703: class-expression instance method invoked as a value pads omitted optional
+        // args with the `undefined` sentinel on the value-call path (covers sync + async).
+        MarkPadsUndefined(methodBuilder);
+
         // Handle async methods via state machine
         if (method.IsAsync)
         {
@@ -853,6 +857,10 @@ public partial class ILCompiler
     {
         if (!_classExprs.StaticMethods[classExpr].TryGetValue(method.Name.Lexeme, out var methodBuilder))
             return;
+
+        // #703: class-expression static method invoked as a value pads omitted optional
+        // args with the `undefined` sentinel on the value-call path (covers sync + async).
+        MarkPadsUndefined(methodBuilder);
 
         var typeBuilder = _classExprs.Builders[classExpr];
 

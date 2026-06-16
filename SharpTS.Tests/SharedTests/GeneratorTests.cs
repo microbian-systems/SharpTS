@@ -1,3 +1,4 @@
+using SharpTS.Diagnostics.Exceptions;
 using SharpTS.Tests.Infrastructure;
 using Xunit;
 
@@ -1427,8 +1428,8 @@ public class GeneratorTests
     public void GeneratorExpression_InsideForOf(ExecutionMode mode)
     {
         // The generator yields a constant (not the loop variable): #634 is about the lifter reaching
-        // the for-of body, not closure capture. Capturing the block-scoped loop variable is a
-        // separate, unsupported case (the lift would move the body outside the loop's scope).
+        // the for-of body, not closure capture. Capturing the block-scoped loop variable is handled
+        // separately (#678) — see the "closes over a block-scoped binding" region below.
         var source = """
             for (const n of [10, 20]) {
               const g = function* () { yield 1; };
@@ -1602,6 +1603,273 @@ public class GeneratorTests
 
     #endregion
 
+    #region Generator function EXPRESSION closing over a BLOCK-scoped binding — issue #678
+
+    // A generator expression that closes over a block-scoped binding (a for/for-of/for-in loop
+    // variable, a catch parameter, or a let/const declared in a nested block or switch body) cannot be
+    // lifted to a top-level declaration — the lift target sits outside that block, so the captured name
+    // would be out of scope. The GeneratorArrowLifter leaves it in place as an expression; the
+    // interpreter runs it natively (SharpTSGenerator) and the type checker establishes the generator
+    // context directly. These run interpreted-only: the compiler has no generator-expression IL path
+    // for a capturing generator and reports a clear "Yield not supported in this context" error (the
+    // same as #534's enclosing-function-local capture; asserted by the *_CompiledRejectsClearly test).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_CapturesForOfLoopVariable(ExecutionMode mode)
+    {
+        // The exact repro from issue #678.
+        var source = """
+            for (const n of [10, 20]) {
+              const g = function* () { yield n; };
+              console.log(g().next().value);
+            }
+            """;
+
+        Assert.Equal("10\n20\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_CapturesNestedBlockLet(ExecutionMode mode)
+    {
+        // The second repro from issue #678: a let in a nested block within a function.
+        var source = """
+            function outer() {
+              {
+                let y = 5;
+                const g = function* () { yield y; };
+                return [...g()];
+              }
+            }
+            console.log(outer());
+            """;
+
+        Assert.Equal("[5]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_CapturesForLetLoopVariable(ExecutionMode mode)
+    {
+        var source = """
+            for (let k = 1; k <= 2; k++) {
+              const g = function* () { yield k * 10; };
+              console.log(g().next().value);
+            }
+            """;
+
+        Assert.Equal("10\n20\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_CapturesForInKey(ExecutionMode mode)
+    {
+        var source = """
+            const obj = { a: 1, b: 2 };
+            for (const key in obj) {
+              const g = function* () { yield key; };
+              console.log(g().next().value);
+            }
+            """;
+
+        Assert.Equal("a\nb\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_CapturesCatchParameter(ExecutionMode mode)
+    {
+        var source = """
+            try {
+              throw "boom";
+            } catch (e) {
+              const g = function* () { yield e; };
+              console.log(g().next().value);
+            }
+            """;
+
+        Assert.Equal("boom\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_CapturesSwitchCaseBinding(ExecutionMode mode)
+    {
+        var source = """
+            switch (1) {
+              case 1: {
+                const local = 99;
+                const g = function* () { yield local; };
+                console.log(g().next().value);
+                break;
+              }
+            }
+            """;
+
+        Assert.Equal("99\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_LoopVariableCapturedPerIteration(ExecutionMode mode)
+    {
+        // Each iteration's for-of binding is distinct, so a generator created in one iteration captures
+        // that iteration's value — not the last one. Confirms the in-place generator closes over the
+        // per-iteration binding (it is not hoisted to a single shared slot).
+        var source = """
+            const gens: (() => Generator<number>)[] = [];
+            for (const n of [1, 2, 3]) {
+              gens.push(function* () { yield n; });
+            }
+            console.log(gens.map(g => g().next().value).join(","));
+            """;
+
+        Assert.Equal("1,2,3\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_CapturesBlockScopedAndModuleScoped(ExecutionMode mode)
+    {
+        // A capture mixing a block-scoped loop variable with a module-scoped const still works: the
+        // presence of a block-scoped capture keeps the generator in place, and the module binding
+        // remains visible via the closure.
+        var source = """
+            const factor = 100;
+            for (const n of [2]) {
+              const g = function* () { yield n * factor; };
+              console.log(g().next().value);
+            }
+            """;
+
+        Assert.Equal("200\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_NamedSelfRecursionCapturingLoopVariable(ExecutionMode mode)
+    {
+        // #678 + #679 together: a NAMED generator expression that both closes over a loop variable and
+        // recurses by its own name. The in-place native path binds the self-name in the call scope.
+        var source = """
+            for (const base of [10]) {
+              const g = function* count(n: number): Generator<number> {
+                if (n > 0) { yield base + n; yield* count(n - 1); }
+              };
+              console.log([...g(2)].join(","));
+            }
+            """;
+
+        Assert.Equal("12,11\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void GeneratorExpression_BlockScopedCapture_CompiledRejectsClearly()
+    {
+        // The compiler has no generator-expression IL path for a generator that closes over a
+        // block-scoped binding (it cannot be lifted, and nested-generator lowering is incomplete,
+        // #501). It must FAIL FAST with a clear message rather than crash or silently misbehave —
+        // matching #534's enclosing-function-local capture.
+        var source = """
+            for (const n of [1, 2]) {
+              const g = function* () { yield n; };
+              console.log(g().next().value);
+            }
+            """;
+
+        var ex = Assert.Throws<CompileException>(() => TestHarness.RunCompiled(source));
+        Assert.Contains("Yield not supported", ex.Message);
+    }
+
+    #endregion
+
+    #region Named generator function EXPRESSION self-reference — issue #679
+
+    // A NAMED generator function expression can call itself by its own name for recursion. The
+    // GeneratorArrowLifter renames the lifted declaration to the synthetic __genArrow_N and discards
+    // the original name, so it injects `const <name> = __genArrow_N;` at the top of the body to keep
+    // the self-reference bound (skipped when a parameter or body-level binding shadows the name).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_NamedSelfRecursion(ExecutionMode mode)
+    {
+        // The exact repro from issue #679.
+        var source = """
+            const g = function* countdown(n: number): Generator<number> {
+              if (n > 0) { yield n; yield* countdown(n - 1); }
+            };
+            console.log([...g(3)]);
+            """;
+
+        Assert.Equal("[3, 2, 1]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_NamedSelfRecursion_ClosesOverModuleConst(ExecutionMode mode)
+    {
+        // Self-reference plus a capture of a module-scope binding: both must resolve.
+        var source = """
+            const step = 1;
+            const g = function* down(n: number): Generator<number> {
+              if (n > 0) { yield n; yield* down(n - step); }
+            };
+            console.log([...g(3)]);
+            """;
+
+        Assert.Equal("[3, 2, 1]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_NamedSelfReference_ParameterShadowsName(ExecutionMode mode)
+    {
+        // A parameter named the same as the function expression shadows the self-name (the self-binding
+        // must NOT be injected): `foo` refers to the parameter inside the body.
+        var source = """
+            const a = function* foo(foo: number) { yield foo; yield foo + 1; };
+            console.log([...a(10)]);
+            """;
+
+        Assert.Equal("[10, 11]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_NamedSelfReference_BodyLetShadowsName(ExecutionMode mode)
+    {
+        // A body-level `let` of the same name shadows the self-name (no self-binding injected).
+        var source = """
+            const b = function* bar() { let bar = 7; yield bar; };
+            console.log([...b()]);
+            """;
+
+        Assert.Equal("[7]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_NamedSelfReference_NestedBlockDoesNotShadow(ExecutionMode mode)
+    {
+        // A nested-block binding of the same name shadows only within that block, so the outer
+        // self-call still resolves to the function. Interpreted-only: compiled generators do not yet
+        // give a nested-block redeclaration its own slot, so the inner `rec` leaks (tracked by #711).
+        var source = """
+            const d = function* rec(n: number): Generator<number> {
+              { const rec = 0; if (n < -100) yield rec; }
+              if (n > 0) { yield n; yield* rec(n - 1); }
+            };
+            console.log([...d(2)]);
+            """;
+
+        Assert.Equal("[2, 1]\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
+
     #region Re-entrant next()/return()/throw() — "already running" (ECMA-262 §27.5.3.3) — issues #515, #521
 
     // ECMA-262 §27.5.3.3 (GeneratorValidate): calling next/return/throw on a generator whose state
@@ -1732,19 +2000,22 @@ public class GeneratorTests
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void GeneratorExpression_ReentrantNext_ThrowsTypeError(ExecutionMode mode)
     {
-        // A generator function *expression* uses a distinct runtime class (SharpTSArrowGenerator);
-        // its guard is exercised here. `var` (not `let`) sidesteps an unrelated type-checker scoping
-        // bug for generator function expressions that close over block-scoped variables.
+        // A generator function *expression* that closes over a block-scoped binding stays in place and
+        // runs natively (it is NOT lifted to a declaration, #678); it produces a SharpTSGenerator like
+        // any other generator, so the re-entrancy guard (ECMA-262 §27.5.3.3) applies. The `let it`
+        // capture forces the in-place native path.
         var source = """
-            var it: any;
-            const g = function*() {
-                try { it.next(); }
-                catch (e: any) { console.log("expr ->", e.message); }
-                yield 7;
-            };
-            it = g();
-            const r = it.next();
-            console.log(r.value, r.done);
+            {
+                let it: any;
+                const g = function*() {
+                    try { it.next(); }
+                    catch (e: any) { console.log("expr ->", e.message); }
+                    yield 7;
+                };
+                it = g();
+                const r = it.next();
+                console.log(r.value, r.done);
+            }
             """;
 
         var output = TestHarness.Run(source, mode);

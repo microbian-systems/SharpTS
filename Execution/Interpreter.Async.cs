@@ -205,6 +205,14 @@ public partial class Interpreter
     /// </summary>
     private async Task<ExecutionResult> IterateAsyncIterator(object asyncIterator, Stmt.ForOf forOf)
     {
+        // The loop body must run in the for-await statement's own lexical scope, regardless of how the
+        // iterator's next() mutates the interpreter's ambient environment. The eager-drain async generator
+        // transiently repoints that environment at its own closure while draining, and a body shape whose
+        // await is nested in a delegated expression can leave it repointed across the suspension; without
+        // re-asserting the loop scope here, the body (and code after the loop) would resolve outer bindings
+        // against the wrong scope — "Undefined variable" (#689). Capturing once and restoring after each
+        // next() also hardens for-await against any custom async iterator with environment side effects.
+        RuntimeEnvironment hostEnv = _environment;
         while (true)
         {
             // Call iterator.next()
@@ -215,6 +223,9 @@ public partial class Interpreter
                 nextResult = await AwaitPreservingEnvironment(promise.Task);
             else if (nextResult is Task<object?> task)
                 nextResult = await AwaitPreservingEnvironment(task);
+
+            // Re-assert the loop's lexical scope (see above) before consuming the result or running the body.
+            _environment = hostEnv;
 
             // Check if the result is an iterator result object
             bool done = false;

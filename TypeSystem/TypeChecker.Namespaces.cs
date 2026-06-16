@@ -59,6 +59,13 @@ public partial class TypeChecker
             // not a same-named one from an enclosing or earlier sibling scope.
             PreRegisterTypeDeclarations(ns.Members);
 
+            // Hoist function declarations into the namespace scope before the first pass, mirroring
+            // the top-level pass. The first pass fully checks any NESTED namespace (its bodies
+            // resolve here), so a nested member's bare reference to an enclosing-namespace function
+            // (`outerHelp()` from `O.I.f`) must already be bound — and functions are otherwise only
+            // registered in the second pass, after nested namespaces are checked (#665).
+            HoistFunctionDeclarations(ns.Members);
+
             // Hoist var declarations (as `any`) before anything resolves, mirroring the top-level
             // pass: a member's own annotation/initializer may reference itself or a later var
             // (`var a: { foo: typeof a }`, `var a2 = { foo: a2 }`).

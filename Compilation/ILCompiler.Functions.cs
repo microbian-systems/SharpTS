@@ -257,16 +257,18 @@ public partial class ILCompiler
     }
 
     /// <summary>
-    /// Creates and registers a function-level display class holding one <c>object</c> field per
-    /// named captured variable. Shared by the sync/async path (<see cref="DefineFunctionDisplayClass"/>,
-    /// which lifts all captured locals) and the generator path (which lifts only captured-AND-mutated
-    /// locals, #674). The caller is responsible for the membership decision; this only builds the type.
+    /// Creates and registers a function-level display class holding one <c>object</c> field per named
+    /// captured variable. Shared by the sync/async path (<see cref="DefineFunctionDisplayClass"/>, which
+    /// lifts all captured locals), the generator path (captured-AND-mutated locals, #674), and the
+    /// async-method / standalone-arrow path (only the promoted async-written captures, #682). The caller
+    /// decides membership; this only builds the type.
     /// </summary>
     private void RegisterFunctionDisplayClass(string qualifiedFunctionName, IEnumerable<string> capturedLocals)
     {
-        // Create display class type
+        // Create display class type. The counter guarantees a unique type name; '.' and ':' in the key
+        // (async-method keys are "<Class>::<method>") are sanitized to valid identifier characters.
         var displayClass = _moduleBuilder.DefineType(
-            $"<>c__FuncDisplayClass_{qualifiedFunctionName.Replace(".", "_")}_{_closures.DisplayClassCounter++}",
+            $"<>c__FuncDisplayClass_{qualifiedFunctionName.Replace(".", "_").Replace(":", "_")}_{_closures.DisplayClassCounter++}",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
             _types.Object);
 

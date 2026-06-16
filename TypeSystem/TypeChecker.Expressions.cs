@@ -1393,6 +1393,8 @@ public partial class TypeChecker
         var previousInferredArrow = _inferredReturnTypes;
         TypeInfo? previousThisType = _currentFunctionThisType;
         bool previousInAsync = _inAsyncFunction;
+        bool previousInGenerator = _inGeneratorFunction;
+        var previousInferredYieldTypes = _inferredYieldTypes;
         int previousLoopDepth = _loopDepth;
         int previousSwitchDepth = _switchDepth;
         var previousActiveLabels = new Dictionary<string, bool>(_activeLabels);
@@ -1410,6 +1412,15 @@ public partial class TypeChecker
         }
         _currentFunctionThisType = thisType;
         _inAsyncFunction = arrow.IsAsync;
+        // A generator function EXPRESSION establishes its own generator context so `yield` is valid in
+        // its body and its element type is inferred from the yields. Reached only for generator arrows
+        // the GeneratorArrowLifter intentionally leaves in place — i.e. those closing over a block-scoped
+        // binding (#678); all other generator expressions are lifted to declarations before type-check.
+        _inGeneratorFunction = arrow.IsGenerator;
+        // Collect yield operand types only while inferring a generator's type (mirrors the declaration
+        // path, #548). Null otherwise so a nested explicitly-typed generator's yields cannot leak into an
+        // enclosing inferred one.
+        _inferredYieldTypes = inferringArrowReturn && arrow.IsGenerator ? new List<TypeInfo>() : null;
         _loopDepth = 0;
         _switchDepth = 0;
         _activeLabels.Clear();
@@ -1476,7 +1487,13 @@ public partial class TypeChecker
                     var collected = _inferredReturnTypes!;
                     _inferredReturnTypes = null;
 
-                    if (collected.Count == 0)
+                    if (arrow.IsGenerator)
+                    {
+                        // A generator's element type is its YIELD type (#548), not the return-derived
+                        // type; build Generator<Y> (or AsyncGenerator<Y> for an async generator).
+                        returnType = BuildInferredGeneratorType(_inferredYieldTypes!, arrow.IsAsync);
+                    }
+                    else if (collected.Count == 0)
                     {
                         returnType = new TypeInfo.Void();
                     }
@@ -1486,7 +1503,7 @@ public partial class TypeChecker
                         returnType = CollapseOrCreateUnion(distinct);
                     }
 
-                    if (arrow.IsAsync && returnType is not TypeInfo.Void)
+                    if (arrow.IsAsync && !arrow.IsGenerator && returnType is not TypeInfo.Void)
                         returnType = new TypeInfo.Promise(returnType);
                 }
             }
@@ -1498,6 +1515,8 @@ public partial class TypeChecker
             _inferredReturnTypes = previousInferredArrow;
             _currentFunctionThisType = previousThisType;
             _inAsyncFunction = previousInAsync;
+            _inGeneratorFunction = previousInGenerator;
+            _inferredYieldTypes = previousInferredYieldTypes;
             _loopDepth = previousLoopDepth;
             _switchDepth = previousSwitchDepth;
             _activeLabels.Clear();
@@ -1582,15 +1601,36 @@ public partial class TypeChecker
             // its descendants, AND widen any enclosing lexical narrowing the context stack can't reach.
             // `if`-guard variable narrowing lives in a child TypeEnvironment that a nested block's own
             // env shadows-then-discards, so without WidenEnclosingNarrowing a reassignment inside a
-            // nested branch leaves the outer guard's narrowing in place for later statements (#570).
+            // nested branch leaves the outer guard's narrowing in place for later statements (#570/#654).
             InvalidateNarrowingsFor(assignedPath);
             WidenEnclosingNarrowing(assign.Name.Lexeme, declaredType);
         }
 
-        // Also restore the declared type in the environment to undo any variable narrowing
-        // that was applied via TypeEnvironment.Define() in control flow statements.
-        // This ensures subsequent uses of the variable see the correct (un-narrowed) type.
-        _environment.Define(assign.Name.Lexeme, declaredType);
+        // Restore the environment binding, undoing any control-flow narrowing applied via
+        // TypeEnvironment.Define(). For a tracked (function-local/parameter) variable, restore it to
+        // the post-write flow-narrowed type (#653): subsequent reads see the declared type filtered to
+        // the members the RHS can be, mirroring the property-write narrowing of #48 (`o.x = "s"`
+        // narrows `o.x` to `string`). The narrowed binding lives in the current lexical scope and is
+        // discarded at its block's join, so it does not leak a too-narrow type past a conditional.
+        //
+        // Two guards keep this sound and non-regressive:
+        //   * Only TRACKED (function-local/parameter) variables narrow. Module/top-level variables are
+        //     not in the declared-type stack, so GetDeclaredType falls back to the environment for
+        //     them — narrowing the binding would then corrupt the declared type a later assignment
+        //     checks against.
+        //   * A purely-nullish narrowed slot (`null`/`undefined`) is NOT installed; the variable keeps
+        //     its declared type. Property access on a bare `null`/`undefined` type is not yet flagged
+        //     (only on a union containing them — see CheckGetOnUnion), so narrowing `x = undefined` to
+        //     `undefined` would silently drop the "possibly undefined" error that a later `x.length`
+        //     must still raise (#570/#556). Keeping the declared union preserves that diagnostic.
+        var postAssignType = declaredType;
+        if (IsDeclaredTypeTracked(assign.Name.Lexeme)
+            && NarrowToDeclaredSlot(declaredType, valueType) is { } narrowedSlot
+            && !IsPurelyNullish(narrowedSlot))
+        {
+            postAssignType = narrowedSlot;
+        }
+        _environment.Define(assign.Name.Lexeme, postAssignType);
 
         // tsc narrows a reference whose declared type is a bare type parameter by assignment:
         // the constraint is the narrowing domain, so after `x = y` the reference reads as the

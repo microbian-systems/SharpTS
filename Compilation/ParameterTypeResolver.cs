@@ -31,7 +31,9 @@ public static class ParameterTypeResolver
         if (funcType == null || funcType.ParamTypes.Count != parameters.Count)
         {
             // Fallback: try to resolve from parameter type annotations
-            return parameters.Select(p => WidenIfUndefinedReachableParam(ResolveParameterType(p, typeMapper), p, typeMap)).ToArray();
+            var fallback = parameters.Select(p => WidenIfUndefinedReachableParam(ResolveParameterType(p, typeMapper), p, typeMap)).ToArray();
+            WidenDefaultedParamsToObject(fallback, parameters, typeof(object));
+            return fallback;
         }
 
         // Map each parameter type, but use 'object' for:
@@ -41,7 +43,7 @@ public static class ParameterTypeResolver
         //    `List<object>` when packing trailing args; using a typed list like
         //    `List<string>` for `...parts: string[]` breaks the dispatch path
         //    (method gets invoked without rest packing, trailing args are dropped).
-        return funcType.ParamTypes
+        var resolved = funcType.ParamTypes
             .Select((pt, i) =>
             {
                 var mappedType = typeMapper.MapTypeInfoStrict(pt);
@@ -81,26 +83,34 @@ public static class ParameterTypeResolver
                     WidenIfUndefinedReachableParam(mappedType, parameters[i], typeMap), pt, typeMapper);
             })
             .ToArray();
+
+        WidenDefaultedParamsToObject(resolved, parameters, typeof(object));
+        return resolved;
     }
 
     /// <summary>
     /// Widens any parameter that has a <b>default value</b> to an <c>object</c> slot. Required for
-    /// function kinds that apply parameter defaults via the runtime entry prologue
-    /// (<see cref="ILEmitter.EmitDefaultParameters"/>) rather than via <see cref="OverloadGenerator"/>
-    /// lower-arity forwarding — i.e. arrow functions and function expressions, which get no overloads.
-    /// The prologue detects a missing/undefined argument by comparing the slot against null and the
-    /// <c>$Undefined</c> sentinel, and value-call padding (<c>$TSFunction.AdjustArgs</c>) fills omitted
-    /// slots with that sentinel. Only an <c>object</c> slot can hold it: a value-type slot can never be
-    /// null (and emits invalid <c>ldarg; brfalse</c> IL), and a typed reference slot (e.g. <c>string</c>)
-    /// coerces the sentinel to a real value (e.g. the string <c>"undefined"</c>) before the prologue can
-    /// observe it. Either way the default could never fire. Mirrors the optional-without-default widening
-    /// already applied in <see cref="ResolveParameters"/>. (#646)
+    /// every function kind that applies parameter defaults via the runtime entry prologue
+    /// (<see cref="ILEmitter.EmitDefaultParameters"/>): arrow functions and function expressions
+    /// (which get no overloads), and — since #705 — function declarations, class methods, and
+    /// constructors. The prologue detects a missing/undefined argument by comparing the slot against
+    /// null and the <c>$Undefined</c> sentinel, and value-call padding (<c>$TSFunction.AdjustArgs</c>)
+    /// fills omitted slots with that sentinel. Only an <c>object</c> slot can hold it: a value-type
+    /// slot can never be null (and emits invalid <c>ldarg; brfalse</c> IL — so the prologue skips it
+    /// and the default never fires), and a typed reference slot (e.g. <c>string</c>) coerces the
+    /// sentinel to a real value (the string <c>"undefined"</c>) before the prologue can observe it.
+    /// Either way the default could never fire. Applied centrally in <see cref="ResolveParameters"/>,
+    /// <see cref="ResolveMethodParameters"/>, and <see cref="ResolveConstructorParameters"/> so the
+    /// define-time and emit-time signatures always agree. (#646, #705)
     /// </summary>
     public static void WidenDefaultedParamsToObject(Type[] resolved, List<Stmt.Parameter> parameters, Type objectType)
     {
         for (int i = 0; i < parameters.Count && i < resolved.Length; i++)
         {
-            if (parameters[i].DefaultValue != null && resolved[i] != objectType)
+            // A rest parameter is never "omitted" (it collects zero-or-more trailing args into a
+            // List<object>) and its `= ` form is illegal TS, but guard anyway so a future change
+            // can't turn the rest marker List<object> into a plain object slot and break dispatch.
+            if (parameters[i].DefaultValue != null && !parameters[i].IsRest && resolved[i] != objectType)
                 resolved[i] = objectType;
         }
     }
@@ -300,6 +310,17 @@ public static class ParameterTypeResolver
     /// <summary>
     /// Resolves parameter types for a class method.
     /// </summary>
+    /// <remarks>
+    /// Deliberately does NOT widen value-type-defaulted params to <c>object</c> (unlike free
+    /// functions and constructors, which do). Instance methods are <b>virtual</b>: changing a
+    /// defaulted param's slot from <c>double</c>/<c>bool</c> to <c>object</c> would change the CLR
+    /// signature and break override matching against a base method that declares the same param
+    /// without a default (the derived override silently lands in a new vtable slot, so a
+    /// base-typed call dispatches to the base method). Reference-type defaults still fire via the
+    /// entry prologue without any slot change (a reference slot already holds null). Firing
+    /// value-type method defaults override-safely needs hierarchy-consistent widening or bridge
+    /// methods — tracked as #737.
+    /// </remarks>
     public static Type[] ResolveMethodParameters(
         string className,
         string methodName,
@@ -406,9 +427,21 @@ public static class ParameterTypeResolver
     }
 
     /// <summary>
-    /// Resolves constructor parameter types for a class.
+    /// Resolves constructor parameter types for a class, widening value-type-defaulted params to
+    /// <c>object</c> so the entry prologue can fire their defaults (#705).
     /// </summary>
     public static Type[] ResolveConstructorParameters(
+        string className,
+        List<Stmt.Parameter> parameters,
+        TypeMapper typeMapper,
+        TypeMap? typeMap)
+    {
+        var resolved = ResolveConstructorParametersCore(className, parameters, typeMapper, typeMap);
+        WidenDefaultedParamsToObject(resolved, parameters, typeof(object));
+        return resolved;
+    }
+
+    private static Type[] ResolveConstructorParametersCore(
         string className,
         List<Stmt.Parameter> parameters,
         TypeMapper typeMapper,

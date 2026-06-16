@@ -533,6 +533,16 @@ public class TypeProvider
     public MethodInfo StringConcat2 =>
         _stringConcat2 ??= GetMethod(String, "Concat", String, String);
 
+    private MethodInfo? _stringConcatObjObj;
+
+    /// <summary>
+    /// Gets the string.Concat(object, object) method. Null-safe (a null arg
+    /// stringifies to ""); used to splice a runtime value into a diagnostic
+    /// message without risking an NRE on ToString.
+    /// </summary>
+    public MethodInfo StringConcatObjectObject =>
+        _stringConcatObjObj ??= GetMethod(String, "Concat", Object, Object);
+
     /// <summary>
     /// Gets the Math.Min(int, int) method.
     /// </summary>

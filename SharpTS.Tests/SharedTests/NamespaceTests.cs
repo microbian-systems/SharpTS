@@ -681,4 +681,120 @@ public class NamespaceTests
     }
 
     #endregion
+
+    #region Nested namespace bare-name reference into enclosing namespace scope (#665)
+
+    // A function declared in a NESTED namespace must resolve a bare reference to a member of its
+    // ENCLOSING namespace — the enclosing members are in lexical scope of the nested bodies (tsc).
+    // The type checker previously rejected this ("Undefined variable") in both modes because a
+    // nested namespace is fully checked during the enclosing namespace's first pass, before its
+    // sibling functions were registered; CheckNamespace now hoists function declarations first.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedNamespaceFunction_CallsNonExportedEnclosingFunction(ExecutionMode mode)
+    {
+        // The exact issue repro: O.I.f() reaches O's non-exported helper by bare name.
+        var code = @"
+            namespace O {
+                function outerHelp() { return 7; }
+                export namespace I {
+                    export function f() { return outerHelp(); }
+                }
+            }
+            console.log(O.I.f());
+        ";
+        Assert.Equal("7\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedNamespaceFunction_ForwardReferencesEnclosingFunction(ExecutionMode mode)
+    {
+        // The enclosing helper is declared AFTER the nested namespace — function hoisting makes it
+        // visible regardless of source order.
+        var code = @"
+            namespace O {
+                export namespace I {
+                    export function f() { return outerHelp(); }
+                }
+                function outerHelp() { return 7; }
+            }
+            console.log(O.I.f());
+        ";
+        Assert.Equal("7\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedNamespaceFunction_ReferencesEnclosingClassByBareName(ExecutionMode mode)
+    {
+        var code = @"
+            namespace O {
+                class Helper { val = 42; }
+                export namespace I {
+                    export function f() { return new Helper().val; }
+                }
+            }
+            console.log(O.I.f());
+        ";
+        Assert.Equal("42\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedNamespaceFunction_ReferencesSiblingNamespaceByBareName(ExecutionMode mode)
+    {
+        // B.f names sibling namespace A by its simple name (A is a member of the enclosing O). The
+        // checker already admitted this (namespaces register eagerly); compiled codegen previously
+        // threw at runtime because namespace fields are keyed by full path — ResolveNamespaceField
+        // now walks enclosing prefixes so the bare name reaches O.A.
+        var code = @"
+            namespace O {
+                export namespace A { export function g() { return 5; } }
+                export namespace B { export function f() { return A.g(); } }
+            }
+            console.log(O.B.f());
+        ";
+        Assert.Equal("5\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DeeplyNestedNamespaceFunction_ReferencesOutermostFunction(ExecutionMode mode)
+    {
+        var code = @"
+            namespace A {
+                function help() { return 1; }
+                export namespace B {
+                    export namespace C {
+                        export function f() { return help(); }
+                    }
+                }
+            }
+            console.log(A.B.C.f());
+        ";
+        Assert.Equal("1\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedNamespaceFunction_OwnHelperShadowsEnclosingOfSameName(ExecutionMode mode)
+    {
+        // The nested namespace declares its own `help`; the bare reference resolves to the inner
+        // one (2), shadowing the enclosing namespace's `help` (1).
+        var code = @"
+            namespace O {
+                function help() { return 1; }
+                export namespace I {
+                    function help() { return 2; }
+                    export function f() { return help(); }
+                }
+            }
+            console.log(O.I.f());
+        ";
+        Assert.Equal("2\n", TestHarness.Run(code, mode));
+    }
+
+    #endregion
 }
