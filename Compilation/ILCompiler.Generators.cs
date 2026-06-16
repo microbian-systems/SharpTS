@@ -552,9 +552,12 @@ public partial class ILCompiler
         // into it so an arrow that writes that parameter shares the generator's storage. Instance
         // methods carry 'this' at arg 0, so user params start at arg 1 (paramOffset: 1). The stub
         // params are typed, so EmitGeneratorFunctionDCInit boxes value types before the store. No-op
-        // when the method has no function DC.
+        // when the method has no function DC. Pass the CLR boxing types from the method's ACTUAL IL
+        // signature (same source as the field-seeding loop above), so widened/all-object slots are not
+        // spuriously boxed.
         if (funcDCKey != null)
-            EmitGeneratorFunctionDCInit(il, smBuilder.FunctionDCField, method, funcDCKey, paramOffset: 1, paramTypes);
+            EmitGeneratorFunctionDCInit(il, smBuilder.FunctionDCField, method, funcDCKey, paramOffset: 1,
+                paramTypes.Select(p => p.ParameterType).ToArray());
 
         // Captured outer-scope variables are NOT copied into the state machine (#541): see the
         // free-function stub above. MoveNext reads/writes them live from their backing storage,

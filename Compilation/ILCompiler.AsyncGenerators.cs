@@ -371,9 +371,12 @@ public partial class ILCompiler
 
         // #725: instantiate the function display class and seed any captured-and-mutated parameter
         // into it (instance methods carry 'this' at arg 0, so user params start at arg 1). The stub
-        // params are typed, so value types are boxed before the store. No-op when no function DC.
+        // params are typed, so value types are boxed before the store. No-op when no function DC. Pass
+        // the CLR boxing types from the method's ACTUAL IL signature (same source as the field-seeding
+        // loop above), so widened/all-object slots are not spuriously boxed.
         if (funcDCKey != null)
-            EmitGeneratorFunctionDCInit(il, smBuilder.FunctionDCField, method, funcDCKey, paramOffset: 1, paramTypes);
+            EmitGeneratorFunctionDCInit(il, smBuilder.FunctionDCField, method, funcDCKey, paramOffset: 1,
+                paramTypes.Select(p => p.ParameterType).ToArray());
 
         // Return the state machine (which implements IAsyncEnumerable<object>)
         il.Emit(OpCodes.Ret);
