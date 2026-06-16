@@ -140,12 +140,11 @@ public class ComputedSymbolMethodTests
         Assert.Equal("2\n1\n2\n", TestHarness.Run(source, mode));
     }
 
-    // Compiled mode: reading a symbol method as a value (`obj[Symbol.iterator]`) returns the raw
-    // MethodInfo rather than a receiver-bound callable, so a standalone `obj[Symbol.iterator]()` call
-    // loses `this`. for...of / spread / for-await (which pass the receiver themselves) are unaffected
-    // and run in both back ends. Tracked as a follow-up.
+    // Reading a symbol method as a value (`obj[Symbol.iterator]`) returns a receiver-bound callable in
+    // both back ends, so a standalone `obj[Symbol.iterator]()` call keeps `this` (#755: compiled mode
+    // now binds the receiver as `new $TSFunction(obj, method)`, mirroring the string-keyed method read).
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void DirectSymbolMethodAccess_ReturnsCallable(ExecutionMode mode)
     {
         var source = """
@@ -155,6 +154,22 @@ public class ComputedSymbolMethodTests
             """;
 
         Assert.Equal("5\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DirectSymbolMethodAccess_BindsThis(ExecutionMode mode)
+    {
+        // The returned callable must carry `this` — a standalone `obj[Symbol.iterator]()` reads
+        // `this.v` from the receiver (#755).
+        var source = """
+            class R { v = 9; *[Symbol.iterator]() { yield this.v; yield this.v + 1; } }
+            const it = (new R() as any)[Symbol.iterator]();
+            console.log(it.next().value);
+            console.log(it.next().value);
+            """;
+
+        Assert.Equal("9\n10\n", TestHarness.Run(source, mode));
     }
 
     // Compiled mode: class *expressions* go through a separate emit path that doesn't yet wire

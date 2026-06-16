@@ -175,32 +175,37 @@ public partial class ILCompiler
     }
 
     /// <summary>
-    /// Emits the body of an instance async generator method using a state machine.
-    /// Called for class methods marked with both IsAsync and IsGenerator = true.
+    /// Emits the body of an async generator method using a state machine. Called for class methods
+    /// marked with both IsAsync and IsGenerator = true. A static async generator method (#761) has no
+    /// <c>this</c>/instance fields, so it is set up like a free function (isInstanceMethod: false,
+    /// static stub) — the async-generator analog of the static sync generator (#692).
     /// </summary>
-    private void EmitAsyncGeneratorMethodBody(MethodBuilder methodBuilder, Stmt.Function method, FieldInfo fieldsField)
+    private void EmitAsyncGeneratorMethodBody(MethodBuilder methodBuilder, Stmt.Function method, FieldInfo? fieldsField, bool isInstanceMethod = true)
     {
         // Analyze async generator function to determine yield/await points and hoisted variables
         var analysis = _asyncGenerators.Analyzer.Analyze(method);
 
-        // Build state machine type for instance method
+        // Build state machine type
         var smBuilder = new AsyncGeneratorStateMachineBuilder(_moduleBuilder, _types, _asyncGenerators.StateMachineCounter++);
         smBuilder.DefineStateMachine(
             $"{methodBuilder.DeclaringType!.Name}_{method.Name.Lexeme}",
             analysis,
-            isInstanceMethod: true,  // This is an instance method
+            isInstanceMethod: isInstanceMethod,
             runtime: _runtime
         );
 
         // Emit stub method body (creates state machine and returns it)
-        EmitAsyncGeneratorInstanceStubMethod(methodBuilder, smBuilder, method.Parameters);
+        if (isInstanceMethod)
+            EmitAsyncGeneratorInstanceStubMethod(methodBuilder, smBuilder, method.Parameters);
+        else
+            EmitAsyncGeneratorStaticStubMethod(methodBuilder, smBuilder, method.Parameters);
 
         // Create context for MoveNextAsync emission
         var il = smBuilder.MoveNextAsyncMethod.GetILGenerator();
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             FieldsField = fieldsField,
-            IsInstanceMethod = true,
+            IsInstanceMethod = isInstanceMethod,
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
             ConstArrowBindings = _closures.ConstArrowBindings,
@@ -291,6 +296,52 @@ public partial class ILCompiler
             {
                 il.Emit(OpCodes.Dup);  // Keep state machine reference on stack
                 il.Emit(OpCodes.Ldarg, i + 1);  // +1 because 'this' is at index 0
+
+                // Box value types since state machine fields are object-typed
+                if (i < paramTypes.Length && paramTypes[i].IsValueType)
+                {
+                    il.Emit(OpCodes.Box, paramTypes[i]);
+                }
+
+                il.Emit(OpCodes.Stfld, field);
+            }
+        }
+
+        // Return the state machine (which implements IAsyncEnumerable<object>)
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits the stub that creates the async generator state machine for a STATIC method (#761): like
+    /// the instance stub but with no <c>this</c> and parameters starting at arg 0 (no receiver slot).
+    /// Value-type parameters are boxed into the object-typed state-machine fields. Mirrors the static
+    /// sync generator stub <see cref="EmitGeneratorStaticStubMethod"/>.
+    /// </summary>
+    private void EmitAsyncGeneratorStaticStubMethod(
+        MethodBuilder methodBuilder,
+        AsyncGeneratorStateMachineBuilder smBuilder,
+        List<Stmt.Parameter> parameters)
+    {
+        var il = methodBuilder.GetILGenerator();
+
+        // Create new instance of the state machine
+        il.Emit(OpCodes.Newobj, smBuilder.Constructor);
+
+        // Get the typed parameter types for the method (to box value types into object-typed fields).
+        string? className = methodBuilder.DeclaringType?.Name;
+        string methodName = methodBuilder.Name;
+        Type[] paramTypes = className != null
+            ? ParameterTypeResolver.ResolveMethodParameters(className, methodName, parameters, _typeMapper, _typeMap)
+            : parameters.Select(_ => typeof(object)).ToArray();
+
+        // Copy parameters to state machine fields (static methods start params at index 0).
+        for (int i = 0; i < parameters.Count; i++)
+        {
+            var field = smBuilder.GetVariableField(parameters[i].Name.Lexeme);
+            if (field != null)
+            {
+                il.Emit(OpCodes.Dup);  // Keep state machine reference on stack
+                il.Emit(OpCodes.Ldarg, i);  // No receiver slot — params start at arg 0
 
                 // Box value types since state machine fields are object-typed
                 if (i < paramTypes.Length && paramTypes[i].IsValueType)

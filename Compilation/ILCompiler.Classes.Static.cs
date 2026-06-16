@@ -343,12 +343,21 @@ public partial class ILCompiler
 
         // Static generator methods (#692) use the generator state machine, set up like a free
         // function (no `this`). Checked before the plain-async branch so `static async *m()` isn't
-        // mis-emitted as a non-generator async method (its full support is tracked separately).
+        // mis-emitted as a non-generator async method.
         if (method.IsGenerator && !method.IsAsync)
         {
             var genTypeBuilder = _classes.Builders[className];
             var genMethodBuilder = _classes.StaticMethods[className][method.Name.Lexeme];
             EmitGeneratorMethodBody(genMethodBuilder, method, fieldsField: null, isInstanceMethod: false);
+            return;
+        }
+
+        // Static async generator methods (#761): the async-generator state machine, set up like a free
+        // function (no `this`). Must precede the plain-async branch since async generators set IsAsync too.
+        if (method.IsGenerator && method.IsAsync)
+        {
+            var agMethodBuilder = _classes.StaticMethods[className][method.Name.Lexeme];
+            EmitAsyncGeneratorMethodBody(agMethodBuilder, method, fieldsField: null, isInstanceMethod: false);
             return;
         }
 

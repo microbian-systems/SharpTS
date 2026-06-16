@@ -482,6 +482,14 @@ public partial class TypeChecker
                         substitutedMembers,
                         genericInterface.OptionalMembers);
                 }
+                else if (TryResolveIterableProtocolInterface(interfaceToken.Lexeme, typeArgs, out var protocolType))
+                {
+                    // Built-in iterable-protocol interface (Iterable<T>, AsyncIterable<T>, …): validate
+                    // the class satisfies it structurally — it has no named environment entry to validate
+                    // member-by-member. #756.
+                    ValidateProtocolInterfaceImplementation(classTypeForBody, protocolType, interfaceToken.Lexeme, classStmt.Name.Lexeme);
+                    continue;
+                }
                 else
                 {
                     throw new TypeCheckException($" '{interfaceToken.Lexeme}' is not an interface.", tsCode: "TS2304");

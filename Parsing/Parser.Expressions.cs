@@ -804,6 +804,46 @@ public partial class Parser
                         continue;
                     }
 
+                    // Method modifiers: generator `*` and/or `async` preceding the key, e.g.
+                    //   { *gen() {} }  { *[Symbol.iterator]() {} }  { async foo() {} }  { async *g() {} }
+                    // `async` is only a modifier when a property-name start or `*` follows it;
+                    // otherwise it is a property literally named `async` ({ async }, { async: v }, { async() {} }).
+                    bool isMethodAsync = false;
+                    if (Check(TokenType.ASYNC) && (IsPropertyNameStart(PeekNext().Type) || PeekNext().Type == TokenType.STAR))
+                    {
+                        Advance(); // consume 'async'
+                        isMethodAsync = true;
+                    }
+                    bool isMethodGenerator = Match(TokenType.STAR);
+
+                    if (isMethodAsync || isMethodGenerator)
+                    {
+                        // A modifier guarantees a method; parse its key (computed/string/number/identifier).
+                        Expr.PropertyKey methodKey;
+                        if (Match(TokenType.LEFT_BRACKET))
+                        {
+                            Expr keyExpr = Expression();
+                            Consume(TokenType.RIGHT_BRACKET, "Expect ']' after computed property key.");
+                            methodKey = new Expr.ComputedKey(keyExpr);
+                        }
+                        else if (Match(TokenType.STRING) || Match(TokenType.NUMBER))
+                        {
+                            methodKey = new Expr.LiteralKey(Previous());
+                        }
+                        else
+                        {
+                            Token methodName = ConsumePropertyName("Expect method name after method modifier.");
+                            methodKey = new Expr.IdentifierKey(methodName);
+                        }
+
+                        // Like the plain `{ foo() {} }` method-shorthand paths, object-literal methods
+                        // use the default Value kind; the generator/async semantics ride on the
+                        // ArrowFunction's IsGenerator/IsAsync flags.
+                        var methodExpr = ParseObjectMethodShorthand(isMethodAsync, isMethodGenerator);
+                        properties.Add(new Expr.Property(methodKey, methodExpr));
+                        continue;
+                    }
+
                     // Accessor shorthand: { get foo() {} }, { set foo(v) {} }.
                     // Disambiguate from a property literally named `get`/`set`:
                     //   { get }       shorthand            (next is `,` or `}`)
@@ -1035,7 +1075,7 @@ public partial class Parser
     /// values, and an optional <c>this:</c> parameter (TypeScript).
     /// Returns an ArrowFunction with <c>HasOwnThis=true</c>.
     /// </summary>
-    private Expr.ArrowFunction ParseObjectMethodShorthand()
+    private Expr.ArrowFunction ParseObjectMethodShorthand(bool isAsync = false, bool isGenerator = false)
     {
         Consume(TokenType.LEFT_PAREN, "Expect '(' in method shorthand.");
 
@@ -1145,7 +1185,9 @@ public partial class Parser
             ExpressionBody: null,
             BlockBody: body,
             ReturnType: returnType,
-            HasOwnThis: true);
+            HasOwnThis: true,
+            IsAsync: isAsync,
+            IsGenerator: isGenerator);
     }
 
     private Expr ParseTemplateLiteral()
