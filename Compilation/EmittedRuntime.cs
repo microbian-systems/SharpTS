@@ -1686,13 +1686,19 @@ public class EmittedRuntime
     public MethodBuilder GlobalThisGetProperty { get; set; } = null!;
     public MethodBuilder GlobalThisSetProperty { get; set; } = null!;
 
-    // Symbol-keyed class accessor registry (#266). The field holds
-    // Dictionary<Type, Dictionary<object, object[]>>; each object[4] slot is
-    // {instanceGetter, instanceSetter, staticGetter, staticSetter} MethodInfos.
+    // Symbol-keyed class accessor registry (#266, #647). The field holds
+    // Dictionary<Type, Dictionary<object, object[]>>; each object[6] slot is
+    // {instanceGetter, instanceSetter, staticGetter, staticSetter, instanceMethod,
+    // staticMethod} MethodInfos. The method slots (#647) back computed symbol-keyed
+    // class methods (`[Symbol.iterator]() {…}`).
     public FieldBuilder SymbolAccessorRegistryField { get; set; } = null!;
     public MethodBuilder RegisterSymbolAccessor { get; set; } = null!;
     public MethodBuilder FindSymbolGetter { get; set; } = null!;
     public MethodBuilder FindSymbolSetter { get; set; } = null!;
+    // #647 computed symbol-keyed methods: register a method MethodInfo and look it up
+    // (base-chain walk), reusing the accessor registry's slot array with method slots.
+    public MethodBuilder RegisterSymbolMethod { get; set; } = null!;
+    public MethodBuilder FindSymbolMethod { get; set; } = null!;
     // #351 generic-class support helpers: map a (possibly generic) owner type to
     // its registry key (the open generic definition) and to a closed type usable
     // for cctor + reflective Invoke, and close an accessor MethodInfo declared on

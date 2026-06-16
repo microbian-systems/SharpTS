@@ -285,10 +285,13 @@ public partial class RuntimeEmitter
         var returnNullLabel = il.DefineLabel();
         var tryGetValueLabel = il.DefineLabel();
         var returnLabel = il.DefineLabel();
+        var returnLabel2 = il.DefineLabel();   // registry-hit return (#647)
 
         // Locals
         var dictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
         var valueLocal = il.DeclareLocal(_types.Object);
+
+        var tryRegistryLabel = il.DefineLabel();
 
         // if (obj == null) return null;
         il.Emit(OpCodes.Ldarg_0);
@@ -299,9 +302,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
         il.Emit(OpCodes.Stloc, dictLocal);
 
-        // if (dict == null) return null;
+        // if (dict == null) goto tryRegistry;  (a class instance carries no per-object symbol dict)
         il.Emit(OpCodes.Ldloc, dictLocal);
-        il.Emit(OpCodes.Brfalse, returnNullLabel);
+        il.Emit(OpCodes.Brfalse, tryRegistryLabel);
 
         // if (dict.TryGetValue(symbol, out value)) return value;
         il.Emit(OpCodes.Ldloc, dictLocal);
@@ -311,14 +314,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, tryGetValue);
         il.Emit(OpCodes.Brtrue, returnLabel);
 
+        // Per-object dict didn't have it — consult the symbol-method registry (#647): a computed
+        // [Symbol.iterator]()/[Symbol.asyncIterator]() declared on the class chain. The returned
+        // MethodInfo is invoked through InvokeMethodValue's MethodBase arm by the caller.
+        il.MarkLabel(tryRegistryLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.FindSymbolMethod);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, returnLabel2);
+        il.Emit(OpCodes.Pop);
+
         // return null;
         il.MarkLabel(returnNullLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
-        // return value;
+        // return value;  (per-object dict hit)
         il.MarkLabel(returnLabel);
         il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ret);
+
+        // return registryMethod;  (registry hit — value already on stack)
+        il.MarkLabel(returnLabel2);
         il.Emit(OpCodes.Ret);
     }
 

@@ -14,7 +14,7 @@ namespace SharpTS.Tests.SharedTests;
 public class ComputedSymbolMethodTests
 {
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ObjectReturningIterator_ForOf_Works(ExecutionMode mode)
     {
         var source = """
@@ -31,7 +31,7 @@ public class ComputedSymbolMethodTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void GeneratorIterator_ForOfAndSpread_Works(ExecutionMode mode)
     {
         var source = """
@@ -44,7 +44,7 @@ public class ComputedSymbolMethodTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void GeneratorIterator_CapturesThis(ExecutionMode mode)
     {
         var source = """
@@ -63,7 +63,7 @@ public class ComputedSymbolMethodTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void GeneratorIterator_ElementTypeIsNumber(ExecutionMode mode)
     {
         // The spread must yield number[], not Iterator<number>[] — the factory's iterator
@@ -77,6 +77,9 @@ public class ComputedSymbolMethodTests
         Assert.Equal("3\n", TestHarness.Run(source, mode));
     }
 
+    // Compiled mode: a non-symbol computed key (`[KEY]()` with KEY a string) would need a
+    // dynamically-named .NET method; the symbol-method registry only backs symbol keys, and named
+    // access doesn't consult it. Interpreter-only; tracked as a follow-up.
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void NonSymbolComputedMethodKey_FoldsToNamedMethod(ExecutionMode mode)
@@ -91,7 +94,7 @@ public class ComputedSymbolMethodTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGeneratorIterator_ForAwait_Works(ExecutionMode mode)
     {
         var source = """
@@ -106,6 +109,42 @@ public class ComputedSymbolMethodTests
     }
 
     [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GenericIterableClass_Works(ExecutionMode mode)
+    {
+        // Exercises the symbol registry's generic-class handling (registry keyed by the open
+        // definition; receiver/MethodInfo closed for invoke).
+        var source = """
+            class Box<T> {
+              constructor(private items: T[]) {}
+              *[Symbol.iterator](): Iterator<T> { for (const x of this.items) yield x; }
+            }
+            for (const n of new Box<number>([1, 2, 3])) console.log(n);
+            """;
+
+        Assert.Equal("1\n2\n3\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedComputedIterator_Works(ExecutionMode mode)
+    {
+        // A subclass inherits the base's [Symbol.iterator] via the registry's base-chain walk.
+        var source = """
+            class Base { *[Symbol.iterator]() { yield 1; yield 2; } }
+            class Derived extends Base {}
+            console.log([...new Derived()].length);
+            for (const x of new Derived()) console.log(x);
+            """;
+
+        Assert.Equal("2\n1\n2\n", TestHarness.Run(source, mode));
+    }
+
+    // Compiled mode: reading a symbol method as a value (`obj[Symbol.iterator]`) returns the raw
+    // MethodInfo rather than a receiver-bound callable, so a standalone `obj[Symbol.iterator]()` call
+    // loses `this`. for...of / spread / for-await (which pass the receiver themselves) are unaffected
+    // and run in both back ends. Tracked as a follow-up.
+    [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void DirectSymbolMethodAccess_ReturnsCallable(ExecutionMode mode)
     {
@@ -118,6 +157,8 @@ public class ComputedSymbolMethodTests
         Assert.Equal("5\n", TestHarness.Run(source, mode));
     }
 
+    // Compiled mode: class *expressions* go through a separate emit path that doesn't yet wire
+    // computed symbol-keyed methods (class declarations do). Tracked as a follow-up.
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void ClassExpression_ComputedSymbolMethod_Works(ExecutionMode mode)

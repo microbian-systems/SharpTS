@@ -5,11 +5,14 @@ namespace SharpTS.Compilation;
 
 public partial class RuntimeEmitter
 {
-    // Slot layout inside each per-(Type,symbol) object[4].
+    // Slot layout inside each per-(Type,symbol) object[6].
     private const int SymGetterInstanceSlot = 0;
     private const int SymSetterInstanceSlot = 1;
     private const int SymGetterStaticSlot = 2;
     private const int SymSetterStaticSlot = 3;
+    private const int SymMethodInstanceSlot = 4;   // #647 computed instance method
+    private const int SymMethodStaticSlot = 5;     // #647 computed static method
+    private const int SymSlotCount = 6;
 
     private Type SymInnerDictType => _types.MakeGenericType(_types.DictionaryOpen, _types.Object, _types.ObjectArray);
     private Type SymOuterDictType => _types.MakeGenericType(_types.DictionaryOpen, _types.Type, SymInnerDictType);
@@ -40,6 +43,19 @@ public partial class RuntimeEmitter
 
         runtime.FindSymbolSetter = typeBuilder.DefineMethod(
             "FindSymbolSetterFor",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]);
+
+        // #647 computed symbol-keyed methods.
+        runtime.RegisterSymbolMethod = typeBuilder.DefineMethod(
+            "RegisterSymbolMethod",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [_types.Type, _types.Object, _types.Object, _types.Boolean]);
+
+        runtime.FindSymbolMethod = typeBuilder.DefineMethod(
+            "FindSymbolMethodFor",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Object,
             [_types.Object, _types.Object]);
@@ -87,11 +103,74 @@ public partial class RuntimeEmitter
         var getType = _types.GetMethod(_types.Object, "GetType");
 
         EmitRegisterSymbolAccessorBody(runtime, inner, outerTryGetValue, outerSetItem, innerTryGetValue, innerSetItem);
+        EmitRegisterSymbolMethodBody(runtime, inner, outerTryGetValue, outerSetItem, innerTryGetValue, innerSetItem);
         EmitSymbolGenericHelperBodies(runtime);
         EmitFindSymbolAccessorBody(runtime, runtime.FindSymbolGetter, field, inner,
             SymGetterInstanceSlot, SymGetterStaticSlot, outerTryGetValue, innerTryGetValue, getBaseType, getType);
         EmitFindSymbolAccessorBody(runtime, runtime.FindSymbolSetter, field, inner,
             SymSetterInstanceSlot, SymSetterStaticSlot, outerTryGetValue, innerTryGetValue, getBaseType, getType);
+        // #647: methods reuse the same base-chain walk, reading the method slots.
+        EmitFindSymbolAccessorBody(runtime, runtime.FindSymbolMethod, field, inner,
+            SymMethodInstanceSlot, SymMethodStaticSlot, outerTryGetValue, innerTryGetValue, getBaseType, getType);
+    }
+
+    /// <summary>
+    /// Emits <c>RegisterSymbolMethod(Type owner, object symbol, object method, bool isStatic)</c> (#647):
+    /// stores <paramref name="method"/> into the per-(owner,symbol) slot array's method slot (instance
+    /// slot 4 / static slot 5). Mirrors <see cref="EmitRegisterSymbolAccessorBody"/>'s get-or-create of
+    /// the inner dictionary and slot array (sized <see cref="SymSlotCount"/>).
+    /// </summary>
+    private void EmitRegisterSymbolMethodBody(
+        EmittedRuntime runtime, Type inner,
+        MethodInfo outerTryGetValue, MethodInfo outerSetItem,
+        MethodInfo innerTryGetValue, MethodInfo innerSetItem)
+    {
+        var il = runtime.RegisterSymbolMethod.GetILGenerator();
+        var field = runtime.SymbolAccessorRegistryField;
+        var innerLocal = il.DeclareLocal(inner);
+        var slotLocal = il.DeclareLocal(_types.ObjectArray);
+
+        // if (symbol == null) return;  (see RegisterSymbolAccessor — module-local Symbol keys, #282)
+        var symbolOkLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brtrue, symbolOkLabel);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(symbolOkLabel);
+
+        // if (!_symbolAccessors.TryGetValue(owner, out inner)) { inner = new(); _symbolAccessors[owner] = inner; }
+        var haveInner = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, field);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, innerLocal);
+        il.Emit(OpCodes.Callvirt, outerTryGetValue);
+        il.Emit(OpCodes.Brtrue, haveInner);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(inner));
+        il.Emit(OpCodes.Stloc, innerLocal);
+        il.Emit(OpCodes.Ldsfld, field);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, innerLocal);
+        il.Emit(OpCodes.Callvirt, outerSetItem);
+        il.MarkLabel(haveInner);
+
+        // if (!inner.TryGetValue(symbol, out slot)) { slot = new object[6]; inner[symbol] = slot; }
+        var haveSlot = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, innerLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, slotLocal);
+        il.Emit(OpCodes.Callvirt, innerTryGetValue);
+        il.Emit(OpCodes.Brtrue, haveSlot);
+        il.Emit(OpCodes.Ldc_I4, SymSlotCount);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, slotLocal);
+        il.Emit(OpCodes.Ldloc, innerLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, slotLocal);
+        il.Emit(OpCodes.Callvirt, innerSetItem);
+        il.MarkLabel(haveSlot);
+
+        // if (method != null) slot[isStatic ? 5 : 4] = method;  (isStatic is arg 3 here)
+        EmitStoreSlotIfPresent(il, slotLocal, argIndex: 2, staticSlot: SymMethodStaticSlot, instanceSlot: SymMethodInstanceSlot, isStaticArgIndex: 3);
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
@@ -269,14 +348,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, outerSetItem);
         il.MarkLabel(haveInner);
 
-        // if (!inner.TryGetValue(symbol, out slot)) { slot = new object[4]; inner[symbol] = slot; }
+        // if (!inner.TryGetValue(symbol, out slot)) { slot = new object[6]; inner[symbol] = slot; }
         var haveSlot = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, innerLocal);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloca, slotLocal);
         il.Emit(OpCodes.Callvirt, innerTryGetValue);
         il.Emit(OpCodes.Brtrue, haveSlot);
-        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Ldc_I4, SymSlotCount);
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Stloc, slotLocal);
         il.Emit(OpCodes.Ldloc, innerLocal);
@@ -285,25 +364,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, innerSetItem);
         il.MarkLabel(haveSlot);
 
-        // if (getter != null) slot[isStatic ? 2 : 0] = getter;
-        EmitStoreSlotIfPresent(il, slotLocal, argIndex: 2, staticSlot: SymGetterStaticSlot, instanceSlot: SymGetterInstanceSlot);
+        // if (getter != null) slot[isStatic ? 2 : 0] = getter;  (isStatic is arg 4 here)
+        EmitStoreSlotIfPresent(il, slotLocal, argIndex: 2, staticSlot: SymGetterStaticSlot, instanceSlot: SymGetterInstanceSlot, isStaticArgIndex: 4);
         // if (setter != null) slot[isStatic ? 3 : 1] = setter;
-        EmitStoreSlotIfPresent(il, slotLocal, argIndex: 3, staticSlot: SymSetterStaticSlot, instanceSlot: SymSetterInstanceSlot);
+        EmitStoreSlotIfPresent(il, slotLocal, argIndex: 3, staticSlot: SymSetterStaticSlot, instanceSlot: SymSetterInstanceSlot, isStaticArgIndex: 4);
 
         il.Emit(OpCodes.Ret);
     }
 
-    // if (argN != null) slot[isStatic ? staticSlot : instanceSlot] = argN;
-    private static void EmitStoreSlotIfPresent(ILGenerator il, LocalBuilder slotLocal, int argIndex, int staticSlot, int instanceSlot)
+    // if (argN != null) slot[arg(isStaticArgIndex) ? staticSlot : instanceSlot] = argN;
+    private static void EmitStoreSlotIfPresent(ILGenerator il, LocalBuilder slotLocal, int argIndex, int staticSlot, int instanceSlot, int isStaticArgIndex)
     {
         var skip = il.DefineLabel();
         il.Emit(OpCodes.Ldarg, argIndex);
         il.Emit(OpCodes.Brfalse, skip);
         il.Emit(OpCodes.Ldloc, slotLocal);
-        // index = isStatic(arg4) ? staticSlot : instanceSlot
+        // index = isStatic ? staticSlot : instanceSlot
         var useStatic = il.DefineLabel();
         var haveIdx = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg, 4);
+        il.Emit(OpCodes.Ldarg, isStaticArgIndex);
         il.Emit(OpCodes.Brtrue, useStatic);
         il.Emit(OpCodes.Ldc_I4, instanceSlot);
         il.Emit(OpCodes.Br, haveIdx);

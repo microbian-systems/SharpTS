@@ -199,6 +199,23 @@ public partial class RuntimeEmitter
             il.MarkLabel(noSymGetterLabel);
         }
 
+        // #647: computed symbol-keyed method (`[Symbol.iterator]() {...}`). Reading the member
+        // returns the callable itself — the found MethodInfo, invoked later via InvokeMethodValue's
+        // MethodBase arm — unlike a getter (above), which is invoked here.
+        {
+            var noSymMethodLabel = il.DefineLabel();
+            var symMethodLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.FindSymbolMethod);
+            il.Emit(OpCodes.Stloc, symMethodLocal);
+            il.Emit(OpCodes.Ldloc, symMethodLocal);
+            il.Emit(OpCodes.Brfalse, noSymMethodLabel);
+            il.Emit(OpCodes.Ldloc, symMethodLocal);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(noSymMethodLabel);
+        }
+
         // Not found in user-set symbol dict — fall back to prototype-keyed
         // well-known-symbol dispatch. Currently only RegExp.prototype carries
         // symbol-keyed methods (@@match/@@matchAll/@@replace/@@search/@@split,
