@@ -1242,11 +1242,15 @@ public class AsyncGeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_PendingAwait_DirectNext_ResolvesInOrder(ExecutionMode mode)
     {
-        // Driving a pending-await async generator by awaiting next() directly (compiled mode; the
-        // interpreter eagerly drains the body, a separate non-conformant model). #631.
+        // Driving a pending-await async generator by awaiting next() directly. #631 (compiled). Now also
+        // covered in the interpreter: a second `await it.next()` previously read `it` against a scope the
+        // generator's eager drain had corrupted ("Only instances and objects have properties"); the drain
+        // now restores the caller's environment across each suspension (#690), so sequential next() calls
+        // resolve in order. The eager-drain model still collects values eagerly, but the observable result
+        // matches the spec for this finite, no-sent-value case.
         var source = """
             function later(n: number): Promise<number> {
                 return new Promise(res => setTimeout(() => res(n), 5));
@@ -1288,12 +1292,15 @@ public class AsyncGeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_ConcurrentNext_QueuesInOrder(ExecutionMode mode)
     {
         // Two next() calls issued before the first settles must be serviced FIFO (ECMA-262 §27.6.3
-        // AsyncGeneratorQueue), modeled as a task chain — not rejected as "already running" (#542).
-        // Compiled-only: the interpreter's eager-drain async generator can't service concurrent next().
+        // AsyncGeneratorQueue): compiled mode models it as a task chain (#542); the interpreter serializes
+        // every caller on one shared body drain, then hands out collected values in call order, so a
+        // second next() can no longer race ahead and read the not-yet-populated values list as completion
+        // (#690). Previously the interpreter threw "Only instances and objects have properties" here (the
+        // env-leak symptom) and could not service concurrent next() at all.
         var source = """
             function later(n: number): Promise<number> {
                 return new Promise(res => setTimeout(() => res(n), 5));
@@ -1308,6 +1315,86 @@ public class AsyncGeneratorTests
             """;
 
         Assert.Equal("1 false 2 false\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ForAwaitBody_WritesOuterBinding(ExecutionMode mode)
+    {
+        // #689: a `let`/`const` declared before a `for await…of` over a (genuinely-async) async generator
+        // must remain visible inside the loop body. The interpreter's eager drain repointed the shared
+        // environment at the generator's closure and held it across the body's awaits, so the loop body
+        // resolved `out` against the wrong scope and threw "Undefined variable 'out'". The drain now
+        // restores the caller's environment across each suspension, so the body reaches the enclosing
+        // scope in both modes.
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            async function* g() { yield await later(1); yield await later(2); }
+            async function main() {
+                let out = "";
+                for await (const v of g()) out += v;
+                console.log(out);
+            }
+            main();
+            """;
+
+        Assert.Equal("12\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_DirectNext_PreservesCallerScope(ExecutionMode mode)
+    {
+        // #690 (env-leak symptom): after the first `await it.next()` drives the generator's eager drain,
+        // bindings declared before it (here `it` itself and the outer `tag`) must still resolve in the
+        // caller's scope. Previously a second `it.next()` read `it` against the leaked generator closure
+        // and threw "Only instances and objects have properties", and an outer local read back as
+        // undefined. The drain now restores the caller's environment across each await suspension.
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            async function* g() { yield await later(1); yield await later(2); }
+            async function main() {
+                let tag = "T";
+                const it = g();
+                const a = await it.next();
+                const b = await it.next();
+                console.log(tag + " " + a.value + " " + b.value);
+            }
+            main();
+            """;
+
+        Assert.Equal("T 1 2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ForAwaitBody_OuterBinding_SurvivesNestedAwaitBody(ExecutionMode mode)
+    {
+        // #689 hardening: a generator body whose await is nested inside a delegated expression
+        // (`yield dbl(await later(n))`) suspends through the interpreter's general async-expression path,
+        // not the generator's own await chokepoint, so the generator alone can't keep its closure from
+        // leaking for that shape. The for-await driver re-asserts the loop's lexical scope after each
+        // next(), so the loop body still reaches the outer `out` binding regardless of the body shape.
+        // (Direct `await it.next()` of such a body is the narrower residual tracked in #752.)
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            function dbl(n: number): number { return n * 2; }
+            async function* g() { yield dbl(await later(1)); yield dbl(await later(2)); }
+            async function main() {
+                let out = "";
+                for await (const v of g()) out += v;
+                console.log(out);
+            }
+            main();
+            """;
+
+        Assert.Equal("24\n", TestHarness.Run(source, mode));
     }
 
     [Theory]
