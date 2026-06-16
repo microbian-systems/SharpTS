@@ -207,19 +207,14 @@ public partial class TypeChecker
                 // Check fields first, then methods
                 if (mutableClass.FieldTypes.TryGetValue(name, out var fieldType)) return fieldType;
                 if (mutableClass.Methods.TryGetValue(name, out var methodType)) return methodType;
-                // Check frozen version if available (may have superclass methods)
-                if (mutableClass.Frozen is TypeInfo.Class frozen)
-                {
-                    TypeInfo? current = frozen.Superclass;
-                    while (current != null)
-                    {
-                        var fields = GetFieldTypes(current);
-                        if (fields != null && fields.TryGetValue(name, out var superField)) return superField;
-                        var methods = GetMethods(current);
-                        if (methods != null && methods.TryGetValue(name, out var superMethod)) return superMethod;
-                        current = GetSuperclass(current);
-                    }
-                }
+                // Walk the frozen superclass chain (it may carry inherited members) through the
+                // substitution-aware resolver, so an inherited generic-base member (`value: T` on
+                // `Base<number>`) resolves to its instantiated type rather than the bare `T`. Keeps
+                // this signature-collection-time path consistent with the frozen-instance path above
+                // and the member-set collectors (#639); the unsubstituted GetFieldTypes/GetMethods
+                // walk it replaced returned the bare type parameter through a generic base.
+                if (mutableClass.Frozen is TypeInfo.Class { Superclass: { } superclass })
+                    return ResolveClassMemberTypeSubstituted(superclass, name);
             }
         }
         return null;

@@ -1724,7 +1724,10 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             return true;
         }
 
-        if (Ctx.NamespaceFields?.TryGetValue(name, out var nsField) == true)
+        // ResolveNamespaceField walks enclosing namespace prefixes so a nested namespace's member
+        // body can name a sibling/enclosing namespace by its simple name (#665). Shared with
+        // ILEmitter's sync path so state-machine bodies resolve namespaces identically.
+        if (Ctx.ResolveNamespaceField(name) is { } nsField)
         {
             IL.Emit(OpCodes.Ldsfld, nsField);
             SetStackUnknown();

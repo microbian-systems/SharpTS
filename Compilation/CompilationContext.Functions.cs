@@ -90,6 +90,37 @@ public partial class CompilationContext
     }
 
     /// <summary>
+    /// Resolves a bare identifier to a namespace's static backing field. Namespace fields are keyed
+    /// by full dotted path (e.g. <c>O.A</c>), so a nested/enclosing namespace referenced by its
+    /// simple name from inside a namespace member body — <c>A</c> inside <c>O.B.f</c>, where
+    /// <c>A</c> is <c>O.A</c> — does not match a direct lookup. Walks the current namespace path
+    /// innermost → outermost (<c>O.B.A</c>, then <c>O.A</c>) and returns the first existing field,
+    /// mirroring <see cref="ResolveFunctionName"/>'s namespace-scoped function resolution so a
+    /// nested namespace can reference an enclosing namespace's namespace-typed member (#665). The
+    /// namespace-scoped pass runs first so an inner namespace shadows a same-named top-level one;
+    /// the direct lookup then covers a top-level namespace reference (or any reference outside a
+    /// namespace). Returns null when no namespace matches.
+    /// </summary>
+    public FieldBuilder? ResolveNamespaceField(string name)
+    {
+        if (NamespaceFields == null)
+            return null;
+
+        if (CurrentNamespacePath != null)
+        {
+            var parts = CurrentNamespacePath.Split('.');
+            for (int i = parts.Length; i >= 1; i--)
+            {
+                string nsPrefix = string.Join('.', parts.Take(i));
+                if (NamespaceFields.TryGetValue($"{nsPrefix}.{name}", out var scoped))
+                    return scoped;
+            }
+        }
+
+        return NamespaceFields.TryGetValue(name, out var direct) ? direct : null;
+    }
+
+    /// <summary>
     /// Gets the qualified function name for the current module + namespace context. Module
     /// qualification (#418) keeps same-named functions in different modules distinct; namespace
     /// qualification (#657) keeps same-named members of different namespaces distinct. Both are
