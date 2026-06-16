@@ -8119,13 +8119,13 @@ test/built-ins/RegExp/CharacterClassEscapes/character-class-digit-class-escape-n
 test/built-ins/RegExp/CharacterClassEscapes/character-class-digit-class-escape-positive-cases.js Pass
 test/built-ins/RegExp/CharacterClassEscapes/character-class-non-digit-class-escape-negative-cases.js Pass
 test/built-ins/RegExp/CharacterClassEscapes/character-class-non-digit-class-escape-positive-cases.js Pass
-test/built-ins/RegExp/CharacterClassEscapes/character-class-non-whitespace-class-escape-negative-cases.js Fail
+test/built-ins/RegExp/CharacterClassEscapes/character-class-non-whitespace-class-escape-negative-cases.js Pass
 test/built-ins/RegExp/CharacterClassEscapes/character-class-non-whitespace-class-escape-positive-cases.js Pass
 test/built-ins/RegExp/CharacterClassEscapes/character-class-non-word-class-escape-negative-cases.js Pass
-test/built-ins/RegExp/CharacterClassEscapes/character-class-non-word-class-escape-positive-cases.js Fail
+test/built-ins/RegExp/CharacterClassEscapes/character-class-non-word-class-escape-positive-cases.js Pass
 test/built-ins/RegExp/CharacterClassEscapes/character-class-whitespace-class-escape-negative-cases.js Pass
-test/built-ins/RegExp/CharacterClassEscapes/character-class-whitespace-class-escape-positive-cases.js Fail
-test/built-ins/RegExp/CharacterClassEscapes/character-class-word-class-escape-negative-cases.js Fail
+test/built-ins/RegExp/CharacterClassEscapes/character-class-whitespace-class-escape-positive-cases.js Pass
+test/built-ins/RegExp/CharacterClassEscapes/character-class-word-class-escape-negative-cases.js Pass
 test/built-ins/RegExp/CharacterClassEscapes/character-class-word-class-escape-positive-cases.js Pass
 test/built-ins/RegExp/S15.10.1_A1_T1.js Pass
 test/built-ins/RegExp/S15.10.1_A1_T10.js Pass
@@ -8503,7 +8503,7 @@ test/built-ins/RegExp/call_with_non_regexp_same_constructor.js Pass
 test/built-ins/RegExp/call_with_regexp_match_falsy.js Pass
 test/built-ins/RegExp/call_with_regexp_not_same_constructor.js Pass
 test/built-ins/RegExp/character-class-escape-non-whitespace-u180e.js Pass
-test/built-ins/RegExp/character-class-escape-non-whitespace.js Fail
+test/built-ins/RegExp/character-class-escape-non-whitespace.js Pass
 test/built-ins/RegExp/dotall/with-dotall-unicode.js Fail
 test/built-ins/RegExp/dotall/with-dotall.js Pass
 test/built-ins/RegExp/dotall/without-dotall-unicode.js Fail

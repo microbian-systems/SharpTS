@@ -49,11 +49,12 @@ public partial class ILCompiler
         bool hasPrivateFieldStorage = _classes.PrivateFieldStorage.ContainsKey(qualifiedClassName);
         bool hasStaticPrivateFields = _classes.StaticPrivateFields.TryGetValue(qualifiedClassName, out var staticPrivateFields) && staticPrivateFields.Count > 0;
         bool hasStaticInitializers = classStmt.StaticInitializers != null && classStmt.StaticInitializers.Count > 0;
-        // Symbol-keyed computed accessors (#266) register in the .cctor.
+        // Symbol-keyed computed accessors (#266) and methods (#647) register in the .cctor.
         bool hasSymbolAccessors = _classes.SymbolAccessors.ContainsKey(typeBuilder.Name);
+        bool hasSymbolMethods = _classes.SymbolMethods.ContainsKey(typeBuilder.Name);
 
-        // Only emit if there are static fields with initializers, static lock fields, private field storage, static auto-accessors, static blocks, or symbol accessors
-        if (staticFieldsWithInit.Count == 0 && !hasStaticLockFields && !hasPrivateFieldStorage && !hasStaticPrivateFields && staticAutoAccessorsWithInit.Count == 0 && !hasStaticInitializers && !hasSymbolAccessors) return;
+        // Only emit if there are static fields with initializers, static lock fields, private field storage, static auto-accessors, static blocks, or symbol accessors/methods
+        if (staticFieldsWithInit.Count == 0 && !hasStaticLockFields && !hasPrivateFieldStorage && !hasStaticPrivateFields && staticAutoAccessorsWithInit.Count == 0 && !hasStaticInitializers && !hasSymbolAccessors && !hasSymbolMethods) return;
 
         var cctor = typeBuilder.DefineConstructor(
             MethodAttributes.Static | MethodAttributes.Private | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
@@ -242,6 +243,7 @@ public partial class ILCompiler
         // Register symbol-keyed computed accessors (#266) in the runtime registry,
         // keyed by this class's Type so dynamic bracket get/set can dispatch them.
         EmitSymbolAccessorRegistrations(emitter, il, typeBuilder);
+        EmitSymbolMethodRegistrations(emitter, il, typeBuilder);
 
         il.Emit(OpCodes.Ret);
     }
@@ -290,6 +292,40 @@ public partial class ILCompiler
         }
     }
 
+    /// <summary>
+    /// Emits <c>$Runtime.RegisterSymbolMethod(typeof(ThisClass), symbol, methodInfo, isStatic)</c>
+    /// for each computed symbol-keyed method recorded for this class (#647), mirroring
+    /// <see cref="EmitSymbolAccessorRegistrations"/>.
+    /// </summary>
+    private void EmitSymbolMethodRegistrations(ILEmitter emitter, ILGenerator il, TypeBuilder typeBuilder)
+    {
+        if (!_classes.SymbolMethods.TryGetValue(typeBuilder.Name, out var list))
+            return;
+
+        var getTypeFromHandle = _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle);
+        var getMethodFromHandle = _types.MethodBase.GetMethod(
+            "GetMethodFromHandle", [_types.RuntimeMethodHandle, _types.RuntimeTypeHandle])!;
+
+        foreach (var (method, key, builder) in list)
+        {
+            // owner: typeof(ThisClass)
+            il.Emit(OpCodes.Ldtoken, typeBuilder);
+            il.Emit(OpCodes.Call, getTypeFromHandle);
+
+            // symbol: evaluate the computed key expression (e.g. Symbol.iterator)
+            emitter.EmitExpression(key);
+            emitter.EmitBoxIfNeeded(key);
+
+            // method MethodInfo
+            EmitMethodInfoLiteral(il, builder, typeBuilder, getMethodFromHandle);
+
+            // isStatic
+            il.Emit(method.IsStatic ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+
+            il.Emit(OpCodes.Call, _runtime.RegisterSymbolMethod);
+        }
+    }
+
     private void EmitMethodInfoLiteral(ILGenerator il, MethodBuilder method, TypeBuilder declaringType, MethodInfo getMethodFromHandle)
     {
         il.Emit(OpCodes.Ldtoken, method);
@@ -301,9 +337,20 @@ public partial class ILCompiler
     private void EmitStaticMethodBody(string className, Stmt.Function method)
     {
         // #703: a static method invoked as a value pads omitted optional args with the
-        // `undefined` sentinel on the value-call path. Mark before the async branch so it
-        // covers both sync and async static methods (same builder).
+        // `undefined` sentinel on the value-call path. Mark before the branches below so it
+        // covers sync, async, and generator (#692) static methods (same builder).
         MarkPadsUndefined(_classes.StaticMethods[className][method.Name.Lexeme]);
+
+        // Static generator methods (#692) use the generator state machine, set up like a free
+        // function (no `this`). Checked before the plain-async branch so `static async *m()` isn't
+        // mis-emitted as a non-generator async method (its full support is tracked separately).
+        if (method.IsGenerator && !method.IsAsync)
+        {
+            var genTypeBuilder = _classes.Builders[className];
+            var genMethodBuilder = _classes.StaticMethods[className][method.Name.Lexeme];
+            EmitGeneratorMethodBody(genMethodBuilder, method, fieldsField: null, isInstanceMethod: false);
+            return;
+        }
 
         // Async static methods use state machine generation
         if (method.IsAsync)

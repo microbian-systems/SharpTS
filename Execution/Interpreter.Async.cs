@@ -183,8 +183,16 @@ public partial class Interpreter
         else if (iterable is SharpTSInstance inst)
         {
             var asyncIteratorFn = inst.GetBySymbol(SharpTSSymbol.AsyncIterator);
+            // Fall back to a declared symbol-keyed method on the class chain
+            // (`class C { async *[Symbol.asyncIterator]() {...} }`).
+            if (asyncIteratorFn == null && inst.GetClass().FindSymbolMethod(SharpTSSymbol.AsyncIterator) is { } symMethod)
+            {
+                asyncIteratorFn = SharpTSClass.BindMethod(symMethod, inst);
+            }
             if (asyncIteratorFn != null)
             {
+                if (asyncIteratorFn is SharpTSArrowFunction arrowFunc)
+                    asyncIteratorFn = arrowFunc.Bind(inst);
                 if (asyncIteratorFn is ISharpTSCallable callable)
                     return callable.Call(this, []);
             }

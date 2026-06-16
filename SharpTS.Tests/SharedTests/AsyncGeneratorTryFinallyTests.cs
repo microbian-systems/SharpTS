@@ -659,6 +659,56 @@ public class AsyncGeneratorTryFinallyTests
         Assert.Equal("v0\nF\nouter x\nv1\n", TestHarness.Run(source, mode));
     }
 
+    // ---- #675: a real exception escaping a nested real-IL try/catch inside a flag-based catch/finally
+    // body must reach an enclosing flag-based try's catch (async-generator analog of the sync #675) ----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void RealThrowEscapingNestedTryInCatchBody_CaughtByEnclosingTry(ExecutionMode mode)
+    {
+        // A nested real-IL try/catch inside a flag-based catch body rethrows; the in-flight value must
+        // reach the enclosing flag-based catch rather than escape MoveNextAsync.
+        var source = """
+            async function* g() {
+              try {
+                try { yield 0; throw "a"; }
+                catch (e: any) {
+                  try { throw "b"; }
+                  catch (e2: any) { console.log("C3 " + e2); throw "c"; }
+                }
+              } catch (e: any) { console.log("outer " + e); }
+              yield 1;
+            }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v0\nC3 b\nouter c\nv1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void RealThrowEscapingNestedTryInFinallyBody_CaughtByEnclosingTry(ExecutionMode mode)
+    {
+        // The finally-body analog.
+        var source = """
+            async function* g() {
+              try {
+                try { yield 0; }
+                finally {
+                  try { throw "b"; }
+                  catch (e2: any) { console.log("F3 " + e2); throw "c"; }
+                }
+              } catch (e: any) { console.log("outer " + e); }
+              yield 1;
+            }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v0\nF3 b\nouter c\nv1\n", TestHarness.Run(source, mode));
+    }
+
     // ---- IL-verification guards (the heart of #559: emitted IL must verify) ----
 
     [Theory]
@@ -702,6 +752,11 @@ public class AsyncGeneratorTryFinallyTests
     [InlineData("async function* g() { try { try { yield 0; throw 'a'; } catch (e) { throw 'b'; } } catch (e) { console.log(e); } yield 1; } async function main(){ for await (const v of g()) {} } main();")]
     [InlineData("async function* g() { try { try { yield 0; throw 'a'; } catch (e) { throw 'b'; } finally { console.log('f'); } } catch (e) { console.log(e); } } async function main(){ for await (const v of g()) {} } main();")]
     [InlineData("async function* g() { try { try { yield 0; throw 'x'; } finally { yield 7; } } catch (e) { console.log(e); } } async function main(){ for await (const v of g()) {} } main();")]
+    // #675: a real exception escaping a nested real-IL try/catch inside a flag-based catch/finally body —
+    // the handler-body sync-segment capture + outward routing must verify in the async generator too.
+    [InlineData("async function* g() { try { try { yield 0; throw 'a'; } catch (e) { try { throw 'b'; } catch (e2) { throw 'c'; } } } catch (e) { console.log(e); } yield 1; } async function main(){ for await (const v of g()) {} } main();")]
+    [InlineData("async function* g() { try { try { yield 0; } finally { try { throw 'b'; } catch (e2) { throw 'c'; } } } catch (e) { console.log(e); } } async function main(){ for await (const v of g()) {} } main();")]
+    [InlineData("async function* g() { try { try { yield 0; throw 'a'; } catch (e) { try { throw 'b'; } catch (e2) { throw 'c'; } } finally { console.log('f'); } } catch (e) { console.log(e); } } async function main(){ for await (const v of g()) {} } main();")]
     public void AsyncGeneratorTryFinallyWithSuspension_EmitsVerifiableIL(string source)
     {
         var errors = TestHarness.CompileAndVerifyOnly(source);

@@ -993,18 +993,19 @@ public class WorkerThreadsTests
     #region Worker construction failure surfaces as an Error (#464)
 
     /// <summary>
-    /// Regression for #464: when the <c>Worker</c> constructor fails (here an
+    /// Regression for #464 and #700: when the <c>Worker</c> constructor fails (here an
     /// uncloneable <c>workerData</c> containing a function), the value caught by guest
-    /// <c>try/catch</c> must be an object carrying the reason in <c>.message</c> — not
-    /// the bare message string the interpreter previously bound (<c>typeof e</c> was
-    /// "string", <c>e.message</c> undefined). Both modes now expose <c>.message</c>;
-    /// interpreter mode additionally surfaces a real <c>Error</c> (asserted below).
+    /// <c>try/catch</c> must be a real <c>Error</c> carrying the reason in <c>.message</c>
+    /// — not the bare message string the interpreter previously bound (<c>typeof e</c>
+    /// was "string", <c>e.message</c> undefined), and not the plain
+    /// <c>{ message, name }</c> object (with <c>name</c> = the .NET type) that compiled
+    /// mode previously produced.
     /// </summary>
     /// <remarks>
-    /// Compiled mode currently yields a plain object with <c>message</c> rather than a
-    /// real <c>Error</c> instance (a separate, general compiled-mode gap in how caught
-    /// host exceptions are wrapped — filed separately), so <c>instanceof Error</c> is
-    /// only asserted for the interpreter, which #464 targets.
+    /// #700 fixed the compiled-mode <c>WrapException</c> catch-boundary path to return a
+    /// real <c>$Error</c>, so <c>e instanceof Error</c> and <c>e.name === "Error"</c> now
+    /// hold in BOTH modes (previously asserted only for the interpreter, which #464
+    /// targeted).
     /// </remarks>
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
@@ -1025,6 +1026,7 @@ public class WorkerThreadsTests
                     console.log("typeof=" + typeof e);
                     console.log("hasMessage=" + (e && typeof e.message === "string" && e.message.length > 0));
                     console.log("isError=" + (e instanceof Error));
+                    console.log("name=" + e.name);
                 }
                 """
         };
@@ -1034,8 +1036,10 @@ public class WorkerThreadsTests
         Assert.Contains("hasMessage=true", output);
         Assert.DoesNotContain("constructed-without-error", output);
         Assert.DoesNotContain("worker-should-not-start", output);
-        if (mode == ExecutionMode.Interpreted)
-            Assert.Contains("isError=true", output);
+        // #700: a real Error in both modes — instanceof Error holds and name is "Error"
+        // (not the .NET exception type name).
+        Assert.Contains("isError=true", output);
+        Assert.Contains("name=Error", output);
     }
 
     #endregion
