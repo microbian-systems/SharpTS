@@ -780,7 +780,12 @@ public partial class AsyncGeneratorMoveNextEmitter
                        (f.Increment != null && ContainsSuspensionInExpr(f.Increment)) ||
                        ContainsSuspensionInStmt(f.Body);
             case Stmt.ForOf fo:
-                return ContainsSuspensionInExpr(fo.Iterable) || ContainsSuspensionInStmt(fo.Body);
+                // `for await…of` now suspends on its implicit next()/return() awaits (#697), so it
+                // contains a suspension even when neither the iterable nor the body has an explicit
+                // yield/await. Treating it otherwise would put a `for await` inside a try on the real-IL
+                // try path, where its resume labels become illegal BranchIntoTry targets (the async-gen
+                // analog of the #631 ContainsAwait pitfall).
+                return fo.IsAsync || ContainsSuspensionInExpr(fo.Iterable) || ContainsSuspensionInStmt(fo.Body);
             case Stmt.ForIn fi:
                 return ContainsSuspensionInExpr(fi.Object) || ContainsSuspensionInStmt(fi.Body);
             case Stmt.Block b:

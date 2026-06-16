@@ -31,7 +31,24 @@ public partial class AsyncGeneratorStateAnalyzer
         // Track for...of loops to detect suspensions inside them
         _forOfStack.Push(stmt);
         _variablesUsedInLoopBody[stmt] = [];
-        base.VisitForOf(stmt);
+
+        if (stmt.IsAsync)
+        {
+            // `for await…of` suspends the async generator on the iterator protocol: it awaits
+            // iterator.next() each iteration and iterator.return() on early exit. Reserve a suspension
+            // state for each, in emission order (iterable, next, body, return) — consumed in the same
+            // order by EmitForAwaitOf in AsyncGeneratorMoveNextEmitter.Statements.cs (#697). Mirrors
+            // AsyncStateAnalyzer.VisitForOf for async functions (#631).
+            Visit(stmt.Iterable);
+            RecordSyntheticAwaitPoint();   // iterator.next() — awaited at the loop head
+            Visit(stmt.Body);
+            RecordSyntheticAwaitPoint();   // iterator.return() — awaited in the break cleanup
+        }
+        else
+        {
+            base.VisitForOf(stmt);
+        }
+
         _forOfStack.Pop();
 
         // If this loop contains a suspension, all variables used in its body need hoisting
