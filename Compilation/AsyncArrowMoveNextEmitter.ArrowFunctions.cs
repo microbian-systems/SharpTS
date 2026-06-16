@@ -66,7 +66,7 @@ public partial class AsyncArrowMoveNextEmitter
         {
             _il.Emit(OpCodes.Dup); // Keep display class instance on stack
 
-            // Load the captured variable using the same logic as LoadVariable
+            // Load the captured variable using the capture-population loader
             LoadVariableForCapture(capturedVar);
 
             _il.Emit(OpCodes.Stfld, field);
