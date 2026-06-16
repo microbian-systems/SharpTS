@@ -2,10 +2,19 @@ namespace SharpTS.Parsing;
 
 public partial class Parser
 {
-    private Stmt FunctionDeclaration(string kind, bool isAsync = false, bool isGenerator = false, bool isDeclare = false)
+    private Stmt FunctionDeclaration(string kind, bool isAsync = false, bool isGenerator = false, bool isDeclare = false, (Token Name, Expr? ComputedKey)? computedMethod = null)
     {
         Token name;
-        if (kind == "constructor" && Match(TokenType.CONSTRUCTOR))
+        Expr? computedKey = null;
+        if (computedMethod is { } cm)
+        {
+            // Computed symbol-keyed class method ([Symbol.iterator]() {}): the caller already
+            // parsed [expr] and synthesized the <computed> name token; the key expression is
+            // carried on the resulting Stmt.Function for the interpreter/compiler to resolve.
+            name = cm.Name;
+            computedKey = cm.ComputedKey;
+        }
+        else if (kind == "constructor" && Match(TokenType.CONSTRUCTOR))
         {
             name = Previous();
         }
@@ -157,7 +166,7 @@ public partial class Parser
         if (Match(TokenType.SEMICOLON))
         {
             // Overload signature - no body, just declaration
-            return new Stmt.Function(name, typeParams, thisType, parameters, null, returnType, IsAsync: isAsync, IsGenerator: isGenerator, IsDeclare: isDeclare);
+            return new Stmt.Function(name, typeParams, thisType, parameters, null, returnType, IsAsync: isAsync, IsGenerator: isGenerator, IsDeclare: isDeclare, ComputedKey: computedKey);
         }
 
         // Save current strict mode state before parsing function body
@@ -220,7 +229,7 @@ public partial class Parser
         // declarations + assignments. Cheap no-op if no `var` keywords are present.
         body = VarHoister.Hoist(body);
 
-        return new Stmt.Function(name, typeParams, thisType, parameters, body, returnType, IsAsync: isAsync, IsGenerator: isGenerator);
+        return new Stmt.Function(name, typeParams, thisType, parameters, body, returnType, IsAsync: isAsync, IsGenerator: isGenerator, ComputedKey: computedKey);
     }
 
     /// <summary>

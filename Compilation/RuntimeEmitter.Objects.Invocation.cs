@@ -576,6 +576,22 @@ public partial class RuntimeEmitter
         EmitThrowNotAFunction(il, runtime, () => il.Emit(OpCodes.Ldarg_1));
         il.MarkLabel(notNullLabel);
 
+        // A reflected MethodBase (a computed symbol-keyed method resolved from the symbol-method
+        // registry, #647) is invoked directly: function.Invoke(receiver, args). A static method
+        // ignores the receiver. This mirrors the symbol-accessor get/set paths, which invoke the
+        // found getter/setter MethodInfo the same way.
+        var notMethodBaseLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.MethodBase);
+        il.Emit(OpCodes.Brfalse, notMethodBaseLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Castclass, _types.MethodBase);
+        il.Emit(OpCodes.Ldarg_0);  // receiver (this)
+        il.Emit(OpCodes.Ldarg_2);  // args
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notMethodBaseLabel);
+
         // ECMA-262 §22.2.6: a RegExp object has no [[Call]] — calling one
         // (`/x/()`, `RegExp("a","g")()`) must throw TypeError. Checked early
         // so it doesn't fall into the dispatch chain.

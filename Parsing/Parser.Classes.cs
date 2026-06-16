@@ -324,28 +324,8 @@ public partial class Parser
                     throw new Exception($"Parse Error at line {Peek().Line}: 'declare' modifier cannot be used with computed property names.");
                 }
 
-                Advance(); // consume '['
-                Expr computedKey = Expression();
-                Consume(TokenType.RIGHT_BRACKET, "Expect ']' after computed property name.");
-
-                // Create a synthetic token for the field name (for error reporting)
-                Token syntheticName = new Token(TokenType.IDENTIFIER, "<computed>", null, Previous().Line);
-
-                Consume(TokenType.COLON, "Expect ':' after computed property name.");
-                string typeAnnotation = ParseTypeAnnotation();
-                Expr? initializer = null;
-                if (Match(TokenType.EQUAL))
-                {
-                    initializer = Expression();
-                }
-
-                ConsumeSemicolon("Expect ';' after computed property field declaration.");
-                var field = new Stmt.Field(syntheticName, typeAnnotation, initializer, isStatic, access, isReadonly, IsOptional: false, HasDefiniteAssignmentAssertion: false, memberDecorators, IsPrivate: false, IsDeclare: false, ComputedKey: computedKey);
-                fields.Add(field);
-                if (isStatic)
-                {
-                    staticInitializers.Add(field);
-                }
+                // Computed-name method ([Symbol.iterator]() {}) or field ([expr]: T = v).
+                ParseComputedClassMember(isStatic, isMemberAsync, isMemberGenerator, isOverride, isReadonly, access, memberDecorators, methods, fields, staticInitializers);
             }
             else if ((Peek().Type == TokenType.IDENTIFIER || IsContextualKeyword(Peek().Type)
                       || Peek().Type == TokenType.STRING || Peek().Type == TokenType.NUMBER) &&
@@ -507,6 +487,58 @@ public partial class Parser
 
         Consume(TokenType.RIGHT_BRACE, "Expect '}' after class body.");
         return new Stmt.Class(name, typeParams, superclassExpr, superclassTypeArgs, methods, fields, accessors.Count > 0 ? accessors : null, autoAccessors.Count > 0 ? autoAccessors : null, interfaces, interfaceTypeArgs, isAbstract, classDecorators, isDeclare, staticInitializers.Count > 0 ? staticInitializers : null, indexSignatures.Count > 0 ? indexSignatures : null);
+    }
+
+    /// <summary>
+    /// Parses a computed-name class member positioned at the opening <c>[</c> — either a computed
+    /// symbol-keyed method (<c>[Symbol.iterator]() {}</c>, plus the generator <c>*[Symbol.iterator]()</c>
+    /// and async <c>async *[Symbol.asyncIterator]()</c> forms) or a computed-name field
+    /// (<c>[expr]: T = v</c>). Disambiguated by what follows the <c>]</c>: a <c>(</c> or <c>&lt;</c>
+    /// (generic) marks a method, otherwise a field. Index signatures must be ruled out by the caller first.
+    /// </summary>
+    private void ParseComputedClassMember(
+        bool isStatic, bool isMemberAsync, bool isMemberGenerator, bool isOverride, bool isReadonly,
+        AccessModifier access, List<Decorator>? memberDecorators,
+        List<Stmt.Function> methods, List<Stmt.Field> fields, List<Stmt> staticInitializers)
+    {
+        Advance(); // consume '['
+        Expr computedKey = Expression();
+        Consume(TokenType.RIGHT_BRACKET, "Expect ']' after computed property name.");
+
+        // Synthetic name token for error reporting; the real key lives in ComputedKey.
+        Token syntheticName = new Token(TokenType.IDENTIFIER, "<computed>", null, Previous().Line);
+
+        // A '(' or '<' after ']' marks a method ([Symbol.iterator]() {} / generic form);
+        // anything else is a computed-name field ([expr]: T = v).
+        if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS))
+        {
+            var func = (Stmt.Function)FunctionDeclaration("method", isMemberAsync, isMemberGenerator, computedMethod: (syntheticName, computedKey));
+            func = func with { IsStatic = isStatic, Access = access, IsOverride = isOverride, Decorators = memberDecorators };
+            methods.Add(func);
+            return;
+        }
+
+        // Computed-name field. Generator/async are method-only markers.
+        if (isMemberGenerator)
+        {
+            throw new Exception($"Parse Error at line {syntheticName.Line}: Generator marker '*' can only be used with methods, not fields.");
+        }
+
+        Consume(TokenType.COLON, "Expect ':' after computed property name.");
+        string typeAnnotation = ParseTypeAnnotation();
+        Expr? initializer = null;
+        if (Match(TokenType.EQUAL))
+        {
+            initializer = Expression();
+        }
+
+        ConsumeSemicolon("Expect ';' after computed property field declaration.");
+        var field = new Stmt.Field(syntheticName, typeAnnotation, initializer, isStatic, access, isReadonly, IsOptional: false, HasDefiniteAssignmentAssertion: false, memberDecorators, IsPrivate: false, IsDeclare: false, ComputedKey: computedKey);
+        fields.Add(field);
+        if (isStatic)
+        {
+            staticInitializers.Add(field);
+        }
     }
 
     /// <summary>
@@ -869,6 +901,15 @@ public partial class Parser
                 {
                     staticInitializers.Add(field);
                 }
+            }
+            // Computed-name member: [Symbol.iterator]() {} (method) or [expr]: T = v (field).
+            else if (Check(TokenType.LEFT_BRACKET))
+            {
+                if (isMemberDeclare)
+                {
+                    throw new Exception($"Parse Error at line {Peek().Line}: 'declare' modifier cannot be used with computed property names.");
+                }
+                ParseComputedClassMember(isStatic, isMemberAsync, isMemberGenerator, isOverride: false, isReadonly, access, memberDecorators: null, methods, fields, staticInitializers);
             }
             else
             {
