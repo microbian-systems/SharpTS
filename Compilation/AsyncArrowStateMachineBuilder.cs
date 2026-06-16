@@ -327,16 +327,19 @@ public class AsyncArrowStateMachineBuilder
             paramTypes.Add(_types.Object); // Outer SM
         }
 
-        // For standalone arrows with captures, add capture parameters first
-        // Order: [captures...], [arrow params...]
-        // Ordinal ordering must match the call sites (ILEmitter / AsyncArrowMoveNextEmitter).
+        // For standalone arrows with captures, a SINGLE leading object arg carries ALL captured
+        // values packed into an object[] (passed by the call site as the $TSFunction "target").
+        // $TSFunction prepends its target as one leading argument, so one slot must hold every
+        // capture regardless of count — the stub unpacks the array into its fields below. Using
+        // one slot for any capture count is what makes multi-capture work (#684); a per-capture
+        // arg only ever lined up when there was exactly one (#641).
+        // Ordinal ordering must match the call sites (ILEmitter / AsyncArrowMoveNextEmitter) and
+        // the unpack loop below.
         var captureOrder = StandaloneCaptureFields.Keys.OrderBy(k => k, System.StringComparer.Ordinal).ToList();
-        if (IsStandalone)
+        bool hasStandaloneCaptures = IsStandalone && captureOrder.Count > 0;
+        if (hasStandaloneCaptures)
         {
-            foreach (var _ in captureOrder)
-            {
-                paramTypes.Add(_types.Object); // Captured values
-            }
+            paramTypes.Add(_types.Object); // object[] of captured values (the single target slot)
         }
 
         // Add arrow parameters
@@ -369,18 +372,22 @@ public class AsyncArrowStateMachineBuilder
             paramOffset = 1; // Skip outer SM arg when copying params
         }
 
-        // For standalone arrows with captures, copy captured values to state machine fields
-        if (IsStandalone && captureOrder.Count > 0)
+        // For standalone arrows with captures, unpack the leading object[] (arg0) into the
+        // state-machine capture fields: sm.<>captured_x = ((object[])arg0)[i]. The ordinal
+        // capture order matches DefineStateMachineStandalone and the call sites.
+        if (hasStandaloneCaptures)
         {
             for (int i = 0; i < captureOrder.Count; i++)
             {
-                var captureName = captureOrder[i];
-                var captureField = StandaloneCaptureFields[captureName];
+                var captureField = StandaloneCaptureFields[captureOrder[i]];
                 il.Emit(OpCodes.Ldloca, smLocal);
-                il.Emit(OpCodes.Ldarg, i);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Castclass, _types.ObjectArray);
+                il.Emit(OpCodes.Ldc_I4, i);
+                il.Emit(OpCodes.Ldelem_Ref);
                 il.Emit(OpCodes.Stfld, captureField);
             }
-            paramOffset = captureOrder.Count; // Skip capture args when copying params
+            paramOffset = 1; // Skip the single capture-array arg when copying params
         }
 
         // Copy parameters to state machine fields (in order!)

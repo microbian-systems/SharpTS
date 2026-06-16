@@ -93,51 +93,32 @@ public partial class ILEmitter
         var stubMethod = arrowBuilder.StubMethod;
 
         // For standalone async arrows with captures, TSFunction's "static method with target"
-        // mechanism prepends the target to the args, so captures get passed as leading args.
+        // mechanism prepends the single target to the args. Pack EVERY captured value into one
+        // object[] and pass it as that target; the stub unpacks each into its own field. One
+        // array slot for any capture count is what makes multi-capture work — the old per-capture
+        // arg layout only lined up at exactly one capture (#641/#684).
         if (arrowBuilder.IsStandalone && arrowBuilder.StandaloneCaptureFields.Count > 0)
         {
             // Ordinal ordering must match the stub's capture-unpacking order (AsyncArrowStateMachineBuilder).
             var captureOrder = arrowBuilder.StandaloneCaptureFields.Keys.OrderBy(k => k, System.StringComparer.Ordinal).ToList();
 
-            if (captureOrder.Count == 1)
+            IL.Emit(OpCodes.Ldc_I4, captureOrder.Count);
+            IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+            for (int i = 0; i < captureOrder.Count; i++)
             {
-                // Single capture: use TSFunction target prepend mechanism.
-                // TSFunction.Invoke detects static method + non-null target and prepends target as arg0.
-                var captureName = captureOrder[0];
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldc_I4, i);
+                var captureName = captureOrder[i];
                 if (captureName == "this")
                 {
-                    // Load 'this' (arg0 in instance methods)
                     IL.Emit(OpCodes.Ldarg_0);
                 }
                 else
                 {
-                    // Load the captured variable
                     EmitVariable(new Expr.Variable(new Parsing.Token(Parsing.TokenType.IDENTIFIER, captureName, null, 0)));
                     EnsureBoxed();
                 }
-            }
-            else
-            {
-                // Multiple captures: pack into an object[] and use as target.
-                // The stub's paramOffset handles unpacking from arg0.
-                IL.Emit(OpCodes.Ldc_I4, captureOrder.Count);
-                IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
-                for (int i = 0; i < captureOrder.Count; i++)
-                {
-                    IL.Emit(OpCodes.Dup);
-                    IL.Emit(OpCodes.Ldc_I4, i);
-                    var captureName = captureOrder[i];
-                    if (captureName == "this")
-                    {
-                        IL.Emit(OpCodes.Ldarg_0);
-                    }
-                    else
-                    {
-                        EmitVariable(new Expr.Variable(new Parsing.Token(Parsing.TokenType.IDENTIFIER, captureName, null, 0)));
-                        EnsureBoxed();
-                    }
-                    IL.Emit(OpCodes.Stelem_Ref);
-                }
+                IL.Emit(OpCodes.Stelem_Ref);
             }
         }
         else
