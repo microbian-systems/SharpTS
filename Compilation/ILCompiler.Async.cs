@@ -276,10 +276,24 @@ public partial class ILCompiler
     /// Analyzes an async arrow function to determine its await points and hoisted variables.
     /// Uses pooled HashSets for intermediate analysis to reduce allocations.
     /// </summary>
-    private (int AwaitCount, HashSet<string> HoistedLocals) AnalyzeAsyncArrow(Expr.ArrowFunction arrow)
+    // Block-scope shadow renames for the async arrow currently being analyzed (#766). Set at the top of
+    // AnalyzeAsyncArrow and consulted by the AnalyzeArrow*ForAwaits walkers, which are non-reentrant (a
+    // nested arrow is a separate AnalyzeAsyncArrow pass — the Expr.ArrowFunction walker case is a no-op,
+    // so this field is never clobbered mid-walk). Mirrors the renamer wiring in the visitor analyzers.
+    private IReadOnlyDictionary<object, string> _arrowBlockScopeRenames = new Dictionary<object, string>();
+
+    /// <summary>Storage name for an async-arrow declaration/reference node (#766), or the lexeme unchanged.</summary>
+    private string ArrowStorageName(object node, string lexeme) =>
+        _arrowBlockScopeRenames.TryGetValue(node, out var renamed) ? renamed : lexeme;
+
+    private (int AwaitCount, HashSet<string> HoistedLocals, IReadOnlyDictionary<object, string> Renames) AnalyzeAsyncArrow(Expr.ArrowFunction arrow)
     {
         var awaitCount = 0;
         var seenAwait = false;
+
+        // Disambiguate nested-block let/const shadows so the hoisting decision below is per-binding
+        // rather than per-name (#766, async analog of #711).
+        _arrowBlockScopeRenames = GeneratorBlockScopeRenamer.Compute(arrow);
 
         // Clear and reuse pooled HashSets
         _async.DeclaredVars.Clear();
@@ -313,11 +327,12 @@ public partial class ILCompiler
         var hoistedLocals = new HashSet<string>(_async.DeclaredBeforeAwait);
         hoistedLocals.IntersectWith(_async.UsedAfterAwait);
 
-        // Remove parameters from hoisted locals (they're stored separately)
+        // Remove parameters from hoisted locals (they're stored separately). Parameters are never
+        // renamed, so removing by source lexeme is correct.
         foreach (var param in arrow.Parameters)
             hoistedLocals.Remove(param.Name.Lexeme);
 
-        return (awaitCount, hoistedLocals);
+        return (awaitCount, hoistedLocals, _arrowBlockScopeRenames);
     }
 
     private void AnalyzeArrowStmtForAwaits(Stmt stmt, ref int awaitCount, ref bool seenAwait,
@@ -326,18 +341,24 @@ public partial class ILCompiler
         switch (stmt)
         {
             case Stmt.Var v:
-                declaredVariables.Add(v.Name.Lexeme);
+            {
+                var name = ArrowStorageName(v, v.Name.Lexeme);   // #766: per-binding storage name
+                declaredVariables.Add(name);
                 if (!seenAwait)
-                    declaredBeforeAwait.Add(v.Name.Lexeme);
+                    declaredBeforeAwait.Add(name);
                 if (v.Initializer != null)
                     AnalyzeArrowExprForAwaits(v.Initializer, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 break;
+            }
             case Stmt.Const c:
-                declaredVariables.Add(c.Name.Lexeme);
+            {
+                var name = ArrowStorageName(c, c.Name.Lexeme);   // #766: per-binding storage name
+                declaredVariables.Add(name);
                 if (!seenAwait)
-                    declaredBeforeAwait.Add(c.Name.Lexeme);
+                    declaredBeforeAwait.Add(name);
                 AnalyzeArrowExprForAwaits(c.Initializer, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 break;
+            }
             case Stmt.Expression e:
                 AnalyzeArrowExprForAwaits(e.Expr, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 break;
@@ -429,14 +450,20 @@ public partial class ILCompiler
                 AnalyzeArrowExprForAwaits(a.Expression, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 break;
             case Expr.Variable v:
-                if (seenAwait && declaredVariables.Contains(v.Name.Lexeme))
-                    usedAfterAwait.Add(v.Name.Lexeme);
+            {
+                var name = ArrowStorageName(v, v.Name.Lexeme);   // #766
+                if (seenAwait && declaredVariables.Contains(name))
+                    usedAfterAwait.Add(name);
                 break;
+            }
             case Expr.Assign a:
-                if (seenAwait && declaredVariables.Contains(a.Name.Lexeme))
-                    usedAfterAwait.Add(a.Name.Lexeme);
+            {
+                var name = ArrowStorageName(a, a.Name.Lexeme);   // #766
+                if (seenAwait && declaredVariables.Contains(name))
+                    usedAfterAwait.Add(name);
                 AnalyzeArrowExprForAwaits(a.Value, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 break;
+            }
             case Expr.Binary b:
                 AnalyzeArrowExprForAwaits(b.Left, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 AnalyzeArrowExprForAwaits(b.Right, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
@@ -506,10 +533,13 @@ public partial class ILCompiler
                     AnalyzeArrowExprForAwaits(e, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 break;
             case Expr.CompoundAssign ca:
-                if (seenAwait && declaredVariables.Contains(ca.Name.Lexeme))
-                    usedAfterAwait.Add(ca.Name.Lexeme);
+            {
+                var name = ArrowStorageName(ca, ca.Name.Lexeme);   // #766
+                if (seenAwait && declaredVariables.Contains(name))
+                    usedAfterAwait.Add(name);
                 AnalyzeArrowExprForAwaits(ca.Value, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 break;
+            }
             case Expr.CompoundSet cs:
                 AnalyzeArrowExprForAwaits(cs.Object, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
                 AnalyzeArrowExprForAwaits(cs.Value, ref awaitCount, ref seenAwait, declaredVariables, usedAfterAwait, declaredBeforeAwait);
@@ -677,7 +707,10 @@ public partial class ILCompiler
             new HashSet<string>(arrow.Parameters.Select(p => p.Name.Lexeme)),
             false, // HasTryCatch - will be detected during emission
             arrowBuilder.Captures.Contains("this"),
-            [] // No nested async arrows handled yet
+            [], // No nested async arrows handled yet
+            // #766: carry the block-scope shadow renames so the arrow emitter routes a shadowing
+            // nested-block let/const to its own storage instead of the outer binding's hoisted field.
+            BlockScopeRenames: arrowAnalysis.Renames
         );
 
         // Create a new context for arrow MoveNext emission
@@ -1174,7 +1207,9 @@ public partial class ILCompiler
                 new HashSet<string>(arrow.Parameters.Select(p => p.Name.Lexeme)),
                 false, // HasTryCatch - detected during emission
                 false, // UsesThis - standalone arrows don't have 'this' binding by default
-                []     // No nested async arrows handled in this pass
+                [],    // No nested async arrows handled in this pass
+                // #766: carry the block-scope shadow renames into the standalone arrow emitter too.
+                BlockScopeRenames: arrowAnalysis.Renames
             );
 
             // Determine if this arrow is inside a class (for private field access)

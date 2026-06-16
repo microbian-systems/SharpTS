@@ -8,17 +8,21 @@ public partial class AsyncGeneratorStateAnalyzer
 
     protected override void VisitVar(Stmt.Var stmt)
     {
-        _declaredVariables.Add(stmt.Name.Lexeme);
+        // Track declaration under its (possibly disambiguated) storage name (#766).
+        var name = StorageName(stmt, stmt.Name.Lexeme);
+        _declaredVariables.Add(name);
         if (!_seenSuspension)
-            _variablesDeclaredBeforeSuspension.Add(stmt.Name.Lexeme);
+            _variablesDeclaredBeforeSuspension.Add(name);
         base.VisitVar(stmt);
     }
 
     protected override void VisitConst(Stmt.Const stmt)
     {
-        _declaredVariables.Add(stmt.Name.Lexeme);
+        // Track declaration under its (possibly disambiguated) storage name (#766).
+        var name = StorageName(stmt, stmt.Name.Lexeme);
+        _declaredVariables.Add(name);
         if (!_seenSuspension)
-            _variablesDeclaredBeforeSuspension.Add(stmt.Name.Lexeme);
+            _variablesDeclaredBeforeSuspension.Add(name);
         base.VisitConst(stmt);
     }
 

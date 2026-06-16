@@ -5,9 +5,13 @@ namespace SharpTS.Compilation;
 
 /// <summary>
 /// Computes per-binding storage names for block-scoped (<c>let</c>/<c>const</c>) declarations inside a
-/// generator body that <em>shadow</em> an enclosing binding of the same name.
+/// suspension state-machine body that <em>shadow</em> an enclosing binding of the same name.
 /// </summary>
 /// <remarks>
+/// Although named for generators (where it originated, #711), this pass is mode-agnostic: every
+/// suspension state machine that hoists live-across-suspension locals to name-keyed fields shares the
+/// same shadow-collision root cause, so it is reused by the async-function and async-generator state
+/// machines too (<see cref="AsyncStateAnalyzer"/> / <see cref="AsyncGeneratorStateAnalyzer"/>, #766).
 /// The generator state machine hoists every local that lives across a <c>yield</c> into a field keyed
 /// by its source name (see <see cref="HoistingManager"/>), and resolves non-hoisted locals through a
 /// flat, name-keyed local map. Both flatten lexical scope, so two block-scoped bindings that share a
@@ -45,23 +49,35 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
     /// <summary>
     /// Returns the node→storage-name map for <paramref name="func"/>, empty when nothing shadows.
     /// </summary>
-    public static IReadOnlyDictionary<object, string> Compute(Stmt.Function func)
+    public static IReadOnlyDictionary<object, string> Compute(Stmt.Function func) =>
+        Compute(func.Name.Lexeme, func.Parameters, func.Body);
+
+    /// <summary>
+    /// Arrow-function overload (#766). Arrows have no self-name, and only a block body can hold
+    /// block-scoped declarations (an expression-bodied arrow has none, so it has no shadows to rename).
+    /// </summary>
+    public static IReadOnlyDictionary<object, string> Compute(Expr.ArrowFunction arrow) =>
+        Compute(selfName: null, arrow.Parameters, arrow.BlockBody);
+
+    private static IReadOnlyDictionary<object, string> Compute(
+        string? selfName, List<Stmt.Parameter> parameters, List<Stmt>? body)
     {
         var renamer = new GeneratorBlockScopeRenamer();
-        new ClosureReferenceCollector(renamer._closureReferenced).Run(func);
+        if (body == null) return renamer._renames;   // expression-bodied arrow: nothing to rename
+
+        new ClosureReferenceCollector(renamer._closureReferenced).Run(body);
 
         renamer.PushScope();
-        // The generator's own name is in scope inside the body (a named function expression can call
+        // The callable's own name is in scope inside the body (a named function expression can call
         // itself by it); a nested-block let/const may shadow it, so seed it for shadow detection.
         // Never renamed (it is not a hoisted local — it resolves to the function/method itself).
-        if (!string.IsNullOrEmpty(func.Name.Lexeme))
-            renamer.CurrentScope[func.Name.Lexeme] = func.Name.Lexeme;
+        if (!string.IsNullOrEmpty(selfName))
+            renamer.CurrentScope[selfName] = selfName;
         // Parameters live in the function scope; an inner block let/const may shadow them. Never renamed.
-        foreach (var p in func.Parameters)
+        foreach (var p in parameters)
             renamer.CurrentScope[p.Name.Lexeme] = p.Name.Lexeme;
-        if (func.Body != null)
-            foreach (var stmt in func.Body)
-                renamer.Visit(stmt);
+        foreach (var stmt in body)
+            renamer.Visit(stmt);
         renamer.PopScope();
 
         return renamer._renames;
@@ -256,10 +272,9 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
 
         public ClosureReferenceCollector(HashSet<string> names) => _names = names;
 
-        public void Run(Stmt.Function func)
+        public void Run(List<Stmt> body)
         {
-            if (func.Body != null)
-                foreach (var s in func.Body) Visit(s);
+            foreach (var s in body) Visit(s);
         }
 
         protected override void VisitArrowFunction(Expr.ArrowFunction expr) { _depth++; base.VisitArrowFunction(expr); _depth--; }

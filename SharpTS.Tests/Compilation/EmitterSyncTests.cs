@@ -58,10 +58,18 @@ public class EmitterSyncTests
             "EmitTemplateLiteral",  // Template literals with await-safe temp storage
             "EmitTaggedTemplateLiteral", // Tagged template literals in async context
             // --- Closure mutation sharing ---
-            "EmitVariable",         // Route captured function locals through function DC
-            "EmitAssign",           // Route captured function locals through function DC
+            "EmitVariable",         // Route captured function locals through function DC (+ #766 rename)
+            "EmitAssign",           // Route captured function locals through function DC (+ #766 rename)
             "EmitStoreVariable",    // Route captured function locals through function DC
-            "EmitVarDeclaration",   // Route captured function locals through function DC
+            "EmitVarDeclaration",   // Route captured function locals through function DC (+ #766 rename)
+            // --- #766: a nested-block let/const that shadows an enclosing binding gets its own storage;
+            // these overrides retoken the operator node so the read/write land on the shadow's own
+            // field/local instead of the outer binding's hoisted field (async analog of #711) ---
+            "EmitConstDeclaration", // #766: route a shadowing const declaration to its own slot
+            "EmitCompoundAssign",   // #766: route a shadowing compound assignment to its own slot
+            "EmitLogicalAssign",    // #766: route a shadowing logical assignment to its own slot
+            "EmitPrefixIncrement",  // #766: route a shadowing prefix ++/-- to its own slot
+            "EmitPostfixIncrement", // #766: route a shadowing postfix ++/-- to its own slot
         },
         [typeof(AsyncArrowMoveNextEmitter)] = new()
         {
@@ -92,6 +100,15 @@ public class EmitterSyncTests
             "EmitAwait",            // Core: suspend/resume state machine
             "EmitArrowFunction",    // Nested async arrows in state machine
             "EmitExpressionAsDouble", // Literal optimization
+            // --- #766: a nested-block let/const that shadows an enclosing binding gets its own storage;
+            // these overrides retoken the operator node so the read/write land on the shadow's own
+            // field/local instead of the outer binding's hoisted field (async analog of #711).
+            // (EmitVariable/EmitAssign/EmitVarDeclaration above are also rename-aware now.) ---
+            "EmitConstDeclaration", // #766: route a shadowing const declaration to its own slot
+            "EmitCompoundAssign",   // #766: route a shadowing compound assignment to its own slot
+            "EmitLogicalAssign",    // #766: route a shadowing logical assignment to its own slot
+            "EmitPrefixIncrement",  // #766: route a shadowing prefix ++/-- to its own slot
+            "EmitPostfixIncrement", // #766: route a shadowing postfix ++/-- to its own slot
         },
         [typeof(GeneratorMoveNextEmitter)] = new()
         {
@@ -160,10 +177,18 @@ public class EmitterSyncTests
             "EmitSuper",            // This field indirection
             // --- #725: route a captured-and-mutated local through the function display class ---
             "GetFunctionDCField",   // Exposes <>__functionDC so a capturing arrow threads it in
-            "EmitVariable",         // Read a captured-and-mutated local through the function DC
-            "EmitAssign",           // Write a captured-and-mutated local through the function DC
+            "EmitVariable",         // Read a captured-and-mutated local through the function DC (+ #766 rename)
+            "EmitAssign",           // Write a captured-and-mutated local through the function DC (+ #766 rename)
             "EmitStoreVariable",    // Store side of compound/logical/increment through the function DC
-            "EmitVarDeclaration",   // Initialize a captured-and-mutated local into the function DC
+            "EmitVarDeclaration",   // Initialize a captured-and-mutated local into the function DC (+ #766 rename)
+            // --- #766: a nested-block let/const that shadows an enclosing binding gets its own storage;
+            // these overrides retoken the operator node so the read/write land on the shadow's own
+            // field/local instead of the outer binding's hoisted field (async analog of #711) ---
+            "EmitConstDeclaration", // #766: route a shadowing const declaration to its own slot
+            "EmitCompoundAssign",   // #766: route a shadowing compound assignment to its own slot
+            "EmitLogicalAssign",    // #766: route a shadowing logical assignment to its own slot
+            "EmitPrefixIncrement",  // #766: route a shadowing prefix ++/-- to its own slot
+            "EmitPostfixIncrement", // #766: route a shadowing postfix ++/-- to its own slot
             // --- #559: non-local exits must run an enclosing flag-based finally first (async #500) ---
             "EmitBreak",            // Route a break leaving a try through its finally(s)
             "EmitContinue",         // Route a continue leaving a try through its finally(s)
