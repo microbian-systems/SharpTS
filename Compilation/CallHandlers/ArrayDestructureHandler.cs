@@ -8,13 +8,14 @@ namespace SharpTS.Compilation.CallHandlers;
 
 /// <summary>
 /// Handles the internal <c>__arrayDestructure</c> helper that normalizes an array binding-pattern
-/// source through the iterator protocol (#685). Index-addressable sources (arrays, tuples, strings)
-/// are emitted as-is — the desugared positional index access reads them directly and the type checker
+/// source through the iterator protocol (#685). Index-addressable sources (arrays, tuples) are
+/// emitted as-is — the desugared positional index access reads them directly and the type checker
 /// assigns them a matching pass-through type, so no runtime work is needed (preserves the fast path
-/// and tuple positional element types). Every other source is routed through the emitted
-/// <c>ArrayDestructureSource</c> runtime helper, which materializes non-indexable iterables
-/// (generators, Set, Map, <c>[Symbol.iterator]</c> objects) into an array and passes everything else
-/// through unchanged.
+/// and tuple positional element types). Every other source — including <b>strings</b> — is routed
+/// through the emitted <c>ArrayDestructureSource</c> runtime helper, which materializes non-indexable
+/// iterables (generators, Set, Map, strings, <c>[Symbol.iterator]</c> objects) into an array. Strings
+/// are deliberately not on the fast path so a rest element binds a fresh character array rather than
+/// the trailing substring (#753); non-rest character values are identical either way.
 /// </summary>
 public class ArrayDestructureHandler : ICallHandler
 {
@@ -52,6 +53,8 @@ public class ArrayDestructureHandler : ICallHandler
         return true;
     }
 
+    // Strings are intentionally excluded: they must materialize through ArrayDestructureSource so a
+    // rest element collects a fresh character array, not the trailing substring (#753).
     private static bool IsIndexAddressable(TypeInfo? type) =>
-        type is TypeInfo.Array or TypeInfo.Tuple or TypeInfo.String or TypeInfo.StringLiteral;
+        type is TypeInfo.Array or TypeInfo.Tuple;
 }

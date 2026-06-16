@@ -9,13 +9,17 @@ public partial class RuntimeEmitter
 {
     /// <summary>
     /// Emits ArrayDestructureSource: normalizes an array binding-pattern source through the
-    /// iterator protocol (#685). Index-addressable sources — strings and any
+    /// iterator protocol (#685). Index-addressable sources — any
     /// <see cref="System.Collections.IList"/> (arrays, <c>$Array</c>, typed lists) — pass through
     /// unchanged so the desugared positional index access reads them directly and stays consistent
     /// with the matching pass-through type the type checker assigned. Any other iterable (Set, Map,
-    /// generators, <c>[Symbol.iterator]</c> objects, <c>IEnumerable&lt;object&gt;</c>) is materialized
-    /// via <c>IterateToList</c> into a <c>List&lt;object&gt;</c> so positional access yields the
-    /// iterated elements. Non-iterable sources pass through, preserving the existing lenient behavior.
+    /// generators, strings, <c>[Symbol.iterator]</c> objects, <c>IEnumerable&lt;object&gt;</c>) is
+    /// materialized via <c>IterateToList</c> into a <c>List&lt;object&gt;</c> so positional access
+    /// yields the iterated elements. A <b>string</b> is deliberately not on the pass-through path: it
+    /// materializes to a fresh character array so a rest element binds an array rather than the trailing
+    /// substring (<c>const [a, ...rest] = "hi"</c>), matching ECMA-262 (#753) — non-rest character
+    /// values are identical either way. Non-iterable sources pass through, preserving the existing
+    /// lenient behavior.
     /// Signature: object ArrayDestructureSource(object value, $TSSymbol iteratorSymbol, Type runtimeType)
     /// </summary>
     private void EmitArrayDestructureSource(TypeBuilder typeBuilder, EmittedRuntime runtime)
@@ -33,13 +37,10 @@ public partial class RuntimeEmitter
 
         var passThroughLabel = il.DefineLabel();
 
-        // string → pass through (the source stays typed as string; index access reads chars).
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brtrue, passThroughLabel);
-
         // IList (List<object>, $Array, typed lists) → pass through: already index-addressable, and
         // routing a typed list (List<double>/List<bool>) through IterateToList would re-box it.
+        // Note: a .NET string is NOT an IList, so it falls through to the IterateToList path below and
+        // is materialized into a character array (#753) — required so a rest element binds an array.
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, ilistType);
         il.Emit(OpCodes.Brtrue, passThroughLabel);
