@@ -581,4 +581,100 @@ public class ErrorTests
     }
 
     #endregion
+
+    #region Built-in error parity (#694)
+
+    /// <summary>
+    /// Regression for #694: built-ins signal JS errors with
+    /// <c>throw new Exception("RangeError: ...")</c>. The interpreter previously bound the
+    /// bare message string as the caught value (<c>typeof e === "string"</c>,
+    /// <c>e instanceof RangeError === false</c>, <c>e.name === undefined</c>); it now
+    /// synthesizes a real <c>RangeError</c>, matching compiled mode which throws a real
+    /// <c>$RangeError</c>. Asserted identical in both modes.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BuiltInRangeError_CaughtAsRangeErrorInstance(ExecutionMode mode)
+    {
+        var source = @"
+            try {
+                String.fromCodePoint(-1);
+            } catch (e: any) {
+                console.log(typeof e);
+                console.log(e instanceof RangeError);
+                console.log(e instanceof Error);
+                console.log(e.name);
+                console.log(typeof e.message === 'string' && e.message.length > 0);
+            }
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("object\ntrue\ntrue\nRangeError\ntrue\n", output);
+    }
+
+    /// <summary>
+    /// Regression for #694 covering a second error type: an empty-array <c>reduce</c> with
+    /// no initial value throws <c>"TypeError: ..."</c> from the built-in. The caught value
+    /// must be a real <c>TypeError</c> in both modes.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BuiltInTypeError_CaughtAsTypeErrorInstance(ExecutionMode mode)
+    {
+        var source = @"
+            try {
+                ([] as number[]).reduce((a, b) => a + b);
+            } catch (e: any) {
+                console.log(typeof e);
+                console.log(e instanceof TypeError);
+                console.log(e instanceof Error);
+                console.log(e.name);
+                console.log(typeof e.message === 'string' && e.message.length > 0);
+            }
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("object\ntrue\ntrue\nTypeError\ntrue\n", output);
+    }
+
+    /// <summary>
+    /// Regression for #694: a built-in error thrown inside a CALLED function — so it crosses
+    /// a function boundary where <c>ThrowException.FromResult</c> stringifies it — is still
+    /// caught as the typed Error by an outer <c>try</c>. Guards the catch-binding coercion
+    /// against the host-error string round-trip across the boundary.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BuiltInError_AcrossFunctionBoundary_CaughtAsTypedError(ExecutionMode mode)
+    {
+        var source = @"
+            function boom() { String.fromCodePoint(-1); }
+            try {
+                boom();
+            } catch (e: any) {
+                console.log(e instanceof RangeError);
+                console.log(e.name);
+            }
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\nRangeError\n", output);
+    }
+
+    /// <summary>
+    /// Regression guard for #694: a guest <c>throw</c> of a real error object keeps its exact
+    /// identity when caught (the catch-binding coercion only touches prefixed strings), and a
+    /// guest <c>throw</c> of a plain string stays a string.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GuestThrows_PreserveValueIdentity(ExecutionMode mode)
+    {
+        var source = @"
+            const original = new RangeError('mine');
+            try { throw original; } catch (e: any) { console.log(e === original, e instanceof RangeError); }
+            try { throw 'plain string'; } catch (e: any) { console.log(typeof e, e); }
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true true\nstring plain string\n", output);
+    }
+
+    #endregion
 }

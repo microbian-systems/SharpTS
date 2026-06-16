@@ -162,21 +162,16 @@ public partial class RuntimeEmitter
         // Return the dictionary
         il.Emit(OpCodes.Ret);
 
-        // Standard fallback: wrap standard .NET exceptions as Dictionary
+        // Standard fallback: a host-originated .NET exception (no guest __tsValue,
+        // not a rejected promise, no Node metadata). Wrap as a real $Error so guest
+        // `catch` sees a proper Error instance — `e instanceof Error` is true and
+        // `e.name` is "Error" rather than the .NET type name. Previously this returned
+        // a plain { message, name=<.NET type> } dictionary. (#700)
+        // return new $Error(ex.Message)
         il.MarkLabel(standardFallbackLabel);
-        // return new Dictionary<string, object> { ["message"] = ex.Message, ["name"] = ex.GetType().Name }
-        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldstr, "message");
         il.Emit(OpCodes.Ldloc, exLocal);
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Message").GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldstr, "name");
-        il.Emit(OpCodes.Ldloc, exLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Type, "Name").GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        il.Emit(OpCodes.Newobj, runtime.TSErrorCtorMessage);
         il.Emit(OpCodes.Ret);
     }
 
