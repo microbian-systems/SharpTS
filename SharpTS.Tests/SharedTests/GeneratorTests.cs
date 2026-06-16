@@ -1851,12 +1851,12 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void GeneratorExpression_NamedSelfReference_NestedBlockDoesNotShadow(ExecutionMode mode)
     {
         // A nested-block binding of the same name shadows only within that block, so the outer
-        // self-call still resolves to the function. Interpreted-only: compiled generators do not yet
-        // give a nested-block redeclaration its own slot, so the inner `rec` leaks (tracked by #711).
+        // self-call still resolves to the function. Compiled generators now give the nested-block
+        // redeclaration its own slot instead of leaking it onto the hoisted field (#711).
         var source = """
             const d = function* rec(n: number): Generator<number> {
               { const rec = 0; if (n < -100) yield rec; }
@@ -1866,6 +1866,189 @@ public class GeneratorTests
             """;
 
         Assert.Equal("[2, 1]\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
+
+    #region Block-scope shadowing in compiled generators (#711) and void operator (#712)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_NestedBlockConstShadow_DoesNotLeakToOuter(ExecutionMode mode)
+    {
+        // A const in a nested block that shadows an outer body-level const must get its own slot
+        // instead of clobbering the outer binding's hoisted state-machine field (#711).
+        var source = """
+            function* g(): Generator<number> {
+              const r = 100;
+              { const r = 0; if (false) yield r; }
+              yield r;
+            }
+            console.log([...g()]);
+            """;
+
+        Assert.Equal("[100]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_NestedBlockShadow_LiveAcrossYield_GetsOwnField(ExecutionMode mode)
+    {
+        // The inner shadow is itself read after a yield, so it must hoist to its OWN field, distinct
+        // from the outer binding's field — both must survive the suspension independently (#711).
+        var source = """
+            function* g(): Generator<number> {
+              const r = 100;
+              {
+                const r = 0;
+                yield r;
+                yield r + 1;
+              }
+              yield r;
+            }
+            console.log([...g()]);
+            """;
+
+        Assert.Equal("[0, 1, 100]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_NestedBlockLetShadow_ReassignedAcrossYield(ExecutionMode mode)
+    {
+        // A let shadow that is compound-assigned across yields keeps its own value, separate from
+        // the outer binding (#711).
+        var source = """
+            function* g(): Generator<number> {
+              let r = 7;
+              {
+                let r = 1;
+                r += 1;
+                yield r;
+                r += 10;
+                yield r;
+              }
+              yield r;
+            }
+            console.log([...g()]);
+            """;
+
+        Assert.Equal("[2, 12, 7]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_NestedBlockShadowsParameter(ExecutionMode mode)
+    {
+        // An inner block const may shadow a (hoisted) parameter without clobbering it (#711).
+        var source = """
+            function* g(r: number): Generator<number> {
+              { const r = 99; yield r; }
+              yield r;
+            }
+            console.log([...g(5)]);
+            """;
+
+        Assert.Equal("[99, 5]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_DeeplyNestedShadows_EachGetOwnSlot(ExecutionMode mode)
+    {
+        // Each nesting level that re-declares the name resolves to its own binding (#711).
+        var source = """
+            function* g(): Generator<number> {
+              const r = 1;
+              { const r = 2; { const r = 3; yield r; } yield r; }
+              yield r;
+            }
+            console.log([...g()]);
+            """;
+
+        Assert.Equal("[3, 2, 1]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_VoidOperator_InBody(ExecutionMode mode)
+    {
+        // `void expr` inside a compiled generator body must evaluate the operand for its side effects
+        // and yield undefined, rather than failing to compile (#712).
+        var source = """
+            function* g(): Generator<number> {
+              const r = 5;
+              void r;
+              yield r;
+            }
+            console.log([...g()]);
+            """;
+
+        Assert.Equal("[5]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_VoidOperator_WithYieldOperand_Suspends(ExecutionMode mode)
+    {
+        // `void (yield x)` must still suspend at the inner yield (the operand can suspend), then
+        // discard its result (#712).
+        var source = """
+            function* g(): Generator<number> {
+              void (yield 1);
+              yield 2;
+            }
+            console.log([...g()]);
+            """;
+
+        Assert.Equal("[1, 2]\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
+
+    #region Optional-chain string-method yield short-circuit parity (#709)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_OptionalChainStringMethod_OnNonString_ShortCircuitsBeforeYield(ExecutionMode mode)
+    {
+        // o?.substring(...) on a non-string object lacking the method short-circuits to undefined
+        // WITHOUT evaluating the yield argument, so the generator completes on the first next() in
+        // both modes (#709 — the generator manifestation of the #627 await parity).
+        var source = """
+            function* gen() {
+              const o: any = { foo: 1 };
+              const r = o?.substring((yield 1) as any, 4);
+              return r;
+            }
+            const g = gen();
+            const a = g.next();
+            const b = g.next(99);
+            console.log(a.value, a.done, b.value, b.done);
+            """;
+
+        Assert.Equal("undefined true undefined true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_OptionalChainStringMethod_OnString_RunsYield(ExecutionMode mode)
+    {
+        // On a genuine string receiver the method exists, so the yield argument DOES run and the
+        // generator suspends — the short-circuit must not over-trigger (#709).
+        var source = """
+            function* gen() {
+              const s: any = "hello";
+              const r = s?.substring((yield 1) as any, 4);
+              return r;
+            }
+            const g = gen();
+            const a = g.next();
+            const b = g.next(0);
+            console.log(a.value, a.done, b.value, b.done);
+            """;
+
+        Assert.Equal("1 false hell true\n", TestHarness.Run(source, mode));
     }
 
     #endregion
