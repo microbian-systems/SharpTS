@@ -79,6 +79,7 @@ public class EmitterSyncTests
             // --- Genuinely different behavior ---
             "EmitReturn",           // Async arrow return: store result + SetResult
             "EmitTryCatch",         // Await-aware exception handling
+            "EmitForOf",            // #430/#645: for-await-of dispatch to the shared async-iterator lowering (sync for-of delegates to base)
             "EmitVarDeclaration",   // Capture indirection for outer variables
             "EmitVariable",         // Capture indirection
             "EmitAssign",           // Capture indirection
@@ -129,6 +130,7 @@ public class EmitterSyncTests
             "EmitReturn",           // Async generator return: store in CurrentField + state -2
             "EmitTryCatch",         // Suspension-aware exception handling (flag-based)
             "EmitForOf",            // for-await-of + hoisted enumerator for yield/await in loops
+            "EmitForAwaitOf",       // #430/#645: async-generator consumer keeps its own error-propagating lowering instead of the shared base one
             "EmitBranchToLabel",    // Leave instead of Br in exception blocks
             "EmitYield",            // Core: yield value + suspend
             "EmitAwait",            // Core: suspend/resume state machine

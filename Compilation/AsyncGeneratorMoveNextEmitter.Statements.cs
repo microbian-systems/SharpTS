@@ -168,7 +168,11 @@ public partial class AsyncGeneratorMoveNextEmitter
         ExitLoop();
     }
 
-    private void EmitForAwaitOf(Stmt.ForOf f)
+    // Overrides the shared StatementEmitterBase.EmitForAwaitOf: an async generator that
+    // consumes another async iterable needs its own error-propagation handling (the
+    // try/catch around GetResult below) and a strict done check, so it keeps a specialized
+    // lowering rather than the shared one used by async functions/arrows (#430/#645).
+    protected override void EmitForAwaitOf(Stmt.ForOf f)
     {
         // for await...of iterates over async iterables
         // We use the $IAsyncGenerator.next() method which returns Task<object>

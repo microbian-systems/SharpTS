@@ -517,6 +517,316 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     }
 
     /// <summary>
+    /// Emits a <c>for await...of</c> loop over an async iterable. Shared by every async
+    /// state-machine emitter (async functions, async arrows, async generators) so the
+    /// async-iterator lowering lives in exactly one place instead of being duplicated and
+    /// drifting per emitter.
+    /// </summary>
+    /// <remarks>
+    /// First tries the <c>Symbol.asyncIterator</c> protocol (custom async iterators), then
+    /// falls back to the <c>$IAsyncGenerator</c> interface. Each <c>next()</c> result is
+    /// awaited via a blocking <c>GetAwaiter().GetResult()</c>; the loop does not suspend the
+    /// enclosing state machine, so loop-scoped IL locals are safe as long as the loop body
+    /// itself does not await across them.
+    ///
+    /// Subclasses dispatch here from their <see cref="EmitForOf"/> override when
+    /// <see cref="Stmt.ForOf.IsAsync"/> is set. <see cref="GetHoistedVariableField"/> supplies
+    /// the loop-variable storage so each emitter routes the binding through its own state
+    /// machine fields.
+    /// </remarks>
+    protected virtual void EmitForAwaitOf(Stmt.ForOf f)
+    {
+        // for await...of iterates over async iterables.
+        // First try the Symbol.asyncIterator protocol, then fall back to $IAsyncGenerator.
+        // The result from next() is a promise/task with { value, done } properties.
+        var il = IL;
+        var types = Types;
+        var runtime = Ctx.Runtime!;
+
+        string varName = f.Variable.Lexeme;
+
+        // Emit the async iterable expression
+        EmitExpression(f.Iterable);
+        EnsureBoxed();
+
+        // Store the iterable
+        var iterableLocal = il.DeclareLocal(types.Object);
+        il.Emit(OpCodes.Stloc, iterableLocal);
+
+        // Declare the loop variable AFTER the iterable is evaluated (so the iterable expression
+        // can't resolve to the not-yet-bound loop variable). Storage is routed through the
+        // DeclareLoopVariable/EmitStoreLoopVariable hooks so each emitter binds it correctly: a
+        // hoisted state-machine field for async functions and async generators, or an
+        // emitter-local for async arrows (whose resolver reads its own local map, not Ctx.Locals).
+        var loopVarLocal = DeclareLoopVariable(varName);
+
+        // Try async iterator protocol: GetIteratorFunction(iterable, Symbol.asyncIterator)
+        var asyncIteratorFnLocal = il.DeclareLocal(types.Object);
+        var asyncGenLabel = il.DefineLabel();
+        var afterLoopLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldloc, iterableLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.SymbolAsyncIterator);
+        il.Emit(OpCodes.Call, runtime.GetIteratorFunction);
+        il.Emit(OpCodes.Stloc, asyncIteratorFnLocal);
+
+        // If async iterator function is null, fall back to $IAsyncGenerator
+        il.Emit(OpCodes.Ldloc, asyncIteratorFnLocal);
+        il.Emit(OpCodes.Brfalse, asyncGenLabel);
+
+        // ===== Custom async iterator protocol path =====
+        {
+            // Call the async iterator function to get the async iterator object.
+            // Use InvokeMethodValue to properly bind 'this' to the iterable object.
+            il.Emit(OpCodes.Ldloc, iterableLocal);           // receiver (this)
+            il.Emit(OpCodes.Ldloc, asyncIteratorFnLocal);    // method
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Newarr, types.Object);           // args
+            il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+
+            var asyncIteratorLocal = il.DeclareLocal(types.Object);
+            il.Emit(OpCodes.Stloc, asyncIteratorLocal);
+
+            var startLabel = il.DefineLabel();
+            var endLabel = il.DefineLabel();
+            var cleanupLabel = il.DefineLabel();
+            var continueLabel = il.DefineLabel();
+
+            // Break goes to cleanup (calls iterator.return()), not directly to end
+            EnterLoop(cleanupLabel, continueLabel);
+
+            il.MarkLabel(startLabel);
+
+            // Call InvokeIteratorNext(asyncIterator) which returns a Promise/Task
+            il.Emit(OpCodes.Ldloc, asyncIteratorLocal);
+            il.Emit(OpCodes.Call, runtime.InvokeIteratorNext);
+
+            // The result should be a Task/Promise - await it.
+            // Store as object first, then check if it's a $TSPromise or Task.
+            var nextResultLocal = il.DeclareLocal(types.Object);
+            il.Emit(OpCodes.Stloc, nextResultLocal);
+
+            // If it's a $TSPromise, unwrap to its inner Task<object?>
+            // (custom async iterators may return $TSPromise via WrapTaskAsPromise)
+            var notTSPromiseLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, nextResultLocal);
+            il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+            il.Emit(OpCodes.Brfalse, notTSPromiseLabel);
+            // Replace nextResultLocal with the inner Task
+            il.Emit(OpCodes.Ldloc, nextResultLocal);
+            il.Emit(OpCodes.Castclass, runtime.TSPromiseType);
+            il.Emit(OpCodes.Callvirt, runtime.TSPromiseTaskGetter);
+            il.Emit(OpCodes.Stloc, nextResultLocal);
+            il.MarkLabel(notTSPromiseLabel);
+
+            // Check if result is a Task<object> and await it
+            var isTaskLabel = il.DefineLabel();
+            var afterAwaitLabel = il.DefineLabel();
+            var resultLocal = il.DeclareLocal(types.Object);
+
+            il.Emit(OpCodes.Ldloc, nextResultLocal);
+            il.Emit(OpCodes.Isinst, types.TaskOfObject);
+            il.Emit(OpCodes.Brtrue, isTaskLabel);
+
+            // Not a task - use the result directly (might be a sync iterator result)
+            il.Emit(OpCodes.Ldloc, nextResultLocal);
+            il.Emit(OpCodes.Stloc, resultLocal);
+            il.Emit(OpCodes.Br, afterAwaitLabel);
+
+            // Is a Task - await it
+            il.MarkLabel(isTaskLabel);
+            il.Emit(OpCodes.Ldloc, nextResultLocal);
+            il.Emit(OpCodes.Castclass, types.TaskOfObject);
+            var taskLocal = il.DeclareLocal(types.TaskOfObject);
+            il.Emit(OpCodes.Stloc, taskLocal);
+            il.Emit(OpCodes.Ldloc, taskLocal);
+            var getAwaiter = types.GetMethodNoParams(types.TaskOfObject, "GetAwaiter");
+            il.Emit(OpCodes.Call, getAwaiter);
+            var awaiterLocal = il.DeclareLocal(types.TaskAwaiterOfObject);
+            il.Emit(OpCodes.Stloc, awaiterLocal);
+
+            il.Emit(OpCodes.Ldloca, awaiterLocal);
+            var getResult = types.GetMethodNoParams(types.TaskAwaiterOfObject, "GetResult");
+            il.Emit(OpCodes.Call, getResult);
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            il.MarkLabel(afterAwaitLabel);
+
+            // Check if done: use GetIteratorDone
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Call, runtime.GetIteratorDone);
+            il.Emit(OpCodes.Brtrue, endLabel);
+
+            // Assign to loop variable (value via GetIteratorValue)
+            EmitStoreLoopVariable(loopVarLocal, varName, () =>
+            {
+                il.Emit(OpCodes.Ldloc, resultLocal);
+                il.Emit(OpCodes.Call, runtime.GetIteratorValue);
+            });
+
+            EmitStatement(f.Body);
+
+            il.MarkLabel(continueLabel);
+            il.Emit(OpCodes.Br, startLabel);
+
+            // Cleanup on break: call iterator.return() to trigger finally blocks in generators
+            il.MarkLabel(cleanupLabel);
+            {
+                // Get the "return" method from the async iterator
+                il.Emit(OpCodes.Ldloc, asyncIteratorLocal);
+                il.Emit(OpCodes.Ldstr, "return");
+                il.Emit(OpCodes.Call, runtime.GetProperty);
+
+                var returnFnLocal = il.DeclareLocal(types.Object);
+                il.Emit(OpCodes.Stloc, returnFnLocal);
+
+                // If no return method, skip cleanup — iterator.return() is
+                // optional per the iterator protocol. GetProperty reports a
+                // missing member as either null or $Undefined, and
+                // InvokeMethodValue now throws TypeError for both (#260), so
+                // guard against both here.
+                il.Emit(OpCodes.Ldloc, returnFnLocal);
+                il.Emit(OpCodes.Brfalse, endLabel);
+                il.Emit(OpCodes.Ldloc, returnFnLocal);
+                il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+                il.Emit(OpCodes.Brtrue, endLabel);
+
+                // Call: InvokeMethodValue(asyncIterator, returnFn, [])
+                il.Emit(OpCodes.Ldloc, asyncIteratorLocal);
+                il.Emit(OpCodes.Ldloc, returnFnLocal);
+                il.Emit(OpCodes.Ldc_I4_0);
+                il.Emit(OpCodes.Newarr, types.Object);
+                il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+
+                // If result is a Task, await it. Unwrap $TSPromise first if present.
+                var returnResultLocal = il.DeclareLocal(types.Object);
+                il.Emit(OpCodes.Stloc, returnResultLocal);
+
+                // If $TSPromise, replace with inner Task<object?>
+                var returnNotTSPromiseLabel = il.DefineLabel();
+                il.Emit(OpCodes.Ldloc, returnResultLocal);
+                il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+                il.Emit(OpCodes.Brfalse, returnNotTSPromiseLabel);
+                il.Emit(OpCodes.Ldloc, returnResultLocal);
+                il.Emit(OpCodes.Castclass, runtime.TSPromiseType);
+                il.Emit(OpCodes.Callvirt, runtime.TSPromiseTaskGetter);
+                il.Emit(OpCodes.Stloc, returnResultLocal);
+                il.MarkLabel(returnNotTSPromiseLabel);
+
+                il.Emit(OpCodes.Ldloc, returnResultLocal);
+                il.Emit(OpCodes.Isinst, types.TaskOfObject);
+                il.Emit(OpCodes.Brfalse, endLabel);
+
+                il.Emit(OpCodes.Ldloc, returnResultLocal);
+                il.Emit(OpCodes.Castclass, types.TaskOfObject);
+                var cleanupTaskLocal = il.DeclareLocal(types.TaskOfObject);
+                il.Emit(OpCodes.Stloc, cleanupTaskLocal);
+                il.Emit(OpCodes.Ldloc, cleanupTaskLocal);
+                var cleanupGetAwaiter = types.GetMethodNoParams(types.TaskOfObject, "GetAwaiter");
+                il.Emit(OpCodes.Call, cleanupGetAwaiter);
+                var cleanupAwaiterLocal = il.DeclareLocal(types.TaskAwaiterOfObject);
+                il.Emit(OpCodes.Stloc, cleanupAwaiterLocal);
+                il.Emit(OpCodes.Ldloca, cleanupAwaiterLocal);
+                var cleanupGetResult = types.GetMethodNoParams(types.TaskAwaiterOfObject, "GetResult");
+                il.Emit(OpCodes.Call, cleanupGetResult);
+                il.Emit(OpCodes.Pop); // Discard return result
+            }
+
+            il.MarkLabel(endLabel);
+            ExitLoop();
+            il.Emit(OpCodes.Br, afterLoopLabel); // Skip the fallback path
+        }
+
+        // ===== $IAsyncGenerator fallback path =====
+        il.MarkLabel(asyncGenLabel);
+        {
+            // Cast to $IAsyncGenerator interface
+            var asyncGenInterface = runtime.AsyncGeneratorInterfaceType;
+            il.Emit(OpCodes.Ldloc, iterableLocal);
+            il.Emit(OpCodes.Castclass, asyncGenInterface);
+
+            // Store the async generator in a local
+            var asyncGenLocal = il.DeclareLocal(asyncGenInterface);
+            il.Emit(OpCodes.Stloc, asyncGenLocal);
+
+            var genStartLabel = il.DefineLabel();
+            var genEndLabel = il.DefineLabel();
+            var genCleanupLabel = il.DefineLabel();
+            var genContinueLabel = il.DefineLabel();
+
+            // Break goes to cleanup (calls generator.return()), not directly to end
+            EnterLoop(genCleanupLabel, genContinueLabel);
+
+            il.MarkLabel(genStartLabel);
+
+            // Call next() which returns Task<object>
+            il.Emit(OpCodes.Ldloc, asyncGenLocal);
+            il.Emit(OpCodes.Callvirt, runtime.AsyncGeneratorNextMethod);
+
+            // Await the Task<object>
+            var genTaskLocal = il.DeclareLocal(types.TaskOfObject);
+            il.Emit(OpCodes.Stloc, genTaskLocal);
+            il.Emit(OpCodes.Ldloc, genTaskLocal);
+            var genGetAwaiter = types.GetMethodNoParams(types.TaskOfObject, "GetAwaiter");
+            il.Emit(OpCodes.Call, genGetAwaiter);
+            var genAwaiterLocal = il.DeclareLocal(types.TaskAwaiterOfObject);
+            il.Emit(OpCodes.Stloc, genAwaiterLocal);
+            il.Emit(OpCodes.Ldloca, genAwaiterLocal);
+            var genGetResult = types.GetMethodNoParams(types.TaskAwaiterOfObject, "GetResult");
+            il.Emit(OpCodes.Call, genGetResult);
+
+            // Result is a Dictionary<string, object> with { value, done }
+            var genResultLocal = il.DeclareLocal(types.Object);
+            il.Emit(OpCodes.Stloc, genResultLocal);
+
+            // Check if done: GetProperty(result, "done")
+            il.Emit(OpCodes.Ldloc, genResultLocal);
+            il.Emit(OpCodes.Ldstr, "done");
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+
+            // Convert to bool and check - natural done exits directly (no cleanup needed)
+            il.Emit(OpCodes.Call, runtime.IsTruthy);
+            il.Emit(OpCodes.Brtrue, genEndLabel);
+
+            // Assign to loop variable (value via GetProperty(result, "value"))
+            EmitStoreLoopVariable(loopVarLocal, varName, () =>
+            {
+                il.Emit(OpCodes.Ldloc, genResultLocal);
+                il.Emit(OpCodes.Ldstr, "value");
+                il.Emit(OpCodes.Call, runtime.GetProperty);
+            });
+
+            EmitStatement(f.Body);
+
+            il.MarkLabel(genContinueLabel);
+            il.Emit(OpCodes.Br, genStartLabel);
+
+            // Cleanup on break: call generator.return(null) to trigger finally blocks
+            il.MarkLabel(genCleanupLabel);
+            il.Emit(OpCodes.Ldloc, asyncGenLocal);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Callvirt, runtime.AsyncGeneratorReturnMethod);
+            // Await the Task<object> result and discard it
+            var cleanupGenTaskLocal = il.DeclareLocal(types.TaskOfObject);
+            il.Emit(OpCodes.Stloc, cleanupGenTaskLocal);
+            il.Emit(OpCodes.Ldloc, cleanupGenTaskLocal);
+            il.Emit(OpCodes.Call, genGetAwaiter);
+            var cleanupGenAwaiterLocal = il.DeclareLocal(types.TaskAwaiterOfObject);
+            il.Emit(OpCodes.Stloc, cleanupGenAwaiterLocal);
+            il.Emit(OpCodes.Ldloca, cleanupGenAwaiterLocal);
+            il.Emit(OpCodes.Call, genGetResult);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Br, genEndLabel);
+
+            il.MarkLabel(genEndLabel);
+            ExitLoop();
+        }
+
+        // Common exit point for both paths
+        il.MarkLabel(afterLoopLabel);
+    }
+
+    /// <summary>
     /// Emits a for...in loop iterating over object keys.
     /// </summary>
     protected virtual void EmitForIn(Stmt.ForIn f)
