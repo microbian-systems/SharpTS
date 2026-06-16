@@ -111,8 +111,18 @@ public abstract record Expr
     /// <c>Assignments</c>, then yield <c>ResultValue</c>. <c>Assignments</c> contains only synthesized
     /// <see cref="Stmt.Var"/> and <see cref="Stmt.Expression"/> statements (no control flow), so it is
     /// safe in any expression position.
+    /// <para><paramref name="RawTarget"/>/<paramref name="RawDefault"/> retain the un-lowered pattern and
+    /// default RHS so that when this node was eager-parsed as a nested element WITH a default
+    /// (<c>[[a] = []]</c>, <c>{p: {x} = {}}</c>) the outer pattern walk can re-lower the inner pattern
+    /// against the defaulted access instead of the pre-built (wrong-source) statements (#779). Both are
+    /// null for a top-level assignment-destructuring, where only <c>Assignments</c>/<c>ResultValue</c> are
+    /// used; backends never read them.</para>
     /// </summary>
-    public record DestructuringAssign(List<Stmt> Assignments, Expr ResultValue) : Expr;
+    public record DestructuringAssign(
+        List<Stmt> Assignments,
+        Expr ResultValue,
+        Expr? RawTarget = null,
+        Expr? RawDefault = null) : Expr;
     public record Binary(Expr Left, Token Operator, Expr Right) : Expr;
     public record Logical(Expr Left, Token Operator, Expr Right) : Expr;
     public record NullishCoalescing(Expr Left, Expr Right) : Expr;
@@ -189,12 +199,17 @@ public abstract record Expr
     /// <param name="IsSpread">Whether this is a spread property (...obj)</param>
     /// <param name="Kind">The kind of property (value, getter, setter, method)</param>
     /// <param name="SetterParam">The setter parameter (for Kind=Setter only)</param>
+    /// <param name="IsShorthandDefault">True for the cover-grammar form <c>{ a = 5 }</c> (an ES
+    /// CoverInitializedName). The value is stored as <c>Expr.Assign(a, 5)</c> so it round-trips to the
+    /// #754 assignment-destructuring lowering; this flag distinguishes it from the legal expression
+    /// <c>{ a: a = 5 }</c> so a pure-expression object literal can be rejected as tsc does (#780).</param>
     public record Property(
         PropertyKey? Key,
         Expr Value,
         bool IsSpread = false,
         ObjectPropertyKind Kind = ObjectPropertyKind.Value,
-        Stmt.Parameter? SetterParam = null);
+        Stmt.Parameter? SetterParam = null,
+        bool IsShorthandDefault = false);
     public record GetIndex(Expr Object, Expr Index, bool Optional = false) : Expr;
     public record SetIndex(Expr Object, Expr Index, Expr Value) : Expr;
     public record Super(Token Keyword, Token? Method) : Expr;  // Method is null for super() constructor calls

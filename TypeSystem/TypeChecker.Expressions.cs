@@ -151,6 +151,22 @@ public partial class TypeChecker
     {
         foreach (var stmt in expr.Assignments)
             CheckStmt(stmt);
+
+        // The lowered spill temps live inside an EXPRESSION, so they escape the whole-body
+        // numeric-slot taint pass (MarkUndefinedReachableNumericSlots) that the declaration
+        // desugaring's Stmt.Sequence goes through. A defaulted element/property whose source value
+        // is absent (`[a = 5] = arr`, `({c = 5} = obj)`) leaves the spill holding the runtime
+        // `undefined` sentinel; an unboxed `double` slot would coerce it to NaN at the store. Widen
+        // every synthesized temp back to an object slot (a no-op for the non-numeric source temps). #784
+        foreach (var stmt in expr.Assignments)
+        {
+            if (stmt is Stmt.Var { Initializer: { } init } varStmt)
+            {
+                _typeMap.MarkUndefinedReachableNumericLocal(varStmt);
+                _typeMap.MarkUndefinedReachableNumericLocal(init);
+            }
+        }
+
         return CheckExpr(expr.ResultValue);
     }
 
@@ -686,6 +702,16 @@ public partial class TypeChecker
             }
             else
             {
+                if (prop.IsShorthandDefault)
+                {
+                    // A `{ a = 5 }` CoverInitializedName reaching CheckObject was used as a plain object
+                    // literal expression, not a destructuring target (assignment-destructuring patterns are
+                    // consumed by BuildDestructuringAssignment before type-checking). tsc rejects it (#780).
+                    throw new TypeCheckException(
+                        " '=' can only be used in an object literal property inside a destructuring assignment.",
+                        tsCode: "TS1312");
+                }
+
                 TypeInfo valueType = CheckExpr(prop.Value);
 
                 switch (prop.Key)
