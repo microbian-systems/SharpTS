@@ -70,14 +70,16 @@ public partial class GeneratorMoveNextEmitter
     private bool _inHandlerBody;
 
     // The innermost flag-based try whose *body* is currently being emitted: its catch/finally entry
-    // (afterTryBodyLabel), the local capturing a try-body exception, and the boolean flag recording
-    // whether one was captured. An external throw() injected at a yield in this body behaves as if the
-    // body threw there — it stores the error into the local, sets the flag, and branches to the cleanup
-    // so the catch/finally run (#526). The flag (not the value's nullness) gates the catch so an
-    // injected throw(null)/throw(undefined) still engages it (#619). Saved/restored around the try-body
-    // emission, so it is null (or the enclosing try's) while emitting a catch/finally body, where
-    // `_inHandlerBody` instead routes an injected throw through the enclosing finally(s).
-    private (Label AfterTryBody, LocalBuilder CaughtException, LocalBuilder ExceptionPresent)? _tryBodyContext;
+    // (afterTryBodyLabel), the local capturing a try-body exception, the boolean flag recording whether
+    // one was captured, and `_exitScopes.Count` at the start of its body (ScopeDepth — finally scopes at
+    // indices >= it are strictly inside this try). An external throw() injected at a yield in this body
+    // behaves as if the body threw there — it stores the error into the local, sets the flag, and
+    // branches to the cleanup so the catch/finally run (#526). The flag (not the value's nullness) gates
+    // the catch so an injected throw(null)/throw(undefined) still engages it (#619). Saved/restored
+    // around the try-body emission, so while emitting a catch/finally body it instead identifies the
+    // *enclosing* flag-based try (or is null) — the one whose catch must handle a throw escaping that
+    // handler, after the finally(s) inside it have run (#632).
+    private (Label AfterTryBody, LocalBuilder CaughtException, LocalBuilder ExceptionPresent, int ScopeDepth)? _tryBodyContext;
 
     // `<>pendingExit` (int): the code of an in-flight non-local exit, or 0 when none. A finally that
     // yields suspends MoveNext mid-routing, so this must be a field (a local would reset on re-entry).
@@ -221,14 +223,24 @@ public partial class GeneratorMoveNextEmitter
     }
 
     /// <summary>
-    /// A <c>throw</c> in a catch or finally body must run the enclosing finally(s) before the
-    /// exception propagates. A throw in a try body is captured by its sync-segment mini try/catch
-    /// (handled by the catch arm), so it is not routed here.
+    /// A <c>throw</c> in a catch or finally body propagates to the enclosing flag-based try (the one
+    /// whose body lexically contains this handler): it runs the finally(s) inside that try, then lands
+    /// in its catch — rather than a real IL <c>throw</c> that bypasses the flag-based catch (#632). With
+    /// no enclosing flag-based try it runs the active finally(s) and propagates out of MoveNext. A throw
+    /// in a try body is captured by its sync-segment mini try/catch (handled by the catch arm), not here.
     /// </summary>
     protected override void EmitThrow(Stmt.Throw t)
     {
         if (_inHandlerBody && _protectedRegionDepth == 0)
         {
+            if (_tryBodyContext is { } encl)
+            {
+                EmitThrowIntoEnclosingTry(encl, () => { EmitExpression(t.Value); EnsureBoxed(); });
+                return;
+            }
+
+            // No enclosing flag-based try (this handler belongs to the outermost try), but its own
+            // finally may still be active and must run before the throw leaves MoveNext.
             var chain = ActiveFinallyFrames();
             if (chain.Count > 0)
             {
@@ -247,6 +259,47 @@ public partial class GeneratorMoveNextEmitter
         }
 
         base.EmitThrow(t);
+    }
+
+    /// <summary>
+    /// Propagates a guest exception escaping a handler body into the enclosing flag-based try
+    /// <paramref name="encl"/>: stores the value into that try's capture local and sets its present
+    /// flag, then branches to its cleanup entry so its catch runs (or, catch-less, its finally then its
+    /// own propagation). Any finally(s) strictly inside that try run first; because such a finally can
+    /// yield, the value is held in <c>&lt;&gt;pendingException</c> across them and moved into the capture
+    /// local by the routing terminal. This is the catch-side analog of the finally routing already used
+    /// for a routed return/throw (#632). <paramref name="loadValue"/> pushes the boxed guest value.
+    /// </summary>
+    private void EmitThrowIntoEnclosingTry((Label AfterTryBody, LocalBuilder CaughtException, LocalBuilder ExceptionPresent, int ScopeDepth) encl, Action loadValue)
+    {
+        var chain = FinallyFramesInside(encl.ScopeDepth);
+        if (chain.Count == 0)
+        {
+            // No intervening finally: store straight into the enclosing try and branch to its catch.
+            loadValue();
+            _il.Emit(OpCodes.Stloc, encl.CaughtException);
+            _il.Emit(OpCodes.Ldc_I4_1);
+            _il.Emit(OpCodes.Stloc, encl.ExceptionPresent);
+            _il.Emit(OpCodes.Br, encl.AfterTryBody);
+            return;
+        }
+
+        // Intervening finally(s) may yield, so hold the value in a field across them; the routing
+        // terminal moves it into the enclosing try's capture local and branches to its catch.
+        _il.Emit(OpCodes.Ldarg_0);
+        loadValue();
+        _il.Emit(OpCodes.Stfld, GetPendingExceptionField());
+        int code = _nextExitCode++;
+        _exitTerminals[code] = () =>
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, GetPendingExceptionField());
+            _il.Emit(OpCodes.Stloc, encl.CaughtException);
+            _il.Emit(OpCodes.Ldc_I4_1);
+            _il.Emit(OpCodes.Stloc, encl.ExceptionPresent);
+            _il.Emit(OpCodes.Br, encl.AfterTryBody);
+        };
+        RouteThroughFinallys(chain, code, OpCodes.Br);
     }
 
     // ---- Routing helpers ------------------------------------------------------------------------
@@ -271,6 +324,21 @@ public partial class GeneratorMoveNextEmitter
             if (_exitScopes[i] is FinallyScope fs)
                 result.Add(fs);
         }
+        return result;
+    }
+
+    /// <summary>
+    /// The finally scopes strictly inside the flag-based try whose body began at <paramref
+    /// name="scopeDepth"/> (= <c>_exitScopes.Count</c> at that point), innermost first. Excludes the
+    /// try's own finally (which lives just below scopeDepth) and everything outside it. These are the
+    /// finallys a throw escaping a nested handler must run before reaching that try's catch (#632).
+    /// </summary>
+    private List<FinallyScope> FinallyFramesInside(int scopeDepth)
+    {
+        var result = new List<FinallyScope>();
+        for (int i = _exitScopes.Count - 1; i >= scopeDepth; i--)
+            if (_exitScopes[i] is FinallyScope fs)
+                result.Add(fs);
         return result;
     }
 
@@ -454,32 +522,41 @@ public partial class GeneratorMoveNextEmitter
     }
 
     /// <summary>
-    /// Emits a <c>throw &lt;value&gt;</c> at a top-level resume point. Inside a try body it behaves
-    /// as if the body threw there (store into the try's caught-exception local and branch to its
-    /// cleanup, so the catch/finally run); inside a catch/finally body it routes through the
-    /// enclosing finally(s); with no enclosing try it propagates out of MoveNext. <paramref
-    /// name="loadValue"/> pushes the boxed guest error value.
+    /// Emits a <c>throw &lt;value&gt;</c> at a top-level resume point (an external <c>throw()</c>
+    /// injected at a suspended yield). Inside a try body it behaves as if the body threw there (store
+    /// into the try's caught-exception local and branch to its cleanup, so the catch/finally run);
+    /// inside a catch/finally body it propagates to the enclosing flag-based try's catch the same way a
+    /// lexical handler-body throw does (#632); with no enclosing try it runs the active finally(s) and
+    /// propagates out of MoveNext. <paramref name="loadValue"/> pushes the boxed guest error value.
     /// </summary>
     private void EmitRoutedThrow(Action loadValue)
     {
-        if (!_inHandlerBody && _tryBodyContext is { } tryBody)
+        if (_tryBodyContext is { } ctx)
         {
-            // In a try body: capture exactly like a try-body exception so the catch/finally at
-            // afterTryBodyLabel handle it. A catch-less yielding finally persists this local to a
-            // field before suspending, so it survives (#599). Set the present flag (not the value's
-            // nullness) so an injected throw(null)/throw(undefined) still engages the catch (#619).
-            loadValue();
-            _il.Emit(OpCodes.Stloc, tryBody.CaughtException);
-            _il.Emit(OpCodes.Ldc_I4_1);
-            _il.Emit(OpCodes.Stloc, tryBody.ExceptionPresent);
-            _il.Emit(OpCodes.Br, tryBody.AfterTryBody);
+            if (!_inHandlerBody)
+            {
+                // In a try body: capture exactly like a try-body exception so the catch/finally at
+                // afterTryBodyLabel handle it. A catch-less yielding finally persists this local to a
+                // field before suspending, so it survives (#599). Set the present flag (not the value's
+                // nullness) so an injected throw(null)/throw(undefined) still engages the catch (#619).
+                loadValue();
+                _il.Emit(OpCodes.Stloc, ctx.CaughtException);
+                _il.Emit(OpCodes.Ldc_I4_1);
+                _il.Emit(OpCodes.Stloc, ctx.ExceptionPresent);
+                _il.Emit(OpCodes.Br, ctx.AfterTryBody);
+                return;
+            }
+
+            // In a catch/finally body: run the finally(s) inside the enclosing try, then land in its
+            // catch — the injection-path analog of the lexical handler-body throw fix (#632).
+            EmitThrowIntoEnclosingTry(ctx, loadValue);
             return;
         }
 
         var chain = ActiveFinallyFrames();
         if (chain.Count > 0)
         {
-            // In a catch/finally body: run the enclosing finally(s), then rethrow at the terminal.
+            // Outermost try's catch/finally body: run its own finally(s), then rethrow at the terminal.
             _il.Emit(OpCodes.Ldarg_0);
             loadValue();
             _il.Emit(OpCodes.Stfld, GetPendingExceptionField());
@@ -669,7 +746,7 @@ public partial class GeneratorMoveNextEmitter
         bool previousInHandler = _inHandlerBody;
         var previousTryBody = _tryBodyContext;
         _inHandlerBody = false;
-        _tryBodyContext = (afterTryBodyLabel, caughtExceptionLocal, exceptionPresentLocal);
+        _tryBodyContext = (afterTryBodyLabel, caughtExceptionLocal, exceptionPresentLocal, _exitScopes.Count);
         EmitTryBodyWithYields(t.TryBlock, caughtExceptionLocal, exceptionPresentLocal, afterTryBodyLabel);
         _tryBodyContext = previousTryBody;
         _inHandlerBody = previousInHandler;
@@ -737,20 +814,30 @@ public partial class GeneratorMoveNextEmitter
             EmitFinallyDispatch(frame!);
         }
 
-        // Rethrow an uncaught exception once the finally has run (try/finally with no catch).
+        // Propagate an uncaught exception once the finally has run (try/finally with no catch).
         if (t.CatchBlock == null)
         {
             var noExceptionLabel = _il.DefineLabel();
             EmitLoadExceptionPresent();
             _il.Emit(OpCodes.Brfalse, noExceptionLabel);
 
-            // Mark the generator done before the exception leaves MoveNext.
-            _il.Emit(OpCodes.Ldarg_0);
-            _il.Emit(OpCodes.Ldc_I4, -2);
-            _il.Emit(OpCodes.Stfld, _builder.StateField);
-            EmitLoadCaughtException();
-            _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateException);
-            _il.Emit(OpCodes.Throw);
+            if (_tryBodyContext is { } encl)
+            {
+                // The finally has run; the still-uncaught exception now propagates to the enclosing
+                // flag-based try's catch (not out of MoveNext), so an outer catch still handles it — the
+                // try/finally analog of the handler-body throw routing (#632).
+                EmitThrowIntoEnclosingTry(encl, EmitLoadCaughtException);
+            }
+            else
+            {
+                // No enclosing flag-based try: mark the generator done and propagate out of MoveNext.
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldc_I4, -2);
+                _il.Emit(OpCodes.Stfld, _builder.StateField);
+                EmitLoadCaughtException();
+                _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateException);
+                _il.Emit(OpCodes.Throw);
+            }
 
             _il.MarkLabel(noExceptionLabel);
         }

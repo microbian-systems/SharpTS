@@ -1325,9 +1325,9 @@ public class GeneratorTests
     //   * Compiled tests resolve the receiver through a live object property (`h.it`), because
     //     compiled generators capture closure variables by value (#541) — a self-assigned `it` is
     //     snapshotted as `undefined`, so the `let it; it = g()` form never reaches the guard.
-    //   * `instanceof TypeError` is asserted only when the error is caught OUTSIDE the generator; a
-    //     separate pre-existing bug (#543) makes `instanceof` report false for an error caught
-    //     inside a compiled generator body (its `.name`/`.message` are still correct).
+    //   * `instanceof TypeError` now holds for an error caught inside a compiled generator body too
+    //     (#543, fixed): the compiled re-entrancy test below asserts it, as does
+    //     GeneratorErrorIdentityTests for the runtime "not a function" TypeError.
     // The yield*-delegation case doesn't rely on the captured self-reference (the inner generator is
     // created after the outer is assigned), so it runs in both modes from a single source.
 
@@ -1468,12 +1468,13 @@ public class GeneratorTests
     public void Generator_ReentrantNext_Compiled_ThrowsTypeErrorThenResumes(ExecutionMode mode)
     {
         // The re-entrant next() throws a catchable TypeError; once caught, the generator is still
-        // suspended-able and resumes normally (the guard must not corrupt its running state).
+        // suspended-able and resumes normally (the guard must not corrupt its running state). The
+        // in-body catch also satisfies `instanceof TypeError` (#543, fixed).
         var source = """
             const h: any = {};
             function* g() {
                 try { h.it.next(); }
-                catch (e: any) { console.log(e.name, e.message); }
+                catch (e: any) { console.log(e instanceof TypeError, e.name, e.message); }
                 yield 1;
             }
             h.it = g();
@@ -1482,7 +1483,7 @@ public class GeneratorTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("TypeError Generator is already running\n1 false\n", output);
+        Assert.Equal("true TypeError Generator is already running\n1 false\n", output);
     }
 
     [Theory]

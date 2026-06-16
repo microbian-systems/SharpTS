@@ -863,6 +863,130 @@ public class GeneratorTryFinallyTests
         Assert.Equal("c:undefined\n", TestHarness.Run(source, mode));
     }
 
+    // ---- #632: a throw escaping a handler body must reach an enclosing flag-based try's catch ----
+    // EmitThrow routed a handler-body throw only through enclosing *finally* frames, then did a real IL
+    // throw — which bypasses an outer flag-based try's caughtException flag, so its catch never ran. The
+    // throw is now routed into the enclosing try's capture local (running the finally(s) inside that try
+    // first) and branched to its cleanup, the catch-side analog of the existing finally routing.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RethrowFromCatch_CaughtByEnclosingTryCatch(ExecutionMode mode)
+    {
+        // The exact #632 repro: an inner catch rethrows; the outer catch must catch the rethrown value.
+        var source = """
+            function* g() {
+              try {
+                try { yield 0; throw "inner"; } catch (e: any) { console.log("inner caught " + e); throw "rethrown"; }
+              } catch (e: any) { console.log("outer caught " + e); }
+              yield 1;
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v0\ninner caught inner\nouter caught rethrown\nv1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ThrowFromCatch_WithInterveningFinally_RunsFinallyThenOuterCatch(ExecutionMode mode)
+    {
+        // The inner try has a finally: a throw escaping the inner catch must run that finally before the
+        // outer catch sees the value (the finally is routed via FinallyFramesInside).
+        var source = """
+            function* g() {
+              try {
+                try { yield 0; throw "inner"; }
+                catch (e: any) { console.log("C1 " + e); throw "rethrown"; }
+                finally { console.log("F1"); }
+              } catch (e: any) { console.log("outer " + e); }
+              yield 1;
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v0\nC1 inner\nF1\nouter rethrown\nv1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void UncaughtThrowFromCatchlessTryFinally_CaughtByEnclosingTry(ExecutionMode mode)
+    {
+        // An uncaught exception leaving a catch-less inner try/finally must, after its finally runs,
+        // propagate to the enclosing flag-based catch rather than escape the state machine (the
+        // try/finally analog: the post-finally rethrow now routes to the enclosing try too).
+        var source = """
+            function* g() {
+              try {
+                try { yield 0; throw "x"; } finally { console.log("F"); }
+              } catch (e: any) { console.log("outer " + e); }
+              yield 1;
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v0\nF\nouter x\nv1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ThrowFromFinallyBody_CaughtByEnclosingTry(ExecutionMode mode)
+    {
+        // A throw from a finally body propagates to the enclosing try's catch the same way.
+        var source = """
+            function* g() {
+              try {
+                try { yield 0; } finally { console.log("F1"); throw "fromFinally"; }
+              } catch (e: any) { console.log("outer " + e); }
+              yield 1;
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v0\nF1\nouter fromFinally\nv1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RethrowAcrossTwoNestedFinallys_RunsBothBeforeEnclosingCatch(ExecutionMode mode)
+    {
+        // Two finallys lie between the rethrow and the enclosing catch; both run, innermost first.
+        var source = """
+            function* g() {
+              try {
+                try {
+                  try { yield 0; throw "deep"; } finally { console.log("Finner"); }
+                } catch (e: any) { console.log("Cmid " + e); throw "remid"; } finally { console.log("Fmid"); }
+              } catch (e: any) { console.log("outer " + e); }
+              yield 1;
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v0\nFinner\nCmid deep\nFmid\nouter remid\nv1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExternalThrowAtCatchBodyYield_CaughtByEnclosingTry(ExecutionMode mode)
+    {
+        // An external it.throw() injected at a yield *inside a catch body* must also propagate to the
+        // enclosing try's catch (the injection-path analog of the lexical handler-body throw fix).
+        var source = """
+            function* g() {
+              try {
+                try { throw "a"; } catch (e: any) { yield 1; console.log("unreached"); }
+              } catch (e: any) { console.log("outer " + e); }
+              yield 99;
+            }
+            const it = g();
+            const r1 = it.next();   console.log(r1.value, r1.done);
+            const r2 = it.throw("b"); console.log(r2.value, r2.done);
+            """;
+
+        Assert.Equal("1 false\nouter b\n99 false\n", TestHarness.Run(source, mode));
+    }
+
     // ---- IL-verification guards (the heart of #477: emitted IL must verify) ----
 
     [Theory]
@@ -918,6 +1042,12 @@ public class GeneratorTryFinallyTests
     [InlineData("function* g() { try { yield 1; throw null; } catch (e) { console.log(e); } } for (const v of g()) {}")]
     [InlineData("function* g() { try { yield 1; throw undefined; } catch (e) { console.log(e); } } for (const v of g()) {}")]
     [InlineData("function* g() { try { yield 1; throw null; } finally { yield 2; } } try { for (const v of g()) {} } catch (e) {}")]
+    // #632: a throw/rethrow escaping a handler routed into an enclosing flag-based try's catch — the new
+    // routing (with intervening finallys, possibly yielding) must verify.
+    [InlineData("function* g() { try { try { yield 0; throw 'a'; } catch (e) { throw 'b'; } } catch (e) { console.log(e); } yield 1; } for (const v of g()) {}")]
+    [InlineData("function* g() { try { try { yield 0; throw 'a'; } catch (e) { throw 'b'; } finally { console.log('f'); } } catch (e) { console.log(e); } } for (const v of g()) {}")]
+    [InlineData("function* g() { try { try { yield 0; throw 'x'; } finally { yield 7; } } catch (e) { console.log(e); } } for (const v of g()) {}")]
+    [InlineData("function* g() { try { try { yield 0; } finally { throw 'fin'; } } catch (e) { console.log(e); } } for (const v of g()) {}")]
     public void GeneratorTryFinallyWithYield_EmitsVerifiableIL(string source)
     {
         var errors = TestHarness.CompileAndVerifyOnly(source);

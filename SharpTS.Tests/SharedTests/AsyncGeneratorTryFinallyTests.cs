@@ -527,6 +527,138 @@ public class AsyncGeneratorTryFinallyTests
         Assert.Equal("v1\ncaught boom\nv9\n", TestHarness.Run(source, mode));
     }
 
+    // ---- #628: throwing/rejecting null/undefined into a flag-based try/catch must engage the catch ----
+    // The async analog of #619: the flag-based scheme inferred "was an exception thrown?" from the
+    // captured value's nullness, so a thrown/rejected null/undefined (a null CLR reference) read as "no
+    // exception" — skipping the catch. A dedicated present flag now records presence independent of the
+    // value, set by both the sync-segment capture and the rejected-await routing (#617). CompiledOnly:
+    // the interpreter's eager-drain ordering (#564) is a separate concern.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void ThrowNullIntoFlagBasedTryCatch_IsCaught(ExecutionMode mode)
+    {
+        // The exact #628 repro: throw null after a yield, caught in the same try's catch.
+        var source = """
+            async function* g() { try { yield 1; throw null; } catch (e) { console.log("caught isNull=" + (e === null)); } }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v1\ncaught isNull=true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void ThrowUndefinedIntoFlagBasedTryCatch_IsCaught(ExecutionMode mode)
+    {
+        // throw undefined likewise reaches the catch (was skipped). Asserted via `=== undefined`.
+        var source = """
+            async function* g() { try { yield 1; throw undefined; } catch (e) { console.log("isUndef=" + (e === undefined)); } }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v1\nisUndef=true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void RejectedNullAwaitInTry_IsCaughtWithNullBinding(ExecutionMode mode)
+    {
+        // A rejected await whose reason is null must reach the catch (the await-routing present flag,
+        // #617 + #628), and the catch param must bind the null reason.
+        var source = """
+            async function* g() { try { await Promise.reject(null); } catch (e) { console.log("isNull=" + (e === null)); } yield 1; }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("isNull=true\nv1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void FalsyNonNullThrowIntoFlagBasedTryCatch_StillCaught(ExecutionMode mode)
+    {
+        // Boundary guard: a falsy-but-non-null thrown value (0) boxes to a non-null reference and was
+        // already caught; it must remain so under the present-flag scheme.
+        var source = """
+            async function* g() { try { yield 1; throw 0; } catch (e) { console.log("caught e=" + e); } }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v1\ncaught e=0\n", TestHarness.Run(source, mode));
+    }
+
+    // ---- #632: a throw escaping a handler body must reach an enclosing flag-based try's catch ----
+    // Async analog of the plain-generator #632: a handler-body throw is routed into the enclosing
+    // flag-based try's capture local (running the finally(s) inside that try first) and branched to its
+    // cleanup, instead of a real IL throw that bypasses the flag-based catch.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void RethrowFromCatch_CaughtByEnclosingTryCatch(ExecutionMode mode)
+    {
+        // The exact async #632 repro: a rejected await is caught by the inner catch, which rethrows; the
+        // outer catch must catch the rethrown value.
+        var source = """
+            async function* g() {
+              try {
+                try { await Promise.reject("inner"); } catch (e: any) { console.log("inner caught " + e); throw "rethrown"; }
+              } catch (e: any) { console.log("outer caught " + e); }
+              yield 1;
+            }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("inner caught inner\nouter caught rethrown\nv1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void RethrowFromCatch_WithInterveningFinally_RunsFinallyThenOuterCatch(ExecutionMode mode)
+    {
+        // The inner try has a finally: a throw escaping the inner catch runs that finally before the
+        // outer catch sees the value.
+        var source = """
+            async function* g() {
+              try {
+                try { yield 0; throw "inner"; }
+                catch (e: any) { console.log("C1 " + e); throw "rethrown"; }
+                finally { console.log("F1"); }
+              } catch (e: any) { console.log("outer " + e); }
+              yield 1;
+            }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v0\nC1 inner\nF1\nouter rethrown\nv1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void UncaughtThrowFromCatchlessTryFinally_CaughtByEnclosingTry(ExecutionMode mode)
+    {
+        // An uncaught exception leaving a catch-less inner try/finally must, after its finally runs,
+        // propagate to the enclosing flag-based catch rather than escape the state machine.
+        var source = """
+            async function* g() {
+              try {
+                try { yield 0; throw "x"; } finally { console.log("F"); }
+              } catch (e: any) { console.log("outer " + e); }
+              yield 1;
+            }
+            async function main() { for await (const v of g()) console.log("v" + v); }
+            main();
+            """;
+
+        Assert.Equal("v0\nF\nouter x\nv1\n", TestHarness.Run(source, mode));
+    }
+
     // ---- IL-verification guards (the heart of #559: emitted IL must verify) ----
 
     [Theory]
@@ -563,6 +695,13 @@ public class AsyncGeneratorTryFinallyTests
     // #569: catch parameter read after a suspension (yield / await) in the catch body — hoisted-field binding.
     [InlineData("async function* g() { try { yield 1; throw 'boom'; } catch (e) { yield 0; console.log(e); } } async function main(){ for await (const v of g()) {} } main();")]
     [InlineData("async function* g() { try { yield 1; throw 'boom'; } catch (e) { await Promise.resolve(0); console.log(e); } } async function main(){ for await (const v of g()) {} } main();")]
+    // #628: thrown/rejected null/undefined into a flag-based try — the present-flag gates must verify.
+    [InlineData("async function* g() { try { yield 1; throw null; } catch (e) { console.log(e); } } async function main(){ for await (const v of g()) {} } main();")]
+    [InlineData("async function* g() { try { await Promise.reject(null); } catch (e) { console.log(e); } yield 1; } async function main(){ for await (const v of g()) {} } main();")]
+    // #632: a throw/rethrow escaping a handler routed into an enclosing flag-based try's catch.
+    [InlineData("async function* g() { try { try { yield 0; throw 'a'; } catch (e) { throw 'b'; } } catch (e) { console.log(e); } yield 1; } async function main(){ for await (const v of g()) {} } main();")]
+    [InlineData("async function* g() { try { try { yield 0; throw 'a'; } catch (e) { throw 'b'; } finally { console.log('f'); } } catch (e) { console.log(e); } } async function main(){ for await (const v of g()) {} } main();")]
+    [InlineData("async function* g() { try { try { yield 0; throw 'x'; } finally { yield 7; } } catch (e) { console.log(e); } } async function main(){ for await (const v of g()) {} } main();")]
     public void AsyncGeneratorTryFinallyWithSuspension_EmitsVerifiableIL(string source)
     {
         var errors = TestHarness.CompileAndVerifyOnly(source);
