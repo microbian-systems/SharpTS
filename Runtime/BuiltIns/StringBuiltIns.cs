@@ -242,12 +242,35 @@ public static class StringBuiltIns
         var sb = new StringBuilder();
         foreach (var arg in args)
         {
-            var codePoint = (int)arg.AsNumber();
-            if (codePoint < 0 || codePoint > 0x10FFFF)
-                throw new Exception($"RangeError: Invalid code point {codePoint}");
-            sb.Append(char.ConvertFromUtf32(codePoint));
+            // ECMA-262 §22.1.2.2: each code point must be an integral Number in
+            // [0, 0x10FFFF]; NaN / Infinity / fractional values throw RangeError.
+            var num = arg.AsNumber();
+            if (!double.IsInteger(num) || num < 0 || num > 0x10FFFF)
+                throw new Exception($"RangeError: Invalid code point {num}");
+            AppendCodePoint(sb, (int)num);
         }
         return RuntimeValue.FromString(sb.ToString());
+    }
+
+    /// <summary>
+    /// ECMA-262 §11.1.3 UTF16EncodeCodePoint. Unlike <see cref="char.ConvertFromUtf32"/>,
+    /// this accepts lone surrogates (0xD800–0xDFFF): JS strings are sequences of
+    /// UTF-16 code units, so <c>String.fromCodePoint(0xDC00)</c> yields a one-unit
+    /// string holding that surrogate. .NET strings are likewise UTF-16, so a lone
+    /// surrogate is representable as a single <see cref="char"/>.
+    /// </summary>
+    internal static void AppendCodePoint(StringBuilder sb, int cp)
+    {
+        if (cp <= 0xFFFF)
+        {
+            sb.Append((char)cp);
+        }
+        else
+        {
+            cp -= 0x10000;
+            sb.Append((char)((cp >> 10) + 0xD800));
+            sb.Append((char)((cp & 0x3FF) + 0xDC00));
+        }
     }
 
     #region V2 Implementations (RuntimeValue — no boxing)

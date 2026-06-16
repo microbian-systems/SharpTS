@@ -380,6 +380,16 @@ public abstract partial class ExpressionEmitterBase
 
     private void EmitGetPropertyAndInvoke(LocalBuilder objLocal, string methodName, List<Expr> arguments, LocalBuilder[]? argLocals = null)
     {
+        // ECMA-262 §13.3.2.1: evaluating the member-access callee `recv.method`
+        // performs RequireObjectCoercible(recv), so an undefined receiver throws
+        // TypeError *before* ArgumentListEvaluation (§13.3.6.1 step 2 runs before
+        // the callability check in steps 3/4). $Runtime.GetProperty returns
+        // undefined for a nullish base (so optional chains can short-circuit),
+        // which would otherwise defer the throw past the arguments and run their
+        // side effects. Enforce coercibility here, on the non-optional method-call
+        // path. (test262 language/expressions/call/11.2.3-3_3)
+        EmitThrowIfReceiverUndefined(objLocal, methodName);
+
         // Resolve the method first (property lookup precedes argument evaluation, per spec) and
         // store it, so the receiver and resolved fn aren't left on the IL stack while arguments are
         // evaluated — a later argument can suspend (await/yield), which requires a clear stack.
@@ -398,6 +408,35 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Ldloc, fnLocal);                 // resolved fn
         EmitBoxedArgsArray(arguments, argLocals);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeMethodValue);
+    }
+
+    /// <summary>
+    /// Emits a guard that throws <c>TypeError</c> when <paramref name="objLocal"/>
+    /// holds <c>$Undefined</c> — the RequireObjectCoercible step a member-access
+    /// callee performs before its arguments are evaluated. Missing-property reads
+    /// (e.g. <c>o.bar</c> where <c>bar</c> is absent) yield <c>$Undefined</c>, so
+    /// this catches <c>o.bar.gar(sideEffect())</c> before the side effect runs.
+    ///
+    /// Deliberately does NOT reject a bare CLR <c>null</c>: compiled sloppy-mode
+    /// <c>this</c> is represented as <c>null</c> (spec says it is globalThis, which
+    /// is coercible), so <c>this.method(sideEffect())</c> must keep evaluating its
+    /// arguments. Symbols/primitives are coercible too. A genuine <c>null.x()</c>
+    /// still throws — just deferred to InvokeMethodValue, as before this guard.
+    /// </summary>
+    protected void EmitThrowIfReceiverUndefined(LocalBuilder objLocal, string methodName)
+    {
+        var okLabel = IL.DefineLabel();
+
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+        IL.Emit(OpCodes.Brfalse, okLabel);               // not $Undefined → ok
+
+        IL.Emit(OpCodes.Ldstr, $"Cannot read properties of undefined (reading '{methodName}')");
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSTypeErrorCtor);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateException);
+        IL.Emit(OpCodes.Throw);
+
+        IL.MarkLabel(okLabel);
     }
 
     /// <summary>

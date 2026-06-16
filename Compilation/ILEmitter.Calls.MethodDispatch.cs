@@ -182,6 +182,14 @@ public partial class ILEmitter
         var receiverLocal = IL.DeclareLocal(_ctx.Types.Object);
         IL.Emit(OpCodes.Stloc, receiverLocal);
 
+        // ECMA-262 §13.3.2.1 / §13.3.6.1: the member-access callee `recv.method`
+        // runs RequireObjectCoercible(recv) before ArgumentListEvaluation, so an
+        // undefined receiver throws TypeError *before* the arguments' side effects
+        // fire. GetProperty/InvokeMethodValue would otherwise defer the throw until
+        // after the args are built. (test262 .../call/11.2.3-3_3)
+        if (!methodGet.Optional)
+            EmitThrowIfReceiverUndefined(receiverLocal, methodName);
+
         // Load receiver for InvokeMethodValue's first argument
         IL.Emit(OpCodes.Ldloc, receiverLocal);
 
