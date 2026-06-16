@@ -95,4 +95,78 @@ public class ValueCallUndefinedPaddingTests
             """;
         Assert.Equal("2,4,6\n", TestHarness.Run(source, mode));
     }
+
+    // #703: class methods invoked as values (extracted, `.bind()`-ed, passed as callbacks →
+    // `$TSFunction.Invoke`) must also pad omitted trailing optional args with the `undefined`
+    // sentinel, matching function declarations/arrows. Marking is applied to every user
+    // class-method builder kind (instance, static, private, class-expression).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InstanceMethodBound_OmittedOptionalArg_IsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            class C { m(x?: any): string { return typeof x; } }
+            const inst = new C();
+            const mval = inst.m.bind(inst);
+            console.log(mval());
+            """;
+        Assert.Equal("undefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InstanceMethodAsValue_OmittedOptionalArg_StrictEquality(ExecutionMode mode)
+    {
+        var source = """
+            class C {
+              isUndef(x?: any): boolean { return x === undefined; }
+              isNull(x?: any): boolean { return x === null; }
+            }
+            const c = new C();
+            const u = c.isUndef.bind(c);
+            const n = c.isNull.bind(c);
+            console.log(u());
+            console.log(n());
+            """;
+        Assert.Equal("true\nfalse\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticMethodAsValue_OmittedOptionalArg_IsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            class C { static m(x?: any): string { return typeof x; } }
+            const f = C.m;
+            console.log(f());
+            """;
+        Assert.Equal("undefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpressionMethodAsValue_OmittedOptionalArg_IsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            const C = class { m(x?: any): string { return typeof x; } };
+            const c = new C();
+            const mval = c.m.bind(c);
+            console.log(mval());
+            """;
+        Assert.Equal("undefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InstanceMethodAsCallback_OmittedOptionalArg_IsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            class C { m(x?: any): string { return typeof x; } }
+            function invoke(cb: () => string): string { return cb(); }
+            const c = new C();
+            console.log(invoke(c.m.bind(c)));
+            """;
+        Assert.Equal("undefined\n", TestHarness.Run(source, mode));
+    }
 }

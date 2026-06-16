@@ -738,6 +738,10 @@ public partial class ILCompiler
         string qualifiedClassName,
         bool isStatic)
     {
+        // #703: a private method referenced as a value (e.g. `this.#m` passed as a callback)
+        // pads omitted optional args with the `undefined` sentinel on the value-call path.
+        MarkPadsUndefined(methodBuilder);
+
         var il = methodBuilder.GetILGenerator();
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
@@ -820,7 +824,8 @@ public partial class ILCompiler
         // (`x?: T`) private-method parameter whose argument was omitted arrives as the `undefined`
         // sentinel (call sites pad omitted trailing args — see EmitPrivateCallUndefinedPadding);
         // this fires the default the same way function/public-method bodies do. Private methods are
-        // emitted with all-`object` parameter slots, so none are skipped for being value types. (#696)
+        // emitted with all-`object` parameter slots, so none are skipped for being value types. (#696,
+        // covers the private-method case of #705's explicit-undefined repro too.)
         emitter.EmitDefaultParameters(
             method.Parameters,
             isInstanceMethod: !isStatic,
@@ -896,6 +901,13 @@ public partial class ILCompiler
             }
             classMethods[method.Name.Lexeme] = methodBuilder;
         }
+
+        // #703: a user class method invoked as a value (extracted, `.bind()`-ed, or passed
+        // as a callback → `$TSFunction.Invoke`) must pad omitted trailing optional args with
+        // the `undefined` sentinel, matching the direct-call path. Marking is safe for direct
+        // calls — it only affects the value-call padding mask. Covers sync/async/generator
+        // instance methods (they all share this builder before the kind-specific branch).
+        MarkPadsUndefined(methodBuilder);
 
         // Apply method-level decorators as .NET attributes
         if (_decoratorMode != DecoratorMode.None)
@@ -1096,6 +1108,14 @@ public partial class ILCompiler
                 .ToArray();
             EmitArgumentsLocalPrologueForInstanceMethod(il, ctx, method.Parameters, resolvedParamTypes);
         }
+
+        // Apply parameter defaults (JS: a default fires when the argument is missing or
+        // explicit `undefined`). Class declarations historically skipped this entirely, so
+        // defaults never fired in compiled mode (omit → null/0, explicit undefined → NaN/cast
+        // error). ParameterTypeResolver widens value-type-defaulted params to an object slot
+        // so the prologue can observe the `$Undefined` sentinel and fire the default. (#705)
+        var defaultParamTypes = methodBuilder.GetParameters().Select(p => p.ParameterType).ToArray();
+        emitter.EmitDefaultParameters(method.Parameters, isInstanceMethod: true, paramTypes: defaultParamTypes);
 
         // Abstract methods have no body to emit
         if (method.Body != null)
