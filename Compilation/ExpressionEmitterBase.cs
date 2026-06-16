@@ -1577,6 +1577,21 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     {
         IL.Emit(OpCodes.Newobj, displayCtor);
 
+        // Thread the entry-point display class into the arrow's $entryPointDC field so the arrow
+        // reads captured TOP-LEVEL (module-level) variables through shared storage. The generator
+        // body itself reads top-level vars live via the static entry-point DC field; an arrow
+        // nested in that body needs the same reference, or dereferencing the (null) $entryPointDC
+        // field throws a NullReferenceException when the arrow runs (#732). Mirrors the per-emitter
+        // override in AsyncMoveNextEmitter; the static field is the only entry-point DC source
+        // reachable from a generator MoveNext (no local, no parent-arrow DC field).
+        if (Ctx.ArrowEntryPointDCFields?.TryGetValue(af, out var entryPointDCField) == true &&
+            Ctx.EntryPointDisplayClassStaticField != null)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldsfld, Ctx.EntryPointDisplayClassStaticField);
+            IL.Emit(OpCodes.Stfld, entryPointDCField);
+        }
+
         // Thread the enclosing state machine's function display class into the arrow's $functionDC
         // field so the arrow reads/writes captured-and-mutated locals through shared storage rather
         // than a by-value snapshot — the write case that was previously rejected (#674). The arrow's

@@ -1,4 +1,3 @@
-using SharpTS.Diagnostics.Exceptions;
 using SharpTS.Tests.Infrastructure;
 using Xunit;
 
@@ -79,6 +78,71 @@ public class GeneratorArrowBodyTests
             """;
 
         Assert.Equal("101,102,103\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_ArrowReadsCapturedTopLevelVar(ExecutionMode mode)
+    {
+        // #732: a TOP-LEVEL (module-level) variable captured by an arrow inside the generator body.
+        // The arrow reaches it through its $entryPointDC field, which the compiled generator MoveNext
+        // previously never populated → NullReferenceException when the arrow ran. Distinct from a
+        // captured generator LOCAL (snapshot path); top-level vars route through the entry-point DC.
+        var source = """
+            const base = 10;
+            function* g() {
+              yield [1, 2, 3].map(x => x + base).join(",");
+            }
+            console.log(g().next().value);
+            """;
+
+        Assert.Equal("11,12,13\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_ArrowWritesCapturedTopLevelVar(ExecutionMode mode)
+    {
+        // #732 (write case): an arrow inside the generator body WRITES a captured top-level binding.
+        // Top-level captures route through $entryPointDC (not the arrow's snapshot field map), so the
+        // write reaches the module variable directly — no function display class involved.
+        var source = """
+            let outer = 0;
+            function* g() { [1, 2, 3].forEach(n => outer += n); yield outer; }
+            console.log(g().next().value);
+            console.log(outer);
+            """;
+
+        Assert.Equal("6\n6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_InstanceMethodArrowReadsCapturedTopLevelVar(ExecutionMode mode)
+    {
+        // #732 for an INSTANCE generator method — the separate EmitGeneratorMethodBody context also
+        // needed the per-arrow $entryPointDC field map wired in.
+        var source = """
+            const base = 10;
+            class C { *gen() { yield [1, 2, 3].map(x => x + base).join(","); } }
+            console.log(new C().gen().next().value);
+            """;
+
+        Assert.Equal("11,12,13\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_InstanceMethodArrowWritesCapturedTopLevelVar(ExecutionMode mode)
+    {
+        // #732 instance-method write case.
+        var source = """
+            let outer = 0;
+            class C { *gen() { [1, 2, 3].forEach(n => outer += n); yield outer; } }
+            console.log(new C().gen().next().value);
+            """;
+
+        Assert.Equal("6\n", TestHarness.Run(source, mode));
     }
 
     [Theory]
@@ -242,13 +306,13 @@ public class GeneratorArrowBodyTests
         Assert.Equal("before:0|after:6\n", TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void Generator_InstanceMethodWritesCapturedBinding_CompiledRejectsClearly()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_InstanceMethodWritesCapturedBinding(ExecutionMode mode)
     {
-        // An INSTANCE generator method's state machine is not yet wired with a function display
-        // class (#674 covers free `function*` declarations), so a write-to-captured-binding inside
-        // one must still FAIL FAST with a clear message rather than silently dropping the write.
-        // The interpreter handles it correctly.
+        // #724: an INSTANCE generator method whose arrow WRITES a captured method local. The method's
+        // state machine is now wired with a function display class (registered in DefineClass before
+        // PropagateFunctionDCRequirements), the instance-method analogue of #674's free-function path.
         var source = """
             class C {
               *gen() {
@@ -260,18 +324,81 @@ public class GeneratorArrowBodyTests
             console.log(new C().gen().next().value);
             """;
 
-        Assert.Equal("6\n", TestHarness.RunInterpreted(source));
-        var ex = Assert.Throws<CompileException>(() => TestHarness.RunCompiled(source));
-        Assert.Contains("captured from the generator scope", ex.Message);
+        Assert.Equal("6\n", TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void AsyncGenerator_WritesCapturedBinding_CompiledRejectsClearly()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_InstanceMethodCallbackMutatesCapturedParameter(ExecutionMode mode)
     {
-        // The async-generator state machine has no function display class wired yet (#674 lifts the
-        // sync free-function generator case). Previously this SILENTLY dropped the write (compiled
-        // yielded 0 where the interpreter yields 6); it must now FAIL FAST with a clear message
-        // instead of miscompiling.
+        // #724: the mutated capture is a method PARAMETER (value-typed in the stub). The instance stub
+        // seeds it into the DC at arg offset 1 (this at 0), boxing the value type before the store.
+        var source = """
+            class C { *gen(acc: number) { [1, 2, 3].forEach(n => acc += n); yield acc; } }
+            console.log(new C().gen(100).next().value);
+            """;
+
+        Assert.Equal("106\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_InstanceMethodMixesThisAndMutatedLocal(ExecutionMode mode)
+    {
+        // #724 + #435: the arrow reads `this` (via the state machine's ThisField) AND writes a captured
+        // local (via the function DC) in the same callback.
+        var source = """
+            class C {
+              base = 10;
+              *gen() { let s = 0; [1, 2, 3].forEach(n => s += n + this.base); yield s; }
+            }
+            console.log(new C().gen().next().value);
+            """;
+
+        Assert.Equal("36\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_InstanceMethodCapturedWriteSurvivesAcrossYield(ExecutionMode mode)
+    {
+        // #724: the mutated capture is live across a yield — the DC lives on a state-machine field so
+        // it persists across the suspension.
+        var source = """
+            class C {
+              *gen() { let s = 0; yield "b:" + s; [1, 2, 3].forEach(n => s += n); yield "a:" + s; }
+            }
+            const it = new C().gen();
+            console.log(it.next().value + "|" + it.next().value);
+            """;
+
+        Assert.Equal("b:0|a:6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_TwoClassesSameMethodNameWriteCaptureIndependently(ExecutionMode mode)
+    {
+        // #724: two classes declaring a `*g()` with a write-capture must get DISTINCT function display
+        // classes — the registry key is qualified by class name, so they don't clobber each other.
+        var source = """
+            class A { *g() { let s = 0; [1, 2].forEach(n => s += n); yield s; } }
+            class B { *g() { let s = 100; [1, 2].forEach(n => s += n); yield s; } }
+            console.log(new A().g().next().value, new B().g().next().value);
+            """;
+
+        Assert.Equal("3 103\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_WritesCapturedBinding(ExecutionMode mode)
+    {
+        // #725: a sync arrow inside an ASYNC generator (`async function*`) body that WRITES a captured
+        // generator local. The async-generator state machine — a reference type — is now wired with a
+        // function display class (the async analogue of #674), so the write reaches shared storage and
+        // the generator yields 6. Previously the compiled path SILENTLY dropped the write (yielded 0),
+        // then (after #674) fail-fast; now it works.
         var source = """
             async function* g() {
               let sum = 0;
@@ -281,8 +408,78 @@ public class GeneratorArrowBodyTests
             (async () => { for await (const v of g()) console.log(v); })();
             """;
 
-        Assert.Equal("6\n", TestHarness.RunInterpreted(source));
-        var ex = Assert.Throws<CompileException>(() => TestHarness.RunCompiled(source));
-        Assert.Contains("captured from the generator scope", ex.Message);
+        Assert.Equal("6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_CapturedWriteSurvivesAcrossAwait(ExecutionMode mode)
+    {
+        // #725: the mutated capture is live across an actual `await` suspension — the DC lives on the
+        // (reference-type) state machine, so it persists across the await like a hoisted local.
+        var source = """
+            async function* g() {
+              let sum = 0;
+              await Promise.resolve(1);
+              [1, 2, 3].forEach(n => sum += n);
+              yield sum;
+            }
+            (async () => { for await (const v of g()) console.log(v); })();
+            """;
+
+        Assert.Equal("6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_MixedMutatedAndReadOnlyCaptures(ExecutionMode mode)
+    {
+        // #725: a read-only capture (`base`, by-value snapshot) and a mutated capture (`total`, function
+        // DC) coexist in the same callback — the snapshot/DC split mirrors the sync generator case.
+        var source = """
+            async function* g() {
+              const base = 10; let total = 0;
+              [1, 2, 3].forEach(n => total += n + base);
+              yield total;
+            }
+            (async () => { for await (const v of g()) console.log(v); })();
+            """;
+
+        Assert.Equal("36\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_InstanceMethodWritesCapturedBinding(ExecutionMode mode)
+    {
+        // #725: the async-generator INSTANCE method analogue — the function DC is registered in
+        // DefineClass (before Phase 5) and wired into the method's state machine at emit time.
+        var source = """
+            class C {
+              async *gen() {
+                let s = 0;
+                [1, 2, 3].forEach(n => s += n);
+                yield s;
+              }
+            }
+            (async () => { for await (const v of new C().gen()) console.log(v); })();
+            """;
+
+        Assert.Equal("6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ArrowReadsCapturedTopLevelVar(ExecutionMode mode)
+    {
+        // #725 also threads $entryPointDC into arrows nested in an async generator body (the async
+        // analogue of #732), so a captured TOP-LEVEL variable read works rather than NRE-ing.
+        var source = """
+            const base = 10;
+            async function* g() { yield [1, 2, 3].map(x => x + base).join(","); }
+            (async () => { for await (const v of g()) console.log(v); })();
+            """;
+
+        Assert.Equal("11,12,13\n", TestHarness.Run(source, mode));
     }
 }

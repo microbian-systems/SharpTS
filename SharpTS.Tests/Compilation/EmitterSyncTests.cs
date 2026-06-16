@@ -150,6 +150,12 @@ public class EmitterSyncTests
             "EmitAwait",            // Core: suspend/resume state machine
             "EmitArrowFunction",    // Display class in async generator context
             "EmitSuper",            // This field indirection
+            // --- #725: route a captured-and-mutated local through the function display class ---
+            "GetFunctionDCField",   // Exposes <>__functionDC so a capturing arrow threads it in
+            "EmitVariable",         // Read a captured-and-mutated local through the function DC
+            "EmitAssign",           // Write a captured-and-mutated local through the function DC
+            "EmitStoreVariable",    // Store side of compound/logical/increment through the function DC
+            "EmitVarDeclaration",   // Initialize a captured-and-mutated local into the function DC
             // --- #559: non-local exits must run an enclosing flag-based finally first (async #500) ---
             "EmitBreak",            // Route a break leaving a try through its finally(s)
             "EmitContinue",         // Route a continue leaving a try through its finally(s)

@@ -672,6 +672,28 @@ public partial class AsyncGeneratorMoveNextEmitter
 
         _il.Emit(OpCodes.Newobj, displayCtor);
 
+        // Thread the entry-point display class into the arrow's $entryPointDC field so it reads
+        // captured TOP-LEVEL variables through shared storage (the async-generator analog of #732).
+        if (_ctx.ArrowEntryPointDCFields?.TryGetValue(af, out var entryPointDCField) == true &&
+            _ctx.EntryPointDisplayClassStaticField != null)
+        {
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Ldsfld, _ctx.EntryPointDisplayClassStaticField);
+            _il.Emit(OpCodes.Stfld, entryPointDCField);
+        }
+
+        // Thread the state machine's function display class into the arrow's $functionDC field so a
+        // write to a captured-and-mutated generator local reaches shared storage instead of a by-value
+        // snapshot — the case the compile-time guard previously rejected (#725).
+        if (_ctx.ArrowFunctionDCFields?.TryGetValue(af, out var functionDCField) == true &&
+            _builder.FunctionDCField != null)
+        {
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.FunctionDCField);
+            _il.Emit(OpCodes.Stfld, functionDCField);
+        }
+
         if (_ctx.DisplayClassFields == null || !_ctx.DisplayClassFields.TryGetValue(af, out var fieldMap))
         {
             _il.Emit(OpCodes.Ldtoken, method);

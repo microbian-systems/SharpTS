@@ -70,6 +70,11 @@ public partial class ILCompiler
             return;
         }
 
+        // #724: register function display classes for instance generator methods whose arrows write a
+        // captured method local, before Phase 5's PropagateFunctionDCRequirements runs. Skipped for
+        // external (@DotNetType) classes, which return above without an emitted body.
+        RegisterGeneratorMethodFunctionDisplayClasses(classStmt, qualifiedClassName);
+
         // Set TypeAttributes.Abstract if the class is abstract
         TypeAttributes typeAttrs = TypeAttributes.Public | TypeAttributes.Class;
         if (classStmt.IsAbstract)
