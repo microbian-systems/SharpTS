@@ -147,6 +147,22 @@ public class SharpTSClass(
         };
     }
 
+    /// <summary>
+    /// Binds a static method to its class (so <c>this</c> is the class), handling sync,
+    /// async, generator and async-generator forms. Mirrors <see cref="BindMethod"/>.
+    /// </summary>
+    public static ISharpTSCallable BindStaticMethod(ISharpTSCallable method, SharpTSClass klass)
+    {
+        return method switch
+        {
+            SharpTSFunction func => func.BindStatic(klass),
+            SharpTSAsyncFunction asyncFunc => asyncFunc.BindStatic(klass),
+            SharpTSGeneratorFunction genFunc => genFunc.BindStatic(klass),
+            SharpTSAsyncGeneratorFunction asyncGenFunc => asyncGenFunc.BindStatic(klass),
+            _ => method
+        };
+    }
+
     protected void InitializeInstanceFields(Interpreter interpreter, SharpTSInstance instance)
     {
         // First initialize superclass fields
@@ -311,6 +327,27 @@ public class SharpTSClass(
 
     public SharpTSFunction? FindStaticSymbolSetter(SharpTSSymbol symbol)
         => _staticSymbolSetters?.GetValueOrDefault(symbol) ?? Superclass?.FindStaticSymbolSetter(symbol);
+
+    // Symbol-keyed declared methods (`[Symbol.iterator]() {...}`, the generator
+    // `*[Symbol.iterator]()` / async `async *[Symbol.asyncIterator]()` forms, and the
+    // static variants). Computed method keys are evaluated at class-definition time;
+    // symbol-valued keys land here, string-valued keys go into the regular method
+    // dictionaries. Stored as ISharpTSCallable so generator/async functions are held
+    // unboxed and bound via BindMethod. Lazy — most classes declare none.
+    private Dictionary<SharpTSSymbol, ISharpTSCallable>? _symbolMethods;
+    private Dictionary<SharpTSSymbol, ISharpTSCallable>? _staticSymbolMethods;
+
+    public void AddSymbolMethod(SharpTSSymbol symbol, ISharpTSCallable func, bool isStatic)
+    {
+        if (isStatic) (_staticSymbolMethods ??= [])[symbol] = func;
+        else (_symbolMethods ??= [])[symbol] = func;
+    }
+
+    public ISharpTSCallable? FindSymbolMethod(SharpTSSymbol symbol)
+        => _symbolMethods?.GetValueOrDefault(symbol) ?? Superclass?.FindSymbolMethod(symbol);
+
+    public ISharpTSCallable? FindStaticSymbolMethod(SharpTSSymbol symbol)
+        => _staticSymbolMethods?.GetValueOrDefault(symbol) ?? Superclass?.FindStaticSymbolMethod(symbol);
 
     public SharpTSFunction? FindGetter(string name)
     {

@@ -1830,8 +1830,28 @@ public partial class TypeChecker
                 return new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, null, paramNames);
             }
 
-            // Collect method signatures
-            var methodGroups = classExpr.Methods.GroupBy(m => m.Name.Lexeme).ToList();
+            // Computed symbol-keyed methods (`[Symbol.iterator]() {...}`) are modeled under their
+            // canonical @@name (@@iterator, …) so structural iterability sees them (#592). They carry the
+            // synthetic `<computed>` name, so they're pulled out of the name-keyed overload grouping.
+            // An iterator factory's explicit return type is used as-is (not generator-wrapped), so the
+            // structural probe reads the right element type.
+            foreach (var method in classExpr.Methods.Where(m => m.ComputedKey != null && m.Body != null))
+            {
+                if (TryGetWellKnownSymbolMemberName(method.ComputedKey) is not { } memberName)
+                    continue;
+                var (cParamTypes, cRequired, cHasRest, cParamNames) = BuildFunctionSignature(
+                    method.Parameters, validateDefaults: true, contextName: $"method '{memberName}'");
+                TypeInfo factoryReturn = method.ReturnType != null ? ToTypeInfo(method.ReturnType) : new TypeInfo.Inferred();
+                var computedFunc = new TypeInfo.Function(cParamTypes, factoryReturn, cRequired, cHasRest, null, cParamNames);
+                if (method.IsStatic)
+                    mutableClass.StaticMethods[memberName] = computedFunc;
+                else
+                    mutableClass.Methods[memberName] = computedFunc;
+                mutableClass.MethodAccess[memberName] = method.Access;
+            }
+
+            // Collect method signatures (computed-key methods handled above)
+            var methodGroups = classExpr.Methods.Where(m => m.ComputedKey == null).GroupBy(m => m.Name.Lexeme).ToList();
             foreach (var group in methodGroups)
             {
                 string methodName = group.Key;
@@ -1995,9 +2015,31 @@ public partial class TypeChecker
                 else
                     methodEnv = new TypeEnvironment(_environment);
 
-                var declaredMethodType = method.IsStatic
-                    ? classTypeForBody.StaticMethods[method.Name.Lexeme]
-                    : classTypeForBody.Methods[method.Name.Lexeme];
+                TypeInfo declaredMethodType;
+                if (method.ComputedKey != null)
+                {
+                    // Computed methods carry the `<computed>` name; well-known ones are keyed by their
+                    // @@name, arbitrary ones aren't modeled — build a signature inline to bind params.
+                    string? memberName = TryGetWellKnownSymbolMemberName(method.ComputedKey);
+                    var computedDict = method.IsStatic ? classTypeForBody.StaticMethods : classTypeForBody.Methods;
+                    if (memberName != null && computedDict.TryGetValue(memberName, out var ct))
+                    {
+                        declaredMethodType = ct;
+                    }
+                    else
+                    {
+                        var (cpt, creq, chr, cpn) = BuildFunctionSignature(
+                            method.Parameters, validateDefaults: true, contextName: "computed method");
+                        TypeInfo cr = method.ReturnType != null ? ToTypeInfo(method.ReturnType) : new TypeInfo.Inferred();
+                        declaredMethodType = new TypeInfo.Function(cpt, cr, creq, chr, null, cpn);
+                    }
+                }
+                else
+                {
+                    declaredMethodType = method.IsStatic
+                        ? classTypeForBody.StaticMethods[method.Name.Lexeme]
+                        : classTypeForBody.Methods[method.Name.Lexeme];
+                }
 
                 TypeInfo.Function methodType = declaredMethodType switch
                 {

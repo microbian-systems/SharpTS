@@ -790,6 +790,12 @@ public partial class Interpreter
         if (iterable is SharpTSInstance inst)
         {
             var iteratorFn = inst.GetBySymbol(SharpTSSymbol.Iterator);
+            // Fall back to a declared symbol-keyed method on the class chain
+            // (`class C { [Symbol.iterator]() {...} }`, including generator forms).
+            if (iteratorFn == null && inst.GetClass().FindSymbolMethod(SharpTSSymbol.Iterator) is { } symMethod)
+            {
+                iteratorFn = SharpTSClass.BindMethod(symMethod, inst);
+            }
             if (iteratorFn != null)
             {
                 // Bind 'this' to the instance if it's an arrow function
@@ -822,6 +828,16 @@ public partial class Interpreter
         else
         {
             throw new InterpreterException("[Symbol.iterator] must be a function.");
+        }
+
+        // A generator-valued [Symbol.iterator]() (`*[Symbol.iterator]() { yield ... }`) returns a
+        // generator object, which exposes iteration directly via IEnumerable rather than a queryable
+        // next() data property — delegate to it (the explicit next()-protocol objects are handled below).
+        if (iterator is IEnumerable<object?> directEnumerable and not SharpTSObject and not SharpTSInstance)
+        {
+            foreach (var item in directEnumerable)
+                yield return item;
+            yield break;
         }
 
         // Iterate using the iterator protocol

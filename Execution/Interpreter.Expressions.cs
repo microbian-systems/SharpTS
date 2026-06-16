@@ -979,6 +979,12 @@ public partial class Interpreter
     {
         object? own = instance.GetBySymbol(symbol);
         if (own != null) return own;
+        // Declared symbol-keyed method (`[Symbol.iterator]() {...}`) — returned bound, like a
+        // normal method read (`instance[Symbol.iterator]` yields the callable).
+        if (instance.GetClass().FindSymbolMethod(symbol) is { } method)
+        {
+            return SharpTSClass.BindMethod(method, instance);
+        }
         if (instance.GetClass().FindSymbolGetter(symbol) is { } getter)
         {
             return getter.Bind(instance).Call(this, []);
@@ -995,6 +1001,11 @@ public partial class Interpreter
         if (klass.FindStaticSymbolGetter(symbol) is { } getter)
         {
             return getter.BindStatic(klass).Call(this, []);
+        }
+        // Declared static symbol-keyed method (`static [Symbol.iterator]() {...}`) — bound to the class.
+        if (klass.FindStaticSymbolMethod(symbol) is { } method)
+        {
+            return SharpTSClass.BindStaticMethod(method, klass);
         }
         return klass.TryGetStaticBySymbol(symbol, out var value)
             ? value ?? SharpTSUndefined.Instance
@@ -1341,17 +1352,37 @@ public partial class Interpreter
                 }
             }
 
+            // Symbol-keyed computed methods (`[Symbol.iterator]() {...}`) attach to the class after construction.
+            List<(SharpTSSymbol Symbol, ISharpTSCallable Func, bool IsStatic)>? symbolMethods = null;
+
             // Process methods (skip overload signatures with no body)
             foreach (Stmt.Function method in classExpr.Methods.Where(m => m.Body != null))
             {
                 // Create the appropriate function type based on async/generator flags
                 ISharpTSCallable func;
-                if (method.IsAsync)
+                if (method.IsAsync && method.IsGenerator)
+                    func = new SharpTSAsyncGeneratorFunction(method, _environment);
+                else if (method.IsAsync)
                     func = new SharpTSAsyncFunction(method, _environment);
                 else if (method.IsGenerator)
                     func = new SharpTSGeneratorFunction(method, _environment);
                 else
                     func = new SharpTSFunction(method, _environment);
+
+                // Computed method keys (`[Symbol.iterator]()`) — symbol keys land in the symbol-method
+                // table; other keys fold to a string-named method (parallels the class-declaration path).
+                if (method.ComputedKey != null)
+                {
+                    object? key = Evaluate(method.ComputedKey);
+                    if (key is SharpTSSymbol symbolKey)
+                    {
+                        (symbolMethods ??= []).Add((symbolKey, func, method.IsStatic));
+                        continue;
+                    }
+                    string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
+                    (method.IsStatic ? staticMethods : methods)[keyStr] = func;
+                    continue;
+                }
 
                 if (method.IsStatic)
                 {
@@ -1459,6 +1490,14 @@ public partial class Interpreter
                 foreach (var (symbol, func, isStatic, isGetter) in symbolAccessors)
                 {
                     klass.AddSymbolAccessor(symbol, func, isStatic, isGetter);
+                }
+            }
+
+            if (symbolMethods != null)
+            {
+                foreach (var (symbol, func, isStatic) in symbolMethods)
+                {
+                    klass.AddSymbolMethod(symbol, func, isStatic);
                 }
             }
 
