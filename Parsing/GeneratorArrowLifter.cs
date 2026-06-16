@@ -760,19 +760,17 @@ internal sealed class GeneratorArrowLifter
     {
         var freeVars = FreeVariableCollector.Collect(af);
 
-        // #678: a generator expression that closes over a block-scoped binding (loop variable, catch
-        // parameter, or a let/const/class declared in a nested block) cannot be lifted — the module
-        // body and every enclosing function body sit outside that block, so the lift would unbind the
-        // reference. Leave it in place as a generator EXPRESSION: the interpreter runs generator
-        // expressions natively and the type checker establishes the generator context directly. The
-        // body is still rewritten so any nested generator expressions inside it are handled, and its
-        // own name (if any) stays bound natively — no #679 self-binding rewrite is needed in place.
-        //
-        // ASYNC generator expressions are excluded: the interpreter's native arrow path does not yet
-        // build an async generator instance (EvaluateArrowFunction treats an async arrow as a plain
-        // async function), so an in-place async generator would be mishandled. They keep their prior
-        // lift behavior — a block-capturing async generator still reports "Undefined variable" (#734).
-        if (!af.IsAsync && CapturesBlockScopedBinding(freeVars))
+        // #678/#734: a generator expression (sync or async) that closes over a block-scoped binding
+        // (loop variable, catch parameter, or a let/const/class declared in a nested block) cannot be
+        // lifted — the module body and every enclosing function body sit outside that block, so the lift
+        // would unbind the reference. Leave it in place as a generator EXPRESSION: the interpreter runs
+        // both sync (SharpTSArrowGeneratorFunction) and async (SharpTSAsyncArrowGeneratorFunction)
+        // generator expressions natively, and the type checker establishes the generator context
+        // directly (CheckArrowFunction handles arrow.IsAsync). The body is still rewritten so any nested
+        // generator expressions inside it are handled, and its own name (if any) stays bound natively —
+        // no #679 self-binding rewrite is needed in place. The compiler has no generator-expression IL
+        // path and reports a clear "Yield not supported in this context" error for the capturing case.
+        if (CapturesBlockScopedBinding(freeVars))
         {
             var inPlaceBody = RewriteFunctionBody(af.Parameters, af.BlockBody!, selfName: af.Name?.Lexeme);
             var inPlaceParams = RewriteParameters(af.Parameters);

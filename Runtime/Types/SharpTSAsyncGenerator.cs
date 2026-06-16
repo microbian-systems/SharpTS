@@ -10,622 +10,378 @@ namespace SharpTS.Runtime.Types;
 /// Runtime object representing an active async generator instance.
 /// </summary>
 /// <remarks>
-/// Created by <see cref="SharpTSAsyncGeneratorFunction"/> when called.
-/// Combines async execution (await) with generator semantics (yield).
-/// Each call to next() returns a Promise that resolves to { value, done }.
+/// Created by <see cref="SharpTSAsyncGeneratorFunction"/> (declarations) and
+/// <see cref="SharpTSAsyncArrowGeneratorFunction"/> (function expressions) when called — both drive
+/// the same body-statement list, so a single type serves both. Each <c>next()</c>/<c>return()</c>/
+/// <c>throw()</c> returns a <see cref="Task{T}"/> that resolves to a <see cref="SharpTSIteratorResult"/>.
+///
+/// <para><b>Lazy coroutine model.</b> Unlike a fully synchronous generator (which suspends a worker
+/// thread at each <c>yield</c>), an async generator can <c>await</c> mid-body, so it cannot use a
+/// background thread: the interpreter is single-threaded (a custom <see cref="System.Threading.SynchronizationContext"/>
+/// routes every async continuation back to the one event-loop thread), and a worker would race the
+/// event loop on the shared interpreter environment. Instead the body runs as an ordinary
+/// interpreter async execution (<see cref="Interpreter.ExecuteBlockAsync"/>) on that event-loop
+/// thread and suspends at each <c>yield</c> by handing the value to the driving request and awaiting
+/// the next one. Reusing the real async execution means an <c>await</c> nested inside a yielded
+/// expression preserves the ambient environment like any async function (no closure leak, #752) and a
+/// <c>for await…of</c> inside the body drives the async-iterator protocol natively (#717).</para>
+///
+/// <para><b>Request queue.</b> Pending <c>next()</c>/<c>return()</c>/<c>throw()</c> calls are serviced
+/// FIFO (ECMA-262 §27.6.3 AsyncGenerator request queue), so two <c>next()</c> issued before the first
+/// settles resolve in call order instead of racing (#690). A re-entrant resume (the body advancing
+/// itself synchronously) is rejected with a catchable <c>TypeError</c> rather than deadlocking (#542,
+/// mirrors compiled mode).</para>
 /// </remarks>
 /// <seealso cref="SharpTSAsyncGeneratorFunction"/>
+/// <seealso cref="SharpTSAsyncArrowGeneratorFunction"/>
 /// <seealso cref="SharpTSGenerator"/>
 public class SharpTSAsyncGenerator : ITypeCategorized
 {
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.AsyncGenerator;
 
-    private readonly Stmt.Function _declaration;
+    private readonly List<Stmt> _body;
     private readonly RuntimeEnvironment _environment;
     private readonly Interpreter _interpreter;
 
-    private List<object?>? _values = null;  // Collected yielded values (null = not yet executed)
-    // The single eager body drain, shared by every next() caller. Started by the first next() and
-    // awaited by all subsequent calls so overlapping requests are serviced in call order (ECMA-262
-    // §27.6.3 services the async-generator request queue FIFO) rather than racing the half-populated
-    // _values list. _values alone can't gate this: it is set to an empty list at drain start, so a
-    // second next() issued before the first settles would see it non-null and wrongly report completion
-    // before any value was collected (#690).
-    private Task? _drainTask = null;
-    private int _index = 0;
-    // The generator's completion value. Defaults to undefined so a body that falls off the end (or a
-    // no-arg return) reports { value: undefined, done: true }, not C# null (#540).
-    private object? _returnValue = SharpTSUndefined.Instance;
-    private bool _closed = false;
-    // Whether the one-time completion result has already been handed out. Once the body is drained
-    // (or the generator is closed), the completion value is reported exactly once; every later next()
-    // reports undefined (ECMA-262 §27.6.1.2 → CreateIterResultObject(undefined, true), #540).
-    private bool _completionDelivered = false;
-    // A throw (an uncaught guest `throw` or a rejected `await`) raised by the eagerly-drained body.
-    // The body runs to completion on the first next(), but the throw must be observed from the next()
-    // that follows the values yielded before it — so it is buffered here and rethrown by Next() once
-    // those values are exhausted, rejecting that call's promise (#566). Null when the body did not throw.
-    private Exception? _pendingException = null;
-
-    // The interpreter's ambient environment captured when the eager body drain begins — i.e. the scope
-    // active in the caller that triggered the first next(). The drain temporarily repoints the shared
-    // interpreter environment at the generator's own closure (_environment); because the body suspends
-    // at `await` points while that closure is installed, control can return to the caller — or to
-    // interleaved event-loop work — with the generator's closure still in place. Every guest-suspending
-    // await restores this caller environment before suspending and re-asserts the generator's
-    // environment on resume, so the generator never leaks its closure into the ambient environment
-    // (otherwise an outer binding read after the generator is driven resolves against the wrong scope:
-    // "Undefined variable" in a for-await body (#689), or a member access on the wrong value (#690)).
-    private RuntimeEnvironment? _callerEnv;
-
-    public SharpTSAsyncGenerator(Stmt.Function declaration, RuntimeEnvironment environment, Interpreter interpreter)
+    private enum State
     {
-        _declaration = declaration;
+        /// <summary>Created but body not started; the first next() starts it.</summary>
+        SuspendedStart,
+        /// <summary>Body suspended at a yield, awaiting the next request.</summary>
+        SuspendedYield,
+        /// <summary>Body running or suspended at an await (started, not at a yield, not finished).</summary>
+        Executing,
+        /// <summary>Body finished (ran off the end, returned, or threw).</summary>
+        Completed,
+    }
+
+    private State _state = State.SuspendedStart;
+
+    /// <summary>
+    /// A queued <c>next</c>/<c>return</c>/<c>throw</c>: how it resumes the body, the carried value, and
+    /// the promise handed back to the caller (resolved/rejected when the body produces the matching
+    /// result). Continuations run asynchronously so a resolved request never re-enters the body inline.
+    /// </summary>
+    private sealed class Request(GeneratorResumeKind kind, object? value)
+    {
+        public GeneratorResumeKind Kind { get; } = kind;
+        public object? Value { get; } = value;
+        public TaskCompletionSource<object?> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    // Requests received while the body is Executing (mid-await), drained in arrival order (§27.6.3).
+    private readonly Queue<Request> _queue = new();
+    // The request the body's next yield/completion will fulfill.
+    private Request? _currentRequest;
+    // Set while the body is SuspendedYield: completed by the resuming request to wake the body.
+    private TaskCompletionSource<Request>? _pendingResume;
+
+    // True only while the body runs its initial synchronous segment (between the first next() and the
+    // first suspension). A next/return/throw observing this is the body advancing itself synchronously
+    // (re-entrancy), which a real queue can't serve here without deadlocking the body it blocks (#542).
+    private bool _running;
+
+    public SharpTSAsyncGenerator(List<Stmt> body, RuntimeEnvironment environment, Interpreter interpreter)
+    {
+        _body = body;
         _environment = environment;
         _interpreter = interpreter;
     }
 
+    /// <summary>Advances the generator, resuming a suspended <c>yield</c> with <c>undefined</c>.</summary>
+    public Task<object?> Next() => Resume(GeneratorResumeKind.Next, SharpTSUndefined.Instance);
+
+    /// <summary>Advances the generator, resuming a suspended <c>yield</c> with <paramref name="sentValue"/>.</summary>
+    public Task<object?> Next(object? sentValue) => Resume(GeneratorResumeKind.Next, sentValue);
+
     /// <summary>
-    /// Advances the async generator to the next yield point.
-    /// Returns a Promise that resolves to { value, done } result object.
+    /// Resumes the generator with a <c>return</c> completion. A suspended body runs its enclosing
+    /// <c>finally</c> blocks before settling as <c>{ value, done: true }</c> (a yielding finally
+    /// suspends here instead, ECMA-262 §27.6.1.3 / §14.4.14); a not-yet-started or finished one simply
+    /// reports the value.
     /// </summary>
-    public async Task<object?> Next()
+    public Task<object?> Return(object? value = null) => Resume(GeneratorResumeKind.Return, value);
+
+    /// <summary>
+    /// Resumes the generator with a <c>throw</c> completion at the suspended <c>yield</c>, running any
+    /// active <c>catch</c>/<c>finally</c>. If a catch handles it the body continues; otherwise the
+    /// returned promise rejects.
+    /// </summary>
+    public Task<object?> Throw(object? error = null) => Resume(GeneratorResumeKind.Throw, error);
+
+    /// <summary>
+    /// Core of <c>next()</c>/<c>return()</c>/<c>throw()</c>: enqueues the request and, depending on the
+    /// generator's state, starts the body, resumes it from a yield, or queues behind an in-flight run.
+    /// </summary>
+    private Task<object?> Resume(GeneratorResumeKind kind, object? value)
     {
-        // A finished/disposed generator (closed via return()/throw()) reports undefined; its completion
-        // value was already delivered/consumed by that return()/throw() call (ECMA-262 §27.6.1.2, #540).
-        if (_closed)
-        {
-            return new SharpTSIteratorResult(SharpTSUndefined.Instance, done: true);
-        }
+        // Re-entrancy (the body advancing itself during its synchronous segment): reject rather than
+        // deadlock — the queued request could only be served by the body that is blocking on it (#542).
+        if (_running)
+            return Task.FromException<object?>(
+                new ThrowException(new SharpTSTypeError("Async generator is already running")));
 
-        // Execute the generator body on the first call; serialize concurrent/overlapping next() calls by
-        // awaiting the same drain task. A second next() issued before the first settles must wait for the
-        // shared drain and then hand out the next collected value in call order — not race ahead and read
-        // the not-yet-populated _values list as completion (#690).
-        _drainTask ??= ExecuteBodyAsync();
-        await _drainTask;
-
-        // Defensive check: ExecuteBodyAsync should always initialize _values,
-        // but verify to provide a clear error message if something goes wrong.
-        if (_values == null)
+        switch (_state)
         {
-            throw new InvalidOperationException(
-                "Internal error: Async generator body did not initialize values collection. " +
-                "This indicates a bug in ExecuteBodyAsync.");
-        }
+            case State.Completed:
+                return SettleCompleted(kind, value);
 
-        if (_index < _values.Count)
-        {
-            return new SharpTSIteratorResult(_values[_index++], done: false);
-        }
+            case State.SuspendedStart:
+                if (kind == GeneratorResumeKind.Return)
+                {
+                    // return() before the body starts closes it without running the body.
+                    _state = State.Completed;
+                    return Task.FromResult<object?>(new SharpTSIteratorResult(value, done: true));
+                }
+                if (kind == GeneratorResumeKind.Throw)
+                {
+                    // throw() before the body starts completes it abnormally.
+                    _state = State.Completed;
+                    return Task.FromException<object?>(ThrowException.FromResult(value));
+                }
+                return StartBody(new Request(kind, value));
 
-        // Body fully drained. If it threw after the values above, surface that now so this next()'s
-        // promise rejects — the throw is delivered after the preceding values, then the generator is
-        // done (#566). Reported exactly once.
-        if (_pendingException != null)
-        {
-            var ex = _pendingException;
-            _pendingException = null;
-            _closed = true;
-            _completionDelivered = true;
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex).Throw();
-        }
+            case State.SuspendedYield:
+                var resumeReq = new Request(kind, value);
+                _currentRequest = resumeReq;
+                _state = State.Executing;
+                var pending = _pendingResume!;
+                _pendingResume = null;
+                pending.SetResult(resumeReq); // wakes the body on a later turn (RunContinuationsAsynchronously)
+                return resumeReq.Completion.Task;
 
-        // Deliver the completion value once (the body's `return X`, or undefined when it ran off the
-        // end), then undefined on every later call — the stale completion / last yielded value must
-        // not replay forever (#540; mirrors the sync generator's done semantics).
-        if (_completionDelivered)
-        {
-            return new SharpTSIteratorResult(SharpTSUndefined.Instance, done: true);
+            case State.Executing:
+            default:
+                // Body is mid-await (concurrent next): queue and let the body pick it up at its next yield.
+                var queued = new Request(kind, value);
+                _queue.Enqueue(queued);
+                return queued.Completion.Task;
         }
-        _completionDelivered = true;
-        return new SharpTSIteratorResult(_returnValue, done: true);
     }
 
     /// <summary>
-    /// Closes the async generator and returns a Promise resolving to { value, done: true }.
+    /// Starts the body for the first <c>next()</c>. The body runs synchronously up to its first
+    /// suspension (matching ECMA-262, where the first resume runs the body until its first
+    /// await/yield); the surrounding save/restore keeps that synchronous prologue from leaking the
+    /// generator's environment / active-generator binding into the caller that issued <c>next()</c>.
     /// </summary>
-    public Task<object?> Return(object? value = null)
+    private Task<object?> StartBody(Request first)
     {
-        // return(v) reports { value: v, done: true } (echoing the argument, per ECMA-262 §27.6.1.3) and
-        // closes the generator; a later next() then reports undefined via the `_closed` guard in Next()
-        // rather than replaying v (#540). _completionDelivered is set so the once-only accounting stays
-        // consistent even if the body had already run off the end before this return().
-        _closed = true;
-        _completionDelivered = true;
-        // return() closes the generator and wins over a not-yet-observed body throw: the code after
-        // the last yield never "runs" observably, so discard any buffered exception (#566).
-        _pendingException = null;
-        return Task.FromResult<object?>(new SharpTSIteratorResult(value, done: true));
-    }
+        _currentRequest = first;
+        _state = State.Executing;
 
-    /// <summary>
-    /// Throws an exception at the current yield point.
-    /// Returns a Promise that rejects with the error.
-    /// </summary>
-    public Task<object?> Throw(object? error = null)
-    {
-        _closed = true;
-        string message = error?.ToString() ?? "AsyncGenerator.throw() called";
-        throw new ThrowException(error ?? message);
-    }
-
-    /// <summary>
-    /// Executes the async generator body, collecting all yielded values.
-    /// Handles both yield and await expressions.
-    /// </summary>
-    private async Task ExecuteBodyAsync()
-    {
-        _values = [];
-
-        if (_declaration.Body == null || _declaration.Body.Count == 0)
-        {
-            return;
-        }
-
-        // Save and set the interpreter environment. _callerEnv is the scope the drain must restore
-        // whenever it suspends at an await, so the shared interpreter environment is never left pointing
-        // at this generator's closure while control is elsewhere (#689, #690).
-        RuntimeEnvironment previousEnv = _interpreter.Environment;
-        _callerEnv = previousEnv;
-        _interpreter.SetEnvironment(_environment);
-
+        RuntimeEnvironment savedEnv = _interpreter.Environment;
+        SharpTSAsyncGenerator? savedGen = _interpreter.CurrentAsyncGenerator;
+        _running = true;
         try
         {
-            var result = await ExecuteStatementsAsync(_declaration.Body);
+            _ = RunBodyAsync();
+        }
+        finally
+        {
+            _running = false;
+            _interpreter.CurrentAsyncGenerator = savedGen;
+            _interpreter.SetEnvironment(savedEnv);
+        }
+        return first.Completion.Task;
+    }
+
+    /// <summary>
+    /// Runs the generator body as an ordinary interpreter async execution, installing this generator as
+    /// the interpreter's active async-generator (so <c>yield</c> expressions suspend through it) and the
+    /// generator closure as the ambient environment. Settles the driving request with the completion
+    /// value, a <c>return</c> value, or a thrown error.
+    /// </summary>
+    private async Task RunBodyAsync()
+    {
+        RuntimeEnvironment prevEnv = _interpreter.Environment;
+        SharpTSAsyncGenerator? prevGen = _interpreter.CurrentAsyncGenerator;
+        _interpreter.SetEnvironment(_environment);
+        _interpreter.CurrentAsyncGenerator = this;
+
+        object? completionValue = SharpTSUndefined.Instance;
+        Exception? pendingException = null;
+        try
+        {
+            ExecutionResult result = await _interpreter.ExecuteBlockAsync(_body, _environment);
             if (result.Type == ExecutionResult.ResultType.Return)
-            {
-                _returnValue = result.Value.ToObject();
-            }
+                completionValue = result.Value.ToObject();
             else if (result.Type == ExecutionResult.ResultType.Throw)
-            {
-                // Buffer rather than throw now: the body drains eagerly, so a throw after some yields
-                // must surface from the next() that follows those values, not the first one (#566).
-                // The original throw value is preserved through ThrowException (see SharpTSFunction.Call).
-                _pendingException = ThrowException.FromResult(result.Value.ToObject());
-            }
+                pendingException = ThrowException.FromResult(result.Value.ToObject());
+        }
+        catch (GeneratorReturnException grex)
+        {
+            // A return() injected at a yield with no enclosing try unwinds to here: settle as a return.
+            completionValue = grex.Value;
         }
         catch (Exception ex) when (ex is not YieldException)
         {
-            // A host exception escaped the body — a rejected `await`, or a `throw` surfaced as a C#
-            // exception. Buffer it so the post-drain next() rejects its promise with it (#566).
-            _pendingException = ex;
+            // A rejected await, or a guest throw surfaced as a host exception: reject the driving request.
+            pendingException = ex;
         }
         finally
         {
-            _interpreter.SetEnvironment(previousEnv);
+            _interpreter.CurrentAsyncGenerator = prevGen;
+            _interpreter.SetEnvironment(prevEnv);
         }
+
+        CompleteBody(completionValue, pendingException);
     }
 
     /// <summary>
-    /// Awaits a host task at a point where the eager body drain suspends, keeping the interpreter's
-    /// shared ambient environment consistent across the suspension. The drain runs with that environment
-    /// repointed at this generator's closure; this restores the caller's environment (<see cref="_callerEnv"/>)
-    /// before suspending — so control returning to the caller, or interleaved event-loop work, sees the
-    /// correct scope — and re-asserts the generator's environment on resume so the drain continues in the
-    /// right scope. Without it, an outer binding read after the generator is driven resolves against the
-    /// wrong scope: "Undefined variable" in a for-await body (#689) or a member access on the wrong value
-    /// (#690). Mirrors the caller-state save/restore the synchronous generator performs at each yield.
+    /// Suspends the body at a plain <c>yield</c>: hands the yielded value to the driving request and
+    /// awaits the next one. Invoked by the interpreter when it evaluates a <c>yield</c> inside this
+    /// generator's body (see <see cref="Interpreter.EvaluateYieldAsync"/>).
     /// </summary>
-    private async Task<object?> AwaitDetached(Task<object?> task)
+    internal Task<object?> OnYieldAsync(object? value, bool isDelegating)
+        => isDelegating ? DelegateYieldStarAsync(value) : PlainYieldAsync(value);
+
+    private async Task<object?> PlainYieldAsync(object? value)
     {
-        RuntimeEnvironment generatorEnv = _interpreter.Environment;
-        _interpreter.SetEnvironment(_callerEnv ?? generatorEnv);
-        try
-        {
-            return await task;
-        }
-        finally
-        {
-            _interpreter.SetEnvironment(generatorEnv);
-        }
+        GeneratorResume resume = await SuspendAtYieldAsync(value);
+        // The resumed yield evaluates to the sent value; an abrupt resume (return/throw) is realized as
+        // the control-flow exception that unwinds the body's own try/finally blocks (§27.5.3.4).
+        return resume.Realize();
     }
 
     /// <summary>
-    /// Recursively executes statements asynchronously, collecting yields.
+    /// The core suspend: delivers <paramref name="value"/> as <c>{ value, done: false }</c> to the
+    /// driving request, awaits the next request, and re-asserts the generator's scope on resume (the
+    /// await may have run unrelated event-loop work in between).
     /// </summary>
-    private async Task<ExecutionResult> ExecuteStatementsAsync(List<Stmt> statements)
+    private async Task<GeneratorResume> SuspendAtYieldAsync(object? value)
     {
-        foreach (var stmt in statements)
-        {
-            var result = await ExecuteStatementAsync(stmt);
-            if (result.IsAbrupt) return result;
-        }
-        return ExecutionResult.Success();
+        RuntimeEnvironment genEnv = _interpreter.Environment;
+        Request req = _currentRequest!;
+        _currentRequest = null;
+        _state = State.SuspendedYield;
+        req.Completion.SetResult(new SharpTSIteratorResult(value, done: false));
+
+        Request next = await TakeNextRequestAsync();
+
+        _interpreter.SetEnvironment(genEnv);
+        _interpreter.CurrentAsyncGenerator = this;
+        return new GeneratorResume(next.Kind, next.Value);
     }
 
     /// <summary>
-    /// Executes a single statement asynchronously, handling yield and await expressions.
+    /// Returns the next request to resume with: a concurrently-queued one immediately, otherwise a task
+    /// completed by the resuming <c>next()</c>/<c>return()</c>/<c>throw()</c>.
     /// </summary>
-    private async Task<ExecutionResult> ExecuteStatementAsync(Stmt stmt)
+    private Task<Request> TakeNextRequestAsync()
     {
-        switch (stmt)
+        if (_queue.Count > 0)
         {
-            case Stmt.Expression exprStmt:
-                try
-                {
-                    await EvaluateAsync(exprStmt.Expr);
-                }
-                catch (YieldException yield)
-                {
-                    await HandleYieldAsync(yield);
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.Block block:
-                if (block.Statements != null)
-                {
-                    var blockEnv = new RuntimeEnvironment(_interpreter.Environment);
-                    RuntimeEnvironment prevEnv = _interpreter.Environment;
-                    _interpreter.SetEnvironment(blockEnv);
-                    try
-                    {
-                        return await ExecuteStatementsAsync(block.Statements);
-                    }
-                    finally
-                    {
-                        _interpreter.SetEnvironment(prevEnv);
-                    }
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.Var varStmt:
-                object? value = null;
-                try
-                {
-                    if (varStmt.Initializer != null)
-                    {
-                        value = await EvaluateAsync(varStmt.Initializer);
-                    }
-                }
-                catch (YieldException yield)
-                {
-                    await HandleYieldAsync(yield);
-                    value = null;
-                }
-                _environment.Define(varStmt.Name.Lexeme, value);
-                return ExecutionResult.Success();
-
-            case Stmt.If ifStmt:
-                object? condition;
-                try
-                {
-                    condition = await EvaluateAsync(ifStmt.Condition);
-                }
-                catch (YieldException yield)
-                {
-                    await HandleYieldAsync(yield);
-                    condition = false;
-                }
-
-                if (IsTruthy(condition))
-                {
-                    return await ExecuteStatementAsync(ifStmt.ThenBranch);
-                }
-                else if (ifStmt.ElseBranch != null)
-                {
-                    return await ExecuteStatementAsync(ifStmt.ElseBranch);
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.While whileStmt:
-                while (true)
-                {
-                    object? whileCond;
-                    try
-                    {
-                        whileCond = await EvaluateAsync(whileStmt.Condition);
-                    }
-                    catch (YieldException yield)
-                    {
-                        await HandleYieldAsync(yield);
-                        whileCond = false;
-                    }
-
-                    if (!IsTruthy(whileCond)) break;
-
-                    var result = await ExecuteStatementAsync(whileStmt.Body);
-                    if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == null) break;
-                    if (result.Type == ExecutionResult.ResultType.Continue && result.TargetLabel == null) continue;
-                    if (result.IsAbrupt) return result;
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.For forStmt:
-                // Execute initializer once
-                if (forStmt.Initializer != null)
-                {
-                    var initResult = await ExecuteStatementAsync(forStmt.Initializer);
-                    if (initResult.IsAbrupt) return initResult;
-                }
-
-                // Loop
-                while (true)
-                {
-                    // Check condition
-                    if (forStmt.Condition != null)
-                    {
-                        object? forCond;
-                        try
-                        {
-                            forCond = await EvaluateAsync(forStmt.Condition);
-                        }
-                        catch (YieldException yield)
-                        {
-                            await HandleYieldAsync(yield);
-                            forCond = false;
-                        }
-
-                        if (!IsTruthy(forCond)) break;
-                    }
-
-                    // Execute body
-                    var result = await ExecuteStatementAsync(forStmt.Body);
-
-                    if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == null)
-                        break;
-
-                    // On continue OR normal completion, execute increment
-                    if (result.Type == ExecutionResult.ResultType.Continue && result.TargetLabel == null)
-                    {
-                        // Execute increment before continuing
-                        if (forStmt.Increment != null)
-                        {
-                            try
-                            {
-                                await EvaluateAsync(forStmt.Increment);
-                            }
-                            catch (YieldException yield)
-                            {
-                                await HandleYieldAsync(yield);
-                            }
-                        }
-                        continue;
-                    }
-
-                    if (result.IsAbrupt) return result;
-
-                    // Normal completion: execute increment
-                    if (forStmt.Increment != null)
-                    {
-                        try
-                        {
-                            await EvaluateAsync(forStmt.Increment);
-                        }
-                        catch (YieldException yield)
-                        {
-                            await HandleYieldAsync(yield);
-                        }
-                    }
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.ForOf forOf:
-                object? iterable;
-                try
-                {
-                    iterable = await EvaluateAsync(forOf.Iterable);
-                }
-                catch (YieldException yield)
-                {
-                    await HandleYieldAsync(yield);
-                    iterable = new SharpTSArray([]);
-                }
-
-                IEnumerable<object?> elements = GetIterableElements(iterable);
-                foreach (var element in elements)
-                {
-                    var loopEnv = new RuntimeEnvironment(_interpreter.Environment);
-                    loopEnv.Define(forOf.Variable.Lexeme, element);
-
-                    RuntimeEnvironment prevEnv = _interpreter.Environment;
-                    _interpreter.SetEnvironment(loopEnv);
-                    try
-                    {
-                        var result = await ExecuteStatementAsync(forOf.Body);
-                        if (result.Type == ExecutionResult.ResultType.Break && result.TargetLabel == null) break;
-                        if (result.Type == ExecutionResult.ResultType.Continue && result.TargetLabel == null) continue;
-                        if (result.IsAbrupt) return result;
-                    }
-                    finally
-                    {
-                        _interpreter.SetEnvironment(prevEnv);
-                    }
-                }
-                return ExecutionResult.Success();
-
-            case Stmt.Return returnStmt:
-                // A value-less `return;` (or running off the end) completes with undefined, not C#
-                // null; only an explicit `return null;` reports null (#540, mirrors the sync gen).
-                object? returnValue = SharpTSUndefined.Instance;
-                if (returnStmt.Value != null)
-                {
-                    try
-                    {
-                        returnValue = await EvaluateAsync(returnStmt.Value);
-                    }
-                    catch (YieldException yield)
-                    {
-                        await HandleYieldAsync(yield);
-                    }
-                }
-                return ExecutionResult.Return(returnValue);
-
-            case Stmt.TryCatch tryCatch:
-                ExecutionResult tryResult;
-                try
-                {
-                    tryResult = await ExecuteStatementsAsync(tryCatch.TryBlock);
-                }
-                catch (Exception ex) when (ex is not YieldException)
-                {
-                    // A host exception escaped the try body — most often a rejected `await`
-                    // (SharpTSPromiseRejectedException) or a guest `throw` surfaced as a C#
-                    // exception. Convert it to a guest Throw so this try's catch/finally run (#617).
-                    tryResult = ExecutionResult.Throw(_interpreter.TranslateException(ex));
-                }
-
-                if (tryResult.Type == ExecutionResult.ResultType.Throw && tryCatch.CatchBlock != null)
-                {
-                    var catchEnv = new RuntimeEnvironment(_interpreter.Environment);
-                    // `catch {}` (no binding) is valid — only define the param when present, and bind
-                    // the unwrapped guest value rather than the boxed RuntimeValue struct.
-                    if (tryCatch.CatchParam != null)
-                        catchEnv.Define(tryCatch.CatchParam.Lexeme,
-                            _interpreter.CoerceCaughtValueForBinding(tryResult.Value.ToObject()));
-                    RuntimeEnvironment prevEnv = _interpreter.Environment;
-                    _interpreter.SetEnvironment(catchEnv);
-                    try
-                    {
-                        tryResult = await ExecuteStatementsAsync(tryCatch.CatchBlock);
-                    }
-                    catch (Exception ex) when (ex is not YieldException)
-                    {
-                        tryResult = ExecutionResult.Throw(_interpreter.TranslateException(ex));
-                    }
-                    finally
-                    {
-                        _interpreter.SetEnvironment(prevEnv);
-                    }
-                }
-
-                if (tryCatch.FinallyBlock != null)
-                {
-                    ExecutionResult finallyResult;
-                    try
-                    {
-                        finallyResult = await ExecuteStatementsAsync(tryCatch.FinallyBlock);
-                    }
-                    catch (Exception ex) when (ex is not YieldException)
-                    {
-                        finallyResult = ExecutionResult.Throw(_interpreter.TranslateException(ex));
-                    }
-                    if (finallyResult.IsAbrupt) return finallyResult;
-                }
-                return tryResult;
-
-            default:
-                // For other statements, delegate to the interpreter's async handler
-                try
-                {
-                    return await _interpreter.ExecuteBlockAsync([stmt], _environment);
-                }
-                catch (YieldException yield)
-                {
-                    await HandleYieldAsync(yield);
-                    return ExecutionResult.Success();
-                }
+            Request req = _queue.Dequeue();
+            _currentRequest = req;
+            _state = State.Executing;
+            return Task.FromResult(req);
         }
+        // _state stays SuspendedYield; Resume() sets _currentRequest + Executing when it wakes us.
+        _pendingResume = new TaskCompletionSource<Request>(TaskCreationOptions.RunContinuationsAsynchronously);
+        return _pendingResume.Task;
     }
 
     /// <summary>
-    /// Evaluates an expression asynchronously, handling await and yield expressions.
+    /// <c>yield*</c> delegation (ECMA-262 §14.4.14, async path). A delegated async generator is driven
+    /// via <c>next/return/throw</c>, forwarding the outer's resume completion into it; a sync iterable
+    /// is iterated lazily with the outer suspended for each element.
     /// </summary>
-    private async Task<object?> EvaluateAsync(Expr expr)
+    private async Task<object?> DelegateYieldStarAsync(object? iterable)
     {
-        // Check for await expression
-        if (expr is Expr.Await awaitExpr)
+        if (iterable is SharpTSAsyncGenerator inner)
         {
-            // Recursively evaluate the inner expression (may contain await)
-            var value = await EvaluateAsync(awaitExpr.Expression);
-            // Handle SharpTSPromise (wraps Task<object?>). Await through AwaitDetached so the suspension
-            // does not leak this generator's closure into the shared interpreter environment (#689, #690).
-            if (value is SharpTSPromise promise)
+            var received = new GeneratorResume(GeneratorResumeKind.Next, SharpTSUndefined.Instance);
+            while (true)
             {
-                return await AwaitDetached(promise.Task);
+                // Drive the delegate with the completion the outer was resumed with, preserving the
+                // outer's environment across the inner's own suspensions.
+                Task<object?> step = received.Kind switch
+                {
+                    GeneratorResumeKind.Return => inner.Return(received.Value),
+                    GeneratorResumeKind.Throw => inner.Throw(received.Value),
+                    _ => inner.Next(received.Value),
+                };
+                object? innerResult = await _interpreter.AwaitPreservingEnvironment(step);
+                (bool done, object? innerValue) = ReadIteratorResult(innerResult);
+
+                if (done)
+                {
+                    // return → the outer generator itself returns the delegate's value (step c.viii);
+                    // next/throw(handled) → yield* evaluates to it and the outer continues (steps a.v/b.5).
+                    if (received.Kind == GeneratorResumeKind.Return)
+                        throw new GeneratorReturnException(innerValue);
+                    return innerValue;
+                }
+
+                received = await SuspendAtYieldAsync(innerValue);
             }
-            if (value is Task<object?> task)
-            {
-                return await AwaitDetached(task);
-            }
-            return value;
         }
 
-        // Check for yield expression - evaluate its value asynchronously
-        if (expr is Expr.Yield yieldExpr)
+        // Sync iterable (array, Map, Set, string, custom iterator): iterate lazily, suspending the outer
+        // for each element. An abrupt resume realizes the control-flow exception to unwind the outer.
+        foreach (object? element in _interpreter.GetIterableElements(iterable))
         {
-            object? value = null;
-            if (yieldExpr.Value != null)
-            {
-                value = await EvaluateAsync(yieldExpr.Value);
-            }
-            throw new YieldException(value, yieldExpr.IsDelegating);
+            GeneratorResume resume = await SuspendAtYieldAsync(element);
+            resume.Realize();
         }
-
-        // For other expressions, evaluate asynchronously to support nested await
-        return (await _interpreter.EvaluateAsync(expr)).ToObject();
+        return SharpTSUndefined.Instance;
     }
 
     /// <summary>
-    /// Handles a yield exception by collecting the value.
+    /// Settles the body's completion: resolves the driving request once with the completion value
+    /// (a <c>return</c> value or undefined when it ran off the end), or rejects it with a thrown error.
+    /// Any requests queued behind it report <c>{ undefined, done: true }</c> (the value is delivered
+    /// once, §27.6.1.2).
     /// </summary>
-    private async Task HandleYieldAsync(YieldException yield)
+    private void CompleteBody(object? completionValue, Exception? pendingException)
     {
-        if (yield.IsDelegating)
+        _state = State.Completed;
+        Request? req = _currentRequest;
+        _currentRequest = null;
+        if (req != null)
         {
-            // yield* - delegate to another iterable
-            var value = yield.Value;
-
-            // If delegating to an async iterable, await each value
-            if (value is SharpTSAsyncGenerator asyncGen)
-            {
-                while (true)
-                {
-                    var result = await AwaitDetached(asyncGen.Next());
-                    if (result is SharpTSIteratorResult ir)
-                    {
-                        if (ir.Done) break;
-                        _values!.Add(ir.Value);
-                    }
-                    else
-                    {
-                        _values!.Add(result);
-                    }
-                }
-            }
+            if (pendingException != null)
+                req.Completion.SetException(pendingException);
             else
-            {
-                var elements = GetIterableElements(value);
-                foreach (var element in elements)
-                {
-                    _values!.Add(element);
-                }
-            }
+                req.Completion.SetResult(new SharpTSIteratorResult(completionValue, done: true));
         }
-        else
-        {
-            // If yielding a promise, await it first (through AwaitDetached so the suspension does not
-            // leak this generator's closure into the shared interpreter environment — #689, #690).
-            var value = yield.Value;
-            if (value is Task<object?> task)
-            {
-                value = await AwaitDetached(task);
-            }
-            _values!.Add(value);
-        }
+
+        while (_queue.Count > 0)
+            SettleCompletedInto(_queue.Dequeue());
     }
 
-    /// <summary>
-    /// Gets elements from an iterable value.
-    /// </summary>
-    private static IEnumerable<object?> GetIterableElements(object? value)
+    /// <summary>Resolves a next/return/throw issued after the generator has finished (§27.6.1.2).</summary>
+    private static Task<object?> SettleCompleted(GeneratorResumeKind kind, object? value) => kind switch
     {
-        return value switch
+        GeneratorResumeKind.Throw => Task.FromException<object?>(ThrowException.FromResult(value)),
+        GeneratorResumeKind.Return => Task.FromResult<object?>(new SharpTSIteratorResult(value, done: true)),
+        _ => Task.FromResult<object?>(new SharpTSIteratorResult(SharpTSUndefined.Instance, done: true)),
+    };
+
+    private static void SettleCompletedInto(Request req)
+    {
+        switch (req.Kind)
         {
-            SharpTSArray array => array,
-            SharpTSGenerator gen => gen,
-            SharpTSIterator iter => iter.Elements,
-            SharpTSMap map => map.Entries().Elements,
-            SharpTSSet set => set.Values().Elements,
-            string s => s.Select(c => (object?)c.ToString()),
-            IEnumerable<object?> enumerable => enumerable,
-            null => [],
-            _ => throw new Exception($"Runtime Error: Cannot iterate over non-iterable value.")
-        };
+            case GeneratorResumeKind.Throw:
+                req.Completion.SetException(ThrowException.FromResult(req.Value));
+                break;
+            case GeneratorResumeKind.Return:
+                req.Completion.SetResult(new SharpTSIteratorResult(req.Value, done: true));
+                break;
+            default:
+                req.Completion.SetResult(new SharpTSIteratorResult(SharpTSUndefined.Instance, done: true));
+                break;
+        }
     }
 
-    private static bool IsTruthy(object? obj) => RuntimeTypes.IsTruthy(obj);
+    private static (bool Done, object? Value) ReadIteratorResult(object? result) => result switch
+    {
+        SharpTSIteratorResult ir => (ir.Done, ir.Value),
+        SharpTSObject obj => (RuntimeTypes.IsTruthy(obj.GetProperty("done")), obj.GetProperty("value")),
+        _ => (true, result),
+    };
 
     public override string ToString() => "[object AsyncGenerator]";
 }

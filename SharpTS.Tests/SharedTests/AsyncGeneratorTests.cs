@@ -1105,15 +1105,12 @@ public class AsyncGeneratorTests
     #region Completion / resume value semantics — #481, #540
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_ResumedYield_EvaluatesToUndefined(ExecutionMode mode)
     {
         // The resumed `yield` expression evaluates to undefined (no value sent), not null (#481, the
-        // async analog of #443). Previously the compiled emitter loaded CLR null here.
-        //
-        // COMPILED-ONLY: #481 is a compiled-emitter bug. The interpreter eagerly drains the body and
-        // does not bind a variable whose initializer is a yield (`const r = yield 1`) at all — it
-        // throws "Undefined variable 'r'" — a separate pre-existing eager-drain gap, not what #481 fixes.
+        // async analog of #443). The interpreter's lazy async-generator coroutine binds `const r = yield 1`
+        // (an earlier eager-drain model threw "Undefined variable 'r'" — fixed by the coroutine rewrite).
         var source = """
             async function* ag() { const r = yield 1; console.log("r=" + r); }
             async function main() { for await (const v of ag()) {} }
@@ -1124,12 +1121,11 @@ public class AsyncGeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_YieldStarCompletion_EvaluatesToUndefined(ExecutionMode mode)
     {
         // The completion value of `yield* inner()` (when the delegate has no explicit return value) is
-        // undefined, not null (#481). COMPILED-ONLY for the same eager-drain reason as the resumed-yield
-        // test: the interpreter does not bind `const x = yield* …`.
+        // undefined, not null (#481). The interpreter binds `const x = yield* …` via its lazy coroutine.
         var source = """
             async function* inner() { yield 2; yield 3; }
             async function* g() { const x = yield* inner(); console.log("x=" + x); yield 4; }
@@ -1186,19 +1182,16 @@ public class AsyncGeneratorTests
     #region Re-entrant next() — "already running" guard (#542)
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
-    public void AsyncGenerator_ReentrantNext_Compiled_RejectsInsteadOfStackOverflow(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ReentrantNext_RejectsInsteadOfStackOverflow(ExecutionMode mode)
     {
-        // A compiled async generator whose body advances itself previously recursed into MoveNextAsync
-        // until the stack overflowed (RangeError: Maximum call stack size exceeded). ECMA-262 §27.6.3
-        // queues such a request, but under this synchronous drive a real queue would deadlock the only
-        // reachable re-entrancy case (the body awaiting its own request), so the guard rejects with a
-        // catchable TypeError instead of crashing (#542). Observed here via a `for await…of` consumer,
-        // whose next()-drive surfaces the rejection to the enclosing try/catch.
-        //
-        // COMPILED-ONLY: the interpreter eagerly drains the body, so its re-entrant next() returns a
-        // (non-conformant) done result rather than recursing — it never hit the stack overflow this
-        // guards against, and asserting that divergent eager-drain output here would not test #542.
+        // An async generator whose body advances itself (a re-entrant next()) is rejected with a
+        // catchable TypeError rather than crashing. Compiled mode previously recursed into MoveNextAsync
+        // until the stack overflowed; ECMA-262 §27.6.3 queues such a request, but under both modes' drive
+        // the queued request could only be served by the body that blocks on it, so the guard rejects
+        // (#542). The interpreter's lazy coroutine guards the body's synchronous segment the same way
+        // (an earlier eager-drain model returned a non-conformant done result instead). Observed via a
+        // `for await…of` consumer, whose next()-drive surfaces the rejection to the enclosing try/catch.
         var source = """
             const h: any = {};
             async function* g() { await h.it.next(); yield 1; }
@@ -1245,12 +1238,11 @@ public class AsyncGeneratorTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_PendingAwait_DirectNext_ResolvesInOrder(ExecutionMode mode)
     {
-        // Driving a pending-await async generator by awaiting next() directly. #631 (compiled). Now also
-        // covered in the interpreter: a second `await it.next()` previously read `it` against a scope the
-        // generator's eager drain had corrupted ("Only instances and objects have properties"); the drain
-        // now restores the caller's environment across each suspension (#690), so sequential next() calls
-        // resolve in order. The eager-drain model still collects values eagerly, but the observable result
-        // matches the spec for this finite, no-sent-value case.
+        // Driving a pending-await async generator by awaiting next() directly. #631 (compiled). Also
+        // covered in the interpreter: a second `await it.next()` previously read `it` against a scope an
+        // eager-drain model had corrupted ("Only instances and objects have properties"). The interpreter's
+        // lazy async-generator coroutine runs the body on demand and preserves the caller's environment
+        // across each suspension (#690), so sequential next() calls resolve in order.
         var source = """
             function later(n: number): Promise<number> {
                 return new Promise(res => setTimeout(() => res(n), 5));
@@ -1296,11 +1288,11 @@ public class AsyncGeneratorTests
     public void AsyncGenerator_ConcurrentNext_QueuesInOrder(ExecutionMode mode)
     {
         // Two next() calls issued before the first settles must be serviced FIFO (ECMA-262 §27.6.3
-        // AsyncGeneratorQueue): compiled mode models it as a task chain (#542); the interpreter serializes
-        // every caller on one shared body drain, then hands out collected values in call order, so a
-        // second next() can no longer race ahead and read the not-yet-populated values list as completion
-        // (#690). Previously the interpreter threw "Only instances and objects have properties" here (the
-        // env-leak symptom) and could not service concurrent next() at all.
+        // AsyncGeneratorQueue): compiled mode models it as a task chain (#542); the interpreter's lazy
+        // async-generator coroutine enqueues the second request and the body services it after the first
+        // yield, so it can no longer race ahead and read a half-populated state as completion (#690).
+        // Previously the interpreter threw "Only instances and objects have properties" here (the env-leak
+        // symptom of an eager-drain model) and could not service concurrent next() at all.
         var source = """
             function later(n: number): Promise<number> {
                 return new Promise(res => setTimeout(() => res(n), 5));
@@ -1322,10 +1314,10 @@ public class AsyncGeneratorTests
     public void AsyncGenerator_ForAwaitBody_WritesOuterBinding(ExecutionMode mode)
     {
         // #689: a `let`/`const` declared before a `for await…of` over a (genuinely-async) async generator
-        // must remain visible inside the loop body. The interpreter's eager drain repointed the shared
-        // environment at the generator's closure and held it across the body's awaits, so the loop body
-        // resolved `out` against the wrong scope and threw "Undefined variable 'out'". The drain now
-        // restores the caller's environment across each suspension, so the body reaches the enclosing
+        // must remain visible inside the loop body. An eager-drain model repointed the shared environment
+        // at the generator's closure and held it across the body's awaits, so the loop body resolved `out`
+        // against the wrong scope and threw "Undefined variable 'out'". The interpreter's lazy coroutine
+        // preserves the caller's environment across each suspension, so the body reaches the enclosing
         // scope in both modes.
         var source = """
             function later(n: number): Promise<number> {
@@ -1347,11 +1339,11 @@ public class AsyncGeneratorTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_DirectNext_PreservesCallerScope(ExecutionMode mode)
     {
-        // #690 (env-leak symptom): after the first `await it.next()` drives the generator's eager drain,
-        // bindings declared before it (here `it` itself and the outer `tag`) must still resolve in the
-        // caller's scope. Previously a second `it.next()` read `it` against the leaked generator closure
-        // and threw "Only instances and objects have properties", and an outer local read back as
-        // undefined. The drain now restores the caller's environment across each await suspension.
+        // #690 (env-leak symptom): after the first `await it.next()` drives the generator, bindings
+        // declared before it (here `it` itself and the outer `tag`) must still resolve in the caller's
+        // scope. Previously a second `it.next()` read `it` against a leaked generator closure and threw
+        // "Only instances and objects have properties", and an outer local read back as undefined. The
+        // interpreter's lazy coroutine preserves the caller's environment across each await suspension.
         var source = """
             function later(n: number): Promise<number> {
                 return new Promise(res => setTimeout(() => res(n), 5));
@@ -1375,11 +1367,10 @@ public class AsyncGeneratorTests
     public void AsyncGenerator_ForAwaitBody_OuterBinding_SurvivesNestedAwaitBody(ExecutionMode mode)
     {
         // #689 hardening: a generator body whose await is nested inside a delegated expression
-        // (`yield dbl(await later(n))`) suspends through the interpreter's general async-expression path,
-        // not the generator's own await chokepoint, so the generator alone can't keep its closure from
-        // leaking for that shape. The for-await driver re-asserts the loop's lexical scope after each
-        // next(), so the loop body still reaches the outer `out` binding regardless of the body shape.
-        // (Direct `await it.next()` of such a body is the narrower residual tracked in #752.)
+        // (`yield dbl(await later(n))`) suspends through the interpreter's general async-expression path.
+        // The interpreter's lazy coroutine evaluates the yielded expression with the ambient environment
+        // preserved across that await (like any async function), so the loop body still reaches the outer
+        // `out` binding regardless of the body shape.
         var source = """
             function later(n: number): Promise<number> {
                 return new Promise(res => setTimeout(() => res(n), 5));
@@ -1398,14 +1389,41 @@ public class AsyncGeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_DirectNext_OuterBinding_SurvivesNestedAwaitBody(ExecutionMode mode)
+    {
+        // #752: the direct `await it.next()` form of the nested-await body shape
+        // (`yield dbl(await later(n))`). An eager-drain model leaked the generator's closure into the
+        // shared environment for this shape, so the outer `tag` read back as undefined ("T 2" became
+        // "undefined 2"). The interpreter's lazy coroutine preserves the environment across the nested
+        // await like any async function, so the caller binding survives even when driven by direct next().
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            function dbl(n: number): number { return n * 2; }
+            async function* g() { yield dbl(await later(1)); yield dbl(await later(2)); }
+            async function main() {
+                let tag = "T";
+                const it = g();
+                const a = await it.next();
+                console.log(tag + " " + a.value);
+            }
+            main();
+            """;
+
+        Assert.Equal("T 2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_ForAwaitOf_OverPendingAsyncGenerator_SuspendsNotBlocks(ExecutionMode mode)
     {
         // A `for await…of` INSIDE an async generator, consuming a genuinely-async (setTimeout-backed)
-        // source, must suspend on the inner iterator's next() instead of blocking on a synchronous
-        // GetResult — the latter deadlocked/crashed this stream-transform shape in compiled mode (#697,
-        // the async-generator sibling of #631). Compiled-only: the interpreter has a separate "cannot
-        // iterate" gap for `for await` over an async generator (its eager-drain model), tracked apart.
+        // source, must suspend on the inner iterator's next() instead of blocking — the compiled sibling
+        // deadlocked/crashed this stream-transform shape (#697, the async-generator sibling of #631). The
+        // interpreter now drives it natively: its lazy async-generator body runs the for-await through the
+        // real async-iterator protocol, fixing the prior "Cannot iterate over non-iterable value" (#717).
         var source = """
             function later(n: number): Promise<number> {
                 return new Promise(res => setTimeout(() => res(n), 5));
@@ -1422,13 +1440,13 @@ public class AsyncGeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_ForAwaitOf_BreakAwaitsReturn(ExecutionMode mode)
     {
         // Breaking out of a `for await…of` inside an async generator must await the inner iterator's
         // return() (the suspension-based cleanup path) and stop consuming — here only the first
-        // transformed value is produced before the break (#697). Compiled-only (interp for-await-in-
-        // async-generator gap).
+        // transformed value is produced before the break (#697). The interpreter now drives this natively
+        // (#717), closing the inner iterator on the break via AsyncIteratorClose.
         var source = """
             function later(n: number): Promise<number> {
                 return new Promise(res => setTimeout(() => res(n), 5));
@@ -1448,13 +1466,13 @@ public class AsyncGeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_ForAwaitOf_InsideTryFinally_RunsFinally(ExecutionMode mode)
     {
-        // A `for await…of` inside a try in an async generator now suspends, so it must take the
-        // flag-based try path: its resume labels would be illegal BranchIntoTry targets on the real-IL
-        // try path (the async-gen analog of the #631 ContainsAwait pitfall). The finally still runs after
-        // the loop drains. Compiled-only (interp for-await-in-async-generator gap).
+        // A `for await…of` inside a try in an async generator suspends; the finally still runs after the
+        // loop drains. Compiled mode must take its flag-based try path (resume labels would be illegal
+        // BranchIntoTry targets on the real-IL try path — the async-gen analog of the #631 ContainsAwait
+        // pitfall). The interpreter now drives the same shape natively via its lazy coroutine (#717).
         var source = """
             function later(n: number): Promise<number> {
                 return new Promise(res => setTimeout(() => res(n), 5));

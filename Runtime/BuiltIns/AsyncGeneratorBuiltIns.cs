@@ -17,11 +17,14 @@ public static class AsyncGeneratorBuiltIns
     {
         return name switch
         {
-            "next" => new BuiltInAsyncMethod("next", 0, 0, async (_, receiver, _) =>
+            "next" => new BuiltInAsyncMethod("next", 0, 1, async (_, receiver, args) =>
             {
                 if (receiver is SharpTSAsyncGenerator gen)
                 {
-                    return await gen.Next();
+                    // A resumed `yield` evaluates to the value sent via next(v); an omitted argument is
+                    // undefined, not null (ECMA-262 §27.6.3.6).
+                    object? sent = args.Count > 0 ? args[0] : SharpTSUndefined.Instance;
+                    return await gen.Next(sent);
                 }
                 throw new Exception("Runtime Error: next() called on non-async-generator.");
             }),
