@@ -71,6 +71,10 @@ public class AsyncArrowVariableResolver : IVariableResolver
             return StackType.Unknown;
         }
 
+        // NOTE: standalone captures (#641) are resolved by the EMITTER (AsyncArrowMoveNextEmitter)
+        // at LOWER priority than module-level globals, because a top-level variable a standalone
+        // arrow closes over is ALSO registered as a standalone capture but must be read LIVE from
+        // its static field, not from the by-value snapshot. Handling it here would shadow that.
         return null; // Not found - caller handles fallback
     }
 

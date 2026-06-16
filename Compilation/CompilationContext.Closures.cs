@@ -144,6 +144,15 @@ public partial class CompilationContext
     /// </summary>
     public FieldBuilder? CurrentArrowFunctionDCField { get; set; }
 
+    /// <summary>
+    /// For an async arrow's MoveNext: the <c>&lt;&gt;__functionDC</c> field on the enclosing async
+    /// function's state machine. Combined with <see cref="FunctionDisplayClassFields"/>, it lets the
+    /// arrow read/write captured locals that were promoted into the (reference-type) function display
+    /// class — `outer.functionDC.field` — instead of mutating a field of the boxed value-type state
+    /// machine in place, which is unverifiable (`unbox` yields a readonly managed pointer; #625).
+    /// </summary>
+    public FieldBuilder? OuterFunctionDCField { get; set; }
+
     // ============================================
     // Arrow Scope Display Class (for arrow-local vars captured by nested arrows)
     // ============================================

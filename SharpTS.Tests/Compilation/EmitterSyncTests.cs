@@ -106,6 +106,10 @@ public class EmitterSyncTests
             "EmitYield",            // Core: yield value + suspend
             "EmitSuper",            // This field indirection
             "EmitDynamicImport",    // Dynamic import fallback
+            // #674: reject (with a clear error) an arrow that writes a variable captured from the
+            // generator scope — the generator SM has no function display class to share storage, so
+            // a by-value snapshot would silently drop the write. Read-only captures delegate to base.
+            "EmitArrowFunction",
             // --- #500: non-local exits must run an enclosing flag-based finally first ---
             "EmitBreak",            // Route a break leaving a try through its finally(s)
             "EmitContinue",         // Route a continue leaving a try through its finally(s)

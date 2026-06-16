@@ -96,7 +96,8 @@ public partial class ILEmitter
         // mechanism prepends the target to the args, so captures get passed as leading args.
         if (arrowBuilder.IsStandalone && arrowBuilder.StandaloneCaptureFields.Count > 0)
         {
-            var captureOrder = arrowBuilder.StandaloneCaptureFields.Keys.OrderBy(k => k).ToList();
+            // Ordinal ordering must match the stub's capture-unpacking order (AsyncArrowStateMachineBuilder).
+            var captureOrder = arrowBuilder.StandaloneCaptureFields.Keys.OrderBy(k => k, System.StringComparer.Ordinal).ToList();
 
             if (captureOrder.Count == 1)
             {

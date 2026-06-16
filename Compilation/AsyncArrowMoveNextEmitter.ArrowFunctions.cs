@@ -111,18 +111,55 @@ public partial class AsyncArrowMoveNextEmitter
         // stub's arg0, clobbering the first real parameter. (#615)
         if (nestedBuilder.IsStandalone)
         {
-            // A capturing standalone nested arrow would need its capture fields populated from the
-            // enclosing frame, which this path does not wire up — fail loudly rather than read
-            // uninitialized captures (it did not compile at all before #615; tracked in #641).
-            if (nestedBuilder.StandaloneCaptureFields.Count > 0)
+            // A capturing standalone nested arrow's stub takes its single captured value as a leading
+            // argument. $TSFunction's "static method with target" mechanism prepends the target before
+            // the call args, so we pass the capture AS the target, read from THIS (enclosing) arrow's
+            // frame. Mirrors the module-level standalone path in ILEmitter.EmitAsyncArrowFunction.
+            // Before #641 every capturing standalone nested arrow threw "not yet supported"; now the
+            // single read-only capture (the #641 repros) is supported, and the two harder shapes below
+            // fail loudly rather than miscompiling.
+            var captureOrder = nestedBuilder.StandaloneCaptureFields.Keys
+                .OrderBy(k => k, System.StringComparer.Ordinal).ToList();
+
+            if (captureOrder.Count > 0)
             {
-                throw new CompileException(
-                    "A nested async arrow that captures variables inside a top-level async arrow is " +
-                    "not yet supported in compiled mode; hoist it to a named async arrow or async " +
-                    "function, or run in interpreted mode.");
+                // A standalone arrow captures BY VALUE (the values are copied into its own state
+                // machine). A write to a capture therefore cannot propagate back to the enclosing
+                // binding, so reject it instead of silently dropping the write (#684).
+                var written = CapturedWriteAnalysis.CollectImmediateWrites(af);
+                written.IntersectWith(captureOrder);
+                if (written.Count > 0)
+                {
+                    throw new CompileException(
+                        "A nested async arrow inside a top-level async arrow that WRITES a captured " +
+                        $"variable ({string.Join(", ", written.OrderBy(n => n, System.StringComparer.Ordinal))}) " +
+                        "is not yet supported in compiled mode (#684): the standalone arrow captures by " +
+                        "value, so the write would be lost. Hoist it to a named async function, or run " +
+                        "in interpreted mode.");
+                }
+
+                // Multiple captures would need to ride in $TSFunction's single prepended target slot
+                // (an object[]), but the standalone stub expects each capture as a separate arg — a
+                // mismatch also broken for module-level standalone async arrows (#684).
+                if (captureOrder.Count > 1)
+                {
+                    throw new CompileException(
+                        "A nested async arrow inside a top-level async arrow that captures more than " +
+                        "one variable is not yet supported in compiled mode (#684); reduce it to a " +
+                        "single capture, hoist it to a named async function, or run in interpreted mode.");
+                }
             }
 
-            _il.Emit(OpCodes.Ldnull);
+            if (captureOrder.Count == 1)
+            {
+                LoadVariableForCapture(captureOrder[0]);
+                EnsureBoxed();
+            }
+            else
+            {
+                _il.Emit(OpCodes.Ldnull);
+            }
+
             _il.Emit(OpCodes.Ldtoken, nestedBuilder.StubMethod);
             _il.Emit(OpCodes.Call, Types.MethodBaseGetMethodFromHandle);
             _il.Emit(OpCodes.Castclass, typeof(MethodInfo));

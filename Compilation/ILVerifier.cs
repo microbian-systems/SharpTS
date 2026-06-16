@@ -62,7 +62,24 @@ public class ILVerifier : IResolver, IDisposable
                     var argsStr = result.Args != null && result.Args.Length > 0
                         ? $" [{string.Join(", ", result.Args)}]"
                         : "";
-                    errors.Add($"[IL Error] {typeName}.{methodName}: {result.Code}{argsStr} - {result.Message}");
+                    var diag = "";
+                    try
+                    {
+                        var ea = result.GetType().GetProperty("ErrorArguments")?.GetValue(result) as System.Collections.IEnumerable;
+                        if (ea != null)
+                        {
+                            var parts = new List<string>();
+                            foreach (var a in ea)
+                            {
+                                var n = a.GetType().GetProperty("Name")?.GetValue(a);
+                                var val = a.GetType().GetProperty("Value")?.GetValue(a);
+                                parts.Add($"{n}={val}");
+                            }
+                            if (parts.Count > 0) diag = $" {{{string.Join(", ", parts)}}}";
+                        }
+                    }
+                    catch { }
+                    errors.Add($"[IL Error] {typeName}.{methodName}: {result.Code}{argsStr}{diag} - {result.Message}");
                 }
             }
             catch (Exception ex)
