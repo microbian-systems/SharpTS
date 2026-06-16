@@ -363,4 +363,29 @@ public class ObjectCreateTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("42\nhello\ntrue\n2\n1\n", output);
     }
+
+    // ECMA-262 §20.1.2.2 step 1: prototype must be Object or null (#104).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_Create_NonObjectPrototype_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = """
+            function attempt(label: string, fn: () => void) {
+                try { fn(); console.log(label, "no throw"); }
+                catch (e: any) { console.log(label, e instanceof TypeError); }
+            }
+            attempt("undefined", () => Object.create(undefined as any));
+            attempt("number", () => Object.create(5 as any));
+            attempt("string", () => Object.create("x" as any));
+            attempt("bool", () => Object.create(true as any));
+            // null and objects are valid prototypes — must NOT throw.
+            console.log("null", typeof Object.create(null));
+            console.log("obj", typeof Object.create({}));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal(
+            "undefined true\nnumber true\nstring true\nbool true\nnull object\nobj object\n",
+            output);
+    }
 }
