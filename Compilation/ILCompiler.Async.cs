@@ -1071,6 +1071,18 @@ public partial class ILCompiler
                 continue;
             }
 
+            // #721: an async arrow whose enclosing async function/method builds an async state machine
+            // is given its real (nested) builder by that machine's phase-6 emission — but only AFTER
+            // this earlier pass runs. Free async functions register their arrows before this pass (the
+            // ContainsKey check above already skips those); class async methods do not, so a standalone
+            // builder defined here would be a dead, never-invoked duplicate of the nested one. Skip an
+            // arrow that an enclosing async state machine will claim; an arrow behind a sync arrow/method,
+            // or a genuinely top-level one, is not claimed and still needs the standalone builder.
+            if (IsClaimedByEnclosingAsyncStateMachine(arrow))
+            {
+                continue;
+            }
+
             // Analyze this arrow for await points and hoisted locals
             var arrowAnalysis = AnalyzeAsyncArrow(arrow);
 
@@ -1095,6 +1107,26 @@ public partial class ILCompiler
             // Store the builder
             _async.ArrowBuilders[arrow] = arrowBuilder;
         }
+    }
+
+    /// <summary>
+    /// True when <paramref name="arrow"/> will be given a nested async state machine by an enclosing
+    /// async function/method's phase-6 emission (<see cref="DefineAsyncArrowStateMachines"/>), so this
+    /// pass must not also create a standalone (dead-duplicate) builder for it (#721). An async function's
+    /// state machine claims its async arrow descendants reachable through a chain of <em>async</em>
+    /// arrows; a sync arrow (or sync function) on the way up breaks that chain — arrows behind one get
+    /// their own standalone builder instead. Walks the enclosing-callable chain to decide.
+    /// </summary>
+    private bool IsClaimedByEnclosingAsyncStateMachine(Expr.ArrowFunction arrow)
+    {
+        object? enclosing = _arrowEnclosingCallable.GetValueOrDefault(arrow);
+        while (enclosing is Expr.ArrowFunction parentArrow)
+        {
+            if (!parentArrow.IsAsync)
+                return false; // a sync arrow does not build a state machine to claim descendants
+            enclosing = _arrowEnclosingCallable.GetValueOrDefault(parentArrow);
+        }
+        return enclosing is Stmt.Function { IsAsync: true };
     }
 
     /// <summary>
