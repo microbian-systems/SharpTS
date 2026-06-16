@@ -533,4 +533,98 @@ public class AsyncArrowFunctionTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("6 42\n", output);
     }
+
+    // #430/#645: a `for await...of` over an async generator inside an async ARROW must drive the
+    // async-iterator protocol. Previously the arrow emitter had no EmitForOf override, so the loop
+    // fell through to the synchronous for-of path and threw InvalidCastException casting the
+    // async-generator state machine to IEnumerable in compiled mode.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncArrow_ForAwaitOfAsyncGenerator(ExecutionMode mode)
+    {
+        var source = """
+            async function* g() { yield 1; yield 2; }
+            const run = async () => {
+                let s = "";
+                for await (const v of g()) s += v + ",";
+                console.log("arrow=" + s);
+            };
+            run();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("arrow=1,2,\n", output);
+    }
+
+    // #430/#645: breaking out of a `for await` inside an async arrow must run the loop's cleanup
+    // (iterator.return()) path without corrupting the loop variable binding.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncArrow_ForAwaitBreakRunsCleanup(ExecutionMode mode)
+    {
+        var source = """
+            async function* g() { yield 10; yield 20; yield 30; }
+            const run = async () => {
+                for await (const v of g()) {
+                    console.log("v=" + v);
+                    if (v === 20) break;
+                }
+                console.log("done");
+            };
+            run();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("v=10\nv=20\ndone\n", output);
+    }
+
+    // #430/#645: the async-arrow `for await` must also honor the custom Symbol.asyncIterator
+    // protocol (not only the $IAsyncGenerator fast path).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncArrow_ForAwaitCustomAsyncIterator(ExecutionMode mode)
+    {
+        var source = """
+            const obj = {
+                [Symbol.asyncIterator]() {
+                    let i = 0;
+                    return {
+                        next() {
+                            return Promise.resolve(i < 3 ? { value: i++, done: false } : { value: undefined, done: true });
+                        }
+                    };
+                }
+            };
+            const run = async () => {
+                let s = "";
+                for await (const v of obj) s += v;
+                console.log("got=" + s);
+            };
+            run();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("got=012\n", output);
+    }
+
+    // #430/#645: the loop variable bound inside an async-arrow `for await` must resolve to the
+    // arrow's own local store. The original fix landed `null` values here because the binding was
+    // registered in Ctx.Locals while the arrow's resolver reads its private local map.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncArrow_ForAwaitAccumulatesCapturedVariable(ExecutionMode mode)
+    {
+        var source = """
+            async function* g() { yield 1; yield 2; yield 3; }
+            const run = async () => {
+                let sum = 0;
+                for await (const v of g()) sum += v;
+                console.log("sum=" + sum);
+            };
+            run();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("sum=6\n", output);
+    }
 }

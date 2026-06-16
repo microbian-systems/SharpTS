@@ -1,10 +1,28 @@
 using System.Reflection.Emit;
+using SharpTS.Parsing;
 
 namespace SharpTS.Compilation;
 
 public partial class AsyncArrowMoveNextEmitter
 {
     // Statement dispatch is now inherited from StatementEmitterBase
+
+    protected override void EmitForOf(Stmt.ForOf f)
+    {
+        if (f.IsAsync)
+        {
+            // for await...of must drive the async-iterator protocol, not a synchronous
+            // IEnumerable enumeration. Without this override the loop fell through to the
+            // sync for-of path in StatementEmitterBase and threw InvalidCastException
+            // casting the async-generator state machine to IEnumerable (#430/#645).
+            EmitForAwaitOf(f);
+            return;
+        }
+
+        // Sync for...of: delegate to base (uses DeclareLoopVariable/EmitStoreLoopVariable
+        // overrides to handle hoisted state machine fields)
+        base.EmitForOf(f);
+    }
 
     // Falling off the end of a block-bodied async arrow completes with `undefined`, not null
     // (#587). Explicit returns are handled by EmitReturn; this is only the implicit-completion
