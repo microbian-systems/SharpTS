@@ -742,6 +742,37 @@ public partial class ILCompiler
         // pads omitted optional args with the `undefined` sentinel on the value-call path.
         MarkPadsUndefined(methodBuilder);
 
+        // #720: async/generator private methods must be emitted through a state machine, exactly like
+        // their public counterparts — not linearly into __private_<name>, which leaves a bare object on
+        // the stack for an `async` method declared to return Task<object> (invalid IL) and rejects
+        // `yield` ("Yield not supported"). Route by method kind; the parameter-default prologue moves
+        // into the state machine's entry (the state-machine emitters apply EmitDefaultParameters
+        // themselves). The qualified class name is threaded so nested private member access resolves.
+        if (method.IsAsync && method.IsGenerator)
+        {
+            // Static async generators are unsupported project-wide (so is the public static form, #762):
+            // fall through to the linear path, which reports the existing "Yield not supported" error
+            // rather than emitting invalid IL.
+            if (!isStatic)
+            {
+                EmitAsyncGeneratorMethodBody(methodBuilder, method, fieldsField, currentClassName: qualifiedClassName);
+                return;
+            }
+        }
+        else if (method.IsAsync)
+        {
+            EmitAsyncMethodBody(methodBuilder, method, isStatic ? null : fieldsField,
+                isInstanceMethod: !isStatic, currentClassName: qualifiedClassName);
+            return;
+        }
+        else if (method.IsGenerator && !isStatic)
+        {
+            EmitGeneratorMethodBody(methodBuilder, method, fieldsField, currentClassName: qualifiedClassName);
+            return;
+        }
+        // Static generators/async generators fall through to the linear emission below, which reports
+        // "Yield not supported" (same as public static generators today, tracked by #762).
+
         var il = methodBuilder.GetILGenerator();
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
