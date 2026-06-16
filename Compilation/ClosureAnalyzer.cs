@@ -276,7 +276,44 @@ public class ClosureAnalyzer : AstVisitorBase
                     _captureSources[_currentFunction] = sources;
                 }
                 sources[name] = definingFunc;
+
+                PropagateCaptureUpAsyncArrowChain(name, definingFunc);
             }
+        }
+    }
+
+    /// <summary>
+    /// A STANDALONE async arrow (one not nested in an async <em>function</em>) copies each captured
+    /// variable BY VALUE into its own state machine — there is no shared display class to relay it,
+    /// unlike sync arrows. So an INTERMEDIATE async arrow that does not itself reference
+    /// <paramref name="name"/> must still capture-and-forward it for a deeper nested arrow that does,
+    /// or the deeper arrow's capture array reads it as null (#716). This mirrors the up-the-chain
+    /// propagation <see cref="VisitThis"/> already does for <c>this</c>, but unions
+    /// <paramref name="name"/> onto enclosing ASYNC arrow frames only — sync arrows relay captures
+    /// through shared scope display classes and rely on per-arrow capture sets staying innermost-only,
+    /// so adding to them would perturb that machinery. Stops at the variable's defining scope (its
+    /// owner, which already has it as a local) and at the first non-async-arrow boundary (a sync arrow
+    /// or any function declaration), beyond which a different relay mechanism applies. Only invoked for
+    /// function-local captures (<paramref name="definingFunc"/> non-null); top-level variables reach an
+    /// arrow through the entry-point display class, not capture forwarding, so they are not propagated.
+    /// </summary>
+    private void PropagateCaptureUpAsyncArrowChain(string name, object definingFunc)
+    {
+        // _functionStack enumerates innermost-first; the top is _currentFunction (already recorded).
+        bool passedCurrent = false;
+        foreach (var frame in _functionStack)
+        {
+            if (!passedCurrent)
+            {
+                if (ReferenceEquals(frame, _currentFunction)) passedCurrent = true;
+                continue;
+            }
+            if (ReferenceEquals(frame, definingFunc))
+                break; // reached the owning scope — it holds `name` as a local
+            if (frame is not Expr.ArrowFunction { IsAsync: true } intermediateArrow)
+                break; // sync arrow / function boundary — different relay mechanism applies
+            if (_captures.TryGetValue(intermediateArrow, out var caps) && caps.Add(name))
+                _allCapturedVariables.Add(name);
         }
     }
 

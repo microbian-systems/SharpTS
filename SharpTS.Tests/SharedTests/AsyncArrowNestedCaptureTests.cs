@@ -168,8 +168,7 @@ public class AsyncArrowNestedCaptureTests
         // reads it directly) and then again by `h` nested inside g — so when building h's
         // capture array we must re-read `a` from g's capture field, not drop it to null.
         // (The "relay-only" shape where the intermediate arrow does NOT read the variable and
-        // captures it solely to forward to a deeper arrow is a separate capture-propagation
-        // gap, tracked in #716.)
+        // captures it solely to forward to a deeper arrow is exercised below — #716.)
         var source = """
             const f = async () => {
               const a = 7;
@@ -184,6 +183,93 @@ public class AsyncArrowNestedCaptureTests
             """;
 
         Assert.Equal("15\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedAsyncArrow_RelayOnlyCaptureToDeeperArrow(ExecutionMode mode)
+    {
+        // #716: the intermediate arrow `g` does NOT itself read `a` — it captures it solely so the
+        // deeper nested `h` can. ClosureAnalyzer now propagates the capture up the standalone async
+        // arrow chain (onto async-arrow frames only), so g's state machine carries `a` and forwards
+        // it; previously g omitted `a`, h read it as null, and compiled mode printed 1 instead of 8.
+        var source = """
+            const f = async () => {
+              const a = 7;
+              const g = async () => {
+                const h = async () => a + 1;
+                return await h();
+              };
+              console.log(await g());
+            };
+            f();
+            """;
+
+        Assert.Equal("8\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedAsyncArrow_RelayOnlyCaptureThroughTwoIntermediates(ExecutionMode mode)
+    {
+        // #716 across two relay-only intermediates: both `g` and `h` forward `a` to the deepest `k`.
+        var source = """
+            const f = async () => {
+              const a = 5;
+              const g = async () => {
+                const h = async () => {
+                  const k = async () => a * 2;
+                  return await k();
+                };
+                return await h();
+              };
+              console.log(await g());
+            };
+            f();
+            """;
+
+        Assert.Equal("10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedAsyncArrow_RelayOnlyMultipleCaptures(ExecutionMode mode)
+    {
+        // #716: more than one relay-only capture forwarded through the intermediate arrow.
+        var source = """
+            const f = async () => {
+              const a = 3; const b = 100;
+              const g = async () => {
+                const h = async () => a + b;
+                return await h();
+              };
+              console.log(await g());
+            };
+            f();
+            """;
+
+        Assert.Equal("103\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void NestedAsyncArrow_RelayOnlyCaptureToDeeperArrow_PassesILVerification()
+    {
+        var source = """
+            const f = async () => {
+              const a = 7;
+              const g = async () => {
+                const h = async () => a + 1;
+                return await h();
+              };
+              console.log(await g());
+            };
+            f();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("8\n", output);
     }
 
     [Fact]

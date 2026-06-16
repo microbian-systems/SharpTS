@@ -33,6 +33,13 @@ public partial class ILCompiler
         _asyncGenerators.StateMachines[qualifiedName] = smBuilder;
         _asyncGenerators.Functions[qualifiedName] = funcStmt;
 
+        // Record the AST node so PropagateFunctionDCRequirements can resolve arrows nested in this
+        // async generator back to its qualified name, and lift captured-and-mutated locals into a
+        // shared function display class so a sync arrow/callback that writes one reaches the generator
+        // instead of snapshotting it by value (#725). Mirrors DefineGeneratorFunction (#674).
+        _closures.FunctionAstNodes[qualifiedName] = funcStmt;
+        DefineAsyncGeneratorFunctionDisplayClass(funcStmt, qualifiedName, smBuilder);
+
         // Define the stub method that creates and returns the state machine.
         // A trailing rest parameter is typed List<object> so the indirect
         // ($TSFunction.Invoke) call path packs trailing args into it (#426).
@@ -58,6 +65,25 @@ public partial class ILCompiler
     }
 
     /// <summary>
+    /// Lifts an async generator's captured-AND-mutated locals into a function-level display class so a
+    /// sync arrow/callback inside the body that writes such a variable shares storage with the generator
+    /// instead of snapshotting it by value (#725). The async-generator state machine is a reference type,
+    /// so the DC field persists across awaits and yields. No-op when there is no write-capture, leaving
+    /// fully-standalone output unchanged. Mirrors <see cref="DefineGeneratorFunctionDisplayClass"/>.
+    /// </summary>
+    private void DefineAsyncGeneratorFunctionDisplayClass(
+        Stmt.Function funcStmt, string qualifiedName, AsyncGeneratorStateMachineBuilder smBuilder)
+    {
+        var mutatedCaptured = ComputeMutatedCapturedGeneratorVars(funcStmt);
+        if (mutatedCaptured.Count == 0)
+            return;
+
+        RegisterFunctionDisplayClass(qualifiedName, mutatedCaptured);
+        if (_closures.FunctionDisplayClasses.TryGetValue(qualifiedName, out var funcDC))
+            smBuilder.DefineFunctionDisplayClassField(funcDC);
+    }
+
+    /// <summary>
     /// Emits all async generator state machine bodies.
     /// Called after all functions have been defined.
     /// </summary>
@@ -78,10 +104,10 @@ public partial class ILCompiler
             var methodBuilder = _functions.Builders[funcName];
 
             // Emit the stub method body (creates and returns the state machine)
-            EmitAsyncGeneratorStubMethod(methodBuilder, smBuilder, funcStmt);
+            EmitAsyncGeneratorStubMethod(methodBuilder, smBuilder, funcStmt, funcName);
 
             // Emit the MoveNextAsync method body
-            EmitAsyncGeneratorMoveNextAsyncBody(smBuilder, funcStmt);
+            EmitAsyncGeneratorMoveNextAsyncBody(smBuilder, funcStmt, funcName);
 
             // Finalize the state machine type
             smBuilder.CreateType();
@@ -93,7 +119,7 @@ public partial class ILCompiler
     /// <summary>
     /// Emits the stub method that creates and initializes the async generator state machine.
     /// </summary>
-    private void EmitAsyncGeneratorStubMethod(MethodBuilder methodBuilder, AsyncGeneratorStateMachineBuilder smBuilder, Stmt.Function funcStmt)
+    private void EmitAsyncGeneratorStubMethod(MethodBuilder methodBuilder, AsyncGeneratorStateMachineBuilder smBuilder, Stmt.Function funcStmt, string qualifiedName)
     {
         var il = methodBuilder.GetILGenerator();
 
@@ -113,6 +139,11 @@ public partial class ILCompiler
             }
         }
 
+        // Instantiate the function display class (#725) and seed any captured-and-mutated parameter
+        // into it so a sync arrow that writes it shares the generator's storage. The stub params are
+        // object-typed (BuildStateMachineStubParamTypes), so no boxing is needed (paramTypes: null).
+        EmitGeneratorFunctionDCInit(il, smBuilder.FunctionDCField, funcStmt, qualifiedName, paramOffset: 0);
+
         // Return the state machine (which implements IAsyncEnumerable<object>)
         il.Emit(OpCodes.Ret);
     }
@@ -121,7 +152,7 @@ public partial class ILCompiler
     /// Emits the MoveNextAsync method body for an async generator state machine.
     /// Uses AsyncGeneratorMoveNextEmitter to handle full generator body with yield and await expressions.
     /// </summary>
-    private void EmitAsyncGeneratorMoveNextAsyncBody(AsyncGeneratorStateMachineBuilder smBuilder, Stmt.Function funcStmt)
+    private void EmitAsyncGeneratorMoveNextAsyncBody(AsyncGeneratorStateMachineBuilder smBuilder, Stmt.Function funcStmt, string qualifiedName)
     {
         var analysis = _asyncGenerators.Analyzer.Analyze(funcStmt);
 
@@ -166,8 +197,21 @@ public partial class ILCompiler
             EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+            // Per-arrow $entryPointDC field map so a capturing arrow nested in the async generator body
+            // gets the entry-point display class threaded in (#725 / async analog of #732).
+            ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
             TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath)
         };
+
+        // Route reads/writes of captured-and-mutated locals through the shared function display class
+        // (#725) and let capturing arrows thread it in. Only set when this async generator has a
+        // function DC; otherwise the existing by-value snapshot path is used unchanged.
+        if (_closures.FunctionDisplayClassFields.TryGetValue(qualifiedName, out var funcDCFields))
+        {
+            ctx.FunctionDisplayClassFields = funcDCFields;
+            ctx.CapturedFunctionLocals = [.. funcDCFields.Keys];
+            ctx.ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null;
+        }
 
         // Use the new emitter for full async generator body emission
         var emitter = new AsyncGeneratorMoveNextEmitter(smBuilder, analysis, _types);
@@ -192,8 +236,16 @@ public partial class ILCompiler
             runtime: _runtime
         );
 
+        // #725: wire the function display class registered for this async generator method in
+        // DefineClass so a sync arrow that writes a captured method local shares storage with the
+        // generator. The field must be defined before the stub seeds captured params into it and
+        // before CreateType() finalizes the state machine.
+        string? methodDCKey = _asyncGeneratorMethodFunctionDCKeys.GetValueOrDefault(method);
+        if (methodDCKey != null && _closures.FunctionDisplayClasses.TryGetValue(methodDCKey, out var methodFuncDC))
+            smBuilder.DefineFunctionDisplayClassField(methodFuncDC);
+
         // Emit stub method body (creates state machine and returns it)
-        EmitAsyncGeneratorInstanceStubMethod(methodBuilder, smBuilder, method.Parameters);
+        EmitAsyncGeneratorInstanceStubMethod(methodBuilder, smBuilder, method, methodDCKey);
 
         // Create context for MoveNextAsync emission
         var il = smBuilder.MoveNextAsyncMethod.GetILGenerator();
@@ -241,8 +293,21 @@ public partial class ILCompiler
             EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
             CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+            // Per-arrow $entryPointDC field map so a capturing arrow nested in this instance async
+            // generator method's body gets the entry-point display class threaded in (#725).
+            ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
             TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath)
         };
+
+        // #725: route reads/writes of captured-and-mutated method locals through the shared function
+        // display class so the arrow's write and the generator body observe the same storage. Only set
+        // when this method has a function DC; otherwise the by-value snapshot path is used unchanged.
+        if (methodDCKey != null && _closures.FunctionDisplayClassFields.TryGetValue(methodDCKey, out var methodDCFields))
+        {
+            ctx.FunctionDisplayClassFields = methodDCFields;
+            ctx.CapturedFunctionLocals = [.. methodDCFields.Keys];
+            ctx.ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null;
+        }
 
         // Emit MoveNextAsync body
         var moveNextEmitter = new AsyncGeneratorMoveNextEmitter(smBuilder, analysis, _types);
@@ -259,8 +324,10 @@ public partial class ILCompiler
     private void EmitAsyncGeneratorInstanceStubMethod(
         MethodBuilder methodBuilder,
         AsyncGeneratorStateMachineBuilder smBuilder,
-        List<Stmt.Parameter> parameters)
+        Stmt.Function method,
+        string? funcDCKey)
     {
+        var parameters = method.Parameters;
         var il = methodBuilder.GetILGenerator();
 
         // Create new instance of the state machine
@@ -301,6 +368,12 @@ public partial class ILCompiler
                 il.Emit(OpCodes.Stfld, field);
             }
         }
+
+        // #725: instantiate the function display class and seed any captured-and-mutated parameter
+        // into it (instance methods carry 'this' at arg 0, so user params start at arg 1). The stub
+        // params are typed, so value types are boxed before the store. No-op when no function DC.
+        if (funcDCKey != null)
+            EmitGeneratorFunctionDCInit(il, smBuilder.FunctionDCField, method, funcDCKey, paramOffset: 1, paramTypes);
 
         // Return the state machine (which implements IAsyncEnumerable<object>)
         il.Emit(OpCodes.Ret);

@@ -41,6 +41,12 @@ public class AsyncGeneratorStateMachineBuilder
     // 'this' field for instance async generator methods
     public FieldBuilder? ThisField { get; private set; }
 
+    // Function-level display class field for captured-and-mutated locals (#725). A sync arrow inside
+    // the async generator body that WRITES a variable captured from the generator scope shares storage
+    // with the generator through this reference-typed display class — the same mechanism the sync
+    // generator state machine uses (#674). Null when the async generator has no such write-capture.
+    public FieldBuilder? FunctionDCField { get; private set; }
+
     // Delegated async enumerator field for yield* expressions
     public FieldBuilder? DelegatedAsyncEnumeratorField { get; private set; }
 
@@ -748,6 +754,18 @@ public class AsyncGeneratorStateMachineBuilder
         var fromException = typeof(Task).GetMethod("FromException", 1, [typeof(Exception)])!.MakeGenericMethod(_types.Object);
         il.Emit(OpCodes.Call, fromException);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Adds the field that holds the function display class instance for closure mutation
+    /// sharing (#725). Mirrors <see cref="GeneratorStateMachineBuilder.DefineFunctionDisplayClassField"/>.
+    /// </summary>
+    public void DefineFunctionDisplayClassField(Type dcType)
+    {
+        FunctionDCField = _stateMachineType.DefineField(
+            "<>__functionDC",
+            dcType,
+            FieldAttributes.Public);
     }
 
     /// <summary>
