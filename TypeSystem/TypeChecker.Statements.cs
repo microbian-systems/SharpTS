@@ -825,6 +825,18 @@ public partial class TypeChecker
 
     internal VoidResult VisitForOf(Stmt.ForOf stmt)
     {
+        // `for await...of` drives the async-iterator protocol, so — like an `await` expression or
+        // `await using` — it is only valid inside an async function. SharpTS does not support
+        // top-level await, so a top-level (or otherwise non-async-context) `for await` is rejected
+        // here rather than silently degrading to a synchronous `for...of`, which would then fail at
+        // runtime with a misleading 'not iterable' error (#672). Mirrors CheckAwait / CheckUsingDeclaration.
+        if (stmt.IsAsync && !_inAsyncFunction)
+        {
+            throw new TypeCheckException(
+                "'await' is only valid inside an async function.",
+                stmt.Variable.Line, tsCode: "TS1308");
+        }
+
         TypeInfo iterableType = CheckExpr(stmt.Iterable);
 
         // Now that generator yield-type inference draws from the `yield` / `yield*` operands (#548), the

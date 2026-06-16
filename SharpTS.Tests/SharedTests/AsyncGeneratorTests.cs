@@ -1,4 +1,5 @@
 using SharpTS.Tests.Infrastructure;
+using SharpTS.TypeSystem.Exceptions;
 using Xunit;
 
 namespace SharpTS.Tests.SharedTests;
@@ -327,6 +328,41 @@ public class AsyncGeneratorTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("first: 1\nfirst: 2\nsecond: 1\nsecond: 2\n", output);
+    }
+
+    // #672: a top-level `for await...of` drives the async-iterator protocol, which requires an async
+    // context. SharpTS does not support top-level await, so — like a top-level `await` expression —
+    // it must be rejected by the type checker rather than silently degrading to a synchronous
+    // `for...of` (which then throws a misleading 'not iterable' runtime error in both modes).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForAwaitOf_TopLevel_RejectedByTypeChecker(ExecutionMode mode)
+    {
+        var source = """
+            async function* g() { yield 1; yield 2; }
+            for await (const x of g()) console.log("top", x);
+            """;
+
+        var ex = Assert.Throws<TypeCheckException>(() => TestHarness.Run(source, mode));
+        Assert.Contains("'await' is only valid inside an async function.", ex.Message);
+    }
+
+    // #672: `for await...of` inside a non-async function is likewise an await outside an async
+    // context and must be rejected (TS conformance), not run as a synchronous `for...of`.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForAwaitOf_InNonAsyncFunction_RejectedByTypeChecker(ExecutionMode mode)
+    {
+        var source = """
+            async function* g() { yield 1; yield 2; }
+            function notAsync() {
+                for await (const x of g()) console.log(x);
+            }
+            notAsync();
+            """;
+
+        var ex = Assert.Throws<TypeCheckException>(() => TestHarness.Run(source, mode));
+        Assert.Contains("'await' is only valid inside an async function.", ex.Message);
     }
 
     #endregion
