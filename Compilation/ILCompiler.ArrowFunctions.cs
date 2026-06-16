@@ -157,6 +157,11 @@ public partial class ILCompiler
             var resolvedParamTypes = ParameterTypeResolver.ResolveParameters(
                 arrow.Parameters, _typeMapper, null, _typeMap); // null funcType - use annotations only
 
+            // Arrows/function expressions get no OverloadGenerator forwarding, so a parameter
+            // default is applied by the runtime entry prologue, which needs an object slot to
+            // detect the missing/undefined argument (#646).
+            ParameterTypeResolver.WidenDefaultedParamsToObject(resolvedParamTypes, arrow.Parameters, _types.Object);
+
             // Store resolved types for use during arrow body emission
             _closures.ArrowParameterTypes[arrow] = resolvedParamTypes;
 
@@ -403,6 +408,10 @@ public partial class ILCompiler
                 _closures.DisplayClasses[arrow] = displayClass;
                 _closures.ArrowMethods[arrow] = invokeMethod;
             }
+
+            // User arrow / function-expression body: when invoked as a value, omitted trailing
+            // args must pad with the `undefined` sentinel (JS semantics), not CLR null. (#640)
+            MarkPadsUndefined(_closures.ArrowMethods[arrow]);
         }
     }
 

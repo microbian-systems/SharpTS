@@ -31,6 +31,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _messagePortStartedField = null!;
     private FieldBuilder _messagePortClosedField = null!;
     private FieldBuilder _messagePortRefedField = null!;
+    private FieldBuilder _messagePortOnEnqueueField = null!;
     private ConstructorBuilder _messagePortCtor = null!;
     private MethodBuilder _messagePortDrain = null!;
     private MethodBuilder _messagePortStart = null!;
@@ -59,6 +60,11 @@ public partial class RuntimeEmitter
         _messagePortStartedField = typeBuilder.DefineField("_started", _types.Boolean, FieldAttributes.Assembly);
         _messagePortClosedField = typeBuilder.DefineField("_closed", _types.Boolean, FieldAttributes.Assembly);
         _messagePortRefedField = typeBuilder.DefineField("_refed", _types.Boolean, FieldAttributes.Assembly);
+        // Optional on-enqueue notification. Null for ordinary in-process ports; set
+        // (reflectively) by CompiledMessagePortBridge when this port has been
+        // transferred to an interpreter worker, so a parent post wakes the worker loop
+        // to drain _pending event-driven instead of the worker polling (#465).
+        _messagePortOnEnqueueField = typeBuilder.DefineField("_onEnqueue", typeof(Action), FieldAttributes.Assembly);
 
         EmitMessagePortConstructorIl(typeBuilder, runtime);
         EmitMessagePortDrain(typeBuilder, runtime);
@@ -285,6 +291,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _messagePortPendingField);
         il.Emit(OpCodes.Ldloc, clonedLocal);
         il.Emit(OpCodes.Callvirt, _types.ConcurrentQueueOfObject.GetMethod("Enqueue", [_types.Object])!);
+
+        // var cb = partner._onEnqueue; if (cb != null) cb();
+        // Wakes a bridge-driven partner (an interpreter worker that adopted this port
+        // via CompiledMessagePortBridge) so it drains _pending event-driven rather than
+        // polling (#465). The volatile read pairs with the Thread.MemoryBarrier the
+        // bridge issues after installing the callback, so a cross-thread post on the
+        // parent loop reliably observes it. Null (skipped) for ordinary in-process ports.
+        var onEnqueueLocal = il.DeclareLocal(typeof(Action));
+        var afterOnEnqueue = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, partnerLocal);
+        il.Emit(OpCodes.Volatile);
+        il.Emit(OpCodes.Ldfld, _messagePortOnEnqueueField);
+        il.Emit(OpCodes.Stloc, onEnqueueLocal);
+        il.Emit(OpCodes.Ldloc, onEnqueueLocal);
+        il.Emit(OpCodes.Brfalse, afterOnEnqueue);
+        il.Emit(OpCodes.Ldloc, onEnqueueLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Action).GetMethod("Invoke", Type.EmptyTypes)!);
+        il.MarkLabel(afterOnEnqueue);
 
         // if (partner._started) $EventLoop.GetInstance().Schedule(new Action(partner.Drain))
         il.Emit(OpCodes.Ldloc, partnerLocal);

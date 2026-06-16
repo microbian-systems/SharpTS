@@ -105,10 +105,10 @@ public partial class ILEmitter : StatementEmitterBase, IEmitterContext
     protected override void ExitLoop()
         => _ctx.ExitLoop();
 
-    protected override (Label BreakLabel, Label ContinueLabel, string? LabelName)? CurrentLoop
+    protected override (Label BreakLabel, Label ContinueLabel, IReadOnlyList<string> LabelNames)? CurrentLoop
         => _ctx.CurrentLoop;
 
-    protected override (Label BreakLabel, Label ContinueLabel, string? LabelName)? FindLabeledLoop(string labelName)
+    protected override (Label BreakLabel, Label ContinueLabel, IReadOnlyList<string> LabelNames)? FindLabeledLoop(string labelName)
         => _ctx.FindLabeledLoop(labelName);
 
     #endregion

@@ -28,7 +28,7 @@ public partial class GeneratorMoveNextEmitter
     {
         public required Label BreakLabel;
         public required Label ContinueLabel;
-        public string? LabelName;
+        public IReadOnlyList<string> LabelNames = CompilationContext.NoLabels;
 
         // Lazily assigned the first time a break/continue to this loop must run an intervening
         // finally; identifies that exit in the `<>pendingExit` field. Unset while the loop's
@@ -133,7 +133,7 @@ public partial class GeneratorMoveNextEmitter
     // ---- Loop-scope methods (override the base stack to use `_exitScopes`) -----------------------
 
     protected override void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
-        => _exitScopes.Add(new LoopScope { BreakLabel = breakLabel, ContinueLabel = continueLabel, LabelName = labelName ?? Ctx.TakePendingLoopLabel() });
+        => _exitScopes.Add(new LoopScope { BreakLabel = breakLabel, ContinueLabel = continueLabel, LabelNames = labelName != null ? new[] { labelName } : Ctx.TakePendingLoopLabels() });
 
     protected override void ExitLoop()
     {
@@ -142,19 +142,19 @@ public partial class GeneratorMoveNextEmitter
         _exitScopes.RemoveAt(_exitScopes.Count - 1);
     }
 
-    protected override (Label BreakLabel, Label ContinueLabel, string? LabelName)? CurrentLoop
+    protected override (Label BreakLabel, Label ContinueLabel, IReadOnlyList<string> LabelNames)? CurrentLoop
     {
         get
         {
             var loop = CurrentLoopScope();
-            return loop == null ? null : (loop.BreakLabel, loop.ContinueLabel, loop.LabelName);
+            return loop == null ? null : (loop.BreakLabel, loop.ContinueLabel, loop.LabelNames);
         }
     }
 
-    protected override (Label BreakLabel, Label ContinueLabel, string? LabelName)? FindLabeledLoop(string labelName)
+    protected override (Label BreakLabel, Label ContinueLabel, IReadOnlyList<string> LabelNames)? FindLabeledLoop(string labelName)
     {
         var loop = FindLabeledLoopScope(labelName);
-        return loop == null ? null : (loop.BreakLabel, loop.ContinueLabel, loop.LabelName);
+        return loop == null ? null : (loop.BreakLabel, loop.ContinueLabel, loop.LabelNames);
     }
 
     private LoopScope? CurrentLoopScope()
@@ -168,7 +168,7 @@ public partial class GeneratorMoveNextEmitter
     private LoopScope? FindLabeledLoopScope(string labelName)
     {
         for (int i = _exitScopes.Count - 1; i >= 0; i--)
-            if (_exitScopes[i] is LoopScope ls && ls.LabelName == labelName)
+            if (_exitScopes[i] is LoopScope ls && ls.LabelNames.Contains(labelName))
                 return ls;
         return null;
     }

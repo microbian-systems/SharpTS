@@ -105,6 +105,66 @@ public class NonCallableInvocationTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NonCallableMember_EvaluatesArgsBeforeCallabilityCheck(ExecutionMode mode)
+    {
+        // ECMA-262 §13.3.6.1: ArgumentListEvaluation (step 2) runs before the
+        // IsCallable check (steps 3/4). `o.bar(se())` with undefined `o.bar` must
+        // still evaluate `se()` before throwing. (test262 .../call/11.2.3-3_1)
+        var source = """
+            let n = 0;
+            function se() { n++; return 1; }
+            const o: any = {};
+            try { o.bar(se()); } catch (e) {}
+            console.log(n);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void MemberAccessOnUndefinedCallee_ThrowsBeforeArgs(ExecutionMode mode)
+    {
+        // ECMA-262 §13.3.2.1: evaluating the callee `o.bar.gar` calls
+        // RequireObjectCoercible(o.bar). With `o.bar` undefined that throws during
+        // callee evaluation, BEFORE the arguments — so `se()` never runs.
+        // (test262 .../call/11.2.3-3_3; compiled mode formerly deferred the throw.)
+        var source = """
+            let n = 0;
+            function se() { n++; return 1; }
+            const o: any = {};
+            try { o.bar.gar(se()); } catch (e) {}
+            console.log(n);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SloppyThisMethodCall_EvaluatesArgs(ExecutionMode mode)
+    {
+        // `this.bar(se())` in a function called without a receiver: sloppy-mode
+        // `this` is the (coercible) global object, so accessing `.bar` does not
+        // throw — `se()` runs, then the undefined `this.bar` fails the callability
+        // check. Guards against the coercibility check over-firing on the
+        // compiled null-`this` representation. (test262 .../call/11.2.3-3_8)
+        var source = """
+            let n = 0;
+            function se() { n++; return 1; }
+            function f() { (this as any).bar(se()); }
+            try { f(); } catch (e) {}
+            console.log(n);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ForAwaitBreak_WithoutIteratorReturn_DoesNotThrow(ExecutionMode mode)
     {
         // iterator.return() is optional per the iterator protocol; the for-await

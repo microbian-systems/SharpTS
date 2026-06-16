@@ -789,10 +789,10 @@ public class WorkerThreadsTests
     /// cloned), in both modes — not silently shared and not an opaque crash.
     /// </summary>
     /// <remarks>
-    /// Compiled mode surfaces the error message via <c>e.message</c>; interpreter mode
-    /// currently surfaces worker-construction failures as a raw string (a separate,
-    /// pre-existing quirk — see issue filed alongside #406), so the guest reads
-    /// whichever is present. Either way the rejection text is observable.
+    /// Both modes now surface the reason via <c>e.message</c>: interpreter mode wraps
+    /// the construction failure in a real <c>Error</c> (#464), and compiled mode yields
+    /// an object carrying <c>message</c>. The guest reads <c>e.message</c> with a string
+    /// fallback so the rejection text is observable either way.
     /// </remarks>
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
@@ -822,6 +822,220 @@ public class WorkerThreadsTests
         Assert.Contains("MessagePort cannot be cloned", output);
         Assert.DoesNotContain("constructed-without-error", output);
         Assert.DoesNotContain("worker-should-not-start", output);
+    }
+
+    /// <summary>
+    /// #465: a transferred port must round-trip repeatedly with the worker idle between
+    /// messages — exercising the event-driven receive (a parent post wakes the worker
+    /// loop to drain) rather than a one-shot. In compiled mode this drives
+    /// <c>CompiledMessagePortBridge</c>'s on-enqueue wake; in interpreter mode the
+    /// cross-thread <c>SharpTSMessagePort</c> delivery. The parent sends the next ping
+    /// only after the previous reply, so each delivery happens while the worker is
+    /// otherwise quiescent.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_TransferredMessagePort_MultipleRoundTripsWhileIdle(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_echo_port.ts"] = """
+                const port: any = workerData.port;
+                let n = 0;
+                port.on("message", (m: any) => {
+                    n++;
+                    port.postMessage("pong" + n + ":" + m);
+                    if (n >= 3) port.close();
+                });
+                """,
+            ["main.ts"] = """
+                import { Worker, MessageChannel } from "worker_threads";
+                const { port1, port2 } = new MessageChannel();
+                const w = new Worker(__dirname + "/worker_echo_port.ts", {
+                    workerData: { port: port1 },
+                    transferList: [port1],
+                });
+                let replies = 0;
+                port2.on("message", (m: any) => {
+                    console.log("recv:" + m);
+                    replies++;
+                    if (replies < 3) port2.postMessage("ping" + (replies + 1));
+                    else port2.close();
+                });
+                port2.postMessage("ping1");
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("recv:pong1:ping1", output);
+        Assert.Contains("recv:pong2:ping2", output);
+        Assert.Contains("recv:pong3:ping3", output);
+    }
+
+    /// <summary>
+    /// #465: <c>worker_threads.receiveMessageOnPort(port)</c> must work on a transferred
+    /// port that the worker drives with a synchronous poll (no <c>'message'</c>
+    /// listener). The worker imports <c>receiveMessageOnPort</c> (module mode, #410) and
+    /// polls the port until a message arrives, then echoes it back. Exercises the
+    /// compiled <c>CompiledMessagePortBridge.ReceiveMessageSync</c> as well as the
+    /// interpreter <c>SharpTSMessagePort</c> path.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_ReceiveMessageOnPort_OnTransferredPort(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_sync_port.ts"] = """
+                import { workerData, receiveMessageOnPort } from "worker_threads";
+                const port: any = workerData.port;
+                const timer = setInterval(() => {
+                    const m: any = receiveMessageOnPort(port);
+                    if (m) {
+                        port.postMessage("sync-got:" + m.message);
+                        clearInterval(timer);
+                        port.close();
+                    }
+                }, 10);
+                """,
+            ["main.ts"] = """
+                import { Worker, MessageChannel } from "worker_threads";
+                const { port1, port2 } = new MessageChannel();
+                const w = new Worker(__dirname + "/worker_sync_port.ts", {
+                    workerData: { port: port1 },
+                    transferList: [port1],
+                });
+                port2.on("message", (m: any) => { console.log("recv:" + m); port2.close(); });
+                port2.postMessage("hello");
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("recv:sync-got:hello", output);
+    }
+
+    #endregion
+
+    #region Worker scripts in module mode (#410)
+
+    /// <summary>
+    /// Regression for #410: a worker script that uses the canonical Node import form
+    /// <c>import { workerData, parentPort, ... } from "worker_threads"</c> must run —
+    /// before the fix the worker ran on a bare single-file pipeline that rejected any
+    /// import at type-check ("Import statements require module mode"), and the failure
+    /// was swallowed by the worker's <c>error</c> event so the parent just produced no
+    /// output. The imported identity bindings must carry this worker's live values
+    /// (the running worker's <c>workerData</c>, a usable <c>parentPort</c>,
+    /// <c>isMainThread === false</c>, a positive <c>threadId</c>) rather than the
+    /// main-thread <c>null</c> placeholders.
+    /// </summary>
+    /// <remarks>
+    /// The worker child script always runs under the interpreter, so this exercises
+    /// the same worker-side module pipeline regardless of the parent's mode.
+    /// <c>__dirname</c> routes the harness through the real-disk path so the worker can
+    /// load its script. Load-independent positive assertion (output present).
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_ImportFromWorkerThreads_ResolvesInModuleMode(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_import.ts"] = """
+                import { workerData, parentPort, isMainThread, threadId } from "worker_threads";
+                parentPort!.postMessage(
+                    "wd=" + workerData + " main=" + isMainThread + " tid=" + (threadId > 0));
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_import.ts", { workerData: 123 });
+                w.on("message", (e: any) => { console.log("received:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("received:wd=123 main=false tid=true", output);
+    }
+
+    /// <summary>
+    /// #410: a module-mode worker can also import its own sibling modules — the worker
+    /// runs through the full resolver/type-check/interpret pipeline, not just a special
+    /// case for <c>worker_threads</c>. Here the worker imports a relative helper and a
+    /// worker_threads binding together.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_ImportRelativeModule_WorksInModuleMode(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["greet.ts"] = """
+                export function greet(name: any): string { return "hello " + name; }
+                """,
+            ["worker_rel.ts"] = """
+                import { workerData, parentPort } from "worker_threads";
+                import { greet } from "./greet";
+                parentPort!.postMessage(greet(workerData));
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_rel.ts", { workerData: "alice" });
+                w.on("message", (e: any) => { console.log("received:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("received:hello alice", output);
+    }
+
+    #endregion
+
+    #region Worker construction failure surfaces as an Error (#464)
+
+    /// <summary>
+    /// Regression for #464: when the <c>Worker</c> constructor fails (here an
+    /// uncloneable <c>workerData</c> containing a function), the value caught by guest
+    /// <c>try/catch</c> must be an object carrying the reason in <c>.message</c> — not
+    /// the bare message string the interpreter previously bound (<c>typeof e</c> was
+    /// "string", <c>e.message</c> undefined). Both modes now expose <c>.message</c>;
+    /// interpreter mode additionally surfaces a real <c>Error</c> (asserted below).
+    /// </summary>
+    /// <remarks>
+    /// Compiled mode currently yields a plain object with <c>message</c> rather than a
+    /// real <c>Error</c> instance (a separate, general compiled-mode gap in how caught
+    /// host exceptions are wrapped — filed separately), so <c>instanceof Error</c> is
+    /// only asserted for the interpreter, which #464 targets.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_UncloneableWorkerData_RejectsWithErrorObjectNotString(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_noop.ts"] = """
+                console.log("worker-should-not-start");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                try {
+                    // A function is never structured-cloneable.
+                    const w = new Worker(__dirname + "/worker_noop.ts", { workerData: { fn: () => 1 } });
+                    console.log("constructed-without-error");
+                } catch (e: any) {
+                    console.log("typeof=" + typeof e);
+                    console.log("hasMessage=" + (e && typeof e.message === "string" && e.message.length > 0));
+                    console.log("isError=" + (e instanceof Error));
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("typeof=object", output);
+        Assert.Contains("hasMessage=true", output);
+        Assert.DoesNotContain("constructed-without-error", output);
+        Assert.DoesNotContain("worker-should-not-start", output);
+        if (mode == ExecutionMode.Interpreted)
+            Assert.Contains("isError=true", output);
     }
 
     #endregion

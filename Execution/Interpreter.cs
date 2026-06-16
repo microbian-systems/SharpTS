@@ -338,6 +338,22 @@ public partial class Interpreter : IDisposable
     /// </summary>
     public string? EntryModulePath { get; set; }
 
+    /// <summary>
+    /// Worker-thread bindings for the <c>worker_threads</c> built-in module. Non-null
+    /// only on the isolated interpreter that runs a Worker's script. It makes
+    /// <c>import { workerData, parentPort, threadId, isMainThread } from "worker_threads"</c>
+    /// resolve to this worker's live values instead of the main-thread <c>null</c>
+    /// placeholders, so a worker can read its inputs via the canonical import form and
+    /// not only the bare worker-context globals (#410). <see cref="WorkerThreadsBindings.ParentPort"/>
+    /// is the same port instance bound as the bare <c>parentPort</c> global, so a
+    /// <c>message</c> listener attached through the import receives the messages the
+    /// worker's message loop delivers to that instance.
+    /// </summary>
+    internal WorkerThreadsBindings? WorkerThreadsContext { get; set; }
+
+    /// <summary>Live <c>worker_threads</c> values for the running Worker (see <see cref="WorkerThreadsContext"/>).</summary>
+    internal sealed record WorkerThreadsBindings(object? WorkerData, object? ParentPort, double ThreadId);
+
     // Flag to indicate interpreter has been disposed - timer callbacks should not execute
     private volatile bool _isDisposed;
 
@@ -1447,6 +1463,17 @@ public partial class Interpreter : IDisposable
             if (moduleName != null && BuiltInModuleValues.HasInterpreterSupport(moduleName))
             {
                 var exports = BuiltInModuleValues.GetModuleExports(moduleName);
+                // On a worker thread, rebind the worker_threads identity exports to this
+                // worker's live values so `import { workerData, parentPort } from
+                // "worker_threads"` sees the same inputs as the bare worker-context
+                // globals instead of the main-thread null placeholders (#410).
+                if (moduleName == "worker_threads" && WorkerThreadsContext is { } wtc)
+                {
+                    exports["workerData"] = wtc.WorkerData;
+                    exports["parentPort"] = wtc.ParentPort;
+                    exports["threadId"] = wtc.ThreadId;
+                    exports["isMainThread"] = false;
+                }
                 foreach (var (name, value) in exports)
                 {
                     moduleInstance.SetExport(name, value);

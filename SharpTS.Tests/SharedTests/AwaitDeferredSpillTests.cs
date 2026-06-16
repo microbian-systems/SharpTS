@@ -362,4 +362,55 @@ public class AwaitDeferredSpillTests
     {
         Assert.Equal("undefined\n", Run("""const n: any = null; console.log(n?.substring(await defer(1, 5), 4));""", mode));
     }
+
+    // #627: an optional-chain call to a dispatchable-string-method NAME (substring/charAt/…) on a
+    // non-string object that LACKS the method, with a deferred-await argument. The chain
+    // short-circuits to undefined; the interpreter does so before evaluating the argument, but the
+    // compiled await-safe path used to spill the arg before the string-vs-generic split, so the
+    // await ran anyway. Both modes must now leave the argument unevaluated (parity). The result is
+    // undefined in both either way — only the side effect differs.
+    // Observes whether an optional-chain call's awaited argument runs. `ran` and the synchronous
+    // flag-setter `mark()` live at top level (compiled mode supports neither a nested function nor a
+    // nested async function inside the async body); the awaited arg folds in `mark()` so its side
+    // effect fires iff the argument is evaluated. If the chain short-circuits first, `ran` stays false.
+    private static string RunOptionalChainObserve(string receiverDecl, string call, ExecutionMode mode)
+        => TestHarness.Run(
+            Defer +
+            "let ran = false;\n" +
+            "function mark(): number { ran = true; return 1; }\n" +
+            receiverDecl + "\n" +
+            "async function m() { const r = " + call + "; console.log(\"r=\" + r + \" ran=\" + ran); }\n" +
+            "m();\n",
+            mode);
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OptionalChainStringMethod_MissingOnNonStringReceiver_DoesNotEvaluateAwaitArg(ExecutionMode mode)
+    {
+        // The #627 repro: substring on a non-string object that lacks it. Both modes short-circuit to
+        // undefined WITHOUT running the awaited arg (compiled used to spill it before the split).
+        Assert.Equal("r=undefined ran=false\n", RunOptionalChainObserve(
+            "const o: any = { foo: 1 };", "o?.substring(mark() + (await defer(0, 5)), 4)", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OptionalChainNonStringMethod_MissingOnReceiver_DoesNotEvaluateAwaitArg(ExecutionMode mode)
+    {
+        // The non-dispatchable-name sibling (slice) was already consistent — it never had a string
+        // fast path, so its arg spill already happened after the fn-nullish short-circuit. Pinned so
+        // the two stay aligned.
+        Assert.Equal("r=undefined ran=false\n", RunOptionalChainObserve(
+            "const o: any = { foo: 1 };", "o?.slice(mark() + (await defer(0, 5)), 4)", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OptionalChainStringMethod_StringReceiver_EvaluatesAwaitArg(ExecutionMode mode)
+    {
+        // A string receiver DOES have the method, so the argument must evaluate (side effect runs) and
+        // the real result comes back — the deferred-await arg still survives the suspension.
+        Assert.Equal("r=ell ran=true\n", RunOptionalChainObserve(
+            "const s: any = \"hello\";", "s?.substring(mark() + (await defer(0, 5)), 4)", mode));
+    }
 }

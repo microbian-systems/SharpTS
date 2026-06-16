@@ -143,7 +143,14 @@ public partial class Interpreter
         if (klass is ISharpTSCallable callable && klass is not SharpTSClass && klass is not BoundFunction)
         {
             List<object?> ctorArgs = await ctx.EvaluateAllAsync(newExpr.Arguments);
-            return callable.Call(this, ctorArgs);
+            try
+            {
+                return callable.Call(this, ctorArgs);
+            }
+            catch (Exception ex) when (IsNativeConstructorFailure(ex))
+            {
+                throw new ThrowException(new SharpTSError(ex.Message));
+            }
         }
 
         // Bound functions cannot be used as constructors (JS spec compliance)
@@ -375,7 +382,14 @@ public partial class Interpreter
             {
                 ctorArgs.Add(Evaluate(arg));
             }
-            return RuntimeValue.FromBoxed(callable.Call(this, ctorArgs));
+            try
+            {
+                return RuntimeValue.FromBoxed(callable.Call(this, ctorArgs));
+            }
+            catch (Exception ex) when (IsNativeConstructorFailure(ex))
+            {
+                throw new ThrowException(new SharpTSError(ex.Message));
+            }
         }
 
         // Bound functions cannot be used as constructors (JS spec compliance)
@@ -405,6 +419,29 @@ public partial class Interpreter
         }
         return sharpClass.CallRV(this, arguments);
     }
+
+    /// <summary>
+    /// True when a host exception escaping a native built-in constructor (a
+    /// <c>new</c> on an <see cref="ISharpTSCallable"/> that is not a user class)
+    /// should be re-surfaced to guest code as a real <see cref="SharpTSError"/>
+    /// instead of the bare message string the host-exception boundary would
+    /// otherwise bind to the catch variable (#464).
+    /// </summary>
+    /// <remarks>
+    /// Native constructors such as <c>Worker</c> and <c>MessageChannel</c> validate
+    /// their input by throwing a plain <see cref="Exception"/> (e.g. <c>new Worker(…)</c>
+    /// failing the <c>workerData</c> structured-clone). In interpreter mode a guest
+    /// <c>try/catch</c> previously bound that exception's message <em>string</em>, so
+    /// <c>e.message</c> was <c>undefined</c> and <c>e instanceof Error</c> was false;
+    /// compiled mode already surfaces a proper <c>Error</c>. Two kinds pass through
+    /// unwrapped: a <see cref="ThrowException"/> (a guest throw already carrying its
+    /// value, e.g. routed out through a constructor that consumed a guest iterable)
+    /// and any <see cref="Diagnostics.Exceptions.SharpTSException"/> (interpreter/
+    /// runtime errors deliberately kept as message strings per the
+    /// <see cref="ThrowException.FromResult"/> backward-compat contract).
+    /// </remarks>
+    private static bool IsNativeConstructorFailure(Exception ex) =>
+        ex is not ThrowException && ex is not Diagnostics.Exceptions.SharpTSException;
 
     /// <summary>
     /// Evaluates a <c>this</c> expression, returning the current instance.

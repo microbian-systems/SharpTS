@@ -28,7 +28,7 @@ public partial class AsyncGeneratorMoveNextEmitter
     {
         public required Label BreakLabel;
         public required Label ContinueLabel;
-        public string? LabelName;
+        public IReadOnlyList<string> LabelNames = CompilationContext.NoLabels;
 
         // Lazily assigned the first time a break/continue to this loop must run an intervening
         // finally; identifies that exit in the `<>pendingExit` field. Unset while the loop's
@@ -102,11 +102,11 @@ public partial class AsyncGeneratorMoveNextEmitter
     // ---- Loop-scope methods (override the base stack to use `_exitScopes`) -----------------------
 
     protected override void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
-        // Adopt a pending label (`outer: for (...)`) just like the sync generator emitter does, so a
-        // labeled `break`/`continue` can resolve this loop as its target. Without the fallback the
-        // LoopScope registers with LabelName == null and FindLabeledLoopScope never matches, making a
-        // labeled break/continue a silent no-op — the loop keeps iterating (#586).
-        => _exitScopes.Add(new LoopScope { BreakLabel = breakLabel, ContinueLabel = continueLabel, LabelName = labelName ?? Ctx.TakePendingLoopLabel() });
+        // Adopt any pending labels (`outer: for (...)`, or a chain `a: b: for`) just like the sync
+        // generator emitter does, so a labeled `break`/`continue` can resolve this loop as its target.
+        // Without the fallback the LoopScope registers with no labels and FindLabeledLoopScope never
+        // matches, making a labeled break/continue a silent no-op — the loop keeps iterating (#586).
+        => _exitScopes.Add(new LoopScope { BreakLabel = breakLabel, ContinueLabel = continueLabel, LabelNames = labelName != null ? new[] { labelName } : Ctx.TakePendingLoopLabels() });
 
     protected override void ExitLoop()
     {
@@ -115,19 +115,19 @@ public partial class AsyncGeneratorMoveNextEmitter
         _exitScopes.RemoveAt(_exitScopes.Count - 1);
     }
 
-    protected override (Label BreakLabel, Label ContinueLabel, string? LabelName)? CurrentLoop
+    protected override (Label BreakLabel, Label ContinueLabel, IReadOnlyList<string> LabelNames)? CurrentLoop
     {
         get
         {
             var loop = CurrentLoopScope();
-            return loop == null ? null : (loop.BreakLabel, loop.ContinueLabel, loop.LabelName);
+            return loop == null ? null : (loop.BreakLabel, loop.ContinueLabel, loop.LabelNames);
         }
     }
 
-    protected override (Label BreakLabel, Label ContinueLabel, string? LabelName)? FindLabeledLoop(string labelName)
+    protected override (Label BreakLabel, Label ContinueLabel, IReadOnlyList<string> LabelNames)? FindLabeledLoop(string labelName)
     {
         var loop = FindLabeledLoopScope(labelName);
-        return loop == null ? null : (loop.BreakLabel, loop.ContinueLabel, loop.LabelName);
+        return loop == null ? null : (loop.BreakLabel, loop.ContinueLabel, loop.LabelNames);
     }
 
     private LoopScope? CurrentLoopScope()
@@ -141,7 +141,7 @@ public partial class AsyncGeneratorMoveNextEmitter
     private LoopScope? FindLabeledLoopScope(string labelName)
     {
         for (int i = _exitScopes.Count - 1; i >= 0; i--)
-            if (_exitScopes[i] is LoopScope ls && ls.LabelName == labelName)
+            if (_exitScopes[i] is LoopScope ls && ls.LabelNames.Contains(labelName))
                 return ls;
         return null;
     }
@@ -780,7 +780,12 @@ public partial class AsyncGeneratorMoveNextEmitter
                        (f.Increment != null && ContainsSuspensionInExpr(f.Increment)) ||
                        ContainsSuspensionInStmt(f.Body);
             case Stmt.ForOf fo:
-                return ContainsSuspensionInExpr(fo.Iterable) || ContainsSuspensionInStmt(fo.Body);
+                // `for await…of` now suspends on its implicit next()/return() awaits (#697), so it
+                // contains a suspension even when neither the iterable nor the body has an explicit
+                // yield/await. Treating it otherwise would put a `for await` inside a try on the real-IL
+                // try path, where its resume labels become illegal BranchIntoTry targets (the async-gen
+                // analog of the #631 ContainsAwait pitfall).
+                return fo.IsAsync || ContainsSuspensionInExpr(fo.Iterable) || ContainsSuspensionInStmt(fo.Body);
             case Stmt.ForIn fi:
                 return ContainsSuspensionInExpr(fi.Object) || ContainsSuspensionInStmt(fi.Body);
             case Stmt.Block b:

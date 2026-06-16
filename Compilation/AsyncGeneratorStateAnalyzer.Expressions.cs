@@ -32,7 +32,18 @@ public partial class AsyncGeneratorStateAnalyzer
         _seenSuspension = true;
 
         if (expr.IsDelegating)
+        {
             _hasYieldStar = true;
+
+            // `yield* iterable` over a genuinely-async iterator awaits the delegated iterator's next()
+            // each turn before re-yielding. Reserve a suspension state for that await — emitted (and
+            // consumed) AFTER the yield's own re-yield state and after the value expression, matching
+            // EmitYieldStarWithTypeCheck's allocation in the async arm (#688). It is reserved
+            // unconditionally for every delegating yield: sync-vs-async delegation is a runtime type
+            // check, and the async arm (which marks this state's resume label) is always emitted, so the
+            // state stays consistent whether or not the sync arm is taken at runtime.
+            RecordSyntheticAwaitPoint();
+        }
 
         // Track suspension in try block
         RecordSuspensionInTryBlock();

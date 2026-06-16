@@ -380,6 +380,16 @@ public abstract partial class ExpressionEmitterBase
 
     private void EmitGetPropertyAndInvoke(LocalBuilder objLocal, string methodName, List<Expr> arguments, LocalBuilder[]? argLocals = null)
     {
+        // ECMA-262 §13.3.2.1: evaluating the member-access callee `recv.method`
+        // performs RequireObjectCoercible(recv), so an undefined receiver throws
+        // TypeError *before* ArgumentListEvaluation (§13.3.6.1 step 2 runs before
+        // the callability check in steps 3/4). $Runtime.GetProperty returns
+        // undefined for a nullish base (so optional chains can short-circuit),
+        // which would otherwise defer the throw past the arguments and run their
+        // side effects. Enforce coercibility here, on the non-optional method-call
+        // path. (test262 language/expressions/call/11.2.3-3_3)
+        EmitThrowIfReceiverUndefined(objLocal, methodName);
+
         // Resolve the method first (property lookup precedes argument evaluation, per spec) and
         // store it, so the receiver and resolved fn aren't left on the IL stack while arguments are
         // evaluated — a later argument can suspend (await/yield), which requires a clear stack.
@@ -398,6 +408,35 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Ldloc, fnLocal);                 // resolved fn
         EmitBoxedArgsArray(arguments, argLocals);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeMethodValue);
+    }
+
+    /// <summary>
+    /// Emits a guard that throws <c>TypeError</c> when <paramref name="objLocal"/>
+    /// holds <c>$Undefined</c> — the RequireObjectCoercible step a member-access
+    /// callee performs before its arguments are evaluated. Missing-property reads
+    /// (e.g. <c>o.bar</c> where <c>bar</c> is absent) yield <c>$Undefined</c>, so
+    /// this catches <c>o.bar.gar(sideEffect())</c> before the side effect runs.
+    ///
+    /// Deliberately does NOT reject a bare CLR <c>null</c>: compiled sloppy-mode
+    /// <c>this</c> is represented as <c>null</c> (spec says it is globalThis, which
+    /// is coercible), so <c>this.method(sideEffect())</c> must keep evaluating its
+    /// arguments. Symbols/primitives are coercible too. A genuine <c>null.x()</c>
+    /// still throws — just deferred to InvokeMethodValue, as before this guard.
+    /// </summary>
+    protected void EmitThrowIfReceiverUndefined(LocalBuilder objLocal, string methodName)
+    {
+        var okLabel = IL.DefineLabel();
+
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+        IL.Emit(OpCodes.Brfalse, okLabel);               // not $Undefined → ok
+
+        IL.Emit(OpCodes.Ldstr, $"Cannot read properties of undefined (reading '{methodName}')");
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSTypeErrorCtor);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateException);
+        IL.Emit(OpCodes.Throw);
+
+        IL.MarkLabel(okLabel);
     }
 
     /// <summary>
@@ -1097,34 +1136,107 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
         IL.Emit(OpCodes.Brtrue, nullishLabel);
 
-        // Pre-spilled, already-boxed argument locals shared by the string fast path and the generic
-        // path below. Stays null unless an argument can suspend.
-        LocalBuilder[]? argLocals = null;
+        bool stringMethod = IsRuntimeDispatchableStringMethod(g.Name.Lexeme);
 
-        // GetProperty can't resolve most string prototype methods (see
-        // EmitDynamicMethodCallPreservingThis) — keep its string fast path.
-        if (IsRuntimeDispatchableStringMethod(g.Name.Lexeme))
+        if (stringMethod && awaitSafe)
         {
-            // The string fast path and the generic path below both contain the arguments and are
-            // mutually exclusive at runtime. When an argument can suspend, spill the arguments once
-            // here — before the string-vs-generic split — so each await/yield is emitted exactly
-            // once; emitting them in both branches would desync the await-state counter (#614). The
-            // spill is reached only on the non-nullish receiver path, so the arguments stay
-            // unevaluated when the chain short-circuits.
+            // A string-named method with a suspending argument needs the args resolved *after* the
+            // short-circuit decision yet emitted exactly once. Handled in its own block (#614/#627).
+            EmitOptionalChainStringMethodAwaitSafe(c, g, recvLocal, nullishLabel, endLabel);
+        }
+        else
+        {
+            // Pre-spilled, already-boxed argument locals shared by the string fast path and the
+            // generic path below. Stays null unless an argument can suspend.
+            LocalBuilder[]? argLocals = null;
+
+            // GetProperty can't resolve most string prototype methods (see
+            // EmitDynamicMethodCallPreservingThis) — keep its string fast path. Without a suspending
+            // argument the args are emitted inline; the two paths are mutually exclusive at runtime,
+            // and with no await/yield, duplicating the (side-effect-free-to-the-counter) arg IL in
+            // both is harmless. The generic branch's fn-nullish check below still short-circuits
+            // before its inline args run, so a missing method never evaluates the args.
+            if (stringMethod)
+            {
+                var notStringLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Ldloc, recvLocal);
+                IL.Emit(OpCodes.Isinst, Types.String);
+                IL.Emit(OpCodes.Brfalse, notStringLabel);
+                EmitRuntimeStringMethod(recvLocal, g.Name.Lexeme, c.Arguments, argLocals);
+                IL.Emit(OpCodes.Br, endLabel);
+                IL.MarkLabel(notStringLabel);
+            }
+
+            // fn = GetProperty(recv, name); nullish fn short-circuits to undefined,
+            // matching the interpreter's HasOptionalInChain rule.
+            IL.Emit(OpCodes.Ldloc, recvLocal);
+            IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+            var fnLocal = _helpers.SpillStoreObject();
+            IL.Emit(OpCodes.Ldloc, fnLocal);
+            IL.Emit(OpCodes.Brfalse, nullishLabel);
+            IL.Emit(OpCodes.Ldloc, fnLocal);
+            IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+            IL.Emit(OpCodes.Brtrue, nullishLabel);
+
+            // InvokeMethodValue(recv, fn, args) — args evaluated only on the non-nullish path, per
+            // spec. For a non-string method spill the args here, after the method lookup, so an await
+            // in a later arg doesn't suspend with the receiver, fn, and the partially-built array all
+            // stacked (#439); this preserves the lookup-before-args evaluation order.
             if (awaitSafe)
                 argLocals = c.Arguments.Select(SpillBoxed).ToArray();
-
-            var notStringLabel = IL.DefineLabel();
             IL.Emit(OpCodes.Ldloc, recvLocal);
-            IL.Emit(OpCodes.Isinst, Types.String);
-            IL.Emit(OpCodes.Brfalse, notStringLabel);
-            EmitRuntimeStringMethod(recvLocal, g.Name.Lexeme, c.Arguments, argLocals);
+            IL.Emit(OpCodes.Ldloc, fnLocal);
+            EmitBoxedArgsArray(c.Arguments, argLocals);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeMethodValue);
             IL.Emit(OpCodes.Br, endLabel);
-            IL.MarkLabel(notStringLabel);
         }
 
-        // fn = GetProperty(recv, name); nullish fn short-circuits to undefined,
-        // matching the interpreter's HasOptionalInChain rule.
+        IL.MarkLabel(nullishLabel);
+        IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
+
+        IL.MarkLabel(endLabel);
+        SetStackUnknown();
+        return true;
+    }
+
+    /// <summary>
+    /// Emits the optional-chain dispatch for a string-named method (<c>substring</c>, <c>charAt</c>,
+    /// …) when an argument can suspend (<c>await</c>/<c>yield</c>). Two constraints collide here:
+    /// <list type="bullet">
+    /// <item>The string fast path (<see cref="EmitRuntimeStringMethod"/>, no method-existence check —
+    /// the method always exists on a real string) and the generic <c>GetProperty</c>+
+    /// <c>InvokeMethodValue</c> path are mutually exclusive at runtime, but the suspending argument
+    /// must be emitted <em>exactly once</em>; emitting it in both branches desyncs the await-state
+    /// counter and crashes the compiler (#614).</item>
+    /// <item>When the receiver is a non-string object that lacks the method, the chain short-circuits
+    /// to <c>undefined</c> and the argument must stay <em>unevaluated</em> — matching the interpreter,
+    /// which short-circuits before evaluating arguments (#627).</item>
+    /// </list>
+    /// So the dispatch is decided and the generic fn null-checked <em>before</em> any argument runs
+    /// (short-circuiting straight to <paramref name="nullishLabel"/> when the method is missing), then
+    /// the argument(s) are evaluated once in a shared block both live dispatches reach. The receiver
+    /// kind is re-tested with <c>isinst string</c> after the evaluation rather than stashed in a flag,
+    /// because <paramref name="recvLocal"/> persists across the suspension but a plain bool local would
+    /// reset on MoveNext re-entry.
+    ///
+    /// Note: like the rest of <see cref="TryEmitOptionalChainMethodCall"/> this keeps SharpTS's
+    /// pre-existing <c>HasOptionalInChain</c> quirk — a missing method on a non-nullish receiver yields
+    /// <c>undefined</c> rather than throwing <c>TypeError</c> (ECMA-262 would evaluate the args and
+    /// throw). Both modes share that quirk; this only realigns <em>when</em> the args run.
+    /// </summary>
+    private void EmitOptionalChainStringMethodAwaitSafe(Expr.Call c, Expr.Get g, LocalBuilder recvLocal, Label nullishLabel, Label endLabel)
+    {
+        var evalArgsLabel = IL.DefineLabel();
+        var genericDispatchLabel = IL.DefineLabel();
+
+        // String receiver → the method exists, so skip the lookup and go straight to arg eval.
+        IL.Emit(OpCodes.Ldloc, recvLocal);
+        IL.Emit(OpCodes.Isinst, Types.String);
+        IL.Emit(OpCodes.Brtrue, evalArgsLabel);
+
+        // Non-string receiver: resolve the method generically; a nullish fn short-circuits to
+        // undefined WITHOUT evaluating the argument (the parity fix — #627).
         IL.Emit(OpCodes.Ldloc, recvLocal);
         IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
@@ -1135,25 +1247,25 @@ public abstract partial class ExpressionEmitterBase
         IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
         IL.Emit(OpCodes.Brtrue, nullishLabel);
 
-        // InvokeMethodValue(recv, fn, args) — args evaluated only on the non-nullish path, per spec.
-        // For a non-string method (or when the string path didn't pre-spill) spill the args here,
-        // after the method lookup, so an await in a later arg doesn't suspend with the receiver, fn,
-        // and the partially-built array all stacked (#439); this preserves the lookup-before-args
-        // evaluation order. String methods reuse the locals pre-spilled above.
-        if (awaitSafe && argLocals == null)
-            argLocals = c.Arguments.Select(SpillBoxed).ToArray();
+        // Shared block both live dispatches reach: evaluate the suspending argument(s) exactly once.
+        IL.MarkLabel(evalArgsLabel);
+        var argLocals = c.Arguments.Select(SpillBoxed).ToArray();
+
+        // Re-test the receiver kind (recvLocal survives the suspension) to pick the dispatch.
+        IL.Emit(OpCodes.Ldloc, recvLocal);
+        IL.Emit(OpCodes.Isinst, Types.String);
+        IL.Emit(OpCodes.Brfalse, genericDispatchLabel);
+        EmitRuntimeStringMethod(recvLocal, g.Name.Lexeme, c.Arguments, argLocals);
+        IL.Emit(OpCodes.Br, endLabel);
+
+        // Non-string receiver with a real method: InvokeMethodValue(recv, fn, args). fnLocal was
+        // stored on the non-string path above (the only way to reach this dispatch at runtime).
+        IL.MarkLabel(genericDispatchLabel);
         IL.Emit(OpCodes.Ldloc, recvLocal);
         IL.Emit(OpCodes.Ldloc, fnLocal);
         EmitBoxedArgsArray(c.Arguments, argLocals);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeMethodValue);
         IL.Emit(OpCodes.Br, endLabel);
-
-        IL.MarkLabel(nullishLabel);
-        IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
-
-        IL.MarkLabel(endLabel);
-        SetStackUnknown();
-        return true;
     }
 
     /// <summary>

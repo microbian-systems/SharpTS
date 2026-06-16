@@ -1719,10 +1719,28 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(validLabel);
 
-        // result = string.Concat(result, Char.ConvertFromUtf32(codePoint))
+        // result = string.Concat(result, <UTF16-encoded codePoint>)
+        // ECMA-262 §11.1.3: char.ConvertFromUtf32 rejects lone surrogates
+        // (0xD800–0xDFFF), but fromCodePoint must emit them as single UTF-16
+        // code units. Code points <= 0xFFFF (incl. lone surrogates) become one
+        // char; supplementary code points (> 0xFFFF, never a surrogate) go
+        // through ConvertFromUtf32.
         il.Emit(OpCodes.Ldloc, resultLocal);
+        var supplementaryLabel = il.DefineLabel();
+        var segmentReadyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, codePointLocal);
+        il.Emit(OpCodes.Ldc_I4, 0xFFFF);
+        il.Emit(OpCodes.Bgt, supplementaryLabel);
+        // cp <= 0xFFFF → char.ToString((char)cp)
+        il.Emit(OpCodes.Ldloc, codePointLocal);
+        il.Emit(OpCodes.Conv_U2);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Char, "ToString", _types.Char));
+        il.Emit(OpCodes.Br, segmentReadyLabel);
+        // cp > 0xFFFF → char.ConvertFromUtf32(cp)
+        il.MarkLabel(supplementaryLabel);
         il.Emit(OpCodes.Ldloc, codePointLocal);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Char, "ConvertFromUtf32", _types.Int32));
+        il.MarkLabel(segmentReadyLabel);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
         il.Emit(OpCodes.Stloc, resultLocal);
 

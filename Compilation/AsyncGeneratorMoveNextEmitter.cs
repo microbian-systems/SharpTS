@@ -74,6 +74,12 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
         _analysis = analysis;
         _il = builder.MoveNextAsyncMethod.GetILGenerator();
         _types = types;
+        // A value spilled before an await/yield and used after it (e.g. the `p` in `p + (await x)`)
+        // must survive the MoveNextAsync re-entry in a state-machine field, not a transient IL local —
+        // the async-generator analog of #400. This was the only state-machine emitter that lacked the
+        // wiring (the other three enable it), so such a value was silently lost across a suspension.
+        _helpers.EnablePersistentSpills(name => _builder.StateMachineType.DefineField(
+            name, _types.Object, FieldAttributes.Private));
     }
 
     // DeclareLoopVariable and EmitStoreLoopVariable are handled by StatementEmitterBase

@@ -6,6 +6,9 @@ namespace SharpTS.Compilation;
 
 public partial class AsyncGeneratorMoveNextEmitter
 {
+    // Per-method counter giving each for await…of loop a unique hoisted iterator field name (#697).
+    private int _forAwaitCounter;
+
     // EmitStatement: inherited from StatementEmitterBase (handles all statement types
     // including Using, DeclareModule, DeclareGlobal that were previously missing here)
 
@@ -168,107 +171,80 @@ public partial class AsyncGeneratorMoveNextEmitter
         ExitLoop();
     }
 
-    // Overrides the shared StatementEmitterBase.EmitForAwaitOf: an async generator that
-    // consumes another async iterable needs its own error-propagation handling (the
-    // try/catch around GetResult below) and a strict done check, so it keeps a specialized
-    // lowering rather than the shared one used by async functions/arrows (#430/#645).
+    /// <summary>
+    /// Async-generator override of the shared <see cref="StatementEmitterBase.EmitForAwaitOf"/>: a
+    /// <c>for await…of</c> inside an async generator drives an async iterator and SUSPENDS the enclosing
+    /// async-generator state machine on each <c>iterator.next()</c>/<c>iterator.return()</c> await,
+    /// instead of blocking on a synchronous <c>GetResult</c>. Blocking deadlocks a genuinely-async source
+    /// (a not-yet-settled await inside the iterator needs the very event-loop thread the block holds) —
+    /// the async-generator sibling of the async-function deadlock fixed in #631 (this is #697). The
+    /// analyzer reserved two suspension states (next + return) in
+    /// <c>AsyncGeneratorStateAnalyzer.VisitForOf</c>, consumed here in the same order.
+    /// </summary>
+    /// <remarks>
+    /// Scope matches the prior override: the iterator is driven through the <c>$IAsyncGenerator</c>
+    /// interface — the only async-iterator shape reachable as a CLR <c>IAsyncEnumerator&lt;object&gt;</c>
+    /// in compiled mode (custom <c>Symbol.asyncIterator</c> sources are guest objects, which this position
+    /// did not accept before either — a separate, pre-existing gap). <c>next()</c> returns a
+    /// <c>Task&lt;object&gt;</c> ({ value, done }) that maps directly onto the async-gen await mechanism
+    /// (<see cref="EmitAwaitFromValueOnStack"/>), so rejected steps propagate / reach an enclosing try
+    /// exactly as a normal <c>await</c> does.
+    /// </remarks>
     protected override void EmitForAwaitOf(Stmt.ForOf f)
     {
-        // for await...of iterates over async iterables
-        // We use the $IAsyncGenerator.next() method which returns Task<object>
-        // The result is a dictionary with { value, done } properties
-
         string varName = f.Variable.Lexeme;
         var varField = _builder.GetVariableField(varName);
+        var asyncGenInterface = _ctx!.Runtime!.AsyncGeneratorInterfaceType;
 
-        // Emit the async iterable expression
+        // The iterator must survive the per-iteration suspensions (a MoveNextAsync re-entry wipes IL
+        // locals — and the loop body itself may yield/await), so store it in a state-machine field,
+        // unique per loop. The type is still open here (CreateType runs after MoveNextAsync), so defining
+        // a field now is valid.
+        int loopId = _forAwaitCounter++;
+        var iteratorField = _builder.StateMachineType.DefineField(
+            $"<>7__aiter{loopId}", _types.Object, FieldAttributes.Private);
+
+        // Evaluate the async iterable and store it as the iterator (the async generator IS its own
+        // iterator). Casting to $IAsyncGenerator validates the shape, matching the prior override.
         EmitExpression(f.Iterable);
         EnsureBoxed();
-
-        // Cast to $IAsyncGenerator interface
-        var asyncGenInterface = _ctx!.Runtime!.AsyncGeneratorInterfaceType;
         _il.Emit(OpCodes.Castclass, asyncGenInterface);
+        var iterTemp = _il.DeclareLocal(asyncGenInterface);
+        _il.Emit(OpCodes.Stloc, iterTemp);
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldloc, iterTemp);
+        _il.Emit(OpCodes.Stfld, iteratorField);
 
-        // Store the async generator in a local
-        var asyncGenLocal = _il.DeclareLocal(asyncGenInterface);
-        _il.Emit(OpCodes.Stloc, asyncGenLocal);
+        int nextState = _currentSuspensionState++;   // iterator.next() await (reused each iteration)
 
         var startLabel = _il.DefineLabel();
         var endLabel = _il.DefineLabel();
         var cleanupLabel = _il.DefineLabel();
         var continueLabel = _il.DefineLabel();
 
-        // Break goes to cleanup (calls generator.return()), not directly to end
+        // break → cleanup (await iterator.return()); natural done → endLabel (no return() per spec).
         EnterLoop(cleanupLabel, continueLabel);
 
         _il.MarkLabel(startLabel);
 
-        // Call next() which returns Task<object>
-        _il.Emit(OpCodes.Ldloc, asyncGenLocal);
-        _il.Emit(OpCodes.Callvirt, _ctx.Runtime.AsyncGeneratorNextMethod);
-
-        // Await the Task<object> - get result synchronously for now
-        // (full async continuation would require state machine suspension)
-        var taskLocal = _il.DeclareLocal(_types.TaskOfObject);
-        _il.Emit(OpCodes.Stloc, taskLocal);
-        _il.Emit(OpCodes.Ldloc, taskLocal);
-        var getAwaiter = _types.GetMethodNoParams(_types.TaskOfObject, "GetAwaiter");
-        _il.Emit(OpCodes.Call, getAwaiter);
-        var awaiterLocal = _il.DeclareLocal(_types.TaskAwaiterOfObject);
-        _il.Emit(OpCodes.Stloc, awaiterLocal);
-
-        // Result local for storing the result
+        // result = await iterator.next()  — suspends if next() is not yet settled.
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, iteratorField);
+        _il.Emit(OpCodes.Castclass, asyncGenInterface);
+        _il.Emit(OpCodes.Callvirt, _ctx.Runtime.AsyncGeneratorNextMethod);  // Task<object>
+        SetStackUnknown();
+        EmitAwaitFromValueOnStack(nextState);
         var resultLocal = _il.DeclareLocal(_types.Object);
-        var getResultSuccessLabel = _il.DefineLabel();
-
-        // Wrap GetResult() in try-catch for proper error propagation from rejected promises
-        _il.BeginExceptionBlock();
-
-        _il.Emit(OpCodes.Ldloca, awaiterLocal);
-        var getResult = _types.GetMethodNoParams(_types.TaskAwaiterOfObject, "GetResult");
-        _il.Emit(OpCodes.Call, getResult);
-        _il.Emit(OpCodes.Stloc, resultLocal);
-        _il.Emit(OpCodes.Leave, getResultSuccessLabel);
-
-        _il.BeginCatchBlock(typeof(Exception));
-        // Re-throw wrapped exception for proper propagation
-        _il.Emit(OpCodes.Call, _ctx.Runtime.WrapException);
-        _il.Emit(OpCodes.Call, _ctx.Runtime.CreateException);
-        _il.Emit(OpCodes.Throw);
-        _il.EndExceptionBlock();
-
-        _il.MarkLabel(getResultSuccessLabel);
-
-        // Result is a Dictionary<string, object> with { value, done }
         _il.Emit(OpCodes.Stloc, resultLocal);
 
-        // Check if done: GetProperty(result, "done")
-        // IMPORTANT: Use strict boolean check, not IsTruthy - IsTruthy treats 0 as falsy
-        // which would incorrectly end the loop when yielding zero
+        // if (result.done) exit without calling return().
         _il.Emit(OpCodes.Ldloc, resultLocal);
-        _il.Emit(OpCodes.Ldstr, "done");
-        _il.Emit(OpCodes.Call, _ctx.Runtime.GetProperty);
+        _il.Emit(OpCodes.Call, _ctx.Runtime.GetIteratorDone);
+        _il.Emit(OpCodes.Brtrue, endLabel);
 
-        // Check if it's a boxed bool true (strict check)
-        var notDoneLabel = _il.DefineLabel();
-        _il.Emit(OpCodes.Isinst, typeof(bool));
-        _il.Emit(OpCodes.Brfalse, notDoneLabel);  // Not a bool - continue loop
-
-        // It's a bool - unbox and check if true
+        // loopVar = result.value
         _il.Emit(OpCodes.Ldloc, resultLocal);
-        _il.Emit(OpCodes.Ldstr, "done");
-        _il.Emit(OpCodes.Call, _ctx.Runtime.GetProperty);
-        _il.Emit(OpCodes.Unbox_Any, typeof(bool));
-        _il.Emit(OpCodes.Brtrue, endLabel);  // done === true -> exit loop (no cleanup needed)
-
-        _il.MarkLabel(notDoneLabel);
-
-        // Get value: GetProperty(result, "value")
-        _il.Emit(OpCodes.Ldloc, resultLocal);
-        _il.Emit(OpCodes.Ldstr, "value");
-        _il.Emit(OpCodes.Call, _ctx.Runtime.GetProperty);
-
-        // Assign to loop variable
+        _il.Emit(OpCodes.Call, _ctx.Runtime.GetIteratorValue);
         if (varField != null)
         {
             var valueTemp = _il.DeclareLocal(_types.Object);
@@ -289,22 +265,17 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.MarkLabel(continueLabel);
         _il.Emit(OpCodes.Br, startLabel);
 
-        // Cleanup on break: call generator.return(null) to trigger finally blocks
+        // Cleanup on break: await iterator.return() (runs the iterator's finally blocks), discard result.
+        int returnState = _currentSuspensionState++;   // allocated after the body, matching the analyzer
         _il.MarkLabel(cleanupLabel);
-        _il.Emit(OpCodes.Ldloc, asyncGenLocal);
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, iteratorField);
+        _il.Emit(OpCodes.Castclass, asyncGenInterface);
         _il.Emit(OpCodes.Ldnull);
-        _il.Emit(OpCodes.Callvirt, _ctx.Runtime.AsyncGeneratorReturnMethod);
-        // Await the Task<object> result and discard it
-        var cleanupTaskLocal = _il.DeclareLocal(_types.TaskOfObject);
-        _il.Emit(OpCodes.Stloc, cleanupTaskLocal);
-        _il.Emit(OpCodes.Ldloc, cleanupTaskLocal);
-        _il.Emit(OpCodes.Call, getAwaiter);
-        var cleanupAwaiterLocal = _il.DeclareLocal(_types.TaskAwaiterOfObject);
-        _il.Emit(OpCodes.Stloc, cleanupAwaiterLocal);
-        _il.Emit(OpCodes.Ldloca, cleanupAwaiterLocal);
-        _il.Emit(OpCodes.Call, getResult);
+        _il.Emit(OpCodes.Callvirt, _ctx.Runtime.AsyncGeneratorReturnMethod);  // Task<object>
+        SetStackUnknown();
+        EmitAwaitFromValueOnStack(returnState);
         _il.Emit(OpCodes.Pop);
-        _il.Emit(OpCodes.Br, endLabel);
 
         _il.MarkLabel(endLabel);
         ExitLoop();

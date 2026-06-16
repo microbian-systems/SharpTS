@@ -1,4 +1,5 @@
 using SharpTS.Tests.Infrastructure;
+using SharpTS.TypeSystem.Exceptions;
 using Xunit;
 
 namespace SharpTS.Tests.SharedTests;
@@ -327,6 +328,41 @@ public class AsyncGeneratorTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("first: 1\nfirst: 2\nsecond: 1\nsecond: 2\n", output);
+    }
+
+    // #672: a top-level `for await...of` drives the async-iterator protocol, which requires an async
+    // context. SharpTS does not support top-level await, so — like a top-level `await` expression —
+    // it must be rejected by the type checker rather than silently degrading to a synchronous
+    // `for...of` (which then throws a misleading 'not iterable' runtime error in both modes).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForAwaitOf_TopLevel_RejectedByTypeChecker(ExecutionMode mode)
+    {
+        var source = """
+            async function* g() { yield 1; yield 2; }
+            for await (const x of g()) console.log("top", x);
+            """;
+
+        var ex = Assert.Throws<TypeCheckException>(() => TestHarness.Run(source, mode));
+        Assert.Contains("'await' is only valid inside an async function.", ex.Message);
+    }
+
+    // #672: `for await...of` inside a non-async function is likewise an await outside an async
+    // context and must be rejected (TS conformance), not run as a synchronous `for...of`.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForAwaitOf_InNonAsyncFunction_RejectedByTypeChecker(ExecutionMode mode)
+    {
+        var source = """
+            async function* g() { yield 1; yield 2; }
+            function notAsync() {
+                for await (const x of g()) console.log(x);
+            }
+            notAsync();
+            """;
+
+        var ex = Assert.Throws<TypeCheckException>(() => TestHarness.Run(source, mode));
+        Assert.Contains("'await' is only valid inside an async function.", ex.Message);
     }
 
     #endregion
@@ -1272,6 +1308,130 @@ public class AsyncGeneratorTests
             """;
 
         Assert.Equal("1 false 2 false\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ForAwaitOf_OverPendingAsyncGenerator_SuspendsNotBlocks(ExecutionMode mode)
+    {
+        // A `for await…of` INSIDE an async generator, consuming a genuinely-async (setTimeout-backed)
+        // source, must suspend on the inner iterator's next() instead of blocking on a synchronous
+        // GetResult — the latter deadlocked/crashed this stream-transform shape in compiled mode (#697,
+        // the async-generator sibling of #631). Compiled-only: the interpreter has a separate "cannot
+        // iterate" gap for `for await` over an async generator (its eager-drain model), tracked apart.
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            async function* src() { yield await later(1); yield await later(2); }
+            async function* transform() { for await (const x of src()) yield x * 10; }
+            async function main() {
+                for await (const v of transform()) console.log("v" + v);
+            }
+            main();
+            """;
+
+        Assert.Equal("v10\nv20\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ForAwaitOf_BreakAwaitsReturn(ExecutionMode mode)
+    {
+        // Breaking out of a `for await…of` inside an async generator must await the inner iterator's
+        // return() (the suspension-based cleanup path) and stop consuming — here only the first
+        // transformed value is produced before the break (#697). Compiled-only (interp for-await-in-
+        // async-generator gap).
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            async function* src() { yield await later(1); yield await later(2); yield await later(3); }
+            async function* transform() {
+                for await (const x of src()) { if (x === 2) break; yield x * 10; }
+            }
+            async function main() {
+                for await (const v of transform()) console.log("v" + v);
+                console.log("end");
+            }
+            main();
+            """;
+
+        Assert.Equal("v10\nend\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ForAwaitOf_InsideTryFinally_RunsFinally(ExecutionMode mode)
+    {
+        // A `for await…of` inside a try in an async generator now suspends, so it must take the
+        // flag-based try path: its resume labels would be illegal BranchIntoTry targets on the real-IL
+        // try path (the async-gen analog of the #631 ContainsAwait pitfall). The finally still runs after
+        // the loop drains. Compiled-only (interp for-await-in-async-generator gap).
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            async function* src() { yield await later(1); yield await later(2); }
+            async function* transform() {
+                try { for await (const x of src()) yield x * 10; }
+                finally { console.log("finally"); }
+            }
+            async function main() {
+                for await (const v of transform()) console.log("v" + v);
+            }
+            main();
+            """;
+
+        Assert.Equal("v10\nv20\nfinally\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_YieldStar_DelegatesToPendingAsyncGenerator(ExecutionMode mode)
+    {
+        // yield* delegating to a genuinely-async (setTimeout-backed) async generator must drive the
+        // delegate via its next() and suspend, not block on a synchronous MoveNextAsync GetResult — which
+        // produced no output at all in compiled mode (#688, sibling of #631). The delegate's
+        // `p + (await …)` body also exercises the live-spill-across-await persistence the async-generator
+        // emitter previously lacked (the #400 analog), so the parameter prefix survives the suspension.
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            async function* inner(p: string) { yield p + (await later(1)); yield p + (await later(2)); }
+            async function* outer() { yield* inner("a"); }
+            async function main() {
+                for await (const v of outer()) console.log(v);
+                console.log("done");
+            }
+            main();
+            """;
+
+        Assert.Equal("a1\na2\ndone\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ValueLiveAcrossAwait_IsPreserved(ExecutionMode mode)
+    {
+        // A value live on the IL evaluation stack across an await inside an async generator — here the
+        // parameter `p`, the left operand of `p + (await …)` — must be spilled to a state-machine field
+        // and restored on resume (the async-generator analog of #400). The async-gen emitter previously
+        // never enabled persistent spills, so `p` was wiped by the MoveNextAsync re-entry and the result
+        // was "1"/"2" instead of "a1"/"a2".
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            async function* g(p: string) { yield p + (await later(1)); yield p + (await later(2)); }
+            async function main() {
+                for await (const v of g("a")) console.log(v);
+            }
+            main();
+            """;
+
+        Assert.Equal("a1\na2\n", TestHarness.Run(source, mode));
     }
 
     #endregion

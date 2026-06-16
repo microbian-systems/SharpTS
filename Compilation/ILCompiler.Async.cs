@@ -250,6 +250,7 @@ public partial class ILCompiler
 
                 // Define the stub method that will be called to invoke the async arrow
                 arrowBuilder.DefineStubMethod(_programType);
+                MarkPadsUndefined(arrowBuilder.StubMethod); // #640
 
                 _async.ArrowBuilders[arrowInfo.Arrow] = arrowBuilder;
                 continue; // Already handled the full setup
@@ -265,6 +266,7 @@ public partial class ILCompiler
 
             // Define the stub method that will be called to invoke the async arrow
             arrowBuilder.DefineStubMethod(_programType);
+            MarkPadsUndefined(arrowBuilder.StubMethod); // #640
 
             _async.ArrowBuilders[arrowInfo.Arrow] = arrowBuilder;
         }
@@ -746,7 +748,7 @@ public partial class ILCompiler
             bodyStatements = [];
         }
 
-        arrowEmitter.EmitMoveNext(bodyStatements, ctx, _types.Object);
+        arrowEmitter.EmitMoveNext(bodyStatements, ctx, _types.Object, arrow.Parameters);
         ILLabelValidator.Validate(arrowBuilder.MoveNextMethod.GetILGenerator(),
             $"async arrow MoveNext");
     }
@@ -1088,6 +1090,7 @@ public partial class ILCompiler
 
             // Define the stub method
             arrowBuilder.DefineStubMethod(_programType);
+            MarkPadsUndefined(arrowBuilder.StubMethod); // #640
 
             // Store the builder
             _async.ArrowBuilders[arrow] = arrowBuilder;
@@ -1209,7 +1212,7 @@ public partial class ILCompiler
                 bodyStatements = [];
             }
 
-            arrowEmitter.EmitMoveNext(bodyStatements, ctx, _types.Object);
+            arrowEmitter.EmitMoveNext(bodyStatements, ctx, _types.Object, arrow.Parameters);
             ILLabelValidator.Validate(arrowBuilder.MoveNextMethod.GetILGenerator(),
                 $"standalone async arrow MoveNext");
 

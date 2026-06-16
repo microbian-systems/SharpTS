@@ -62,6 +62,11 @@ public partial class RuntimeEmitter
         // ldtoken the type for the IsDefined read.
         EmitCapturesArgumentsAttribute(moduleBuilder, runtime);
 
+        // Marker attribute for "this is a user TS function; pad omitted args with the
+        // `undefined` sentinel". Defined+created before EmitTSFunctionClass so the ctor IL
+        // can ldtoken the type for the IsDefined read in AdjustArgs caching. (#640)
+        EmitPadUndefinedAttribute(moduleBuilder, runtime);
+
         // Emit TSFunction class first (other methods depend on it)
         EmitTSFunctionClass(moduleBuilder, runtime);
 

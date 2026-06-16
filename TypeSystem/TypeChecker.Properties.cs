@@ -1024,7 +1024,11 @@ public partial class TypeChecker
                 ? funcType.ParamTypes[i]
                 : funcType.ParamTypes[^1]; // Rest parameter type
 
-            if (!IsCompatible(paramType, argType))
+            // Optional/default params accept an explicit `undefined` (#668). A rest parameter's
+            // elements are not optional in that sense, so only widen for non-rest positions.
+            bool optional = i >= funcType.MinArity &&
+                            !(funcType.HasRestParam && i >= funcType.ParamTypes.Count - 1);
+            if (!IsArgumentCompatible(paramType, argType, optional))
             {
                 throw new TypeCheckException($" Argument {i + 1} to private method '{methodName}' has type '{argType}' but expected '{paramType}'.", tsCode: "TS2345");
             }

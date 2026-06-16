@@ -452,4 +452,26 @@ public class ObjectPrototypeTests
             """;
         Assert.Equal("1\n", TestHarness.Run(source, mode));
     }
+
+    // ECMA-262 §20.1.3.4 Object.prototype.isPrototypeOf — was stubbed to
+    // always return false (#104).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void IsPrototypeOf_WalksPrototypeChain(ExecutionMode mode)
+    {
+        var source = """
+            function Base() {}
+            const b = new Base();
+            const d = Object.create(b);
+            const g = Object.create(d);
+            console.log(b.isPrototypeOf(d));   // direct proto
+            console.log(b.isPrototypeOf(g));    // transitive
+            console.log(d.isPrototypeOf(b));    // reverse — false
+            console.log(({}).isPrototypeOf(d)); // unrelated — false
+            console.log(b.isPrototypeOf(5 as any)); // non-object arg — false
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\nfalse\nfalse\nfalse\n", output);
+    }
 }
