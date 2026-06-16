@@ -32,6 +32,15 @@ public class HoistingManager
     /// </summary>
     public Dictionary<Stmt.ForOf, FieldBuilder> HoistedEnumerators { get; } = [];
 
+    /// <summary>
+    /// Key-list and index fields for for...in loops that contain yield/await. The base for...in
+    /// emitter keeps the enumerated key list and the current index in IL locals, which a state-machine
+    /// MoveNext re-entry wipes — so a yield in the loop body would restart from the first key (#547).
+    /// Hoisting both to fields lets the iteration position survive the suspension.
+    /// </summary>
+    public Dictionary<Stmt.ForIn, FieldBuilder> HoistedForInKeys { get; } = [];
+    public Dictionary<Stmt.ForIn, FieldBuilder> HoistedForInIndex { get; } = [];
+
     public HoistingManager(TypeBuilder typeBuilder, Type objectType)
     {
         _typeBuilder = typeBuilder;
@@ -105,4 +114,27 @@ public class HoistingManager
     /// </summary>
     public FieldBuilder? GetEnumeratorField(Stmt.ForOf loop) =>
         HoistedEnumerators.TryGetValue(loop, out var field) ? field : null;
+
+    /// <summary>
+    /// Defines the key-list and index fields for for...in loops that contain yields/awaits (#547).
+    /// <paramref name="keysListType"/> is <c>List&lt;object&gt;</c>; <paramref name="indexType"/> is <c>int</c>.
+    /// </summary>
+    public void DefineHoistedForInState(IEnumerable<Stmt.ForIn> forInLoops, Type keysListType, Type indexType)
+    {
+        int index = 0;
+        foreach (var loop in forInLoops)
+        {
+            HoistedForInKeys[loop] = _typeBuilder.DefineField($"<>7__inKeys{index}", keysListType, FieldAttributes.Private);
+            HoistedForInIndex[loop] = _typeBuilder.DefineField($"<>7__inIdx{index}", indexType, FieldAttributes.Private);
+            index++;
+        }
+    }
+
+    /// <summary>Gets the hoisted key-list field for a for...in loop, or null if not hoisted.</summary>
+    public FieldBuilder? GetForInKeysField(Stmt.ForIn loop) =>
+        HoistedForInKeys.TryGetValue(loop, out var field) ? field : null;
+
+    /// <summary>Gets the hoisted index field for a for...in loop, or null if not hoisted.</summary>
+    public FieldBuilder? GetForInIndexField(Stmt.ForIn loop) =>
+        HoistedForInIndex.TryGetValue(loop, out var field) ? field : null;
 }

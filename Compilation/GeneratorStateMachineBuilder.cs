@@ -160,6 +160,7 @@ public class GeneratorStateMachineBuilder
         _hoisting.DefineHoistedParameters(analysis.HoistedParameters);
         _hoisting.DefineHoistedLocals(analysis.HoistedLocals);
         _hoisting.DefineHoistedEnumerators(analysis.ForOfLoopsWithYield, _types.IEnumerator);
+        _hoisting.DefineHoistedForInState(analysis.ForInLoopsWithYield, _types.ListOfObject, _types.Int32);
 
         // Define 'this' field for instance methods that use 'this'
         if (isInstanceMethod && analysis.UsesThis)
@@ -414,6 +415,12 @@ public class GeneratorStateMachineBuilder
     /// Gets the hoisted enumerator field for a for...of loop, or null if not hoisted.
     /// </summary>
     public FieldBuilder? GetEnumeratorField(Parsing.Stmt.ForOf loop) => _hoisting.GetEnumeratorField(loop);
+
+    /// <summary>
+    /// Gets the hoisted key-list / index fields for a for...in loop containing yields, or null if not hoisted (#547).
+    /// </summary>
+    public FieldBuilder? GetForInKeysField(Parsing.Stmt.ForIn loop) => _hoisting.GetForInKeysField(loop);
+    public FieldBuilder? GetForInIndexField(Parsing.Stmt.ForIn loop) => _hoisting.GetForInIndexField(loop);
 
     /// <summary>
     /// Finalizes the type after MoveNext body has been emitted.
