@@ -79,7 +79,7 @@ public class ComputedSymbolMethodTests
 
     // Compiled mode: a non-symbol computed key (`[KEY]()` with KEY a string) would need a
     // dynamically-named .NET method; the symbol-method registry only backs symbol keys, and named
-    // access doesn't consult it. Interpreter-only; tracked as a follow-up.
+    // access doesn't consult it. Interpreter-only; tracked as a follow-up in #791.
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void NonSymbolComputedMethodKey_FoldsToNamedMethod(ExecutionMode mode)
@@ -140,12 +140,13 @@ public class ComputedSymbolMethodTests
         Assert.Equal("2\n1\n2\n", TestHarness.Run(source, mode));
     }
 
-    // Compiled mode: reading a symbol method as a value (`obj[Symbol.iterator]`) returns the raw
-    // MethodInfo rather than a receiver-bound callable, so a standalone `obj[Symbol.iterator]()` call
-    // loses `this`. for...of / spread / for-await (which pass the receiver themselves) are unaffected
-    // and run in both back ends. Tracked as a follow-up.
+    // Reading a symbol method as a value (`obj[Symbol.iterator]`) returns a receiver-bound callable in
+    // both back ends, so a standalone `obj[Symbol.iterator]()` call keeps `this` (#755 sub-case 1). In
+    // compiled mode the bracket-get wraps the method in `$TSFunction(obj, method)`, mirroring the
+    // string-key method path. for...of / spread / for-await (which pass the receiver themselves) were
+    // already unaffected.
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void DirectSymbolMethodAccess_ReturnsCallable(ExecutionMode mode)
     {
         var source = """
@@ -157,10 +158,11 @@ public class ComputedSymbolMethodTests
         Assert.Equal("5\n", TestHarness.Run(source, mode));
     }
 
-    // Compiled mode: class *expressions* go through a separate emit path that doesn't yet wire
-    // computed symbol-keyed methods (class declarations do). Tracked as a follow-up.
+    // Class *expressions* now wire computed symbol-keyed methods through the same synthetic-method +
+    // registry path as class declarations, including the generator state machine (#755 sub-case 2,
+    // building on the class-expression generator routing in #765).
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ClassExpression_ComputedSymbolMethod_Works(ExecutionMode mode)
     {
         var source = """
@@ -169,6 +171,24 @@ public class ComputedSymbolMethodTests
             """;
 
         Assert.Equal("7\n8\n", TestHarness.Run(source, mode));
+    }
+
+    // Class expression carrying an async computed symbol method (`async *[Symbol.asyncIterator]()`),
+    // consumed with for-await — exercises the class-expression async-generator + symbol-registry
+    // paths together (#755 sub-case 2).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_AsyncComputedSymbolMethod_Works(ExecutionMode mode)
+    {
+        var source = """
+            const A = class { async *[Symbol.asyncIterator]() { yield 10; yield 20; } };
+            async function main() {
+              for await (const x of new A()) console.log(x);
+            }
+            main();
+            """;
+
+        Assert.Equal("10\n20\n", TestHarness.Run(source, mode));
     }
 
     [Fact]
