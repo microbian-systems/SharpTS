@@ -127,4 +127,67 @@ public class NestedReassignmentNarrowingTests
             """;
         Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
     }
+
+    // ---- #654: nested guards on the SAME variable must widen EVERY enclosing narrowing ----
+
+    [Fact]
+    public void IfGuard_NestedSameVarGuardReassignToExcluded_WidensOuterNarrowing()
+    {
+        // The verbatim #654 repro. Both guards narrow `x`; the inner reassignment to undefined must
+        // widen the OUTER guard's narrowing too, so the read after the inner block is rejected.
+        // Before the fix WidenEnclosingNarrowing only widened the nearest (inner) guard, leaving the
+        // outer narrowing stale — SharpTS accepted code tsc rejects.
+        var source = """
+            function f(x: string | undefined): void {
+                if (x !== undefined) {
+                    if (x !== "foo") { x = undefined; }
+                    x.length;
+                }
+            }
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void IfGuard_ThreeLevelSameVarGuards_WidenAtEveryOuterLevel()
+    {
+        // Three guards deep on the same variable: an escaping reassignment at the deepest level must
+        // widen the narrowing at BOTH shallower levels. The read sits at the middle level here.
+        var source = """
+            function f(x: string | undefined): number {
+                if (x !== undefined) {
+                    if (x !== "a") {
+                        if (x !== "b") { x = undefined; }
+                        return x.length;
+                    }
+                    return x.length;
+                }
+                return 0;
+            }
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void IfGuard_ShadowingSameNameVar_DoesNotWidenOuterVariable()
+    {
+        // No regression from the widen-EVERY-scope change: an inner block that SHADOWS `x` with its
+        // own binding and reassigns it must not widen the OUTER `x`'s guard narrowing. The widening
+        // walk must stop at the inner declaration. Outer `x` stays string, so `x.length` is fine.
+        var source = """
+            function f(x: string | undefined): number {
+                if (x !== undefined) {
+                    {
+                        let x: string | number = "y";
+                        if (typeof x === "string") { x = 42; }
+                        void x;
+                    }
+                    return x.length;
+                }
+                return 0;
+            }
+            console.log(f("hello"));
+            """;
+        Assert.Equal("5\n", TestHarness.RunInterpreted(source));
+    }
 }

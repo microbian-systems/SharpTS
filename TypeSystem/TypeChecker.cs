@@ -273,25 +273,44 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Resets any active lexical (<see cref="TypeEnvironment"/>) narrowing of <paramref name="name"/>
-    /// in the ENCLOSING scope that holds it back to <paramref name="declaredType"/>. <c>if</c>-guard
+    /// Resets active lexical (<see cref="TypeEnvironment"/>) narrowings of <paramref name="name"/> in
+    /// the ENCLOSING scopes that hold them back to <paramref name="declaredType"/>. <c>if</c>-guard
     /// variable narrowing is applied by redefining the variable in the guard's child environment; when
     /// a reassignment that escapes the narrowing happens inside a further-nested block, that block's
     /// environment is discarded at the join, so the outer guard narrowing would otherwise survive into
-    /// later statements (the #570 soundness gap). Widening the guard's environment closes that gap.
+    /// later statements (the #570 soundness gap). Widening the guards' environments closes that gap.
     /// The reassignment's own (current) scope is widened separately by the caller's
-    /// <c>_environment.Define</c>; this walks strictly OUTWARD to the nearest enclosing scope that
-    /// rebound the name, which for an outer guard is its narrowing override.
+    /// <c>_environment.Define</c>; this walks strictly OUTWARD.
+    /// <para>
+    /// It widens EVERY enclosing scope that holds a narrowing of the variable, not just the nearest:
+    /// when two (or more) guards narrow the SAME variable and the escaping reassignment sits under the
+    /// inner one, widening only the inner guard left the outer guard's narrowing stale, so a read at
+    /// the outer level after the inner block still saw it (#654). The walk stops at the variable's
+    /// declaration — whose binding is the full declared type, since guards only ever install proper
+    /// subtypes — so it never crosses into an OUTER, same-named shadowing variable whose own narrowing
+    /// is still valid.
+    /// </para>
     /// </summary>
     private void WidenEnclosingNarrowing(string name, TypeInfo declaredType)
     {
         for (TypeEnvironment? env = _environment.Enclosing; env != null; env = env.Enclosing)
         {
-            if (env.IsDefinedLocally(name))
-            {
-                env.Define(name, declaredType);
+            if (!env.IsDefinedLocally(name))
+                continue;
+
+            var local = env.Get(name);
+
+            // A binding that isn't assignable to the declared type belongs to a different
+            // (shadowing) variable of the same name — stop before touching it.
+            if (local != null && !IsCompatible(declaredType, local))
                 return;
-            }
+
+            env.Define(name, declaredType);
+
+            // Reached the declaration (its binding is the full declared type): nothing further
+            // out narrows THIS variable, so stop rather than widen an outer shadowing variable.
+            if (local == null || TypeInfoEqualityComparer.Instance.Equals(local, declaredType))
+                return;
         }
     }
 
@@ -338,6 +357,36 @@ public partial class TypeChecker
         // Fall back to environment (this handles globals and cases where we didn't track)
         return _environment.Get(name);
     }
+
+    /// <summary>
+    /// Whether <paramref name="name"/> has a recorded declared type in the current function's
+    /// declared-type stack (rather than only living in the environment). Function locals and
+    /// parameters are tracked; module/top-level variables are NOT, so <see cref="GetDeclaredType"/>
+    /// falls back to the environment binding for them. Post-write variable narrowing (#653) replaces
+    /// the environment binding with the narrowed type, so it must only run for tracked variables —
+    /// otherwise a later assignment's <see cref="GetDeclaredType"/> would read the narrowed type as
+    /// the "declared" type and wrongly reject a valid reassignment to another union member.
+    /// </summary>
+    private bool IsDeclaredTypeTracked(string name)
+    {
+        foreach (var scope in _declaredVariableTypesStack)
+            if (scope.ContainsKey(name)) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="type"/> is <c>null</c>, <c>undefined</c>, or a union composed only of
+    /// those. Property access on such a bare nullish type is not yet rejected by the checker (only a
+    /// union that ALSO has a real member is — see <c>CheckGetOnUnion</c>), so post-write variable
+    /// narrowing (#653) refuses to narrow a variable down to one, lest it drop a "possibly null/
+    /// undefined" diagnostic a later access must still raise.
+    /// </summary>
+    private static bool IsPurelyNullish(TypeInfo type) => type switch
+    {
+        TypeInfo.Null or TypeInfo.Undefined => true,
+        TypeInfo.Union u => u.FlattenedTypes.All(IsPurelyNullish),
+        _ => false
+    };
 
     /// <summary>
     /// Invalidates property narrowings for an object when it's passed to a function
