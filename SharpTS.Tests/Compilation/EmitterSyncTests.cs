@@ -114,10 +114,18 @@ public class EmitterSyncTests
             // instance generator methods) so it fails fast instead of dropping the write.
             "EmitArrowFunction",
             // --- #674: closure mutation sharing (route captured-and-mutated locals through the DC) ---
-            "EmitVariable",         // Read a captured-and-mutated local through the function DC
-            "EmitAssign",           // Write a captured-and-mutated local through the function DC
+            "EmitVariable",         // Read a captured-and-mutated local through the function DC (+ #711 rename)
+            "EmitAssign",           // Write a captured-and-mutated local through the function DC (+ #711 rename)
             "EmitStoreVariable",    // Store side of compound/logical/increment through the function DC
-            "EmitVarDeclaration",   // Initialize a captured-and-mutated local into the function DC
+            "EmitVarDeclaration",   // Initialize a captured-and-mutated local into the function DC (+ #711 rename)
+            // --- #711: a nested-block let/const that shadows an enclosing binding is given its own
+            // storage name; these overrides retoken the operator node so the read/write land on the
+            // shadow's own field/local instead of the outer binding's hoisted field ---
+            "EmitConstDeclaration", // #711: route a shadowing const declaration to its own slot
+            "EmitCompoundAssign",   // #711: route a shadowing compound assignment to its own slot
+            "EmitLogicalAssign",    // #711: route a shadowing logical assignment to its own slot
+            "EmitPrefixIncrement",  // #711: route a shadowing prefix ++/-- to its own slot
+            "EmitPostfixIncrement", // #711: route a shadowing postfix ++/-- to its own slot
             // --- #500: non-local exits must run an enclosing flag-based finally first ---
             "EmitBreak",            // Route a break leaving a try through its finally(s)
             "EmitContinue",         // Route a continue leaving a try through its finally(s)

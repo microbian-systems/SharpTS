@@ -29,7 +29,11 @@ public class GeneratorStateAnalyzer : AstVisitorBase
         bool UsesThis,
         bool HasYieldStar,
         List<Stmt.ForOf> ForOfLoopsWithYield,  // for...of loops containing yields that need enumerator hoisting
-        List<Stmt.ForIn> ForInLoopsWithYield   // for...in loops containing yields that need key-list/index hoisting (#547)
+        List<Stmt.ForIn> ForInLoopsWithYield,  // for...in loops containing yields that need key-list/index hoisting (#547)
+        // Per-binding storage names for block-scoped let/const declarations that shadow an enclosing
+        // binding, keyed by declaration/reference AST node (see GeneratorBlockScopeRenamer, #711). The
+        // emitter consults the same map so each shadowing binding gets its own field/local.
+        IReadOnlyDictionary<object, string> BlockScopeRenames
     );
 
     // State during analysis
@@ -49,6 +53,9 @@ public class GeneratorStateAnalyzer : AstVisitorBase
     private bool _seenYield = false;
     private bool _usesThis = false;
     private bool _hasYieldStar = false;
+    // Block-scope shadow renames for this function (#711). Maps a declaration/reference AST node to
+    // the disambiguated storage name its binding uses; nodes absent from the map keep their lexeme.
+    private IReadOnlyDictionary<object, string> _renames = new Dictionary<object, string>();
 
     /// <summary>
     /// Analyzes a generator function to determine yield points and hoisted variables.
@@ -56,6 +63,10 @@ public class GeneratorStateAnalyzer : AstVisitorBase
     public GeneratorFunctionAnalysis Analyze(Stmt.Function func)
     {
         Reset();
+
+        // Disambiguate block-scoped let/const declarations that shadow an enclosing binding so the
+        // hoisting decision below is made per-binding rather than per-name (#711).
+        _renames = GeneratorBlockScopeRenamer.Compute(func);
 
         // Collect parameters as variables that need hoisting
         HashSet<string> parameters = [];
@@ -94,9 +105,17 @@ public class GeneratorStateAnalyzer : AstVisitorBase
             UsesThis: _usesThis,
             HasYieldStar: _hasYieldStar,
             ForOfLoopsWithYield: [.. _forOfLoopsWithYield],
-            ForInLoopsWithYield: [.. _forInLoopsWithYield]
+            ForInLoopsWithYield: [.. _forInLoopsWithYield],
+            BlockScopeRenames: _renames
         );
     }
+
+    /// <summary>
+    /// Translates a declaration/reference node's source lexeme to its disambiguated storage name
+    /// (#711), or returns the lexeme unchanged when the binding is not a renamed shadow.
+    /// </summary>
+    private string StorageName(object node, string lexeme) =>
+        _renames.TryGetValue(node, out var renamed) ? renamed : lexeme;
 
     private void Reset()
     {
@@ -145,17 +164,19 @@ public class GeneratorStateAnalyzer : AstVisitorBase
 
     protected override void VisitVar(Stmt.Var stmt)
     {
-        _declaredVariables.Add(stmt.Name.Lexeme);
+        var name = StorageName(stmt, stmt.Name.Lexeme);
+        _declaredVariables.Add(name);
         if (!_seenYield)
-            _variablesDeclaredBeforeYield.Add(stmt.Name.Lexeme);
+            _variablesDeclaredBeforeYield.Add(name);
         base.VisitVar(stmt);
     }
 
     protected override void VisitConst(Stmt.Const stmt)
     {
-        _declaredVariables.Add(stmt.Name.Lexeme);
+        var name = StorageName(stmt, stmt.Name.Lexeme);
+        _declaredVariables.Add(name);
         if (!_seenYield)
-            _variablesDeclaredBeforeYield.Add(stmt.Name.Lexeme);
+            _variablesDeclaredBeforeYield.Add(name);
         base.VisitConst(stmt);
     }
 
@@ -277,7 +298,7 @@ public class GeneratorStateAnalyzer : AstVisitorBase
 
     protected override void VisitVariable(Expr.Variable expr)
     {
-        var name = expr.Name.Lexeme;
+        var name = StorageName(expr, expr.Name.Lexeme);
 
         // Track variables used in any enclosing loop body (hoisted when the loop contains a yield).
         foreach (var scope in _loopStack)
@@ -290,22 +311,25 @@ public class GeneratorStateAnalyzer : AstVisitorBase
 
     protected override void VisitAssign(Expr.Assign expr)
     {
-        if (_seenYield && _declaredVariables.Contains(expr.Name.Lexeme))
-            _variablesUsedAfterYield.Add(expr.Name.Lexeme);
+        var name = StorageName(expr, expr.Name.Lexeme);
+        if (_seenYield && _declaredVariables.Contains(name))
+            _variablesUsedAfterYield.Add(name);
         base.VisitAssign(expr);
     }
 
     protected override void VisitCompoundAssign(Expr.CompoundAssign expr)
     {
-        if (_seenYield && _declaredVariables.Contains(expr.Name.Lexeme))
-            _variablesUsedAfterYield.Add(expr.Name.Lexeme);
+        var name = StorageName(expr, expr.Name.Lexeme);
+        if (_seenYield && _declaredVariables.Contains(name))
+            _variablesUsedAfterYield.Add(name);
         base.VisitCompoundAssign(expr);
     }
 
     protected override void VisitLogicalAssign(Expr.LogicalAssign expr)
     {
-        if (_seenYield && _declaredVariables.Contains(expr.Name.Lexeme))
-            _variablesUsedAfterYield.Add(expr.Name.Lexeme);
+        var name = StorageName(expr, expr.Name.Lexeme);
+        if (_seenYield && _declaredVariables.Contains(name))
+            _variablesUsedAfterYield.Add(name);
         base.VisitLogicalAssign(expr);
     }
 
