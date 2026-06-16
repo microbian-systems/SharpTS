@@ -128,7 +128,7 @@ public partial class ILCompiler
         var promoted = ComputeArrowWrittenCapturesToPromote(analysis.AsyncArrows);
         if (promoted.Count > 0)
         {
-            DefineFunctionDisplayClassType(dcKey, promoted);
+            RegisterFunctionDisplayClass(dcKey, promoted);
             if (_closures.FunctionDisplayClasses.TryGetValue(dcKey, out var dc))
                 smBuilder.DefineFunctionDisplayClassField(dc);
         }

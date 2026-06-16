@@ -133,6 +133,39 @@ public class PrivateFieldParserTests
         Assert.True(classStmt.Methods[0].IsStatic);
     }
 
+    [Fact]
+    public void PrivateMethod_OptionalParameter()
+    {
+        // #696: an optional parameter (`b?: T`) on a private method must parse, like it
+        // already does on public methods, free functions, and constructors. Before the fix
+        // the private-method parameter path (ParseMethodParameters) did not consume the `?`.
+        var source = """
+            class C {
+                #p(a: string, b?: number): string { return a; }
+            }
+            """;
+        var classStmt = ParseClass(source);
+        Assert.Single(classStmt.Methods);
+        Assert.True(classStmt.Methods[0].IsPrivate);
+        Assert.Equal(2, classStmt.Methods[0].Parameters.Count);
+        Assert.False(classStmt.Methods[0].Parameters[0].IsOptional);
+        Assert.True(classStmt.Methods[0].Parameters[1].IsOptional);
+    }
+
+    [Fact]
+    public void PrivateMethod_SoleOptionalParameter()
+    {
+        // The minimal #696 repro: a private method whose only parameter is optional.
+        var source = """
+            class C {
+                #p(b?: number): number { return 1; }
+            }
+            """;
+        var classStmt = ParseClass(source);
+        Assert.Single(classStmt.Methods);
+        Assert.True(classStmt.Methods[0].Parameters[0].IsOptional);
+    }
+
     #endregion
 
     #region Private Element Access Expressions
