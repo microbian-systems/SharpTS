@@ -44,6 +44,7 @@ public class EmitterSyncTests
             "EmitReturn",           // Async return: store result + leave to SetResult label
             "EmitTryCatch",         // Await-aware exception handling with flag-based tracking
             "EmitForOf",            // for-await-of protocol dispatch
+            "EmitForAwaitOf",       // #631: override the shared base to SUSPEND on next()/return() (vs blocking GetResult)
             "EmitLabeledStatement", // Labeled continue for for loops (base doesn't handle correctly)
             "EmitAwait",            // Core: suspend/resume state machine
             "EmitArrowFunction",    // Display class in state machine context
@@ -103,6 +104,7 @@ public class EmitterSyncTests
             "EmitReturn",           // Generator return: set state -2, return false
             "EmitTryCatch",         // Generator exception handling
             "EmitForOf",            // Hoisted enumerator for yield across loop boundaries
+            "EmitForIn",            // #547: hoisted key-list/index for yield across for-in iterations
             "EmitYield",            // Core: yield value + suspend
             "EmitSuper",            // This field indirection
             "EmitDynamicImport",    // Dynamic import fallback
