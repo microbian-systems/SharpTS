@@ -114,6 +114,40 @@ public class DedicatedContainerTypeReferenceTests
     }
 
     [Fact]
+    public void Generator_ThreeTypeArgs_LibSpelling_Accepted()
+    {
+        // lib.d.ts is Generator<T, TReturn = any, TNext = unknown>; SharpTS keeps only the yield type but
+        // must accept (and ignore) the optional TReturn/TNext rather than rejecting "requires exactly 1"
+        // (#487). This is the issue's exact repro.
+        var source = """
+            function* gen(): Generator<number, void, unknown> { yield 1; }
+            console.log([...gen()]);
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void Generator_TooManyTypeArgs_Rejected()
+    {
+        // Beyond the defaulted range (T, TReturn, TNext) is the range error TS2707, not the exact-count
+        // TS2314 (#487) — mirrors the Iterator arm.
+        var source = "function* gen(): Generator<number, void, unknown, string> { yield 1; }";
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2707", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void AsyncGenerator_ThreeTypeArgs_LibSpelling_Accepted()
+    {
+        // AsyncGenerator<T, TReturn = any, TNext = unknown> — same defaulted range as Generator (#487).
+        var source = """
+            async function* gen(): AsyncGenerator<number, void, unknown> { yield 1; }
+            let g: AsyncGenerator<number> = gen();
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
     public void Generator_AssignableToIterableIterator_Accepted()
     {
         // Generator<T> extends IterableIterator<T>; without this arm the assignment would regress now

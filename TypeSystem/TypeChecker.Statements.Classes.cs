@@ -1,5 +1,6 @@
 using System.Collections.Frozen;
 using SharpTS.Parsing;
+using SharpTS.Runtime.BuiltIns;
 using SharpTS.TypeSystem.Exceptions;
 
 namespace SharpTS.TypeSystem;
@@ -551,6 +552,11 @@ public partial class TypeChecker
         _environment = classEnv;
         _currentClass = classTypeForBody;
 
+        // Set when a method's inferred (un-annotated) return type is resolved during the body
+        // pass below. The class was frozen with <inferred> placeholders before this pass, so
+        // when this is true the frozen class is rebuilt and re-published afterwards (#658/#661).
+        bool anyInferredMethodReturnResolved = false;
+
         try
         {
             // Check instance field initializers (e.g. `x = 5`, `r = () => { ... }`) within the
@@ -714,6 +720,9 @@ public partial class TypeChecker
                             if (method.IsStatic) mutableClass.StaticMethods[mName] = updatedMethodType;
                             else mutableClass.Methods[mName] = updatedMethodType;
                         }
+                        // The frozen class call sites read still holds the <inferred> placeholder for
+                        // this method; flag a rebuild after the body pass (#658/#661).
+                        anyInferredMethodReturnResolved = true;
                     }
                 }
                 finally
@@ -814,6 +823,34 @@ public partial class TypeChecker
             _environment = prevEnv;
             _currentClass = prevClass;
         }
+
+        // Publish method return types inferred during the body pass. The class was frozen with
+        // <inferred> placeholders before the body could be checked, so the frozen Class/GenericClass
+        // that call sites read (and the TypeMap the compiler reads) still hold the placeholder for
+        // every un-annotated method. Rebuild the frozen forms from the now-resolved mutable state and
+        // re-register them. Without this, `new C().m()` on an inferred method reads <inferred> (~any):
+        // ordinary methods silently skip assignability checks and a generator method's result is
+        // rejected as non-iterable by spread/for...of/yield* (#658/#661). `_environment` here is the
+        // outer scope the class was originally defined in (the body pass restored it above).
+        if (anyInferredMethodReturnResolved)
+        {
+            mutableClass.ResetFrozenCache();
+            if (classTypeParams != null && classTypeParams.Count > 0)
+            {
+                _environment.Define(classStmt.Name.Lexeme, mutableClass.FreezeGeneric(classTypeParams));
+                _typeMap.SetClassType(classStmt.Name.Lexeme, mutableClass.Freeze());
+            }
+            else
+            {
+                var refrozen = mutableClass.Freeze();
+                _environment.Define(classStmt.Name.Lexeme, refrozen);
+                _typeMap.SetClassType(classStmt.Name.Lexeme, refrozen);
+            }
+            // Structural compatibility results cache on CacheKey() (carries the stable DeclarationId),
+            // so any comparison made against the placeholder during the body pass must not be reused.
+            _compatibilityCache = null;
+            _identityCompatibilityCache = null;
+        }
     }
 
     /// <summary>
@@ -874,15 +911,60 @@ public partial class TypeChecker
                 // Promise<T>, Array). Create a placeholder class so super()
                 // calls and constructor validation type-check correctly
                 // (accept any number of args).
-                var placeholder = new TypeInfo.MutableClass(Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!);
+                var leafName = Expr.GetSuperclassLeafName(classStmt.SuperclassExpr)!;
+                var placeholder = new TypeInfo.MutableClass(leafName);
                 placeholder.Methods["constructor"] = new TypeInfo.Function(
                     [new TypeInfo.Any()], new TypeInfo.Void(), RequiredParams: 0, HasRestParam: true);
+                // When the base is a built-in iterable (`class C extends Array<number>`), record its
+                // element type as an @@iterator member. The global resolves to Any in value position so
+                // the type argument is otherwise dropped; recovering it lets an instance's for...of /
+                // yield* / spread bind the real element type, and lets a genuinely non-iterable instance
+                // be told apart from an iterable one (#593).
+                if (TryGetBuiltInIterableElement(leafName, classStmt.SuperclassTypeArgs, out var iterableElement))
+                {
+                    placeholder.Methods["@@iterator"] = new TypeInfo.Function(
+                        [], new TypeInfo.Iterator(iterableElement), RequiredParams: 0, HasRestParam: false);
+                }
                 superclass = placeholder;
             }
             else
                 throw new TypeCheckException("Superclass must be a class", tsCode: "TS2507");
         }
         return superclass;
+    }
+
+    /// <summary>
+    /// Element type of a built-in iterable used as a superclass (<c>class C extends Array&lt;number&gt;</c>),
+    /// recovered from the <c>extends</c> type-argument names that <see cref="ResolveDeclaredSuperclass"/>
+    /// otherwise drops (the global resolves to <c>Any</c> in value position). Array/Set/typed-array element
+    /// is the sole argument; Map yields the <c>[K, V]</c> tuple; String yields <c>string</c>; the bigint
+    /// typed arrays yield <c>bigint</c> and the rest <c>number</c>. Returns <c>false</c> for a non-iterable
+    /// base (Error, Date, Promise, WeakMap, …), so such a subclass instance stays correctly non-iterable
+    /// (#593). A missing/omitted type argument degrades to <c>any</c>, matching <c>class C extends Array</c>.
+    /// </summary>
+    private bool TryGetBuiltInIterableElement(string baseName, List<string>? typeArgs, out TypeInfo element)
+    {
+        TypeInfo Arg(int i) => typeArgs != null && i < typeArgs.Count ? ToTypeInfo(typeArgs[i]) : new TypeInfo.Any();
+        switch (baseName)
+        {
+            case "Array" or "ReadonlyArray" or "Set" or "ReadonlySet":
+                element = Arg(0);
+                return true;
+            case "Map" or "ReadonlyMap":
+                element = TypeInfo.Tuple.FromTypes([Arg(0), Arg(1)], 2);
+                return true;
+            case "String":
+                element = new TypeInfo.String();
+                return true;
+            case var n when BuiltInNames.IsTypedArrayName(n):
+                element = n is BuiltInNames.BigInt64Array or BuiltInNames.BigUint64Array
+                    ? new TypeInfo.BigInt()
+                    : new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
+                return true;
+            default:
+                element = null!;
+                return false;
+        }
     }
 
     /// <summary>

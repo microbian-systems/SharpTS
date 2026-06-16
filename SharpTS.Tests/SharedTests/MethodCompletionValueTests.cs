@@ -67,10 +67,13 @@ public class MethodCompletionValueTests
     public void OffEndInstanceMethod_InArithmetic_IsNaN(ExecutionMode mode)
     {
         // undefined + 10 === NaN, but null + 10 === 10 — this distinguishes the
-        // undefined sentinel from CLR null beyond the typeof check.
+        // undefined sentinel from CLR null beyond the typeof check. The `as any` is
+        // required because `inst()`'s return type now correctly infers `void` (#661/#658)
+        // and `void + 10` is a type error (TS2365, matching tsc); the cast keeps this a
+        // pure runtime-sentinel probe.
         var source = """
             class C { inst() {} }
-            console.log(new C().inst() + 10);
+            console.log((new C().inst() as any) + 10);
             """;
         Assert.Equal("NaN\n", TestHarness.Run(source, mode));
     }

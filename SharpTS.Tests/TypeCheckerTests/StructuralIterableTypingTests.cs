@@ -432,4 +432,121 @@ public class StructuralIterableTypingTests
             """;
         Assert.Equal("30\n3\n", TestHarness.Run(source, mode));
     }
+
+    // ---- #593: class-instance iterability (plain instance non-iterable; `extends Array` instance iterable) ----
+    // A class is iterable only via an inherited [Symbol.iterator]. SharpTS previously bound `any` for a
+    // plain instance in for...of (under-rejecting) and threw a spurious TS2488 for an `extends Array`
+    // instance in yield* (over-rejecting); both now match tsc.
+
+    [Fact]
+    public void PlainClassInstance_ForOf_RejectedTS2488()
+    {
+        // tsc: TS2488 — a plain class instance has no [Symbol.iterator]. SharpTS used to bind `any`.
+        var source = """
+            class P { x = 1; }
+            function f(p: P) { for (const v of p) { console.log(v); } }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2488", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void PlainClassInstance_Spread_RejectedTS2488()
+    {
+        var source = """
+            class P { x = 1; }
+            function f(p: P) { return [...p]; }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2488", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void PlainClassInstance_YieldStar_RejectedTS2488()
+    {
+        var source = """
+            class P { x = 1; }
+            function* g(p: P) { yield* p; }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2488", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void ClassWithNextButNoSymbolIterator_ForOf_RejectedTS2488()
+    {
+        // Having a next() method does not make a class iterable in tsc (needs [Symbol.iterator]); the
+        // SharpTS runtime agrees (for...of over such an instance throws), so the static TS2488 matches both.
+        var source = """
+            class Counter { next() { return { value: 1, done: false }; } }
+            function f(c: Counter) { for (const v of c) { console.log(v); } }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2488", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void ExtendsArray_YieldStar_Accepted()
+    {
+        // tsc: OK — C inherits Array's [Symbol.iterator]. SharpTS used to throw a spurious TS2488.
+        var source = """
+            class C extends Array<number> {}
+            function* g(x: C) { yield* x; }
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExtendsArray_ForOf_BindsElementType_RunsInBothModes(ExecutionMode mode)
+    {
+        // The inherited element type is number (recovered from the dropped `extends Array<number>` arg), and
+        // the runtime supports iterating an Array subclass.
+        var source = """
+            class C extends Array<number> {}
+            const c = new C();
+            c.push(10); c.push(20);
+            let total = 0;
+            for (const v of c) { total += v; }
+            console.log(total);
+            """;
+        Assert.Equal("30\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void ExtendsArray_ForOf_ElementIsNumberNotAny_WrongUseRejected()
+    {
+        // The bound element is genuinely number (not `any`), so misusing it as string is a TS2322.
+        var source = """
+            class C extends Array<number> {}
+            function f(c: C) { for (const v of c) { const s: string = v; } }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2322", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void ExtendsArray_ThroughUserSubclass_IsIterable()
+    {
+        // Iterability is inherited transitively: B → A → Array<number>.
+        var source = """
+            class A extends Array<number> {}
+            class B extends A {}
+            function f(b: B) { for (const v of b) { const n: number = v; } }
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void ExtendsNonIterableBuiltin_ForOf_RejectedTS2488()
+    {
+        // `extends Error` is not iterable in tsc; the enumeration of iterable bases excludes it, so the
+        // instance is correctly reported non-iterable rather than binding `any`.
+        var source = """
+            class MyErr extends Error {}
+            function f(e: MyErr) { for (const v of e) {} }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2488", ex.Diagnostic.TsCode);
+    }
 }
