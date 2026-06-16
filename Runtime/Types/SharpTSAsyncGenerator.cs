@@ -26,6 +26,13 @@ public class SharpTSAsyncGenerator : ITypeCategorized
     private readonly Interpreter _interpreter;
 
     private List<object?>? _values = null;  // Collected yielded values (null = not yet executed)
+    // The single eager body drain, shared by every next() caller. Started by the first next() and
+    // awaited by all subsequent calls so overlapping requests are serviced in call order (ECMA-262
+    // §27.6.3 services the async-generator request queue FIFO) rather than racing the half-populated
+    // _values list. _values alone can't gate this: it is set to an empty list at drain start, so a
+    // second next() issued before the first settles would see it non-null and wrongly report completion
+    // before any value was collected (#690).
+    private Task? _drainTask = null;
     private int _index = 0;
     // The generator's completion value. Defaults to undefined so a body that falls off the end (or a
     // no-arg return) reports { value: undefined, done: true }, not C# null (#540).
@@ -40,6 +47,17 @@ public class SharpTSAsyncGenerator : ITypeCategorized
     // that follows the values yielded before it — so it is buffered here and rethrown by Next() once
     // those values are exhausted, rejecting that call's promise (#566). Null when the body did not throw.
     private Exception? _pendingException = null;
+
+    // The interpreter's ambient environment captured when the eager body drain begins — i.e. the scope
+    // active in the caller that triggered the first next(). The drain temporarily repoints the shared
+    // interpreter environment at the generator's own closure (_environment); because the body suspends
+    // at `await` points while that closure is installed, control can return to the caller — or to
+    // interleaved event-loop work — with the generator's closure still in place. Every guest-suspending
+    // await restores this caller environment before suspending and re-asserts the generator's
+    // environment on resume, so the generator never leaks its closure into the ambient environment
+    // (otherwise an outer binding read after the generator is driven resolves against the wrong scope:
+    // "Undefined variable" in a for-await body (#689), or a member access on the wrong value (#690)).
+    private RuntimeEnvironment? _callerEnv;
 
     public SharpTSAsyncGenerator(Stmt.Function declaration, RuntimeEnvironment environment, Interpreter interpreter)
     {
@@ -61,11 +79,12 @@ public class SharpTSAsyncGenerator : ITypeCategorized
             return new SharpTSIteratorResult(SharpTSUndefined.Instance, done: true);
         }
 
-        // Execute the generator body on first call (async)
-        if (_values == null)
-        {
-            await ExecuteBodyAsync();
-        }
+        // Execute the generator body on the first call; serialize concurrent/overlapping next() calls by
+        // awaiting the same drain task. A second next() issued before the first settles must wait for the
+        // shared drain and then hand out the next collected value in call order — not race ahead and read
+        // the not-yet-populated _values list as completion (#690).
+        _drainTask ??= ExecuteBodyAsync();
+        await _drainTask;
 
         // Defensive check: ExecuteBodyAsync should always initialize _values,
         // but verify to provide a clear error message if something goes wrong.
@@ -145,8 +164,11 @@ public class SharpTSAsyncGenerator : ITypeCategorized
             return;
         }
 
-        // Save and set the interpreter environment
+        // Save and set the interpreter environment. _callerEnv is the scope the drain must restore
+        // whenever it suspends at an await, so the shared interpreter environment is never left pointing
+        // at this generator's closure while control is elsewhere (#689, #690).
         RuntimeEnvironment previousEnv = _interpreter.Environment;
+        _callerEnv = previousEnv;
         _interpreter.SetEnvironment(_environment);
 
         try
@@ -173,6 +195,30 @@ public class SharpTSAsyncGenerator : ITypeCategorized
         finally
         {
             _interpreter.SetEnvironment(previousEnv);
+        }
+    }
+
+    /// <summary>
+    /// Awaits a host task at a point where the eager body drain suspends, keeping the interpreter's
+    /// shared ambient environment consistent across the suspension. The drain runs with that environment
+    /// repointed at this generator's closure; this restores the caller's environment (<see cref="_callerEnv"/>)
+    /// before suspending — so control returning to the caller, or interleaved event-loop work, sees the
+    /// correct scope — and re-asserts the generator's environment on resume so the drain continues in the
+    /// right scope. Without it, an outer binding read after the generator is driven resolves against the
+    /// wrong scope: "Undefined variable" in a for-await body (#689) or a member access on the wrong value
+    /// (#690). Mirrors the caller-state save/restore the synchronous generator performs at each yield.
+    /// </summary>
+    private async Task<object?> AwaitDetached(Task<object?> task)
+    {
+        RuntimeEnvironment generatorEnv = _interpreter.Environment;
+        _interpreter.SetEnvironment(_callerEnv ?? generatorEnv);
+        try
+        {
+            return await task;
+        }
+        finally
+        {
+            _interpreter.SetEnvironment(generatorEnv);
         }
     }
 
@@ -482,14 +528,15 @@ public class SharpTSAsyncGenerator : ITypeCategorized
         {
             // Recursively evaluate the inner expression (may contain await)
             var value = await EvaluateAsync(awaitExpr.Expression);
-            // Handle SharpTSPromise (wraps Task<object?>)
+            // Handle SharpTSPromise (wraps Task<object?>). Await through AwaitDetached so the suspension
+            // does not leak this generator's closure into the shared interpreter environment (#689, #690).
             if (value is SharpTSPromise promise)
             {
-                return await promise.Task;
+                return await AwaitDetached(promise.Task);
             }
             if (value is Task<object?> task)
             {
-                return await task;
+                return await AwaitDetached(task);
             }
             return value;
         }
@@ -524,7 +571,7 @@ public class SharpTSAsyncGenerator : ITypeCategorized
             {
                 while (true)
                 {
-                    var result = await asyncGen.Next();
+                    var result = await AwaitDetached(asyncGen.Next());
                     if (result is SharpTSIteratorResult ir)
                     {
                         if (ir.Done) break;
@@ -547,11 +594,12 @@ public class SharpTSAsyncGenerator : ITypeCategorized
         }
         else
         {
-            // If yielding a promise, await it first
+            // If yielding a promise, await it first (through AwaitDetached so the suspension does not
+            // leak this generator's closure into the shared interpreter environment — #689, #690).
             var value = yield.Value;
             if (value is Task<object?> task)
             {
-                value = await task;
+                value = await AwaitDetached(task);
             }
             _values!.Add(value);
         }
