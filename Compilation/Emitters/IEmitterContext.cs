@@ -79,6 +79,14 @@ public interface IEmitterContext
     void EmitDefaultForType(Type type);
 
     /// <summary>
+    /// Emits the value for a trailing parameter slot the call site omits: the <c>$Undefined</c>
+    /// sentinel for an <c>object</c> slot (JS: an omitted argument is <c>undefined</c>), else the
+    /// type's CLR default. Use this instead of <see cref="EmitDefaultForType"/> when padding omitted
+    /// call arguments. (#739/#705)
+    /// </summary>
+    void EmitOmittedArgument(Type slotType);
+
+    /// <summary>
     /// Emits IL that constructs a delegate of the given type pointing at the
     /// arrow's compiled body. For non-capturing arrows: <c>new Func(null, ldftn staticMethod)</c>.
     /// For capturing arrows: allocate the display class instance, populate

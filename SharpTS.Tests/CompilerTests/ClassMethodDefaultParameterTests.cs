@@ -4,15 +4,21 @@ using Xunit;
 namespace SharpTS.Tests.CompilerTests;
 
 /// <summary>
-/// #705: in compiled mode, default parameters on class-declaration members were never applied —
-/// the body emitters skipped the runtime entry prologue entirely, and value-type-defaulted params
-/// kept an unboxed slot that cannot hold the <c>undefined</c> sentinel. This pins the fixes for the
-/// <b>non-virtual</b> members from the issue's repros — constructors, private methods, and free
-/// functions — whose value-type defaults are now widened to an object slot so an omitted or explicit
-/// <c>undefined</c> argument fires the default (omit → default, explicit undefined → default, present
-/// → used). Reference-type defaults on (virtual) instance / static methods also fire now, override-safely
-/// (no slot change). Value-type defaults on virtual instance/static methods remain a tracked follow-up
-/// (widening their slot would break override matching), and are intentionally not asserted here.
+/// #705/#723/#737/#739: in compiled mode, default/optional parameters on class-declaration members
+/// were mishandled — the body emitters skipped the runtime entry prologue, value-type-defaulted
+/// params kept an unboxed slot that cannot hold the <c>undefined</c> sentinel, and direct calls
+/// padded omitted optionals with CLR null instead of <c>undefined</c>. This pins the fixes:
+/// <list type="bullet">
+/// <item><b>#705/#723</b>: value-type defaults fire (omit → default, explicit <c>undefined</c> →
+/// default, present → used) for free functions, constructors, private methods, and now <b>instance
+/// and static methods</b> — the latter via value-type slot widening (static: direct; instance:
+/// hierarchy-consistent, so override matching is preserved).</item>
+/// <item><b>#737</b>: defaults also fire on <b>generator and async-generator methods</b> (their
+/// state machines now run a default-parameter prologue).</item>
+/// <item><b>#739</b>: a direct instance/static method or constructor call pads an omitted trailing
+/// optional (no-default) param with the <c>undefined</c> sentinel, so <c>typeof</c> reads
+/// "undefined" (not "object").</item>
+/// </list>
 /// All run in both modes to pin interpreter/compiler parity.
 /// </summary>
 public class ClassMethodDefaultParameterTests
@@ -240,6 +246,170 @@ public class ClassMethodDefaultParameterTests
         Assert.Equal("D:D\n", TestHarness.Run(source, mode));
     }
 
+    // ---- Value-type defaults on (virtual) instance & static methods (#723/#737) ----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InstanceMethod_NumericDefault_Omitted(ExecutionMode mode)
+    {
+        var source = """
+            class C { add(a: number, b: number = 10): number { return a + b; } }
+            console.log(new C().add(5));
+            """;
+        Assert.Equal("15\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InstanceMethod_NumericDefault_ExplicitUndefined(ExecutionMode mode)
+    {
+        var source = """
+            class C { add(a: number, b: number = 10): number { return a + b; } }
+            console.log(new C().add(5, undefined));
+            """;
+        Assert.Equal("15\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticMethod_NumericDefault_Omitted(ExecutionMode mode)
+    {
+        var source = """
+            class C { static add(a: number, b: number = 10): number { return a + b; } }
+            console.log(C.add(5));
+            console.log(C.add(5, undefined));
+            """;
+        Assert.Equal("15\n15\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InstanceMethod_BooleanDefault_Omitted(ExecutionMode mode)
+    {
+        var source = """
+            class C { flag(on: boolean = true): boolean { return on; } }
+            console.log(new C().flag());
+            console.log(new C().flag(false));
+            """;
+        Assert.Equal("true\nfalse\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Override_DerivedAddsDefault_OmittedFiresDerivedDefault(ExecutionMode mode)
+    {
+        // The derived override adds a value-type default the base declares as required; calling it
+        // with the argument omitted must fire the derived default. The hierarchy-consistent widening
+        // makes both `m` slots `object`, so the derived prologue can observe `undefined`. (#737)
+        var source = """
+            class B { m(x: number): number { return x; } }
+            class D extends B { m(x: number = 5): number { return x * 2; } }
+            console.log(new D().m());
+            """;
+        Assert.Equal("10\n", TestHarness.Run(source, mode));
+    }
+
+    // ---- Generator / async-generator method defaults (#737) ----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorMethod_NumericDefault_Omitted(ExecutionMode mode)
+    {
+        var source = """
+            class C { *gen(a: number, b: number = 10): Generator<number> { yield a; yield b; } }
+            console.log([...new C().gen(1)].join(","));
+            console.log([...new C().gen(1, 2)].join(","));
+            console.log([...new C().gen(1, undefined)].join(","));
+            """;
+        Assert.Equal("1,10\n1,2\n1,10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FreeGenerator_NumericDefault_Omitted(ExecutionMode mode)
+    {
+        var source = """
+            function* gen(a: number, b: number = 7): Generator<number> { yield a; yield b; }
+            console.log([...gen(3)].join(","));
+            """;
+        Assert.Equal("3,7\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorMethod_NumericDefault_Omitted(ExecutionMode mode)
+    {
+        var source = """
+            class C { async *agen(a: number, b: number = 3): AsyncGenerator<number> { yield a; yield b; } }
+            (async () => {
+              const out: number[] = [];
+              for await (const v of new C().agen(100)) out.push(v);
+              console.log(out.join(","));
+            })();
+            """;
+        Assert.Equal("100,3\n", TestHarness.Run(source, mode));
+    }
+
+    // ---- #739: direct call pads omitted optional with `undefined`, not null ----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InstanceMethod_OmittedOptional_IsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            class C { m(x?: any): string { return typeof x; } }
+            console.log(new C().m());
+            """;
+        Assert.Equal("undefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticMethod_OmittedOptional_IsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            class C { static s(x?: any): string { return typeof x; } }
+            console.log(C.s());
+            """;
+        Assert.Equal("undefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Constructor_OmittedOptional_IsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            class C { kind: string; constructor(x?: any) { this.kind = typeof x; } }
+            console.log(new C().kind);
+            """;
+        Assert.Equal("undefined\n", TestHarness.Run(source, mode));
+    }
+
+    // ---- Generator `??` over an omitted optional (regression: #739 padding exposed a latent
+    //      state-machine nullish-coalescing bug that ignored the `$Undefined` sentinel) ----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorNullishCoalescing_OmittedOptional_EvaluatesRight(ExecutionMode mode)
+    {
+        // `pop(error?)` does `error ?? this.arr.pop()`. With `error` omitted (→ `undefined`), the
+        // right side MUST run so the stack drains and the driving `while` terminates — otherwise the
+        // generator spins forever (the real-world yaml-parser hang). The compiled state-machine `??`
+        // previously caught only CLR null, not the `$Undefined` sentinel.
+        var source = """
+            class P {
+              arr: number[] = [1, 2, 3];
+              *pop(error?: any): Generator<string> {
+                const token = error ?? this.arr.pop();
+                yield "t" + token;
+              }
+              *drain(): Generator<string> { while (this.arr.length > 0) yield* this.pop(); }
+            }
+            console.log([...new P().drain()].join(","));
+            """;
+        Assert.Equal("t3,t2,t1\n", TestHarness.Run(source, mode));
+    }
+
     // ---- IL verification guard ---------------------------------------------
 
     [Fact]
@@ -256,6 +426,28 @@ public class ClassMethodDefaultParameterTests
             class D { constructor(public age: number = 99) {} }
             function f(x: number, y: number = 3): number { return x + y; }
             console.log(new C().run() + new D().age + f(1));
+            """;
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void InstanceStaticAndGeneratorDefaults_ProduceVerifiableIL()
+    {
+        // Widening value-type defaults on instance (hierarchy-consistent) and static methods,
+        // padding omitted optionals with the undefined sentinel, and the generator/async-generator
+        // default prologues must all emit verifiable IL.
+        var source = """
+            class B { m(x: number): number { return x; } }
+            class D extends B { m(x: number = 5): number { return x * 2; } }
+            class C {
+              add(a: number, b: number = 10): number { return a + b; }
+              static st(a: number, b: number = 2): number { return a + b; }
+              opt(x?: any): string { return typeof x; }
+              *gen(a: number, b: number = 1): Generator<number> { yield a; yield b; }
+              async *agen(a: number, b: number = 1): AsyncGenerator<number> { yield a; yield b; }
+            }
+            console.log(new D().m() + C.st(1) + new C().add(1) + new C().opt() + [...new C().gen(1)].length);
             """;
         var errors = TestHarness.CompileAndVerifyOnly(source);
         Assert.Empty(errors);

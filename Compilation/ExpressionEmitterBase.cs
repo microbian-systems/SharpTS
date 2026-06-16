@@ -1398,10 +1398,10 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 }
             }
 
-            // Pad missing optional arguments
+            // Pad omitted trailing arguments (object slot → `undefined` sentinel). (#739/#705)
             for (int i = n.Arguments.Count; i < expectedParamCount; i++)
             {
-                EmitDefaultForType(ctorParams[i].ParameterType);
+                EmitOmittedArgument(ctorParams[i].ParameterType);
             }
 
             IL.Emit(OpCodes.Newobj, targetCtor);
@@ -1512,7 +1512,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         }
 
         for (int i = n.Arguments.Count; i < expectedParamCount; i++)
-            EmitDefaultForType(ctorParams[i].ParameterType);
+            EmitOmittedArgument(ctorParams[i].ParameterType);
 
         IL.Emit(OpCodes.Newobj, classExprCtor);
         SetStackUnknown();

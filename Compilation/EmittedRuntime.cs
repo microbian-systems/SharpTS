@@ -274,6 +274,13 @@ public class EmittedRuntime
     public TypeBuilder PadUndefinedAttrType { get; set; } = null!;
     public ConstructorBuilder PadUndefinedAttrCtor { get; set; } = null!;
 
+    // Marker attribute applied to a user function-expression / `this`-bearing arrow method whose
+    // first emitted parameter is the synthetic `__this` receiver slot. $TSFunction reads it back via
+    // IsDefined so it can detect that slot without the parameter name (a --ref-asm rewrite strips
+    // parameter names, breaking the name-based check and shifting value-call arguments). (#738)
+    public TypeBuilder ExpectsThisAttrType { get; set; } = null!;
+    public ConstructorBuilder ExpectsThisAttrCtor { get; set; } = null!;
+
     // String methods
     public MethodBuilder StringCharAt { get; set; } = null!;
     public MethodBuilder StringSubstring { get; set; } = null!;

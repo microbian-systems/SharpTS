@@ -88,7 +88,7 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
     /// <summary>
     /// Emits the complete MoveNextAsync method body.
     /// </summary>
-    public void EmitMoveNextAsync(List<Stmt>? body, CompilationContext ctx)
+    public void EmitMoveNextAsync(List<Stmt>? body, CompilationContext ctx, List<Stmt.Parameter>? parameters = null)
     {
         if (body == null)
         {
@@ -125,6 +125,13 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
 
         // Emit state dispatch switch
         EmitStateSwitch();
+
+        // Apply parameter defaults on initial entry only (state -1 falls through here; resume
+        // states jump past via the switch, the completed state short-circuits above). (#737)
+        if (parameters != null)
+        {
+            EmitDefaultParameters(parameters);
+        }
 
         // Emit the function body (will emit yield/await points inline)
         foreach (var stmt in body)
@@ -167,6 +174,56 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
         _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
         _il.Emit(OpCodes.Stfld, _builder.CurrentField);
         EmitReturnValueTaskBool(false);
+    }
+
+    /// <summary>
+    /// Applies parameter defaults at async-generator entry — the async-generator analogue of the sync
+    /// generator and async function versions (this state machine previously ran no default prologue, so
+    /// defaults never fired in compiled mode). A defaulted parameter whose argument was omitted or
+    /// explicitly <c>undefined</c> arrives in its hoisted field as null / the <c>$Undefined</c> sentinel
+    /// and is replaced with the evaluated default. Evaluated in declaration order so a later default may
+    /// reference an earlier (already-defaulted) parameter. (#737)
+    /// </summary>
+    private void EmitDefaultParameters(List<Stmt.Parameter> parameters)
+    {
+        if (!parameters.Any(p => p.DefaultValue != null))
+            return;
+
+        foreach (var param in parameters)
+        {
+            if (param.DefaultValue == null) continue;
+
+            var field = _builder.GetVariableField(param.Name.Lexeme);
+            if (field == null) continue; // Parameter not hoisted (unused in body) — default is moot.
+
+            var applyDefault = _il.DefineLabel();
+            var checkUndefined = _il.DefineLabel();
+            var skipDefault = _il.DefineLabel();
+
+            // if (field == null) apply; else if (field is $Undefined) apply; else keep.
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, field);
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Brtrue, checkUndefined);
+            _il.Emit(OpCodes.Pop);                       // pop the null
+            _il.Emit(OpCodes.Br, applyDefault);
+
+            _il.MarkLabel(checkUndefined);
+            _il.Emit(OpCodes.Isinst, _ctx!.Runtime!.UndefinedType);
+            _il.Emit(OpCodes.Brtrue, applyDefault);
+            _il.Emit(OpCodes.Br, skipDefault);
+
+            _il.MarkLabel(applyDefault);
+            EmitExpression(param.DefaultValue);
+            EnsureBoxed();
+            var temp = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, temp);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldloc, temp);
+            _il.Emit(OpCodes.Stfld, field);
+
+            _il.MarkLabel(skipDefault);
+        }
     }
 
     private void EmitStateSwitch()

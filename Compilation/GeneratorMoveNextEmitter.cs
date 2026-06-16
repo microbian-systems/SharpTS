@@ -68,7 +68,10 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
     /// <summary>
     /// Emits the complete MoveNext method body.
     /// </summary>
-    public void EmitMoveNext(List<Stmt>? body, CompilationContext ctx)
+    /// <param name="parameters">The generator's declared parameters. When supplied, a default-parameter
+    /// prologue runs on initial entry so an omitted or explicit-<c>undefined</c> argument fires its
+    /// default (#737). Null skips it (callers with no params).</param>
+    public void EmitMoveNext(List<Stmt>? body, CompilationContext ctx, List<Stmt.Parameter>? parameters = null)
     {
         if (body == null) return;
 
@@ -100,6 +103,15 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
 
         // Emit state dispatch switch
         EmitStateSwitch();
+
+        // Apply parameter defaults on initial entry. The state switch jumps every resume state
+        // (>= 0) to its yield label and the completed state (-2) short-circuits above, so only the
+        // initial entry (state -1) falls through to here — the defaults run exactly once, before the
+        // body, with no extra guard field needed. (#737)
+        if (parameters != null)
+        {
+            EmitDefaultParameters(parameters);
+        }
 
         // Emit the function body (will emit yield points inline)
         foreach (var stmt in body)
@@ -150,6 +162,57 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
         _il.Emit(OpCodes.Stfld, _builder.CurrentField);
         _il.Emit(OpCodes.Ldc_I4_0);
         _il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Applies parameter defaults at generator entry. A defaulted parameter whose argument was
+    /// omitted or explicitly <c>undefined</c> arrives in its hoisted state-machine field as null /
+    /// the <c>$Undefined</c> sentinel; this replaces it with the evaluated default expression — the
+    /// generator analogue of <see cref="ILEmitter.EmitDefaultParameters"/> and the async emitter's
+    /// own version, both of which a generator's state machine previously lacked (defaults never
+    /// fired in compiled mode). Defaults are evaluated in declaration order, so a later default may
+    /// reference an earlier (already-defaulted) parameter via its field. (#737)
+    /// </summary>
+    private void EmitDefaultParameters(List<Stmt.Parameter> parameters)
+    {
+        if (!parameters.Any(p => p.DefaultValue != null))
+            return;
+
+        foreach (var param in parameters)
+        {
+            if (param.DefaultValue == null) continue;
+
+            var field = _builder.GetVariableField(param.Name.Lexeme);
+            if (field == null) continue; // Parameter not hoisted (unused in body) — default is moot.
+
+            var applyDefault = _il.DefineLabel();
+            var checkUndefined = _il.DefineLabel();
+            var skipDefault = _il.DefineLabel();
+
+            // if (field == null) apply; else if (field is $Undefined) apply; else keep.
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, field);
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Brtrue, checkUndefined);
+            _il.Emit(OpCodes.Pop);                       // pop the null
+            _il.Emit(OpCodes.Br, applyDefault);
+
+            _il.MarkLabel(checkUndefined);
+            _il.Emit(OpCodes.Isinst, _ctx!.Runtime!.UndefinedType);
+            _il.Emit(OpCodes.Brtrue, applyDefault);
+            _il.Emit(OpCodes.Br, skipDefault);
+
+            _il.MarkLabel(applyDefault);
+            EmitExpression(param.DefaultValue);
+            EnsureBoxed();
+            var temp = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, temp);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldloc, temp);
+            _il.Emit(OpCodes.Stfld, field);
+
+            _il.MarkLabel(skipDefault);
+        }
     }
 
     private void EmitStateSwitch()

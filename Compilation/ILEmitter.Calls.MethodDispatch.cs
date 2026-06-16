@@ -312,10 +312,12 @@ public partial class ILEmitter
             EmitConversionForParameter(arg, targetParams[i].ParameterType);
         }
 
-        // Pad missing required-position arguments with defaults.
+        // Pad omitted trailing arguments. An optional/defaulted param uses an object slot, so it is
+        // padded with the `undefined` sentinel — observable via typeof for a plain optional and
+        // firing the entry prologue for a defaulted one. (#739/#705)
         for (int i = regularArgsToEmit; i < regularParamCount; i++)
         {
-            EmitDefaultForType(targetParams[i].ParameterType);
+            EmitOmittedArgument(targetParams[i].ParameterType);
         }
 
         if (hasRestParam)
@@ -416,10 +418,10 @@ public partial class ILEmitter
             }
         }
 
-        // Pad missing optional arguments
+        // Pad omitted trailing arguments (object slot → `undefined` sentinel). (#739/#705)
         for (int i = arguments.Count; i < methodParams.Length; i++)
         {
-            EmitDefaultForType(methodParams[i].ParameterType);
+            EmitOmittedArgument(methodParams[i].ParameterType);
         }
 
         // Use Call (NOT Callvirt) to bypass virtual dispatch

@@ -171,7 +171,7 @@ public partial class ILCompiler
 
         // Use the new emitter for full async generator body emission
         var emitter = new AsyncGeneratorMoveNextEmitter(smBuilder, analysis, _types);
-        emitter.EmitMoveNextAsync(funcStmt.Body, ctx);
+        emitter.EmitMoveNextAsync(funcStmt.Body, ctx, funcStmt.Parameters);
     }
 
     /// <summary>
@@ -246,7 +246,7 @@ public partial class ILCompiler
 
         // Emit MoveNextAsync body
         var moveNextEmitter = new AsyncGeneratorMoveNextEmitter(smBuilder, analysis, _types);
-        moveNextEmitter.EmitMoveNextAsync(method.Body, ctx);
+        moveNextEmitter.EmitMoveNextAsync(method.Body, ctx, method.Parameters);
 
         // Finalize the state machine type
         smBuilder.CreateType();

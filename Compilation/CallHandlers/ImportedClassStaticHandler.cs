@@ -40,7 +40,7 @@ public class ImportedClassStaticHandler : ICallHandler
         }
 
         for (int i = call.Arguments.Count; i < paramCount; i++)
-            emitter.EmitDefaultForType(methodParams[i].ParameterType);
+            emitter.EmitOmittedArgument(methodParams[i].ParameterType);
 
         il.Emit(OpCodes.Call, callableMethod);
         emitter.SetStackUnknown();

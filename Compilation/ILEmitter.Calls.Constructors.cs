@@ -149,7 +149,7 @@ public partial class ILEmitter
         }
 
         for (int i = n.Arguments.Count; i < expectedParamCount; i++)
-            EmitDefaultForType(ctorParams[i].ParameterType);
+            EmitOmittedArgument(ctorParams[i].ParameterType);
 
         IL.Emit(OpCodes.Newobj, targetCtor);
         SetStackUnknown();
@@ -230,12 +230,13 @@ public partial class ILEmitter
             }
             else if (pt.IsGenericParameter)
             {
-                // Under-applied generic-typed parameter: default for the closed type.
-                EmitDefaultForType(inferred[pt.GenericParameterPosition]!);
+                // Under-applied generic-typed parameter: pad with undefined for an object closure,
+                // else the closed type's CLR default. (#739)
+                EmitOmittedArgument(inferred[pt.GenericParameterPosition]!);
             }
             else
             {
-                EmitDefaultForType(pt);
+                EmitOmittedArgument(pt);
             }
         }
 
@@ -294,7 +295,7 @@ public partial class ILEmitter
         }
 
         for (int i = n.Arguments.Count; i < expectedParamCount; i++)
-            EmitDefaultForType(ctorParams[i].ParameterType);
+            EmitOmittedArgument(ctorParams[i].ParameterType);
 
         IL.Emit(OpCodes.Newobj, ctor);
         SetStackUnknown();

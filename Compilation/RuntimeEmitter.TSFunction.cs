@@ -83,6 +83,35 @@ public partial class RuntimeEmitter
         typeBuilder.CreateType();
     }
 
+    /// <summary>
+    /// Emits a minimal marker attribute <c>$ExpectsThis</c> (empty <see cref="System.Attribute"/>
+    /// subclass) applied to a user function-expression / <c>this</c>-bearing arrow method, whose
+    /// first emitted parameter is the synthetic <c>__this</c> receiver slot. <c>$TSFunction</c>
+    /// normally detects that slot by parameter name (<c>params[0].Name == "__this"</c>), but a
+    /// reference-assembly rewrite (<c>--compile --ref-asm</c>) strips parameter names, so the name
+    /// check fails and the receiver slot is miscounted as a real argument — shifting a value-call's
+    /// arguments by one. Custom attributes survive the rewrite, so reading this marker back via
+    /// <see cref="System.Reflection.MemberInfo.IsDefined(Type, bool)"/> restores correct detection.
+    /// Lives in the output assembly so the compiled DLL stays standalone. (#738)
+    /// </summary>
+    private void EmitExpectsThisAttribute(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$ExpectsThis",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            typeof(System.Attribute));
+        var ctor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
+        var ctorIl = ctor.GetILGenerator();
+        ctorIl.Emit(OpCodes.Ldarg_0);
+        ctorIl.Emit(OpCodes.Call, typeof(System.Attribute).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null)!);
+        ctorIl.Emit(OpCodes.Ret);
+        runtime.ExpectsThisAttrCtor = ctor;
+        runtime.ExpectsThisAttrType = typeBuilder;
+        typeBuilder.CreateType();
+    }
+
     private void EmitTSFunctionClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
         // Define class: public sealed class $TSFunction
@@ -268,7 +297,7 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Ldnull);
         ctorIL.Emit(OpCodes.Stfld, cachedNameField);
         // this._expectsThis = (method.GetParameters().Length > 0 && params[0].Name == "__this")
-        EmitComputeExpectsThis(ctorIL, expectsThisField, methodArgIndex: 2);
+        EmitComputeExpectsThis(ctorIL, expectsThisField, runtime, methodArgIndex: 2);
         // this._capturesArguments = method.IsDefined($CapturesArguments)
         EmitComputeCapturesArguments(ctorIL, capturesArgumentsField, runtime, methodArgIndex: 2);
         // this._padUndefinedMask = $PadUndefined ? (object-param bits) : 0
@@ -310,7 +339,7 @@ public partial class RuntimeEmitter
         ctorCacheIL.Emit(OpCodes.Ldarg, 4);  // 4th argument (0-indexed: 0=this, 1=target, 2=method, 3=name, 4=length)
         ctorCacheIL.Emit(OpCodes.Stfld, cachedLengthField);
         // this._expectsThis = (method.GetParameters().Length > 0 && params[0].Name == "__this")
-        EmitComputeExpectsThis(ctorCacheIL, expectsThisField, methodArgIndex: 2);
+        EmitComputeExpectsThis(ctorCacheIL, expectsThisField, runtime, methodArgIndex: 2);
         EmitComputeCapturesArguments(ctorCacheIL, capturesArgumentsField, runtime, methodArgIndex: 2);
         EmitComputePadUndefinedMask(ctorCacheIL, padUndefinedMaskField, runtime, methodArgIndex: 2);
         EmitComputeAdjustArgsCache(ctorCacheIL, paramCountField, hasListRestField, hasArrayRestField, methodArgIndex: 2);
@@ -1264,46 +1293,55 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits IL inside a constructor to compute and store the cached
-    /// <c>_expectsThis</c> bool field. Logic:
-    /// <c>this._expectsThis = (method.GetParameters().Length > 0 &amp;&amp; params[0].Name == "__this")</c>.
-    /// Caller must provide the field and the constructor's argument index of
-    /// the <c>MethodInfo</c> param (typically 2).
+    /// Emits IL inside a constructor to compute and store the cached <c>_expectsThis</c> bool field:
+    /// <c>this._expectsThis = (params.Length > 0 &amp;&amp; params[0].Name == "__this")
+    /// || method.IsDefined(typeof($ExpectsThis), false)</c>. The name check is the primary path; the
+    /// <c>$ExpectsThis</c> attribute backstops it because a <c>--ref-asm</c> rewrite strips parameter
+    /// names (so the name check fails there, otherwise shifting a value-call's arguments). Caller
+    /// provides the field and the constructor argument index of the <c>MethodInfo</c> param. (#738)
     /// </summary>
-    private void EmitComputeExpectsThis(ILGenerator il, FieldBuilder expectsThisField, int methodArgIndex)
+    private void EmitComputeExpectsThis(ILGenerator il, FieldBuilder expectsThisField, EmittedRuntime runtime, int methodArgIndex)
     {
         var paramsLocal = il.DeclareLocal(_types.MakeArrayType(_types.ParameterInfo));
-        var falseLabel = il.DefineLabel();
-        var doneLabel = il.DefineLabel();
+        var resultLocal = il.DeclareLocal(_types.Boolean);
+        var checkAttr = il.DefineLabel();
+        var store = il.DefineLabel();
 
         // params = method.GetParameters()
         il.Emit(OpCodes.Ldarg, methodArgIndex);
         il.Emit(OpCodes.Callvirt, _types.MethodInfo.GetMethod("GetParameters")!);
         il.Emit(OpCodes.Stloc, paramsLocal);
 
-        // [this] for the eventual stfld
-        il.Emit(OpCodes.Ldarg_0);
-
-        // if (params.Length == 0) goto falseLabel
+        // nameMatch = params.Length > 0 && params[0].Name == "__this"
         il.Emit(OpCodes.Ldloc, paramsLocal);
         il.Emit(OpCodes.Ldlen);
         il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Brfalse, checkAttr);   // 0 params → fall back to the attribute
 
-        // params[0].Name == "__this" — leaves bool on stack
         il.Emit(OpCodes.Ldloc, paramsLocal);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("Name")!.GetGetMethod()!);
         il.Emit(OpCodes.Ldstr, "__this");
         il.Emit(OpCodes.Call, _types.String.GetMethod("op_Equality", [_types.String, _types.String])!);
-        il.Emit(OpCodes.Br, doneLabel);
+        il.Emit(OpCodes.Stloc, resultLocal);
 
-        il.MarkLabel(falseLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Brtrue, store);        // name matched → done
+
+        // Backstop: resultLocal = method.IsDefined(typeof($ExpectsThis), false) — survives the
+        // parameter-name strip the name check above does not.
+        il.MarkLabel(checkAttr);
+        il.Emit(OpCodes.Ldarg, methodArgIndex);
+        il.Emit(OpCodes.Ldtoken, runtime.ExpectsThisAttrType);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
         il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "IsDefined", _types.Type, _types.Boolean));
+        il.Emit(OpCodes.Stloc, resultLocal);
 
-        il.MarkLabel(doneLabel);
-        // Stack: [this, bool] → stfld
+        il.MarkLabel(store);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Stfld, expectsThisField);
     }
 
