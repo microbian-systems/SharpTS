@@ -820,12 +820,17 @@ public partial class ILCompiler
 
         var emitter = new ILEmitter(ctx);
 
-        // Apply parameter defaults (omitted or explicit `undefined` fires the default). Private
-        // methods get neither OverloadGenerator forwarding nor (previously) this prologue, so
-        // defaults never fired. Their params are already object-typed, so the prologue can
-        // observe the `$Undefined` sentinel directly. (#705)
-        var privateDefaultParamTypes = methodBuilder.GetParameters().Select(p => p.ParameterType).ToArray();
-        emitter.EmitDefaultParameters(method.Parameters, isInstanceMethod: !isStatic, paramTypes: privateDefaultParamTypes);
+        // Apply parameter defaults at the top of the body. A defaulted (`x = ...`) or optional
+        // (`x?: T`) private-method parameter whose argument was omitted arrives as the `undefined`
+        // sentinel (call sites pad omitted trailing args — see EmitPrivateCallUndefinedPadding);
+        // this fires the default the same way function/public-method bodies do. Private methods are
+        // emitted with all-`object` parameter slots, so none are skipped for being value types. (#696,
+        // covers the private-method case of #705's explicit-undefined repro too.)
+        emitter.EmitDefaultParameters(
+            method.Parameters,
+            isInstanceMethod: !isStatic,
+            hasOwnThis: false,
+            paramTypes: methodParams.Select(p => p.ParameterType).ToArray());
 
         // Emit method body
         if (method.Body != null)

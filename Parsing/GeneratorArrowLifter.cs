@@ -61,6 +61,92 @@ internal sealed class GeneratorArrowLifter
         public List<Stmt.Function> Lifted { get; } = new();
     }
 
+    /// <summary>
+    /// Stack of block-scoped binding-name sets currently in scope along the traversal path: loop
+    /// variables, catch parameters, and <c>let</c>/<c>const</c>/<c>class</c>/block-level <c>function</c>
+    /// declarations inside a nested block, switch body, or try/catch/finally block. A generator function
+    /// expression that closes over one of these CANNOT be lifted out — the module body and every
+    /// enclosing function body sit outside the block where the binding lives, so the lift would unbind
+    /// the reference. Such a generator is left in place as an expression instead (#678): the interpreter
+    /// runs generator expressions natively (<c>SharpTSArrowGeneratorFunction</c>) and the type checker
+    /// establishes the generator context directly (<c>CheckArrowFunction</c>). The compiler has no
+    /// generator-expression IL path; it reports a clear "Yield not supported in this context" error for
+    /// the capturing case — the same outcome as #534's enclosing-function-local capture.
+    /// </summary>
+    private readonly List<HashSet<string>> _blockScopes = new();
+
+    /// <summary>Shared read-only sentinel for blocks that introduce no block-scoped bindings (avoids a
+    /// per-block allocation; never mutated after creation).</summary>
+    private static readonly HashSet<string> EmptyScope = new(StringComparer.Ordinal);
+
+    private void PushBlockScope(HashSet<string> names) => _blockScopes.Add(names);
+    private void PopBlockScope() => _blockScopes.RemoveAt(_blockScopes.Count - 1);
+
+    private static HashSet<string> SingletonScope(string name) => new(StringComparer.Ordinal) { name };
+
+    /// <summary>
+    /// Collects the block-scoped binding names declared directly in a statement list (a block body):
+    /// <c>let</c>/<c>const</c>/<c>class</c> and block-level <c>function</c> declarations. <c>var</c> is
+    /// excluded (function-scoped, and already hoisted to the function top by the parse-time
+    /// <c>VarHoister</c>), as are bindings nested in deeper blocks. Returns the shared empty sentinel
+    /// when the block declares nothing block-scoped.
+    /// </summary>
+    private static HashSet<string> CollectBlockBindings(List<Stmt> statements)
+    {
+        HashSet<string>? names = null;
+        foreach (var stmt in statements)
+        {
+            string? n = stmt switch
+            {
+                Stmt.Var v when !v.IsVar => v.Name.Lexeme,   // `let` (var is function-scoped + pre-hoisted)
+                Stmt.Const c => c.Name.Lexeme,
+                Stmt.Function f => f.Name.Lexeme,
+                Stmt.Class cl => cl.Name.Lexeme,
+                _ => null,
+            };
+            if (n is not null) (names ??= new HashSet<string>(StringComparer.Ordinal)).Add(n);
+        }
+        return names ?? EmptyScope;
+    }
+
+    /// <summary>Collects the block-scoped names declared by a <c>for(;;)</c> initializer (the loop
+    /// variables of <c>for (let i = 0, j = 0; …)</c>). A <c>var</c> initializer is function-scoped, so
+    /// it contributes nothing.</summary>
+    private static HashSet<string> CollectForInitBindings(Stmt? init) => init switch
+    {
+        Stmt.Sequence seq => CollectBlockBindings(seq.Statements),
+        Stmt.Var v when !v.IsVar => SingletonScope(v.Name.Lexeme),
+        Stmt.Const c => SingletonScope(c.Name.Lexeme),
+        _ => EmptyScope,
+    };
+
+    /// <summary>The body of a <c>switch</c> is a single lexical scope shared by every case, so its
+    /// block-scoped bindings are the union of all case and default body declarations.</summary>
+    private static HashSet<string> CollectSwitchBindings(Stmt.Switch sw)
+    {
+        HashSet<string>? names = null;
+        void Merge(HashSet<string> from)
+        {
+            if (from.Count == 0) return;
+            (names ??= new HashSet<string>(StringComparer.Ordinal)).UnionWith(from);
+        }
+        foreach (var c in sw.Cases) Merge(CollectBlockBindings(c.Body));
+        if (sw.DefaultBody is not null) Merge(CollectBlockBindings(sw.DefaultBody));
+        return names ?? EmptyScope;
+    }
+
+    /// <summary>True when the generator arrow references a free variable bound in an enclosing BLOCK
+    /// scope (loop variable, catch parameter, or nested-block let/const/class/function). Lifting it out
+    /// would move the reference outside that block, so the generator must stay an expression (#678).</summary>
+    private bool CapturesBlockScopedBinding(HashSet<string> freeVars)
+    {
+        if (freeVars.Count == 0) return false;
+        foreach (var scope in _blockScopes)
+            foreach (var name in freeVars)
+                if (scope.Contains(name)) return true;
+        return false;
+    }
+
     public static List<Stmt> Lift(List<Stmt> body)
     {
         // Cheap pre-scan: if there are no generator function expressions anywhere, return the
@@ -153,8 +239,13 @@ internal sealed class GeneratorArrowLifter
 
     private Stmt RewriteBlock(Stmt.Block b)
     {
-        var rewritten = RewriteListIfChanged(b.Statements, RewriteStmt);
-        return ReferenceEquals(rewritten, b.Statements) ? b : new Stmt.Block(rewritten);
+        PushBlockScope(CollectBlockBindings(b.Statements));
+        try
+        {
+            var rewritten = RewriteListIfChanged(b.Statements, RewriteStmt);
+            return ReferenceEquals(rewritten, b.Statements) ? b : new Stmt.Block(rewritten);
+        }
+        finally { PopBlockScope(); }
     }
 
     private Stmt RewriteSequence(Stmt.Sequence sq)
@@ -193,10 +284,20 @@ internal sealed class GeneratorArrowLifter
 
     private Stmt RewriteFor(Stmt.For f)
     {
+        // The initializer is rewritten BEFORE the loop variables enter scope (a `for (let i = …)`
+        // initializer is in i's TDZ); the condition, increment, and body see them as block-scoped.
         var newInit = f.Initializer is null ? null : RewriteStmt(f.Initializer);
-        var newCond = f.Condition is null ? null : RewriteExpr(f.Condition);
-        var newIncr = f.Increment is null ? null : RewriteExpr(f.Increment);
-        var newBody = RewriteStmt(f.Body);
+        Expr? newCond;
+        Expr? newIncr;
+        Stmt newBody;
+        PushBlockScope(CollectForInitBindings(f.Initializer));
+        try
+        {
+            newCond = f.Condition is null ? null : RewriteExpr(f.Condition);
+            newIncr = f.Increment is null ? null : RewriteExpr(f.Increment);
+            newBody = RewriteStmt(f.Body);
+        }
+        finally { PopBlockScope(); }
         if ((f.Initializer is null || ReferenceEquals(newInit, f.Initializer))
             && (f.Condition is null || ReferenceEquals(newCond, f.Condition))
             && (f.Increment is null || ReferenceEquals(newIncr, f.Increment))
@@ -207,8 +308,13 @@ internal sealed class GeneratorArrowLifter
 
     private Stmt RewriteForOf(Stmt.ForOf fo)
     {
+        // The iterable is evaluated before the loop variable is bound, so it is rewritten outside the
+        // loop-variable scope; the body sees the loop variable as block-scoped (#678).
         var newIter = RewriteExpr(fo.Iterable);
-        var newBody = RewriteStmt(fo.Body);
+        Stmt newBody;
+        PushBlockScope(SingletonScope(fo.Variable.Lexeme));
+        try { newBody = RewriteStmt(fo.Body); }
+        finally { PopBlockScope(); }
         if (ReferenceEquals(newIter, fo.Iterable) && ReferenceEquals(newBody, fo.Body)) return fo;
         return fo with { Iterable = newIter, Body = newBody };
     }
@@ -216,7 +322,10 @@ internal sealed class GeneratorArrowLifter
     private Stmt RewriteForIn(Stmt.ForIn fi)
     {
         var newObj = RewriteExpr(fi.Object);
-        var newBody = RewriteStmt(fi.Body);
+        Stmt newBody;
+        PushBlockScope(SingletonScope(fi.Variable.Lexeme));
+        try { newBody = RewriteStmt(fi.Body); }
+        finally { PopBlockScope(); }
         if (ReferenceEquals(newObj, fi.Object) && ReferenceEquals(newBody, fi.Body)) return fi;
         return fi with { Object = newObj, Body = newBody };
     }
@@ -229,20 +338,27 @@ internal sealed class GeneratorArrowLifter
 
     private Stmt RewriteSwitch(Stmt.Switch sw)
     {
+        // The subject is evaluated outside the switch block; every case shares one lexical scope (#678).
         var newSubject = RewriteExpr(sw.Subject);
         List<Stmt.SwitchCase>? newCases = null;
-        for (int i = 0; i < sw.Cases.Count; i++)
+        List<Stmt>? newDefault;
+        PushBlockScope(CollectSwitchBindings(sw));
+        try
         {
-            var c = sw.Cases[i];
-            var newValue = RewriteExpr(c.Value);
-            var newBody = RewriteListIfChanged(c.Body, RewriteStmt);
-            if (!ReferenceEquals(newValue, c.Value) || !ReferenceEquals(newBody, c.Body))
+            for (int i = 0; i < sw.Cases.Count; i++)
             {
-                newCases ??= new List<Stmt.SwitchCase>(sw.Cases);
-                newCases[i] = new Stmt.SwitchCase(newValue, newBody);
+                var c = sw.Cases[i];
+                var newValue = RewriteExpr(c.Value);
+                var newBody = RewriteListIfChanged(c.Body, RewriteStmt);
+                if (!ReferenceEquals(newValue, c.Value) || !ReferenceEquals(newBody, c.Body))
+                {
+                    newCases ??= new List<Stmt.SwitchCase>(sw.Cases);
+                    newCases[i] = new Stmt.SwitchCase(newValue, newBody);
+                }
             }
+            newDefault = sw.DefaultBody is null ? null : RewriteListIfChanged(sw.DefaultBody, RewriteStmt);
         }
-        var newDefault = sw.DefaultBody is null ? null : RewriteListIfChanged(sw.DefaultBody, RewriteStmt);
+        finally { PopBlockScope(); }
         if (ReferenceEquals(newSubject, sw.Subject) && newCases is null
             && (sw.DefaultBody is null || ReferenceEquals(newDefault, sw.DefaultBody)))
             return sw;
@@ -251,14 +367,42 @@ internal sealed class GeneratorArrowLifter
 
     private Stmt RewriteTryCatch(Stmt.TryCatch tc)
     {
-        var newTry = RewriteListIfChanged(tc.TryBlock, RewriteStmt);
-        var newCatch = tc.CatchBlock is null ? null : RewriteListIfChanged(tc.CatchBlock, RewriteStmt);
-        var newFinally = tc.FinallyBlock is null ? null : RewriteListIfChanged(tc.FinallyBlock, RewriteStmt);
+        // The try/catch/finally blocks are each their own lexical scope; the catch block additionally
+        // binds the catch parameter (#678).
+        var newTry = RewriteBlockScoped(tc.TryBlock);
+
+        List<Stmt>? newCatch;
+        if (tc.CatchBlock is null)
+        {
+            newCatch = null;
+        }
+        else
+        {
+            var catchBindings = CollectBlockBindings(tc.CatchBlock);
+            HashSet<string> catchScope =
+                tc.CatchParam is null ? catchBindings
+                : catchBindings.Count == 0 ? SingletonScope(tc.CatchParam.Lexeme)
+                : new HashSet<string>(catchBindings, StringComparer.Ordinal) { tc.CatchParam.Lexeme };
+            PushBlockScope(catchScope);
+            try { newCatch = RewriteListIfChanged(tc.CatchBlock, RewriteStmt); }
+            finally { PopBlockScope(); }
+        }
+
+        var newFinally = tc.FinallyBlock is null ? null : RewriteBlockScoped(tc.FinallyBlock);
         if (ReferenceEquals(newTry, tc.TryBlock)
             && (tc.CatchBlock is null || ReferenceEquals(newCatch, tc.CatchBlock))
             && (tc.FinallyBlock is null || ReferenceEquals(newFinally, tc.FinallyBlock)))
             return tc;
         return tc with { TryBlock = newTry, CatchBlock = newCatch, FinallyBlock = newFinally };
+    }
+
+    /// <summary>Rewrites a statement list that forms its own block scope (a try/catch/finally block),
+    /// pushing the block's block-scoped bindings for the #678 capture analysis.</summary>
+    private List<Stmt> RewriteBlockScoped(List<Stmt> statements)
+    {
+        PushBlockScope(CollectBlockBindings(statements));
+        try { return RewriteListIfChanged(statements, RewriteStmt); }
+        finally { PopBlockScope(); }
     }
 
     private Stmt RewriteFunction(Stmt.Function f)
@@ -614,6 +758,29 @@ internal sealed class GeneratorArrowLifter
 
     private Expr LiftGeneratorArrow(Expr.ArrowFunction af)
     {
+        var freeVars = FreeVariableCollector.Collect(af);
+
+        // #678: a generator expression that closes over a block-scoped binding (loop variable, catch
+        // parameter, or a let/const/class declared in a nested block) cannot be lifted — the module
+        // body and every enclosing function body sit outside that block, so the lift would unbind the
+        // reference. Leave it in place as a generator EXPRESSION: the interpreter runs generator
+        // expressions natively and the type checker establishes the generator context directly. The
+        // body is still rewritten so any nested generator expressions inside it are handled, and its
+        // own name (if any) stays bound natively — no #679 self-binding rewrite is needed in place.
+        //
+        // ASYNC generator expressions are excluded: the interpreter's native arrow path does not yet
+        // build an async generator instance (EvaluateArrowFunction treats an async arrow as a plain
+        // async function), so an in-place async generator would be mishandled. They keep their prior
+        // lift behavior — a block-capturing async generator still reports "Undefined variable" (#734).
+        if (!af.IsAsync && CapturesBlockScopedBinding(freeVars))
+        {
+            var inPlaceBody = RewriteFunctionBody(af.Parameters, af.BlockBody!, selfName: af.Name?.Lexeme);
+            var inPlaceParams = RewriteParameters(af.Parameters);
+            return ReferenceEquals(inPlaceBody, af.BlockBody) && ReferenceEquals(inPlaceParams, af.Parameters)
+                ? af
+                : af with { BlockBody = inPlaceBody, Parameters = inPlaceParams };
+        }
+
         var name = $"__genArrow_{_counter++}";
         var nameToken = new Token(TokenType.IDENTIFIER, name, null, af.Parameters.FirstOrDefault()?.Name.Line ?? 1);
 
@@ -621,6 +788,21 @@ internal sealed class GeneratorArrowLifter
         // own function scope, so run it through the frame machinery too.
         var rewrittenBody = RewriteFunctionBody(af.Parameters, af.BlockBody!, selfName: af.Name?.Lexeme);
         var rewrittenParams = RewriteParameters(af.Parameters);
+
+        // #679: a NAMED generator function expression can reference itself by name for recursion
+        // (`const g = function* gen(n) { ... yield* gen(n - 1); }`). The lift renames the declaration to
+        // the synthetic __genArrow_N and discards af.Name, so without help the self-reference is unbound.
+        // Inject `const <name> = __genArrow_N;` at the top of the lifted body so the name resolves to the
+        // generator inside its own body (the lifted declaration hoists, so it is in scope there). Skipped
+        // when the name is shadowed by a parameter or a body-level declaration — there the inner binding
+        // wins (named-function-expression scoping), and injecting a const would be a duplicate declaration.
+        if (af.Name is not null && !IsSelfNameShadowed(af))
+        {
+            var selfBinding = new Stmt.Const(af.Name, TypeAnnotation: null, Initializer: new Expr.Variable(nameToken));
+            var withSelfBinding = new List<Stmt>(rewrittenBody.Count + 1) { selfBinding };
+            withSelfBinding.AddRange(rewrittenBody);
+            rewrittenBody = withSelfBinding;
+        }
 
         var funcStmt = new Stmt.Function(
             Name: nameToken,
@@ -638,7 +820,7 @@ internal sealed class GeneratorArrowLifter
         // over-approximates the BOUND set, so a free-variable name is only attributed to an
         // enclosing local when it truly escapes the generator body — never a false positive that
         // would relocate a module-closing generator into a function (which the compiler can't lower).
-        if (_frames.Count > 0 && ClosesOverEnclosingLocal(af))
+        if (_frames.Count > 0 && ClosesOverEnclosingLocal(freeVars))
         {
             _frames[^1].Lifted.Add(funcStmt);
         }
@@ -651,12 +833,25 @@ internal sealed class GeneratorArrowLifter
     }
 
     /// <summary>
+    /// True when a named function expression's own name is shadowed by a parameter or a body-level
+    /// var/let/const/function/class declaration. In that case the inner binding — not the function
+    /// itself — is what the name refers to inside the body (named-function-expression scoping), so the
+    /// #679 self-binding must NOT be injected (it would be a duplicate declaration). Nested-block
+    /// bindings do not shadow at the body level, so they are intentionally excluded.
+    /// </summary>
+    private static bool IsSelfNameShadowed(Expr.ArrowFunction af)
+    {
+        if (af.Name is null) return false;
+        var bodyBindings = LocalBindingCollector.Collect(af.Parameters, af.BlockBody!, selfName: null);
+        return bodyBindings.Contains(af.Name.Lexeme);
+    }
+
+    /// <summary>
     /// True when the generator arrow references a free variable that is bound as a local by one of
     /// the enclosing function scopes (so the lift must stay inside that scope, #534).
     /// </summary>
-    private bool ClosesOverEnclosingLocal(Expr.ArrowFunction af)
+    private bool ClosesOverEnclosingLocal(HashSet<string> freeVars)
     {
-        var freeVars = FreeVariableCollector.Collect(af);
         if (freeVars.Count == 0) return false;
         foreach (var frame in _frames)
         {

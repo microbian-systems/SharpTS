@@ -440,6 +440,66 @@ public abstract partial class ExpressionEmitterBase
     }
 
     /// <summary>
+    /// ECMA-262 RequireObjectCoercible for a NON-optional member READ (<c>o.x</c>):
+    /// with the boxed receiver on top of the stack, throws a guest <c>TypeError</c>
+    /// ("Cannot read properties of undefined (reading '<paramref name="propertyName"/>')")
+    /// when it is <c>$Undefined</c>, leaving the receiver on the stack otherwise.
+    /// The read-expression analog of <see cref="EmitThrowIfReceiverUndefined"/> (the
+    /// method-call-callee guard) and the compiled counterpart of the interpreter's
+    /// guard — like the call-callee guard, a bare CLR <c>null</c> is left coercible
+    /// because compiled sloppy-mode <c>this</c> is represented as <c>null</c>
+    /// (= globalThis). Fixes #701, where <c>undefined.x</c> silently yielded
+    /// <c>undefined</c> instead of throwing. Callers MUST short-circuit the
+    /// optional-chain case (<c>o?.x</c>) before calling this.
+    /// </summary>
+    protected void EmitThrowIfUndefinedReceiverOnStack(string propertyName)
+    {
+        var okLabel = IL.DefineLabel();
+
+        IL.Emit(OpCodes.Dup);
+        IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+        IL.Emit(OpCodes.Brfalse, okLabel);               // not $Undefined → ok
+
+        IL.Emit(OpCodes.Ldstr, $"Cannot read properties of undefined (reading '{propertyName}')");
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSTypeErrorCtor);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateException);
+        IL.Emit(OpCodes.Throw);
+
+        IL.MarkLabel(okLabel);
+    }
+
+    /// <summary>
+    /// Bracket-access (<c>o[k]</c>) counterpart of
+    /// <see cref="EmitThrowIfUndefinedReceiverOnStack"/>: throws a guest
+    /// <c>TypeError</c> when <paramref name="objLocal"/> holds <c>$Undefined</c>,
+    /// splicing the runtime key (<paramref name="keyLocal"/>, a boxed
+    /// <see cref="object"/>) into the message to match Node ("Cannot read
+    /// properties of undefined (reading '&lt;key&gt;')"). Leaves the stack
+    /// untouched. Callers MUST short-circuit the optional-chain case first. (#701)
+    /// </summary>
+    protected void EmitThrowIfUndefinedIndexReceiver(LocalBuilder objLocal, LocalBuilder keyLocal)
+    {
+        var okLabel = IL.DefineLabel();
+
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+        IL.Emit(OpCodes.Brfalse, okLabel);               // not $Undefined → ok
+
+        // "Cannot read properties of undefined (reading '" + key + "')"
+        // Concat(object, object) is null-safe (a null key stringifies to "").
+        IL.Emit(OpCodes.Ldstr, "Cannot read properties of undefined (reading '");
+        IL.Emit(OpCodes.Ldloc, keyLocal);
+        IL.Emit(OpCodes.Call, Types.StringConcatObjectObject);
+        IL.Emit(OpCodes.Ldstr, "')");
+        IL.Emit(OpCodes.Call, Types.StringConcat2);
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSTypeErrorCtor);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateException);
+        IL.Emit(OpCodes.Throw);
+
+        IL.MarkLabel(okLabel);
+    }
+
+    /// <summary>
     /// Builds an <c>object[]</c> of the boxed call arguments on the stack. Stack: [] -&gt; [object[]].
     /// When <paramref name="argLocals"/> is non-null each element is loaded from those pre-spilled,
     /// already-boxed locals (await-safe: the arguments were evaluated and spilled by the caller, so

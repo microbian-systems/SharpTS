@@ -376,6 +376,15 @@ public partial class TypeChecker
             return new TypeInfo.Any(); // Returns an object with remaining properties
         }
 
+        // Handle __arrayDestructure (internal helper for array binding patterns, #685).
+        // Normalizes the destructuring source so the desugared positional index
+        // access types correctly for non-indexable iterables.
+        if (call.Callee is Expr.Variable arrDestVar && arrDestVar.Name.Lexeme == BuiltInNames.ArrayDestructure)
+        {
+            var sourceType = call.Arguments.Count == 1 ? CheckExpr(call.Arguments[0]) : new TypeInfo.Any();
+            return NormalizeArrayDestructureSourceType(sourceType);
+        }
+
         // Invalidate property narrowings for method calls on objects
         // e.g., obj.mutate() should invalidate narrowings on obj's properties
         if (call.Callee is Expr.Get methodGet)

@@ -73,6 +73,15 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual FieldBuilder? GetHoistedVariableField(string name) => null;
 
+    /// <summary>
+    /// Gets the state machine's function display class field (<c>&lt;&gt;__functionDC</c>), or
+    /// null if this emitter has no function-level display class. Override in a state-machine
+    /// emitter whose generator/async function lifts captured-and-mutated locals into a shared
+    /// display class, so <see cref="EmitCapturingArrowViaHooks"/> can thread that reference into
+    /// an arrow's <c>$functionDC</c> field and the arrow's writes reach shared storage (#674).
+    /// </summary>
+    protected virtual FieldBuilder? GetFunctionDCField() => null;
+
     protected ExpressionEmitterBase(StateMachineEmitHelpers helpers)
     {
         _helpers = helpers;
@@ -503,6 +512,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         else
         {
             var idxLocal = SpillBoxed(gi.Index);
+            // RequireObjectCoercible: `undefined[k]` throws a guest TypeError instead
+            // of silently yielding undefined (#701). Optional `o?.[k]` short-circuited above.
+            EmitThrowIfUndefinedIndexReceiver(objLocal, idxLocal);
             IL.Emit(OpCodes.Ldloc, objLocal);
             IL.Emit(OpCodes.Ldloc, idxLocal);
             IL.Emit(OpCodes.Call, Ctx.Runtime!.GetIndex);
@@ -873,6 +885,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 EmitExpression(arg);
                 EnsureBoxed();
             }
+            EmitPrivateCallUndefinedPadding(cp.Arguments.Count, staticMethod!.GetParameters().Length);
             IL.Emit(OpCodes.Call, staticMethod!);
             SetStackUnknown();
             return;
@@ -916,6 +929,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     EnsureBoxed();
                 }
 
+                EmitPrivateCallUndefinedPadding(cp.Arguments.Count, instanceMethod!.GetParameters().Length);
                 IL.Emit(OpCodes.Callvirt, instanceMethod!);
                 SetStackUnknown();
                 return;
@@ -934,6 +948,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     EnsureBoxed();
                 }
 
+                EmitPrivateCallUndefinedPadding(cp.Arguments.Count, instanceMethod!.GetParameters().Length);
                 IL.Emit(OpCodes.Callvirt, instanceMethod!);
                 SetStackUnknown();
                 return;
@@ -943,6 +958,22 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         IL.Emit(OpCodes.Ldstr, $"Private method '#{methodName}' not found in class '{className}'");
         IL.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
         IL.Emit(OpCodes.Throw);
+    }
+
+    /// <summary>
+    /// Pads the evaluation stack with <c>undefined</c> sentinels for any trailing parameters a
+    /// private method declares but the call omits. Private methods are emitted with a fixed,
+    /// all-<c>object</c> signature (see <c>ILCompiler.Classes.cs</c>), so a call supplying fewer
+    /// arguments than the method declares would otherwise leave <c>call</c>/<c>callvirt</c> short
+    /// of operands (StackUnderflow → <c>InvalidProgramException</c>). The padded slots read as
+    /// <c>undefined</c> in the body and fire any default-parameter prologue
+    /// (<see cref="ILEmitter.EmitDefaultParameters"/>). Mirrors the undefined-padding that
+    /// <c>$TSFunction.AdjustArgs</c> applies on the value-call path. (#696)
+    /// </summary>
+    protected void EmitPrivateCallUndefinedPadding(int argCount, int paramCount)
+    {
+        for (int i = argCount; i < paramCount; i++)
+            EmitUndefinedConstant();
     }
 
     /// <summary>
@@ -1543,6 +1574,20 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     {
         IL.Emit(OpCodes.Newobj, displayCtor);
 
+        // Thread the enclosing state machine's function display class into the arrow's $functionDC
+        // field so the arrow reads/writes captured-and-mutated locals through shared storage rather
+        // than a by-value snapshot — the write case that was previously rejected (#674). The arrow's
+        // own snapshot fields (populated below) deliberately omit these vars (see the function-DC
+        // skip in CollectAndDefineArrowFunctions), so the two paths don't both materialize them.
+        if (Ctx.ArrowFunctionDCFields?.TryGetValue(af, out var arrowFunctionDCField) == true &&
+            GetFunctionDCField() is FieldBuilder stateMachineFunctionDC)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, stateMachineFunctionDC);
+            IL.Emit(OpCodes.Stfld, arrowFunctionDCField);
+        }
+
         if (Ctx.DisplayClassFields?.TryGetValue(af, out var fieldMap) == true)
         {
             foreach (var (capturedVar, field) in fieldMap)
@@ -1682,7 +1727,10 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             return true;
         }
 
-        if (Ctx.NamespaceFields?.TryGetValue(name, out var nsField) == true)
+        // ResolveNamespaceField walks enclosing namespace prefixes so a nested namespace's member
+        // body can name a sibling/enclosing namespace by its simple name (#665). Shared with
+        // ILEmitter's sync path so state-machine bodies resolve namespaces identically.
+        if (Ctx.ResolveNamespaceField(name) is { } nsField)
         {
             IL.Emit(OpCodes.Ldsfld, nsField);
             SetStackUnknown();
@@ -2268,8 +2316,36 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         // Dynamic property access fallback
         EmitExpression(g.Object);
         EnsureBoxed();
-        IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+        if (g.Optional)
+        {
+            // `o?.x`: short-circuit to undefined when the base is nullish. This base
+            // emitter (used by the async/generator state-machine emitters) previously
+            // leaned on GetProperty's leniency for a nullish base; the explicit
+            // short-circuit is required now that the non-optional path throws on
+            // $Undefined below, and is otherwise behaviour-preserving.
+            var nullishLabel = IL.DefineLabel();
+            var endLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Brfalse, nullishLabel);          // CLR null → nullish
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+            IL.Emit(OpCodes.Brtrue, nullishLabel);           // $Undefined → nullish
+            IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+            IL.Emit(OpCodes.Br, endLabel);
+            IL.MarkLabel(nullishLabel);
+            IL.Emit(OpCodes.Pop);
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
+            IL.MarkLabel(endLabel);
+        }
+        else
+        {
+            // RequireObjectCoercible: a non-optional read on `undefined` throws a
+            // guest TypeError instead of silently yielding undefined (#701).
+            EmitThrowIfUndefinedReceiverOnStack(g.Name.Lexeme);
+            IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+        }
         SetStackUnknown();
     }
 
