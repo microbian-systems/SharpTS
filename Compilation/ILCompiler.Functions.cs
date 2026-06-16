@@ -1405,9 +1405,27 @@ public partial class ILCompiler
             };
             var emitter = new ILEmitter(ctx);
 
+            // Make the provided parameters resolvable so a default value that references an
+            // earlier parameter (e.g. `function f(a, b = a) {}`) emits `ldarg` instead of
+            // throwing "Undefined variable" at runtime. Static functions have no implicit
+            // `this`, so parameter i lives at arg index i. (#698)
+            var fullParams = fullMethod.GetParameters();
+            for (int i = 0; i < arity; i++)
+            {
+                Type paramType = i < fullParams.Length ? fullParams[i].ParameterType : _types.Object;
+                ctx.DefineParameter(funcStmt.Parameters[i].Name.Lexeme, i, paramType);
+            }
+
+            // Cascade: forward to the overload one arity higher (it fills the next default), or to
+            // the full implementation when this overload is one below full arity. Higher-arity
+            // overloads come earlier in the list, so the next arity up is overloads[overloadIndex-1].
+            // This lets a later default reference an earlier *defaulted* parameter — that parameter
+            // is a real argument of the target method rather than a transient stack value. (#698)
+            MethodInfo targetMethod = overloadIndex == 1 ? fullMethod : overloads[overloadIndex - 2];
+
             OverloadGenerator.EmitOverloadBody(
                 il,
-                fullMethod,
+                targetMethod,
                 funcStmt.Parameters,
                 arity,
                 isStatic: true,
