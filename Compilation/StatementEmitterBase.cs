@@ -117,14 +117,14 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
 
     #region Virtual Methods - Loop Label Management (default: stack-based)
 
-    protected readonly Stack<(Label BreakLabel, Label ContinueLabel, string? LabelName)> _loopLabels = new();
+    protected readonly Stack<(Label BreakLabel, Label ContinueLabel, IReadOnlyList<string> LabelNames)> _loopLabels = new();
 
     /// <summary>
     /// Registers a loop context for break/continue resolution.
     /// Default: pushes onto an internal stack. ILEmitter overrides to use CompilationContext.
     /// </summary>
     protected virtual void EnterLoop(Label breakLabel, Label continueLabel, string? labelName = null)
-        => _loopLabels.Push((breakLabel, continueLabel, labelName ?? Ctx.TakePendingLoopLabel()));
+        => _loopLabels.Push((breakLabel, continueLabel, labelName != null ? new[] { labelName } : Ctx.TakePendingLoopLabels()));
 
     /// <summary>
     /// Exits the current loop context.
@@ -135,16 +135,16 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     /// <summary>
     /// Gets the current innermost loop context, or null if not in a loop.
     /// </summary>
-    protected virtual (Label BreakLabel, Label ContinueLabel, string? LabelName)? CurrentLoop
+    protected virtual (Label BreakLabel, Label ContinueLabel, IReadOnlyList<string> LabelNames)? CurrentLoop
         => _loopLabels.Count > 0 ? _loopLabels.Peek() : null;
 
     /// <summary>
-    /// Finds a loop context by label name.
+    /// Finds a loop context that carries the given label name.
     /// </summary>
-    protected virtual (Label BreakLabel, Label ContinueLabel, string? LabelName)? FindLabeledLoop(string labelName)
+    protected virtual (Label BreakLabel, Label ContinueLabel, IReadOnlyList<string> LabelNames)? FindLabeledLoop(string labelName)
     {
         foreach (var loop in _loopLabels)
-            if (loop.LabelName == labelName)
+            if (loop.LabelNames.Contains(labelName))
                 return loop;
         return null;
     }
@@ -941,23 +941,33 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     /// </summary>
     protected virtual void EmitLabeledStatement(Stmt.LabeledStatement ls)
     {
-        if (IsLabelableLoop(ls.Statement))
+        // Look through a chain of labels (a: b: …) to whatever they ultimately wrap.
+        var inner = UnwrapLabelChain(ls, out var chainLabels);
+
+        if (IsLabelableLoop(inner))
         {
-            // Direct loop: park the label so the loop attaches it to its OWN break/continue
-            // targets. A for registers continue at its increment, a while at its condition, etc.;
-            // marking a continue label here (ahead of the initializer) would re-run it (#558).
-            Ctx.PendingLoopLabel = ls.Label.Lexeme;
-            EmitStatement(ls.Statement);
-            // Defensive: the loop's EnterLoop consumes the label; clear it if somehow it didn't.
-            Ctx.PendingLoopLabel = null;
+            // Direct (or chained) loop: park EVERY label in the chain so the loop attaches them all
+            // to its OWN break/continue targets. A for registers continue at its increment, a while
+            // at its condition, etc.; marking a continue label here (ahead of a for's initializer)
+            // would re-run it forever — and the outer label of a chain used to fall into exactly
+            // that path (#558/#580).
+            foreach (var label in chainLabels)
+                Ctx.AddPendingLoopLabel(label);
+            try
+            {
+                EmitStatement(inner);
+            }
+            finally
+            {
+                // The loop's EnterLoop drains the parked labels; clear any it somehow didn't.
+                Ctx.ClearPendingLoopLabels();
+            }
             return;
         }
 
-        // Non-loop labeled statement (a block, etc.) or a chained label (a: b: loop) whose inner
-        // labeled statement owns the loop. Mark the continue target before the statement: it is
-        // harmless for a block, and for a chained while/for-of/for-in/do-while it re-enters at the
-        // loop head. (A chained label on a `for` re-runs its initializer — a pre-existing
-        // limitation, not regressed here; single-label `for` continue is fixed above.)
+        // Non-loop labeled statement (a block, etc.). Mark the continue target before the statement
+        // (harmless for a block) and keep one wrapper scope per label by recursing through the chain;
+        // only `break <label>` is meaningful here.
         var breakLabel = IL.DefineLabel();
         var continueLabel = IL.DefineLabel();
         IL.MarkLabel(continueLabel);
@@ -965,6 +975,22 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         EmitStatement(ls.Statement);
         ExitLoop();
         IL.MarkLabel(breakLabel);
+    }
+
+    /// <summary>
+    /// Follows a chain of nested labeled statements (<c>a: b: stmt</c>) to the statement they wrap,
+    /// collecting every label name along the way.
+    /// </summary>
+    protected static Stmt UnwrapLabelChain(Stmt.LabeledStatement ls, out List<string> labels)
+    {
+        labels = [];
+        Stmt inner = ls;
+        while (inner is Stmt.LabeledStatement l)
+        {
+            labels.Add(l.Label.Lexeme);
+            inner = l.Statement;
+        }
+        return inner;
     }
 
     /// <summary>
