@@ -58,6 +58,13 @@ public class GeneratorStateMachineBuilder
     // 'this' field for instance generator methods
     public FieldBuilder? ThisField { get; private set; }
 
+    // Function-level display class field for captured-and-mutated locals (#674).
+    // An arrow inside the generator body that WRITES a variable captured from the
+    // generator scope shares storage with the generator through this reference-typed
+    // display class (mirrors AsyncStateMachineBuilder.FunctionDCField). Null when the
+    // generator has no such write-capture.
+    public FieldBuilder? FunctionDCField { get; private set; }
+
     // Delegated enumerator field for yield* expressions
     public FieldBuilder? DelegatedEnumeratorField { get; private set; }
 
@@ -399,6 +406,18 @@ public class GeneratorStateMachineBuilder
 
         var nonGenericInterfaceMethod = _types.GetMethodNoParams(_types.IEnumerable, "GetEnumerator");
         _stateMachineType.DefineMethodOverride(NonGenericGetEnumeratorMethod, nonGenericInterfaceMethod);
+    }
+
+    /// <summary>
+    /// Adds the field that holds the function display class instance for closure mutation
+    /// sharing (#674). Mirrors <see cref="AsyncStateMachineBuilder.DefineFunctionDisplayClassField"/>.
+    /// </summary>
+    public void DefineFunctionDisplayClassField(Type dcType)
+    {
+        FunctionDCField = _stateMachineType.DefineField(
+            "<>__functionDC",
+            dcType,
+            FieldAttributes.Public);
     }
 
     /// <summary>

@@ -73,6 +73,15 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual FieldBuilder? GetHoistedVariableField(string name) => null;
 
+    /// <summary>
+    /// Gets the state machine's function display class field (<c>&lt;&gt;__functionDC</c>), or
+    /// null if this emitter has no function-level display class. Override in a state-machine
+    /// emitter whose generator/async function lifts captured-and-mutated locals into a shared
+    /// display class, so <see cref="EmitCapturingArrowViaHooks"/> can thread that reference into
+    /// an arrow's <c>$functionDC</c> field and the arrow's writes reach shared storage (#674).
+    /// </summary>
+    protected virtual FieldBuilder? GetFunctionDCField() => null;
+
     protected ExpressionEmitterBase(StateMachineEmitHelpers helpers)
     {
         _helpers = helpers;
@@ -1542,6 +1551,20 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     private void EmitCapturingArrowViaHooks(Expr.ArrowFunction af, MethodBuilder method, ConstructorBuilder displayCtor)
     {
         IL.Emit(OpCodes.Newobj, displayCtor);
+
+        // Thread the enclosing state machine's function display class into the arrow's $functionDC
+        // field so the arrow reads/writes captured-and-mutated locals through shared storage rather
+        // than a by-value snapshot — the write case that was previously rejected (#674). The arrow's
+        // own snapshot fields (populated below) deliberately omit these vars (see the function-DC
+        // skip in CollectAndDefineArrowFunctions), so the two paths don't both materialize them.
+        if (Ctx.ArrowFunctionDCFields?.TryGetValue(af, out var arrowFunctionDCField) == true &&
+            GetFunctionDCField() is FieldBuilder stateMachineFunctionDC)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, stateMachineFunctionDC);
+            IL.Emit(OpCodes.Stfld, arrowFunctionDCField);
+        }
 
         if (Ctx.DisplayClassFields?.TryGetValue(af, out var fieldMap) == true)
         {

@@ -592,6 +592,12 @@ public partial class AsyncGeneratorMoveNextEmitter
             return;
         }
 
+        // The async-generator state machine has no function display class wired yet (#674 lifts the
+        // sync free-function generator case; the async-generator path is tracked separately), so an
+        // arrow that WRITES a captured generator local would snapshot it by value and silently drop
+        // the write. Fail fast with a clear message instead of miscompiling to a wrong result.
+        CapturedWriteAnalysis.ThrowIfCapturedWriteWouldBeLost(af, _ctx?.DisplayClassFields);
+
         // Get the method for this arrow function (pre-compiled)
         if (_ctx!.ArrowMethods == null || !_ctx.ArrowMethods.TryGetValue(af, out var method))
         {

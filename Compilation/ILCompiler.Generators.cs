@@ -34,6 +34,12 @@ public partial class ILCompiler
         _generators.StateMachines[qualifiedName] = smBuilder;
         _generators.Functions[qualifiedName] = funcStmt;
 
+        // Record the AST node so PropagateFunctionDCRequirements can resolve arrows nested in this
+        // generator back to its qualified name, and lift captured-and-mutated locals into a shared
+        // function display class so a write inside an arrow/callback reaches the generator (#674).
+        _closures.FunctionAstNodes[qualifiedName] = funcStmt;
+        DefineGeneratorFunctionDisplayClass(funcStmt, qualifiedName, smBuilder);
+
         // Define the stub method that creates and returns the state machine.
         // A trailing rest parameter is typed List<object> so the indirect
         // ($TSFunction.Invoke) call path packs trailing args into it (#426).
@@ -59,6 +65,87 @@ public partial class ILCompiler
     }
 
     /// <summary>
+    /// Lifts a generator's captured-AND-mutated locals into a function-level display class so an
+    /// arrow/callback inside the generator body that writes such a variable shares storage with the
+    /// generator instead of snapshotting it by value (#674). Read-only captures keep the existing
+    /// by-value snapshot path. Mirrors the sync/async function-DC wiring, restricted to the write
+    /// case the generator state machine could not previously honour. No-op when the generator has no
+    /// write-captures (the common case), leaving fully-standalone output unchanged.
+    /// </summary>
+    private void DefineGeneratorFunctionDisplayClass(
+        Stmt.Function funcStmt, string qualifiedName, GeneratorStateMachineBuilder smBuilder)
+    {
+        var mutatedCaptured = ComputeMutatedCapturedGeneratorVars(funcStmt);
+        if (mutatedCaptured.Count == 0)
+            return;
+
+        RegisterFunctionDisplayClass(qualifiedName, mutatedCaptured);
+        if (_closures.FunctionDisplayClasses.TryGetValue(qualifiedName, out var funcDC))
+            smBuilder.DefineFunctionDisplayClassField(funcDC);
+    }
+
+    /// <summary>
+    /// Returns the generator's own locals/parameters that are both captured by an inner arrow and
+    /// written by one (the set that needs shared reference storage). Per-iteration <c>for (let…)</c>
+    /// bindings are excluded — each iteration owns its binding (#649), so closures must snapshot them
+    /// per iteration rather than share one function-DC cell.
+    /// </summary>
+    private HashSet<string> ComputeMutatedCapturedGeneratorVars(Stmt.Function funcStmt)
+    {
+        var capturedLocals = _closures.Analyzer.GetCapturedLocals(funcStmt);
+        if (capturedLocals.Count == 0)
+            return [];
+
+        var result = new HashSet<string>(capturedLocals);
+        result.IntersectWith(CollectGeneratorArrowCapturedWrites(funcStmt));
+        if (result.Count == 0)
+            return [];
+
+        var perIteration = _closures.Analyzer.GetPerIterationLoopBindings(funcStmt);
+        if (perIteration.Count > 0)
+            result.ExceptWith(perIteration);
+        return result;
+    }
+
+    /// <summary>
+    /// Unions, over every arrow lexically inside the generator body (nested arrows included), the
+    /// names the arrow assigns within its own scope that it also captures from an enclosing scope.
+    /// Intersected by the caller with the generator's own captured locals to identify mutated
+    /// generator captures.
+    /// </summary>
+    private HashSet<string> CollectGeneratorArrowCapturedWrites(Stmt.Function funcStmt)
+    {
+        var collector = new ArrowCollector();
+        if (funcStmt.Body != null)
+            foreach (var stmt in funcStmt.Body)
+                collector.Visit(stmt);
+
+        var writes = new HashSet<string>();
+        foreach (var arrow in collector.Arrows)
+        {
+            // Only sync arrows share the generator's function DC — async arrows capture through
+            // their own boxed state machine, the same scope the compile-time guard covers (#674).
+            if (arrow.IsAsync)
+                continue;
+            var arrowWrites = CapturedWriteAnalysis.CollectImmediateWrites(arrow);
+            arrowWrites.IntersectWith(_closures.Analyzer.GetCaptures(arrow));
+            writes.UnionWith(arrowWrites);
+        }
+        return writes;
+    }
+
+    /// <summary>Collects every arrow function in a subtree, descending into nested arrows.</summary>
+    private sealed class ArrowCollector : Parsing.Visitors.AstVisitorBase
+    {
+        public readonly List<Expr.ArrowFunction> Arrows = [];
+        protected override void VisitArrowFunction(Expr.ArrowFunction expr)
+        {
+            Arrows.Add(expr);
+            base.VisitArrowFunction(expr); // descend to find nested arrows
+        }
+    }
+
+    /// <summary>
     /// Emits all generator state machine bodies.
     /// Called after all functions have been defined.
     /// </summary>
@@ -79,10 +166,10 @@ public partial class ILCompiler
             var methodBuilder = _functions.Builders[funcName];
 
             // Emit the stub method body (creates and returns the state machine)
-            EmitGeneratorStubMethod(methodBuilder, smBuilder, funcStmt);
+            EmitGeneratorStubMethod(methodBuilder, smBuilder, funcStmt, funcName);
 
             // Emit the MoveNext method body
-            EmitGeneratorMoveNextBody(smBuilder, funcStmt);
+            EmitGeneratorMoveNextBody(smBuilder, funcStmt, funcName);
 
             // Finalize the state machine type
             smBuilder.CreateType();
@@ -97,7 +184,8 @@ public partial class ILCompiler
     private void EmitGeneratorStubMethod(
         MethodBuilder methodBuilder,
         GeneratorStateMachineBuilder smBuilder,
-        Stmt.Function funcStmt)
+        Stmt.Function funcStmt,
+        string qualifiedName)
     {
         var il = methodBuilder.GetILGenerator();
 
@@ -117,6 +205,11 @@ public partial class ILCompiler
             }
         }
 
+        // Instantiate the function display class (#674) and seed any captured-and-mutated
+        // parameters into it so an arrow that writes them shares the generator's storage. The
+        // stub params are object-typed (BuildStateMachineStubParamTypes), so no boxing is needed.
+        EmitGeneratorFunctionDCInit(il, smBuilder, funcStmt, qualifiedName, paramOffset: 0);
+
         // Captured outer-scope variables are NOT copied into the state machine here. Doing so
         // snapshotted their value at creation time, so a later mutation of the outer variable
         // was invisible to the running body (#541). MoveNext instead reads/writes them live
@@ -128,10 +221,46 @@ public partial class ILCompiler
     }
 
     /// <summary>
+    /// With the state machine instance on the stack, news up the function display class (#674),
+    /// stores it into the state machine's <c>&lt;&gt;__functionDC</c> field, and copies any
+    /// captured-and-mutated parameters into it. Leaves the state machine reference on the stack
+    /// (net stack effect zero). No-op when the generator has no function DC.
+    /// </summary>
+    private void EmitGeneratorFunctionDCInit(
+        ILGenerator il,
+        GeneratorStateMachineBuilder smBuilder,
+        Stmt.Function funcStmt,
+        string qualifiedName,
+        int paramOffset)
+    {
+        if (smBuilder.FunctionDCField == null ||
+            !_closures.FunctionDisplayClassCtors.TryGetValue(qualifiedName, out var dcCtor))
+            return;
+
+        il.Emit(OpCodes.Dup);                       // [sm, sm]
+        il.Emit(OpCodes.Newobj, dcCtor);            // [sm, sm, dc]
+        il.Emit(OpCodes.Stfld, smBuilder.FunctionDCField); // [sm]
+
+        if (!_closures.FunctionDisplayClassFields.TryGetValue(qualifiedName, out var dcFields))
+            return;
+
+        for (int i = 0; i < funcStmt.Parameters.Count; i++)
+        {
+            var paramName = funcStmt.Parameters[i].Name.Lexeme;
+            if (!dcFields.TryGetValue(paramName, out var dcField))
+                continue;
+            il.Emit(OpCodes.Dup);                   // [sm, sm]
+            il.Emit(OpCodes.Ldfld, smBuilder.FunctionDCField); // [sm, dc]
+            il.Emit(OpCodes.Ldarg, i + paramOffset);           // [sm, dc, arg]
+            il.Emit(OpCodes.Stfld, dcField);        // [sm]
+        }
+    }
+
+    /// <summary>
     /// Emits the MoveNext method body for a generator state machine.
     /// Uses GeneratorMoveNextEmitter to handle full generator body with yield expressions.
     /// </summary>
-    private void EmitGeneratorMoveNextBody(GeneratorStateMachineBuilder smBuilder, Stmt.Function funcStmt)
+    private void EmitGeneratorMoveNextBody(GeneratorStateMachineBuilder smBuilder, Stmt.Function funcStmt, string qualifiedName)
     {
         var analysis = _generators.Analyzer.Analyze(funcStmt);
 
@@ -181,6 +310,16 @@ public partial class ILCompiler
             EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
             TopLevelStaticVars = BuildTopLevelStaticVarsForModule(_modules.CurrentPath)
         };
+
+        // Route reads/writes of captured-and-mutated locals through the shared function display
+        // class (#674) and let capturing arrows thread it in. Only set when this generator has a
+        // function DC; otherwise the existing by-value snapshot path is used unchanged.
+        if (_closures.FunctionDisplayClassFields.TryGetValue(qualifiedName, out var funcDCFields))
+        {
+            ctx.FunctionDisplayClassFields = funcDCFields;
+            ctx.CapturedFunctionLocals = [.. funcDCFields.Keys];
+            ctx.ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null;
+        }
 
         // Use the new emitter for full generator body emission
         var emitter = new GeneratorMoveNextEmitter(smBuilder, analysis, _types);

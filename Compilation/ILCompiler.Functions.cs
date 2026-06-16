@@ -253,6 +253,17 @@ public partial class ILCompiler
                 return;
         }
 
+        RegisterFunctionDisplayClass(qualifiedFunctionName, capturedLocals);
+    }
+
+    /// <summary>
+    /// Creates and registers a function-level display class holding one <c>object</c> field per
+    /// named captured variable. Shared by the sync/async path (<see cref="DefineFunctionDisplayClass"/>,
+    /// which lifts all captured locals) and the generator path (which lifts only captured-AND-mutated
+    /// locals, #674). The caller is responsible for the membership decision; this only builds the type.
+    /// </summary>
+    private void RegisterFunctionDisplayClass(string qualifiedFunctionName, IEnumerable<string> capturedLocals)
+    {
         // Create display class type
         var displayClass = _moduleBuilder.DefineType(
             $"<>c__FuncDisplayClass_{qualifiedFunctionName.Replace(".", "_")}_{_closures.DisplayClassCounter++}",
