@@ -859,6 +859,31 @@ public partial class Interpreter
     /// </summary>
     private RuntimeValue PerformIndexGet(Expr objectExpr, object? obj, object? index)
     {
+        // ECMA-262 §13.3.3 RequireObjectCoercible: a bracket read on a nullish base
+        // throws a guest TypeError. The optional `?.[]` case is short-circuited by
+        // callers (EvaluateGetIndex/EvaluateGetIndexAsync) before reaching here, so
+        // any nullish receiver at this point is a non-optional access that must throw.
+        // Mirrors the dot-access guard in EvaluateGetOnObject (#676).
+        if (obj == null || obj is SharpTSUndefined)
+        {
+            // Format the key for the message WITHOUT invoking a guest toString:
+            // RequireObjectCoercible (this throw) runs before ToPropertyKey, so a
+            // throwing key.toString() must not pre-empt the TypeError. Primitive keys
+            // (the realistic case) format directly; the object-key fallback uses the
+            // host ToString, which does not dispatch the guest toString.
+            string key = index switch
+            {
+                null => "null",
+                SharpTSUndefined => "undefined",
+                SharpTSSymbol sym => sym.ToString(),
+                string s => s,
+                bool bk => bk ? "true" : "false",
+                double d => Stringify(d),
+                _ => index.ToString() ?? ""
+            };
+            ThrowCannotReadProperty(obj, key);
+        }
+
         // Proxy: intercept index access via get trap
         if (obj is SharpTSProxy proxy)
         {
