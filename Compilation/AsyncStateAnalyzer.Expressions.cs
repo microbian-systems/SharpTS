@@ -11,7 +11,16 @@ public partial class AsyncStateAnalyzer
         // Visit await expression BEFORE marking _seenAwait, so variables in the await
         // expression are not incorrectly marked as "used after await"
         base.VisitAwait(expr);
+        RecordAwaitPoint(expr);
+    }
 
+    /// <summary>
+    /// Records an await point (real or synthetic) and the surrounding try-region/await bookkeeping.
+    /// <paramref name="expr"/> is null for synthetic awaits — the implicit next()/return() awaits a
+    /// <c>for await…of</c> loop performs (#631), which have no <see cref="Expr.Await"/> node.
+    /// </summary>
+    internal void RecordAwaitPoint(Expr.Await? expr)
+    {
         // Record this await point with try block context
         var liveVars = new HashSet<string>(_declaredVariables);
         _awaitPoints.Add(new AwaitPoint(

@@ -99,6 +99,192 @@ public partial class RuntimeEmitter
 
         // Create the state machine type
         sm.Type.CreateType();
+
+        // Emit the next()-result builder used by truly-async next() (#631/#542).
+        EmitAsyncGeneratorBuildResultMethod(typeBuilder, moduleBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Emits <c>static Task&lt;object&gt; AsyncGeneratorBuildResult(ValueTask&lt;bool&gt; moveNext,
+    /// IAsyncEnumerator&lt;object&gt; gen)</c> — an async helper that awaits a MoveNextAsync result and
+    /// produces the <c>{ value: gen.Current, done: !moved }</c> iterator-result dictionary.
+    /// <para>
+    /// This is what lets the emitted async-generator <c>next()</c> be truly asynchronous: instead of
+    /// blocking the event-loop thread on <c>MoveNextAsync().AsTask().GetResult()</c> (which deadlocks a
+    /// genuinely-async await — the continuation needs the very thread that is blocked, #631), <c>next()</c>
+    /// drives one step and hands the (possibly pending) ValueTask here, returning the Task this produces.
+    /// A faulted MoveNext (uncaught body throw) surfaces as a faulted Task — i.e. a rejected next()
+    /// promise — exactly as ECMA-262 §27.6.1.2 requires.
+    /// </para>
+    /// </summary>
+    private void EmitAsyncGeneratorBuildResultMethod(TypeBuilder typeBuilder, ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var builderType = typeof(System.Runtime.CompilerServices.AsyncTaskMethodBuilder<>).MakeGenericType(_types.Object);
+        var valueTaskAwaiterType = _types.ValueTaskAwaiterOfBool;
+
+        // --- State machine type ---
+        var smType = moduleBuilder.DefineType(
+            "$AsyncGeneratorBuildResult_StateMachine",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            typeof(ValueType),
+            [typeof(IAsyncStateMachine)]);
+
+        var stateField = smType.DefineField("<>1__state", typeof(int), FieldAttributes.Public);
+        var builderField = smType.DefineField("<>t__builder", builderType, FieldAttributes.Public);
+        var genField = smType.DefineField("gen", _types.IAsyncEnumeratorOfObject, FieldAttributes.Public);
+        var awaiterField = smType.DefineField("<>u__1", valueTaskAwaiterType, FieldAttributes.Public);
+
+        var moveNext = smType.DefineMethod(
+            "MoveNext",
+            MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.HideBySig | MethodAttributes.NewSlot,
+            typeof(void), Type.EmptyTypes);
+        smType.DefineMethodOverride(moveNext, _types.AsyncStateMachineMoveNext);
+
+        var setStateMachine = smType.DefineMethod(
+            "SetStateMachine",
+            MethodAttributes.Private | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.HideBySig | MethodAttributes.NewSlot,
+            typeof(void), [typeof(IAsyncStateMachine)]);
+        smType.DefineMethodOverride(setStateMachine, _types.AsyncStateMachineSetStateMachine);
+        setStateMachine.GetILGenerator().Emit(OpCodes.Ret);
+
+        // --- Wrapper: AsyncGeneratorBuildResult(ValueTask<bool> moveNext, IAsyncEnumerator<object> gen) ---
+        var method = typeBuilder.DefineMethod(
+            "AsyncGeneratorBuildResult",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.TaskOfObject,
+            [_types.ValueTaskOfBool, _types.IAsyncEnumeratorOfObject]);
+        runtime.AsyncGeneratorBuildResult = method;
+
+        {
+            var il = method.GetILGenerator();
+            var smLocal = il.DeclareLocal(smType);
+            il.Emit(OpCodes.Ldloca, smLocal);
+            il.Emit(OpCodes.Initobj, smType);
+            // sm.<>1__state = -1
+            il.Emit(OpCodes.Ldloca, smLocal);
+            il.Emit(OpCodes.Ldc_I4_M1);
+            il.Emit(OpCodes.Stfld, stateField);
+            // sm.<>u__1 = moveNext.GetAwaiter()
+            il.Emit(OpCodes.Ldloca, smLocal);
+            il.Emit(OpCodes.Ldarga_S, (byte)0);
+            il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.ValueTaskOfBool, "GetAwaiter"));
+            il.Emit(OpCodes.Stfld, awaiterField);
+            // sm.gen = arg1
+            il.Emit(OpCodes.Ldloca, smLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Stfld, genField);
+            // sm.<>t__builder = AsyncTaskMethodBuilder<object>.Create()
+            il.Emit(OpCodes.Ldloca, smLocal);
+            il.Emit(OpCodes.Call, builderType.GetMethod("Create", BindingFlags.Public | BindingFlags.Static)!);
+            il.Emit(OpCodes.Stfld, builderField);
+            // sm.<>t__builder.Start(ref sm)
+            il.Emit(OpCodes.Ldloca, smLocal);
+            il.Emit(OpCodes.Ldflda, builderField);
+            il.Emit(OpCodes.Ldloca, smLocal);
+            il.Emit(OpCodes.Call, builderType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .First(m => m.Name == "Start" && m.IsGenericMethod).MakeGenericMethod(smType));
+            // return sm.<>t__builder.Task
+            il.Emit(OpCodes.Ldloca, smLocal);
+            il.Emit(OpCodes.Ldflda, builderField);
+            il.Emit(OpCodes.Call, builderType.GetProperty("Task", BindingFlags.Public | BindingFlags.Instance)!.GetGetMethod()!);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // --- MoveNext ---
+        {
+            var il = moveNext.GetILGenerator();
+            var exLocal = il.DeclareLocal(typeof(Exception));
+            var movedLocal = il.DeclareLocal(_types.Boolean);
+            var resultLocal = il.DeclareLocal(_types.Object);
+            var resumeLabel = il.DefineLabel();
+            var continueLabel = il.DefineLabel();
+            var returnLabel = il.DefineLabel();
+
+            il.BeginExceptionBlock();
+
+            // switch (state) { case 0: goto resume; default: fall through (-1) }
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, stateField);
+            il.Emit(OpCodes.Switch, [resumeLabel]);
+
+            // state -1: if (awaiter.IsCompleted) goto continue;
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldflda, awaiterField);
+            il.Emit(OpCodes.Call, valueTaskAwaiterType.GetProperty("IsCompleted")!.GetGetMethod()!);
+            il.Emit(OpCodes.Brtrue, continueLabel);
+
+            // not completed: suspend
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stfld, stateField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldflda, builderField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldflda, awaiterField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, builderType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
+                .First(m => m.Name == "AwaitUnsafeOnCompleted" && m.IsGenericMethod)
+                .MakeGenericMethod(valueTaskAwaiterType, smType));
+            il.Emit(OpCodes.Leave, returnLabel);
+
+            // state 0 resume:
+            il.MarkLabel(resumeLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_M1);
+            il.Emit(OpCodes.Stfld, stateField);
+
+            il.MarkLabel(continueLabel);
+            // moved = awaiter.GetResult()  (throws if the body faulted → faults this Task)
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldflda, awaiterField);
+            il.Emit(OpCodes.Call, _types.GetMethodNoParams(valueTaskAwaiterType, "GetResult"));
+            il.Emit(OpCodes.Stloc, movedLocal);
+
+            // result = new Dictionary<string,object?> { ["value"] = gen.Current, ["done"] = !moved }
+            il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "value");
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, genField);
+            il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.IAsyncEnumeratorOfObject, "Current"));
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object));
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, "done");
+            il.Emit(OpCodes.Ldloc, movedLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ceq);                 // !moved
+            il.Emit(OpCodes.Box, _types.Boolean);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object));
+            il.Emit(OpCodes.Stloc, resultLocal);
+
+            // state = -2; builder.SetResult(result)
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4, -2);
+            il.Emit(OpCodes.Stfld, stateField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldflda, builderField);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Call, builderType.GetMethod("SetResult")!);
+            il.Emit(OpCodes.Leave, returnLabel);
+
+            // catch (Exception e) { state=-2; builder.SetException(e); }
+            il.BeginCatchBlock(typeof(Exception));
+            il.Emit(OpCodes.Stloc, exLocal);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4, -2);
+            il.Emit(OpCodes.Stfld, stateField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldflda, builderField);
+            il.Emit(OpCodes.Ldloc, exLocal);
+            il.Emit(OpCodes.Call, builderType.GetMethod("SetException")!);
+            il.Emit(OpCodes.Leave, returnLabel);
+            il.EndExceptionBlock();
+
+            il.MarkLabel(returnLabel);
+            il.Emit(OpCodes.Ret);
+        }
+
+        smType.CreateType();
     }
 
     /// <summary>
@@ -284,11 +470,13 @@ public partial class RuntimeEmitter
         // ========== Continue after task await ==========
         il.MarkLabel(continueAfterTaskAwait);
 
-        // Get result (we don't use it, just need to trigger any exception)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldflda, sm.TaskAwaiterField);
-        il.Emit(OpCodes.Call, typeof(TaskAwaiter<object>).GetMethod("GetResult")!);
-        il.Emit(OpCodes.Pop);  // Discard result
+        // Deliberately do NOT call awaiter.GetResult() here. A *rejected* awaited task must reach the
+        // generator body's own resume point (which reads its AwaiterField.GetResult and re-throws into
+        // the body's try/catch), not be re-thrown here — calling GetResult would fault this helper's
+        // ValueTask and bypass the body's resume entirely, so a pending rejection inside a guest
+        // try/catch could never reach its catch (#631, #617). We only needed the await above to wait
+        // for completion; resuming MoveNextAsync regardless of fault lets the body observe it (mirrors
+        // the ContinueWith-based RuntimeTypes.AsyncGeneratorAwaitContinue).
 
         // Call generator.MoveNextAsync()
         il.Emit(OpCodes.Ldarg_0);

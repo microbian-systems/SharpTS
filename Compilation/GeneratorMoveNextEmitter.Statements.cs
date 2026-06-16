@@ -244,10 +244,95 @@ public partial class GeneratorMoveNextEmitter
 
     #endregion
 
+    #region For...In Loop Override (Hoisted Key-List/Index Support)
+
+    /// <summary>
+    /// Emits a for...in loop with hoisted key-list and index when the body contains a yield.
+    /// The base emitter keeps the enumerated key list and current index in IL locals, which a
+    /// MoveNext re-entry across a yield wipes — so the loop would restart from (or stop after) the
+    /// first key (#547). Storing both in state-machine fields makes the iteration position survive
+    /// the suspension, mirroring the hoisted-enumerator treatment <see cref="EmitForOf"/> gives
+    /// for...of.
+    /// </summary>
+    protected override void EmitForIn(Stmt.ForIn f)
+    {
+        var keysField = _builder.GetForInKeysField(f);
+        if (keysField == null)
+        {
+            // No yield inside this loop - use base implementation with local key list/index.
+            base.EmitForIn(f);
+            return;
+        }
+        var indexField = _builder.GetForInIndexField(f)!;
+
+        var startLabel = _il.DefineLabel();
+        var endLabel = _il.DefineLabel();
+        var continueLabel = _il.DefineLabel();
+
+        // Get keys from the object and stash them in the hoisted field (need a temp for the swap).
+        EmitExpression(f.Object);
+        EnsureBoxed();
+        _il.Emit(OpCodes.Call, _ctx!.Runtime!.GetKeys);
+        var keysTemp = _il.DeclareLocal(_types.ListOfObject);
+        _il.Emit(OpCodes.Stloc, keysTemp);
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldloc, keysTemp);
+        _il.Emit(OpCodes.Stfld, keysField);
+
+        // index = 0
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldc_I4_0);
+        _il.Emit(OpCodes.Stfld, indexField);
+
+        EnterLoop(endLabel, continueLabel);
+
+        var loopVarLocal = DeclareLoopVariable(f.Variable.Lexeme);
+
+        _il.MarkLabel(startLabel);
+        EmitCancellationCheck();
+
+        // if (index < keys.Count) else goto end — both read from hoisted fields.
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, indexField);
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, keysField);
+        _il.Emit(OpCodes.Call, _ctx.Runtime!.GetLength);
+        _il.Emit(OpCodes.Clt);
+        _il.Emit(OpCodes.Brfalse, endLabel);
+
+        // loopVar = keys[index]
+        EmitStoreLoopVariable(loopVarLocal, f.Variable.Lexeme, () =>
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, keysField);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, indexField);
+            _il.Emit(OpCodes.Call, _ctx.Runtime!.GetElement);
+        });
+
+        EmitStatement(f.Body);
+
+        _il.MarkLabel(continueLabel);
+
+        // index = index + 1 (store back to the hoisted field)
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, indexField);
+        _il.Emit(OpCodes.Ldc_I4_1);
+        _il.Emit(OpCodes.Add);
+        _il.Emit(OpCodes.Stfld, indexField);
+
+        _il.Emit(OpCodes.Br, startLabel);
+
+        _il.MarkLabel(endLabel);
+        ExitLoop();
+    }
+
+    #endregion
+
     // Note: The following methods are inherited from StatementEmitterBase:
     // - EmitStatement (dispatch)
     // - EmitIf, EmitWhile, EmitDoWhile (control flow)
-    // - EmitForIn (loops with DeclareLoopVariable/EmitStoreLoopVariable overrides)
     // - EmitBlock, EmitLabeledStatement, EmitSwitch, EmitPrint
     //
     // EmitBreak, EmitContinue and EmitThrow are overridden in

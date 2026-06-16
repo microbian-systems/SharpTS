@@ -382,7 +382,10 @@ public partial class AsyncMoveNextEmitter
                        (f.Increment != null && ContainsAwaitInExpr(f.Increment)) ||
                        ContainsAwaitInStmt(f.Body);
             case Stmt.ForOf fo:
-                return ContainsAwaitInExpr(fo.Iterable) || ContainsAwaitInStmt(fo.Body);
+                // `for await…of` always suspends (it awaits iterator.next()/return()), even when the
+                // iterable and body contain no explicit await — so a try enclosing one must take the
+                // flag-based path, not a real IL try (whose resume labels would be branched into) (#631).
+                return fo.IsAsync || ContainsAwaitInExpr(fo.Iterable) || ContainsAwaitInStmt(fo.Body);
             case Stmt.ForIn fi:
                 return ContainsAwaitInExpr(fi.Object) || ContainsAwaitInStmt(fi.Body);
             case Stmt.Block b:

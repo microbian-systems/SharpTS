@@ -28,7 +28,8 @@ public class GeneratorStateAnalyzer : AstVisitorBase
         HashSet<string> HoistedParameters,
         bool UsesThis,
         bool HasYieldStar,
-        List<Stmt.ForOf> ForOfLoopsWithYield  // for...of loops containing yields that need enumerator hoisting
+        List<Stmt.ForOf> ForOfLoopsWithYield,  // for...of loops containing yields that need enumerator hoisting
+        List<Stmt.ForIn> ForInLoopsWithYield   // for...in loops containing yields that need key-list/index hoisting (#547)
     );
 
     // State during analysis
@@ -37,6 +38,7 @@ public class GeneratorStateAnalyzer : AstVisitorBase
     private readonly HashSet<string> _variablesUsedAfterYield = [];
     private readonly HashSet<string> _variablesDeclaredBeforeYield = [];
     private readonly List<Stmt.ForOf> _forOfLoopsWithYield = [];  // for...of loops containing yields (enumerator hoisting)
+    private readonly List<Stmt.ForIn> _forInLoopsWithYield = [];  // for...in loops containing yields (key-list/index hoisting, #547)
     // Loop bodies currently being analyzed (innermost on top). A loop whose body contains a
     // yield re-executes after the yield resumes, so every local used anywhere in it is live
     // across the suspension and must be hoisted to a state-machine field — otherwise the IL
@@ -91,7 +93,8 @@ public class GeneratorStateAnalyzer : AstVisitorBase
             HoistedParameters: parameters,
             UsesThis: _usesThis,
             HasYieldStar: _hasYieldStar,
-            ForOfLoopsWithYield: [.. _forOfLoopsWithYield]
+            ForOfLoopsWithYield: [.. _forOfLoopsWithYield],
+            ForInLoopsWithYield: [.. _forInLoopsWithYield]
         );
     }
 
@@ -102,6 +105,7 @@ public class GeneratorStateAnalyzer : AstVisitorBase
         _variablesUsedAfterYield.Clear();
         _variablesDeclaredBeforeYield.Clear();
         _forOfLoopsWithYield.Clear();
+        _forInLoopsWithYield.Clear();
         _loopStack.Clear();
         _yieldCounter = 0;
         _seenYield = false;
@@ -114,14 +118,15 @@ public class GeneratorStateAnalyzer : AstVisitorBase
     /// yield occurs anywhere inside it. <see cref="ForOf"/> is non-null only for for...of loops,
     /// which additionally need their enumerator hoisted to a field.
     /// </summary>
-    private sealed class LoopScope(Stmt.ForOf? forOf)
+    private sealed class LoopScope(Stmt.ForOf? forOf, Stmt.ForIn? forIn)
     {
         public readonly HashSet<string> UsedVariables = [];
         public bool ContainsYield;
         public readonly Stmt.ForOf? ForOf = forOf;
+        public readonly Stmt.ForIn? ForIn = forIn;
     }
 
-    private void EnterLoop(Stmt.ForOf? forOf = null) => _loopStack.Push(new LoopScope(forOf));
+    private void EnterLoop(Stmt.ForOf? forOf = null, Stmt.ForIn? forIn = null) => _loopStack.Push(new LoopScope(forOf, forIn));
 
     // On leaving a loop body that contained a yield, hoist every local it used: the body
     // re-executes after the yield resumes, so those values must survive the suspension (#497).
@@ -185,7 +190,9 @@ public class GeneratorStateAnalyzer : AstVisitorBase
         _declaredVariables.Add(stmt.Variable.Lexeme);
         if (!_seenYield)
             _variablesDeclaredBeforeYield.Add(stmt.Variable.Lexeme);
-        EnterLoop();
+
+        // Pass the loop node so a yield inside also records it for key-list/index hoisting (#547).
+        EnterLoop(forIn: stmt);
         base.VisitForIn(stmt);  // object + body
         ExitLoop();
     }
@@ -263,6 +270,8 @@ public class GeneratorStateAnalyzer : AstVisitorBase
             scope.ContainsYield = true;
             if (scope.ForOf != null && !_forOfLoopsWithYield.Contains(scope.ForOf))
                 _forOfLoopsWithYield.Add(scope.ForOf);
+            if (scope.ForIn != null && !_forInLoopsWithYield.Contains(scope.ForIn))
+                _forInLoopsWithYield.Add(scope.ForIn);
         }
     }
 

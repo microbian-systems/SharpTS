@@ -53,6 +53,63 @@ public class GeneratorTests
 
     #endregion
 
+    #region For...In Integration (#547)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_ForInLoop_YieldsAllKeys(ExecutionMode mode)
+    {
+        // A for...in whose body yields must continue past the first key: the key list and index
+        // are hoisted to state-machine fields so they survive the MoveNext re-entry (#547).
+        var source = """
+            function* inGen() {
+                const obj = { a: 1, b: 2, c: 3 };
+                for (const k in obj) { yield k; }
+            }
+            console.log([...inGen()].join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("a,b,c\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_ForInLoop_TwoYieldsPerKey_AccumulatesAcrossSuspension(ExecutionMode mode)
+    {
+        // Two yields per iteration force the loop to re-enter mid-body; the index must persist (#547).
+        var source = """
+            function* kv() {
+                const obj: any = { x: 10, y: 20 };
+                for (const k in obj) { yield k; yield obj[k]; }
+            }
+            console.log([...kv()].join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("x,10,y,20\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_ForInLoop_Nested_YieldsCartesianProduct(ExecutionMode mode)
+    {
+        // Nested for...in loops, each with its own hoisted key-list/index fields.
+        var source = """
+            function* nested() {
+                const a = { p: 0, q: 0 };
+                const b = { m: 0, n: 0 };
+                for (const i in a) { for (const j in b) { yield i + j; } }
+            }
+            console.log([...nested()].join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("pm,pn,qm,qn\n", output);
+    }
+
+    #endregion
+
     #region Yield* Delegation
 
     [Theory]

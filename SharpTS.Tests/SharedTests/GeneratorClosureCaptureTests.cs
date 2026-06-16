@@ -171,4 +171,78 @@ public class GeneratorClosureCaptureTests
 
         Assert.Equal("H\n", TestHarness.Run(source, mode));
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_CapturingArrowCalledInsideBody(ExecutionMode mode)
+    {
+        // Calling a *capturing* arrow inside a generator body previously failed in compiled mode with
+        // "Non-static method requires a target" — the arrow's display instance was not bound as the
+        // $TSFunction target. Foundational for lifting capturing nested function-likes (#583).
+        var source = """
+            function* outer() {
+                const x = 10;
+                const f = () => x;
+                yield f();
+            }
+            console.log([...outer()].join(","));
+            """;
+
+        Assert.Equal("10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_NestedGeneratorCapturingLocal_IsLifted(ExecutionMode mode)
+    {
+        // The #583 §1 repro: a nested generator that captures an enclosing local is lambda-lifted (the
+        // capture becomes a leading parameter forwarded by an in-place arrow), instead of failing with
+        // "Yield not supported in this context" in compiled mode.
+        var source = """
+            function* outer(): Generator<number> {
+                const x = 10;
+                function* inner(): Generator<number> { yield x; }
+                yield* inner();
+            }
+            for (const v of outer()) console.log(v);
+            """;
+
+        Assert.Equal("10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncFunction_NestedAsyncCapturingLocal_IsLifted(ExecutionMode mode)
+    {
+        // The async analogue of #583 §1: a nested async function capturing an enclosing local lifts too.
+        var source = """
+            async function outer(): Promise<number> {
+                const x = 10;
+                async function inner(): Promise<number> { return x + 1; }
+                return await inner();
+            }
+            outer().then(v => console.log(v));
+            """;
+
+        Assert.Equal("11\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_PlainNestedFunctionCapturingLocal_IsLifted(ExecutionMode mode)
+    {
+        // A plain function nested in a generator, capturing an enclosing local (#583 §1, case-B analogue):
+        // lambda-lifted with the captured local forwarded as a leading parameter.
+        var source = """
+            function* outer(): Generator<number> {
+                const base = 100;
+                function add(d: number): number { return base + d; }
+                yield add(1);
+                yield add(2);
+            }
+            console.log([...outer()].join(","));
+            """;
+
+        Assert.Equal("101,102\n", TestHarness.Run(source, mode));
+    }
 }

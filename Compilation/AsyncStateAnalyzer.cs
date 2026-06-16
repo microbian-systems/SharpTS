@@ -15,7 +15,7 @@ public partial class AsyncStateAnalyzer : AstVisitorBase
     /// </summary>
     public record AwaitPoint(
         int StateNumber,
-        Expr.Await AwaitExpr,
+        Expr.Await? AwaitExpr,  // null for synthetic await points (e.g. for await…of's implicit next()/return() awaits, #631)
         HashSet<string> LiveVariables,
         int TryBlockDepth = 0,  // 0 = not in try, 1+ = nested try depth
         int? EnclosingTryId = null  // ID of the innermost try block containing this await

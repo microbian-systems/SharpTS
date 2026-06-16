@@ -33,6 +33,20 @@ public partial class AsyncStateAnalyzer
         if (!_seenAwait)
             _variablesDeclaredBeforeAwait.Add(stmt.Variable.Lexeme);
 
+        if (stmt.IsAsync)
+        {
+            // `for await…of` suspends on the iterator protocol: it awaits iterator.next() each
+            // iteration and iterator.return() on early exit. Each needs a reserved state (resume
+            // label + awaiter field), matching the two inline awaits EmitForAwaitOf emits (#631).
+            // Allocation order mirrors emission order: the iterable is evaluated before the loop, so
+            // its awaits come first; the next() await before the body; the return() await after.
+            Visit(stmt.Iterable);
+            RecordAwaitPoint(null);   // iterator.next() — awaited at the loop head
+            Visit(stmt.Body);
+            RecordAwaitPoint(null);   // iterator.return() — awaited in the break cleanup
+            return;
+        }
+
         base.VisitForOf(stmt);
     }
 

@@ -1181,4 +1181,98 @@ public class AsyncGeneratorTests
     }
 
     #endregion
+
+    #region Genuinely-async awaits and request queuing (#631 / #542)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_PendingAwait_ForAwaitOf_YieldsAllValues(ExecutionMode mode)
+    {
+        // A not-yet-settled (setTimeout-backed) await inside an async generator consumed by for await…of
+        // previously hung the compiled program: next() drove MoveNextAsync synchronously via GetResult,
+        // blocking the event-loop thread the continuation needed. next() is now truly asynchronous (#631).
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            async function* g() { yield await later(1); yield await later(2); }
+            async function main() {
+                for await (const v of g()) console.log("v" + v);
+            }
+            main();
+            """;
+
+        Assert.Equal("v1\nv2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_PendingAwait_DirectNext_ResolvesInOrder(ExecutionMode mode)
+    {
+        // Driving a pending-await async generator by awaiting next() directly (compiled mode; the
+        // interpreter eagerly drains the body, a separate non-conformant model). #631.
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            async function* g() { yield await later(7); yield await later(8); }
+            async function main() {
+                const it = g();
+                const a = await it.next();
+                const b = await it.next();
+                const c = await it.next();
+                console.log(a.value + " " + a.done + " " + b.value + " " + b.done + " " + c.value + " " + c.done);
+            }
+            main();
+            """;
+
+        Assert.Equal("7 false 8 false undefined true\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_PendingRejection_InTry_ReachesCatch(ExecutionMode mode)
+    {
+        // A pending (genuinely-async) rejected await must reach the consumer's catch through for await…of.
+        // The emitted AsyncGeneratorAwaitContinue no longer short-circuits on the faulted task; it resumes
+        // the body so its own resume point re-throws into place (#631, unblocks the pending sub-case of #617).
+        var source = """
+            function fail(): Promise<number> {
+                return new Promise((_res, rej) => setTimeout(() => rej("boom"), 5));
+            }
+            async function* g() { yield await fail(); }
+            async function main() {
+                try { for await (const v of g()) console.log("v" + v); }
+                catch (e) { console.log("caught " + e); }
+            }
+            main();
+            """;
+
+        Assert.Equal("caught boom\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ConcurrentNext_QueuesInOrder(ExecutionMode mode)
+    {
+        // Two next() calls issued before the first settles must be serviced FIFO (ECMA-262 §27.6.3
+        // AsyncGeneratorQueue), modeled as a task chain — not rejected as "already running" (#542).
+        // Compiled-only: the interpreter's eager-drain async generator can't service concurrent next().
+        var source = """
+            function later(n: number): Promise<number> {
+                return new Promise(res => setTimeout(() => res(n), 5));
+            }
+            async function* g() { yield await later(1); yield await later(2); }
+            async function main() {
+                const it: any = g();
+                const [a, b] = await Promise.all([it.next(), it.next()]);
+                console.log(a.value + " " + a.done + " " + b.value + " " + b.done);
+            }
+            main();
+            """;
+
+        Assert.Equal("1 false 2 false\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
 }
