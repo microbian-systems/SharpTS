@@ -42,12 +42,17 @@ public static class WorkerThreadsModuleInterpreter
             // BroadcastChannel constructor
             ["BroadcastChannel"] = new BroadcastChannelConstructor(),
 
-            // Synchronous message receive
+            // Synchronous message receive. Accepts a native MessagePort or a
+            // transferred compiled port adopted by this worker (#465).
             ["receiveMessageOnPort"] = BuiltInMethod.CreateV2("receiveMessageOnPort", 1, (interp, recv, args) =>
             {
-                if (args.Length == 0 || args[0].ToObject() is not SharpTSMessagePort port)
-                    throw new Exception("receiveMessageOnPort requires a MessagePort argument");
-                return RuntimeValue.FromBoxed(port.ReceiveMessageSync());
+                object? result = (args.Length == 0 ? null : args[0].ToObject()) switch
+                {
+                    SharpTSMessagePort port => port.ReceiveMessageSync(),
+                    CompiledMessagePortBridge bridge => bridge.ReceiveMessageSync(),
+                    _ => throw new Exception("receiveMessageOnPort requires a MessagePort argument"),
+                };
+                return RuntimeValue.FromBoxed(result);
             }),
 
             // SHARE_ENV constant (placeholder - we don't support env sharing)

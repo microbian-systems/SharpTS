@@ -27,34 +27,33 @@ namespace SharpTS.Runtime.Types;
 /// reusing its enqueue-to-partner + schedule-drain-on-<c>$EventLoop</c> logic so the
 /// parent's compiled listeners run on the parent loop thread.</item>
 /// <item><b>receive</b> — the compiled partner's posts are always enqueued to the
-/// transferred port's <c>_pending</c> queue (the drain is only <i>scheduled</i> when
-/// the port has started, which this transferred port never does on the compiled
-/// side). A recurring timer on the WORKER interpreter's loop drains that queue and
-/// emits <c>'message'</c> to the worker's listeners on the worker thread. The
-/// interval timer also keeps the worker loop alive while the port is open, matching
-/// Node's "a listening port is ref'd" semantics (#406, same liveness class as #329).</item>
+/// transferred port's <c>_pending</c> queue (the compiled <c>Drain</c> is only
+/// scheduled when the port has started, which this transferred port never does on the
+/// compiled side). The bridge instead installs an on-enqueue callback on the compiled
+/// port (<c>_onEnqueue</c>): a parent post invokes it right after enqueuing, and it
+/// marshals a drain onto the WORKER loop via the thread-safe <c>EnqueueCallback</c>,
+/// which emits <c>'message'</c> to the worker's listeners on the worker thread. This
+/// is event-driven — an idle bridged port no longer wakes the worker loop on a timer
+/// (#465). A keep-alive <c>Ref</c> on the worker loop holds it open while the port is
+/// open, matching Node's "a listening port is ref'd" semantics (#406, same liveness
+/// class as #329).</item>
 /// </list>
 ///
 /// All access to the emitted type is via reflection cached at adoption time, since
 /// this class lives in SharpTS.dll while the compiled port lives in the output
-/// assembly. The field/method names mirrored here (<c>PostMessage</c>, <c>_pending</c>)
-/// MUST stay in sync with <c>RuntimeEmitter.MessageChannel.cs</c>.
+/// assembly. The field/method names mirrored here (<c>PostMessage</c>, <c>_pending</c>,
+/// <c>_onEnqueue</c>) MUST stay in sync with <c>RuntimeEmitter.MessageChannel.cs</c>.
 /// </remarks>
 public sealed class CompiledMessagePortBridge : SharpTSEventEmitter
 {
-    // The poll cadence for draining the compiled port's incoming queue onto the
-    // worker loop. Matches WorkerMessageHandler's 10ms parent→worker poll so the
-    // two worker-bound delivery paths feel identical.
-    private const int PollIntervalMs = 10;
-
     private readonly object _compiledPort;               // transferred emitted $MessagePort
     private readonly MethodInfo _postMessageMethod;      // $MessagePort.PostMessage(object)
     private readonly ConcurrentQueue<object> _incoming;  // $MessagePort._pending
+    private readonly FieldInfo _onEnqueueField;          // $MessagePort._onEnqueue (Action wake hook)
 
     // The worker interpreter that owns delivery. Captured the first time the worker
     // attaches a 'message' listener / starts the port; null until then.
     private Interp? _owner;
-    private Interp.VirtualTimer? _pollTimer;
     private bool _started;
     private bool _closed;
     private bool _loopRefed;
@@ -63,11 +62,13 @@ public sealed class CompiledMessagePortBridge : SharpTSEventEmitter
     // returns Unknown for subclasses, routing member access through the per-type
     // registration in BuiltInRegistry, which reaches this class's GetMember.
 
-    private CompiledMessagePortBridge(object compiledPort, MethodInfo postMessageMethod, ConcurrentQueue<object> incoming)
+    private CompiledMessagePortBridge(object compiledPort, MethodInfo postMessageMethod,
+        ConcurrentQueue<object> incoming, FieldInfo onEnqueueField)
     {
         _compiledPort = compiledPort;
         _postMessageMethod = postMessageMethod;
         _incoming = incoming;
+        _onEnqueueField = onEnqueueField;
     }
 
     /// <summary>
@@ -99,7 +100,11 @@ public sealed class CompiledMessagePortBridge : SharpTSEventEmitter
             throw new StructuredClone.DataCloneError(
                 "Cannot transfer $MessagePort: _pending is not a ConcurrentQueue<object>");
 
-        return new CompiledMessagePortBridge(compiledPort, postMessage, incoming);
+        var onEnqueueField = type.GetField("_onEnqueue", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new StructuredClone.DataCloneError(
+                "Cannot transfer $MessagePort: no _onEnqueue field (emitted shape changed?)");
+
+        return new CompiledMessagePortBridge(compiledPort, postMessage, incoming, onEnqueueField);
     }
 
     /// <summary>
@@ -122,8 +127,9 @@ public sealed class CompiledMessagePortBridge : SharpTSEventEmitter
     }
 
     /// <summary>
-    /// Begins delivery: schedules a recurring drain of the compiled port's incoming
-    /// queue onto the worker loop. Idempotent. No-op until an owner interpreter has
+    /// Begins delivery: installs an on-enqueue wake callback on the compiled port so a
+    /// parent post drains the incoming queue onto the worker loop event-driven, and
+    /// drains anything already queued. Idempotent. No-op until an owner interpreter has
     /// been captured (via the first <c>on('message')</c>/<c>start()</c>).
     /// </summary>
     private void Start()
@@ -133,23 +139,55 @@ public sealed class CompiledMessagePortBridge : SharpTSEventEmitter
 
         _started = true;
 
-        // Keep the worker loop alive while the port is open. RunEventLoop's exit
-        // check counts active handles and queued callbacks but NOT scheduled timers,
-        // so the poll interval alone would not hold the loop open — without this Ref
-        // the worker can quiesce and exit before the parent's message is ever polled
-        // (Node: a listening port is ref'd; #406, same liveness class as #329).
+        // Keep the worker loop alive while the port is open. RunEventLoop's exit check
+        // counts active handles and queued callbacks but NOT a port that is merely
+        // waiting for a message, so without this Ref the worker could quiesce and exit
+        // before the parent ever posts (Node: a listening port is ref'd; #406, same
+        // liveness class as #329).
         if (!_loopRefed)
         {
             _loopRefed = true;
             _owner.Ref();
         }
 
-        // The interval timer drains _incoming on the worker loop thread. Delay 0 so
-        // anything the parent already posted before the worker started is delivered
-        // on the next tick; the partner's posts land in _incoming asynchronously, so
-        // the loop must poll (the compiled enqueue cannot wake this interpreter).
-        // An event-driven alternative is tracked as a follow-up (#465).
-        _pollTimer = _owner.ScheduleTimer(0, PollIntervalMs, Pump, isInterval: true);
+        // Event-driven receive (#465): a parent post enqueues to _incoming on the
+        // parent loop thread and then invokes this callback, which marshals a drain
+        // onto the worker loop via the thread-safe EnqueueCallback (it wakes the
+        // worker's blocking wait). This replaces a 10ms poll, so an idle bridged port
+        // no longer wakes the worker loop 100×/second. The MemoryBarrier pairs with the
+        // volatile read the emitted PostMessage does, so the parent reliably observes
+        // the installed callback once set.
+        _onEnqueueField.SetValue(_compiledPort, (Action)OnPartnerEnqueued);
+        Thread.MemoryBarrier();
+
+        // Drain anything the parent posted before the callback was installed.
+        _owner.EnqueueCallback(Pump);
+    }
+
+    /// <summary>
+    /// On-enqueue hook invoked by the compiled partner's <c>PostMessage</c> (on the
+    /// parent loop thread) right after it enqueues to <c>_incoming</c>. Marshals a
+    /// drain onto the worker loop; <see cref="Interp.EnqueueCallback"/> is thread-safe
+    /// and wakes the worker's event loop.
+    /// </summary>
+    private void OnPartnerEnqueued() => _owner?.EnqueueCallback(Pump);
+
+    /// <summary>
+    /// Synchronously dequeues one message from the compiled partner's incoming queue,
+    /// for <c>worker_threads.receiveMessageOnPort(port)</c> on a transferred compiled
+    /// port (#465). Returns <c>{ message }</c> (the payload is already an independent
+    /// structured clone) or <c>null</c> when the queue is empty or the port is closed,
+    /// matching <see cref="SharpTSMessagePort.ReceiveMessageSync"/>.
+    /// </summary>
+    internal object? ReceiveMessageSync()
+    {
+        if (_closed || !_incoming.TryDequeue(out var message))
+            return null;
+
+        return new SharpTSObject(new Dictionary<string, object?>
+        {
+            ["message"] = message
+        });
     }
 
     /// <summary>
@@ -171,8 +209,9 @@ public sealed class CompiledMessagePortBridge : SharpTSEventEmitter
     }
 
     /// <summary>
-    /// Stops worker-side delivery and cancels the poll timer so the worker loop can
-    /// quiesce and the worker can exit. Emits 'close' to the worker's listeners.
+    /// Stops worker-side delivery: clears the wake callback and releases the keep-alive
+    /// Ref so the worker loop can quiesce and the worker can exit. Emits 'close' to the
+    /// worker's listeners.
     /// </summary>
     private void Close()
     {
@@ -181,11 +220,10 @@ public sealed class CompiledMessagePortBridge : SharpTSEventEmitter
 
         _closed = true;
 
-        if (_pollTimer != null)
-        {
-            _pollTimer.IsCancelled = true;
-            _pollTimer = null;
-        }
+        // Stop the parent from waking this (now closed) bridge. A post that already
+        // loaded the old callback is still harmless — Pump short-circuits on _closed.
+        _onEnqueueField.SetValue(_compiledPort, null);
+        Thread.MemoryBarrier();
 
         // Release the keep-alive Ref so the worker loop can quiesce and the worker
         // thread can exit.
