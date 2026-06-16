@@ -279,7 +279,7 @@ public partial class ILCompiler
         Stmt.Function funcStmt,
         string qualifiedName,
         int paramOffset,
-        Type[]? paramTypes = null)
+        System.Reflection.ParameterInfo[]? paramTypes = null)
     {
         if (functionDCField == null ||
             !_closures.FunctionDisplayClassCtors.TryGetValue(qualifiedName, out var dcCtor))
@@ -302,9 +302,10 @@ public partial class ILCompiler
             il.Emit(OpCodes.Ldarg, i + paramOffset);           // [sm, dc, arg]
             // The DC field is object-typed; box a value-type parameter. Free-function stubs pass
             // null here (their params are already object slots); instance-method stubs pass the
-            // resolved typed-parameter array so value types are boxed before the store (#724).
-            if (paramTypes != null && i < paramTypes.Length && paramTypes[i].IsValueType)
-                il.Emit(OpCodes.Box, paramTypes[i]);
+            // method's actual IL parameters (methodBuilder.GetParameters()) so value types are boxed
+            // before the store (#724) — and a private method's all-`object` slots are left unboxed.
+            if (paramTypes != null && i < paramTypes.Length && paramTypes[i].ParameterType.IsValueType)
+                il.Emit(OpCodes.Box, paramTypes[i].ParameterType);
             il.Emit(OpCodes.Stfld, dcField);        // [sm]
         }
     }
