@@ -300,6 +300,11 @@ public partial class ILCompiler
 
     private void EmitStaticMethodBody(string className, Stmt.Function method)
     {
+        // #703: a static method invoked as a value pads omitted optional args with the
+        // `undefined` sentinel on the value-call path. Mark before the async branch so it
+        // covers both sync and async static methods (same builder).
+        MarkPadsUndefined(_classes.StaticMethods[className][method.Name.Lexeme]);
+
         // Async static methods use state machine generation
         if (method.IsAsync)
         {
@@ -378,7 +383,13 @@ public partial class ILCompiler
 
         var emitter = new ILEmitter(ctx);
 
-        // No runtime default parameter checks needed - overloads handle this
+        // Apply parameter defaults. Static methods get no OverloadGenerator forwarding (only
+        // free functions do), so without this a defaulted argument that is omitted or explicit
+        // `undefined` would never fire its default (omit → null/0, undefined → NaN/cast error).
+        // Value-type-defaulted params are widened to an object slot by ParameterTypeResolver so
+        // the prologue can observe the `$Undefined` sentinel. (#705)
+        var staticDefaultParamTypes = methodBuilder.GetParameters().Select(p => p.ParameterType).ToArray();
+        emitter.EmitDefaultParameters(method.Parameters, isInstanceMethod: false, paramTypes: staticDefaultParamTypes);
 
         // Variables for @lock decorator support
         LocalBuilder? prevReentrancyLocal = null;

@@ -206,6 +206,33 @@ public partial class ILEmitter
     }
 
     /// <summary>
+    /// Emits the arguments for a private method call (boxing each), then pads any omitted
+    /// trailing parameters with the <c>$Undefined</c> sentinel. Private methods get neither
+    /// OverloadGenerator forwarding nor call-site padding elsewhere, so without this an
+    /// under-applied call — e.g. <c>this.#m(x)</c> to <c>#m(x, y = 1)</c> — pushes too few stack
+    /// slots (InvalidProgramException) and the body's default-parameter prologue never sees the
+    /// missing argument. Padding with the sentinel (not null) also makes an omitted optional
+    /// parameter read as <c>undefined</c>. Over-application is left untouched. (#705)
+    /// </summary>
+    private void EmitPrivateCallArgsPadded(System.Reflection.MethodInfo method, IReadOnlyList<Expr> args)
+    {
+        foreach (var arg in args)
+        {
+            EmitExpression(arg);
+            EmitBoxIfNeeded(arg);
+        }
+
+        int paramCount = method.GetParameters().Length;
+        for (int i = args.Count; i < paramCount; i++)
+        {
+            if (_ctx.Runtime?.UndefinedInstance != null)
+                IL.Emit(OpCodes.Ldsfld, _ctx.Runtime.UndefinedInstance);
+            else
+                IL.Emit(OpCodes.Ldnull);
+        }
+    }
+
+    /// <summary>
     /// Emits IL for ES2022 private method call (obj.#method()).
     /// </summary>
     protected override void EmitCallPrivate(Expr.CallPrivate cp)
@@ -229,12 +256,7 @@ public partial class ILEmitter
         {
             if (_ctx.ClassRegistry!.TryGetStaticPrivateMethod(className, methodName, out var staticMethod))
             {
-                // Emit arguments
-                foreach (var arg in cp.Arguments)
-                {
-                    EmitExpression(arg);
-                    EmitBoxIfNeeded(arg);
-                }
+                EmitPrivateCallArgsPadded(staticMethod!, cp.Arguments);
 
                 // Call static method
                 IL.Emit(OpCodes.Call, staticMethod!);
@@ -288,12 +310,7 @@ public partial class ILEmitter
                     IL.Emit(OpCodes.Castclass, _ctx.CurrentClassBuilder);
                 }
 
-                // Emit arguments
-                foreach (var arg in cp.Arguments)
-                {
-                    EmitExpression(arg);
-                    EmitBoxIfNeeded(arg);
-                }
+                EmitPrivateCallArgsPadded(instanceMethod!, cp.Arguments);
 
                 // Call instance method
                 IL.Emit(OpCodes.Callvirt, instanceMethod!);
@@ -310,11 +327,7 @@ public partial class ILEmitter
                     IL.Emit(OpCodes.Castclass, _ctx.CurrentClassBuilder);
                 }
 
-                foreach (var arg in cp.Arguments)
-                {
-                    EmitExpression(arg);
-                    EmitBoxIfNeeded(arg);
-                }
+                EmitPrivateCallArgsPadded(instanceMethod!, cp.Arguments);
 
                 IL.Emit(OpCodes.Callvirt, instanceMethod!);
                 SetStackUnknown();
@@ -325,11 +338,7 @@ public partial class ILEmitter
         // Fallback: check for static private method
         if (_ctx.ClassRegistry!.TryGetStaticPrivateMethod(className, methodName, out var fallbackStaticMethod))
         {
-            foreach (var arg in cp.Arguments)
-            {
-                EmitExpression(arg);
-                EmitBoxIfNeeded(arg);
-            }
+            EmitPrivateCallArgsPadded(fallbackStaticMethod!, cp.Arguments);
 
             IL.Emit(OpCodes.Call, fallbackStaticMethod!);
             SetStackUnknown();

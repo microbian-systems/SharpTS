@@ -353,7 +353,15 @@ public partial class ILCompiler
 
             var emitter = new ILEmitter(ctx);
 
-            // No runtime default parameter checks needed - overloads handle this
+            // Apply parameter defaults before the body. Constructors get no OverloadGenerator
+            // forwarding, so without this a defaulted constructor argument that is omitted or
+            // explicit `undefined` would never fire its default. This must run before the body
+            // because parameter-property assignments (`this.x = x`, prepended to the body by the
+            // parser) and any default expression referencing the param read the defaulted value.
+            // Value-type-defaulted params are widened to object by ParameterTypeResolver so the
+            // prologue can observe the `$Undefined` sentinel. (#705)
+            var ctorDefaultParamTypes = ctorBuilder.GetParameters().Select(p => p.ParameterType).ToArray();
+            emitter.EmitDefaultParameters(constructor.Parameters, isInstanceMethod: true, paramTypes: ctorDefaultParamTypes);
 
             if (constructor.Body != null)
             {

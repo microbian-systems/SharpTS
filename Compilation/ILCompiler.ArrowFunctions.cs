@@ -152,15 +152,12 @@ public partial class ILCompiler
                 continue;
             }
 
-            // Resolve typed parameters from annotations (optimization for numeric parameters)
-            // Rest parameters always use List<object> to enable detection at invoke time
+            // Resolve typed parameters from annotations (optimization for numeric parameters).
+            // Rest parameters always use List<object> to enable detection at invoke time.
+            // ResolveParameters widens defaulted params to an object slot (#646/#705) so the
+            // runtime entry prologue can detect the missing/undefined argument and fire the default.
             var resolvedParamTypes = ParameterTypeResolver.ResolveParameters(
                 arrow.Parameters, _typeMapper, null, _typeMap); // null funcType - use annotations only
-
-            // Arrows/function expressions get no OverloadGenerator forwarding, so a parameter
-            // default is applied by the runtime entry prologue, which needs an object slot to
-            // detect the missing/undefined argument (#646).
-            ParameterTypeResolver.WidenDefaultedParamsToObject(resolvedParamTypes, arrow.Parameters, _types.Object);
 
             // Store resolved types for use during arrow body emission
             _closures.ArrowParameterTypes[arrow] = resolvedParamTypes;
