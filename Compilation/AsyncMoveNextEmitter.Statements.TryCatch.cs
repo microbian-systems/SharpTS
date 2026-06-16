@@ -27,6 +27,13 @@ public partial class AsyncMoveNextEmitter
 
     private void EmitSimpleTryCatch(Stmt.TryCatch t)
     {
+        // A real IL protected region is open across the whole try/catch/finally. A `br`/`ret` directly
+        // out of it is illegal, so a non-local break/continue crossing it must use `Leave` instead —
+        // which also runs this (no-await) finally. ExceptionBlockDepth drives the Leave-vs-Br choice in
+        // EmitBranchToLabel; it is incremented only here (not in the flag path's mini try/catch
+        // segments), so a break targeting a loop nested inside the try stays a legal in-region `Br`
+        // while an escaping break/continue leaves via `Leave` (#727).
+        _ctx!.ExceptionBlockDepth++;
         _il.BeginExceptionBlock();
 
         // Emit try block statements
@@ -68,6 +75,7 @@ public partial class AsyncMoveNextEmitter
         }
 
         _il.EndExceptionBlock();
+        _ctx!.ExceptionBlockDepth--;
     }
 
     private void EmitTryCatchWithAwaits(Stmt.TryCatch t, bool hasAwaitsInTry, bool hasAwaitsInCatch, bool hasAwaitsInFinally)
@@ -276,53 +284,52 @@ public partial class AsyncMoveNextEmitter
         _currentTryCatchExceptionLocal = caughtExceptionLocal;
         _currentTryCatchSkipLabel = afterTryLabel;
 
-        List<Stmt> stmtsBeforeAwait = [];
+        List<Stmt> syncSegment = [];
+
+        void FlushSegment()
+        {
+            if (syncSegment.Count == 0)
+                return;
+            // Skip the segment if an earlier one already threw (its exception heads to the catch).
+            var skipSegmentLabel = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+            _il.Emit(OpCodes.Brtrue, skipSegmentLabel);
+            EmitSegmentInTry(syncSegment, caughtExceptionLocal);
+            _il.MarkLabel(skipSegmentLabel);
+            syncSegment.Clear();
+        }
 
         foreach (var stmt in tryBody)
         {
-            if (ContainsAwait([stmt]))
+            // A "segment breaker" must be emitted at the top level rather than inside a mini IL
+            // try/catch: a suspension point (await) whose resume label can't be branched into a
+            // protected region, or a non-local exit (break/continue/return) whose `Br`/`Leave` out of
+            // the try targets the enclosing loop — both illegal inside the segment's real IL block. An
+            // escaping break/continue branches with `Br` at this top level (ExceptionBlockDepth is 0),
+            // which is what makes it legal; previously it landed inside a segment and `Br`'d out of the
+            // mini try (BranchOutOfTry → invalid IL) (#727).
+            if (ContainsAwait([stmt]) || ContainsEscapingExit(stmt, insideLoop: false, insideSwitch: false))
             {
-                // Emit accumulated statements in a try block
-                if (stmtsBeforeAwait.Count > 0)
-                {
-                    // Check if exception was already caught
-                    var skipSegmentLabel = _il.DefineLabel();
-                    _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-                    _il.Emit(OpCodes.Brtrue, skipSegmentLabel);
+                FlushSegment();
 
-                    EmitSegmentInTry(stmtsBeforeAwait, caughtExceptionLocal);
-                    _il.MarkLabel(skipSegmentLabel);
-                    stmtsBeforeAwait.Clear();
-                }
-
-                // Check if exception was caught before continuing with await
-                var skipAwaitLabel = _il.DefineLabel();
+                // If an earlier segment threw, skip this suspension/exit and fall through to the catch.
+                var skipLabel = _il.DefineLabel();
                 _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-                _il.Emit(OpCodes.Brtrue, skipAwaitLabel);
+                _il.Emit(OpCodes.Brtrue, skipLabel);
 
-                // Emit the statement containing await
-                // EmitAwait will check _currentTryCatchExceptionLocal and wrap GetResult in try/catch
+                // EmitAwait checks _currentTryCatchExceptionLocal and wraps GetResult in try/catch; a
+                // break/continue/return emits its jump here, outside any real IL exception block.
                 EmitStatement(stmt);
 
-                _il.MarkLabel(skipAwaitLabel);
+                _il.MarkLabel(skipLabel);
             }
             else
             {
-                stmtsBeforeAwait.Add(stmt);
+                syncSegment.Add(stmt);
             }
         }
 
-        // Emit remaining statements in a try block
-        if (stmtsBeforeAwait.Count > 0)
-        {
-            // Check if exception was already caught
-            var skipLabel = _il.DefineLabel();
-            _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-            _il.Emit(OpCodes.Brtrue, skipLabel);
-
-            EmitSegmentInTry(stmtsBeforeAwait, caughtExceptionLocal);
-            _il.MarkLabel(skipLabel);
-        }
+        FlushSegment();
 
         _il.MarkLabel(afterTryLabel);
 
