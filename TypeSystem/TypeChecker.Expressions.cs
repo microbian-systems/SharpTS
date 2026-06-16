@@ -1281,6 +1281,13 @@ public partial class TypeChecker
                 thisType = _pendingObjectThisType ?? new TypeInfo.Any();
             }
 
+            // A default value may reference any PRECEDING parameter (`(a, b = a * 2)`), so each
+            // parameter is progressively defined in a dedicated scope and later defaults are checked
+            // against it. Each parameter is defined AFTER its own default is checked, so a
+            // self-reference resolves to an outer binding or errors. Mirrors BuildFunctionSignature,
+            // which the function-declaration/method path already uses (#698).
+            var paramScope = new TypeEnvironment(_environment);
+
             // Build parameter types and check defaults
             for (int i = 0; i < arrow.Parameters.Count; i++)
             {
@@ -1307,13 +1314,18 @@ public partial class TypeChecker
                 // Rest parameters are not counted toward required params
                 if (param.IsRest)
                 {
+                    paramScope.Define(param.Name.Lexeme, paramType);
                     continue;
                 }
 
                 if (param.DefaultValue != null)
                 {
                     seenDefault = true;
-                    TypeInfo defaultType = CheckExpr(param.DefaultValue);
+                    TypeInfo defaultType;
+                    using (new EnvironmentScope(this, paramScope))
+                    {
+                        defaultType = CheckExpr(param.DefaultValue);
+                    }
                     if (!IsCompatible(paramType, defaultType))
                     {
                         throw new TypeCheckException($" Default value type '{defaultType}' is not assignable to parameter type '{paramType}'.", tsCode: "TS2322");
@@ -1331,6 +1343,8 @@ public partial class TypeChecker
                     }
                     requiredParams++;
                 }
+
+                paramScope.Define(param.Name.Lexeme, paramType);
             }
 
             // Determine return type (use expected type if available and no explicit annotation)

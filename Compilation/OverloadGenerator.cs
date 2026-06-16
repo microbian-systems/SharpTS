@@ -58,24 +58,33 @@ public static class OverloadGenerator
     }
 
     /// <summary>
-    /// Emits the forwarding body for an overload method.
-    /// Loads provided arguments, emits default values for missing arguments, then calls full method.
+    /// Emits the forwarding body for an overload method. Loads the provided arguments, supplies the
+    /// single next default value, then forwards to <paramref name="targetMethod"/> — the overload one
+    /// arity higher (or the full implementation when this overload is one arity below it).
     /// </summary>
+    /// <remarks>
+    /// Forwarding is <b>cascading</b>, not direct-to-full: an overload of arity <c>k</c> fills exactly
+    /// the default at index <c>k</c> and calls the arity-<c>k+1</c> method, which fills index <c>k+1</c>,
+    /// and so on. This keeps every parameter a real argument of the method that evaluates the next
+    /// default, so a default expression may reference any earlier parameter — including an earlier
+    /// <i>defaulted</i> one, e.g. <c>function f(a, b = 1, c = a + b) {}</c>. (#698)
+    /// </remarks>
     /// <param name="il">IL generator for the overload method</param>
-    /// <param name="fullMethod">The full method to call</param>
+    /// <param name="targetMethod">The next-higher-arity method to forward to (overload or full)</param>
     /// <param name="parameters">All parameters from AST (for default value expressions)</param>
     /// <param name="overloadArity">Number of parameters in this overload</param>
     /// <param name="isStatic">Whether this is a static method</param>
     /// <param name="emitter">ILEmitter for emitting default value expressions</param>
     public static void EmitOverloadBody(
         ILGenerator il,
-        MethodInfo fullMethod,
+        MethodInfo targetMethod,
         List<Stmt.Parameter> parameters,
         int overloadArity,
         bool isStatic,
         ILEmitter emitter)
     {
         int argOffset = isStatic ? 0 : 1;
+        var targetParams = targetMethod.GetParameters();
 
         // Load 'this' for instance methods
         if (!isStatic)
@@ -89,17 +98,21 @@ public static class OverloadGenerator
             il.Emit(OpCodes.Ldarg, i + argOffset);
         }
 
-        // Emit default values for missing arguments
-        for (int i = overloadArity; i < parameters.Count; i++)
+        // Supply the defaults this overload adds to reach the target method's arity. Under cascading
+        // forwarding that is the single parameter at index `overloadArity`, whose default may reference
+        // any earlier parameter (all are real arguments here, so they resolve to `ldarg`). (#698)
+        for (int i = overloadArity; i < targetParams.Length; i++)
         {
             var defaultExpr = parameters[i].DefaultValue;
-            var targetType = fullMethod.GetParameters()[i].ParameterType;
+            var targetType = targetParams[i].ParameterType;
 
             if (defaultExpr != null)
             {
                 emitter.EmitExpression(defaultExpr);
-                // Box if needed based on target type
-                EmitConversionIfNeeded(il, emitter, defaultExpr, targetType);
+                // Stack-aware conversion: adapts to whatever EmitExpression actually produced
+                // (an unboxed double/bool for an earlier-parameter reference, a boxed object for
+                // an `any` expression, etc.) so a default like `b = a` is not wrongly unboxed. (#698)
+                emitter.EmitConversionForParameter(defaultExpr, targetType);
             }
             else
             {
@@ -118,14 +131,14 @@ public static class OverloadGenerator
             }
         }
 
-        // Call the full method
+        // Forward to the next-higher-arity method (cascading).
         if (isStatic)
         {
-            il.Emit(OpCodes.Call, fullMethod);
+            il.Emit(OpCodes.Call, targetMethod);
         }
         else
         {
-            il.Emit(OpCodes.Callvirt, fullMethod);
+            il.Emit(OpCodes.Callvirt, targetMethod);
         }
 
         il.Emit(OpCodes.Ret);
