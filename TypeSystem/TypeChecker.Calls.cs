@@ -560,8 +560,10 @@ public partial class TypeChecker
                         }
                         if (paramIndex < regularParamCount)
                         {
-                            // Check against regular parameter
-                            if (!IsCompatible(funcType.ParamTypes[paramIndex], argType))
+                            // Check against regular parameter. An optional/default-valued parameter
+                            // (position >= MinArity) also accepts an explicit `undefined` (#668).
+                            bool optional = paramIndex >= funcType.MinArity;
+                            if (!IsArgumentCompatible(funcType.ParamTypes[paramIndex], argType, optional))
                             {
                                 throw new TypeCheckException($"Argument {argIndex + 1} expected type '{funcType.ParamTypes[paramIndex]}' but got '{argType}'.", tsCode: "TS2345");
                             }

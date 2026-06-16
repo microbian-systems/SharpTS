@@ -56,6 +56,33 @@ public partial class RuntimeEmitter
         typeBuilder.CreateType();
     }
 
+    /// <summary>
+    /// Emits a minimal marker attribute <c>$PadUndefined</c> (empty
+    /// <see cref="System.Attribute"/> subclass). Applied to user TypeScript function
+    /// methods (declarations, arrows/function expressions, methods, async stubs); read
+    /// back via <see cref="System.Reflection.MemberInfo.IsDefined(Type, bool)"/> at
+    /// <c>$TSFunction</c> construction to decide whether <c>AdjustArgs</c> pads omitted
+    /// trailing arguments with the <c>undefined</c> sentinel rather than CLR null (#640).
+    /// Lives in the output assembly so the compiled DLL stays standalone.
+    /// </summary>
+    private void EmitPadUndefinedAttribute(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
+    {
+        var typeBuilder = moduleBuilder.DefineType(
+            "$PadUndefined",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
+            typeof(System.Attribute));
+        var ctor = typeBuilder.DefineConstructor(
+            MethodAttributes.Public, CallingConventions.Standard, Type.EmptyTypes);
+        var ctorIl = ctor.GetILGenerator();
+        ctorIl.Emit(OpCodes.Ldarg_0);
+        ctorIl.Emit(OpCodes.Call, typeof(System.Attribute).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic, null, Type.EmptyTypes, null)!);
+        ctorIl.Emit(OpCodes.Ret);
+        runtime.PadUndefinedAttrCtor = ctor;
+        runtime.PadUndefinedAttrType = typeBuilder;
+        typeBuilder.CreateType();
+    }
+
     private void EmitTSFunctionClass(ModuleBuilder moduleBuilder, EmittedRuntime runtime)
     {
         // Define class: public sealed class $TSFunction
@@ -88,6 +115,16 @@ public partial class RuntimeEmitter
         // skip-index-box detection can read it without a method call.
         var capturesArgumentsField = typeBuilder.DefineField("_capturesArguments", _types.Boolean, FieldAttributes.Public);
         runtime.TSFunctionCapturesArgumentsField = capturesArgumentsField;
+        // Bitmask of parameter positions that AdjustArgs pads with the `undefined`
+        // sentinel (instead of CLR null) when the argument is omitted. Bit i is set iff
+        // the wrapped method carries the $PadUndefined marker (i.e. is a user TS function)
+        // AND parameter i has an `object` slot. Object slots can hold the sentinel, so
+        // `typeof`/`=== undefined`/default-firing all work; a typed slot (string/double)
+        // would coerce the sentinel to a real value before the entry prologue, so those
+        // stay null-padded and fire their default via the null check. Built-ins have an
+        // all-zero mask and keep pure null padding. Positions >= 32 are not tracked
+        // (such arity is never reached in practice) and pad null. (#640)
+        var padUndefinedMaskField = typeBuilder.DefineField("_padUndefinedMask", _types.Int32, FieldAttributes.Private);
         // Cached MethodInvoker. .NET 8+'s MethodInvoker.Create() pre-builds
         // the JIT'd dispatch stub for a method, then Invoke(...) calls it
         // directly — measured ~10× faster than MethodInfo.Invoke per call.
@@ -234,6 +271,8 @@ public partial class RuntimeEmitter
         EmitComputeExpectsThis(ctorIL, expectsThisField, methodArgIndex: 2);
         // this._capturesArguments = method.IsDefined($CapturesArguments)
         EmitComputeCapturesArguments(ctorIL, capturesArgumentsField, runtime, methodArgIndex: 2);
+        // this._padUndefinedMask = $PadUndefined ? (object-param bits) : 0
+        EmitComputePadUndefinedMask(ctorIL, padUndefinedMaskField, runtime, methodArgIndex: 2);
         // this._paramCount, _hasListRest, _hasArrayRest: cached by AdjustArgs.
         EmitComputeAdjustArgsCache(ctorIL, paramCountField, hasListRestField, hasArrayRestField, methodArgIndex: 2);
         EmitComputeNeedsArgConversion(ctorIL, needsArgConversionField, methodArgIndex: 2);
@@ -273,6 +312,7 @@ public partial class RuntimeEmitter
         // this._expectsThis = (method.GetParameters().Length > 0 && params[0].Name == "__this")
         EmitComputeExpectsThis(ctorCacheIL, expectsThisField, methodArgIndex: 2);
         EmitComputeCapturesArguments(ctorCacheIL, capturesArgumentsField, runtime, methodArgIndex: 2);
+        EmitComputePadUndefinedMask(ctorCacheIL, padUndefinedMaskField, runtime, methodArgIndex: 2);
         EmitComputeAdjustArgsCache(ctorCacheIL, paramCountField, hasListRestField, hasArrayRestField, methodArgIndex: 2);
         EmitComputeNeedsArgConversion(ctorCacheIL, needsArgConversionField, methodArgIndex: 2);
         // this._invoker = LookupOrAdd(_invokerCache, method)
@@ -356,7 +396,7 @@ public partial class RuntimeEmitter
         gmIL.Emit(OpCodes.Ret);
 
         // Helper method: private static object[] AdjustArgs(MethodInfo method, object[] args)
-        var adjustArgsMethod = EmitTSFunctionAdjustArgsHelper(typeBuilder, runtime, paramCountField, hasListRestField, hasArrayRestField);
+        var adjustArgsMethod = EmitTSFunctionAdjustArgsHelper(typeBuilder, runtime, paramCountField, hasListRestField, hasArrayRestField, padUndefinedMaskField);
 
         // Helper method: private static void ConvertArgsForUnionTypes(MethodInfo method, object[] args)
         var convertArgsMethod = EmitTSFunctionConvertArgsHelper(typeBuilder, runtime);
@@ -1286,6 +1326,91 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits computation of <c>this._padUndefinedMask</c>. Zero unless the method carries the
+    /// <c>$PadUndefined</c> marker (i.e. is a user TS function), in which case bit <c>i</c> is set
+    /// for every parameter <c>i &lt; 32</c> whose slot is <c>object</c>. <c>AdjustArgs</c> pads only
+    /// those positions with the <c>undefined</c> sentinel; typed slots and built-ins keep null
+    /// padding. See <see cref="EmitPadUndefinedAttribute"/>. (#640)
+    /// </summary>
+    private void EmitComputePadUndefinedMask(ILGenerator il, FieldBuilder padUndefinedMaskField, EmittedRuntime runtime, int methodArgIndex)
+    {
+        var done = il.DefineLabel();
+
+        // if (!method.IsDefined($PadUndefined, false)) leave mask at its zero-init value.
+        il.Emit(OpCodes.Ldarg, methodArgIndex);
+        il.Emit(OpCodes.Ldtoken, runtime.PadUndefinedAttrType);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetTypeFromHandle", _types.RuntimeTypeHandle));
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "IsDefined", _types.Type, _types.Boolean));
+        il.Emit(OpCodes.Brfalse, done);
+
+        var paramsLocal = il.DeclareLocal(_types.MakeArrayType(_types.ParameterInfo));
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var maskLocal = il.DeclareLocal(_types.Int32);
+        var nLocal = il.DeclareLocal(_types.Int32);
+
+        // ps = method.GetParameters(); n = ps.Length; mask = 0; i = 0;
+        il.Emit(OpCodes.Ldarg, methodArgIndex);
+        il.Emit(OpCodes.Callvirt, _types.MethodInfo.GetMethod("GetParameters")!);
+        il.Emit(OpCodes.Stloc, paramsLocal);
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, nLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, maskLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        var loopBody = il.DefineLabel();
+        var loopCond = il.DefineLabel();
+        var nextIter = il.DefineLabel();
+        var storeMask = il.DefineLabel();
+        il.Emit(OpCodes.Br, loopCond);
+
+        il.MarkLabel(loopBody);
+        // if (ps[i].ParameterType != typeof(object)) goto nextIter;
+        il.Emit(OpCodes.Ldloc, paramsLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.ParameterInfo.GetProperty("ParameterType")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldtoken, _types.Object);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("GetTypeFromHandle")!);
+        il.Emit(OpCodes.Call, _types.Type.GetMethod("op_Equality", [_types.Type, _types.Type])!);
+        il.Emit(OpCodes.Brfalse, nextIter);
+        // mask |= (1 << i);
+        il.Emit(OpCodes.Ldloc, maskLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Shl);
+        il.Emit(OpCodes.Or);
+        il.Emit(OpCodes.Stloc, maskLocal);
+
+        il.MarkLabel(nextIter);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+
+        il.MarkLabel(loopCond);
+        // while (i < n && i < 32)
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Bge, storeMask);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4, 32);
+        il.Emit(OpCodes.Blt, loopBody);
+
+        il.MarkLabel(storeMask);
+        // this._padUndefinedMask = mask;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, maskLocal);
+        il.Emit(OpCodes.Stfld, padUndefinedMaskField);
+
+        il.MarkLabel(done);
+    }
+
+    /// <summary>
     /// Emits an instance helper method <c>$TSFunction.AdjustArgs(object[] args)</c>
     /// that adjusts argument arrays for rest parameters and padding/trimming
     /// using cached field reads (<c>_paramCount</c>, <c>_hasListRest</c>,
@@ -1293,7 +1418,8 @@ public partial class RuntimeEmitter
     /// + <c>ParameterType</c> reflection.
     /// </summary>
     private MethodBuilder EmitTSFunctionAdjustArgsHelper(TypeBuilder typeBuilder, EmittedRuntime runtime,
-        FieldBuilder paramCountField, FieldBuilder hasListRestField, FieldBuilder hasArrayRestField)
+        FieldBuilder paramCountField, FieldBuilder hasListRestField, FieldBuilder hasArrayRestField,
+        FieldBuilder padUndefinedMaskField)
     {
         // private object[] AdjustArgs(object[] args)
         // Instance method: arg0 = this, arg1 = args. paramCount and rest-shape
@@ -1518,13 +1644,59 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, argsLengthLocal);
         il.Emit(OpCodes.Call, _types.ArrayType.GetMethod("Copy", [_types.ArrayType, _types.ArrayType, _types.Int32])!);
 
-        // Missing args pad as null. NOT the $Undefined singleton: emitted
-        // built-ins broadly use null-checks for optional-arg absence (stream
-        // write/end callbacks, encodings, ...), so sentinel padding makes them
-        // treat the slot as a real argument. The one built-in that must
-        // distinguish absent (skip) from explicit JS null (throw) — value-form
-        // Object.create's props — gets a dedicated wrapper instead
-        // (ObjectCreateValueForm in RuntimeEmitter.Objects.Prototype.cs).
+        // Pad value for the missing trailing slots, per the cached _padUndefinedMask.
+        //
+        // A slot whose mask bit is set (user TS function + `object`-typed parameter) is filled
+        // with the `undefined` sentinel, matching JS semantics and the direct-call path — so
+        // `typeof`, `=== undefined`, and `=== null` answer correctly for an omitted optional
+        // parameter, and an object-slotted default-valued parameter's entry prologue fires.
+        //
+        // Every other slot is left as CLR null (the Newarr zero value). That covers built-ins
+        // (mask 0 — their bodies use null-checks for optional-arg absence: stream write/end
+        // callbacks, encodings, ...) and typed default-valued parameters of user functions
+        // (string/double slots can't hold the sentinel — it would coerce to a real value
+        // before the entry prologue, whereas null fires their default via the null check). The
+        // one built-in that must distinguish absent (skip) from explicit JS null (throw) —
+        // value-form Object.create's props — gets a dedicated wrapper instead
+        // (ObjectCreateValueForm in RuntimeEmitter.Objects.Prototype.cs). (#640)
+        var skipUndefinedPad = il.DefineLabel();
+        // if (_padUndefinedMask == 0) skip — fast path for built-ins and all-typed signatures.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, padUndefinedMaskField);
+        il.Emit(OpCodes.Brfalse, skipUndefinedPad);
+        // for (int i = argsLength; i < paramCount; i++)
+        //     if (((_padUndefinedMask >> i) & 1) != 0) result[i] = $Undefined.Instance;
+        var padIdxLocal = il.DeclareLocal(_types.Int32);
+        var padLoopBody = il.DefineLabel();
+        var padLoopCond = il.DefineLabel();
+        var padSkipSlot = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argsLengthLocal);
+        il.Emit(OpCodes.Stloc, padIdxLocal);
+        il.Emit(OpCodes.Br, padLoopCond);
+        il.MarkLabel(padLoopBody);
+        // if (((mask >> i) & 1) == 0) goto next;
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, padUndefinedMaskField);
+        il.Emit(OpCodes.Ldloc, padIdxLocal);
+        il.Emit(OpCodes.Shr_Un);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Brfalse, padSkipSlot);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, padIdxLocal);
+        il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.MarkLabel(padSkipSlot);
+        il.Emit(OpCodes.Ldloc, padIdxLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, padIdxLocal);
+        il.MarkLabel(padLoopCond);
+        il.Emit(OpCodes.Ldloc, padIdxLocal);
+        il.Emit(OpCodes.Ldloc, paramCountLocal);
+        il.Emit(OpCodes.Blt, padLoopBody);
+        il.MarkLabel(skipUndefinedPad);
+
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 

@@ -90,6 +90,24 @@ public partial class TypeChecker
     private const int MaxCompatibilityCheckDepth = 50;
 
     /// <summary>
+    /// Argument/parameter assignability that additionally honors parameter optionality.
+    /// An optional (<c>x?: T</c>) or default-valued (<c>x: T = …</c>) parameter has a call-site
+    /// type of <c>T | undefined</c> in TypeScript, so an explicit <c>undefined</c> (or a
+    /// <c>T | undefined</c> value) argument is accepted there — and, for a default-valued
+    /// parameter, triggers the default. Pass <paramref name="optional"/> = true only for a
+    /// non-rest parameter whose position is at or beyond the signature's <c>MinArity</c>; a
+    /// genuinely required parameter (optional = false) still rejects <c>undefined</c>. (#668)
+    /// </summary>
+    private bool IsArgumentCompatible(TypeInfo paramType, TypeInfo argType, bool optional)
+    {
+        if (IsCompatible(paramType, argType)) return true;
+        if (!optional) return false;
+        // Widen the declared type with `undefined`; the existing union-compatibility rules then
+        // accept an `undefined` / `T | undefined` argument without admitting any other mismatch.
+        return IsCompatible(new TypeInfo.Union([paramType, new TypeInfo.Undefined()]), argType);
+    }
+
+    /// <summary>
     /// Checks type compatibility with two-level memoization and co-inductive cycle detection.
     /// Level 1: Fast identity-based cache using reference equality (O(1) for same instances)
     /// Level 2: Structural equality cache for different instances with same structure
