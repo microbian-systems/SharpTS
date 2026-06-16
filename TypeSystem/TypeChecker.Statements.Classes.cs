@@ -698,10 +698,9 @@ public partial class TypeChecker
 
                         // A generator method's type argument is its YIELD type (#548), not the
                         // `return`-derived inferredReturn; a non-generator async method wraps in Promise.
-                        // (The inferred result is not yet observable at a call site — `new C().m()` reads an
-                        // inferred method return as `<inferred>` regardless of generator-ness, a separate
-                        // method-return-inference propagation gap, #658 — but computing it correctly here
-                        // keeps the method path consistent with the function path for when that is fixed.)
+                        // The resolved type is re-published below (anyInferredMethodReturnResolved), so
+                        // `new C().m()` reads the real Generator<…>/Promise<…> at the call site rather than
+                        // the `<inferred>` placeholder (#658/#661; the generator-method face was #687).
                         if (method.IsGenerator)
                             inferredReturn = BuildInferredGeneratorType(_inferredYieldTypes!, method.IsAsync);
                         else if (method.IsAsync && inferredReturn is not TypeInfo.Void)

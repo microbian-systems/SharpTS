@@ -253,9 +253,22 @@ public partial class ILCompiler
                 return;
         }
 
-        // Create display class type
+        RegisterFunctionDisplayClass(qualifiedFunctionName, capturedLocals);
+    }
+
+    /// <summary>
+    /// Creates and registers a function-level display class holding one <c>object</c> field per named
+    /// captured variable. Shared by the sync/async path (<see cref="DefineFunctionDisplayClass"/>, which
+    /// lifts all captured locals), the generator path (captured-AND-mutated locals, #674), and the
+    /// async-method / standalone-arrow path (only the promoted async-written captures, #682). The caller
+    /// decides membership; this only builds the type.
+    /// </summary>
+    private void RegisterFunctionDisplayClass(string qualifiedFunctionName, IEnumerable<string> capturedLocals)
+    {
+        // Create display class type. The counter guarantees a unique type name; '.' and ':' in the key
+        // (async-method keys are "<Class>::<method>") are sanitized to valid identifier characters.
         var displayClass = _moduleBuilder.DefineType(
-            $"<>c__FuncDisplayClass_{qualifiedFunctionName.Replace(".", "_")}_{_closures.DisplayClassCounter++}",
+            $"<>c__FuncDisplayClass_{qualifiedFunctionName.Replace(".", "_").Replace(":", "_")}_{_closures.DisplayClassCounter++}",
             TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit,
             _types.Object);
 
@@ -1405,9 +1418,27 @@ public partial class ILCompiler
             };
             var emitter = new ILEmitter(ctx);
 
+            // Make the provided parameters resolvable so a default value that references an
+            // earlier parameter (e.g. `function f(a, b = a) {}`) emits `ldarg` instead of
+            // throwing "Undefined variable" at runtime. Static functions have no implicit
+            // `this`, so parameter i lives at arg index i. (#698)
+            var fullParams = fullMethod.GetParameters();
+            for (int i = 0; i < arity; i++)
+            {
+                Type paramType = i < fullParams.Length ? fullParams[i].ParameterType : _types.Object;
+                ctx.DefineParameter(funcStmt.Parameters[i].Name.Lexeme, i, paramType);
+            }
+
+            // Cascade: forward to the overload one arity higher (it fills the next default), or to
+            // the full implementation when this overload is one below full arity. Higher-arity
+            // overloads come earlier in the list, so the next arity up is overloads[overloadIndex-1].
+            // This lets a later default reference an earlier *defaulted* parameter — that parameter
+            // is a real argument of the target method rather than a transient stack value. (#698)
+            MethodInfo targetMethod = overloadIndex == 1 ? fullMethod : overloads[overloadIndex - 2];
+
             OverloadGenerator.EmitOverloadBody(
                 il,
-                fullMethod,
+                targetMethod,
                 funcStmt.Parameters,
                 arity,
                 isStatic: true,

@@ -201,6 +201,41 @@ public partial class AsyncGeneratorStateAnalyzer : AstVisitorBase
         _tryBlockSuspensionFlags.Clear();
     }
 
+    /// <summary>
+    /// Reserves a synthetic await suspension point — one that has no <see cref="Expr.Await"/> node in the
+    /// source. These back the implicit awaits of <c>for await…of</c> (the iterator's next()/return(), #697)
+    /// and of <c>yield*</c> delegation to a genuinely-async iterator (the delegated iterator's next(), #688).
+    /// The emitter consumes them, in the same traversal order, via <c>EmitAwaitFromValueOnStack</c>; this
+    /// mirrors <c>AsyncStateAnalyzer.VisitForOf</c>'s <c>RecordAwaitPoint(null)</c> for async functions (#631).
+    /// <see cref="SuspensionPoint.Expression"/> is left null and is never dereferenced — only
+    /// <see cref="SuspensionPoint.StateNumber"/> is read (to define the resume label in MoveNextAsync).
+    /// </summary>
+    private void RecordSyntheticAwaitPoint()
+    {
+        var liveVars = new HashSet<string>(_declaredVariables);
+        _suspensionPoints.Add(new SuspensionPoint(
+            _stateCounter++,
+            SuspensionType.Await,
+            Expression: null,
+            liveVars,
+            IsDelegatingYield: false,
+            TryBlockDepth: _currentTryBlockDepth,
+            EnclosingTryId: _currentTryBlockId
+        ));
+        _seenSuspension = true;
+
+        // Track suspension in try block (a for-await/delegating-yield inside a try makes that try suspend).
+        RecordSuspensionInTryBlock();
+
+        // Any for...of loop currently on the stack now contains a suspension and needs enumerator/variable
+        // hoisting (its body re-executes across the suspension).
+        foreach (var forOf in _forOfStack)
+        {
+            if (!_forOfLoopsWithSuspension.Contains(forOf))
+                _forOfLoopsWithSuspension.Add(forOf);
+        }
+    }
+
     private void RecordSuspensionInTryBlock()
     {
         if (_currentTryBlockId.HasValue && _currentTryRegion != TryRegion.None)

@@ -360,12 +360,13 @@ public class LabeledStatementTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    public void ChainedLabels_For_ContinueOuter_Interpreted(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ChainedLabels_For_ContinueOuter(ExecutionMode mode)
     {
-        // A chain of labels on a `for` (a: b: for) — `continue p` must advance the outer for.
-        // The interpreter handles this; the compiled path is a known follow-up gap (it would
-        // re-run the for initializer), so this is interpreter-only.
+        // A chain of labels on a `for` (p: q: for) — `continue p` to the OUTER label of the chain
+        // must advance the for's own increment, not restart it. The compiled path used to re-run the
+        // for initializer (an infinite loop), since only the innermost label was handed to the loop
+        // and the outer one fell into the legacy "mark continue before the loop" path (#580).
         var source = """
             let sum: number = 0;
             p: q: for (let x = 0; x < 3; x++) {
@@ -408,6 +409,27 @@ public class LabeledStatementTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ChainedLabels_For_ContinueInner(ExecutionMode mode)
+    {
+        // `continue q` to the INNER label of the chain targets the same for — same result as the
+        // outer-label case, since both labels wrap that one loop.
+        var source = """
+            let sum: number = 0;
+            p: q: for (let x = 0; x < 3; x++) {
+                for (let y = 0; y < 3; y++) {
+                    if (y === 1) { continue q; }
+                    sum = sum + (x * 10 + y);
+                }
+            }
+            console.log(sum);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("30\n", output);  // 0 + 10 + 20
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Async_ChainedLabels_For_BreakOuter(ExecutionMode mode)
     {
         // `break a` to the outer label of a chain inside an async function must exit the outer for.
@@ -426,6 +448,26 @@ public class LabeledStatementTests
             """;
 
         Assert.Equal("4\n", TestHarness.Run(source, mode));  // x=0: 3 iters; x=1: 1 iter then break
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ChainedLabels_For_BreakOuter(ExecutionMode mode)
+    {
+        // `break a` to the outer label of a chain on a `for` exits the loop entirely.
+        var source = """
+            let s: string = "";
+            a: b: for (let x = 0; x < 3; x++) {
+                for (let y = 0; y < 3; y++) {
+                    if (x === 1 && y === 1) { break a; }
+                    s = s + x + "" + y + ";";
+                }
+            }
+            console.log(s);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("00;01;02;10;\n", output);
     }
 
     [Theory]
@@ -457,6 +499,26 @@ public class LabeledStatementTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ChainedLabels_For_TripleChain_ContinueOutermost(ExecutionMode mode)
+    {
+        // Three labels on one `for`; `continue a` to the outermost resolves to the loop's increment.
+        var source = """
+            let sum: number = 0;
+            a: b: c: for (let x = 0; x < 3; x++) {
+                for (let y = 0; y < 3; y++) {
+                    if (y === 1) { continue a; }
+                    sum = sum + (x * 10 + y);
+                }
+            }
+            console.log(sum);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("30\n", output);  // 0 + 10 + 20
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Async_ChainedLabels_ForOf_ContinueOuter(ExecutionMode mode)
     {
         // Chained labels on a (synchronous) `for…of` inside an async function — `continue p` must
@@ -476,6 +538,26 @@ public class LabeledStatementTests
             """;
 
         Assert.Equal("30\n", TestHarness.Run(source, mode));  // 0 + 10 + 20
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ChainedLabels_ForOf_ContinueOuter(ExecutionMode mode)
+    {
+        // A chain on a `for-of`; `continue m` to the outer label advances the outer iterator.
+        var source = """
+            let s: string = "";
+            m: n: for (const x of [0, 1, 2]) {
+                for (const y of [0, 1, 2]) {
+                    if (y === 1) { continue m; }
+                    s = s + x + "" + y + ";";
+                }
+            }
+            console.log(s);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("00;10;20;\n", output);
     }
 
     #endregion

@@ -525,6 +525,16 @@ public partial class Interpreter
             return RuntimeValue.Undefined;
         }
 
+        // ECMA-262 §13.3.2.1 RequireObjectCoercible: a non-optional member read on
+        // a nullish base throws a guest TypeError ("Cannot read properties of
+        // <null|undefined> (reading '<key>')"), so a guest try/catch binds a real
+        // TypeError rather than a host "Runtime Error" string — matching Node, tsc
+        // and the compiled path (#676).
+        if (obj == null || obj is SharpTSUndefined)
+        {
+            ThrowCannotReadProperty(obj, get.Name.Lexeme);
+        }
+
         // Proxy interception - must be before any other dispatch
         if (obj is SharpTSProxy proxy)
         {
@@ -567,6 +577,24 @@ public partial class Interpreter
             // Fallback for remaining types (IDictionary, ISharpTSPropertyAccessor, unknown types)
             _ => RuntimeValue.FromBoxed(EvaluateGetOnFallback(obj, memberName))
         };
+    }
+
+    /// <summary>
+    /// ECMA-262 RequireObjectCoercible failure on a member read: throws a guest
+    /// <see cref="SharpTSTypeError"/> ("Cannot read properties of
+    /// &lt;null|undefined&gt; (reading '&lt;key&gt;')") wrapped in a
+    /// <see cref="ThrowException"/> so a guest <c>try/catch</c> binds a real
+    /// <c>TypeError</c> (with the correct name/message and
+    /// <c>instanceof TypeError</c>) rather than a host "Runtime Error" string.
+    /// Shared by the dot-access (<see cref="EvaluateGetOnObject"/>) and
+    /// bracket-access (<see cref="PerformIndexGet"/>) paths (#676).
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    private static void ThrowCannotReadProperty(object? nullishReceiver, string key)
+    {
+        string what = nullishReceiver is SharpTSUndefined ? "undefined" : "null";
+        throw new ThrowException(new SharpTSTypeError(
+            $"Cannot read properties of {what} (reading '{key}')"));
     }
 
     /// <summary>

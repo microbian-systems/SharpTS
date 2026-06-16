@@ -144,7 +144,28 @@ public sealed class SharpTSObjectUnboundMethod : ISharpTSCallable
 
     private static object? ValueOfImpl(object? target, List<object?> args) => target;
 
-    private static object? IsPrototypeOfImpl(object? target, List<object?> args) => false;
+    private static object? IsPrototypeOfImpl(object? target, List<object?> args)
+    {
+        // ECMA-262 §20.1.3.4 Object.prototype.isPrototypeOf(V): walk V's
+        // prototype chain and return true if `this` (target) appears in it.
+        // (Was stubbed to always return false.)
+        if (args.Count == 0) return false;
+        var v = args[0];
+        // Step 1: if Type(V) is not Object, return false — primitives have no chain.
+        if (v is null or SharpTSUndefined or double or int or long or bool or string
+            or System.Numerics.BigInteger or SharpTSSymbol)
+            return false;
+
+        while (true)
+        {
+            object? proto;
+            try { proto = ObjectBuiltIns.RuntimeGetPrototypeOf(v); }
+            catch { return false; }
+            if (proto is null or SharpTSUndefined) return false;
+            if (ReferenceEquals(proto, target)) return true;
+            v = proto;
+        }
+    }
 
     private static object? PropertyIsEnumerableImpl(object? target, List<object?> args)
     {

@@ -173,8 +173,9 @@ public class GeneratorYieldInferenceTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void GeneratorMethod_InferredYield_IsIterable_RunsInBothModes(ExecutionMode mode)
     {
-        // The #661 headline: spreading a generator method with no explicit Generator<T> return type used to
-        // fail "must be an iterable type ... got '<inferred>'". The inferred Generator<number> is now visible.
+        // The #661 headline (also reported as #687): spreading a generator method with no explicit
+        // Generator<T> return type used to fail "must be an iterable type ... got '<inferred>'". The
+        // inferred Generator<number> is now visible at the call site, so the spread type-checks.
         var source = """
             class C { *m() { yield 1; yield 2; } }
             console.log([...new C().m()][0]);

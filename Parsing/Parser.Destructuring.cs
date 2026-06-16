@@ -144,9 +144,20 @@ public partial class Parser
     {
         List<Stmt> statements = [];
 
-        // const _dest0 = initializer;
+        // const _dest0 = __arrayDestructure(initializer);
+        // JS array destructuring follows the iterator protocol, not positional
+        // indexing. The wrapper normalizes non-indexable iterables (generators,
+        // Set, Map, objects with [Symbol.iterator]) into an array so the index
+        // access below is spec-correct (#685); arrays/tuples/strings pass through
+        // unchanged to keep the fast index path.
         Token temp = GenerateTempVar(pattern.Line);
-        statements.Add(new Stmt.Var(temp, null, initializer));
+        Expr normalizedInit = new Expr.Call(
+            new Expr.Variable(new Token(TokenType.IDENTIFIER, "__arrayDestructure", null, pattern.Line)),
+            new Token(TokenType.RIGHT_PAREN, ")", null, pattern.Line),
+            null,
+            [initializer]
+        );
+        statements.Add(new Stmt.Var(temp, null, normalizedInit));
 
         int index = 0;
         foreach (var element in pattern.Elements)

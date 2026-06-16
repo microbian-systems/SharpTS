@@ -267,6 +267,11 @@ public partial class Parser
                 bool isRest = Match(TokenType.DOT_DOT_DOT);
 
                 Token paramName = ConsumeIdentifierName("Expect parameter name.");
+
+                // Check for optional parameter marker (?) — mirrors the main
+                // function-parameter parser so private/abstract methods accept `x?: T`.
+                bool isOptional = Match(TokenType.QUESTION);
+
                 string? paramType = null;
                 if (Match(TokenType.COLON))
                 {
@@ -279,7 +284,7 @@ public partial class Parser
                 {
                     defaultValue = Expression();
                 }
-                parameters.Add(new Stmt.Parameter(paramName, paramType, defaultValue, isRest));
+                parameters.Add(new Stmt.Parameter(paramName, paramType, defaultValue, isRest, IsOptional: isOptional));
 
                 // Rest parameter must be last
                 if (isRest && Check(TokenType.COMMA))

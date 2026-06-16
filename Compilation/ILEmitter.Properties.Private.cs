@@ -236,6 +236,9 @@ public partial class ILEmitter
                     EmitBoxIfNeeded(arg);
                 }
 
+                // Pad omitted trailing arguments with `undefined` (fixed-arity method).
+                EmitPrivateCallUndefinedPadding(cp.Arguments.Count, staticMethod!.GetParameters().Length);
+
                 // Call static method
                 IL.Emit(OpCodes.Call, staticMethod!);
                 SetStackUnknown();
@@ -295,6 +298,9 @@ public partial class ILEmitter
                     EmitBoxIfNeeded(arg);
                 }
 
+                // Pad omitted trailing arguments with `undefined` (fixed-arity method).
+                EmitPrivateCallUndefinedPadding(cp.Arguments.Count, instanceMethod!.GetParameters().Length);
+
                 // Call instance method
                 IL.Emit(OpCodes.Callvirt, instanceMethod!);
                 SetStackUnknown();
@@ -316,6 +322,8 @@ public partial class ILEmitter
                     EmitBoxIfNeeded(arg);
                 }
 
+                // Pad omitted trailing arguments with `undefined` (fixed-arity method).
+                EmitPrivateCallUndefinedPadding(cp.Arguments.Count, instanceMethod!.GetParameters().Length);
                 IL.Emit(OpCodes.Callvirt, instanceMethod!);
                 SetStackUnknown();
                 return;
@@ -331,6 +339,7 @@ public partial class ILEmitter
                 EmitBoxIfNeeded(arg);
             }
 
+            EmitPrivateCallUndefinedPadding(cp.Arguments.Count, fallbackStaticMethod!.GetParameters().Length);
             IL.Emit(OpCodes.Call, fallbackStaticMethod!);
             SetStackUnknown();
             return;

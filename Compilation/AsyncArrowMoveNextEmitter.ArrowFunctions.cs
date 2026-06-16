@@ -111,13 +111,12 @@ public partial class AsyncArrowMoveNextEmitter
         // stub's arg0, clobbering the first real parameter. (#615)
         if (nestedBuilder.IsStandalone)
         {
-            // A capturing standalone nested arrow's stub takes its single captured value as a leading
-            // argument. $TSFunction's "static method with target" mechanism prepends the target before
-            // the call args, so we pass the capture AS the target, read from THIS (enclosing) arrow's
-            // frame. Mirrors the module-level standalone path in ILEmitter.EmitAsyncArrowFunction.
-            // Before #641 every capturing standalone nested arrow threw "not yet supported"; now the
-            // single read-only capture (the #641 repros) is supported, and the two harder shapes below
-            // fail loudly rather than miscompiling.
+            // A capturing standalone nested arrow's stub takes every captured value packed into a
+            // single object[]. $TSFunction's "static method with target" mechanism prepends the
+            // target before the call args, so we pass that object[] AS the target, each element read
+            // from THIS (enclosing) arrow's frame. Mirrors the module-level standalone path in
+            // ILEmitter.EmitAsyncArrowFunction. #641 enabled the single read-only capture; #684
+            // generalized it to any number of read-only captures via the shared object[] slot.
             var captureOrder = nestedBuilder.StandaloneCaptureFields.Keys
                 .OrderBy(k => k, System.StringComparer.Ordinal).ToList();
 
@@ -125,7 +124,8 @@ public partial class AsyncArrowMoveNextEmitter
             {
                 // A standalone arrow captures BY VALUE (the values are copied into its own state
                 // machine). A write to a capture therefore cannot propagate back to the enclosing
-                // binding, so reject it instead of silently dropping the write (#684).
+                // binding, so reject it instead of silently dropping the write (#684/#682). The
+                // verifiable shared-cell fix is the same class as #625/#673 and tracked there.
                 var written = CapturedWriteAnalysis.CollectImmediateWrites(af);
                 written.IntersectWith(captureOrder);
                 if (written.Count > 0)
@@ -133,27 +133,23 @@ public partial class AsyncArrowMoveNextEmitter
                     throw new CompileException(
                         "A nested async arrow inside a top-level async arrow that WRITES a captured " +
                         $"variable ({string.Join(", ", written.OrderBy(n => n, System.StringComparer.Ordinal))}) " +
-                        "is not yet supported in compiled mode (#684): the standalone arrow captures by " +
-                        "value, so the write would be lost. Hoist it to a named async function, or run " +
+                        "is not yet supported in compiled mode (#684/#682): the standalone arrow captures " +
+                        "by value, so the write would be lost. Hoist it to a named async function, or run " +
                         "in interpreted mode.");
                 }
 
-                // Multiple captures would need to ride in $TSFunction's single prepended target slot
-                // (an object[]), but the standalone stub expects each capture as a separate arg — a
-                // mismatch also broken for module-level standalone async arrows (#684).
-                if (captureOrder.Count > 1)
+                // Pack all captures into the single object[] target slot, in the same ordinal order
+                // the stub unpacks them.
+                _il.Emit(OpCodes.Ldc_I4, captureOrder.Count);
+                _il.Emit(OpCodes.Newarr, _types.Object);
+                for (int i = 0; i < captureOrder.Count; i++)
                 {
-                    throw new CompileException(
-                        "A nested async arrow inside a top-level async arrow that captures more than " +
-                        "one variable is not yet supported in compiled mode (#684); reduce it to a " +
-                        "single capture, hoist it to a named async function, or run in interpreted mode.");
+                    _il.Emit(OpCodes.Dup);
+                    _il.Emit(OpCodes.Ldc_I4, i);
+                    LoadVariableForCapture(captureOrder[i]);
+                    EnsureBoxed();
+                    _il.Emit(OpCodes.Stelem_Ref);
                 }
-            }
-
-            if (captureOrder.Count == 1)
-            {
-                LoadVariableForCapture(captureOrder[0]);
-                EnsureBoxed();
             }
             else
             {

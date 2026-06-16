@@ -943,6 +943,9 @@ public partial class RuntimeEmitter
         EmitInvokeTaggedTemplate(typeBuilder, runtime);
         EmitInvokeTaggedTemplateWithThis(typeBuilder, runtime);
         EmitObjectRest(typeBuilder, runtime);
+        // #685: array binding-pattern source normalizer — depends on IterateToList /
+        // GetIteratorFunction (emitted above via EmitIteratorMethodsAdvanced).
+        EmitArrayDestructureSource(typeBuilder, runtime);
         // JSON methods — gated on UsesJSON (also implied by UsesHttp).
         if (_features.UsesJSON)
         {

@@ -320,6 +320,9 @@ public partial class ILEmitter
         }
         else
         {
+            // RequireObjectCoercible: a non-optional read on `undefined` throws a
+            // guest TypeError instead of silently yielding undefined (#701).
+            EmitThrowIfUndefinedReceiverOnStack(g.Name.Lexeme);
             IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
         }
@@ -832,10 +835,15 @@ public partial class ILEmitter
             return;
         }
 
-        EmitExpression(gi.Object);
-        EmitBoxIfNeeded(gi.Object);
-        EmitExpression(gi.Index);
-        EmitBoxIfNeeded(gi.Index);
+        // Generic (non-array) dynamic bracket read. Spill both operands so the
+        // RequireObjectCoercible guard can inspect the receiver and splice the key
+        // into the TypeError message: `undefined[k]` throws instead of silently
+        // yielding undefined (#701). The optional `o?.[k]` case returned early above.
+        var idxRecvLocal = SpillBoxed(gi.Object);
+        var idxKeyLocal = SpillBoxed(gi.Index);
+        EmitThrowIfUndefinedIndexReceiver(idxRecvLocal, idxKeyLocal);
+        IL.Emit(OpCodes.Ldloc, idxRecvLocal);
+        IL.Emit(OpCodes.Ldloc, idxKeyLocal);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.GetIndex);
     }
 

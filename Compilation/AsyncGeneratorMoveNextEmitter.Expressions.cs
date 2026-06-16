@@ -45,11 +45,18 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldc_I4, stateNumber);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
 
+        // Mirror live spill temps to fields before the yield suspends (a value spilled before this yield
+        // and used after it would otherwise be lost across the MoveNextAsync re-entry — #400 analog).
+        _helpers.PersistLiveSpillsBeforeSuspend();
+
         // 4. Return ValueTask<bool>(true) - has value
         EmitReturnValueTaskBool(true);
 
         // 5. Mark the resume label (jumped to from state switch)
         _il.MarkLabel(resumeLabel);
+
+        // Restore spill temps from their fields on the resumed path (reached only via the state switch).
+        _helpers.RehydrateLiveSpillsAfterResume();
 
         // 5a. Check __returnRequested flag (set by generator.return())
         // If true, jump to the enclosing finally cleanup path or complete the generator
@@ -123,6 +130,13 @@ public partial class AsyncGeneratorMoveNextEmitter
 
         var iterableTemp = _il.DeclareLocal(typeof(object));
         _il.Emit(OpCodes.Stloc, iterableTemp);
+
+        // Reserve the suspension state for the delegated iterator's next() await (consumed by the async
+        // arm below, #688). Allocated AFTER the value expression so any awaits inside it take earlier
+        // states — matching AsyncGeneratorStateAnalyzer.VisitYield, which records this synthetic await
+        // point after visiting the yield value. Unused by the sync arm, but its resume label is always
+        // marked (the async arm is always emitted), so the state switch stays valid either way.
+        int awaitState = _currentSuspensionState++;
 
         // Check if it's IAsyncEnumerator<object> (async generators implement this)
         _il.Emit(OpCodes.Ldloc, iterableTemp);
@@ -205,45 +219,38 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Br, endLabel);
 
         // === Async loop ===
+        // Drive the delegated async iterator via its $IAsyncGenerator.next() — a Task<object> holding the
+        // { value, done } iterator result — and SUSPEND the enclosing async generator on it, rather than
+        // blocking on a synchronous ValueTask GetResult (which deadlocks a genuinely-async delegate the
+        // same way next() did before #631). next() maps directly onto the async-gen await mechanism; the
+        // reserved `awaitState` backs that suspension. Everything that reaches this arm
+        // (Isinst IAsyncEnumerator<object> succeeded) is an emitted async generator, which implements
+        // $IAsyncGenerator (#688).
         var asyncLoopEnd = _il.DefineLabel();
         _il.MarkLabel(asyncLoopLabel);
 
-        // Call MoveNextAsync
+        // result = await delegated.next()  — leaves the { value, done } dict on the stack
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldfld, delegatedField);
-        _il.Emit(OpCodes.Castclass, _types.IAsyncEnumeratorOfObject);
-        var moveNextAsync = _types.GetMethodNoParams(_types.IAsyncEnumeratorOfObject, "MoveNextAsync");
-        _il.Emit(OpCodes.Callvirt, moveNextAsync);
+        _il.Emit(OpCodes.Castclass, _ctx!.Runtime!.AsyncGeneratorInterfaceType);
+        _il.Emit(OpCodes.Callvirt, _ctx.Runtime.AsyncGeneratorNextMethod);
+        SetStackUnknown();
+        EmitAwaitFromValueOnStack(awaitState);
+        var asyncResultLocal = _il.DeclareLocal(typeof(object));
+        _il.Emit(OpCodes.Stloc, asyncResultLocal);
 
-        // Get result synchronously (simplified - full impl would suspend here)
-        var valueTaskLocal = _il.DeclareLocal(_types.ValueTaskOfBool);
-        _il.Emit(OpCodes.Stloc, valueTaskLocal);
-        _il.Emit(OpCodes.Ldloca, valueTaskLocal);
-        var getAwaiter = _types.GetMethodNoParams(_types.ValueTaskOfBool, "GetAwaiter");
-        _il.Emit(OpCodes.Call, getAwaiter);
-        var awaiterLocal = _il.DeclareLocal(_types.ValueTaskAwaiterOfBool);
-        _il.Emit(OpCodes.Stloc, awaiterLocal);
-        _il.Emit(OpCodes.Ldloca, awaiterLocal);
-        var getResult = _types.GetMethodNoParams(_types.ValueTaskAwaiterOfBool, "GetResult");
-        _il.Emit(OpCodes.Call, getResult);
+        // if (result.done) the delegation is finished.
+        _il.Emit(OpCodes.Ldloc, asyncResultLocal);
+        _il.Emit(OpCodes.Call, _ctx.Runtime.GetIteratorDone);
+        _il.Emit(OpCodes.Brtrue, asyncLoopEnd);
 
-        _il.Emit(OpCodes.Brfalse, asyncLoopEnd);
-
-        // Get Current
+        // <>2__current = result.value
         _il.Emit(OpCodes.Ldarg_0);
-        _il.Emit(OpCodes.Ldfld, delegatedField);
-        _il.Emit(OpCodes.Castclass, _types.IAsyncEnumeratorOfObject);
-        var currentGetter = _types.GetPropertyGetter(_types.IAsyncEnumeratorOfObject, "Current");
-        _il.Emit(OpCodes.Callvirt, currentGetter);
-
-        // Store in current field
-        var asyncValueTemp = _il.DeclareLocal(typeof(object));
-        _il.Emit(OpCodes.Stloc, asyncValueTemp);
-        _il.Emit(OpCodes.Ldarg_0);
-        _il.Emit(OpCodes.Ldloc, asyncValueTemp);
+        _il.Emit(OpCodes.Ldloc, asyncResultLocal);
+        _il.Emit(OpCodes.Call, _ctx.Runtime.GetIteratorValue);
         _il.Emit(OpCodes.Stfld, _builder.CurrentField);
 
-        // Set state and return
+        // Re-yield the delegated value to our own consumer: suspend at the re-yield state and return true.
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4, stateNumber);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
@@ -428,12 +435,31 @@ public partial class AsyncGeneratorMoveNextEmitter
     protected override void EmitAwait(Expr.Await a)
     {
         int stateNumber = _currentSuspensionState++;
-        var resumeLabel = _stateLabels[stateNumber];
-        var continueLabel = _il.DefineLabel();
 
         // 1. Emit the awaited expression (should produce Task<object> or $Promise or any value)
         EmitExpression(a.Expression);
         EnsureBoxed();
+
+        // 2+. Coerce to Task<object>, suspend the async generator until it settles, and leave the
+        // awaited result on the stack.
+        EmitAwaitFromValueOnStack(stateNumber);
+    }
+
+    /// <summary>
+    /// Emits the await of a value already on the evaluation stack (boxed): coerces it to
+    /// <c>Task&lt;object&gt;</c> (unwrapping $Promise / adopting thenables / wrapping plain values),
+    /// suspends the async-generator state machine until it settles (via
+    /// <see cref="EmitAwaitSuspensionReturn"/> and the emitted AsyncGeneratorAwaitContinue), then leaves
+    /// the awaited result on the stack. Shared by <see cref="EmitAwait"/>, the <c>for await…of</c> loop's
+    /// implicit next()/return() awaits (#697), and <c>yield*</c> delegation's next() await (#688);
+    /// <paramref name="stateNumber"/> is the reserved suspension state for this await. The shared
+    /// AwaiterField/AwaitedTaskField are safe to reuse because the state machine only ever has one
+    /// suspension in flight at a time.
+    /// </summary>
+    internal void EmitAwaitFromValueOnStack(int stateNumber)
+    {
+        var resumeLabel = _stateLabels[stateNumber];
+        var continueLabel = _il.DefineLabel();
 
         // 2. Convert to Task<object> - handle $Promise, Task<object>, or non-Task values
         // If it's a $Promise, extract its Task property
@@ -507,6 +533,11 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldc_I4, stateNumber);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
 
+        // Mirror live spill temps to fields before the state machine suspends: IL locals do not survive
+        // the MoveNextAsync re-entry, so a value spilled before this await and used after it would be lost
+        // (#400 analog). Suspending path only. (#688/#697 exercise this via `param + (await …)` bodies.)
+        _helpers.PersistLiveSpillsBeforeSuspend();
+
         // For async generators, we need to return a ValueTask<bool> that will complete when the await completes
         // The simplest approach: wrap the continuing task
         // Create a continuation that resumes MoveNextAsync
@@ -519,6 +550,10 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldc_I4_M1);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
+
+        // Restore spill temps from their fields — only on the resumed path; the synchronously-completed
+        // path (continueLabel below) never persisted and keeps its locals.
+        _helpers.RehydrateLiveSpillsAfterResume();
 
         // 8. Continue point (if was already completed)
         _il.MarkLabel(continueLabel);
@@ -591,6 +626,12 @@ public partial class AsyncGeneratorMoveNextEmitter
             EmitAsyncArrowFunction(af);
             return;
         }
+
+        // The async-generator state machine has no function display class wired yet (#674 lifts the
+        // sync free-function generator case; the async-generator path is tracked separately), so an
+        // arrow that WRITES a captured generator local would snapshot it by value and silently drop
+        // the write. Fail fast with a clear message instead of miscompiling to a wrong result.
+        CapturedWriteAnalysis.ThrowIfCapturedWriteWouldBeLost(af, _ctx?.DisplayClassFields);
 
         // Get the method for this arrow function (pre-compiled)
         if (_ctx!.ArrowMethods == null || !_ctx.ArrowMethods.TryGetValue(af, out var method))

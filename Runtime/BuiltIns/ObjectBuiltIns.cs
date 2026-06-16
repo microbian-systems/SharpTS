@@ -1438,6 +1438,17 @@ public static class ObjectBuiltIns
         var proto = args[0];
         var propertiesObject = args.Count > 1 ? args[1] : null;
 
+        // ECMA-262 §20.1.2.2 step 1: if Type(O) is neither Object nor Null,
+        // throw TypeError. Object.create(undefined/number/string/bool/symbol/…)
+        // throws; only a real object or null is a valid prototype. (Mirrors the
+        // compiled-mode $Runtime.ObjectCreate guard.) Thrown as a real
+        // SharpTSTypeError so guest `assert.throws(TypeError, …)` / `instanceof`
+        // see a TypeError instance, not a bare string.
+        if (proto is SharpTSUndefined or double or int or long or bool or string
+            or System.Numerics.BigInteger or SharpTSSymbol)
+            throw new Runtime.Exceptions.ThrowException(
+                new SharpTSTypeError("Object prototype may only be an Object or null"));
+
         // ECMA-262 §20.1.2.2 step 2: Let obj be OrdinaryObjectCreate(O).
         // OrdinaryObjectCreate creates a FRESH object whose [[Prototype]] is
         // O — it does NOT copy O's own properties. Inherited properties are
@@ -1451,8 +1462,9 @@ public static class ObjectBuiltIns
         result.Prototype = proto;
         // Object.create(null) → a null-prototype object that inherits nothing
         // (not even Object.prototype's methods). Distinguishes it from an
-        // ordinary object, whose Prototype is also null by default.
-        if (proto is null or SharpTSUndefined)
+        // ordinary object, whose Prototype is also null by default. (undefined
+        // is rejected by the Object-or-Null guard above, so only null reaches here.)
+        if (proto is null)
             result.IsNullPrototype = true;
 
         // If propertiesObject is provided, define properties using defineProperty semantics

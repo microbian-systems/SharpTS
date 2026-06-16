@@ -100,6 +100,7 @@ public class EmitterSyncTests
             "get_Resolver",
             "GetThisField",
             "GetHoistedVariableField",
+            "GetFunctionDCField",   // #674: exposes <>__functionDC so the base arrow emitter threads it in
             // --- Genuinely different behavior ---
             "EmitReturn",           // Generator return: set state -2, return false
             "EmitTryCatch",         // Generator exception handling
@@ -108,10 +109,15 @@ public class EmitterSyncTests
             "EmitYield",            // Core: yield value + suspend
             "EmitSuper",            // This field indirection
             "EmitDynamicImport",    // Dynamic import fallback
-            // #674: reject (with a clear error) an arrow that writes a variable captured from the
-            // generator scope — the generator SM has no function display class to share storage, so
-            // a by-value snapshot would silently drop the write. Read-only captures delegate to base.
+            // #674: a captured-AND-mutated generator local is lifted into a shared function display
+            // class; EmitArrowFunction still rejects the residual not-yet-DC-backed write case (e.g.
+            // instance generator methods) so it fails fast instead of dropping the write.
             "EmitArrowFunction",
+            // --- #674: closure mutation sharing (route captured-and-mutated locals through the DC) ---
+            "EmitVariable",         // Read a captured-and-mutated local through the function DC
+            "EmitAssign",           // Write a captured-and-mutated local through the function DC
+            "EmitStoreVariable",    // Store side of compound/logical/increment through the function DC
+            "EmitVarDeclaration",   // Initialize a captured-and-mutated local into the function DC
             // --- #500: non-local exits must run an enclosing flag-based finally first ---
             "EmitBreak",            // Route a break leaving a try through its finally(s)
             "EmitContinue",         // Route a continue leaving a try through its finally(s)

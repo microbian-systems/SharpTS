@@ -257,8 +257,10 @@ public partial class ILEmitter
             return;
         }
 
-        // Check if it's a namespace - load the static field
-        if (_ctx.NamespaceFields?.TryGetValue(name, out var nsField) == true)
+        // Check if it's a namespace - load the static field. ResolveNamespaceField walks enclosing
+        // namespace prefixes so a nested namespace's member body can name a sibling/enclosing
+        // namespace by its simple name (#665), not just a top-level namespace by full path.
+        if (_ctx.ResolveNamespaceField(name) is { } nsField)
         {
             IL.Emit(OpCodes.Ldsfld, nsField);
             SetStackUnknown();

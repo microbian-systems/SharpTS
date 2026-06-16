@@ -722,6 +722,27 @@ public class StringMethodTests
         Assert.Equal("9731\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCodePoint_LoneSurrogates(ExecutionMode mode)
+    {
+        // ECMA-262 §22.1.2.2 + §11.1.3 UTF16EncodeCodePoint: lone surrogates
+        // (0xD800–0xDFFF) are valid code points that encode to a single UTF-16
+        // code unit. .NET's char.ConvertFromUtf32 rejects them, so this guards
+        // the surrogate-aware encoding path (regressed RegExp/CharacterClassEscapes).
+        var source = """
+            const lo = String.fromCodePoint(0xDC00);
+            console.log(lo.length + " " + lo.charCodeAt(0));
+            const hi = String.fromCodePoint(0xD800);
+            console.log(hi.length + " " + hi.charCodeAt(0));
+            console.log(String.fromCodePoint(0x10FFFF).length);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        // Lone low/high surrogates → length-1 strings; max code point → 2 units.
+        Assert.Equal("1 56320\n1 55296\n2\n", output);
+    }
+
     #endregion
 
     #region String.prototype.codePointAt
