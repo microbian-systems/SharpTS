@@ -33,7 +33,15 @@ public partial class AsyncMoveNextEmitter
     /// suspension state for each await (AsyncStateAnalyzer.VisitForOf), consumed below in the same order.
     /// The base lowering still serves async arrows and async generators (the latter tracked by #697).
     /// </summary>
-    protected override void EmitForAwaitOf(Stmt.ForOf f)
+    protected override void EmitForAwaitOf(Stmt.ForOf f) => EmitForAwaitOf(f, labelName: null);
+
+    /// <summary>
+    /// Emits a <c>for await…of</c> loop, optionally carrying a statement <paramref name="labelName"/> so a
+    /// labeled <c>break</c>/<c>continue &lt;label&gt;</c> targets it (the labeled path delegates here so it
+    /// gets the same suspending async-iterator lowering as the unlabeled case, rather than enumerating the
+    /// async iterator synchronously and leaving the reserved await-state labels unmarked — #728).
+    /// </summary>
+    private void EmitForAwaitOf(Stmt.ForOf f, string? labelName)
     {
         // for await…of drives an async iterator: resolve it (Symbol.asyncIterator, else assume the
         // value is itself an async iterator / $IAsyncGenerator), then each iteration await
@@ -122,7 +130,8 @@ public partial class AsyncMoveNextEmitter
         var continueLabel = _il.DefineLabel();
 
         // break → cleanup (await iterator.return()); natural done → endLabel (no return() per spec).
-        EnterLoop(cleanupLabel, continueLabel);
+        // labelName (when set) lets `break`/`continue <label>` resolve to this loop.
+        EnterLoop(cleanupLabel, continueLabel, labelName);
 
         _il.MarkLabel(startLabel);
 

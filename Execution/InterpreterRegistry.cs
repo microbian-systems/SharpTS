@@ -36,6 +36,9 @@ public static class InterpreterRegistry
             .RegisterStmtAsync<Stmt.For>((s, i) => i.ExecuteForAsyncVT(s))
             .RegisterStmtAsync<Stmt.ForOf>((s, i) => i.ExecuteForOfAsyncVT(s))
             .RegisterStmtAsync<Stmt.ForIn>((s, i) => i.ExecuteForInAsyncVT(s))
+            // #728: route a labeled `for await` (and any labeled loop in async code) through the async
+            // path so the for-await async-iterator lowering runs and labels are parked for the loop.
+            .RegisterStmtAsync<Stmt.LabeledStatement>((s, i) => i.ExecuteLabeledStatementAsyncVT(s))
             .RegisterStmtAsync<Stmt.Switch>((s, i) => i.ExecuteSwitchAsyncVT(s))
             .RegisterStmtAsync<Stmt.TryCatch>((s, i) => i.ExecuteTryCatchAsyncVT(s))
             .RegisterStmtAsync<Stmt.Throw>((s, i) => i.ExecuteThrowAsyncVT(s))
