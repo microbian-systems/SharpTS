@@ -1785,6 +1785,101 @@ public class GeneratorTests
 
     #endregion
 
+    #region ASYNC generator function EXPRESSION closing over a BLOCK-scoped binding — issue #734
+
+    // The async analog of #678: an `async function*() {}` expression that closes over a block-scoped
+    // binding (loop variable, catch parameter, nested-block let/const) likewise cannot be lifted, so the
+    // GeneratorArrowLifter leaves it in place. EvaluateArrowFunction dispatches IsAsync && IsGenerator to
+    // a SharpTSAsyncArrowGeneratorFunction so the interpreter runs it natively (previously it was
+    // mishandled as a plain async function, leaving the capture out of scope — "Undefined variable").
+    // Interpreted-only: the compiler has no generator-expression IL path and reports a clear
+    // "Yield not supported in this context" error (asserted by the *_CompiledRejectsClearly test).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorExpression_CapturesForOfLoopVariable(ExecutionMode mode)
+    {
+        // The exact repro from issue #734.
+        var source = """
+            async function main() {
+              for (const n of [10]) {
+                const g = async function* () { yield n; };
+                const out: number[] = [];
+                for await (const v of g()) out.push(v);
+                console.log(out.join(','));
+              }
+            }
+            main();
+            """;
+
+        Assert.Equal("10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorExpression_CapturesNestedBlockLet(ExecutionMode mode)
+    {
+        // A let in a nested block captured by an in-place async generator expression, driven by direct
+        // next() (which the lazy coroutine resolves asynchronously).
+        var source = """
+            async function main() {
+              {
+                let y = 5;
+                const g = async function* () { yield y; yield y + 1; };
+                const it = g();
+                console.log((await it.next()).value + "," + (await it.next()).value);
+              }
+            }
+            main();
+            """;
+
+        Assert.Equal("5,6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorExpression_CapturesLoopVariablePerIteration(ExecutionMode mode)
+    {
+        // Each iteration's for-of binding is distinct, so an async generator created in one iteration
+        // captures that iteration's value — confirming the in-place generator closes over the
+        // per-iteration binding rather than a single shared slot.
+        var source = """
+            async function main() {
+              let out = "";
+              for (const n of [1, 2, 3]) {
+                const g = async function* () { yield n * 10; };
+                for await (const v of g()) out += v + ",";
+              }
+              console.log(out);
+            }
+            main();
+            """;
+
+        Assert.Equal("10,20,30,\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void AsyncGeneratorExpression_BlockScopedCapture_CompiledRejectsClearly()
+    {
+        // The compiler has no generator-expression IL path for an async generator that closes over a
+        // block-scoped binding; it must FAIL FAST with a clear message rather than crash (matching the
+        // sync #678 case).
+        var source = """
+            async function main() {
+              for (const n of [1, 2]) {
+                const g = async function* () { yield n; };
+                for await (const v of g()) console.log(v);
+              }
+            }
+            main();
+            """;
+
+        var ex = Assert.Throws<CompileException>(() => TestHarness.RunCompiled(source));
+        Assert.Contains("Yield not supported", ex.Message);
+    }
+
+    #endregion
+
     #region Named generator function EXPRESSION self-reference — issue #679
 
     // A NAMED generator function expression can call itself by its own name for recursion. The

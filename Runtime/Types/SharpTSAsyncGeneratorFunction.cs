@@ -36,8 +36,9 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable
         // Bind parameters to arguments
         ParameterBinder.Bind(_declaration.Parameters ?? [], arguments, environment, interpreter);
 
-        // Return the async generator object (not yet started)
-        return new SharpTSAsyncGenerator(_declaration, environment, interpreter);
+        // Return the async generator object (not yet started). It drives the same SharpTSAsyncGenerator
+        // as a function expression — only the body and captured environment differ.
+        return new SharpTSAsyncGenerator(_declaration.Body ?? [], environment, interpreter);
     }
 
     /// <summary>
@@ -57,6 +58,68 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable
         if (klass.Superclass != null)
             boundEnv.Define("super", klass.Superclass);
         return new SharpTSAsyncGeneratorFunction(_declaration, boundEnv);
+    }
+
+    public override string ToString() => $"[async function* {_declaration.Name?.Lexeme ?? "anonymous"}]";
+}
+
+/// <summary>
+/// Runtime wrapper for async generator function EXPRESSIONS (<c>async function*() { }</c> as an
+/// expression). The async analogue of <see cref="SharpTSArrowGeneratorFunction"/>.
+/// </summary>
+/// <remarks>
+/// Wraps an <see cref="Expr.ArrowFunction"/> with <c>IsAsync = true</c> and <c>IsGenerator = true</c>
+/// instead of a <see cref="Stmt.Function"/>. <see cref="GeneratorArrowLifter"/> lifts most async
+/// generator expressions to declarations, but leaves in place those that close over a block-scoped
+/// binding (loop variable, catch parameter, nested-block <c>let</c>/<c>const</c>); this native path runs
+/// those (#734). Drives the same <see cref="SharpTSAsyncGenerator"/> as a declaration.
+/// </remarks>
+/// <seealso cref="SharpTSAsyncGenerator"/>
+/// <seealso cref="SharpTSArrowGeneratorFunction"/>
+public class SharpTSAsyncArrowGeneratorFunction : ISharpTSCallable
+{
+    private readonly Expr.ArrowFunction _declaration;
+    private readonly RuntimeEnvironment _closure;
+    private readonly int _arity;
+
+    /// <summary>
+    /// Whether this has its own <c>this</c> binding (a <c>function*</c> expression) rather than
+    /// capturing <c>this</c> from the enclosing scope (an arrow — which cannot be a generator anyway).
+    /// </summary>
+    public bool HasOwnThis { get; }
+
+    public SharpTSAsyncArrowGeneratorFunction(Expr.ArrowFunction declaration, RuntimeEnvironment closure, bool hasOwnThis = false)
+    {
+        _declaration = declaration;
+        _closure = closure;
+        HasOwnThis = hasOwnThis;
+        _arity = declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
+    }
+
+    public int Arity() => _arity;
+
+    /// <summary>Creates a new async generator instance. Does NOT execute the function body.</summary>
+    public object? Call(Interpreter interpreter, List<object?> arguments)
+    {
+        RuntimeEnvironment environment = new(_closure);
+        // Named async generator function expression: bind self-reference alongside params.
+        if (_declaration.Name != null)
+        {
+            environment.Define(_declaration.Name.Lexeme, this);
+        }
+        ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
+
+        // Generator expressions always have a block body (the parser never produces an
+        // expression-bodied generator).
+        return new SharpTSAsyncGenerator(_declaration.BlockBody ?? [], environment, interpreter);
+    }
+
+    /// <summary>Binds <c>this</c>. Only applicable for function expressions with HasOwnThis=true.</summary>
+    public SharpTSAsyncArrowGeneratorFunction Bind(object thisObject)
+    {
+        RuntimeEnvironment boundEnv = new(_closure);
+        boundEnv.Define("this", thisObject);
+        return new SharpTSAsyncArrowGeneratorFunction(_declaration, boundEnv, hasOwnThis: true);
     }
 
     public override string ToString() => $"[async function* {_declaration.Name?.Lexeme ?? "anonymous"}]";

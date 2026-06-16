@@ -170,7 +170,7 @@ public partial class Interpreter
             case Expr.Await awaitExpr: return await EvaluateAwaitAsync(awaitExpr);
             case Expr.DynamicImport di: return EvaluateDynamicImport(di);
             case Expr.ImportMeta im: return EvaluateImportMeta(im);
-            case Expr.Yield yieldExpr: return EvaluateYield(yieldExpr);
+            case Expr.Yield yieldExpr: return await EvaluateYieldAsync(yieldExpr);
             case Expr.RegexLiteral regex: return RuntimeValue.FromObject(new SharpTSRegExp(regex.Pattern, regex.Flags));
             case Expr.ClassExpr classExpr: return EvaluateClassExpression(classExpr);
             default: throw new InvalidOperationException($"Runtime Error: Unhandled expression type in async Interpreter: {expr.GetType().Name}");
@@ -208,6 +208,34 @@ public partial class Interpreter
         }
 
         throw new YieldException(value, yieldExpr.IsDelegating);
+    }
+
+    /// <summary>
+    /// Evaluates a <c>yield</c>/<c>yield*</c> inside an async generator body. The body runs as an
+    /// ordinary interpreter async execution, so the yielded expression is evaluated asynchronously
+    /// (supporting <c>yield await x</c>) and the suspension is delegated to the active async generator
+    /// (<see cref="Runtime.Types.SharpTSAsyncGenerator.OnYieldAsync"/>), which hands the value to the
+    /// driving <c>next()</c> and awaits the resume. Falls back to the synchronous <c>yield</c> path when
+    /// no async generator is active (a misplaced yield reached via the async dispatcher).
+    /// </summary>
+    private async Task<RuntimeValue> EvaluateYieldAsync(Expr.Yield yieldExpr)
+    {
+        var activeGenerator = CurrentAsyncGenerator;
+        if (activeGenerator == null)
+            return EvaluateYield(yieldExpr);
+
+        object? value = yieldExpr.Value != null
+            ? (await EvaluateAsync(yieldExpr.Value)).ToObject()
+            : SharpTSUndefined.Instance;
+
+        object? result = await activeGenerator.OnYieldAsync(value, yieldExpr.IsDelegating);
+
+        // For a plain `yield`, the resume value is delivered verbatim (so `next(null)` yields null and a
+        // bare next() yields undefined). For `yield*`, a non-generator delegate's completion value is
+        // undefined; coalesce null → undefined to preserve that.
+        if (yieldExpr.IsDelegating)
+            return RuntimeValue.FromBoxed(result ?? SharpTSUndefined.Instance);
+        return RuntimeValue.FromBoxed(result);
     }
 
     /// <summary>
@@ -449,7 +477,15 @@ public partial class Interpreter
         RuntimeEnvironment closure = _environment;
 
         ISharpTSCallable func;
-        if (arrow.IsAsync)
+        if (arrow.IsAsync && arrow.IsGenerator)
+        {
+            // Async generator function expressions (async function*) — wrap in an async-generator-
+            // creating function. Dispatched before the plain-async branch so an async generator
+            // expression that closes over a block-scoped binding (left in place by GeneratorArrowLifter)
+            // runs natively rather than being mishandled as a plain async function (#734).
+            func = new SharpTSAsyncArrowGeneratorFunction(arrow, closure, arrow.HasOwnThis);
+        }
+        else if (arrow.IsAsync)
         {
             func = new SharpTSAsyncArrowFunction(arrow, closure, arrow.HasOwnThis);
         }

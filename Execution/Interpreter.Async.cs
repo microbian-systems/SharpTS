@@ -35,6 +35,10 @@ public partial class Interpreter
     internal async Task<object?> AwaitPreservingEnvironment(Task<object?> task)
     {
         var saved = _environment;
+        // Also preserve the active async generator: a generator body whose yielded expression awaits
+        // must resume with its own generator (and scope) restored, even if interleaved event-loop work
+        // ran another generator in the meantime (#752).
+        var savedGen = CurrentAsyncGenerator;
         try
         {
             return await task;
@@ -42,6 +46,7 @@ public partial class Interpreter
         finally
         {
             _environment = saved;
+            CurrentAsyncGenerator = savedGen;
         }
     }
 
@@ -261,15 +266,62 @@ public partial class Interpreter
 
             var result = await ExecuteLoopBodyAsync(forOf.Variable.Lexeme, value, forOf.Body);
             var (shouldBreak, shouldContinue, abruptResult) = HandleLoopResult(result, labels);
-            if (shouldBreak) return ExecutionResult.Success();
+            // An early exit (break, or a return/throw out of the loop body) closes the iterator before
+            // leaving: ECMA-262 AsyncIteratorClose calls return() and awaits it, so a suspended async
+            // generator runs its finally blocks (#697 / cleanup). A lazy generator is otherwise simply
+            // abandoned at its yield and its finally never runs. The labels (#728) match a labeled
+            // break/continue that targets this for-await loop rather than escaping it.
+            if (shouldBreak)
+            {
+                await CloseAsyncIteratorOnEarlyExit(asyncIterator);
+                return ExecutionResult.Success();
+            }
             if (shouldContinue) continue;
-            if (abruptResult.HasValue) return abruptResult.Value;
+            if (abruptResult.HasValue)
+            {
+                await CloseAsyncIteratorOnEarlyExit(asyncIterator);
+                return abruptResult.Value;
+            }
 
             // Process any pending timer callbacks
             ProcessPendingCallbacks();
         }
 
         return ExecutionResult.Success();
+    }
+
+    /// <summary>
+    /// Closes an async iterator when a <c>for await…of</c> exits early (break, or a return/throw out of
+    /// the loop body) — ECMA-262 AsyncIteratorClose. Calls <c>return()</c> if the iterator provides one
+    /// and awaits it, so a suspended async generator runs its <c>finally</c> blocks before the loop
+    /// leaves. Cleanup is best-effort: a missing <c>return()</c> is skipped, and a rejection from the
+    /// <c>return()</c> itself is swallowed so the loop's own completion (the break / return / throw that
+    /// triggered the close) takes precedence.
+    /// </summary>
+    private async Task CloseAsyncIteratorOnEarlyExit(object asyncIterator)
+    {
+        object? result;
+        try
+        {
+            result = CallMethodOnObject(asyncIterator, "return", []);
+        }
+        catch
+        {
+            // No return() method (or it threw synchronously) — nothing to close.
+            return;
+        }
+
+        try
+        {
+            if (result is SharpTSPromise promise)
+                await AwaitPreservingEnvironment(promise.Task);
+            else if (result is Task<object?> task)
+                await AwaitPreservingEnvironment(task);
+        }
+        catch
+        {
+            // The iterator's return() rejected during cleanup; the loop's own completion wins.
+        }
     }
 
     /// <summary>

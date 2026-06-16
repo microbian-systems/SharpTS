@@ -475,6 +475,16 @@ public partial class Interpreter : IDisposable
     internal Func<object?, bool, object?>? YieldCallback { get; set; }
 
     /// <summary>
+    /// The async generator whose body is currently executing, if any. An async generator body runs as
+    /// an ordinary interpreter async execution on the single event-loop thread; this binding lets the
+    /// async <c>yield</c> evaluator (<see cref="EvaluateYieldAsync"/>) suspend through the right
+    /// generator. It is re-asserted across every suspension the body crosses — guest awaits restore it
+    /// via <see cref="AwaitPreservingEnvironment"/>, and the generator re-asserts it itself at each
+    /// <c>yield</c> resume — so interleaved async generators never observe each other's binding.
+    /// </summary>
+    internal Runtime.Types.SharpTSAsyncGenerator? CurrentAsyncGenerator { get; set; }
+
+    /// <summary>
     /// Registers a timer for tracking. Called by TimerBuiltIns when creating setTimeout/setInterval.
     /// Enables proper cleanup of all pending timers when the interpreter is disposed.
     /// </summary>
