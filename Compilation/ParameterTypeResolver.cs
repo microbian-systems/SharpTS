@@ -84,6 +84,28 @@ public static class ParameterTypeResolver
     }
 
     /// <summary>
+    /// Widens any parameter that has a <b>default value</b> to an <c>object</c> slot. Required for
+    /// function kinds that apply parameter defaults via the runtime entry prologue
+    /// (<see cref="ILEmitter.EmitDefaultParameters"/>) rather than via <see cref="OverloadGenerator"/>
+    /// lower-arity forwarding — i.e. arrow functions and function expressions, which get no overloads.
+    /// The prologue detects a missing/undefined argument by comparing the slot against null and the
+    /// <c>$Undefined</c> sentinel, and value-call padding (<c>$TSFunction.AdjustArgs</c>) fills omitted
+    /// slots with that sentinel. Only an <c>object</c> slot can hold it: a value-type slot can never be
+    /// null (and emits invalid <c>ldarg; brfalse</c> IL), and a typed reference slot (e.g. <c>string</c>)
+    /// coerces the sentinel to a real value (e.g. the string <c>"undefined"</c>) before the prologue can
+    /// observe it. Either way the default could never fire. Mirrors the optional-without-default widening
+    /// already applied in <see cref="ResolveParameters"/>. (#646)
+    /// </summary>
+    public static void WidenDefaultedParamsToObject(Type[] resolved, List<Stmt.Parameter> parameters, Type objectType)
+    {
+        for (int i = 0; i < parameters.Count && i < resolved.Length; i++)
+        {
+            if (parameters[i].DefaultValue != null && resolved[i] != objectType)
+                resolved[i] = objectType;
+        }
+    }
+
+    /// <summary>
     /// #372: widen a <c>number</c>/<c>boolean</c> parameter slot (unboxed <c>double</c>/<c>bool</c>) to
     /// <c>object</c> when the type checker flagged it as possibly holding the runtime <c>undefined</c>
     /// sentinel (a body reassignment of an <c>any</c>/<c>undefined</c> value, e.g.

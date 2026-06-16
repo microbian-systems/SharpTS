@@ -128,6 +128,9 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
     /// Emits the complete MoveNext method body.
     /// </summary>
     public void EmitMoveNext(List<Stmt> body, CompilationContext ctx, Type returnType)
+        => EmitMoveNext(body, ctx, returnType, null);
+
+    public void EmitMoveNext(List<Stmt> body, CompilationContext ctx, Type returnType, List<Stmt.Parameter>? parameters)
     {
         // Note: _il is initialized in constructor via GetILGenerator()
         _ctx = ctx;
@@ -154,6 +157,16 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
 
         // State dispatch switch
         EmitStateDispatch();
+
+        // Apply parameter defaults on initial entry (#646). Placed after the state-dispatch
+        // switch so a resume (state >= 0) jumps straight to its await label past this code; on
+        // initial entry (state -1) the switch falls through to here. Arrow parameter fields are
+        // always object-typed (AsyncArrowStateMachineBuilder), so the null / $Undefined check
+        // is valid — unlike the sync-arrow path, no slot widening is needed.
+        if (parameters != null)
+        {
+            EmitDefaultParameters(parameters);
+        }
 
         // Emit the body
         foreach (var stmt in body)
@@ -194,6 +207,56 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
 
         // Default case - continue with normal execution
         _il.MarkLabel(defaultLabel);
+    }
+
+    /// <summary>
+    /// Applies parameter defaults at async-arrow entry (#646). For each parameter with a default
+    /// value, if its hoisted state-machine field holds null or the <c>$Undefined</c> sentinel, the
+    /// default expression is evaluated and stored. Mirrors the async-function path
+    /// (<see cref="AsyncMoveNextEmitter"/>); parameter fields are object-typed so the null /
+    /// <c>$Undefined</c> check is sound. Invoked only on initial entry (see EmitMoveNext placement),
+    /// so no defaults-applied guard field is required.
+    /// </summary>
+    private void EmitDefaultParameters(List<Stmt.Parameter> parameters)
+    {
+        foreach (var param in parameters)
+        {
+            if (param.DefaultValue == null) continue;
+
+            var field = _builder.GetVariableField(param.Name.Lexeme);
+            if (field == null) continue; // parameter not hoisted
+
+            var applyDefault = _il.DefineLabel();
+            var checkUndefined = _il.DefineLabel();
+            var skipDefault = _il.DefineLabel();
+
+            // Load the parameter field value.
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, field);
+
+            // null -> apply default; otherwise test for the $Undefined sentinel.
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Brtrue, checkUndefined);
+            _il.Emit(OpCodes.Pop);
+            _il.Emit(OpCodes.Br, applyDefault);
+
+            _il.MarkLabel(checkUndefined);
+            _il.Emit(OpCodes.Isinst, _ctx!.Runtime!.UndefinedType);
+            _il.Emit(OpCodes.Brtrue, applyDefault);
+            _il.Emit(OpCodes.Br, skipDefault);
+
+            // field = <default>
+            _il.MarkLabel(applyDefault);
+            EmitExpression(param.DefaultValue);
+            EnsureBoxed();
+            var temp = _il.DeclareLocal(typeof(object));
+            _il.Emit(OpCodes.Stloc, temp);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldloc, temp);
+            _il.Emit(OpCodes.Stfld, field);
+
+            _il.MarkLabel(skipDefault);
+        }
     }
 
     #region StatementEmitterBase Overrides

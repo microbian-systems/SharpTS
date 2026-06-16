@@ -102,6 +102,10 @@ public partial class ILCompiler
 
         _functions.Builders[qualifiedFunctionName] = methodBuilder;
 
+        // User TS function: when invoked as a value, omitted trailing args must pad with the
+        // `undefined` sentinel (JS semantics), not CLR null. (#640)
+        MarkPadsUndefined(methodBuilder);
+
         // Flag eagerly (phase 3) so direct-call sites emitted in phase 7 can publish
         // caller args to the thread-static before OpCodes.Call. Uses the same scanner
         // the prologue consults, keeping the two sides in sync. Overload signatures
@@ -1410,6 +1414,20 @@ public partial class ILCompiler
                 emitter
             );
         }
+    }
+
+    /// <summary>
+    /// Marks a user TypeScript function method with the <c>$PadUndefined</c> attribute so that
+    /// <c>$TSFunction.AdjustArgs</c> pads omitted trailing arguments with the <c>undefined</c>
+    /// sentinel (JS semantics) when the function is invoked as a value (cross-module imports,
+    /// callbacks, <c>$TSFunction.Invoke</c>) — matching the direct-call path. Runtime built-ins
+    /// stay unmarked and keep CLR-null padding. No-op when the runtime attribute is unavailable. (#640)
+    /// </summary>
+    internal void MarkPadsUndefined(MethodBuilder method)
+    {
+        if (_runtime?.PadUndefinedAttrCtor != null)
+            method.SetCustomAttribute(
+                new System.Reflection.Emit.CustomAttributeBuilder(_runtime.PadUndefinedAttrCtor, []));
     }
 
     /// <summary>

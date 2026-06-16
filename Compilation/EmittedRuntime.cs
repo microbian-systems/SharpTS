@@ -265,6 +265,15 @@ public class EmittedRuntime
     public TypeBuilder CapturesArgumentsAttrType { get; set; } = null!;
     public ConstructorBuilder CapturesArgumentsAttrCtor { get; set; } = null!;
 
+    // Marker attribute applied to USER TypeScript function methods (declarations,
+    // arrows/function expressions, methods, async stubs). When the wrapped method
+    // carries it, $TSFunction.AdjustArgs pads omitted trailing arguments with the
+    // `undefined` sentinel ($Undefined.Instance) instead of CLR null, matching JS
+    // semantics and the direct-call path. Runtime built-ins stay unmarked and keep
+    // null padding (their bodies use null-checks for optional-arg absence). (#640)
+    public TypeBuilder PadUndefinedAttrType { get; set; } = null!;
+    public ConstructorBuilder PadUndefinedAttrCtor { get; set; } = null!;
+
     // String methods
     public MethodBuilder StringCharAt { get; set; } = null!;
     public MethodBuilder StringSubstring { get; set; } = null!;

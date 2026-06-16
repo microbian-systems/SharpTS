@@ -633,7 +633,7 @@ public partial class ILCompiler
                         false, // UsesThis
                         []     // AsyncArrows - handled separately via _async.ArrowBuilders
                     ), _types);
-                arrowEmitter.EmitMoveNext(bodyStatements, ctx, _types.Object);
+                arrowEmitter.EmitMoveNext(bodyStatements, ctx, _types.Object, arrow.Parameters);
             }
         }
 

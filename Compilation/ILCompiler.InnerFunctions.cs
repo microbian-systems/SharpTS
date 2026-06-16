@@ -415,6 +415,10 @@ public partial class ILCompiler
                 _innerFunctionDisplayClasses[func] = displayClass;
                 _innerFunctionMethods[func] = invokeMethod;
             }
+
+            // User inner-function body: when invoked as a value, omitted trailing args must
+            // pad with the `undefined` sentinel (JS semantics), not CLR null. (#640)
+            MarkPadsUndefined(_innerFunctionMethods[func]);
         }
     }
 

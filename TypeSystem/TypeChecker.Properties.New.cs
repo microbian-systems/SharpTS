@@ -759,7 +759,11 @@ public partial class TypeChecker
             for (int i = 0; i < newExpr.Arguments.Count; i++)
             {
                 TypeInfo argType = CheckExpr(newExpr.Arguments[i]);
-                if (!IsCompatible(paramTypes[i], argType))
+                // Optional/default constructor params accept an explicit `undefined` (#668);
+                // a rest parameter's elements are not optional in that sense.
+                bool optional = i >= ctorType.MinArity &&
+                                !(ctorType.HasRestParam && i >= paramTypes.Count - 1);
+                if (!IsArgumentCompatible(paramTypes[i], argType, optional))
                     throw new TypeCheckException($" Constructor argument {i + 1} expected type '{paramTypes[i]}' but got '{argType}'.", tsCode: "TS2345");
             }
         }
