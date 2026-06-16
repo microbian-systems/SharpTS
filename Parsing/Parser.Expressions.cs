@@ -954,6 +954,7 @@ public partial class Parser
                     // Parse regular identifier (including 'get' and 'set' as property names)
                     Token name = ConsumePropertyName("Expect property name.");
                     Expr value;
+                    bool isShorthandDefault = false;
 
                     if (Check(TokenType.LEFT_PAREN))
                     {
@@ -965,13 +966,23 @@ public partial class Parser
                         // Explicit property: { x: value }
                         value = Expression();
                     }
+                    else if (Match(TokenType.EQUAL))
+                    {
+                        // Cover-grammar shorthand-with-default: `{ x = 5 }` (an ES CoverInitializedName).
+                        // Only valid as an object DESTRUCTURING pattern; stored as `{ x: (x = 5) }` so the
+                        // #754 assignment-destructuring lowering recovers the `(target, default)`. A
+                        // pure-expression `{ x = 5 }` is rejected in CheckObject via IsShorthandDefault (#780).
+                        value = new Expr.Assign(name, Expression());
+                        isShorthandDefault = true;
+                    }
                     else
                     {
                         // Shorthand property: { x } -> { x: x }
                         value = new Expr.Variable(name);
                     }
 
-                    properties.Add(new Expr.Property(new Expr.IdentifierKey(name), value));
+                    properties.Add(new Expr.Property(new Expr.IdentifierKey(name), value,
+                        IsShorthandDefault: isShorthandDefault));
                 } while (Match(TokenType.COMMA));
             }
             Consume(TokenType.RIGHT_BRACE, "Expect '}' after object literal.");

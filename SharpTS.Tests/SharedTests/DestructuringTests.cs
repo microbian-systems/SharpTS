@@ -1,4 +1,5 @@
 using SharpTS.Tests.Infrastructure;
+using SharpTS.TypeSystem.Exceptions;
 using Xunit;
 
 namespace SharpTS.Tests.SharedTests;
@@ -480,6 +481,166 @@ public class DestructuringTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("[100,200] 100 200\n1 2 1 2\n", output);
+    }
+
+    #endregion
+
+    #region Undefined-only Defaults (#784)
+
+    // #784: a destructuring default applies ONLY when the matched value is `undefined`, never `null`
+    // (ECMA-262), unlike `??`. Declaration form, array and object patterns.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Defaults_AppliedForUndefinedNotNull_Declaration(ExecutionMode mode)
+    {
+        var source = """
+            const [a = 9] = [null];
+            const [b = 9] = [undefined];
+            const o: { x?: number | null } = { x: null };
+            const { x = 9 } = o;
+            console.log(String(a), String(b), String(x));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("null 9 null\n", output);
+    }
+
+    // #784: same undefined-only rule for assignment destructuring (#754 form), AND a value-type default
+    // over an ABSENT element must yield the default — not NaN. The lowered spill temp lives inside an
+    // expression, so an unboxed numeric slot would coerce the runtime `undefined` sentinel (compiled).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Defaults_AssignmentDestructuring_UndefinedOnlyAndValueType(ExecutionMode mode)
+    {
+        var source = """
+            let a; [a = 5] = [null];
+            let b; [b = 5] = [];
+            const arr: number[] = [];
+            let c; [c = 5] = arr;
+            const o: { z?: number } = {};
+            let d; ({ z: d = 5 } = o);
+            console.log(String(a), String(b), String(c), String(d));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("null 5 5 5\n", output);
+    }
+
+    // #784: the default expression is evaluated lazily (only when undefined) and the matched value is
+    // read exactly once (a getter is not invoked twice).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Defaults_LazyAndSingleEvaluation(ExecutionMode mode)
+    {
+        var source = """
+            let ran = 0;
+            const side = () => { ran++; return 99; };
+            const [p = side()] = [7];
+            console.log(p, ran);
+            const [q = side()] = [undefined];
+            console.log(q, ran);
+            let reads = 0;
+            const src = { get k() { reads++; return undefined; } };
+            const { k = 42 } = src;
+            console.log(k, reads);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        // p: default not evaluated (value present); q: default evaluated exactly once; k: getter read once.
+        Assert.Equal("7 0\n99 1\n42 1\n", output);
+    }
+
+    #endregion
+
+    #region Typed-array Rest (#781)
+
+    // #781: a rest element over a typed-array source must collect a fresh Array (Array.isArray === true),
+    // not a typed-array slice. Interpreter-only: compiled `new Uint8Array([...])` is blocked by #782.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void ArrayDestructuring_TypedArrayRest_BindsFreshArray(ExecutionMode mode)
+    {
+        var source = """
+            const [a, ...rest] = new Uint8Array([1, 2, 3]);
+            console.log(a);
+            console.log(Array.isArray(rest));
+            console.log(rest.length);
+            console.log(rest[0], rest[1]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\ntrue\n2\n2 3\n", output);
+    }
+
+    #endregion
+
+    #region Object Shorthand-with-default Assignment Destructuring (#780)
+
+    // #780: `({ a = 5 } = src)` — the object-pattern cover-grammar form is now accepted by the parser and
+    // routes through the #754 assignment-destructuring lowering (undefined-only default, #784).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AssignmentDestructuring_ObjectShorthandDefault(ExecutionMode mode)
+    {
+        var source = """
+            const present: { a?: number } = { a: 10 };
+            let a; ({ a = 5 } = present);
+            const missing: { b?: number } = {};
+            let b; ({ b = 5 } = missing);
+            console.log(String(a), String(b));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10 5\n", output);
+    }
+
+    // #780: the cover-grammar `{ a = 5 }` is only valid as a destructuring pattern; using it as a plain
+    // object-literal EXPRESSION remains a semantic error, as in tsc.
+    [Fact]
+    public void ObjectLiteral_ShorthandDefault_AsExpression_IsTypeError()
+    {
+        var source = """
+            let a = 1;
+            const o = { a = 5 };
+            console.log(o);
+            """;
+
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    #endregion
+
+    #region Nested Pattern with Default in Assignment Destructuring (#779)
+
+    // #779: a nested array/object pattern that itself carries a default in an ASSIGNMENT destructuring.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AssignmentDestructuring_NestedArrayPatternWithDefault(ExecutionMode mode)
+    {
+        var source = """
+            let a; [[a] = [9]] = [[1]];
+            let b; [[b] = [9]] = [];
+            console.log(String(a), String(b));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1 9\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AssignmentDestructuring_NestedObjectPatternWithDefault(ExecutionMode mode)
+    {
+        var source = """
+            const src: { p?: { x: number } } = { p: { x: 1 } };
+            let x; ({ p: { x: x } = { x: 7 } } = src);
+            const empty: { p?: { x: number } } = {};
+            let y; ({ p: { x: y } = { x: 7 } } = empty);
+            console.log(String(x), String(y));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1 7\n", output);
     }
 
     #endregion

@@ -190,10 +190,10 @@ public partial class Parser
 
             if (element.Pattern is IdentifierPattern id)
             {
-                // Apply default value if present
+                // Apply default value if present (undefined-only, #784)
                 if (id.DefaultValue != null)
                 {
-                    accessExpr = new Expr.NullishCoalescing(accessExpr, id.DefaultValue);
+                    accessExpr = DefaultIfUndefined(accessExpr, id.DefaultValue, statements, pattern.Line);
                 }
                 statements.Add(new Stmt.Var(id.Name, null, accessExpr));
             }
@@ -247,11 +247,11 @@ public partial class Parser
 
             if (prop.Value is IdentifierPattern id)
             {
-                // Apply default value if present
+                // Apply default value if present (undefined-only, #784)
                 Expr? defaultVal = prop.DefaultValue ?? id.DefaultValue;
                 if (defaultVal != null)
                 {
-                    accessExpr = new Expr.NullishCoalescing(accessExpr, defaultVal);
+                    accessExpr = DefaultIfUndefined(accessExpr, defaultVal, statements, pattern.Line);
                 }
                 statements.Add(new Stmt.Var(id.Name, null, accessExpr));
             }
@@ -290,7 +290,9 @@ public partial class Parser
         Token rhsTemp = GenerateTempVar(line);
         stmts.Add(new Stmt.Var(rhsTemp, null, value));
         LowerAssignmentTarget(pattern, new Expr.Variable(rhsTemp), stmts, line);
-        return new Expr.DestructuringAssign(stmts, new Expr.Variable(rhsTemp));
+        // Retain the raw (pattern, default) so this node can be re-lowered if it turns out to be a nested
+        // element WITH a default (`[[a] = []]`) — see LowerElementWithDefault (#779).
+        return new Expr.DestructuringAssign(stmts, new Expr.Variable(rhsTemp), RawTarget: pattern, RawDefault: value);
     }
 
     private void LowerAssignmentTarget(Expr target, Expr source, List<Stmt> stmts, int line)
@@ -352,36 +354,55 @@ public partial class Parser
 
     // Lowers one pattern element / property value to an assignment, peeling off a default (`= expr`)
     // that the eager parser captured as an Assign (variable target) or Set/SetIndex/SetPrivate (member
-    // target). `?? default` applies the default when the read is null/undefined (matching the existing
-    // declaration desugaring; ECMA-262 is undefined-only — tracked separately).
+    // target). The default is applied only when the read is `undefined` (ECMA-262 AssignmentElement),
+    // via the shared DefaultIfUndefined helper (#784).
     private void LowerElementWithDefault(Expr element, Expr access, List<Stmt> stmts, int line)
     {
         switch (Unwrap(element))
         {
             case Expr.Assign def:
                 LowerAssignmentTarget(new Expr.Variable(def.Name),
-                    new Expr.NullishCoalescing(access, def.Value), stmts, line);
+                    DefaultIfUndefined(access, def.Value, stmts, line), stmts, line);
                 break;
             case Expr.Set def:
                 LowerAssignmentTarget(new Expr.Get(def.Object, def.Name),
-                    new Expr.NullishCoalescing(access, def.Value), stmts, line);
+                    DefaultIfUndefined(access, def.Value, stmts, line), stmts, line);
                 break;
             case Expr.SetIndex def:
                 LowerAssignmentTarget(new Expr.GetIndex(def.Object, def.Index),
-                    new Expr.NullishCoalescing(access, def.Value), stmts, line);
+                    DefaultIfUndefined(access, def.Value, stmts, line), stmts, line);
                 break;
             case Expr.SetPrivate def:
                 LowerAssignmentTarget(new Expr.GetPrivate(def.Object, def.Name),
-                    new Expr.NullishCoalescing(access, def.Value), stmts, line);
+                    DefaultIfUndefined(access, def.Value, stmts, line), stmts, line);
                 break;
-            case Expr.DestructuringAssign:
-                // A nested pattern WITH a default (`[[a] = []]`, `{p: {x} = {}}`) was eagerly lowered,
-                // losing its raw target; recovering it needs cover-grammar reparsing. Rare — see #779.
-                throw new Exception("Nested destructuring with a default is not supported in assignment destructuring.");
+            case Expr.DestructuringAssign { RawTarget: { } rawTarget, RawDefault: { } rawDefault }:
+                // A nested pattern WITH a default (`[[a] = []]`, `{p: {x} = {}}`): the eager parser lowered
+                // the inner `[a] = []` to a DestructuringAssign but kept its raw (target, default), so
+                // re-lower the inner pattern against the defaulted access — discarding the inner node's
+                // pre-built statements, which bound against the wrong (inner-rhs) source (#779).
+                LowerAssignmentTarget(rawTarget, DefaultIfUndefined(access, rawDefault, stmts, line), stmts, line);
+                break;
             default:
                 LowerAssignmentTarget(element, access, stmts, line);
                 break;
         }
+    }
+
+    // Destructuring defaults are applied ONLY when the matched value is `undefined`, never `null`
+    // (ECMA-262 ArrayBindingPattern / ObjectBindingPattern / AssignmentElement) — unlike `??`, which
+    // also replaces null. The access is spilled into a temp so it is evaluated exactly once (a property
+    // read may invoke a getter) and the ternary's repeated operand is a side-effect-free temp read.
+    // Shared by both the declaration desugaring and the #754 assignment-destructuring lowering. #784
+    private Expr DefaultIfUndefined(Expr access, Expr defaultValue, List<Stmt> stmts, int line)
+    {
+        Token valueTemp = GenerateTempVar(line);
+        stmts.Add(new Stmt.Var(valueTemp, null, access));
+        Expr isUndefined = new Expr.Binary(
+            new Expr.Variable(valueTemp),
+            new Token(TokenType.EQUAL_EQUAL_EQUAL, "===", null, line),
+            new Expr.Literal(SharpTS.Runtime.Types.SharpTSUndefined.Instance));
+        return new Expr.Ternary(isUndefined, defaultValue, new Expr.Variable(valueTemp));
     }
 
     private static Expr MakeAssignmentExpr(Expr target, Expr value) => Unwrap(target) switch
