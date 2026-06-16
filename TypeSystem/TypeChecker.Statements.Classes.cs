@@ -10,6 +10,21 @@ namespace SharpTS.TypeSystem;
 /// </summary>
 public partial class TypeChecker
 {
+    /// <summary>
+    /// Maps a class computed method/accessor key expression to the canonical well-known-symbol member
+    /// name the type system uses (<c>Symbol.iterator</c> → <c>@@iterator</c>,
+    /// <c>Symbol.asyncIterator</c> → <c>@@asyncIterator</c>, …) — matching the <c>@@</c> convention the
+    /// parser already applies to symbol-keyed members in type/interface positions
+    /// (see <c>Parser.Types.cs</c>). Returns null for keys that aren't a static <c>Symbol.&lt;name&gt;</c>
+    /// access (an arbitrary computed key, e.g. <c>[myVar]()</c>, isn't modeled as a named member —
+    /// it parses and runs but carries no static member type, mirroring computed accessors).
+    /// </summary>
+    private static string? TryGetWellKnownSymbolMemberName(Expr? key) => key switch
+    {
+        Expr.Get { Object: Expr.Variable { Name.Lexeme: "Symbol" }, Name.Lexeme: var n } => "@@" + n,
+        _ => null
+    };
+
     private void CheckClassDeclaration(Stmt.Class classStmt)
     {
         // Check class decorators
@@ -99,9 +114,35 @@ public partial class TypeChecker
             return new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, null, paramNames);
         }
 
+        // Computed symbol-keyed methods (`[Symbol.iterator]() {...}`) are modeled under their canonical
+        // well-known-symbol member name (@@iterator, @@asyncIterator, …) so structural iterability and
+        // member lookup see them (#592/#485). They carry the synthetic `<computed>` name, so they are
+        // pulled out of the name-keyed overload grouping below. Arbitrary computed keys (e.g. `[v]()`)
+        // aren't statically named members and are skipped (still parsed/checked, just untyped — like
+        // computed accessors).
+        foreach (var method in classStmt.Methods.Where(m => m.ComputedKey != null && m.Body != null))
+        {
+            if (TryGetWellKnownSymbolMemberName(method.ComputedKey) is not { } memberName)
+                continue;
+            // Build the factory signature WITHOUT the generator-return wrapping BuildMethodFuncType
+            // applies: a [Symbol.iterator]()/[Symbol.asyncIterator]() factory must return the iterator
+            // type itself (e.g. `Iterator<number>` — what for...of consumes and reads its element from),
+            // not Generator<Iterator<number>>. An un-annotated generator factory stays <inferred> here
+            // and is filled in by the inferred-return post-pass below as Generator<yieldType>.
+            var (cParamTypes, cRequired, cHasRest, cParamNames) = BuildFunctionSignature(
+                method.Parameters, validateDefaults: true, contextName: $"method '{memberName}'");
+            TypeInfo factoryReturn = method.ReturnType != null ? ToTypeInfo(method.ReturnType) : new TypeInfo.Inferred();
+            var funcType = new TypeInfo.Function(cParamTypes, factoryReturn, cRequired, cHasRest, null, cParamNames);
+            if (method.IsStatic)
+                mutableClass.StaticMethods[memberName] = funcType;
+            else
+                mutableClass.Methods[memberName] = funcType;
+            mutableClass.MethodAccess[memberName] = method.Access;
+        }
+
         // First pass: collect signatures, grouping overloads
-        // Group methods by name to detect overloads
-        var methodGroups = classStmt.Methods.GroupBy(m => m.Name.Lexeme).ToList();
+        // Group methods by name to detect overloads (computed-key methods handled above)
+        var methodGroups = classStmt.Methods.Where(m => m.ComputedKey == null).GroupBy(m => m.Name.Lexeme).ToList();
 
         foreach (var group in methodGroups)
         {
@@ -603,7 +644,27 @@ public partial class TypeChecker
                 // Get the method type (could be Function or OverloadedFunction)
                 // For ES2022 private methods, look in PrivateMethodTypes/StaticPrivateMethodTypes
                 TypeInfo declaredMethodType;
-                if (method.IsPrivate)
+                if (method.ComputedKey != null)
+                {
+                    // Computed symbol-keyed methods carry the `<computed>` name, so they aren't keyed
+                    // in the method dictionaries by a static name. Well-known ones are stored under their
+                    // @@name; reuse that type. An arbitrary computed key has no modeled member — build a
+                    // signature inline just to bind parameter types for the body check.
+                    string? memberName = TryGetWellKnownSymbolMemberName(method.ComputedKey);
+                    var computedDict = method.IsStatic ? classTypeForBody.StaticMethods : classTypeForBody.Methods;
+                    if (memberName != null && computedDict.TryGetValue(memberName, out var computedType))
+                    {
+                        declaredMethodType = computedType;
+                    }
+                    else
+                    {
+                        var (cParamTypes, cRequired, cHasRest, cParamNames) = BuildFunctionSignature(
+                            method.Parameters, validateDefaults: true, contextName: "computed method");
+                        TypeInfo cReturn = method.ReturnType != null ? ToTypeInfo(method.ReturnType) : new TypeInfo.Inferred();
+                        declaredMethodType = new TypeInfo.Function(cParamTypes, cReturn, cRequired, cHasRest, null, cParamNames);
+                    }
+                }
+                else if (method.IsPrivate)
                 {
                     declaredMethodType = method.IsStatic
                         ? classTypeForBody.StaticPrivateMethodTypes[method.Name.Lexeme]
@@ -706,22 +767,29 @@ public partial class TypeChecker
                         else if (method.IsAsync && inferredReturn is not TypeInfo.Void)
                             inferredReturn = new TypeInfo.Promise(inferredReturn);
 
-                        // Update the method type in the class
+                        // Update the method type in the class. Computed symbol-keyed methods are keyed
+                        // by their @@name (e.g. @@iterator), not the synthetic `<computed>` lexeme; an
+                        // arbitrary computed key (no well-known @@name) carries no static member to update.
                         var updatedMethodType = new TypeInfo.Function(methodType.ParamTypes, inferredReturn, methodType.RequiredParams, methodType.HasRestParam, methodType.ThisType, methodType.ParamNames);
-                        string mName = method.Name.Lexeme;
-                        if (method.IsPrivate)
+                        string? mName = method.ComputedKey != null
+                            ? TryGetWellKnownSymbolMemberName(method.ComputedKey)
+                            : method.Name.Lexeme;
+                        if (mName != null)
                         {
-                            if (method.IsStatic) mutableClass.StaticPrivateMethods[mName] = updatedMethodType;
-                            else mutableClass.PrivateMethods[mName] = updatedMethodType;
+                            if (method.IsPrivate)
+                            {
+                                if (method.IsStatic) mutableClass.StaticPrivateMethods[mName] = updatedMethodType;
+                                else mutableClass.PrivateMethods[mName] = updatedMethodType;
+                            }
+                            else
+                            {
+                                if (method.IsStatic) mutableClass.StaticMethods[mName] = updatedMethodType;
+                                else mutableClass.Methods[mName] = updatedMethodType;
+                            }
+                            // The frozen class call sites read still holds the <inferred> placeholder for
+                            // this method; flag a rebuild after the body pass (#658/#661).
+                            anyInferredMethodReturnResolved = true;
                         }
-                        else
-                        {
-                            if (method.IsStatic) mutableClass.StaticMethods[mName] = updatedMethodType;
-                            else mutableClass.Methods[mName] = updatedMethodType;
-                        }
-                        // The frozen class call sites read still holds the <inferred> placeholder for
-                        // this method; flag a rebuild after the body pass (#658/#661).
-                        anyInferredMethodReturnResolved = true;
                     }
                 }
                 finally

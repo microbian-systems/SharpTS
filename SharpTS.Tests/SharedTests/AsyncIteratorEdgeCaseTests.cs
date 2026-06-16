@@ -87,6 +87,104 @@ public class AsyncIteratorEdgeCaseTests
         Assert.Equal("got: 1\ngot: 2\ncaught: body error\n", output);
     }
 
+    // #691: a synchronous throw in a for-await body that ALSO awaits (or breaks/continues), inside a try,
+    // must reach the catch. The loop can't sit in a real IL try (its await resume labels would be branched
+    // into), so the body is segmented around its awaits and escaping break/continue, with the synchronous
+    // spans wrapped in a real IL try that routes a throw to the enclosing flag-based catch. Before the fix
+    // the throw escaped the state machine (only an await-free, jump-free body was guarded).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncIterator_ThrowInForAwaitBodyThatAwaits_CatchesError(ExecutionMode mode)
+    {
+        // The exact #691 repro: the body awaits and then throws synchronously.
+        var source = """
+            async function* g() { yield 1; yield 2; }
+            async function main() {
+                try {
+                    for await (const x of g()) {
+                        await Promise.resolve(0);
+                        if (x === 2) throw "body error";
+                    }
+                } catch (e) { console.log("caught " + e); }
+            }
+            main();
+            """;
+
+        Assert.Equal("caught body error\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncIterator_ThrowInForAwaitBodyThatBreaks_CatchesError(ExecutionMode mode)
+    {
+        // The body contains a top-level break and a synchronous throw; the throw must still be caught, and
+        // the break must still exit the loop on the value that reaches it.
+        var source = """
+            async function* g() { yield 1; yield 2; yield 3; }
+            async function main() {
+                let seen = "";
+                try {
+                    for await (const x of g()) {
+                        if (x === 3) break;
+                        if (x === 2) throw "boom";
+                        seen += x;
+                    }
+                } catch (e) { console.log("caught " + e + " seen=" + seen); }
+            }
+            main();
+            """;
+
+        Assert.Equal("caught boom seen=1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncIterator_ThrowInForAwaitBodyThatContinuesAndAwaits_CatchesError(ExecutionMode mode)
+    {
+        // The body awaits, continues, and throws synchronously — all three in one body.
+        var source = """
+            async function* g() { yield 1; yield 2; yield 3; }
+            async function main() {
+                let sum = 0;
+                try {
+                    for await (const x of g()) {
+                        await Promise.resolve(0);
+                        if (x === 1) continue;
+                        if (x === 3) throw "err3";
+                        sum += x;
+                    }
+                } catch (e) { console.log("caught " + e + " sum=" + sum); }
+            }
+            main();
+            """;
+
+        Assert.Equal("caught err3 sum=2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncIterator_ForAwaitBodyBreakContinueNoThrow_StillWorks(ExecutionMode mode)
+    {
+        // Guard against regressing normal break/continue in a for-await body (no enclosing try): the body
+        // is emitted plainly and break/continue branch directly.
+        var source = """
+            async function* g() { yield 1; yield 2; yield 3; yield 4; }
+            async function main() {
+                let sum = 0;
+                for await (const x of g()) {
+                    if (x === 1) continue;
+                    if (x === 4) break;
+                    sum += x;
+                }
+                console.log("sum=" + sum);
+            }
+            main();
+            """;
+
+        Assert.Equal("sum=5\n", TestHarness.Run(source, mode));
+    }
+
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_TryFinally_CleanupRuns(ExecutionMode mode)

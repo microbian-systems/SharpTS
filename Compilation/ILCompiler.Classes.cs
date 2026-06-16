@@ -479,11 +479,12 @@ public partial class ILCompiler
     /// <summary>
     /// Return type for a private (ES2022 <c>#</c>) method's MethodBuilder, matching the state machine its
     /// body is emitted through (see <see cref="EmitPrivateMethodBody"/>): a real <c>Task&lt;object&gt;</c>
-    /// for <c>async</c>, <c>IEnumerable&lt;object&gt;</c> for a generator, <c>IAsyncEnumerable&lt;object&gt;</c>
-    /// for an async generator — mirroring <c>DefineClassMethodsOnly</c>'s public-method logic (#720).
-    /// Generators/async generators are routed to a state machine only for INSTANCE methods; static ones
-    /// still fall back to the linear path (static generator support is a separate gap, #762), so they keep
-    /// the plain <c>object</c> slot to avoid a return-type/stack mismatch for an empty (yield-free) body.
+    /// for <c>async</c>, <c>IEnumerable&lt;object&gt;</c> for a generator (instance or static, since static
+    /// generator support landed in #692), <c>IAsyncEnumerable&lt;object&gt;</c> for an async generator —
+    /// mirroring <c>DefineClassMethodsOnly</c>'s public-method logic (#720). The one exception is a
+    /// <em>static</em> async generator: that state machine is instance-only (#761), so it stays on the
+    /// linear path and keeps the plain <c>object</c> slot to avoid a return-type/stack mismatch for an
+    /// empty (yield-free) body.
     /// </summary>
     private Type ResolvePrivateMethodReturnType(Stmt.Function method, bool isStatic)
     {
@@ -492,7 +493,7 @@ public partial class ILCompiler
         if (method.IsAsync)
             return _types.TaskOfObject;
         if (method.IsGenerator)
-            return isStatic ? typeof(object) : _types.IEnumerableOfObject;
+            return _types.IEnumerableOfObject;
         return typeof(object);
     }
 

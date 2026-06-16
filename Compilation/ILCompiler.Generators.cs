@@ -333,31 +333,35 @@ public partial class ILCompiler
     /// Emits the body of an instance generator method using a state machine.
     /// Called for class methods marked with IsGenerator = true.
     /// </summary>
-    private void EmitGeneratorMethodBody(MethodBuilder methodBuilder, Stmt.Function method, FieldInfo fieldsField,
-        string? currentClassName = null)
+    private void EmitGeneratorMethodBody(MethodBuilder methodBuilder, Stmt.Function method, FieldInfo? fieldsField,
+        bool isInstanceMethod = true, string? currentClassName = null)
     {
         // Analyze generator function to determine yield points and hoisted variables
         var analysis = _generators.Analyzer.Analyze(method);
 
-        // Build state machine type for instance method. Use the MethodBuilder's (mangled) name rather
-        // than method.Name.Lexeme so a private generator's `#p` lexeme doesn't put a `#` in the type name.
+        // Build state machine type. A static generator method (#692) has no `this`/instance fields, so it
+        // is set up like a free function (isInstanceMethod: false, static stub). The type name uses the
+        // MethodBuilder's (mangled) name so a private generator's `#p` lexeme doesn't put a `#` in it (#720).
         var smBuilder = new GeneratorStateMachineBuilder(_moduleBuilder, _types, _generators.StateMachineCounter++);
         smBuilder.DefineStateMachine(
             $"{methodBuilder.DeclaringType!.Name}_{methodBuilder.Name}",
             analysis,
-            isInstanceMethod: true,  // This is an instance method
+            isInstanceMethod: isInstanceMethod,
             runtime: _runtime
         );
 
         // Emit stub method body (creates state machine and returns it)
-        EmitGeneratorInstanceStubMethod(methodBuilder, smBuilder, method.Parameters);
+        if (isInstanceMethod)
+            EmitGeneratorInstanceStubMethod(methodBuilder, smBuilder, method.Parameters);
+        else
+            EmitGeneratorStaticStubMethod(methodBuilder, smBuilder, method.Parameters);
 
         // Create context for MoveNext emission
         var il = smBuilder.MoveNextMethod.GetILGenerator();
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
         {
             FieldsField = fieldsField,
-            IsInstanceMethod = true,
+            IsInstanceMethod = isInstanceMethod,
             ClosureAnalyzer = _closures.Analyzer,
             ArrowMethods = _closures.ArrowMethods,
             ConstArrowBindings = _closures.ConstArrowBindings,
@@ -464,6 +468,49 @@ public partial class ILCompiler
         // Captured outer-scope variables are NOT copied into the state machine (#541): see the
         // free-function stub above. MoveNext reads/writes them live from their backing storage,
         // wired through the CompilationContext in EmitGeneratorMethodBody.
+
+        // Return the state machine (which implements IEnumerable<object>)
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits the stub that creates the generator state machine for a STATIC method (#692): like the
+    /// instance stub but with no <c>this</c> and parameters starting at arg 0 (no receiver slot).
+    /// Value-type parameters are boxed into the object-typed state-machine fields.
+    /// </summary>
+    private void EmitGeneratorStaticStubMethod(
+        MethodBuilder methodBuilder,
+        GeneratorStateMachineBuilder smBuilder,
+        List<Stmt.Parameter> parameters)
+    {
+        var il = methodBuilder.GetILGenerator();
+
+        // Create new instance of the state machine
+        il.Emit(OpCodes.Newobj, smBuilder.Constructor);
+
+        // Box value types since state machine fields are object-typed. Decide from the method's ACTUAL
+        // IL signature (methodBuilder.GetParameters()), not the AST-resolved types: a private static
+        // method's parameters are all `object` slots, so boxing the AST-resolved value type would
+        // mismatch the `object` argument actually loaded (StackUnexpected). Mirrors EmitAsyncStubMethod.
+        var paramTypes = methodBuilder.GetParameters();
+
+        // Copy parameters to state machine fields (static methods start params at index 0).
+        for (int i = 0; i < parameters.Count; i++)
+        {
+            var field = smBuilder.GetVariableField(parameters[i].Name.Lexeme);
+            if (field != null)
+            {
+                il.Emit(OpCodes.Dup);  // Keep state machine reference on stack
+                il.Emit(OpCodes.Ldarg, i);
+
+                if (i < paramTypes.Length && paramTypes[i].ParameterType.IsValueType)
+                {
+                    il.Emit(OpCodes.Box, paramTypes[i].ParameterType);
+                }
+
+                il.Emit(OpCodes.Stfld, field);
+            }
+        }
 
         // Return the state machine (which implements IEnumerable<object>)
         il.Emit(OpCodes.Ret);

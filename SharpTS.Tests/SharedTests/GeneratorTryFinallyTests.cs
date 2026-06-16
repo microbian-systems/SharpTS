@@ -987,6 +987,104 @@ public class GeneratorTryFinallyTests
         Assert.Equal("1 false\nouter b\n99 false\n", TestHarness.Run(source, mode));
     }
 
+    // ---- #675: a *real* exception (in flight from a nested real-IL try, or a runtime error) escaping a
+    // flag-based catch/finally body must reach an enclosing flag-based try's catch ----
+    // #632 fixed a *direct* throw statement at the top of a handler body. An exception that arrives in
+    // the handler body already in flight — escaping a nested no-yield (real IL) try/catch whose handler
+    // throws, or a runtime error — was emitted as a real IL throw inside the nested block and, once it
+    // left it, propagated straight out of MoveNext, bypassing the enclosing flag-based catch. Handler
+    // bodies are now emitted through the same sync-segment capture the try body uses, then the captured
+    // exception is routed outward like a lexical handler throw.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RealThrowEscapingNestedTryInCatchBody_CaughtByEnclosingTry(ExecutionMode mode)
+    {
+        // The exact #675 repro: a nested real-IL try/catch inside a flag-based catch body rethrows; the
+        // in-flight value must reach the enclosing flag-based catch, not escape the state machine.
+        var source = """
+            function* g() {
+              try {
+                try { yield 0; throw "a"; }
+                catch (e: any) {
+                  try { throw "b"; }
+                  catch (e2: any) { console.log("C3 " + e2); throw "c"; }
+                }
+              } catch (e: any) { console.log("outer " + e); }
+              yield 1;
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v0\nC3 b\nouter c\nv1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RealThrowEscapingNestedTryInFinallyBody_CaughtByEnclosingTry(ExecutionMode mode)
+    {
+        // The finally-body analog: a nested real-IL try/catch inside a flag-based finally body rethrows.
+        var source = """
+            function* g() {
+              try {
+                try { yield 0; }
+                finally {
+                  try { throw "b"; }
+                  catch (e2: any) { console.log("F3 " + e2); throw "c"; }
+                }
+              } catch (e: any) { console.log("outer " + e); }
+              yield 1;
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v0\nF3 b\nouter c\nv1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RealThrowEscapingNestedTryInCatchBody_RunsOwnFinallyFirst(ExecutionMode mode)
+    {
+        // The inner try has its own finally: a real exception escaping its catch body must run that
+        // finally before the outer catch sees the value (routed via FinallyFramesInside).
+        var source = """
+            function* g() {
+              try {
+                try { yield 0; throw "a"; }
+                catch (e: any) {
+                  try { throw "b"; }
+                  catch (e2: any) { console.log("C3 " + e2); throw "c"; }
+                }
+                finally { console.log("T1fin"); }
+              } catch (e: any) { console.log("outer " + e); }
+              yield 1;
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v0\nC3 b\nT1fin\nouter c\nv1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void RuntimeErrorInCatchBody_CaughtByEnclosingTry(ExecutionMode mode)
+    {
+        // A runtime error (call on undefined) raised at the top of a flag-based catch body is likewise
+        // routed to the enclosing flag-based catch.
+        var source = """
+            function* g() {
+              try {
+                try { yield 0; throw "a"; }
+                catch (e: any) { const u: any = undefined; u.foo(); }
+              } catch (e: any) { console.log("outer caught"); }
+              yield 1;
+            }
+            for (const v of g()) console.log("v" + v);
+            """;
+
+        Assert.Equal("v0\nouter caught\nv1\n", TestHarness.Run(source, mode));
+    }
+
     // ---- IL-verification guards (the heart of #477: emitted IL must verify) ----
 
     [Theory]
@@ -1048,6 +1146,12 @@ public class GeneratorTryFinallyTests
     [InlineData("function* g() { try { try { yield 0; throw 'a'; } catch (e) { throw 'b'; } finally { console.log('f'); } } catch (e) { console.log(e); } } for (const v of g()) {}")]
     [InlineData("function* g() { try { try { yield 0; throw 'x'; } finally { yield 7; } } catch (e) { console.log(e); } } for (const v of g()) {}")]
     [InlineData("function* g() { try { try { yield 0; } finally { throw 'fin'; } } catch (e) { console.log(e); } } for (const v of g()) {}")]
+    // #675: a real exception escaping a nested real-IL try/catch inside a flag-based catch/finally body —
+    // the handler-body sync-segment capture + outward routing (with intervening finallys) must verify.
+    [InlineData("function* g() { try { try { yield 0; throw 'a'; } catch (e) { try { throw 'b'; } catch (e2) { throw 'c'; } } } catch (e) { console.log(e); } yield 1; } for (const v of g()) {}")]
+    [InlineData("function* g() { try { try { yield 0; } finally { try { throw 'b'; } catch (e2) { throw 'c'; } } } catch (e) { console.log(e); } } for (const v of g()) {}")]
+    [InlineData("function* g() { try { try { yield 0; throw 'a'; } catch (e) { try { throw 'b'; } catch (e2) { throw 'c'; } } finally { console.log('f'); } } catch (e) { console.log(e); } } for (const v of g()) {}")]
+    [InlineData("function* g() { try { try { yield 0; throw 'a'; } catch (e) { const u = undefined; u.foo(); } } catch (e) { console.log('caught'); } } for (const v of g()) {}")]
     public void GeneratorTryFinallyWithYield_EmitsVerifiableIL(string source)
     {
         var errors = TestHarness.CompileAndVerifyOnly(source);

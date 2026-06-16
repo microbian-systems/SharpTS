@@ -776,8 +776,7 @@ public partial class GeneratorMoveNextEmitter
             _il.Emit(OpCodes.Stloc, exceptionPresentLocal);
 
             _inHandlerBody = true;
-            foreach (var stmt in t.CatchBlock)
-                EmitStatement(stmt);
+            EmitHandlerBodyWithCapture(t.CatchBlock);
             _inHandlerBody = previousInHandler;
 
             _il.MarkLabel(skipCatchLabel);
@@ -806,11 +805,13 @@ public partial class GeneratorMoveNextEmitter
             }
 
             _inHandlerBody = true;
-            foreach (var stmt in t.FinallyBlock)
-                EmitStatement(stmt);
+            EmitHandlerBodyWithCapture(t.FinallyBlock);
             _inHandlerBody = previousInHandler;
 
-            // After the finally, dispatch any pending non-local exit that routed through here.
+            // After the finally, dispatch any pending non-local exit that routed through here. (A real
+            // exception arising in the finally body itself was already routed out by
+            // EmitHandlerBodyWithCapture, superseding any pending exit, so this is reached only on the
+            // finally's normal completion.)
             EmitFinallyDispatch(frame!);
         }
 
@@ -910,6 +911,77 @@ public partial class GeneratorMoveNextEmitter
         _protectedRegionDepth--;
 
         _il.MarkLabel(skipLabel);
+    }
+
+    /// <summary>
+    /// Emits a flag-based <c>catch</c>/<c>finally</c> body, capturing any real CLR exception that arises
+    /// at its top level and routing it to the enclosing flag-based try (or out of MoveNext when there is
+    /// none) instead of letting it escape the state machine unhandled. The motivating case is an
+    /// exception escaping a nested no-yield (real IL) <c>try</c>/<c>catch</c> whose handler throws: that
+    /// throw is correctly a real IL <c>throw</c> (it is inside a real protected region), so the lexical
+    /// <see cref="EmitThrow"/> routing never sees it; once it leaves the nested block it was previously
+    /// in flight in an unprotected region and bypassed the enclosing flag-based catch (#675). A runtime
+    /// error (e.g. a call on <c>undefined</c>) at the handler's top level is covered the same way.
+    ///
+    /// <para>Mirrors <see cref="EmitTryBodyWithYields"/>: runs of plain statements are wrapped in mini IL
+    /// try/catch segments (<see cref="EmitSyncSegmentInTry"/>) that record a thrown exception into a
+    /// handler-local flag, while suspension points and non-local exits stay at the top level so their
+    /// resume labels / branches remain legal. After the body, a captured exception is propagated by
+    /// <see cref="EmitRoutedThrow"/> — the same routing used for a lexical handler-body <c>throw</c>:
+    /// it runs the finally(s) inside the enclosing try, then lands in its catch. A lexical <c>throw</c>
+    /// reached at the handler's top level (e.g. after a yield, outside any segment) is still routed
+    /// directly by <see cref="EmitThrow"/>; this method only adds coverage for exceptions that arrive
+    /// already in flight, which no <c>throw</c> statement intercepts. Caller sets <c>_inHandlerBody</c>.</para>
+    /// </summary>
+    private void EmitHandlerBodyWithCapture(List<Stmt> body)
+    {
+        var handlerCaught = _il.DeclareLocal(typeof(object));
+        var handlerPresent = _il.DeclareLocal(typeof(bool));
+        var afterHandlerLabel = _il.DefineLabel();
+
+        _il.Emit(OpCodes.Ldnull);
+        _il.Emit(OpCodes.Stloc, handlerCaught);
+        _il.Emit(OpCodes.Ldc_I4_0);
+        _il.Emit(OpCodes.Stloc, handlerPresent);
+
+        List<Stmt> syncSegment = [];
+
+        foreach (var stmt in body)
+        {
+            if (IsSegmentBreaker(stmt))
+            {
+                if (syncSegment.Count > 0)
+                {
+                    EmitSyncSegmentInTry(syncSegment, handlerCaught, handlerPresent);
+                    syncSegment.Clear();
+                }
+
+                // If an earlier segment threw, skip the suspension/exit and route the exception out.
+                _il.Emit(OpCodes.Ldloc, handlerPresent);
+                _il.Emit(OpCodes.Brtrue, afterHandlerLabel);
+
+                EmitStatement(stmt);
+            }
+            else
+            {
+                syncSegment.Add(stmt);
+            }
+        }
+
+        if (syncSegment.Count > 0)
+            EmitSyncSegmentInTry(syncSegment, handlerCaught, handlerPresent);
+
+        _il.MarkLabel(afterHandlerLabel);
+
+        // A real exception captured in the handler body propagates to the enclosing flag-based try's
+        // catch (running the finally(s) inside that try first), or out of MoveNext when there is none —
+        // exactly the routing EmitRoutedThrow performs for an in-flight handler-body throw. Gating on the
+        // present flag (not the value's nullness) keeps a captured null/undefined routable (#619).
+        var noHandlerException = _il.DefineLabel();
+        _il.Emit(OpCodes.Ldloc, handlerPresent);
+        _il.Emit(OpCodes.Brfalse, noHandlerException);
+        EmitRoutedThrow(() => _il.Emit(OpCodes.Ldloc, handlerCaught));
+        _il.MarkLabel(noHandlerException);
     }
 
     #region Suspension / control-exit detection

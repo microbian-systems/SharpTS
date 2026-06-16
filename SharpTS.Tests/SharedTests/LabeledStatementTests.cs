@@ -384,6 +384,31 @@ public class LabeledStatementTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Async_ChainedLabels_For_ContinueOuter(ExecutionMode mode)
+    {
+        // #704 repro: a chain of labels on a `for` inside an async function — `continue p` (the OUTER
+        // label of the chain) must advance the outer for, not exit it. The async state-machine emitter
+        // has its own labeled-loop subsystem; before the fix it routed the outer label of a chain to
+        // the loop's break target, so `continue p` exited both loops (sum stayed 0).
+        var source = """
+            async function main() {
+              let sum: number = 0;
+              p: q: for (let x = 0; x < 3; x++) {
+                for (let y = 0; y < 3; y++) {
+                  if (y === 1) { continue p; }
+                  sum = sum + (x * 10 + y);
+                }
+              }
+              console.log(sum);
+            }
+            main();
+            """;
+
+        Assert.Equal("30\n", TestHarness.Run(source, mode));  // 0 + 10 + 20
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ChainedLabels_For_ContinueInner(ExecutionMode mode)
     {
         // `continue q` to the INNER label of the chain targets the same for — same result as the
@@ -401,6 +426,28 @@ public class LabeledStatementTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("30\n", output);  // 0 + 10 + 20
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Async_ChainedLabels_For_BreakOuter(ExecutionMode mode)
+    {
+        // `break a` to the outer label of a chain inside an async function must exit the outer for.
+        var source = """
+            async function main() {
+              let count: number = 0;
+              a: b: for (let x = 0; x < 3; x++) {
+                for (let y = 0; y < 3; y++) {
+                  if (x === 1 && y === 1) { break a; }
+                  count = count + 1;
+                }
+              }
+              console.log(count);
+            }
+            main();
+            """;
+
+        Assert.Equal("4\n", TestHarness.Run(source, mode));  // x=0: 3 iters; x=1: 1 iter then break
     }
 
     [Theory]
@@ -425,6 +472,33 @@ public class LabeledStatementTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Async_ChainedLabels_While_ContinueOuter(ExecutionMode mode)
+    {
+        // Chained labels on a `while` inside an async function — `continue a` re-tests the outer
+        // condition (async analog of ChainedLabels_While_ContinueOuter).
+        var source = """
+            async function main() {
+              let sum: number = 0;
+              let i: number = 0;
+              a: b: while (i < 3) {
+                i = i + 1;
+                let j: number = 0;
+                while (j < 3) {
+                  j = j + 1;
+                  if (j === 2) { continue a; }
+                  sum = sum + (i * 10 + j);
+                }
+              }
+              console.log(sum);
+            }
+            main();
+            """;
+
+        Assert.Equal("63\n", TestHarness.Run(source, mode));  // 11 + 21 + 31
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ChainedLabels_For_TripleChain_ContinueOutermost(ExecutionMode mode)
     {
         // Three labels on one `for`; `continue a` to the outermost resolves to the loop's increment.
@@ -441,6 +515,29 @@ public class LabeledStatementTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("30\n", output);  // 0 + 10 + 20
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Async_ChainedLabels_ForOf_ContinueOuter(ExecutionMode mode)
+    {
+        // Chained labels on a (synchronous) `for…of` inside an async function — `continue p` must
+        // advance the outer for…of, exercising the async EmitLabeledForOf label threading.
+        var source = """
+            async function main() {
+              let sum: number = 0;
+              p: q: for (const x of [0, 1, 2]) {
+                for (const y of [0, 1, 2]) {
+                  if (y === 1) { continue p; }
+                  sum = sum + (x * 10 + y);
+                }
+              }
+              console.log(sum);
+            }
+            main();
+            """;
+
+        Assert.Equal("30\n", TestHarness.Run(source, mode));  // 0 + 10 + 20
     }
 
     [Theory]

@@ -126,18 +126,36 @@ public class PrivateAsyncGeneratorMethodTests
         Assert.Empty(errors);
     }
 
-    [Fact]
-    public void StaticPrivateGenerator_ReportsCleanError_NotInvalidIL()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticGeneratorPrivateMethod(ExecutionMode mode)
     {
-        // Static generators are unsupported project-wide (the public static form fails the same way,
-        // tracked by #762). A static private generator must report that clean compile error rather than
-        // emitting invalid IL — i.e. the fix routes only the supported (instance) generator case.
+        // Static generator support landed in #692; the static private form routes through the same
+        // static generator state machine.
         var source = """
             class G {
-              static *#p(): Generator<number> { yield 1; yield 2; }
-              static go(): number { let s = 0; for (const v of G.#p()) s += v; return s; }
+              static *#p(x: number): Generator<number> { yield x; yield x + 1; }
+              static go(): number { let s = 0; for (const v of G.#p(5)) s += v; return s; }
             }
             console.log(G.go());
+            """;
+
+        Assert.Equal("11\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void StaticAsyncGeneratorPrivate_ReportsCleanError_NotInvalidIL()
+    {
+        // Static async generators are not yet supported (the async-generator state machine is
+        // instance-only; the public static form fails the same way, #761). The static private form must
+        // report that clean compile error rather than emitting invalid IL — i.e. the fix routes only the
+        // supported cases.
+        var source = """
+            class A {
+              static async *#p(x: number) { yield x; yield x + 1; }
+              static async go(): Promise<number> { let s = 0; for await (const v of A.#p(5)) s += v; return s; }
+            }
+            A.go().then(v => console.log(v));
             """;
 
         Assert.Throws<CompileException>(() => TestHarness.CompileAndVerifyOnly(source, DecoratorMode.None));

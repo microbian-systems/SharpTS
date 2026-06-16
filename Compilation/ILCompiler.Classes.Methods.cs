@@ -362,7 +362,7 @@ public partial class ILCompiler
         // EmitStaticMethodBody fills the new one, and the abandoned first MethodBuilder
         // shows up via reflection with no body — surface as BadImageFormatException at any
         // reflective Invoke. Tracked as #58.
-        foreach (var method in classStmt.Methods.Where(m => m.Body != null && m.IsStatic && m.Name.Lexeme != "constructor"))
+        foreach (var method in classStmt.Methods.Where(m => m.Body != null && m.IsStatic && m.Name.Lexeme != "constructor" && m.ComputedKey == null))
         {
             if (_classes.StaticMethods[qualifiedClassName].ContainsKey(method.Name.Lexeme))
                 continue;
@@ -387,8 +387,9 @@ public partial class ILCompiler
             _classes.StaticMethods[qualifiedClassName][method.Name.Lexeme] = methodBuilder;
         }
 
-        // Define instance methods (skip overload signatures with no body)
-        foreach (var method in classStmt.Methods.Where(m => m.Body != null))
+        // Define instance methods (skip overload signatures with no body, and computed
+        // symbol-keyed methods — handled by DefineSymbolMethods below).
+        foreach (var method in classStmt.Methods.Where(m => m.Body != null && m.ComputedKey == null))
         {
             if (method.IsStatic || method.Name.Lexeme == "constructor")
                 continue;
@@ -434,6 +435,11 @@ public partial class ILCompiler
             }
             preDefined[method.Name.Lexeme] = methodBuilder;
         }
+
+        // Define computed symbol-keyed methods ([Symbol.iterator]() {…}) under unique synthetic
+        // names so they flow through the normal method-body machinery (incl. generator/async state
+        // machines) and are dispatched via the runtime symbol-method registry (#647).
+        DefineSymbolMethods(typeBuilder, classStmt, qualifiedClassName);
 
         // Define accessors with PascalCase naming
         // Note: Explicit accessors keep object-typed signatures because their bodies
@@ -638,9 +644,10 @@ public partial class ILCompiler
             _classes.StaticMethods[qualifiedClassName] = [];
         }
 
-        // Define static methods first (so we can reference them in the static constructor)
-        // Skip overload signatures (no body)
-        foreach (var method in classStmt.Methods.Where(m => m.Body != null))
+        // Define static methods first (so we can reference them in the static constructor).
+        // Skip overload signatures (no body) and computed symbol-keyed methods (handled by
+        // DefineSymbolMethods / EmitSymbolMethods).
+        foreach (var method in classStmt.Methods.Where(m => m.Body != null && m.ComputedKey == null))
         {
             if (method.IsStatic && method.Name.Lexeme != "constructor")
             {
@@ -651,9 +658,10 @@ public partial class ILCompiler
         // Emit constructor
         EmitConstructor(typeBuilder, classStmt, fieldsField);
 
-        // Emit method bodies (skip overload signatures with no body)
+        // Emit method bodies (skip overload signatures with no body, and computed
+        // symbol-keyed methods — emitted by EmitSymbolMethods below).
         // This must happen BEFORE static constructor so static blocks can call static methods
-        foreach (var method in classStmt.Methods.Where(m => m.Body != null))
+        foreach (var method in classStmt.Methods.Where(m => m.Body != null && m.ComputedKey == null))
         {
             if (method.Name.Lexeme != "constructor")
             {
@@ -667,6 +675,10 @@ public partial class ILCompiler
                 }
             }
         }
+
+        // Emit computed symbol-keyed method bodies (#647). Before the static constructor so the
+        // registry registrations there can reference them.
+        EmitSymbolMethods(typeBuilder, qualifiedClassName, fieldsField);
 
         // Emit static constructor for static property initializers and static blocks
         // This is done AFTER method bodies so static blocks can call static methods
@@ -750,9 +762,9 @@ public partial class ILCompiler
         // themselves). The qualified class name is threaded so nested private member access resolves.
         if (method.IsAsync && method.IsGenerator)
         {
-            // Static async generators are unsupported project-wide (so is the public static form, #762):
-            // fall through to the linear path, which reports the existing "Yield not supported" error
-            // rather than emitting invalid IL.
+            // Static async generators are not yet supported (the async-generator state machine is
+            // instance-only; the public static form fails the same way, #761): fall through to the
+            // linear path, which reports the existing "Yield not supported" error rather than invalid IL.
             if (!isStatic)
             {
                 EmitAsyncGeneratorMethodBody(methodBuilder, method, fieldsField, currentClassName: qualifiedClassName);
@@ -765,13 +777,16 @@ public partial class ILCompiler
                 isInstanceMethod: !isStatic, currentClassName: qualifiedClassName);
             return;
         }
-        else if (method.IsGenerator && !isStatic)
+        else if (method.IsGenerator)
         {
-            EmitGeneratorMethodBody(methodBuilder, method, fieldsField, currentClassName: qualifiedClassName);
+            // Instance and static (static generator support landed in #692) both route through the
+            // generator state machine; static uses no `this`/fields slot.
+            EmitGeneratorMethodBody(methodBuilder, method, isStatic ? null : fieldsField,
+                isInstanceMethod: !isStatic, currentClassName: qualifiedClassName);
             return;
         }
-        // Static generators/async generators fall through to the linear emission below, which reports
-        // "Yield not supported" (same as public static generators today, tracked by #762).
+        // A static async generator falls through to the linear emission below, which reports
+        // "Yield not supported" (the public static async-generator gap, #761), not invalid IL.
 
         var il = methodBuilder.GetILGenerator();
         var ctx = new CompilationContext(il, _typeMapper, _functions.Builders, _classes.Builders, _namespaceFields, _namespaceVarFields, _types)
@@ -886,6 +901,93 @@ public partial class ILCompiler
             // correct defaults. (#588)
             EmitDefaultReturnValue(il, methodBuilder.ReturnType);
             il.Emit(OpCodes.Ret);
+        }
+    }
+
+    /// <summary>
+    /// Pre-defines a uniquely-named .NET method for each computed symbol-keyed class method
+    /// (<c>[Symbol.iterator]() {…}</c>, incl. the generator/async forms) so they flow through the
+    /// normal per-method emitters. Recorded in <see cref="ClassState.SymbolMethods"/> for body emission
+    /// (<see cref="EmitSymbolMethods"/>) and for runtime symbol-method registration in the class .cctor (#647).
+    /// </summary>
+    private void DefineSymbolMethods(TypeBuilder typeBuilder, Stmt.Class classStmt, string qualifiedClassName)
+    {
+        string className = typeBuilder.Name;
+        if (_classes.SymbolMethods.ContainsKey(className))
+            return;  // already defined (idempotent across multi-module pre-define/emit passes)
+
+        var computed = classStmt.Methods.Where(m => m.ComputedKey != null && m.Body != null).ToList();
+        if (computed.Count == 0)
+            return;
+
+        var list = new List<(Stmt.Function, Expr, MethodBuilder)>();
+        for (int i = 0; i < computed.Count; i++)
+        {
+            var method = computed[i];
+            // Unique, deterministic name: multiple computed methods must not collide, and the synthetic
+            // `<computed>` lexeme is not a dispatchable name.
+            string uniqueName = $"$symmethod_{i}";
+            var renamed = method with { Name = new Token(TokenType.IDENTIFIER, uniqueName, null, method.Name.Line) };
+
+            // Param types resolve from each parameter's annotation (the type map is keyed by the @@name,
+            // not the synthetic IL name) — fine: computed iterator methods are typically parameterless.
+            var paramTypes = ParameterTypeResolver.ResolveMethodParameters(
+                classStmt.Name.Lexeme, uniqueName, renamed.Parameters, _typeMapper, _typeMap);
+
+            // Async generator first (it sets both flags).
+            Type returnType = (method.IsAsync && method.IsGenerator) ? _types.IAsyncEnumerableOfObject :
+                              method.IsAsync ? _types.TaskOfObject :
+                              method.IsGenerator ? _types.IEnumerableOfObject :
+                              typeof(object);
+
+            // Non-virtual (like symbol accessors): the registry holds the exact MethodInfo and its
+            // base-chain walk handles inheritance, so virtual override dispatch isn't needed.
+            MethodAttributes attrs = MethodAttributes.Public | MethodAttributes.HideBySig;
+            if (method.IsStatic)
+                attrs |= MethodAttributes.Static;
+
+            var mb = typeBuilder.DefineMethod(uniqueName, attrs, returnType, paramTypes);
+
+            // Register under the unique name so EmitMethod/EmitStaticMethodBody resolve the pre-defined builder.
+            if (method.IsStatic)
+            {
+                _classes.StaticMethods[qualifiedClassName][uniqueName] = mb;
+            }
+            else
+            {
+                if (!_classes.InstanceMethods.TryGetValue(qualifiedClassName, out var im))
+                {
+                    im = [];
+                    _classes.InstanceMethods[qualifiedClassName] = im;
+                }
+                im[uniqueName] = mb;
+                if (!_classes.PreDefinedMethods.TryGetValue(className, out var pd))
+                {
+                    pd = [];
+                    _classes.PreDefinedMethods[className] = pd;
+                }
+                pd[uniqueName] = mb;
+            }
+
+            list.Add((renamed, method.ComputedKey!, mb));
+        }
+        _classes.SymbolMethods[className] = list;
+    }
+
+    /// <summary>
+    /// Emits the bodies of the computed symbol-keyed methods recorded by <see cref="DefineSymbolMethods"/>,
+    /// reusing the normal per-method emitters so the generator/async state machines compose.
+    /// </summary>
+    private void EmitSymbolMethods(TypeBuilder typeBuilder, string qualifiedClassName, FieldInfo fieldsField)
+    {
+        if (!_classes.SymbolMethods.TryGetValue(typeBuilder.Name, out var list))
+            return;
+        foreach (var (method, _key, _builder) in list)
+        {
+            if (method.IsStatic)
+                EmitStaticMethodBody(qualifiedClassName, method);
+            else
+                EmitMethod(typeBuilder, method, fieldsField);
         }
     }
 
