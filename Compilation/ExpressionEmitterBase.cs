@@ -503,6 +503,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         else
         {
             var idxLocal = SpillBoxed(gi.Index);
+            // RequireObjectCoercible: `undefined[k]` throws a guest TypeError instead
+            // of silently yielding undefined (#701). Optional `o?.[k]` short-circuited above.
+            EmitThrowIfUndefinedIndexReceiver(objLocal, idxLocal);
             IL.Emit(OpCodes.Ldloc, objLocal);
             IL.Emit(OpCodes.Ldloc, idxLocal);
             IL.Emit(OpCodes.Call, Ctx.Runtime!.GetIndex);
@@ -2268,8 +2271,36 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         // Dynamic property access fallback
         EmitExpression(g.Object);
         EnsureBoxed();
-        IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
-        IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+        if (g.Optional)
+        {
+            // `o?.x`: short-circuit to undefined when the base is nullish. This base
+            // emitter (used by the async/generator state-machine emitters) previously
+            // leaned on GetProperty's leniency for a nullish base; the explicit
+            // short-circuit is required now that the non-optional path throws on
+            // $Undefined below, and is otherwise behaviour-preserving.
+            var nullishLabel = IL.DefineLabel();
+            var endLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Brfalse, nullishLabel);          // CLR null → nullish
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
+            IL.Emit(OpCodes.Brtrue, nullishLabel);           // $Undefined → nullish
+            IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+            IL.Emit(OpCodes.Br, endLabel);
+            IL.MarkLabel(nullishLabel);
+            IL.Emit(OpCodes.Pop);
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime!.UndefinedInstance);
+            IL.MarkLabel(endLabel);
+        }
+        else
+        {
+            // RequireObjectCoercible: a non-optional read on `undefined` throws a
+            // guest TypeError instead of silently yielding undefined (#701).
+            EmitThrowIfUndefinedReceiverOnStack(g.Name.Lexeme);
+            IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+        }
         SetStackUnknown();
     }
 
