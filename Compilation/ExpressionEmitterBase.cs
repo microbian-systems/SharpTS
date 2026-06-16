@@ -1502,6 +1502,22 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             return;
         }
 
+        // Capturing arrow: its body is emitted as an instance method on a display class, so the
+        // $TSFunction must be bound to a freshly-constructed display-class instance whose fields
+        // hold the captured values. Emitting a null target here (the old behaviour) produced
+        // "Non-static method requires a target" when the arrow was later invoked (#435/#669,
+        // sync generator bodies). Captured values are read through the GetHoistedVariableField /
+        // GetThisField hooks plus Ctx.Locals, which every emitter that reaches this base default
+        // already implements. GeneratorMoveNextEmitter is currently the only such emitter — all
+        // others (ILEmitter, Async/AsyncArrow/AsyncGenerator MoveNext) override EmitArrowFunction.
+        if (Ctx.DisplayClasses?.ContainsKey(af) == true &&
+            Ctx.DisplayClassConstructors?.TryGetValue(af, out var displayCtor) == true)
+        {
+            EmitCapturingArrowViaHooks(af, method, displayCtor);
+            return;
+        }
+
+        // Non-capturing arrow: static method, null target.
         IL.Emit(OpCodes.Ldnull);
         IL.Emit(OpCodes.Ldtoken, method);
         IL.Emit(OpCodes.Call, Types.MethodBaseGetMethodFromHandle);
@@ -1510,6 +1526,59 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         // tolerant so far, but a path leading here from a state-machine label with a
         // different stack state trips PathStackDepth, which promotes the type error
         // to an outright InvalidProgramException.
+        IL.Emit(OpCodes.Castclass, typeof(MethodInfo));
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSFunctionCtor);
+        SetStackUnknown();
+    }
+
+    /// <summary>
+    /// Emits a capturing arrow as a $TSFunction bound to a new display-class instance, populating
+    /// the display class's captured fields from the emitter's storage (hoisted state-machine
+    /// fields, <c>this</c>, or IL locals). Mirrors the per-emitter overrides in
+    /// AsyncMoveNextEmitter / AsyncGeneratorMoveNextEmitter, but resolves storage through the
+    /// shared GetHoistedVariableField / GetThisField hooks so a single implementation serves any
+    /// emitter that uses the base <see cref="EmitArrowFunction"/>.
+    /// </summary>
+    private void EmitCapturingArrowViaHooks(Expr.ArrowFunction af, MethodBuilder method, ConstructorBuilder displayCtor)
+    {
+        IL.Emit(OpCodes.Newobj, displayCtor);
+
+        if (Ctx.DisplayClassFields?.TryGetValue(af, out var fieldMap) == true)
+        {
+            foreach (var (capturedVar, field) in fieldMap)
+            {
+                IL.Emit(OpCodes.Dup);
+
+                // `this` is checked before the hoisted-variable map: the generator's
+                // hoisting analyzer can mint a state-machine field keyed "this" that the
+                // stub never populates, so resolving it via the map would snapshot null
+                // (NRE when the arrow dereferences `this`). The real receiver lives in the
+                // builder's dedicated ThisField (set by the instance-method stub).
+                if (capturedVar == "this" && GetThisField() is FieldBuilder thisField)
+                {
+                    IL.Emit(OpCodes.Ldarg_0);
+                    IL.Emit(OpCodes.Ldfld, thisField);
+                }
+                else if (GetHoistedVariableField(capturedVar) is FieldBuilder hoistedField)
+                {
+                    IL.Emit(OpCodes.Ldarg_0);
+                    IL.Emit(OpCodes.Ldfld, hoistedField);
+                }
+                else if (Ctx.Locals.TryGetLocal(capturedVar, out var local))
+                {
+                    IL.Emit(OpCodes.Ldloc, local);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldnull);
+                }
+
+                IL.Emit(OpCodes.Stfld, field);
+            }
+        }
+
+        IL.Emit(OpCodes.Ldtoken, method);
+        IL.Emit(OpCodes.Call, Types.MethodBaseGetMethodFromHandle);
         IL.Emit(OpCodes.Castclass, typeof(MethodInfo));
         IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSFunctionCtor);
         SetStackUnknown();

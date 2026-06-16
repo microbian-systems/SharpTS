@@ -10,6 +10,18 @@ public partial class AsyncArrowMoveNextEmitter
     {
         string name = v.Name.Lexeme;
 
+        // A capture promoted into the enclosing function's display class (#625) is read through
+        // `outer.functionDC.field`, NOT the boxed state-machine field. Checked before the resolver:
+        // the variable may still have a (now-unused) hoisted SM field that the resolver would load
+        // a stale value from.
+        if (TryGetOuterFunctionDCField(name, out var dcReadField))
+        {
+            EmitLoadOuterFunctionDC();
+            _il.Emit(OpCodes.Ldfld, dcReadField);
+            SetStackUnknown();
+            return;
+        }
+
         // Try resolver first (params, locals, hoisted, captured)
         var stackType = _resolver!.TryLoadVariable(name);
         if (stackType != null)
@@ -57,6 +69,20 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
+        // Standalone capture (#641): a value the enclosing arrow's frame passed as a leading stub
+        // argument, which the stub copied into a field on THIS arrow's state machine. Checked LAST,
+        // below the module-level globals above: a top-level variable a standalone arrow closes over
+        // is ALSO registered as a standalone capture but must be read LIVE from its static field
+        // (the standalone copy is a stale snapshot) — handling it earlier broke compound/logical
+        // assignment to such a variable. Reaches here only for genuine enclosing-arrow locals.
+        if (_builder.StandaloneCaptureFields.TryGetValue(name, out var standaloneField))
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, standaloneField);
+            SetStackUnknown();
+            return;
+        }
+
         // Not found - push null
         _il.Emit(OpCodes.Ldnull);
         SetStackType(StackType.Null);
@@ -69,6 +95,20 @@ public partial class AsyncArrowMoveNextEmitter
         EmitExpression(a.Value);
         EnsureBoxed();
         _il.Emit(OpCodes.Dup);
+
+        // A capture promoted into the enclosing function's display class (#625) is written through
+        // `outer.functionDC.field = value` (the DC is a reference type, so the store is verifiable),
+        // not by mutating the boxed value-type state machine in place. Checked first.
+        if (TryGetOuterFunctionDCField(name, out var dcAssignField))
+        {
+            var temp = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, temp);     // consume the duplicated value
+            EmitLoadOuterFunctionDC();
+            _il.Emit(OpCodes.Ldloc, temp);
+            _il.Emit(OpCodes.Stfld, dcAssignField);
+            SetStackUnknown();                 // remaining copy is the assignment's value
+            return;
+        }
 
         // Check if it's a captured top-level variable in entry-point display class
         if (_ctx?.CapturedTopLevelVars?.Contains(name) == true &&
@@ -185,6 +225,18 @@ public partial class AsyncArrowMoveNextEmitter
 
     private void StoreVariable(string name)
     {
+        // A capture promoted into the enclosing function's display class (#625) is stored through
+        // `outer.functionDC.field`. Checked first so it wins over any (now-unused) hoisted SM field.
+        if (TryGetOuterFunctionDCField(name, out var dcStoreField))
+        {
+            var temp = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, temp);
+            EmitLoadOuterFunctionDC();
+            _il.Emit(OpCodes.Ldloc, temp);
+            _il.Emit(OpCodes.Stfld, dcStoreField);
+            return;
+        }
+
         // Check if it's a parameter of this arrow
         if (_builder.ParameterFields.TryGetValue(name, out var paramField))
         {
@@ -342,5 +394,35 @@ public partial class AsyncArrowMoveNextEmitter
         // Fallback: null
         _il.Emit(OpCodes.Ldnull);
         SetStackType(StackType.Null);
+    }
+
+    /// <summary>
+    /// True when <paramref name="name"/> is a captured variable the enclosing async function placed
+    /// in its (reference-type) display class (#625). Such a variable must be read/written through
+    /// <c>outer.functionDC.field</c> rather than the boxed state-machine field. Requires the outer
+    /// reference plumbing — present only for non-standalone arrows nested directly in an async
+    /// function — so standalone/top-level async arrows fall through to the existing paths.
+    /// </summary>
+    private bool TryGetOuterFunctionDCField(string name, out FieldBuilder dcField)
+    {
+        dcField = null!;
+        return _ctx?.OuterFunctionDCField != null
+            && _builder.OuterStateMachineField != null
+            && _builder.OuterStateMachineType != null
+            && _ctx.FunctionDisplayClassFields?.TryGetValue(name, out dcField!) == true;
+    }
+
+    /// <summary>
+    /// Pushes the enclosing async function's display-class instance: <c>outer.functionDC</c>.
+    /// Reading the DC reference field through the <c>unbox</c>'d (readonly) outer pointer is
+    /// verifiable; the resulting reference is an ordinary class instance, so the caller's
+    /// subsequent <c>ldfld</c>/<c>stfld</c> on it verifies (unlike storing into the boxed struct).
+    /// </summary>
+    private void EmitLoadOuterFunctionDC()
+    {
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, _builder.OuterStateMachineField!);
+        _il.Emit(OpCodes.Unbox, _builder.OuterStateMachineType!);
+        _il.Emit(OpCodes.Ldfld, _ctx!.OuterFunctionDCField!);
     }
 }

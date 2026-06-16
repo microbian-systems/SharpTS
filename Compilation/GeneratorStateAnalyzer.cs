@@ -314,8 +314,35 @@ public class GeneratorStateAnalyzer : AstVisitorBase
 
     protected override void VisitArrowFunction(Expr.ArrowFunction expr)
     {
-        // Arrow functions inside generators don't affect yield analysis
-        // Don't traverse into them
+        // Arrow bodies contribute no yield points or hoisted locals to the enclosing
+        // generator (an arrow can't `yield` to it), so the full generator analysis is
+        // intentionally NOT run over them. But an arrow lexically captures `this`/`super`
+        // from the generator, so when the arrow (or a nested arrow) references either, the
+        // generator instance method must still materialize its `<>4__this` receiver.
+        // Without this, `this` used ONLY inside an arrow left UsesThis false → no ThisField
+        // → the captured `this` snapshot was null → NRE when the arrow dereferenced it
+        // (#435/#669). Detection over-approximates (a `this` inside a nested *regular*
+        // function, which rebinds `this`, also trips it) — harmless: the worst case is an
+        // unused field, only ever read by arrows that genuinely capture `this`.
+        if (!_usesThis)
+        {
+            var detector = new ThisUsageDetector();
+            detector.Visit(expr);
+            if (detector.UsesThis)
+                _usesThis = true;
+        }
+    }
+
+    /// <summary>
+    /// Lightweight visitor that reports whether a subtree references <c>this</c> or
+    /// <c>super</c>. Used to decide whether a generator that only touches <c>this</c>
+    /// from inside an arrow must still materialize its receiver field.
+    /// </summary>
+    private sealed class ThisUsageDetector : Parsing.Visitors.AstVisitorBase
+    {
+        public bool UsesThis { get; private set; }
+        protected override void VisitThis(Expr.This expr) => UsesThis = true;
+        protected override void VisitSuper(Expr.Super expr) => UsesThis = true;
     }
 
     #endregion

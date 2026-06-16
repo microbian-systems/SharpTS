@@ -751,6 +751,16 @@ public partial class ILCompiler
             case Expr.Await aw:
                 CollectArrowsFromExpr(aw.Expression);
                 break;
+            case Expr.Yield y:
+                // Arrows inside a yielded expression (`yield arr.map(x => …)`,
+                // `yield* gen(() => …)`) must be collected too. Without this case the
+                // collection walk stops at the yield, the arrow's method is never
+                // registered in ArrowMethods, and EmitArrowFunction falls back to
+                // `ldnull` — surfacing at runtime as "callback is not callable" inside
+                // a sync generator body (#435/#669).
+                if (y.Value != null)
+                    CollectArrowsFromExpr(y.Value);
+                break;
             case Expr.DynamicImport di:
                 CollectArrowsFromExpr(di.PathExpression);
                 break;

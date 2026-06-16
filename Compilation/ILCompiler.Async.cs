@@ -48,7 +48,8 @@ public partial class ILCompiler
         // Variables also captured by async arrows are excluded since they use the hoisted field mechanism.
         _closures.FunctionAstNodes[qualifiedFunctionName] = funcStmt;
 
-        // Collect variables captured by async arrows (these can't use the function DC)
+        // Collect variables captured by async arrows. By default these can't use the function DC —
+        // they're read through the boxed outer state machine in the arrow's MoveNext.
         var asyncCapturedVars = new HashSet<string>();
         foreach (var arrowInfo in analysis.AsyncArrows)
         {
@@ -56,7 +57,31 @@ public partial class ILCompiler
                 asyncCapturedVars.Add(capture);
         }
 
-        // Filter out async-captured vars before creating the DC
+        // EXCEPTION: a captured variable that a direct-child async arrow WRITES is promoted into the
+        // function display class (a reference type) instead of staying on the boxed value-type state
+        // machine. A boxed struct cannot be mutated in place by verifiable IL — `unbox` yields a
+        // readonly managed pointer, so `stfld` through it fails verification and can drop the write in
+        // complex state machines (#625). Routing the write through `outer.functionDC.field` (a class
+        // reference) is verifiable. Read-only captures stay on the SM field (the existing, working
+        // load path). Variables also captured by a NESTED async arrow are left as-is — the nested
+        // arrow's DC-access path isn't wired (#673) — so only direct-child writes are promoted.
+        var nestedAsyncArrowCaptures = new HashSet<string>();
+        foreach (var arrowInfo in analysis.AsyncArrows)
+            if (arrowInfo.ParentArrow != null)
+                nestedAsyncArrowCaptures.UnionWith(arrowInfo.Captures);
+
+        var promotedToFunctionDC = new HashSet<string>();
+        foreach (var arrowInfo in analysis.AsyncArrows)
+        {
+            if (arrowInfo.ParentArrow != null) continue; // direct children only
+            var written = CapturedWriteAnalysis.CollectImmediateWrites(arrowInfo.Arrow);
+            written.IntersectWith(arrowInfo.Captures);
+            written.ExceptWith(nestedAsyncArrowCaptures);
+            promotedToFunctionDC.UnionWith(written);
+        }
+        asyncCapturedVars.ExceptWith(promotedToFunctionDC);
+
+        // Filter out (still-)async-captured vars before creating the DC
         if (asyncCapturedVars.Count > 0)
             _closures.AsyncCapturedVarsExclusion[qualifiedFunctionName] = asyncCapturedVars;
 
@@ -545,6 +570,10 @@ public partial class ILCompiler
                 ctx.FunctionDisplayClassFields = funcDCFields;
                 ctx.CapturedFunctionLocals = new HashSet<string>(funcDCFields.Keys);
             }
+            // Carry the function's own DC field so async arrows nested in this function can reach
+            // promoted captures through `outer.functionDC.field` (#625). Propagated to the arrow
+            // MoveNext context in EmitAsyncArrowMoveNext.
+            ctx.OuterFunctionDCField = smBuilder.FunctionDCField;
 
             // Emit MoveNext body
             var moveNextEmitter = new AsyncMoveNextEmitter(smBuilder, analysis, _types);
@@ -633,7 +662,13 @@ public partial class ILCompiler
             // Entry-point display class for captured top-level variables
             EntryPointDisplayClassFields = parentCtx.EntryPointDisplayClassFields,
             CapturedTopLevelVars = parentCtx.CapturedTopLevelVars,
-            EntryPointDisplayClassStaticField = parentCtx.EntryPointDisplayClassStaticField
+            EntryPointDisplayClassStaticField = parentCtx.EntryPointDisplayClassStaticField,
+            // Captured locals promoted into the enclosing function's display class (#625): the
+            // arrow reads/writes them through `outer.functionDC.field` rather than mutating the
+            // boxed value-type state machine in place (unverifiable). Only fields the function
+            // actually placed in its DC are listed here, so a name present means "route via DC".
+            FunctionDisplayClassFields = parentCtx.FunctionDisplayClassFields,
+            OuterFunctionDCField = parentCtx.OuterFunctionDCField,
         };
 
         // Create arrow-specific emitter

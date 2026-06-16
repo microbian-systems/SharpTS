@@ -329,7 +329,8 @@ public class AsyncArrowStateMachineBuilder
 
         // For standalone arrows with captures, add capture parameters first
         // Order: [captures...], [arrow params...]
-        var captureOrder = StandaloneCaptureFields.Keys.OrderBy(k => k).ToList();
+        // Ordinal ordering must match the call sites (ILEmitter / AsyncArrowMoveNextEmitter).
+        var captureOrder = StandaloneCaptureFields.Keys.OrderBy(k => k, System.StringComparer.Ordinal).ToList();
         if (IsStandalone)
         {
             foreach (var _ in captureOrder)
