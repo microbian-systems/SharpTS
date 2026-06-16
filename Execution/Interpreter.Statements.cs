@@ -961,15 +961,19 @@ public partial class Interpreter
     /// <summary>
     /// Normalizes an array binding-pattern source through the iterator protocol (#685). Array
     /// destructuring (<c>const [a, b] = src</c>) desugars to positional index access, which is only
-    /// correct for index-addressable sources. Arrays, strings, typed arrays and buffers pass through
-    /// unchanged (fast path); any other source is materialized into a <see cref="SharpTSArray"/> via
-    /// <see cref="GetIterableElements"/> — the same routine spread uses — so the index access reads
-    /// the iterated elements. A genuinely non-iterable source throws "is not iterable", matching JS;
-    /// the type checker already rejects those statically except behind <c>any</c>.
+    /// correct for index-addressable sources. Arrays, typed arrays and buffers pass through unchanged
+    /// (fast path); any other source — including <b>strings</b> — is materialized into a
+    /// <see cref="SharpTSArray"/> via <see cref="GetIterableElements"/> (the same routine spread uses)
+    /// so the index access reads the iterated elements. Strings are intentionally materialized (not on
+    /// the fast path) so a rest element binds a fresh array of characters rather than the trailing
+    /// substring (<c>const [a, ...rest] = "hi"</c> → <c>rest = ["i"]</c>), matching ECMA-262 (#753);
+    /// non-rest character values are identical either way. A genuinely non-iterable source throws "is
+    /// not iterable", matching JS; the type checker already rejects those statically except behind
+    /// <c>any</c>.
     /// </summary>
     internal object? NormalizeArrayDestructureSource(object? value)
     {
-        if (value is SharpTSArray or string or SharpTSTypedArray or SharpTSBuffer)
+        if (value is SharpTSArray or SharpTSTypedArray or SharpTSBuffer)
             return value;
 
         return new SharpTSArray(GetIterableElements(value).ToList());

@@ -47,6 +47,14 @@ public partial class Interpreter
     // All Evaluate* methods return RuntimeValue directly — no FromBoxed in dispatch.
 
     internal RuntimeValue VisitComma(Expr.Comma comma) { Evaluate(comma.Left); return EvaluateRV(comma.Right); }
+    internal RuntimeValue VisitDestructuringAssign(Expr.DestructuringAssign d)
+    {
+        // Run the lowered assignment statements (temp binding + per-target writes), then yield the
+        // original rhs the temp holds — an assignment expression evaluates to its right-hand side (#754).
+        foreach (var stmt in d.Assignments)
+            Execute(stmt);
+        return EvaluateRV(d.ResultValue);
+    }
     internal RuntimeValue VisitBinary(Expr.Binary binary) => EvaluateBinary(binary);
     internal RuntimeValue VisitLogical(Expr.Logical logical) => EvaluateLogical(logical);
     internal RuntimeValue VisitNullishCoalescing(Expr.NullishCoalescing nc) => EvaluateNullishCoalescing(nc);
@@ -115,6 +123,12 @@ public partial class Interpreter
         switch (expr)
         {
             case Expr.Comma comma: await EvaluateAsync(comma.Left); return await EvaluateAsync(comma.Right);
+            case Expr.DestructuringAssign d:
+                // Lowered statements may contain `await` in the rhs; run them on the async path, then
+                // yield the temp holding the original rhs (#754).
+                foreach (var stmt in d.Assignments)
+                    await ExecuteStatementAsync(stmt);
+                return await EvaluateAsync(d.ResultValue);
             case Expr.Binary binary: return await EvaluateBinaryAsync(binary);
             case Expr.Logical logical: return await EvaluateLogicalAsync(logical);
             case Expr.NullishCoalescing nc: return await EvaluateNullishCoalescingAsync(nc);

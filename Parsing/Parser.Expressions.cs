@@ -62,7 +62,12 @@ public partial class Parser
 
         if (Match(TokenType.EQUAL))
         {
+            Token equals = Previous();
             Expr value = Assignment();
+            // Array/object literal on the left of `=` is assignment destructuring (#754): the targets
+            // are existing l-values, lowered to assignment statements reusing the #685 iterator path.
+            if (IsDestructuringAssignmentTarget(expr))
+                return BuildDestructuringAssignment(expr, value, equals.Line);
             return DispatchAssignmentTarget(expr, value, "Invalid assignment target.",
                 onVariable: (name, val) => new Expr.Assign(name, val),
                 onGet: (get, val) => new Expr.Set(get.Object, get.Name, val),

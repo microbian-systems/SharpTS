@@ -1490,6 +1490,56 @@ public class ILVerificationTests
     // T (so storing the $Undefined sentinel threw InvalidCastException), or double? for a value T
     // (unverifiable IL). Such parameters must use an object slot, as locals already do. The body
     // reassigns the parameter to `undefined` and observes it, exercising both store and read.
+    // #751: indexing a typed-array (number[]/boolean[]) variable emitted an unverifiable merge — the
+    // typed List<T> fast path left a native double/bool on the stack where the sibling
+    // $Array/List<object>/fallback paths (and every consumer, which reads the clobbered
+    // StackType=Unknown) expected an object ref. It ran only because the typed branch is dead for an
+    // $Array-backed value. The fast path now boxes its result so every branch converges on object.
+    // Covers GET and SET, number and boolean, typed-backed (empty literal + push) and object-backed
+    // (non-empty literal) arrays, and the original spread/destructure-of-a-numeric-Set repro.
+    [Fact]
+    public void TypedArrayIndexReadAndWrite_PassesILVerification()
+    {
+        var source = """
+            const a: number[] = [1, 2, 3];
+            const x = a[0];
+            a[1] = 9;
+            const b: boolean[] = [true, false];
+            const y = b[0];
+            b[1] = true;
+            const c: number[] = [];
+            c.push(5);
+            let sum = 0;
+            for (let i = 0; i < 3; i++) sum += a[i];
+            console.log(x, a[1], y, b[1], c[0], sum);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("1 9 true true 5 13\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void NumericSetSpreadAndDestructure_PassesILVerification()
+    {
+        // #751 original repro: materializing a numeric Set via spread, then index-reading the
+        // resulting number[], and array-destructuring a numeric Set (inherits the same path).
+        var source = """
+            const out = [...new Set<number>([1, 2, 3])];
+            console.log(out[0], out.length);
+            const [first, second] = new Set<number>([10, 20]);
+            console.log(first, second);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("1 3\n10 20\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
     [Fact]
     public void UndefinedUnionParameterReassignment_PassesILVerification()
     {

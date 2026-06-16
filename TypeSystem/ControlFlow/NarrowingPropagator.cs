@@ -175,6 +175,13 @@ public sealed class NarrowingPropagator
     {
         switch (expr)
         {
+            case Expr.DestructuringAssign destructuring:
+                // Process the lowered assignment statements so each destructured target invalidates its
+                // narrowing (`[a, b] = ...` reassigns a and b), then the result value (#754).
+                foreach (var stmt in destructuring.Assignments)
+                    context = ProcessStatementForNarrowing(stmt, context);
+                return ProcessExpressionForNarrowing(destructuring.ResultValue, context);
+
             case Expr.Assign assign:
                 var varPath = new NarrowingPath.Variable(assign.Name.Lexeme);
                 return context.Invalidate(varPath);

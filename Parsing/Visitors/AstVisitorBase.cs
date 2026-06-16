@@ -26,6 +26,7 @@ public abstract class AstVisitorBase
         switch (expr)
         {
             case Expr.Comma e: VisitComma(e); break;
+            case Expr.DestructuringAssign e: VisitDestructuringAssign(e); break;
             case Expr.Binary e: VisitBinary(e); break;
             case Expr.Logical e: VisitLogical(e); break;
             case Expr.NullishCoalescing e: VisitNullishCoalescing(e); break;
@@ -129,6 +130,15 @@ public abstract class AstVisitorBase
     {
         Visit(expr.Left);
         Visit(expr.Right);
+    }
+
+    protected virtual void VisitDestructuringAssign(Expr.DestructuringAssign expr)
+    {
+        // The lowered assignment statements carry the rhs, per-target writes, and any nested temps;
+        // walking them (plus the result value) exposes every captured variable / declared temp.
+        foreach (var stmt in expr.Assignments)
+            Visit(stmt);
+        Visit(expr.ResultValue);
     }
 
     protected virtual void VisitBinary(Expr.Binary expr)

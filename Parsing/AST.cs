@@ -49,6 +49,7 @@ public abstract record Expr
     public static TResult Accept<TResult>(Expr expr, IExprVisitor<TResult> visitor) => expr switch
     {
         Comma e => visitor.VisitComma(e),
+        DestructuringAssign e => visitor.VisitDestructuringAssign(e),
         Binary e => visitor.VisitBinary(e),
         Logical e => visitor.VisitLogical(e),
         NullishCoalescing e => visitor.VisitNullishCoalescing(e),
@@ -98,6 +99,20 @@ public abstract record Expr
 
     /// <summary>Comma (sequence) expression: evaluates all sub-expressions left-to-right, returns the last value.</summary>
     public record Comma(Expr Left, Expr Right) : Expr;
+    /// <summary>
+    /// Destructuring assignment to existing l-values — <c>[a, b] = rhs</c> / <c>({a, b} = rhs)</c> (#754).
+    /// Unlike declaration destructuring (which binds new variables), the targets are existing
+    /// <see cref="Variable"/>/<see cref="Get"/>/<see cref="GetIndex"/> l-values. The parser lowers the
+    /// pattern (already parsed as an array/object literal) into <paramref name="Assignments"/> — a temp
+    /// declaration for the rhs, the per-target assignment statements (reusing the #685 iterator-protocol
+    /// normalization <c>__arrayDestructure</c> and <c>__objectRest</c>), and any nested temps — plus
+    /// <paramref name="ResultValue"/>, the temp holding the original rhs (an assignment expression
+    /// evaluates to its right-hand side, per ECMA-262). Every backend lowers it identically: run
+    /// <c>Assignments</c>, then yield <c>ResultValue</c>. <c>Assignments</c> contains only synthesized
+    /// <see cref="Stmt.Var"/> and <see cref="Stmt.Expression"/> statements (no control flow), so it is
+    /// safe in any expression position.
+    /// </summary>
+    public record DestructuringAssign(List<Stmt> Assignments, Expr ResultValue) : Expr;
     public record Binary(Expr Left, Token Operator, Expr Right) : Expr;
     public record Logical(Expr Left, Token Operator, Expr Right) : Expr;
     public record NullishCoalescing(Expr Left, Expr Right) : Expr;

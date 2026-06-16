@@ -151,6 +151,14 @@ public static class LoopAssignmentAnalyzer
     {
         switch (expr)
         {
+            case Expr.DestructuringAssign destructuring:
+                // The destructured targets are written by the lowered assignment statements; collecting
+                // their paths keeps loop-narrowing invalidation sound for `[a, b] = ...` in a loop (#754).
+                foreach (var stmt in destructuring.Assignments)
+                    CollectAssignedPaths(stmt, paths);
+                CollectAssignedPathsFromExpr(destructuring.ResultValue, paths);
+                break;
+
             case Expr.Assign assign:
                 paths.Add(new NarrowingPath.Variable(assign.Name.Lexeme));
                 CollectAssignedPathsFromExpr(assign.Value, paths);

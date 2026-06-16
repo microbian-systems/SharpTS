@@ -170,6 +170,9 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             case Expr.Comma c:
                 EmitComma(c);
                 break;
+            case Expr.DestructuringAssign da:
+                EmitDestructuringAssign(da);
+                break;
             case Expr.Literal lit:
                 EmitLiteral(lit);
                 break;
@@ -1992,6 +1995,16 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         EmitExpression(c.Right);
         EnsureBoxed();
     }
+
+    /// <summary>
+    /// Emits an assignment-destructuring expression (#754) by running its lowered statements and then
+    /// leaving the result value on the stack. Overridden in <see cref="StatementEmitterBase"/> (the
+    /// concrete emitters' base), which has access to <c>EmitStatement</c>; declared here only so the
+    /// shared <see cref="EmitExpression"/> dispatch can reach it.
+    /// </summary>
+    protected virtual void EmitDestructuringAssign(Expr.DestructuringAssign da) =>
+        throw new NotSupportedException(
+            "DestructuringAssign requires statement emission; emit it from a StatementEmitterBase subclass.");
     #endregion
 
     #region Virtual Methods - Pass-through expressions

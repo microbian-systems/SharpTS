@@ -824,6 +824,13 @@ public sealed class RuntimeFeatureDetector
                 VisitExpr(cm.Left);
                 VisitExpr(cm.Right);
                 break;
+            case Expr.DestructuringAssign da:
+                // Walk the lowered assignment statements so a feature inside the rhs/targets
+                // (e.g. eval/Proxy in the source expression) is still detected (#754).
+                foreach (var s in da.Assignments)
+                    VisitStmt(s);
+                VisitExpr(da.ResultValue);
+                break;
             case Expr.Grouping gr:
                 VisitExpr(gr.Expression);
                 break;

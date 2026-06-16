@@ -13,6 +13,7 @@ namespace SharpTS.Parsing.Visitors;
 public interface IExprVisitor<out TResult>
 {
     TResult VisitComma(Expr.Comma expr);
+    TResult VisitDestructuringAssign(Expr.DestructuringAssign expr);
     TResult VisitBinary(Expr.Binary expr);
     TResult VisitLogical(Expr.Logical expr);
     TResult VisitNullishCoalescing(Expr.NullishCoalescing expr);

@@ -339,4 +339,148 @@ public class DestructuringTests
     }
 
     #endregion
+
+    #region String Rest Element (#753)
+
+    // #753: a rest element over a STRING source must collect a fresh ARRAY of characters, not bind
+    // the trailing substring. Non-rest character bindings are identical either way.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ArrayDestructuring_StringRest_BindsCharArray(ExecutionMode mode)
+    {
+        var source = """
+            const [a, ...rest] = "hello";
+            console.log(a);
+            console.log(Array.isArray(rest));
+            console.log(rest.length);
+            console.log(rest.join("-"));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("h\ntrue\n4\ne-l-l-o\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ArrayDestructuring_StringNonRest_Unchanged(ExecutionMode mode)
+    {
+        var source = """
+            const [a, b, c = "Z"] = "hi";
+            console.log(a, b, c);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("h i Z\n", output);
+    }
+
+    #endregion
+
+    #region Assignment Destructuring (#754)
+
+    // #754: destructuring assignment to EXISTING l-values (no const/let), array and object patterns.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AssignmentDestructuring_ArrayBasicAndSwap(ExecutionMode mode)
+    {
+        var source = """
+            let a = 0, b = 0;
+            [a, b] = [1, 2];
+            console.log(a, b);
+            [a, b] = [b, a];
+            console.log(a, b);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1 2\n2 1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AssignmentDestructuring_DefaultsHolesAndRest(ExecutionMode mode)
+    {
+        var source = """
+            let c = 0, d = 0;
+            [c, d = 9] = [5];
+            console.log(c, d);
+            let x, y;
+            [, x, , y] = [1, 2, 3, 4];
+            console.log(x, y);
+            let head: number, tail: number[];
+            [head, ...tail] = [1, 2, 3, 4];
+            console.log(head, Array.isArray(tail), tail.join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("5 9\n2 4\n1 true 2,3,4\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AssignmentDestructuring_MemberTargets(ExecutionMode mode)
+    {
+        var source = """
+            const o: any = {};
+            const arr: number[] = [0, 0];
+            [o.p, arr[1]] = [10, 20];
+            console.log(o.p, arr[1]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10 20\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AssignmentDestructuring_Object_RenameRestAndDefault(ExecutionMode mode)
+    {
+        var source = """
+            let pa: number, pb: number, rr: any;
+            ({ a: pa, b: pb, ...rr } = { a: 1, b: 2, z: 9 });
+            console.log(pa, pb, JSON.stringify(rr));
+            const src: any = { p: 3 };
+            let ox, oy;
+            ({ p: ox, q: oy = 4 } = src);
+            console.log(ox, oy);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1 2 {\"z\":9}\n3 4\n", output);
+    }
+
+    // The right-hand side is normalized through the #685 iterator protocol, so a non-indexable
+    // iterable (Set) destructures by assignment just like a declaration.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AssignmentDestructuring_IteratorSource(ExecutionMode mode)
+    {
+        var source = """
+            let s1, s2;
+            [s1, s2] = new Set<number>([11, 22]);
+            console.log(s1, s2);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("11 22\n", output);
+    }
+
+    // An assignment expression evaluates to its right-hand side (the ORIGINAL rhs, not the
+    // normalized array), so it composes in expression position and chains.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AssignmentDestructuring_ExpressionPositionAndChained(ExecutionMode mode)
+    {
+        var source = """
+            let e1, e2;
+            const ret = ([e1, e2] = [100, 200]);
+            console.log(JSON.stringify(ret), e1, e2);
+            let a, b, c, d;
+            [a, b] = [c, d] = [1, 2];
+            console.log(a, b, c, d);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("[100,200] 100 200\n1 2 1 2\n", output);
+    }
+
+    #endregion
 }

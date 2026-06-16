@@ -144,6 +144,16 @@ public partial class TypeChecker
     // Comma (sequence) operator - evaluates all, returns type of last
     internal TypeInfo VisitComma(Expr.Comma expr) { CheckExpr(expr.Left); return CheckExpr(expr.Right); }
 
+    // Assignment destructuring (#754): check the lowered statements (which declare the rhs temp and
+    // validate each target write — e.g. assigning a number element to a `string` target raises TS2322),
+    // then report the result type as the rhs's, since the expression evaluates to its right-hand side.
+    internal TypeInfo VisitDestructuringAssign(Expr.DestructuringAssign expr)
+    {
+        foreach (var stmt in expr.Assignments)
+            CheckStmt(stmt);
+        return CheckExpr(expr.ResultValue);
+    }
+
     // Binary/logical operators (TypeChecker.Operators.cs)
     internal TypeInfo VisitBinary(Expr.Binary expr) => CheckBinary(expr);
     internal TypeInfo VisitLogical(Expr.Logical expr) => CheckLogical(expr);

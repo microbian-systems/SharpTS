@@ -746,7 +746,14 @@ public partial class ILEmitter
                     EmitExpressionAsDouble(gi.Index);
                     IL.Emit(OpCodes.Conv_I4);
                     IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(listType, "get_Item", _ctx.Types.Int32));
-                    SetStackType(h.Descriptor.StackType);
+                    // Box the unboxed element so this branch converges on `object` with the
+                    // $Array / List<object?> / fallback paths at endLabel. The typed List<T>
+                    // fast path otherwise leaves a native double/bool where the merge point — and
+                    // every consumer, which reads the clobbered StackType=Unknown — expects an
+                    // object ref. That ran only because the typed branch is dead for $Array-backed
+                    // values, but is unverifiable IL (#751).
+                    h.Descriptor.EmitBoxElement(IL, _ctx.Types);
+                    SetStackUnknown();
                     IL.Emit(OpCodes.Br, endLabel);
 
                     // Fallback: type didn't match at loop entry
@@ -787,7 +794,10 @@ public partial class ILEmitter
                 EmitExpressionAsDouble(gi.Index);
                 IL.Emit(OpCodes.Conv_I4);
                 IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(listType, "get_Item", _ctx.Types.Int32));
-                SetStackType(desc.StackType);
+                // Box so this branch converges on `object` with the sibling paths at endLabelNH
+                // (see the hoisted get path above for the full rationale, #751).
+                desc.EmitBoxElement(IL, _ctx.Types);
+                SetStackUnknown();
                 IL.Emit(OpCodes.Br, endLabelNH);
 
                 IL.MarkLabel(notTypedLabel);
@@ -898,7 +908,10 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Ldloc, typedValueLocal);
                 IL.Emit(OpCodes.Call, h.Descriptor.GetSetArrayElementMethod(_ctx.Runtime!));
                 IL.Emit(OpCodes.Ldloc, typedValueLocal);
-                SetStackType(h.Descriptor.StackType);
+                // Box the assigned value so this branch leaves `object` like the fallback path at
+                // endLabel (the assignment result is consumed via StackType=Unknown), #751.
+                h.Descriptor.EmitBoxElement(IL, _ctx.Types);
+                SetStackUnknown();
                 IL.Emit(OpCodes.Br, endLabel);
 
                 // Fallback: type didn't match at loop entry
@@ -970,7 +983,10 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Ldloc, typedValueLocalNH);
                 IL.Emit(OpCodes.Call, desc.GetSetArrayElementMethod(_ctx.Runtime!));
                 IL.Emit(OpCodes.Ldloc, typedValueLocalNH);
-                SetStackType(desc.StackType);
+                // Box so this branch converges on `object` with the sibling paths at endLabelNH
+                // (see the hoisted set path above for the full rationale, #751).
+                desc.EmitBoxElement(IL, _ctx.Types);
+                SetStackUnknown();
                 IL.Emit(OpCodes.Br, endLabelNH);
 
                 // Not typed list: box value and fall through to List<object?> path

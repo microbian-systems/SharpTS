@@ -210,12 +210,15 @@ public partial class TypeChecker
     /// <summary>
     /// Computes the static type produced by the <c>__arrayDestructure</c> helper (#685), which
     /// normalizes an array binding-pattern source through the iterator protocol. Index-addressable
-    /// sources (arrays, tuples, strings, <c>any</c>) pass through with their precise type so the
-    /// desugared positional index access stays accurate — notably tuples keep their per-position
-    /// element types. Any other iterable (Set, Map, generators, <c>[Symbol.iterator]</c> objects)
-    /// becomes <c>Array&lt;element&gt;</c>, so the subsequent <c>_dest0[i]</c> reads the element type
-    /// instead of erroring. A non-iterable, non-indexable source is returned unchanged so the existing
-    /// index-access diagnostic still fires.
+    /// sources (arrays, tuples, <c>any</c>) pass through with their precise type so the desugared
+    /// positional index access stays accurate — notably tuples keep their per-position element types.
+    /// Any other iterable (Set, Map, generators, <c>[Symbol.iterator]</c> objects) becomes
+    /// <c>Array&lt;element&gt;</c>, so the subsequent <c>_dest0[i]</c> reads the element type instead of
+    /// erroring. A <b>string</b> is deliberately NOT passed through: it iterates to <c>string[]</c> so a
+    /// rest element binds a fresh array (<c>const [a, ...rest] = "hi"</c> → <c>rest: string[]</c>),
+    /// matching ECMA-262 instead of binding the trailing substring (#753); non-rest element types are
+    /// unchanged (<c>string</c> either way). A non-iterable, non-indexable source is returned unchanged
+    /// so the existing index-access diagnostic still fires.
     /// </summary>
     private TypeInfo NormalizeArrayDestructureSourceType(TypeInfo sourceType)
     {
@@ -223,8 +226,6 @@ public partial class TypeChecker
         {
             case TypeInfo.Array:
             case TypeInfo.Tuple:
-            case TypeInfo.String:
-            case TypeInfo.StringLiteral:
             case TypeInfo.Any:
                 return sourceType;
         }

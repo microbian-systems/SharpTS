@@ -191,6 +191,20 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     #region Core Statement Dispatch
 
     /// <summary>
+    /// Emits an assignment-destructuring expression (#754): run the lowered assignment statements (temp
+    /// binding + per-target writes, all synthesized <see cref="Stmt.Var"/>/<see cref="Stmt.Expression"/>
+    /// with no control flow), then leave the result value (the original rhs) on the stack. Each statement
+    /// goes through the normal <see cref="EmitStatement"/> path, so the async/generator subclasses handle
+    /// an <c>await</c>/<c>yield</c> in the rhs without any extra plumbing.
+    /// </summary>
+    protected override void EmitDestructuringAssign(Expr.DestructuringAssign da)
+    {
+        foreach (var stmt in da.Assignments)
+            EmitStatement(stmt);
+        EmitExpression(da.ResultValue);
+    }
+
+    /// <summary>
     /// Dispatches statement emission to the appropriate handler method.
     /// </summary>
     public virtual void EmitStatement(Stmt stmt)
