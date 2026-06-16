@@ -391,6 +391,20 @@ public abstract record TypeInfo
         /// <summary>Gets the frozen class if available, otherwise null.</summary>
         public TypeInfo.Class? Frozen => _frozen;
 
+        /// <summary>
+        /// Drops the cached frozen core/class so the next <see cref="Freeze"/> /
+        /// <see cref="FreezeGeneric"/> rebuilds from the current mutable state.
+        /// Used after a class body is type-checked to publish method return types that
+        /// were inferred during the body pass — the early freeze captured the
+        /// <c>&lt;inferred&gt;</c> placeholders (#658/#661). The <see cref="DeclarationId"/>
+        /// is preserved, so frozen-class identity-by-declaration (cache keys) is stable.
+        /// </summary>
+        public void ResetFrozenCache()
+        {
+            _frozenCore = null;
+            _frozen = null;
+        }
+
         public override string ToString() => IsAbstract ? $"abstract class {Name}" : $"class {Name}";
     }
 

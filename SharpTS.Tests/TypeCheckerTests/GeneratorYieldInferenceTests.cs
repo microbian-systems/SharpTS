@@ -165,9 +165,105 @@ public class GeneratorYieldInferenceTests
         TestHarness.RunInterpreted(source);
     }
 
-    // NOTE: generator METHODS with an inferred return type now also compute Generator<yieldType> rather
-    // than Generator<void> (the same fix in CheckClassBody), but the result is not yet observable at a call
-    // site: `new C().values()` resolves an inferred method's return to the unresolved `<inferred>`
-    // placeholder regardless of generator-ness — a pre-existing method-return-inference propagation gap
-    // (#658). A test here would exercise that unrelated bug, so it is intentionally omitted.
+    // ---- #661/#658: a class method's inferred return type is now observable at the call site ----
+    // CheckClassBody computes the inferred (un-annotated) method return type during the body pass and
+    // re-publishes the frozen class afterwards, so `new C().m()` no longer reads the `<inferred>` placeholder.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorMethod_InferredYield_IsIterable_RunsInBothModes(ExecutionMode mode)
+    {
+        // The #661 headline: spreading a generator method with no explicit Generator<T> return type used to
+        // fail "must be an iterable type ... got '<inferred>'". The inferred Generator<number> is now visible.
+        var source = """
+            class C { *m() { yield 1; yield 2; } }
+            console.log([...new C().m()][0]);
+            """;
+        Assert.Equal("1\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void GeneratorMethod_InferredYield_WrongElementUse_Rejected()
+    {
+        // The inferred method element is number, so binding it to string is a genuine TS2322 (not a vacuous
+        // pass through the old `<inferred>` ~ any placeholder).
+        var source = """
+            class C { *m() { yield 1; } }
+            const s: string = [...new C().m()][0];
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2322", ex.Diagnostic.TsCode);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorMethod_InferredYield_ForOf_RunsInBothModes(ExecutionMode mode)
+    {
+        var source = """
+            class C { *m() { yield 10; yield 20; } }
+            let total = 0;
+            for (const v of new C().m()) { total += v; }
+            console.log(total);
+            """;
+        Assert.Equal("30\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorMethod_InferredYield_RunsInBothModes(ExecutionMode mode)
+    {
+        // The inferred async generator method computes AsyncGenerator<number> (its yield type), so
+        // `for await...of` binds number and the compiled state machine emits a valid element type.
+        var source = """
+            class C { async *m() { yield 1; yield 2; } }
+            async function run() {
+              let total = 0;
+              for await (const v of new C().m()) { total += v; }
+              console.log(total);
+            }
+            run();
+            """;
+        Assert.Equal("3\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void StaticGeneratorMethod_InferredYield_Interpreted()
+    {
+        // The inferred return type propagates for a STATIC generator method too (CheckClassBody writes the
+        // resolved type into StaticMethods). Interpreter-only: the compiler does not yet lower a static
+        // generator method's body ("Yield not supported in this context"), a pre-existing limitation
+        // independent of return-type inference — it fails the same way with an explicit return type (#692).
+        var source = """
+            class C { static *gen() { yield 7; } }
+            console.log([...C.gen()][0]);
+            """;
+        Assert.Equal("7\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void OrdinaryMethod_InferredReturn_WrongAssignment_Rejected()
+    {
+        // #658 (the non-generator face of the same propagation gap): an ordinary inferred method's return
+        // type now reaches the call site, so a bad assignment is the TS2322 tsc reports rather than a
+        // vacuous pass through `<inferred>` ~ any.
+        var source = """
+            class C { name() { return "hi"; } }
+            const n: number = new C().name();
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2322", ex.Diagnostic.TsCode);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OrdinaryMethod_InferredReturn_CorrectUse_RunsInBothModes(ExecutionMode mode)
+    {
+        // The same propagation must not over-reject: a correctly-typed consumer of the inferred return runs.
+        var source = """
+            class C { name() { return "hi"; } }
+            const s: string = new C().name();
+            console.log(s);
+            """;
+        Assert.Equal("hi\n", TestHarness.Run(source, mode));
+    }
 }

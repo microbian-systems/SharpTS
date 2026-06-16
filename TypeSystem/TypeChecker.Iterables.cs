@@ -85,12 +85,47 @@ public partial class TypeChecker
         TypeInfo? iteratorFactory = GetMemberType(source, "@@iterator");
         if (!IsCallableMember(iteratorFactory) && source is TypeInfo.Record { SymbolIndexType: { } symIndex })
             iteratorFactory = symIndex;   // object-literal [Symbol.iterator]() lands in the symbol index
-        if (!IsCallableMember(iteratorFactory)) return false;
+        if (!IsCallableMember(iteratorFactory))
+        {
+            // A class instance may inherit iterability from a built-in iterable base
+            // (`class C extends Array<number>`). That placeholder superclass is a name-only MutableClass
+            // the normal member walk skips, so probe the hierarchy directly (#593).
+            return source is TypeInfo.Instance instance
+                && TryGetInstanceExtendsBuiltInIterableElement(instance, out elementType);
+        }
 
         TypeInfo? iterator = GetCallableReturnType(iteratorFactory);
         if (iterator is null) { elementType = new TypeInfo.Any(); return true; }
 
         return TryGetIteratorElementFromReturn(iterator, out elementType);
+    }
+
+    /// <summary>
+    /// Element type of a class instance that (transitively) extends a built-in iterable, read from the
+    /// <c>@@iterator</c> the <c>extends Array&lt;T&gt;</c>/<c>Set&lt;T&gt;</c>/… placeholder records (see
+    /// <see cref="ResolveDeclaredSuperclass"/>). That placeholder superclass is a name-only
+    /// <see cref="TypeInfo.MutableClass"/> which <c>ClassInfoAccessor</c>'s chain walk skips, so the
+    /// hierarchy is walked directly here — mirroring <c>ExtendsBuiltInError</c>. Returns <c>false</c> for an
+    /// instance with no built-in-iterable base, leaving it to be reported non-iterable (#593).
+    /// </summary>
+    private bool TryGetInstanceExtendsBuiltInIterableElement(TypeInfo.Instance instance, out TypeInfo elementType)
+    {
+        elementType = null!;
+        TypeInfo? current = instance.ResolvedClassType;
+        for (int guard = 0; current != null && guard < 64; guard++)
+        {
+            TypeInfo? iteratorFactory = current is TypeInfo.MutableClass mc
+                ? (mc.Methods.TryGetValue("@@iterator", out var m) ? m : null)
+                : GetMethods(current)?.GetValueOrDefault("@@iterator");
+            if (IsCallableMember(iteratorFactory))
+            {
+                TypeInfo? iterator = GetCallableReturnType(iteratorFactory);
+                if (iterator is null) { elementType = new TypeInfo.Any(); return true; }
+                return TryGetIteratorElementFromReturn(iterator, out elementType);
+            }
+            current = GetSuperclass(current);
+        }
+        return false;
     }
 
     /// <summary>
@@ -129,14 +164,19 @@ public partial class TypeChecker
     ///   <c>@@iterator</c> member (see TypeChecker.Statements.Interfaces) — so an interface carrying a
     ///   number index might be iterable-via-Array and is spared to avoid a false TS2488. A genuine
     ///   <c>[Symbol.iterator]()</c> interface member is caught earlier by the structural probe.</item>
+    /// <item><b>Class instance</b>: a class is iterable only via an inherited <c>[Symbol.iterator]</c>.
+    ///   An <c>extends Array/Set/Map/...</c> instance carries one (recovered by the structural probe via
+    ///   <see cref="TryGetInstanceExtendsBuiltInIterableElement"/>) and is caught earlier; a class cannot
+    ///   declare its own <c>[Symbol.iterator]()</c> yet (#592), so any instance reaching here is genuinely
+    ///   non-iterable, matching tsc's TS2488 instead of binding <c>any</c> (#593). When #592 lands, a
+    ///   user <c>[Symbol.iterator]</c> becomes a real member the structural probe finds first.</item>
     /// </list>
-    /// Class instances are intentionally excluded: a class may <c>extends Array</c> (iterable) yet that
-    /// base is a name-only placeholder here, so non-iterability can't be proven — tracked separately.
     /// </summary>
     private static bool IsProvablyNonIterableStructuralObject(TypeInfo source) => source switch
     {
         TypeInfo.Record => true,
         TypeInfo.Interface { NumberIndexType: null } => true,
+        TypeInfo.Instance => true,
         _ => false
     };
 
