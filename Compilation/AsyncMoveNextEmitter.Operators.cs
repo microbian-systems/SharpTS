@@ -293,6 +293,7 @@ public partial class AsyncMoveNextEmitter
             var argLocals = cp.Arguments.Select(SpillBoxed).ToList();
             foreach (var argLocal in argLocals)
                 _il.Emit(OpCodes.Ldloc, argLocal);
+            EmitPrivateCallUndefinedPadding(cp.Arguments.Count, staticMethod!.GetParameters().Length);
             _il.Emit(OpCodes.Call, staticMethod!);
             SetStackUnknown();
             return;
@@ -337,6 +338,7 @@ public partial class AsyncMoveNextEmitter
                 foreach (var argLocal in argLocals)
                     _il.Emit(OpCodes.Ldloc, argLocal);
 
+                EmitPrivateCallUndefinedPadding(cp.Arguments.Count, instanceMethod!.GetParameters().Length);
                 _il.Emit(OpCodes.Callvirt, instanceMethod!);
                 SetStackUnknown();
                 return;
@@ -355,6 +357,7 @@ public partial class AsyncMoveNextEmitter
                 foreach (var argLocal in argLocals)
                     _il.Emit(OpCodes.Ldloc, argLocal);
 
+                EmitPrivateCallUndefinedPadding(cp.Arguments.Count, instanceMethod!.GetParameters().Length);
                 _il.Emit(OpCodes.Callvirt, instanceMethod!);
                 SetStackUnknown();
                 return;

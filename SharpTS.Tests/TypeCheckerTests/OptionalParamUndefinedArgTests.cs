@@ -72,11 +72,14 @@ public class OptionalParamUndefinedArgTests
         Assert.Equal("undefined\n", TestHarness.RunInterpreted(source));
     }
 
-    [Fact]
-    public void PrivateMethodDefaultParameter_AcceptsUndefined()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PrivateMethodDefaultParameter_AcceptsUndefined(ExecutionMode mode)
     {
-        // Interpreter-only — see DefaultSecondParameter_AcceptsExplicitUndefined; value-type
-        // default in a method yields NaN in compiled mode (tracked in #705).
+        // #668 private-method argument-compatibility path. Runs in BOTH modes: unlike free
+        // functions / constructors (#705), compiled private methods emit every parameter as an
+        // `object` slot, so the value-type default is not stranded in a `double` slot — the
+        // call-site `undefined` padding + body default prologue added in #696 fire the default.
         var source = """
             class C {
               #priv(a: string, b: number = 7): number { return a.length + b; }
@@ -84,7 +87,40 @@ public class OptionalParamUndefinedArgTests
             }
             console.log(new C().go());
             """;
-        Assert.Equal("8\n", TestHarness.RunInterpreted(source));
+        Assert.Equal("8\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PrivateMethodOptionalParameter_AcceptsExplicitUndefined(ExecutionMode mode)
+    {
+        // #668 path that #696 unblocked: an *optional* (`b?: T`) private-method parameter could
+        // not previously be parsed, so the original #668 work had to probe this path with a
+        // default param instead. An optional reference param accepts an explicit `undefined`.
+        var source = """
+            class C {
+              #priv(a: string, b?: string): string { return a + (b ?? "_"); }
+              go(): string { return this.#priv("x", undefined); }
+            }
+            console.log(new C().go());
+            """;
+        Assert.Equal("x_\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PrivateMethodOptionalParameter_OmittedArgument(ExecutionMode mode)
+    {
+        // The minimal #696 scenario end-to-end: a private method with a sole optional parameter
+        // invoked with no argument. The omitted slot reads as `undefined` in both modes.
+        var source = """
+            class C {
+              #priv(b?: number): number { return b ?? 1; }
+              go(): number { return this.#priv(); }
+            }
+            console.log(new C().go());
+            """;
+        Assert.Equal("1\n", TestHarness.Run(source, mode));
     }
 
     [Fact]

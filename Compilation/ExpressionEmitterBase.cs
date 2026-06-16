@@ -873,6 +873,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                 EmitExpression(arg);
                 EnsureBoxed();
             }
+            EmitPrivateCallUndefinedPadding(cp.Arguments.Count, staticMethod!.GetParameters().Length);
             IL.Emit(OpCodes.Call, staticMethod!);
             SetStackUnknown();
             return;
@@ -916,6 +917,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     EnsureBoxed();
                 }
 
+                EmitPrivateCallUndefinedPadding(cp.Arguments.Count, instanceMethod!.GetParameters().Length);
                 IL.Emit(OpCodes.Callvirt, instanceMethod!);
                 SetStackUnknown();
                 return;
@@ -934,6 +936,7 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     EnsureBoxed();
                 }
 
+                EmitPrivateCallUndefinedPadding(cp.Arguments.Count, instanceMethod!.GetParameters().Length);
                 IL.Emit(OpCodes.Callvirt, instanceMethod!);
                 SetStackUnknown();
                 return;
@@ -943,6 +946,22 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         IL.Emit(OpCodes.Ldstr, $"Private method '#{methodName}' not found in class '{className}'");
         IL.Emit(OpCodes.Newobj, Types.ExceptionCtorString);
         IL.Emit(OpCodes.Throw);
+    }
+
+    /// <summary>
+    /// Pads the evaluation stack with <c>undefined</c> sentinels for any trailing parameters a
+    /// private method declares but the call omits. Private methods are emitted with a fixed,
+    /// all-<c>object</c> signature (see <c>ILCompiler.Classes.cs</c>), so a call supplying fewer
+    /// arguments than the method declares would otherwise leave <c>call</c>/<c>callvirt</c> short
+    /// of operands (StackUnderflow → <c>InvalidProgramException</c>). The padded slots read as
+    /// <c>undefined</c> in the body and fire any default-parameter prologue
+    /// (<see cref="ILEmitter.EmitDefaultParameters"/>). Mirrors the undefined-padding that
+    /// <c>$TSFunction.AdjustArgs</c> applies on the value-call path. (#696)
+    /// </summary>
+    protected void EmitPrivateCallUndefinedPadding(int argCount, int paramCount)
+    {
+        for (int i = argCount; i < paramCount; i++)
+            EmitUndefinedConstant();
     }
 
     /// <summary>
