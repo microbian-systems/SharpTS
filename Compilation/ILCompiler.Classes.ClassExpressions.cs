@@ -319,11 +319,17 @@ public partial class ILCompiler
         _classExprs.Constructors[classExpr] = ctorBuilder;
         _classes.Constructors[className] = ctorBuilder;
 
-        // Define static methods
-        foreach (var method in classExpr.Methods.Where(m => m.Body != null && m.IsStatic && m.Name.Lexeme != "constructor"))
+        // Define static methods (computed symbol-keyed methods are handled by
+        // DefineClassExpressionSymbolMethods below, like the class-declaration path).
+        foreach (var method in classExpr.Methods.Where(m => m.Body != null && m.IsStatic && m.Name.Lexeme != "constructor" && m.ComputedKey == null))
         {
             var paramTypes = method.Parameters.Select(_ => typeof(object)).ToArray();
-            Type returnType = method.IsAsync ? _types.TaskOfObject : typeof(object);
+            // Match the method kind to its state machine's return type (#765), mirroring
+            // DefineClassMethodsOnly. Async generator FIRST since it has both flags set.
+            Type returnType = (method.IsAsync && method.IsGenerator) ? _types.IAsyncEnumerableOfObject :
+                              method.IsAsync ? _types.TaskOfObject :
+                              method.IsGenerator ? _types.IEnumerableOfObject :
+                              typeof(object);
 
             var methodBuilder = typeBuilder.DefineMethod(
                 method.Name.Lexeme,
@@ -334,8 +340,9 @@ public partial class ILCompiler
             _classExprs.StaticMethods[classExpr][method.Name.Lexeme] = methodBuilder;
         }
 
-        // Define instance methods
-        foreach (var method in classExpr.Methods.Where(m => m.Body != null && !m.IsStatic && m.Name.Lexeme != "constructor"))
+        // Define instance methods (computed symbol-keyed methods are handled by
+        // DefineClassExpressionSymbolMethods below, like the class-declaration path).
+        foreach (var method in classExpr.Methods.Where(m => m.Body != null && !m.IsStatic && m.Name.Lexeme != "constructor" && m.ComputedKey == null))
         {
             var paramTypes = method.Parameters.Select(_ => typeof(object)).ToArray();
 
@@ -343,7 +350,12 @@ public partial class ILCompiler
             if (method.IsAbstract)
                 methodAttrs |= MethodAttributes.Abstract;
 
-            Type returnType = method.IsAsync ? typeof(Task<object>) : typeof(object);
+            // Match the method kind to its state machine's return type (#765), mirroring
+            // DefineClassMethodsOnly. Async generator FIRST since it has both flags set.
+            Type returnType = (method.IsAsync && method.IsGenerator) ? _types.IAsyncEnumerableOfObject :
+                              method.IsAsync ? typeof(Task<object>) :
+                              method.IsGenerator ? _types.IEnumerableOfObject :
+                              typeof(object);
 
             var methodBuilder = typeBuilder.DefineMethod(
                 method.Name.Lexeme,
@@ -353,6 +365,10 @@ public partial class ILCompiler
             );
             _classExprs.InstanceMethods[classExpr][method.Name.Lexeme] = methodBuilder;
         }
+
+        // Computed symbol-keyed methods (`*[Symbol.iterator]()` etc.) get synthetic uniquely-named
+        // builders plus runtime symbol-method registration, mirroring the class-declaration path (#755).
+        DefineClassExpressionSymbolMethods(classExpr, typeBuilder);
 
         // Define user-defined accessors (overrides property accessors)
         if (classExpr.Accessors != null)
@@ -428,17 +444,21 @@ public partial class ILCompiler
         // Emit instance constructor
         EmitClassExpressionConstructor(classExpr, typeBuilder, fieldsField);
 
-        // Emit instance method bodies
-        foreach (var method in classExpr.Methods.Where(m => m.Body != null && !m.IsStatic && m.Name.Lexeme != "constructor"))
+        // Emit instance method bodies (computed symbol-keyed methods are emitted below).
+        foreach (var method in classExpr.Methods.Where(m => m.Body != null && !m.IsStatic && m.Name.Lexeme != "constructor" && m.ComputedKey == null))
         {
             EmitClassExpressionMethod(classExpr, typeBuilder, method, fieldsField);
         }
 
-        // Emit static method bodies
-        foreach (var method in classExpr.Methods.Where(m => m.Body != null && m.IsStatic))
+        // Emit static method bodies (computed symbol-keyed methods are emitted below).
+        foreach (var method in classExpr.Methods.Where(m => m.Body != null && m.IsStatic && m.ComputedKey == null))
         {
             EmitClassExpressionStaticMethodBody(classExpr, method);
         }
+
+        // Emit computed symbol-keyed method bodies (#755), then their runtime registration runs in
+        // the class-expression .cctor (EmitClassExpressionStaticConstructor → EmitSymbolMethodRegistrations).
+        EmitClassExpressionSymbolMethods(classExpr, typeBuilder, fieldsField);
 
         // Emit user-defined accessor bodies
         if (classExpr.Accessors != null)
@@ -547,11 +567,12 @@ public partial class ILCompiler
     {
         bool hasStaticFields = classExpr.Fields.Any(f => f.IsStatic && f.Initializer != null);
         bool hasStaticInitializers = classExpr.StaticInitializers?.Count > 0;
-        // Symbol-keyed computed accessors (#281) register in the .cctor, keyed by
-        // this class's generated name (mirrors the class-declaration path #266).
+        // Symbol-keyed computed accessors (#281) and methods (#755) register in the .cctor, keyed by
+        // this class's generated name (mirrors the class-declaration path #266/#647).
         bool hasSymbolAccessors = _classes.SymbolAccessors.ContainsKey(typeBuilder.Name);
+        bool hasSymbolMethods = _classes.SymbolMethods.ContainsKey(typeBuilder.Name);
 
-        if (!hasStaticFields && !hasStaticInitializers && !hasSymbolAccessors) return;
+        if (!hasStaticFields && !hasStaticInitializers && !hasSymbolAccessors && !hasSymbolMethods) return;
 
         var cctor = typeBuilder.DefineConstructor(
             MethodAttributes.Static | MethodAttributes.Private | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
@@ -599,9 +620,10 @@ public partial class ILCompiler
             }
         }
 
-        // Register symbol-keyed computed accessors (#281) in the runtime registry,
-        // keyed by this class's Type so dynamic bracket get/set can dispatch them.
+        // Register symbol-keyed computed accessors (#281) and methods (#755) in the runtime registry,
+        // keyed by this class's Type so dynamic bracket get / for...of dispatch can find them.
         EmitSymbolAccessorRegistrations(emitter, il, typeBuilder);
+        EmitSymbolMethodRegistrations(emitter, il, typeBuilder);
 
         il.Emit(OpCodes.Ret);
     }
@@ -806,10 +828,25 @@ public partial class ILCompiler
         // args with the `undefined` sentinel on the value-call path (covers sync + async).
         MarkPadsUndefined(methodBuilder);
 
+        // Generator methods route through the same state-machine emitters as class declarations (#765).
+        // Async generator FIRST since `async *m()` has both IsAsync and IsGenerator set.
+        if (method.IsAsync && method.IsGenerator)
+        {
+            EmitAsyncGeneratorMethodBody(methodBuilder, method, fieldsField);
+            return;
+        }
+
         // Handle async methods via state machine
         if (method.IsAsync)
         {
             EmitClassExpressionAsyncMethod(classExpr, typeBuilder, method, methodBuilder, fieldsField);
+            return;
+        }
+
+        // Generator methods use the generator state machine (#765).
+        if (method.IsGenerator)
+        {
+            EmitGeneratorMethodBody(methodBuilder, method, fieldsField);
             return;
         }
 
@@ -864,9 +901,23 @@ public partial class ILCompiler
 
         var typeBuilder = _classExprs.Builders[classExpr];
 
+        // Static generator methods route like a free function (no `this`), mirroring the class-
+        // declaration static path (#765/#778). Async generator FIRST since it has both flags set.
+        if (method.IsAsync && method.IsGenerator)
+        {
+            EmitAsyncGeneratorMethodBody(methodBuilder, method, fieldsField: null, isInstanceMethod: false);
+            return;
+        }
+
         if (method.IsAsync)
         {
             EmitClassExpressionStaticAsyncMethod(classExpr, typeBuilder, method, methodBuilder);
+            return;
+        }
+
+        if (method.IsGenerator)
+        {
+            EmitGeneratorMethodBody(methodBuilder, method, fieldsField: null, isInstanceMethod: false);
             return;
         }
 
@@ -952,6 +1003,77 @@ public partial class ILCompiler
                 EmitDefaultReturnValue(il, methodBuilder.ReturnType);
                 il.Emit(OpCodes.Ret);
             }
+        }
+    }
+
+    /// <summary>
+    /// Pre-defines a uniquely-named .NET method for each computed symbol-keyed method of a class
+    /// EXPRESSION (<c>*[Symbol.iterator]() {…}</c> and the async/generator forms), mirroring the
+    /// class-declaration <see cref="DefineSymbolMethods"/> (#755). Recorded in the shared
+    /// <see cref="ClassState.SymbolMethods"/> registry (keyed by the generated type name) so the
+    /// bodies emit through the normal class-expression per-method emitters and the .cctor registers
+    /// them in the runtime symbol-method registry.
+    /// </summary>
+    private void DefineClassExpressionSymbolMethods(Expr.ClassExpr classExpr, TypeBuilder typeBuilder)
+    {
+        string className = typeBuilder.Name;
+        if (_classes.SymbolMethods.ContainsKey(className))
+            return;  // already defined (idempotent across multi-module pre-define/emit passes)
+
+        var computed = classExpr.Methods.Where(m => m.ComputedKey != null && m.Body != null).ToList();
+        if (computed.Count == 0)
+            return;
+
+        var list = new List<(Stmt.Function, Expr, MethodBuilder)>();
+        for (int i = 0; i < computed.Count; i++)
+        {
+            var method = computed[i];
+            // Unique, deterministic name so multiple computed methods don't collide and the synthetic
+            // `<computed>` lexeme (not a dispatchable name) is replaced by a real IL name.
+            string uniqueName = $"$symmethod_{i}";
+            var renamed = method with { Name = new Token(TokenType.IDENTIFIER, uniqueName, null, method.Name.Line) };
+
+            // Class-expression methods use all-object parameter slots (computed iterator methods are
+            // typically parameterless anyway). Async generator FIRST since it sets both flags.
+            var paramTypes = method.Parameters.Select(_ => typeof(object)).ToArray();
+            Type returnType = (method.IsAsync && method.IsGenerator) ? _types.IAsyncEnumerableOfObject :
+                              method.IsAsync ? _types.TaskOfObject :
+                              method.IsGenerator ? _types.IEnumerableOfObject :
+                              typeof(object);
+
+            // Non-virtual (like symbol accessors): the registry holds the exact MethodInfo.
+            MethodAttributes attrs = MethodAttributes.Public | MethodAttributes.HideBySig;
+            if (method.IsStatic)
+                attrs |= MethodAttributes.Static;
+
+            var mb = typeBuilder.DefineMethod(uniqueName, attrs, returnType, paramTypes);
+
+            // Register under the unique name so EmitClassExpression(Static)MethodBody resolves the builder.
+            if (method.IsStatic)
+                _classExprs.StaticMethods[classExpr][uniqueName] = mb;
+            else
+                _classExprs.InstanceMethods[classExpr][uniqueName] = mb;
+
+            list.Add((renamed, method.ComputedKey!, mb));
+        }
+        _classes.SymbolMethods[className] = list;
+    }
+
+    /// <summary>
+    /// Emits the bodies of the computed symbol-keyed methods recorded by
+    /// <see cref="DefineClassExpressionSymbolMethods"/>, reusing the class-expression per-method
+    /// emitters so the generator/async state machines compose (#755).
+    /// </summary>
+    private void EmitClassExpressionSymbolMethods(Expr.ClassExpr classExpr, TypeBuilder typeBuilder, FieldInfo fieldsField)
+    {
+        if (!_classes.SymbolMethods.TryGetValue(typeBuilder.Name, out var list))
+            return;
+        foreach (var (method, _key, _builder) in list)
+        {
+            if (method.IsStatic)
+                EmitClassExpressionStaticMethodBody(classExpr, method);
+            else
+                EmitClassExpressionMethod(classExpr, typeBuilder, method, fieldsField);
         }
     }
 

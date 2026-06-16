@@ -426,4 +426,89 @@ public class ClassExpressionTests
     }
 
     #endregion
+
+    #region Generator Methods (#765)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_GeneratorMethod_Works(ExecutionMode mode)
+    {
+        // #765: a generator method in a class expression was emitted on the linear path and its
+        // `yield` hit "Yield not supported in this context". It now routes through the generator
+        // state machine like a class-declaration method.
+        var source = """
+            const C = class { *gen() { yield 1; yield 2; } };
+            console.log([...new C().gen()].join(","));
+            """;
+
+        Assert.Equal("1,2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_GeneratorMethod_CapturesThis(ExecutionMode mode)
+    {
+        // Exercises `this`/constructor-parameter access and a loop inside a class-expression generator.
+        var source = """
+            const Range = class {
+                constructor(public start: number, public end: number) {}
+                *gen(): Generator<number> { for (let i = this.start; i < this.end; i++) yield i; }
+            };
+            console.log([...new Range(1, 5).gen()].join(","));
+            """;
+
+        Assert.Equal("1,2,3,4\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_GeneratorMethod_YieldStar(ExecutionMode mode)
+    {
+        var source = """
+            const C = class { *gen() { yield* [1, 2, 3]; } };
+            console.log([...new C().gen()].join(","));
+            """;
+
+        Assert.Equal("1,2,3\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_StaticGeneratorMethod_Works(ExecutionMode mode)
+    {
+        var source = """
+            const C = class { static *sg() { yield 7; yield 8; } };
+            console.log([...C.sg()].join(","));
+            """;
+
+        Assert.Equal("7,8\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_AsyncGeneratorMethod_Works(ExecutionMode mode)
+    {
+        var source = """
+            const C = class { async *ag() { yield 1; yield 2; } };
+            async function main() { for await (const x of new C().ag()) console.log(x); }
+            main();
+            """;
+
+        Assert.Equal("1\n2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_StaticAsyncGeneratorMethod_Works(ExecutionMode mode)
+    {
+        var source = """
+            const C = class { static async *sag() { yield 5; yield 6; } };
+            async function main() { for await (const x of C.sag()) console.log(x); }
+            main();
+            """;
+
+        Assert.Equal("5\n6\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
 }

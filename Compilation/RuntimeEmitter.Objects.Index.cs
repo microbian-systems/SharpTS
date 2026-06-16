@@ -199,9 +199,12 @@ public partial class RuntimeEmitter
             il.MarkLabel(noSymGetterLabel);
         }
 
-        // #647: computed symbol-keyed method (`[Symbol.iterator]() {...}`). Reading the member
-        // returns the callable itself — the found MethodInfo, invoked later via InvokeMethodValue's
-        // MethodBase arm — unlike a getter (above), which is invoked here.
+        // #647/#755: computed symbol-keyed method (`[Symbol.iterator]() {...}`). Reading the member
+        // returns a receiver-bound callable — `new $TSFunction(obj, method)` — so a standalone
+        // `obj[Symbol.iterator]()` keeps `this`. InvokeWithThis uses the bound `_target` for an
+        // instance method (and null for a static one), mirroring the string-key method path
+        // (GetFieldsProperty). for...of / spread / for-await pass the receiver themselves, so they
+        // worked even when this returned the raw MethodInfo.
         {
             var noSymMethodLabel = il.DefineLabel();
             var symMethodLocal = il.DeclareLocal(_types.Object);
@@ -211,7 +214,10 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Stloc, symMethodLocal);
             il.Emit(OpCodes.Ldloc, symMethodLocal);
             il.Emit(OpCodes.Brfalse, noSymMethodLabel);
-            il.Emit(OpCodes.Ldloc, symMethodLocal);
+            il.Emit(OpCodes.Ldarg_0);                          // obj — receiver to bind
+            il.Emit(OpCodes.Ldloc, symMethodLocal);            // found MethodInfo (typed object)
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);   // new $TSFunction(obj, method)
             il.Emit(OpCodes.Ret);
             il.MarkLabel(noSymMethodLabel);
         }
