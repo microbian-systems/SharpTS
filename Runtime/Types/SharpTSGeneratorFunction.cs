@@ -39,7 +39,7 @@ public class SharpTSGeneratorFunction : ISharpTSCallable
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         // Return a generator that will execute the body lazily
-        return new SharpTSGenerator(_declaration, environment, interpreter);
+        return new SharpTSGenerator(_declaration.Body ?? [], environment, interpreter);
     }
 
     /// <summary>
@@ -106,7 +106,12 @@ public class SharpTSArrowGeneratorFunction : ISharpTSCallable
         }
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
-        return new SharpTSArrowGenerator(_declaration, environment, interpreter);
+        // A generator function expression drives the same SharpTSGenerator as a declaration — only the
+        // block body and the captured environment differ. Generator expressions always have a block
+        // body (the parser never produces an expression-bodied generator). This native path runs the
+        // generator expressions the GeneratorArrowLifter leaves in place because they close over a
+        // block-scoped binding (#678); all others are lifted to declarations.
+        return new SharpTSGenerator(_declaration.BlockBody ?? [], environment, interpreter);
     }
 
     /// <summary>

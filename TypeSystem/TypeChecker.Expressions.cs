@@ -1393,6 +1393,8 @@ public partial class TypeChecker
         var previousInferredArrow = _inferredReturnTypes;
         TypeInfo? previousThisType = _currentFunctionThisType;
         bool previousInAsync = _inAsyncFunction;
+        bool previousInGenerator = _inGeneratorFunction;
+        var previousInferredYieldTypes = _inferredYieldTypes;
         int previousLoopDepth = _loopDepth;
         int previousSwitchDepth = _switchDepth;
         var previousActiveLabels = new Dictionary<string, bool>(_activeLabels);
@@ -1410,6 +1412,15 @@ public partial class TypeChecker
         }
         _currentFunctionThisType = thisType;
         _inAsyncFunction = arrow.IsAsync;
+        // A generator function EXPRESSION establishes its own generator context so `yield` is valid in
+        // its body and its element type is inferred from the yields. Reached only for generator arrows
+        // the GeneratorArrowLifter intentionally leaves in place — i.e. those closing over a block-scoped
+        // binding (#678); all other generator expressions are lifted to declarations before type-check.
+        _inGeneratorFunction = arrow.IsGenerator;
+        // Collect yield operand types only while inferring a generator's type (mirrors the declaration
+        // path, #548). Null otherwise so a nested explicitly-typed generator's yields cannot leak into an
+        // enclosing inferred one.
+        _inferredYieldTypes = inferringArrowReturn && arrow.IsGenerator ? new List<TypeInfo>() : null;
         _loopDepth = 0;
         _switchDepth = 0;
         _activeLabels.Clear();
@@ -1476,7 +1487,13 @@ public partial class TypeChecker
                     var collected = _inferredReturnTypes!;
                     _inferredReturnTypes = null;
 
-                    if (collected.Count == 0)
+                    if (arrow.IsGenerator)
+                    {
+                        // A generator's element type is its YIELD type (#548), not the return-derived
+                        // type; build Generator<Y> (or AsyncGenerator<Y> for an async generator).
+                        returnType = BuildInferredGeneratorType(_inferredYieldTypes!, arrow.IsAsync);
+                    }
+                    else if (collected.Count == 0)
                     {
                         returnType = new TypeInfo.Void();
                     }
@@ -1486,7 +1503,7 @@ public partial class TypeChecker
                         returnType = CollapseOrCreateUnion(distinct);
                     }
 
-                    if (arrow.IsAsync && returnType is not TypeInfo.Void)
+                    if (arrow.IsAsync && !arrow.IsGenerator && returnType is not TypeInfo.Void)
                         returnType = new TypeInfo.Promise(returnType);
                 }
             }
@@ -1498,6 +1515,8 @@ public partial class TypeChecker
             _inferredReturnTypes = previousInferredArrow;
             _currentFunctionThisType = previousThisType;
             _inAsyncFunction = previousInAsync;
+            _inGeneratorFunction = previousInGenerator;
+            _inferredYieldTypes = previousInferredYieldTypes;
             _loopDepth = previousLoopDepth;
             _switchDepth = previousSwitchDepth;
             _activeLabels.Clear();
