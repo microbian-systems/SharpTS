@@ -425,6 +425,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brfalse, notBoxedPrim);
         il.MarkLabel(doBoxedUnwrap);
+        // #565: only a genuine boxed wrapper (carrying a string __primitiveType tag)
+        // is unwrapped — an ordinary object that merely has a __primitiveValue field
+        // must serialize as a normal object, matching the interpreter and
+        // RuntimeEmitter.Json.StringifyFull.cs.
+        var boxedPrimType = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveType");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, boxedPrimType);
+        il.Emit(OpCodes.Ldloc, boxedPrimType);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, notBoxedPrim);
         var boxedPrimVal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Ldstr, "__primitiveValue");

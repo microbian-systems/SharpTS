@@ -42,6 +42,14 @@ public static class StringBuiltIns
             .MethodV2("at", 1, AtV2)
             .MethodV2("normalize", 0, 1, NormalizeV2)
             .MethodV2("localeCompare", 1, LocaleCompareV2)
+            // ECMA-262 §22.1.3.28/.31: String.prototype.toString and valueOf both
+            // return thisStringValue. Needed so `(new String("x")).toString()` and
+            // ToPrimitive(string-wrapper) unwrap to the primitive instead of
+            // resolving Object.prototype.toString ("[object Object]").
+            .MethodV2("toString", 0, (Interpreter _, string s, ReadOnlySpan<RuntimeValue> _)
+                => RuntimeValue.FromString(s))
+            .MethodV2("valueOf", 0, (Interpreter _, string s, ReadOnlySpan<RuntimeValue> _)
+                => RuntimeValue.FromString(s))
             .Build();
 
     private static readonly BuiltInStaticMemberLookup _staticLookup =
@@ -222,18 +230,26 @@ public static class StringBuiltIns
 
         if (args.Length == 1)
         {
-            var code = (int)args[0].AsNumber();
+            var code = (int)NumArg(args[0]);
             return RuntimeValue.FromString(((char)(code & 0xFFFF)).ToString());
         }
 
         var chars = new char[args.Length];
         for (int i = 0; i < args.Length; i++)
         {
-            var code = (int)args[i].AsNumber();
+            var code = (int)NumArg(args[i]);
             chars[i] = (char)(code & 0xFFFF);
         }
         return RuntimeValue.FromString(new string(chars));
     }
+
+    /// <summary>
+    /// ToNumber-coerces a numeric argument, routing a non-number (notably a
+    /// boxed <c>new Number(x)</c> wrapper) through the interpreter's ToNumber so
+    /// it unwraps to its primitive instead of throwing on <c>AsNumber()</c> (#708).
+    /// </summary>
+    private static double NumArg(RuntimeValue rv)
+        => rv.Kind == ValueKind.Number ? rv.AsNumber() : Interpreter.ToNumber(rv.ToObject());
 
     private static RuntimeValue FromCodePointV2(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
@@ -244,7 +260,7 @@ public static class StringBuiltIns
         {
             // ECMA-262 §22.1.2.2: each code point must be an integral Number in
             // [0, 0x10FFFF]; NaN / Infinity / fractional values throw RangeError.
-            var num = arg.AsNumber();
+            var num = NumArg(arg);
             if (!double.IsInteger(num) || num < 0 || num > 0x10FFFF)
                 throw new Exception($"RangeError: Invalid code point {num}");
             AppendCodePoint(sb, (int)num);

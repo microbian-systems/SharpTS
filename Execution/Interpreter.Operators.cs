@@ -249,6 +249,13 @@ public partial class Interpreter
     /// <seealso href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Addition">MDN Addition Operator</seealso>
     private object EvaluatePlus(object? left, object? right)
     {
+        // ECMA-262 §13.15.3 ApplyStringOrNumericBinaryOperator: ToPrimitive both
+        // operands (default hint) before deciding string-concat vs numeric add.
+        // Reduces boxed Number/String/Boolean wrappers (and objects with an own
+        // valueOf/toString) to their primitive so `"x" + new Number(5)` → "x5"
+        // and `new Number(5) + 1` → 6 (#708). No-op for other values.
+        left = ToPrimitive(left, PrimitiveHint.Default);
+        right = ToPrimitive(right, PrimitiveHint.Default);
         if (left is double l && right is double r) return l + r;
         if (left is string || right is string)
         {
@@ -371,6 +378,14 @@ public partial class Interpreter
     /// </summary>
     private static double CoerceToNumber(object? value) => CoerceToNumber(RuntimeValue.FromBoxed(value));
 
+    /// <summary>
+    /// JS ToNumber for a boxed value, unwrapping a boxed Number/String/Boolean
+    /// wrapper to its primitive first (#708). Exposed for numeric built-ins
+    /// (e.g. <c>String.fromCharCode</c>) that otherwise hard-crash on a wrapper
+    /// argument via <see cref="RuntimeValue.AsNumber"/>.
+    /// </summary>
+    internal static double ToNumber(object? value) => CoerceToNumber(RuntimeValue.FromBoxed(value));
+
     private static double CoerceToNumber(RuntimeValue rv)
     {
         if (rv.IsNumber) return rv.AsNumber();
@@ -386,7 +401,108 @@ public partial class Interpreter
                 return d;
             return double.NaN;
         }
+        // ECMA-262 ToNumber on an object goes through ToPrimitive (number hint).
+        // For a boxed Number/String/Boolean wrapper that reduces to its
+        // [[PrimitiveValue]]; without this `new Number(5) * 2`, comparisons, and
+        // bitwise ops on wrappers coerce to NaN (#708). A user-overridden valueOf
+        // is honored on the instance ToPrimitive paths (+, ==, templates, JSON).
+        if (rv.Kind == ValueKind.Object && TryGetBoxedPrimitiveValue(rv.ToObject(), out var prim))
+            return CoerceToNumber(RuntimeValue.FromBoxed(prim));
         return double.NaN;
+    }
+
+    private enum PrimitiveHint { Default, Number, String }
+
+    private static readonly List<object?> _toPrimitiveNoArgs = new();
+
+    /// <summary>
+    /// True when <paramref name="value"/> is a boxed <c>new Number/String/Boolean</c>
+    /// wrapper (carries a <c>__primitiveType</c> tag); yields its <c>__primitiveValue</c>.
+    /// </summary>
+    internal static bool TryGetBoxedPrimitiveValue(object? value, out object? primitive)
+    {
+        primitive = null;
+        if (value is SharpTSObject obj
+            && obj.GetProperty("__primitiveType") is string pt
+            && pt is "Number" or "String" or "Boolean"
+            && obj.HasProperty("__primitiveValue"))
+        {
+            primitive = obj.GetProperty("__primitiveValue");
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// ECMA-262 §7.1.1 ToPrimitive / OrdinaryToPrimitive for the cases the
+    /// interpreter must coerce explicitly: boxed primitive wrappers and plain
+    /// objects carrying an own <c>valueOf</c>/<c>toString</c>. Calls the own
+    /// conversion methods in hint order (honoring a user override — #574), then
+    /// falls back to a wrapper's <c>__primitiveValue</c> (#708). Every other
+    /// value (already-primitive, array, class instance, plain object without an
+    /// own conversion) is returned unchanged so existing behavior is preserved.
+    /// </summary>
+    private object? ToPrimitive(object? value, PrimitiveHint hint)
+    {
+        if (value is not SharpTSObject obj) return value;
+        bool isWrapper = TryGetBoxedPrimitiveValue(obj, out var primitiveValue);
+        bool hasOwnValueOf = obj.HasProperty("valueOf");
+        bool hasOwnToString = obj.HasProperty("toString");
+        if (!isWrapper && !hasOwnValueOf && !hasOwnToString) return value;
+
+        string first = hint == PrimitiveHint.String ? "toString" : "valueOf";
+        string second = hint == PrimitiveHint.String ? "valueOf" : "toString";
+        if (TryCallOwnConversion(obj, first, out var r1)) return r1;
+        if (TryCallOwnConversion(obj, second, out var r2)) return r2;
+        return isWrapper ? primitiveValue : value;
+    }
+
+    /// <summary>
+    /// Invokes an own <c>valueOf</c>/<c>toString</c> on <paramref name="obj"/> bound
+    /// to it; succeeds only when the result is a primitive (per OrdinaryToPrimitive,
+    /// an object result is skipped so the next method is tried).
+    /// </summary>
+    private bool TryCallOwnConversion(SharpTSObject obj, string name, out object? result)
+    {
+        result = null;
+        if (!obj.HasProperty(name)) return false;
+        var fn = obj.GetProperty(name);
+        if (fn is SharpTSArrowFunction af && af.HasOwnThis) fn = af.Bind(obj);
+        if (fn is not ISharpTSCallable callable) return false;
+        var r = callable.CallBoxed(this, _toPrimitiveNoArgs);
+        if (IsObjectLike(r)) return false;
+        result = r;
+        return true;
+    }
+
+    /// <summary>
+    /// ECMA-262 §25.5.2.2 SerializeJSONProperty step 4: coerce a boxed
+    /// Number/String/Boolean wrapper to the primitive JSON serializes. Number→
+    /// ToNumber, String→ToString (both via <see cref="ToPrimitive"/>, so a user
+    /// override of valueOf/toString is honored — #574); Boolean→its
+    /// [[BooleanData]] (no coercion per spec). Returns false for any non-wrapper.
+    /// </summary>
+    internal bool TryCoerceBoxedPrimitiveForJson(object? value, out object? primitive)
+    {
+        primitive = null;
+        if (value is not SharpTSObject obj
+            || obj.GetProperty("__primitiveType") is not string tag)
+            return false;
+        switch (tag)
+        {
+            case "Number":
+                primitive = CoerceToNumber(RuntimeValue.FromBoxed(ToPrimitive(obj, PrimitiveHint.Number)));
+                return true;
+            case "String":
+                var sp = ToPrimitive(obj, PrimitiveHint.String);
+                primitive = sp as string ?? Stringify(sp);
+                return true;
+            case "Boolean":
+                primitive = obj.GetProperty("__primitiveValue");
+                return true;
+            default:
+                return false;
+        }
     }
 
     /// <summary>
@@ -637,8 +753,20 @@ public partial class Interpreter
         bool bIsNullish = b == null || b is SharpTSUndefined;
         if (aIsNullish && bIsNullish) return true;
         if (aIsNullish || bIsNullish) return false;
+        // ECMA-262 §7.2.15 steps 10-11: Object vs primitive coerces the object
+        // through ToPrimitive, so `new Number(0) == 0` is true (#708). Only when
+        // the other operand is a primitive — object == object stays reference-based.
+        if (a is SharpTSObject && IsPrimitiveOperand(b)) a = ToPrimitive(a, PrimitiveHint.Default);
+        else if (b is SharpTSObject && IsPrimitiveOperand(a)) b = ToPrimitive(b, PrimitiveHint.Default);
         return a!.Equals(b);
     }
+
+    /// <summary>
+    /// True for JS primitive operands that trigger object→primitive coercion on
+    /// the other side of loose <c>==</c> (number, string, boolean, bigint).
+    /// </summary>
+    private static bool IsPrimitiveOperand(object? value) =>
+        value is double or string or bool or SharpTSBigInt;
 
     /// <summary>
     /// Determines if two values are equal using strict equality (<c>===</c>).
