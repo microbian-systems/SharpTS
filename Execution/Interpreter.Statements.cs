@@ -786,13 +786,15 @@ public partial class Interpreter
             }
         }
 
-        // Check for Symbol.iterator on SharpTSInstance
+        // Check for Symbol.iterator on SharpTSInstance. Routes through GetInstanceSymbolValue so a
+        // declared `[Symbol.iterator]() {...}` method on the class chain (not just an own data
+        // property) is found; that path returns the method already bound to the instance.
         if (iterable is SharpTSInstance inst)
         {
-            var iteratorFn = inst.GetBySymbol(SharpTSSymbol.Iterator);
-            if (iteratorFn != null)
+            var iteratorFn = GetInstanceSymbolValue(inst, SharpTSSymbol.Iterator);
+            if (iteratorFn != null && iteratorFn is not SharpTSUndefined)
             {
-                // Bind 'this' to the instance if it's an arrow function
+                // Bind 'this' to the instance if it's an arrow function (own data-property case)
                 if (iteratorFn is SharpTSArrowFunction arrowFunc)
                 {
                     iteratorFn = arrowFunc.Bind(inst);
@@ -822,6 +824,18 @@ public partial class Interpreter
         else
         {
             throw new InterpreterException("[Symbol.iterator] must be a function.");
+        }
+
+        // A generator-returning iterator method (`*[Symbol.iterator]() { yield ... }`) yields a
+        // SharpTSGenerator, which is itself directly enumerable and has no gettable `next` data
+        // property — enumerate it directly rather than via the property-based next() protocol below.
+        if (iterator is SharpTSGenerator genIterator)
+        {
+            foreach (var item in genIterator)
+            {
+                yield return item;
+            }
+            yield break;
         }
 
         // Iterate using the iterator protocol

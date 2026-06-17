@@ -227,6 +227,19 @@ public partial class TypeChecker
                 }
                 break;
 
+            case Stmt.Const constStmt:
+                // Mirror the Stmt.Var arm. Type-checking the initializer narrows the literal
+                // type for `const` (e.g. `export const x = 5` gives `N.x` the type `5`), and we
+                // register the binding so `N.x` resolves as a namespace member (#467). Runtime
+                // visibility is still gated on `export` (see Interpreter.Namespaces.cs).
+                CheckStmt(constStmt);
+                var constType = _environment.Get(constStmt.Name.Lexeme);
+                if (constType != null)
+                {
+                    values[constStmt.Name.Lexeme] = constType;
+                }
+                break;
+
             case Stmt.Class:
             case Stmt.Namespace:
             case Stmt.Interface:

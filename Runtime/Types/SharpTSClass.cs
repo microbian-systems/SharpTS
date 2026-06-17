@@ -312,6 +312,25 @@ public class SharpTSClass(
     public SharpTSFunction? FindStaticSymbolSetter(SharpTSSymbol symbol)
         => _staticSymbolSetters?.GetValueOrDefault(symbol) ?? Superclass?.FindStaticSymbolSetter(symbol);
 
+    // Symbol-keyed methods (`[Symbol.iterator]() {...}`, `*[Symbol.iterator]() {...}`,
+    // `async [Symbol.asyncIterator]() {...}`). Like symbol accessors, the computed key is
+    // evaluated at class-definition time; symbol-valued keys land here (string-valued keys
+    // go into the regular method dictionaries). Lazy — most classes declare none.
+    private Dictionary<SharpTSSymbol, ISharpTSCallable>? _symbolMethods;
+    private Dictionary<SharpTSSymbol, ISharpTSCallable>? _staticSymbolMethods;
+
+    public void AddSymbolMethod(SharpTSSymbol symbol, ISharpTSCallable func, bool isStatic)
+    {
+        if (isStatic) (_staticSymbolMethods ??= [])[symbol] = func;
+        else (_symbolMethods ??= [])[symbol] = func;
+    }
+
+    public ISharpTSCallable? FindSymbolMethod(SharpTSSymbol symbol)
+        => _symbolMethods?.GetValueOrDefault(symbol) ?? Superclass?.FindSymbolMethod(symbol);
+
+    public ISharpTSCallable? FindStaticSymbolMethod(SharpTSSymbol symbol)
+        => _staticSymbolMethods?.GetValueOrDefault(symbol) ?? Superclass?.FindStaticSymbolMethod(symbol);
+
     public SharpTSFunction? FindGetter(string name)
     {
         // Check cache first

@@ -111,6 +111,13 @@ internal sealed class GeneratorArrowLifter
             Stmt.Block b => RewriteBlock(b),
             Stmt.If i => RewriteIf(i),
             Stmt.While w => RewriteWhile(w),
+            Stmt.DoWhile dw => RewriteDoWhile(dw),
+            Stmt.For f => RewriteFor(f),
+            Stmt.ForOf fo => RewriteForOf(fo),
+            Stmt.ForIn fi => RewriteForIn(fi),
+            Stmt.TryCatch t => RewriteTryCatch(t),
+            Stmt.Switch sw => RewriteSwitch(sw),
+            Stmt.LabeledStatement l => RewriteLabeled(l),
             Stmt.Function f => RewriteFunction(f),
             _ => stmt,
         };
@@ -156,6 +163,85 @@ internal sealed class GeneratorArrowLifter
         var newBody = RewriteStmt(w.Body);
         if (ReferenceEquals(newCond, w.Condition) && ReferenceEquals(newBody, w.Body)) return w;
         return new Stmt.While(newCond, newBody);
+    }
+
+    private Stmt RewriteDoWhile(Stmt.DoWhile d)
+    {
+        var newBody = RewriteStmt(d.Body);
+        var newCond = RewriteExpr(d.Condition);
+        if (ReferenceEquals(newBody, d.Body) && ReferenceEquals(newCond, d.Condition)) return d;
+        return new Stmt.DoWhile(newBody, newCond);
+    }
+
+    private Stmt RewriteFor(Stmt.For f)
+    {
+        var newInit = f.Initializer is null ? null : RewriteStmt(f.Initializer);
+        var newCond = f.Condition is null ? null : RewriteExpr(f.Condition);
+        var newIncr = f.Increment is null ? null : RewriteExpr(f.Increment);
+        var newBody = RewriteStmt(f.Body);
+        if ((f.Initializer is null || ReferenceEquals(newInit, f.Initializer))
+            && (f.Condition is null || ReferenceEquals(newCond, f.Condition))
+            && (f.Increment is null || ReferenceEquals(newIncr, f.Increment))
+            && ReferenceEquals(newBody, f.Body))
+            return f;
+        return new Stmt.For(newInit, newCond, newIncr, newBody);
+    }
+
+    private Stmt RewriteForOf(Stmt.ForOf f)
+    {
+        var newIterable = RewriteExpr(f.Iterable);
+        var newBody = RewriteStmt(f.Body);
+        if (ReferenceEquals(newIterable, f.Iterable) && ReferenceEquals(newBody, f.Body)) return f;
+        return f with { Iterable = newIterable, Body = newBody };
+    }
+
+    private Stmt RewriteForIn(Stmt.ForIn f)
+    {
+        var newObject = RewriteExpr(f.Object);
+        var newBody = RewriteStmt(f.Body);
+        if (ReferenceEquals(newObject, f.Object) && ReferenceEquals(newBody, f.Body)) return f;
+        return f with { Object = newObject, Body = newBody };
+    }
+
+    private Stmt RewriteTryCatch(Stmt.TryCatch t)
+    {
+        var newTry = RewriteListIfChanged(t.TryBlock, RewriteStmt);
+        var newCatch = t.CatchBlock is null ? null : RewriteListIfChanged(t.CatchBlock, RewriteStmt);
+        var newFinally = t.FinallyBlock is null ? null : RewriteListIfChanged(t.FinallyBlock, RewriteStmt);
+        if (ReferenceEquals(newTry, t.TryBlock)
+            && (t.CatchBlock is null || ReferenceEquals(newCatch, t.CatchBlock))
+            && (t.FinallyBlock is null || ReferenceEquals(newFinally, t.FinallyBlock)))
+            return t;
+        return t with { TryBlock = newTry, CatchBlock = newCatch, FinallyBlock = newFinally };
+    }
+
+    private Stmt RewriteSwitch(Stmt.Switch s)
+    {
+        var newSubject = RewriteExpr(s.Subject);
+        List<Stmt.SwitchCase>? newCases = null;
+        for (int i = 0; i < s.Cases.Count; i++)
+        {
+            var c = s.Cases[i];
+            var newValue = RewriteExpr(c.Value);
+            var newBody = RewriteListIfChanged(c.Body, RewriteStmt);
+            if (!ReferenceEquals(newValue, c.Value) || !ReferenceEquals(newBody, c.Body))
+            {
+                newCases ??= new List<Stmt.SwitchCase>(s.Cases);
+                newCases[i] = new Stmt.SwitchCase(newValue, newBody);
+            }
+        }
+        var newDefault = s.DefaultBody is null ? null : RewriteListIfChanged(s.DefaultBody, RewriteStmt);
+        if (ReferenceEquals(newSubject, s.Subject)
+            && newCases is null
+            && (s.DefaultBody is null || ReferenceEquals(newDefault, s.DefaultBody)))
+            return s;
+        return new Stmt.Switch(newSubject, newCases ?? s.Cases, newDefault);
+    }
+
+    private Stmt RewriteLabeled(Stmt.LabeledStatement l)
+    {
+        var newStmt = RewriteStmt(l.Statement);
+        return ReferenceEquals(newStmt, l.Statement) ? l : new Stmt.LabeledStatement(l.Label, newStmt);
     }
 
     private Stmt RewriteFunction(Stmt.Function f)

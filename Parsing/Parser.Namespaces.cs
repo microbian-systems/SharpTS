@@ -113,7 +113,9 @@ public partial class Parser
             {
                 return WrapIfExported(EnumDeclaration(isConst: true), isExported);
             }
-            return WrapIfExported(VarDeclaration(), isExported);
+            // Parse as Stmt.Const (not mutable Stmt.Var) so const-ness is preserved:
+            // literal-type narrowing applies and reassignment is flagged (#467, sibling of #428).
+            return WrapIfExported(VarDeclaration(isConst: true), isExported);
         }
         if (Match(TokenType.ENUM))
         {

@@ -381,8 +381,10 @@ public abstract record Stmt
     /// IsAsync indicates this is an async function that returns a Promise.
     /// IsGenerator indicates this is a generator function (function*) that can yield values.
     /// Decorators contains any @decorator annotations applied to this function/method.
+    /// ComputedKey, when set, is the expression of a computed method name in a class body
+    /// (e.g. <c>[Symbol.iterator]() {}</c>); Name is then a synthetic <c>&lt;computed&gt;</c> token.
     /// </summary>
-    public record Function(Token Name, List<TypeParam>? TypeParams, string? ThisType, List<Parameter> Parameters, List<Stmt>? Body, string? ReturnType, bool IsStatic = false, AccessModifier Access = AccessModifier.Public, bool IsAbstract = false, bool IsOverride = false, bool IsAsync = false, bool IsGenerator = false, List<Decorator>? Decorators = null, bool IsPrivate = false, bool IsDeclare = false) : Stmt;
+    public record Function(Token Name, List<TypeParam>? TypeParams, string? ThisType, List<Parameter> Parameters, List<Stmt>? Body, string? ReturnType, bool IsStatic = false, AccessModifier Access = AccessModifier.Public, bool IsAbstract = false, bool IsOverride = false, bool IsAsync = false, bool IsGenerator = false, List<Decorator>? Decorators = null, bool IsPrivate = false, bool IsDeclare = false, Expr? ComputedKey = null) : Stmt;
     public record Parameter(Token Name, string? Type, Expr? DefaultValue = null, bool IsRest = false, bool IsParameterProperty = false, AccessModifier? Access = null, bool IsReadonly = false, bool IsOptional = false, List<Decorator>? Decorators = null);
     /// <summary>
     /// Class field declaration. For computed property names (e.g., [Symbol("key")]: type),

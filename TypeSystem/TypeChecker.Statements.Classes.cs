@@ -9,6 +9,44 @@ namespace SharpTS.TypeSystem;
 /// </summary>
 public partial class TypeChecker
 {
+    /// <summary>
+    /// Maps a computed class-member key expression of the form <c>Symbol.iterator</c> (etc.) to its
+    /// canonical <c>@@</c>-prefixed member name (<c>@@iterator</c>), or null when the key is not a
+    /// recognized well-known symbol. Used to register computed symbol-keyed methods under a name the
+    /// rest of the type system (structural-iterable typing, member lookup) already understands.
+    /// </summary>
+    private static string? TryResolveWellKnownSymbolMemberName(Expr key)
+    {
+        if (key is Expr.Get { Object: Expr.Variable { Name.Lexeme: "Symbol" }, Name.Lexeme: var member }
+            && WellKnownSymbolTypes.TryGet(member) != null)
+        {
+            return "@@" + member;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Builds the <see cref="TypeInfo.Function"/> for a computed-key method's body check. Mirrors the
+    /// local <c>BuildMethodFuncType</c> used during signature collection; used for computed methods,
+    /// which aren't registered under a static name (well-known ones are looked up by their <c>@@name</c>
+    /// instead). Defaults aren't re-validated here — that happens during signature collection.
+    /// </summary>
+    private TypeInfo.Function BuildComputedMethodFuncType(Stmt.Function method)
+    {
+        var (paramTypes, requiredParams, hasRest, paramNames) = BuildFunctionSignature(
+            method.Parameters, validateDefaults: false, contextName: "computed method");
+
+        TypeInfo returnType = method.ReturnType != null ? ToTypeInfo(method.ReturnType) : new TypeInfo.Inferred();
+        if (method.ReturnType != null && method.IsGenerator)
+        {
+            if (method.IsAsync && returnType is not TypeInfo.AsyncGenerator)
+                returnType = new TypeInfo.AsyncGenerator(returnType);
+            else if (!method.IsAsync && returnType is not TypeInfo.Generator)
+                returnType = new TypeInfo.Generator(returnType);
+        }
+        return new TypeInfo.Function(paramTypes, returnType, requiredParams, hasRest, null, paramNames);
+    }
+
     private void CheckClassDeclaration(Stmt.Class classStmt)
     {
         // Check class decorators
@@ -99,8 +137,10 @@ public partial class TypeChecker
         }
 
         // First pass: collect signatures, grouping overloads
-        // Group methods by name to detect overloads
-        var methodGroups = classStmt.Methods.GroupBy(m => m.Name.Lexeme).ToList();
+        // Group methods by name to detect overloads. Computed-key methods (`[Symbol.iterator]() {}`)
+        // all share the synthetic name "<computed>", so they are excluded here and registered
+        // separately below under their resolved well-known name (e.g. `@@iterator`).
+        var methodGroups = classStmt.Methods.Where(m => m.ComputedKey == null).GroupBy(m => m.Name.Lexeme).ToList();
 
         foreach (var group in methodGroups)
         {
@@ -193,6 +233,28 @@ public partial class TypeChecker
             else if (implementations.Count > 1)
             {
                 throw new TypeCheckException($" Multiple implementations of method '{methodName}' without overload signatures.", tsCode: "TS2393");
+            }
+        }
+
+        // Register computed-key methods whose key is a well-known symbol under their canonical
+        // `@@name` member (e.g. `[Symbol.iterator]() {}` → `@@iterator`). This lets the structural
+        // iterable typing (#485, see TryGetStructuralIterableElement) recognise a user-defined
+        // iterable class so `for...of`, spread, and `Array.from` over it type-check. Computed keys
+        // that aren't well-known symbols can't be modeled statically and are skipped here; their
+        // bodies are still type-checked in the body pass below.
+        foreach (var method in classStmt.Methods.Where(m => m.ComputedKey != null && m.Body != null))
+        {
+            string? canonical = TryResolveWellKnownSymbolMemberName(method.ComputedKey!);
+            if (canonical == null) continue;
+            var funcType = BuildMethodFuncType(method);
+            if (method.IsStatic)
+            {
+                mutableClass.StaticMethods[canonical] = funcType;
+            }
+            else
+            {
+                mutableClass.Methods[canonical] = funcType;
+                mutableClass.MethodAccess[canonical] = method.Access;
             }
         }
 
@@ -597,7 +659,18 @@ public partial class TypeChecker
                 // Get the method type (could be Function or OverloadedFunction)
                 // For ES2022 private methods, look in PrivateMethodTypes/StaticPrivateMethodTypes
                 TypeInfo declaredMethodType;
-                if (method.IsPrivate)
+                if (method.ComputedKey != null)
+                {
+                    // Computed-key methods (`[Symbol.iterator]() {}`) aren't registered under their
+                    // synthetic "<computed>" name. Well-known ones were registered under their
+                    // `@@name`; everything else is built on the fly for body checking.
+                    string? canonical = TryResolveWellKnownSymbolMemberName(method.ComputedKey);
+                    var computedTarget = method.IsStatic ? classTypeForBody.StaticMethods : classTypeForBody.Methods;
+                    declaredMethodType = canonical != null && computedTarget.TryGetValue(canonical, out var registered)
+                        ? registered
+                        : BuildComputedMethodFuncType(method);
+                }
+                else if (method.IsPrivate)
                 {
                     declaredMethodType = method.IsStatic
                         ? classTypeForBody.StaticPrivateMethodTypes[method.Name.Lexeme]

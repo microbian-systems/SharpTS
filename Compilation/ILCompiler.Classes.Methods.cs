@@ -278,6 +278,28 @@ public partial class ILCompiler
     /// Defines method signatures and registers them in _classes.InstanceMethods without emitting bodies.
     /// Also pre-defines the constructor so it's available for EmitNew in async contexts.
     /// </summary>
+    /// <summary>
+    /// Computed symbol-keyed methods (`[Symbol.iterator]() {}`, `*[Symbol.iterator]() {}`,
+    /// `async *[Symbol.asyncIterator]() {}`) are implemented in the parser, type checker, and
+    /// interpreter (#592) but the IL backend has no symbol-method dispatch yet (#647). Fail with a
+    /// clear compile error rather than emitting a method under the synthetic "&lt;computed&gt;" name that
+    /// nothing can dispatch — which would otherwise surface as a confusing "not iterable" at runtime.
+    /// Called from both class-method phases so every class-declaration compile path is covered.
+    /// </summary>
+    private static void ThrowIfComputedSymbolMethod(Stmt.Class classStmt)
+    {
+        foreach (var method in classStmt.Methods)
+        {
+            if (method.ComputedKey != null)
+            {
+                throw new Exception(
+                    "Compile Error: computed symbol-keyed class methods (e.g. `[Symbol.iterator]()`) are not yet " +
+                    "supported in compiled mode (issue #647); they are supported in the interpreter. " +
+                    $"Class '{classStmt.Name.Lexeme}'.");
+            }
+        }
+    }
+
     private void DefineClassMethodsOnly(Stmt.Class classStmt)
     {
         // Skip @DotNetType external type classes - they don't have TypeBuilders
@@ -352,6 +374,8 @@ public partial class ILCompiler
         {
             _classes.StaticMethods[qualifiedClassName] = [];
         }
+
+        ThrowIfComputedSymbolMethod(classStmt);
 
         // Pre-define static methods (so they're available during async MoveNext emission).
         // Per-method idempotency check: in multi-module compilation this method runs twice
@@ -631,6 +655,8 @@ public partial class ILCompiler
         if (!_classes.Builders.TryGetValue(qualifiedClassName, out var typeBuilder))
             return;  // Skip if no TypeBuilder exists for this class
         var fieldsField = _classes.InstanceFieldsField[qualifiedClassName];
+
+        ThrowIfComputedSymbolMethod(classStmt);
 
         // Initialize static methods dictionary for this class
         if (!_classes.StaticMethods.ContainsKey(qualifiedClassName))

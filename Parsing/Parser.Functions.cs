@@ -2,10 +2,16 @@ namespace SharpTS.Parsing;
 
 public partial class Parser
 {
-    private Stmt FunctionDeclaration(string kind, bool isAsync = false, bool isGenerator = false, bool isDeclare = false)
+    private Stmt FunctionDeclaration(string kind, bool isAsync = false, bool isGenerator = false, bool isDeclare = false, Token? preParsedName = null, Expr? computedKey = null)
     {
         Token name;
-        if (kind == "constructor" && Match(TokenType.CONSTRUCTOR))
+        if (preParsedName is not null)
+        {
+            // Computed method name ([expr]() {}) — the key was already parsed by the caller,
+            // which passes a synthetic <computed> token and the key expression in computedKey.
+            name = preParsedName;
+        }
+        else if (kind == "constructor" && Match(TokenType.CONSTRUCTOR))
         {
             name = Previous();
         }
@@ -157,7 +163,7 @@ public partial class Parser
         if (Match(TokenType.SEMICOLON))
         {
             // Overload signature - no body, just declaration
-            return new Stmt.Function(name, typeParams, thisType, parameters, null, returnType, IsAsync: isAsync, IsGenerator: isGenerator, IsDeclare: isDeclare);
+            return new Stmt.Function(name, typeParams, thisType, parameters, null, returnType, IsAsync: isAsync, IsGenerator: isGenerator, IsDeclare: isDeclare, ComputedKey: computedKey);
         }
 
         // Save current strict mode state before parsing function body
@@ -220,7 +226,7 @@ public partial class Parser
         // declarations + assignments. Cheap no-op if no `var` keywords are present.
         body = VarHoister.Hoist(body);
 
-        return new Stmt.Function(name, typeParams, thisType, parameters, body, returnType, IsAsync: isAsync, IsGenerator: isGenerator);
+        return new Stmt.Function(name, typeParams, thisType, parameters, body, returnType, IsAsync: isAsync, IsGenerator: isGenerator, ComputedKey: computedKey);
     }
 
     /// <summary>

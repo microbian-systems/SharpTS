@@ -328,8 +328,25 @@ public partial class Parser
                 Expr computedKey = Expression();
                 Consume(TokenType.RIGHT_BRACKET, "Expect ']' after computed property name.");
 
-                // Create a synthetic token for the field name (for error reporting)
+                // Create a synthetic token for the field/method name (for error reporting)
                 Token syntheticName = new Token(TokenType.IDENTIFIER, "<computed>", null, Previous().Line);
+
+                // Computed METHOD: [expr](...) {...}, generic [expr]<T>(...) {...}, and the
+                // generator / async variants (*[expr]() / async [expr]()) — the `*` and `async`
+                // markers were already consumed above into isMemberGenerator / isMemberAsync.
+                // Stored as a Stmt.Function carrying ComputedKey (e.g. [Symbol.iterator]() {}).
+                if (Check(TokenType.LEFT_PAREN) || Check(TokenType.LESS))
+                {
+                    if (isMemberAbstract)
+                    {
+                        throw new Exception($"Parse Error at line {Peek().Line}: Computed method names are not supported on abstract methods.");
+                    }
+
+                    var computedMethod = (Stmt.Function)FunctionDeclaration("method", isMemberAsync, isMemberGenerator, preParsedName: syntheticName, computedKey: computedKey);
+                    computedMethod = computedMethod with { IsStatic = isStatic, Access = access, IsOverride = isOverride, Decorators = memberDecorators };
+                    methods.Add(computedMethod);
+                    continue;
+                }
 
                 Consume(TokenType.COLON, "Expect ':' after computed property name.");
                 string typeAnnotation = ParseTypeAnnotation();

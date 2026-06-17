@@ -2222,6 +2222,10 @@ public partial class Interpreter : IDisposable
             }
         }
 
+        // Symbol-keyed computed methods (`[Symbol.iterator]() {...}`) can't go into the string
+        // method dictionaries; collected here and attached to the class after construction.
+        List<(SharpTSSymbol Symbol, ISharpTSCallable Func, bool IsStatic)>? symbolMethods = null;
+
         // Separate static and instance methods (skip overload signatures with no body)
         foreach (Stmt.Function method in classStmt.Methods.Where(m => m.Body != null))
         {
@@ -2235,6 +2239,23 @@ public partial class Interpreter : IDisposable
                 func = new SharpTSGeneratorFunction(method, _environment);
             else
                 func = new SharpTSFunction(method, _environment);
+
+            // Computed method names (`[Symbol.iterator]() {...}`) are evaluated at
+            // class-definition time, like computed accessor/field keys. Symbol-valued keys
+            // land in the class's symbol-method table; string/number keys fold into the
+            // regular method dictionaries.
+            if (method.ComputedKey != null)
+            {
+                object? key = Evaluate(method.ComputedKey);
+                if (key is SharpTSSymbol symbolKey)
+                {
+                    (symbolMethods ??= []).Add((symbolKey, func, method.IsStatic));
+                    continue;
+                }
+                string keyStr = PropertyKeyConverter.ToPropertyKeyString(key);
+                (method.IsStatic ? staticMethods : methods)[keyStr] = func;
+                continue;
+            }
 
             if (method.IsPrivate)
             {
@@ -2425,6 +2446,14 @@ public partial class Interpreter : IDisposable
             foreach (var (symbol, func, isStatic, isGetter) in symbolAccessors)
             {
                 klass.AddSymbolAccessor(symbol, func, isStatic, isGetter);
+            }
+        }
+
+        if (symbolMethods != null)
+        {
+            foreach (var (symbol, func, isStatic) in symbolMethods)
+            {
+                klass.AddSymbolMethod(symbol, func, isStatic);
             }
         }
 

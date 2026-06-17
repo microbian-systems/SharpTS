@@ -983,6 +983,12 @@ public partial class Interpreter
         {
             return getter.Bind(instance).Call(this, []);
         }
+        // Symbol-keyed method (`[Symbol.iterator]() {...}`): return the method bound to the
+        // instance (not invoked), exactly like `instance.namedMethod` returns a bound method.
+        if (instance.GetClass().FindSymbolMethod(symbol) is { } method)
+        {
+            return SharpTSClass.BindMethod(method, instance);
+        }
         return SharpTSUndefined.Instance;
     }
 
@@ -995,6 +1001,13 @@ public partial class Interpreter
         if (klass.FindStaticSymbolGetter(symbol) is { } getter)
         {
             return getter.BindStatic(klass).Call(this, []);
+        }
+        // Static symbol-keyed method (`static [Symbol.hasInstance]() {...}`): return it bound
+        // to the class receiver where possible (SharpTSFunction); other callable kinds are
+        // returned as-is.
+        if (klass.FindStaticSymbolMethod(symbol) is { } method)
+        {
+            return method is SharpTSFunction f ? f.BindStatic(klass) : method;
         }
         return klass.TryGetStaticBySymbol(symbol, out var value)
             ? value ?? SharpTSUndefined.Instance

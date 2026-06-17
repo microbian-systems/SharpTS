@@ -182,9 +182,14 @@ public partial class Interpreter
         }
         else if (iterable is SharpTSInstance inst)
         {
-            var asyncIteratorFn = inst.GetBySymbol(SharpTSSymbol.AsyncIterator);
-            if (asyncIteratorFn != null)
+            // Route through GetInstanceSymbolValue so a declared `[Symbol.asyncIterator]() {...}`
+            // method on the class chain is found (already bound to the instance), not just an
+            // own data property.
+            var asyncIteratorFn = GetInstanceSymbolValue(inst, SharpTSSymbol.AsyncIterator);
+            if (asyncIteratorFn != null && asyncIteratorFn is not SharpTSUndefined)
             {
+                if (asyncIteratorFn is SharpTSArrowFunction arrowFunc)
+                    asyncIteratorFn = arrowFunc.Bind(inst);
                 if (asyncIteratorFn is ISharpTSCallable callable)
                     return callable.Call(this, []);
             }

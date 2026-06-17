@@ -973,9 +973,17 @@ public partial class Parser
             return new Expr.ObjectLiteral(properties);
         }
 
-        // async arrow function: async () => {} or async (x) => x
+        // async function expression / async arrow function
         if (Match(TokenType.ASYNC))
         {
+            // async function expression: async function [name](params) { body }
+            // (and async generator function expression: async function* () { ... }).
+            // Mirrors the plain `function`/`function*` expression handling above.
+            if (Match(TokenType.FUNCTION))
+            {
+                return FunctionExpression(isAsync: true);
+            }
+
             if (Check(TokenType.LESS))
             {
                 Expr? genericArrow = TryParseGenericArrowFunction(isAsync: true);
@@ -1448,7 +1456,7 @@ public partial class Parser
     /// Supports optional name (for named function expressions), generator syntax (function*),
     /// this parameter, and type annotations.
     /// </summary>
-    private Expr FunctionExpression()
+    private Expr FunctionExpression(bool isAsync = false)
     {
         // Check for generator function: function* () { }
         bool isGenerator = Match(TokenType.STAR);
@@ -1585,6 +1593,7 @@ public partial class Parser
             BlockBody: body,
             ReturnType: returnType,
             HasOwnThis: true,
+            IsAsync: isAsync,
             IsGenerator: isGenerator
         );
     }
