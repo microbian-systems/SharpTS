@@ -212,7 +212,7 @@ public static class JSONBuiltIns
         // ECMA-262 25.5.2.1 step 5: a boxed Number/String wrapper passed as `space`
         // contributes its primitive value before the numeric/string indent rules below.
         // (Compiled mode does the same — RuntimeEmitter.Json.StringifyFull.cs.)
-        if (TryUnwrapBoxedPrimitive(space, out var unwrappedSpace))
+        if (TryUnwrapBoxedPrimitive(interp, space, out var unwrappedSpace))
             space = unwrappedSpace;
 
         // Handle space parameter: number = spaces, string = literal indent string
@@ -273,7 +273,7 @@ public static class JSONBuiltIns
         // serializes as its underlying primitive — not as an object exposing the internal
         // __primitiveType/__primitiveValue marker slots. Applied after toJSON/replacer,
         // before the type switch. (Compiled mode does the same — RuntimeEmitter.Json.Stringify.cs.)
-        if (TryUnwrapBoxedPrimitive(value, out var unwrappedPrimitive))
+        if (TryUnwrapBoxedPrimitive(interp, value, out var unwrappedPrimitive))
             value = unwrappedPrimitive;
 
         switch (value)
@@ -350,18 +350,8 @@ public static class JSONBuiltIns
     /// objects with a genuine [[NumberData]]/[[StringData]]/[[BooleanData]] slot are unwrapped.
     /// Compiled mode performs the equivalent unwrap (RuntimeEmitter.Json.Stringify*.cs).
     /// </summary>
-    private static bool TryUnwrapBoxedPrimitive(object? value, out object? primitive)
-    {
-        if (value is SharpTSObject obj
-            && obj.GetProperty("__primitiveType") is string tag
-            && tag is "Number" or "String" or "Boolean")
-        {
-            primitive = obj.GetProperty("__primitiveValue");
-            return true;
-        }
-        primitive = null;
-        return false;
-    }
+    private static bool TryUnwrapBoxedPrimitive(Interpreter interp, object? value, out object? primitive)
+        => interp.TryCoerceBoxedPrimitiveForJson(value, out primitive);
 
     private static string FormatJsonNumber(double d)
     {

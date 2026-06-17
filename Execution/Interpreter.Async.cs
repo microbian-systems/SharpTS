@@ -913,7 +913,8 @@ public partial class Interpreter
         var evaluatedExprs = new List<object?>();
         foreach (var expr in template.Expressions)
         {
-            evaluatedExprs.Add((await EvaluateAsync(expr)).ToObject());
+            // ToPrimitive (string hint) so boxed wrappers render their primitive (#708).
+            evaluatedExprs.Add(ToPrimitive((await EvaluateAsync(expr)).ToObject(), PrimitiveHint.String));
         }
         return RuntimeValue.FromString(BuildTemplateLiteralString(template.Strings, evaluatedExprs));
     }
