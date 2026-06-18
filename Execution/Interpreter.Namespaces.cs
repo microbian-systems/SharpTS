@@ -16,8 +16,11 @@ public partial class Interpreter
     {
         string name = ns.Name.Lexeme;
 
-        // Get or create namespace object
-        SharpTSNamespace? existingNs = _environment.GetNamespace(name);
+        // Get or create namespace object — check ONLY the current scope, not up the chain.
+        // GetNamespace walks up and would find a same-named outer namespace (e.g. top-level A
+        // when declaring O.A), incorrectly merging the nested namespace into the outer one and
+        // leaving the current scope without an "A" binding (#746).
+        SharpTSNamespace? existingNs = _environment.GetLocalNamespace(name);
         SharpTSNamespace nsObj;
 
         if (existingNs != null)
