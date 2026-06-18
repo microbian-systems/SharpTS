@@ -156,5 +156,15 @@ public partial class RuntimeEmitter
             "_regexpPrototype",
             _types.DictionaryStringObject,
             FieldAttributes.Public | FieldAttributes.Static);
+
+        // Forward-declare the globalThis/global sentinel field (#271). $TSFunction's
+        // InvokeWithThis (emitted in EmitTSFunctionClass, BEFORE EmitRuntimeClass)
+        // coerces a null sloppy-this thisArg to this sentinel, so the field must
+        // exist now. EmitRuntimeClass initialises it in the .cctor (new object());
+        // EmitRuntimeClass MUST skip its own DefineField when this is already set.
+        runtime.GlobalThisSingletonField = typeBuilder.DefineField(
+            "_globalThisSingleton",
+            _types.Object,
+            FieldAttributes.Public | FieldAttributes.Static);
     }
 }

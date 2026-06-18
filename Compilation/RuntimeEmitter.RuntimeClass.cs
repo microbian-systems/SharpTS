@@ -99,11 +99,11 @@ public partial class RuntimeEmitter
         // globalThis/global sentinel (#271) — a plain object whose identity lets
         // the dynamic property paths recognize a value-position globalThis and
         // route reads/writes through GlobalThisGetProperty/GlobalThisSetProperty.
-        var globalThisSingletonField = typeBuilder.DefineField(
-            "_globalThisSingleton",
-            _types.Object,
-            FieldAttributes.Public | FieldAttributes.Static);
-        runtime.GlobalThisSingletonField = globalThisSingletonField;
+        // The field itself is forward-declared in DefineRuntimeClassPhase1 (so
+        // $TSFunction.InvokeWithThis, emitted before this method, can coerce a
+        // null sloppy-this thisArg to it — #735/#733). Only the .cctor init below
+        // runs here; re-DefineField would throw a duplicate.
+        var globalThisSingletonField = runtime.GlobalThisSingletonField;
 
         // Boolean / Number / String prototype singletons. Test262 patterns like
         //   Boolean.prototype[0] = true; Boolean.prototype.length = 1;

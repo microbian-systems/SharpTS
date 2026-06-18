@@ -1117,6 +1117,15 @@ public partial class Interpreter
     {
         bool strictMode = _environment.IsStrictMode;
 
+        // ECMA-262 PutValue: RequireObjectCoercible throws a guest TypeError on a
+        // null/undefined base before any setter dispatch (#733). Operands (obj,
+        // index, value) are already evaluated by EvaluateSetIndex, so RHS side
+        // effects have run — matching PutValue-after-RHS ordering.
+        if (obj == null || obj is SharpTSUndefined)
+        {
+            ThrowCannotSetProperty(obj, index?.ToString() ?? "");
+        }
+
         // Proxy: intercept index assignment via set trap
         if (obj is SharpTSProxy proxy)
         {

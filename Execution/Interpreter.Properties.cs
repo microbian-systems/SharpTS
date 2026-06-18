@@ -161,10 +161,10 @@ public partial class Interpreter
 
         if (klass is not SharpTSClass sharpClass)
         {
-             // ECMA-262: invoking `new X` on a non-constructor surfaces as
-             // TypeError. Routed through ThrowException so guest code sees a
-             // real TypeError instance for `assert.throws(TypeError, ...)`.
-             throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
+            // ECMA-262: invoking `new X` on a non-constructor surfaces as
+            // TypeError. Routed through ThrowException so guest code sees a
+            // real TypeError instance for `assert.throws(TypeError, ...)`.
+            throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
         }
 
         // Runtime check for abstract class instantiation (backup to type checker)
@@ -400,10 +400,10 @@ public partial class Interpreter
 
         if (klass is not SharpTSClass sharpClass)
         {
-             // ECMA-262: invoking `new X` on a non-constructor surfaces as
-             // TypeError. Routed through ThrowException so guest code sees a
-             // real TypeError instance for `assert.throws(TypeError, ...)`.
-             throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
+            // ECMA-262: invoking `new X` on a non-constructor surfaces as
+            // TypeError. Routed through ThrowException so guest code sees a
+            // real TypeError instance for `assert.throws(TypeError, ...)`.
+            throw new ThrowException(new SharpTSTypeError("X is not a constructor"));
         }
 
         // Runtime check for abstract class instantiation (backup to type checker)
@@ -595,6 +595,22 @@ public partial class Interpreter
         string what = nullishReceiver is SharpTSUndefined ? "undefined" : "null";
         throw new ThrowException(new SharpTSTypeError(
             $"Cannot read properties of {what} (reading '{key}')"));
+    }
+
+    /// <summary>
+    /// ECMA-262 PutValue RequireObjectCoercible failure on a member write: throws
+    /// a guest <see cref="SharpTSTypeError"/> ("Cannot set properties of
+    /// &lt;null|undefined&gt; (setting '&lt;key&gt;')") wrapped in a
+    /// <see cref="ThrowException"/> so a guest <c>try/catch</c> binds a real
+    /// <c>TypeError</c>. Write-path counterpart of <see cref="ThrowCannotReadProperty"/>
+    /// (#733). Mirrors Node: <c>null.x = 1</c> throws even in sloppy mode.
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.DoesNotReturn]
+    private static void ThrowCannotSetProperty(object? nullishReceiver, string key)
+    {
+        string what = nullishReceiver is SharpTSUndefined ? "undefined" : "null";
+        throw new ThrowException(new SharpTSTypeError(
+            $"Cannot set properties of {what} (setting '{key}')"));
     }
 
     /// <summary>
@@ -1355,6 +1371,15 @@ public partial class Interpreter
     /// </summary>
     private object? EvaluateSetOnObject(Expr.Set set, object? obj, object? value)
     {
+        // ECMA-262 PutValue: RequireObjectCoercible throws a guest TypeError on a
+        // null/undefined base before any setter dispatch (#733). The RHS value is
+        // already evaluated by EvaluateSet, matching the spec's PutValue-after-RHS
+        // ordering, so side effects in the RHS have run by this point.
+        if (obj == null || obj is SharpTSUndefined)
+        {
+            ThrowCannotSetProperty(obj, set.Name.Lexeme);
+        }
+
         // Proxy interception - must be before any other dispatch
         if (obj is SharpTSProxy proxy)
         {

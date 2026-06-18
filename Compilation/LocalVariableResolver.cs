@@ -469,15 +469,32 @@ public class LocalVariableResolver : IVariableResolver
 
         // 5. Thread-local `this` set by $Runtime.NewOnFunction (or other call paths
         //    that prep a thisArg for a method whose signature has no __this param).
-        //    Falls back to null when no such this is active — matches the JS sloppy-
-        //    mode default (undefined-ish) for bare function calls.
+        //    Falls back to the globalThis sentinel when no such this is active: the
+        //    sentinel denotes sloppy-mode `this` (= globalThis) so that a subsequent
+        //    `this.x` read routes through GlobalThisGetProperty and — crucially for
+        //    #735/#733 — value-position JS null stays distinct from a sloppy `this`.
         if (_ctx.Runtime?.CurrentFunctionThisField != null)
         {
             _il.Emit(OpCodes.Ldsfld, _ctx.Runtime.CurrentFunctionThisField);
+            var thisNotNull = _il.DefineLabel();
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Brtrue, thisNotNull);
+            _il.Emit(OpCodes.Pop);
+            _il.Emit(OpCodes.Ldsfld, _ctx.Runtime.GlobalThisSingletonField);
+            _il.MarkLabel(thisNotNull);
             return;
         }
 
-        // 6. Static context without an emitted runtime (reference-assembly mode etc.)
+        // 6. Static context with an emitted runtime: top-level / entry point with no
+        //    active this binding. Resolve to the globalThis sentinel (sloppy `this`)
+        //    so `this.x` works and value-null remains distinguishable. Reference-
+        //    assembly mode (no runtime) falls back to bare null as before.
+        if (_ctx.Runtime != null)
+        {
+            _il.Emit(OpCodes.Ldsfld, _ctx.Runtime.GlobalThisSingletonField);
+            return;
+        }
+
         _il.Emit(OpCodes.Ldnull);
     }
 

@@ -4,23 +4,25 @@ using Xunit;
 namespace SharpTS.Tests.SharedTests;
 
 /// <summary>
-/// ECMA-262 RequireObjectCoercible (§13.3.2 / §13.3.3): a non-optional member
-/// access on <c>undefined</c> or <c>null</c> must throw a guest <c>TypeError</c>
-/// ("Cannot read properties of &lt;undefined|null&gt; (reading '&lt;key&gt;')"),
-/// not silently yield <c>undefined</c> or surface a raw host "Runtime Error" string.
+/// ECMA-262 RequireObjectCoercible (§13.3.2 / §13.3.3) and PutValue (§13.15.5):
+/// a non-optional member access on <c>undefined</c> or <c>null</c> must throw a
+/// guest <c>TypeError</c> ("Cannot read|set properties of &lt;undefined|null&gt;
+/// (reading|setting '&lt;key&gt;')"), not silently yield <c>undefined</c>,
+/// silently no-op, or surface a raw host "Runtime Error" string.
 ///
-/// <para>#676 (interpreter): the property-access fallback threw a host
+/// <para>#676 (interpreter reads): the property-access fallback threw a host
 /// <c>InterpreterException</c> that a guest <c>catch</c> bound as a plain string.</para>
-/// <para>#701 (compiled): the emitted property/index read silently evaluated to
-/// <c>undefined</c> instead of throwing.</para>
-///
-/// <para><b>Interpreter vs compiled on a genuine <c>null</c> receiver:</b> the
-/// interpreter represents JS <c>null</c> as CLR <c>null</c> (sloppy-mode <c>this</c>
-/// is a distinct globalThis object), so it can throw on both. Compiled mode
-/// represents sloppy-mode <c>this</c> as CLR <c>null</c> too, so — like the
-/// established method-call-callee guard — it only throws on the unambiguous
-/// <c>$Undefined</c> singleton and leaves CLR <c>null</c> coercible. The
-/// <c>null</c>-receiver cases below are therefore interpreter-only.</para>
+/// <para>#701 (compiled reads on <c>undefined</c>): the emitted property/index read
+/// silently evaluated to <c>undefined</c> instead of throwing.</para>
+/// <para>#735 (compiled reads on a genuine <c>null</c>): compiled mode represented
+/// sloppy-mode <c>this</c> as CLR <c>null</c>, so the guards could not reject a
+/// value-position <c>null</c> without breaking <c>this.x</c>. Compiled sloppy
+/// <c>this</c> now resolves to the globalThis sentinel, so <c>null</c> is unambiguous
+/// and reads on it throw — matching the interpreter on both <c>null</c> and
+/// <c>undefined</c>.</para>
+/// <para>#733 (writes on <c>null</c>/<c>undefined</c>): both the interpreter (which
+/// threw a host <c>InterpreterException</c>) and the compiler (which silently
+/// no-op'd) now throw a guest <c>TypeError</c> via PutValue's RequireObjectCoercible.</para>
 /// </summary>
 public class NullishMemberAccessTests
 {
@@ -75,10 +77,37 @@ public class NullishMemberAccessTests
             TestHarness.Run(source, mode));
     }
 
-    // ----- undefined receiver: method call (the #676 repro shape) -----
-    // Identity-only: the interpreter routes the callee through the property read
-    // ("Cannot read properties of …"), while compiled mode reaches its method-call
-    // guard — both raise a real TypeError, which is what #676 was about.
+    // ----- null receiver: dot + bracket read (#735) -----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NullDotRead_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = $$"""
+            const o: any = null;
+            try { const y = o.foo; console.log("NOTHROW " + y); }
+            {{ProbeFull}}
+            """;
+        Assert.Equal(
+            "object true TypeError |Cannot read properties of null (reading 'foo')\n",
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NullBracketRead_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = $$"""
+            const o: any = null;
+            try { const y = o["bar"]; console.log("NOTHROW " + y); }
+            {{ProbeFull}}
+            """;
+        Assert.Equal(
+            "object true TypeError |Cannot read properties of null (reading 'bar')\n",
+            TestHarness.Run(source, mode));
+    }
+
+    // ----- null/undefined receiver: method call (the #676 repro shape) -----
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
@@ -92,35 +121,77 @@ public class NullishMemberAccessTests
         Assert.Equal("object true TypeError\n", TestHarness.Run(source, mode));
     }
 
-    // ----- null receiver (interpreter-only; see class remarks) -----
-
-    [Fact]
-    public void NullDotRead_ThrowsTypeError_Interpreted()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NullMethodCall_ThrowsTypeError(ExecutionMode mode)
     {
         var source = $$"""
             const o: any = null;
-            try { const y = o.foo; console.log("NOTHROW " + y); }
+            try { o.foo(); console.log("NOTHROW"); }
+            {{ProbeIdentity}}
+            """;
+        Assert.Equal("object true TypeError\n", TestHarness.Run(source, mode));
+    }
+
+    // ----- writes on null/undefined (#733) -----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void UndefinedDotWrite_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = $$"""
+            const o: any = undefined;
+            try { o.foo = 1; console.log("NOTHROW"); }
             {{ProbeFull}}
             """;
         Assert.Equal(
-            "object true TypeError |Cannot read properties of null (reading 'foo')\n",
-            TestHarness.RunInterpreted(source));
+            "object true TypeError |Cannot set properties of undefined (setting 'foo')\n",
+            TestHarness.Run(source, mode));
     }
 
-    [Fact]
-    public void NullBracketRead_ThrowsTypeError_Interpreted()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NullDotWrite_ThrowsTypeError(ExecutionMode mode)
     {
         var source = $$"""
             const o: any = null;
-            try { const y = o["bar"]; console.log("NOTHROW " + y); }
+            try { o.foo = 1; console.log("NOTHROW"); }
             {{ProbeFull}}
             """;
         Assert.Equal(
-            "object true TypeError |Cannot read properties of null (reading 'bar')\n",
-            TestHarness.RunInterpreted(source));
+            "object true TypeError |Cannot set properties of null (setting 'foo')\n",
+            TestHarness.Run(source, mode));
     }
 
-    // ----- async context exercises the base (state-machine) emitter for #701 -----
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NullBracketWrite_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = $$"""
+            const o: any = null;
+            try { o["bar"] = 1; console.log("NOTHROW"); }
+            {{ProbeFull}}
+            """;
+        Assert.Equal(
+            "object true TypeError |Cannot set properties of null (setting 'bar')\n",
+            TestHarness.Run(source, mode));
+    }
+
+    // PutValue follows RHS evaluation: the RHS side effect must run before the throw.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NullWrite_RHS_SideEffect_Runs_BeforeThrow(ExecutionMode mode)
+    {
+        var source = """
+            const o: any = null;
+            let ran = false;
+            try { o.foo = (ran = true, 1); }
+            catch (e: any) { console.log("threw ran=" + ran); }
+            """;
+        Assert.Equal("threw ran=true\n", TestHarness.Run(source, mode));
+    }
+
+    // ----- async context exercises the base (state-machine) emitter -----
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
@@ -137,6 +208,67 @@ public class NullishMemberAccessTests
         Assert.Equal(
             "object true TypeError |Cannot read properties of undefined (reading 'foo')\n",
             TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NullDotRead_InsideAsync_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function run(): Promise<void> {
+                const o: any = null;
+                try { const y = o.foo; console.log("NOTHROW " + y); }
+                {{ProbeFull}}
+            }
+            run();
+            """;
+        Assert.Equal(
+            "object true TypeError |Cannot read properties of null (reading 'foo')\n",
+            TestHarness.Run(source, mode));
+    }
+
+    // ----- sloppy-mode `this` must stay coercible (regression for the #735 fix) -----
+    // Compiled sloppy `this` now resolves to the globalThis sentinel (mirroring the
+    // interpreter's SharpTSGlobalThis.Instance binding), so `this.x` must NOT trip
+    // the new null/undefined guard, and writes via `this.x = v` round-trip through
+    // the global object.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SloppyThis_Read_DoesNotThrow(ExecutionMode mode)
+    {
+        var source = """
+            function probe(): any { return this.missing; }
+            console.log(probe() === undefined ? "ok-undefined" : "WRONG:" + probe());
+            """;
+        Assert.Equal("ok-undefined\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SloppyThis_Write_RoutesToGlobalThis(ExecutionMode mode)
+    {
+        var source = """
+            function setViaThis(): void { (this as any).__sloppyProbe735 = 42; }
+            setViaThis();
+            console.log((globalThis as any).__sloppyProbe735);
+            """;
+        Assert.Equal("42\n", TestHarness.Run(source, mode));
+    }
+
+    // The async state-machine emitter resolves `this` via the base EmitThis path
+    // (LoadThis → globalThis sentinel), so a sloppy `this.x` read inside async
+    // must not trip the new null guard. Interpreter-only limitation: top-level
+    // bare async calls don't bind `this` there (pre-existing, tracked separately),
+    // so this is compiled-only.
+    [Fact]
+    public void SloppyThis_Read_InsideAsync_DoesNotThrow_Compiled()
+    {
+        var source = """
+            async function probe(): Promise<any> { return (this as any).missing; }
+            probe().then((v: any) => console.log(v === undefined ? "ok-undefined" : "WRONG:" + v));
+            """;
+        Assert.Equal("ok-undefined\n", TestHarness.RunCompiled(source));
     }
 
     // ----- regression: optional chaining still short-circuits (does NOT throw) -----
@@ -160,6 +292,18 @@ public class NullishMemberAccessTests
         var source = """
             const o: any = undefined;
             const y = o?.["bar"];
+            console.log(y === undefined ? "undefined-ok" : "WRONG:" + y);
+            """;
+        Assert.Equal("undefined-ok\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void OptionalDotChain_OnNull_ReturnsUndefined(ExecutionMode mode)
+    {
+        var source = """
+            const o: any = null;
+            const y = o?.foo;
             console.log(y === undefined ? "undefined-ok" : "WRONG:" + y);
             """;
         Assert.Equal("undefined-ok\n", TestHarness.Run(source, mode));
@@ -193,5 +337,17 @@ public class NullishMemberAccessTests
             console.log(o.foo, o["foo"], o[1]);
             """;
         Assert.Equal("42 42 one\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DefinedReceiver_DotWrite_StillWorks(ExecutionMode mode)
+    {
+        var source = """
+            const o: any = { foo: 1 };
+            o.foo = 99;
+            console.log(o.foo);
+            """;
+        Assert.Equal("99\n", TestHarness.Run(source, mode));
     }
 }
