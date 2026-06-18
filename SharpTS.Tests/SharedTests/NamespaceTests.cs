@@ -796,5 +796,25 @@ public class NamespaceTests
         Assert.Equal("2\n", TestHarness.Run(code, mode));
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedNamespace_ShadowsSameNamedTopLevelNamespace(ExecutionMode mode)
+    {
+        // Nested O.A shadows the top-level A for bare references from sibling O.B.
+        // The interpreter previously merged O.A's members into the global A and left
+        // namespaceEnvO without an "A" binding, so the pre-resolved distance-2 lookup
+        // returned Undefined → "Only instances and objects have properties" (#746).
+        var code = @"
+            namespace A { export function g() { return 100; } }
+            namespace O {
+              export namespace A { export function g() { return 5; } }
+              export namespace B { export function f() { return A.g(); } }
+            }
+            console.log(O.B.f());
+            console.log(A.g());
+        ";
+        Assert.Equal("5\n100\n", TestHarness.Run(code, mode));
+    }
+
     #endregion
 }

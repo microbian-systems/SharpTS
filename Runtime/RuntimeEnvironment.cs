@@ -155,6 +155,17 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     }
 
     /// <summary>
+    /// Gets a namespace by name from THIS scope only (no chain traversal).
+    /// Use when deciding whether to merge vs. create a new namespace declaration —
+    /// avoids treating a same-named namespace in an enclosing scope as a merge target (#746).
+    /// </summary>
+    public SharpTSNamespace? GetLocalNamespace(string name)
+    {
+        _namespaces.TryGetValue(name, out var ns);
+        return ns;
+    }
+
+    /// <summary>
     /// Defines a variable with a boxed value (legacy compatibility).
     /// Wraps the value in RuntimeValue.FromBoxed automatically.
     /// </summary>
