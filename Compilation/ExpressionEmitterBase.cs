@@ -516,8 +516,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         {
             var idxLocal = SpillBoxed(gi.Index);
             // RequireObjectCoercible: `undefined[k]` throws a guest TypeError instead
-            // of silently yielding undefined (#701). Optional `o?.[k]` short-circuited above.
-            EmitThrowIfUndefinedIndexReceiver(objLocal, idxLocal);
+            // of silently yielding undefined (#701), and `null[k]` too now that sloppy
+            // `this` is the globalThis sentinel (#735). Optional `o?.[k]` short-circuited
+            // above. Null-placeholder globals (e.g. `process`) are exempt.
+            if (!IsNullPlaceholderGlobal(gi.Object))
+                EmitThrowIfUndefinedIndexReceiver(objLocal, idxLocal);
             IL.Emit(OpCodes.Ldloc, objLocal);
             IL.Emit(OpCodes.Ldloc, idxLocal);
             IL.Emit(OpCodes.Call, Ctx.Runtime!.GetIndex);
@@ -554,6 +557,12 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         var objLocal = SpillBoxed(si.Object);
         var idxLocal = SpillBoxed(si.Index);
 
+        // RequireObjectCoercible (PutValue): a null/undefined base throws a guest
+        // TypeError ("Cannot set properties of undefined|null (setting '<key>')")
+        // instead of silently no-op'ing (#733). Null-placeholder globals are exempt.
+        if (!IsNullPlaceholderGlobal(si.Object))
+            EmitThrowIfUndefinedIndexReceiver(objLocal, idxLocal, isWrite: true);
+
         IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Ldloc, idxLocal);
         IL.Emit(OpCodes.Ldloc, valueLocal);
@@ -564,8 +573,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     }
 
     /// <summary>
-    /// Emits 'this' expression. Default uses GetThisField() hook — loads from field if non-null, else null.
-    /// ILEmitter overrides (Resolver.LoadThis). AsyncArrowMoveNextEmitter overrides (outer state machine capture).
+    /// Emits 'this' expression. Default uses GetThisField() hook — loads from field if non-null,
+    /// otherwise resolves to the globalThis sentinel (sloppy-mode `this` = globalThis) when an
+    /// emitted runtime is available, so that value-position JS null stays distinct from a sloppy
+    /// `this` receiver (#735/#733). ILEmitter overrides (Resolver.LoadThis). AsyncArrowMoveNextEmitter
+    /// overrides (outer state machine capture).
     /// </summary>
     protected virtual void EmitThis()
     {
@@ -574,6 +586,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         {
             IL.Emit(OpCodes.Ldarg_0);
             IL.Emit(OpCodes.Ldfld, thisField);
+            SetStackUnknown();
+        }
+        else if (Ctx.Runtime?.GlobalThisSingletonField != null)
+        {
+            IL.Emit(OpCodes.Ldsfld, Ctx.Runtime.GlobalThisSingletonField);
             SetStackUnknown();
         }
         else
@@ -701,6 +718,12 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         // Spill operands so an await inside Value doesn't suspend with the object on the stack.
         var objLocal = SpillBoxed(s.Object);
         var valueLocal = SpillBoxed(s.Value);
+
+        // RequireObjectCoercible (PutValue): a null/undefined base throws a guest
+        // TypeError ("Cannot set properties of undefined|null (setting 'X')") (#733).
+        // Null-placeholder globals (e.g. `process`) are exempt.
+        if (!IsNullPlaceholderGlobal(s.Object))
+            EmitThrowIfReceiverUndefined(objLocal, s.Name.Lexeme, isWrite: true);
 
         IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Ldstr, s.Name.Lexeme);
@@ -2380,8 +2403,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         else
         {
             // RequireObjectCoercible: a non-optional read on `undefined` throws a
-            // guest TypeError instead of silently yielding undefined (#701).
-            EmitThrowIfUndefinedReceiverOnStack(g.Name.Lexeme);
+            // guest TypeError instead of silently yielding undefined (#701), and on
+            // a genuine value-null now that sloppy `this` is the globalThis sentinel
+            // (#735). Null-placeholder globals (e.g. `process`) are exempt.
+            if (!IsNullPlaceholderGlobal(g.Object))
+                EmitThrowIfUndefinedReceiverOnStack(g.Name.Lexeme);
             IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
             IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
         }

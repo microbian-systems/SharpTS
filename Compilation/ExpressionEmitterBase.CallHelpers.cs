@@ -411,27 +411,57 @@ public abstract partial class ExpressionEmitterBase
     }
 
     /// <summary>
+    /// True for compile-time null-placeholder globals — globals that emit CLR
+    /// <c>null</c> and rely on special-cased property access (currently just
+    /// <c>process</c>, see <c>EmitVariable</c>'s <c>process</c> branch). An
+    /// uncovered property on such a placeholder yields <c>null</c>/<c>undefined</c>
+    /// via <c>GetProperty</c>'s null branch rather than a <c>TypeError</c>, because
+    /// the receiver is a stand-in for a host object whose full reification isn't
+    /// emitted — not a runtime JS <c>null</c>. Exempting it preserves the
+    /// pre-#735/#733 behavior for <c>process.X</c> reads/writes the dedicated
+    /// emitters don't cover (#735/#733).
+    /// </summary>
+    protected static bool IsNullPlaceholderGlobal(Expr receiver) =>
+        receiver is Expr.Variable v && v.Name.Lexeme == "process";
+
+    /// <summary>
     /// Emits a guard that throws <c>TypeError</c> when <paramref name="objLocal"/>
-    /// holds <c>$Undefined</c> — the RequireObjectCoercible step a member-access
-    /// callee performs before its arguments are evaluated. Missing-property reads
+    /// holds <c>$Undefined</c> or CLR <c>null</c> — the RequireObjectCoercible step a
+    /// member-access callee performs before its arguments are evaluated. Missing-property reads
     /// (e.g. <c>o.bar</c> where <c>bar</c> is absent) yield <c>$Undefined</c>, so
     /// this catches <c>o.bar.gar(sideEffect())</c> before the side effect runs.
     ///
-    /// Deliberately does NOT reject a bare CLR <c>null</c>: compiled sloppy-mode
-    /// <c>this</c> is represented as <c>null</c> (spec says it is globalThis, which
-    /// is coercible), so <c>this.method(sideEffect())</c> must keep evaluating its
-    /// arguments. Symbols/primitives are coercible too. A genuine <c>null.x()</c>
-    /// still throws — just deferred to InvokeMethodValue, as before this guard.
+    /// Compiled sloppy-mode <c>this</c> is no longer represented as bare CLR <c>null</c>:
+    /// it resolves to the globalThis sentinel (see <see cref="LocalVariableResolver.LoadThis"/>
+    /// and <c>InvokeWithThis</c>), so a CLR <c>null</c> receiver here is an unambiguous
+    /// genuine JS <c>null</c> and is rejected with the "Cannot read properties of null"
+    /// message (#735). Symbols/primitives are coercible and pass through.
     /// </summary>
-    protected void EmitThrowIfReceiverUndefined(LocalBuilder objLocal, string methodName)
+    protected void EmitThrowIfReceiverUndefined(LocalBuilder objLocal, string methodName, bool isWrite = false)
     {
+        var action = isWrite ? "set" : "read";
+        var actionIng = isWrite ? "setting" : "reading";
+        var undefinedLabel = IL.DefineLabel();
+        var nullLabel = IL.DefineLabel();
         var okLabel = IL.DefineLabel();
 
         IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
-        IL.Emit(OpCodes.Brfalse, okLabel);               // not $Undefined → ok
+        IL.Emit(OpCodes.Brtrue, undefinedLabel);          // $Undefined → throw "undefined"
 
-        IL.Emit(OpCodes.Ldstr, $"Cannot read properties of undefined (reading '{methodName}')");
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Brfalse, nullLabel);              // CLR null → throw "null"
+
+        IL.Emit(OpCodes.Br, okLabel);
+
+        IL.MarkLabel(undefinedLabel);
+        IL.Emit(OpCodes.Ldstr, $"Cannot {action} properties of undefined ({actionIng} '{methodName}')");
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSTypeErrorCtor);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateException);
+        IL.Emit(OpCodes.Throw);
+
+        IL.MarkLabel(nullLabel);
+        IL.Emit(OpCodes.Ldstr, $"Cannot {action} properties of null ({actionIng} '{methodName}')");
         IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSTypeErrorCtor);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateException);
         IL.Emit(OpCodes.Throw);
@@ -442,25 +472,41 @@ public abstract partial class ExpressionEmitterBase
     /// <summary>
     /// ECMA-262 RequireObjectCoercible for a NON-optional member READ (<c>o.x</c>):
     /// with the boxed receiver on top of the stack, throws a guest <c>TypeError</c>
-    /// ("Cannot read properties of undefined (reading '<paramref name="propertyName"/>')")
-    /// when it is <c>$Undefined</c>, leaving the receiver on the stack otherwise.
-    /// The read-expression analog of <see cref="EmitThrowIfReceiverUndefined"/> (the
-    /// method-call-callee guard) and the compiled counterpart of the interpreter's
-    /// guard — like the call-callee guard, a bare CLR <c>null</c> is left coercible
-    /// because compiled sloppy-mode <c>this</c> is represented as <c>null</c>
-    /// (= globalThis). Fixes #701, where <c>undefined.x</c> silently yielded
-    /// <c>undefined</c> instead of throwing. Callers MUST short-circuit the
-    /// optional-chain case (<c>o?.x</c>) before calling this.
+    /// when it is <c>$Undefined</c> or CLR <c>null</c>, leaving the receiver on the
+    /// stack otherwise. The message distinguishes the two ("Cannot read properties of
+    /// undefined|null (reading '<paramref name="propertyName"/>')"). The read-expression
+    /// analog of <see cref="EmitThrowIfReceiverUndefined"/> (the method-call-callee guard)
+    /// and the compiled counterpart of the interpreter's guard. Compiled sloppy-mode
+    /// <c>this</c> now resolves to the globalThis sentinel instead of CLR <c>null</c>,
+    /// so a null receiver here is an unambiguous genuine JS <c>null</c> (#735). Fixes
+    /// #701 (undefined) and #735 (null). Callers MUST short-circuit the optional-chain
+    /// case (<c>o?.x</c>) before calling this.
     /// </summary>
     protected void EmitThrowIfUndefinedReceiverOnStack(string propertyName)
     {
+        var undefinedLabel = IL.DefineLabel();
+        var nullLabel = IL.DefineLabel();
         var okLabel = IL.DefineLabel();
 
         IL.Emit(OpCodes.Dup);
         IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
-        IL.Emit(OpCodes.Brfalse, okLabel);               // not $Undefined → ok
+        IL.Emit(OpCodes.Brtrue, undefinedLabel);          // $Undefined → throw "undefined"
 
+        IL.Emit(OpCodes.Dup);
+        IL.Emit(OpCodes.Brfalse, nullLabel);              // CLR null → throw "null"
+
+        IL.Emit(OpCodes.Br, okLabel);
+
+        IL.MarkLabel(undefinedLabel);
+        IL.Emit(OpCodes.Pop);                             // discard receiver
         IL.Emit(OpCodes.Ldstr, $"Cannot read properties of undefined (reading '{propertyName}')");
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSTypeErrorCtor);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateException);
+        IL.Emit(OpCodes.Throw);
+
+        IL.MarkLabel(nullLabel);
+        IL.Emit(OpCodes.Pop);                             // discard receiver
+        IL.Emit(OpCodes.Ldstr, $"Cannot read properties of null (reading '{propertyName}')");
         IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSTypeErrorCtor);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateException);
         IL.Emit(OpCodes.Throw);
@@ -471,23 +517,47 @@ public abstract partial class ExpressionEmitterBase
     /// <summary>
     /// Bracket-access (<c>o[k]</c>) counterpart of
     /// <see cref="EmitThrowIfUndefinedReceiverOnStack"/>: throws a guest
-    /// <c>TypeError</c> when <paramref name="objLocal"/> holds <c>$Undefined</c>,
-    /// splicing the runtime key (<paramref name="keyLocal"/>, a boxed
-    /// <see cref="object"/>) into the message to match Node ("Cannot read
-    /// properties of undefined (reading '&lt;key&gt;')"). Leaves the stack
-    /// untouched. Callers MUST short-circuit the optional-chain case first. (#701)
+    /// <c>TypeError</c> when <paramref name="objLocal"/> holds <c>$Undefined</c> or
+    /// CLR <c>null</c>, splicing the runtime key (<paramref name="keyLocal"/>, a boxed
+    /// <see cref="object"/>) into the message to match Node ("Cannot read properties of
+    /// undefined|null (reading '&lt;key&gt;')"). Leaves the stack untouched. Callers MUST
+    /// short-circuit the optional-chain case first. (#701 undefined / #735 null)
     /// </summary>
-    protected void EmitThrowIfUndefinedIndexReceiver(LocalBuilder objLocal, LocalBuilder keyLocal)
+    protected void EmitThrowIfUndefinedIndexReceiver(LocalBuilder objLocal, LocalBuilder keyLocal, bool isWrite = false)
     {
+        var prefixUndef = isWrite
+            ? "Cannot set properties of undefined (setting '"
+            : "Cannot read properties of undefined (reading '";
+        var prefixNull = isWrite
+            ? "Cannot set properties of null (setting '"
+            : "Cannot read properties of null (reading '";
+        var undefinedLabel = IL.DefineLabel();
+        var nullLabel = IL.DefineLabel();
         var okLabel = IL.DefineLabel();
 
         IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Isinst, Ctx.Runtime!.UndefinedType);
-        IL.Emit(OpCodes.Brfalse, okLabel);               // not $Undefined → ok
+        IL.Emit(OpCodes.Brtrue, undefinedLabel);          // $Undefined → throw "undefined"
 
-        // "Cannot read properties of undefined (reading '" + key + "')"
-        // Concat(object, object) is null-safe (a null key stringifies to "").
-        IL.Emit(OpCodes.Ldstr, "Cannot read properties of undefined (reading '");
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Brfalse, nullLabel);              // CLR null → throw "null"
+
+        IL.Emit(OpCodes.Br, okLabel);
+
+        // "<prefix>" + key + "')" — Concat(object, object) is null-safe
+        // (a null key stringifies to "").
+        IL.MarkLabel(undefinedLabel);
+        IL.Emit(OpCodes.Ldstr, prefixUndef);
+        IL.Emit(OpCodes.Ldloc, keyLocal);
+        IL.Emit(OpCodes.Call, Types.StringConcatObjectObject);
+        IL.Emit(OpCodes.Ldstr, "')");
+        IL.Emit(OpCodes.Call, Types.StringConcat2);
+        IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSTypeErrorCtor);
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateException);
+        IL.Emit(OpCodes.Throw);
+
+        IL.MarkLabel(nullLabel);
+        IL.Emit(OpCodes.Ldstr, prefixNull);
         IL.Emit(OpCodes.Ldloc, keyLocal);
         IL.Emit(OpCodes.Call, Types.StringConcatObjectObject);
         IL.Emit(OpCodes.Ldstr, "')");

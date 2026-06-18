@@ -321,8 +321,12 @@ public partial class ILEmitter
         else
         {
             // RequireObjectCoercible: a non-optional read on `undefined` throws a
-            // guest TypeError instead of silently yielding undefined (#701).
-            EmitThrowIfUndefinedReceiverOnStack(g.Name.Lexeme);
+            // guest TypeError instead of silently yielding undefined (#701). Also
+            // rejects a genuine value-null (#735) now that sloppy `this` resolves to
+            // the globalThis sentinel. Null-placeholder globals (e.g. `process`)
+            // are exempt — uncovered properties there yield undefined, not a throw.
+            if (!IsNullPlaceholderGlobal(g.Object))
+                EmitThrowIfUndefinedReceiverOnStack(g.Name.Lexeme);
             IL.Emit(OpCodes.Ldstr, g.Name.Lexeme);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
         }
@@ -606,20 +610,33 @@ public partial class ILEmitter
             return;
         }
 
-        // Build stack for SetProperty(obj, name, value) or SetPropertyStrict(obj, name, value, strictMode)
+        // Build stack for SetProperty(obj, name, value) or SetPropertyStrict(obj, name, value, strictMode).
+        // The LHS base is evaluated and recorded before the RHS (ECMA-262 §13.15 — the
+        // reference's base is captured during LeftHandSideExpression eval), and the RHS
+        // value is captured into a local so the coercibility guard below runs AFTER its
+        // side effects (PutValue follows RHS evaluation).
         EmitExpression(s.Object);
         EmitBoxIfNeeded(s.Object);
-        IL.Emit(OpCodes.Ldstr, s.Name.Lexeme);
+        var setRecvLocal = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, setRecvLocal);
+
         EmitExpression(s.Value);
         EmitBoxIfNeeded(s.Value);
+        var setResultLocal = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, setResultLocal);
 
-        // Stack: [obj, name, value]
-        // Dup value for expression result, then store it
-        IL.Emit(OpCodes.Dup);
-        var resultTemp = IL.DeclareLocal(_ctx.Types.Object);
-        IL.Emit(OpCodes.Stloc, resultTemp);
+        // RequireObjectCoercible (PutValue): a null/undefined base throws a guest
+        // TypeError ("Cannot set properties of undefined|null (setting 'X')") instead
+        // of silently no-op'ing. Compiled sloppy `this` is the globalThis sentinel, so
+        // `this.x = v` in a loose function still routes to GlobalThisSetProperty. (#733)
+        // Null-placeholder globals (e.g. `process`) are exempt.
+        if (!IsNullPlaceholderGlobal(s.Object))
+            EmitThrowIfReceiverUndefined(setRecvLocal, s.Name.Lexeme, isWrite: true);
 
         // Stack: [obj, name, value] - call SetProperty or SetPropertyStrict
+        IL.Emit(OpCodes.Ldloc, setRecvLocal);
+        IL.Emit(OpCodes.Ldstr, s.Name.Lexeme);
+        IL.Emit(OpCodes.Ldloc, setResultLocal);
         if (_ctx.IsStrictMode)
         {
             IL.Emit(OpCodes.Ldc_I4_1); // true for strict mode
@@ -631,7 +648,7 @@ public partial class ILEmitter
         }
 
         // Put result back on stack
-        IL.Emit(OpCodes.Ldloc, resultTemp);
+        IL.Emit(OpCodes.Ldloc, setResultLocal);
     }
 
     protected override void EmitGetIndex(Expr.GetIndex gi)
@@ -848,10 +865,13 @@ public partial class ILEmitter
         // Generic (non-array) dynamic bracket read. Spill both operands so the
         // RequireObjectCoercible guard can inspect the receiver and splice the key
         // into the TypeError message: `undefined[k]` throws instead of silently
-        // yielding undefined (#701). The optional `o?.[k]` case returned early above.
+        // yielding undefined (#701), and `null[k]` too now that sloppy `this` is the
+        // globalThis sentinel (#735). The optional `o?.[k]` case returned early above.
+        // Null-placeholder globals (e.g. `process`) are exempt.
         var idxRecvLocal = SpillBoxed(gi.Object);
         var idxKeyLocal = SpillBoxed(gi.Index);
-        EmitThrowIfUndefinedIndexReceiver(idxRecvLocal, idxKeyLocal);
+        if (!IsNullPlaceholderGlobal(gi.Object))
+            EmitThrowIfUndefinedIndexReceiver(idxRecvLocal, idxKeyLocal);
         IL.Emit(OpCodes.Ldloc, idxRecvLocal);
         IL.Emit(OpCodes.Ldloc, idxKeyLocal);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.GetIndex);
@@ -1014,8 +1034,22 @@ public partial class ILEmitter
 
         EmitExpression(si.Object);
         EmitBoxIfNeeded(si.Object);
+        var objLocalGeneric = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, objLocalGeneric);
+
         EmitExpression(si.Index);
         EmitBoxIfNeeded(si.Index);
+        var idxLocalGeneric = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, idxLocalGeneric);
+
+        // RequireObjectCoercible (PutValue): a null/undefined base throws a guest
+        // TypeError ("Cannot set properties of undefined|null (setting 'X')") (#733).
+        // Null-placeholder globals (e.g. `process`) are exempt.
+        if (!IsNullPlaceholderGlobal(si.Object))
+            EmitThrowIfUndefinedIndexReceiver(objLocalGeneric, idxLocalGeneric, isWrite: true);
+
+        IL.Emit(OpCodes.Ldloc, objLocalGeneric);
+        IL.Emit(OpCodes.Ldloc, idxLocalGeneric);
         IL.Emit(OpCodes.Ldloc, valueLocalGeneric);
 
         if (_ctx.IsStrictMode)
@@ -1090,9 +1124,15 @@ public partial class ILEmitter
 
         // Fallback: generic dispatch
         IL.MarkLabel(fallbackLabel);
+        var idxFallbackLocal = SpillBoxed(si.Index);
+        // RequireObjectCoercible (PutValue): a null/undefined base throws a guest
+        // TypeError. Reached when a statically-typed receiver is null/undefined at
+        // runtime (typed miss) — its value/index side effects have already run. (#733)
+        // Null-placeholder globals (e.g. `process`) are exempt.
+        if (!IsNullPlaceholderGlobal(si.Object))
+            EmitThrowIfUndefinedIndexReceiver(objLocal, idxFallbackLocal, isWrite: true);
         IL.Emit(OpCodes.Ldloc, objLocal);
-        EmitExpression(si.Index);
-        EmitBoxIfNeeded(si.Index);
+        IL.Emit(OpCodes.Ldloc, idxFallbackLocal);
         IL.Emit(OpCodes.Ldloc, valueLocal);
         if (_ctx.IsStrictMode)
         {

@@ -610,7 +610,20 @@ public partial class RuntimeEmitter
         iwt.Emit(OpCodes.Ldsfld, currentThisField);
         iwt.Emit(OpCodes.Stloc, prevThisIWT);
 
+        // Coerce a null thisArg to the globalThis sentinel before storing: compiled
+        // mode uses CLR null to denote sloppy-mode `this` (= globalThis), but #735/#733
+        // rely on value-position JS null being unambiguous so the property-access guards
+        // can throw TypeError on `null.x` / `null.x = v`. Substituting the sentinel here
+        // means the thread-local never holds a "sloppy-this" null; a genuine JS null
+        // thisArg never reaches this path (callers pass $Undefined or a real object).
+        // Mirrors the interpreter binding sloppy `this` to SharpTSGlobalThis.Instance.
+        var thisArgNotNullIWT = iwt.DefineLabel();
         iwt.Emit(OpCodes.Ldarg_1);
+        iwt.Emit(OpCodes.Dup);
+        iwt.Emit(OpCodes.Brtrue, thisArgNotNullIWT);
+        iwt.Emit(OpCodes.Pop);
+        iwt.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+        iwt.MarkLabel(thisArgNotNullIWT);
         iwt.Emit(OpCodes.Stsfld, currentThisField);
 
         iwt.BeginExceptionBlock();
@@ -848,7 +861,7 @@ public partial class RuntimeEmitter
         // Store in cache (even if null, but ConcurrentDictionary doesn't allow null values if we used that, but here we can just skip if null)
         // Actually, if null, we shouldn't cache null if we use TryGetValue. 
         // Let's simplify: if field is found, cache it. If not found, we don't cache (or cache a dummy? no need to overcomplicate).
-        
+
         var fieldNullLabel = bindThisIL.DefineLabel();
         bindThisIL.Emit(OpCodes.Ldloc, thisFieldLocal);
         bindThisIL.Emit(OpCodes.Brfalse, fieldNullLabel);
