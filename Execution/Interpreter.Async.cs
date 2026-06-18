@@ -383,7 +383,9 @@ public partial class Interpreter
 
         IEnumerable<string> keys = obj switch
         {
-            SharpTSObject o => o.Fields.Keys,
+            // Own enumerable keys only, hiding boxed-primitive internal slots and
+            // honoring enumerability — consistent with Object.keys (#475).
+            SharpTSObject o => o.OwnEnumerableKeys(),
             SharpTSInstance inst => inst.GetFieldNames(),
             // for...in skips holes per ECMA-262.
             SharpTSArray arr => Enumerable.Range(0, arr.Length).Where(arr.HasIndex).Select(i => i.ToString()),

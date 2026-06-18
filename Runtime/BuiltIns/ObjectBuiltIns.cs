@@ -45,7 +45,7 @@ public static class ObjectBuiltIns
         var arg = args[0].ToObject();
         if (arg is SharpTSObject obj)
         {
-            var keys = obj.Fields.Keys.Select(k => (object?)k).ToList();
+            var keys = obj.OwnEnumerableKeys().Select(k => (object?)k).ToList();
             return RuntimeValue.FromObject(new SharpTSArray(keys));
         }
         if (arg is SharpTSArray arr)
@@ -100,7 +100,7 @@ public static class ObjectBuiltIns
         var arg = args[0].ToObject();
         if (arg is SharpTSObject obj)
         {
-            var values = obj.Fields.Values.ToList();
+            var values = obj.OwnEnumerableKeys().Select(k => obj.Fields[k]).ToList();
             return RuntimeValue.FromObject(new SharpTSArray(values));
         }
         if (arg is SharpTSArray arr)
@@ -142,8 +142,8 @@ public static class ObjectBuiltIns
         var arg = args[0].ToObject();
         if (arg is SharpTSObject obj)
         {
-            var entries = obj.Fields.Select(kv =>
-                (object?)new SharpTSArray([(object?)kv.Key, kv.Value])).ToList();
+            var entries = obj.OwnEnumerableKeys().Select(k =>
+                (object?)new SharpTSArray([(object?)k, obj.Fields[k]])).ToList();
             return RuntimeValue.FromObject(new SharpTSArray(entries));
         }
         if (arg is SharpTSArray arr)
@@ -523,6 +523,8 @@ public static class ObjectBuiltIns
         // ECMA-262 §7.1.19: coerce non-Symbol property keys via ToPropertyKey
         // (undefined → "undefined", null → "null", -0 → "0", booleans lowercase).
         var propertyKey = PropertyKeyConverter.ToPropertyKeyString(args[1]);
+
+        PreserveOmittedAttributes(target, propertyKey, descriptor, descriptorArg, interpreter);
 
         bool success;
         switch (target)
@@ -1560,6 +1562,39 @@ public static class ObjectBuiltIns
         var c = interpreter.GetProperty(descObj, "configurable");
         if (c is not (null or SharpTSUndefined)) descriptor.Configurable = Compilation.RuntimeTypes.IsTruthy(c);
     }
+
+    /// <summary>
+    /// ECMA-262 §10.1.6.3 ValidateAndApplyPropertyDescriptor: when redefining an
+    /// EXISTING own property, attributes the descriptor omits are preserved from
+    /// the current property rather than reset to false (<see cref="SharpTSPropertyDescriptor"/>
+    /// defaults absent booleans to false, and <see cref="ApplyBooleanAttributes"/> only
+    /// sets the ones actually present). Without this,
+    /// <c>Object.defineProperty(o, "a", { writable:false })</c> on an enumerable data
+    /// property <c>a</c> wrongly clears its enumerable flag, dropping it from
+    /// Object.keys/values/entries/for-in (#475). Scoped to plain objects
+    /// (<see cref="SharpTSObject"/>) — the surface affected by #475's enumerability
+    /// changes; instances/arrays/dicts keep their existing behavior.
+    /// </summary>
+    private static void PreserveOmittedAttributes(
+        object? target, string propertyKey, SharpTSPropertyDescriptor descriptor, object? descObj, Interpreter interpreter)
+    {
+        if (target is not SharpTSObject obj || descObj is null) return;
+        // Only a plain object/dictionary descriptor; exotic descriptors keep prior behavior.
+        if (descObj is not (SharpTSObject or Dictionary<string, object?>)) return;
+        bool exists = obj.Fields.ContainsKey(propertyKey) || obj.AccessorPropertyNames.Contains(propertyKey);
+        if (!exists) return; // a brand-new property defaults omitted attributes to false (spec)
+        var existing = obj.GetPropertyFlags(propertyKey);
+        // Attribute presence is read via interpreter.GetProperty, which walks the
+        // prototype chain (matching ECMA-262 ToPropertyDescriptor), so an inherited
+        // attribute is correctly treated as specified rather than preserved.
+        if (!DescriptorSpecifies(descObj, "writable", interpreter)) descriptor.Writable = existing.Writable;
+        if (!DescriptorSpecifies(descObj, "enumerable", interpreter)) descriptor.Enumerable = existing.Enumerable;
+        if (!DescriptorSpecifies(descObj, "configurable", interpreter)) descriptor.Configurable = existing.Configurable;
+    }
+
+    /// <summary>True when the source descriptor object explicitly provides <paramref name="attr"/>.</summary>
+    private static bool DescriptorSpecifies(object? descObj, string attr, Interpreter interpreter)
+        => interpreter.GetProperty(descObj, attr) is not (null or SharpTSUndefined);
 
     /// <summary>
     /// Runtime helper for Object.create called from compiled code.

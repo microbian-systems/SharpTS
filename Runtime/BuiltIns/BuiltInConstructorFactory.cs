@@ -384,7 +384,11 @@ public static class BuiltInConstructorFactory
         };
         for (int i = 0; i < value.Length; i++)
             dict[i.ToString()] = value[i].ToString();
-        return new SharpTSObject(dict);
+        var wrapper = new SharpTSObject(dict);
+        // ECMA-262 §22.1.4.1: a String exotic's `length` is non-enumerable, so it
+        // must not surface in Object.keys/for-in (only the indexed chars do) (#475).
+        wrapper.MarkNonEnumerable("length");
+        return wrapper;
     }
 
     /// <summary>

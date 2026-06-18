@@ -604,5 +604,41 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
         return PropertyDescriptorFlags.Default;
     }
 
+    /// <summary>
+    /// Marks an existing own data property as non-enumerable, leaving its other
+    /// attributes unchanged. Used for a String exotic wrapper's <c>length</c>,
+    /// which is non-enumerable per ECMA-262 §22.1.4.1 so it stays out of
+    /// Object.keys/values/entries and for-in (#475).
+    /// </summary>
+    internal void MarkNonEnumerable(string name)
+    {
+        var cur = GetPropertyFlags(name);
+        _descriptors ??= new Dictionary<string, PropertyDescriptorFlags>();
+        _descriptors[name] = PropertyDescriptorFlags.ForDefineProperty(cur.Writable, enumerable: false, cur.Configurable);
+    }
+
+    /// <summary>
+    /// True for the internal-slot field names that back boxed primitive wrappers
+    /// (<c>new String/Number/Boolean</c>): they hold [[StringData]]/[[NumberData]]/
+    /// [[BooleanData]] and the type tag, not real own properties, so enumeration
+    /// must skip them (#475).
+    /// </summary>
+    internal static bool IsInternalSlot(string key) => key is "__primitiveType" or "__primitiveValue";
+
+    /// <summary>
+    /// Own enumerable string-keyed data property names, in insertion order: the
+    /// data fields minus the boxed-primitive internal slots, honoring per-property
+    /// enumerability (a <c>defineProperty</c> <c>enumerable:false</c> field, and a
+    /// String exotic's non-enumerable <c>length</c>). Shared by Object.keys/values/
+    /// entries and for-in so internal slots no longer leak and enumerability is
+    /// respected (#475), matching compiled <c>$Runtime.GetKeys</c>.
+    /// </summary>
+    internal IEnumerable<string> OwnEnumerableKeys()
+    {
+        foreach (var key in _fields.Keys)
+            if (!IsInternalSlot(key) && GetPropertyFlags(key).Enumerable)
+                yield return key;
+    }
+
     public override string ToString() => $"{{ {string.Join(", ", _fields.Select(f => $"{f.Key}: {f.Value}"))} }}";
 }
