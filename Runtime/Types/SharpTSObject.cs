@@ -476,7 +476,7 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
                 // Cannot change attributes on non-configurable property
                 return false;
             }
-            if (!existingFlags.Writable && descriptor.Value != null)
+            if (!existingFlags.Writable && descriptor.HasValue)
             {
                 // Cannot change value of non-writable, non-configurable property
                 var currentValue = _fields.TryGetValue(name, out var v) ? v : null;
@@ -506,29 +506,38 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             descriptor.Configurable
         );
 
+        // ECMA-262 §10.1.6.3 classification. SharpTSObject represents an accessor
+        // property only via a concrete getter/setter, so we take the accessor branch
+        // when the descriptor supplies a real getter/setter, when it refines an
+        // existing accessor (e.g. a `set`-only descriptor over one), or on an
+        // attribute-only redefine of an existing accessor — which must KEEP the
+        // accessor rather than convert it to a data property (#801, test 15.2.3.6-4-*).
+        // A descriptor whose only accessor field is undefined (`{get: undefined}`)
+        // on a fresh property falls through to a data property with value undefined,
+        // matching the observable result (hasOwnProperty true, value undefined).
+        bool descHasRealAccessor = descriptor.Get != null || descriptor.Set != null;
+        bool descSpecifiesAccessor = descriptor.HasGet || descriptor.HasSet;
+        bool existingIsAccessor = HasGetter(name) || HasSetter(name);
+
         // Apply the descriptor
-        if (descriptor.Get != null || descriptor.Set != null)
+        if (descHasRealAccessor
+            || (descSpecifiesAccessor && existingIsAccessor)
+            || (!descSpecifiesAccessor && !descriptor.HasValue && existingIsAccessor))
         {
             // Accessor property - remove any data property value
             _fields.Remove(name);
 
-            if (descriptor.Get != null)
-            {
-                DefineGetter(name, descriptor.Get);
-            }
-            else
-            {
-                _getters?.Remove(name);
-            }
+            // Install a concrete getter/setter; clear it only when the descriptor
+            // EXPLICITLY specifies the half as undefined (HasGet/HasSet with a null
+            // callable); otherwise (omitted) preserve the existing one. The non-null
+            // check comes first so internally-built descriptors that set Get/Set
+            // directly without the Has* flags (e.g. RegExp.prototype's accessor
+            // slots) still register their getter.
+            if (descriptor.Get != null) DefineGetter(name, descriptor.Get);
+            else if (descriptor.HasGet) _getters?.Remove(name);
 
-            if (descriptor.Set != null)
-            {
-                DefineSetter(name, descriptor.Set);
-            }
-            else
-            {
-                _setters?.Remove(name);
-            }
+            if (descriptor.Set != null) DefineSetter(name, descriptor.Set);
+            else if (descriptor.HasSet) _setters?.Remove(name);
         }
         else
         {
@@ -536,10 +545,21 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
             _getters?.Remove(name);
             _setters?.Remove(name);
 
-            // Only set value if provided in descriptor
-            if (descriptor.Value != null || !hasExisting)
+            // Only set value when the descriptor actually specifies `value`; an
+            // attribute-only redefine of an existing data property preserves its
+            // current value (ECMA-262 §10.1.6.3). Gating on HasValue rather than
+            // `Value != null` avoids wiping the value to the undefined sentinel when
+            // `value` was omitted (#801).
+            if (descriptor.HasValue)
             {
                 _fields[name] = descriptor.Value;
+            }
+            else if (!hasExisting)
+            {
+                // A brand-new data property whose descriptor omits `value` defaults
+                // to undefined per spec — store the sentinel (not C# null, which
+                // would read back as typeof "object").
+                _fields[name] = SharpTSUndefined.Instance;
             }
         }
 

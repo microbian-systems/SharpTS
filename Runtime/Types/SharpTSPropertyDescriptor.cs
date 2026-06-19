@@ -30,6 +30,22 @@ public class SharpTSPropertyDescriptor
     /// <summary>Whether the property can be deleted or changed.</summary>
     public bool Configurable { get; set; } = false;
 
+    /// <summary>
+    /// Presence flags distinguishing "field omitted" from "field present and
+    /// null/undefined". ECMA-262 §6.2.5.6 treats an absent descriptor field
+    /// differently from one explicitly set to undefined (e.g. an attribute-only
+    /// redefine preserves the existing value, whereas <c>{ value: undefined }</c>
+    /// overwrites it). The flattened Value/Get/Set/bool fields lose that
+    /// distinction; these flags record whether each field was actually specified
+    /// by the source descriptor object. See #801.
+    /// </summary>
+    public bool HasValue { get; set; }
+    public bool HasGet { get; set; }
+    public bool HasSet { get; set; }
+    public bool HasWritable { get; set; }
+    public bool HasEnumerable { get; set; }
+    public bool HasConfigurable { get; set; }
+
     public SharpTSPropertyDescriptor() { }
 
     public SharpTSPropertyDescriptor(
@@ -46,6 +62,15 @@ public class SharpTSPropertyDescriptor
         Writable = writable;
         Enumerable = enumerable;
         Configurable = configurable;
+        // Explicitly-constructed descriptors (ForMethod/ForGetter/…) are full
+        // descriptors: record which fields were supplied so the value-write gate in
+        // SharpTSObject.DefineProperty treats them as specified rather than omitted (#801).
+        HasValue = value != null;
+        HasGet = getter != null;
+        HasSet = setter != null;
+        HasWritable = true;
+        HasEnumerable = true;
+        HasConfigurable = true;
     }
 
     /// <summary>
@@ -84,40 +109,51 @@ public class SharpTSPropertyDescriptor
     {
         var descriptor = new SharpTSPropertyDescriptor();
 
-        var value = obj.GetProperty("value");
-        if (value != null)
+        // Own-only fast path. Presence is detected via HasProperty/HasSetter so an
+        // explicit `value: undefined` (or a setter-only `value` accessor) is recorded
+        // as specified rather than dropped, distinguishing "omitted" from "undefined"
+        // (#801). The interpreter-aware pass in ObjectBuiltIns re-derives these
+        // prototype-aware (walking the chain + ToBoolean) and overrides as needed.
+        if (obj.HasProperty("value") || obj.HasSetter("value"))
         {
-            descriptor.Value = value;
+            descriptor.Value = obj.GetProperty("value");
+            descriptor.HasValue = true;
         }
 
-        var getter = obj.GetProperty("get");
-        if (getter is ISharpTSCallable getterFn)
+        if (obj.HasProperty("get") || obj.HasSetter("get"))
         {
-            descriptor.Get = getterFn;
+            descriptor.HasGet = true;
+            if (obj.GetProperty("get") is ISharpTSCallable getterFn)
+            {
+                descriptor.Get = getterFn;
+            }
         }
 
-        var setter = obj.GetProperty("set");
-        if (setter is ISharpTSCallable setterFn)
+        if (obj.HasProperty("set") || obj.HasSetter("set"))
         {
-            descriptor.Set = setterFn;
+            descriptor.HasSet = true;
+            if (obj.GetProperty("set") is ISharpTSCallable setterFn)
+            {
+                descriptor.Set = setterFn;
+            }
         }
 
-        var writable = obj.GetProperty("writable");
-        if (writable is bool w)
+        if (obj.HasProperty("writable"))
         {
-            descriptor.Writable = w;
+            descriptor.HasWritable = true;
+            if (obj.GetProperty("writable") is bool w) descriptor.Writable = w;
         }
 
-        var enumerable = obj.GetProperty("enumerable");
-        if (enumerable is bool e)
+        if (obj.HasProperty("enumerable"))
         {
-            descriptor.Enumerable = e;
+            descriptor.HasEnumerable = true;
+            if (obj.GetProperty("enumerable") is bool e) descriptor.Enumerable = e;
         }
 
-        var configurable = obj.GetProperty("configurable");
-        if (configurable is bool c)
+        if (obj.HasProperty("configurable"))
         {
-            descriptor.Configurable = c;
+            descriptor.HasConfigurable = true;
+            if (obj.GetProperty("configurable") is bool c) descriptor.Configurable = c;
         }
 
         return descriptor;
@@ -157,40 +193,47 @@ public class SharpTSPropertyDescriptor
         {
             object? GetProp(string name) => getPropertyMethod.Invoke(obj, [name]);
 
-            var value = GetProp("value");
-            if (value != null)
+            // Probe presence via HasProperty(string) when the type exposes it, so an
+            // explicit `value: undefined` is distinguished from an omitted value (#801).
+            var hasPropertyMethod = type.GetMethod("HasProperty",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+                null, [typeof(string)], null);
+            bool HasProp(string name) => hasPropertyMethod?.Invoke(obj, [name]) is bool b && b;
+
+            if (HasProp("value"))
             {
-                descriptor.Value = value;
+                descriptor.Value = GetProp("value");
+                descriptor.HasValue = true;
             }
 
-            var getter = GetProp("get");
-            if (getter is ISharpTSCallable getterFn)
+            if (HasProp("get"))
             {
-                descriptor.Get = getterFn;
+                descriptor.HasGet = true;
+                if (GetProp("get") is ISharpTSCallable getterFn) descriptor.Get = getterFn;
             }
 
-            var setter = GetProp("set");
-            if (setter is ISharpTSCallable setterFn)
+            if (HasProp("set"))
             {
-                descriptor.Set = setterFn;
+                descriptor.HasSet = true;
+                if (GetProp("set") is ISharpTSCallable setterFn) descriptor.Set = setterFn;
             }
 
-            var writable = GetProp("writable");
-            if (writable is bool w)
+            if (HasProp("writable"))
             {
-                descriptor.Writable = w;
+                descriptor.HasWritable = true;
+                if (GetProp("writable") is bool w) descriptor.Writable = w;
             }
 
-            var enumerable = GetProp("enumerable");
-            if (enumerable is bool e)
+            if (HasProp("enumerable"))
             {
-                descriptor.Enumerable = e;
+                descriptor.HasEnumerable = true;
+                if (GetProp("enumerable") is bool e) descriptor.Enumerable = e;
             }
 
-            var configurable = GetProp("configurable");
-            if (configurable is bool c)
+            if (HasProp("configurable"))
             {
-                descriptor.Configurable = c;
+                descriptor.HasConfigurable = true;
+                if (GetProp("configurable") is bool c) descriptor.Configurable = c;
             }
         }
 
@@ -207,31 +250,37 @@ public class SharpTSPropertyDescriptor
         if (dict.TryGetValue("value", out var value))
         {
             descriptor.Value = value;
+            descriptor.HasValue = true;
         }
 
-        if (dict.TryGetValue("get", out var getter) && getter is ISharpTSCallable getterFn)
+        if (dict.TryGetValue("get", out var getter))
         {
-            descriptor.Get = getterFn;
+            descriptor.HasGet = true;
+            if (getter is ISharpTSCallable getterFn) descriptor.Get = getterFn;
         }
 
-        if (dict.TryGetValue("set", out var setter) && setter is ISharpTSCallable setterFn)
+        if (dict.TryGetValue("set", out var setter))
         {
-            descriptor.Set = setterFn;
+            descriptor.HasSet = true;
+            if (setter is ISharpTSCallable setterFn) descriptor.Set = setterFn;
         }
 
-        if (dict.TryGetValue("writable", out var writable) && writable is bool w)
+        if (dict.TryGetValue("writable", out var writable))
         {
-            descriptor.Writable = w;
+            descriptor.HasWritable = true;
+            if (writable is bool w) descriptor.Writable = w;
         }
 
-        if (dict.TryGetValue("enumerable", out var enumerable) && enumerable is bool e)
+        if (dict.TryGetValue("enumerable", out var enumerable))
         {
-            descriptor.Enumerable = e;
+            descriptor.HasEnumerable = true;
+            if (enumerable is bool e) descriptor.Enumerable = e;
         }
 
-        if (dict.TryGetValue("configurable", out var configurable) && configurable is bool c)
+        if (dict.TryGetValue("configurable", out var configurable))
         {
-            descriptor.Configurable = c;
+            descriptor.HasConfigurable = true;
+            if (configurable is bool c) descriptor.Configurable = c;
         }
 
         return descriptor;
@@ -247,31 +296,37 @@ public class SharpTSPropertyDescriptor
         if (dict.Contains("value"))
         {
             descriptor.Value = dict["value"];
+            descriptor.HasValue = true;
         }
 
-        if (dict.Contains("get") && dict["get"] is ISharpTSCallable getterFn)
+        if (dict.Contains("get"))
         {
-            descriptor.Get = getterFn;
+            descriptor.HasGet = true;
+            if (dict["get"] is ISharpTSCallable getterFn) descriptor.Get = getterFn;
         }
 
-        if (dict.Contains("set") && dict["set"] is ISharpTSCallable setterFn)
+        if (dict.Contains("set"))
         {
-            descriptor.Set = setterFn;
+            descriptor.HasSet = true;
+            if (dict["set"] is ISharpTSCallable setterFn) descriptor.Set = setterFn;
         }
 
-        if (dict.Contains("writable") && dict["writable"] is bool w)
+        if (dict.Contains("writable"))
         {
-            descriptor.Writable = w;
+            descriptor.HasWritable = true;
+            if (dict["writable"] is bool w) descriptor.Writable = w;
         }
 
-        if (dict.Contains("enumerable") && dict["enumerable"] is bool e)
+        if (dict.Contains("enumerable"))
         {
-            descriptor.Enumerable = e;
+            descriptor.HasEnumerable = true;
+            if (dict["enumerable"] is bool e) descriptor.Enumerable = e;
         }
 
-        if (dict.Contains("configurable") && dict["configurable"] is bool c)
+        if (dict.Contains("configurable"))
         {
-            descriptor.Configurable = c;
+            descriptor.HasConfigurable = true;
+            if (dict["configurable"] is bool c) descriptor.Configurable = c;
         }
 
         return descriptor;

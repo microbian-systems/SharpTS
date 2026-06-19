@@ -341,22 +341,113 @@ public partial class RuntimeEmitter
         var synthDictTryGetValue = _types.GetMethod(_types.DictionaryStringObject, "TryGetValue", _types.String, _types.Object.MakeByRefType());
 
         // For each well-known descriptor field, GetProperty(descriptor, field).
-        // If result is non-null and not $Undefined, add to synthDict. Treats
-        // "undefined" as "field absent" UNLESS the field is explicit in the
-        // input Dict (the overlay pass below handles that).
+        // GetProperty walks the prototype chain and invokes getters. A defined
+        // result is stashed directly. When Get yields undefined we additionally
+        // probe for an INHERITED accessor (getter OR setter) via the prototype-
+        // walking __lookupGetter__/__lookupSetter__ helpers: a setter-only
+        // inherited `value` (or any field) IS specified per §6.2.5.5 HasProperty
+        // even though Get reads undefined (#801), so we stash $Undefined for it.
+        // Treats "undefined with no accessor" as "field absent" UNLESS the field
+        // is an explicit own key on the input Dict (the overlay pass handles that).
+        //
+        // Branches to `target` when `local` holds a defined value (non-null and
+        // not $Undefined); otherwise falls through.
+        void EmitBranchIfDefined(LocalBuilder local, Label target)
+        {
+            var notDefined = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, local);
+            il.Emit(OpCodes.Brfalse, notDefined);
+            il.Emit(OpCodes.Ldloc, local);
+            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+            il.Emit(OpCodes.Brtrue, notDefined);
+            il.Emit(OpCodes.Br, target);
+            il.MarkLabel(notDefined);
+        }
+
+        // Walks the descriptor's prototype chain via the PDS (the compiled
+        // prototype link) and branches to `target` if any level has a PDS
+        // accessor descriptor (getter OR setter) for `field`. Detects an
+        // inherited setter-only `value` whose Get yields undefined (#801). Uses
+        // only PDS primitives, which are emitted before this method.
+        var getterGet = runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!;
+        var setterGet = runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!;
+        void EmitBranchIfAccessorOnChain(string field, Label target)
+        {
+            var curLocal = il.DeclareLocal(_types.Object);
+            var pdescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            var depthLocal = il.DeclareLocal(_types.Int32);
+            var loopLabel = il.DefineLabel();
+            var notFoundLabel = il.DefineLabel();
+            var noPdescLabel = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stloc, curLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, depthLocal);
+
+            il.MarkLabel(loopLabel);
+            // cur == null → not found
+            il.Emit(OpCodes.Ldloc, curLocal);
+            il.Emit(OpCodes.Brfalse, notFoundLabel);
+            // depth guard (cycle safety)
+            il.Emit(OpCodes.Ldloc, depthLocal);
+            il.Emit(OpCodes.Ldc_I4, 64);
+            il.Emit(OpCodes.Bge, notFoundLabel);
+            il.Emit(OpCodes.Ldloc, depthLocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, depthLocal);
+            // pdesc = PDSGetPropertyDescriptor(cur, field)
+            il.Emit(OpCodes.Ldloc, curLocal);
+            il.Emit(OpCodes.Ldstr, field);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, pdescLocal);
+            il.Emit(OpCodes.Ldloc, pdescLocal);
+            il.Emit(OpCodes.Brfalse, noPdescLabel);
+            // pdesc.Getter != null → accessor present
+            il.Emit(OpCodes.Ldloc, pdescLocal);
+            il.Emit(OpCodes.Callvirt, getterGet);
+            il.Emit(OpCodes.Brtrue, target);
+            // pdesc.Setter != null → accessor present
+            il.Emit(OpCodes.Ldloc, pdescLocal);
+            il.Emit(OpCodes.Callvirt, setterGet);
+            il.Emit(OpCodes.Brtrue, target);
+            il.MarkLabel(noPdescLabel);
+            // cur = PDSGetPrototype(cur)
+            il.Emit(OpCodes.Ldloc, curLocal);
+            il.Emit(OpCodes.Call, runtime.PDSGetPrototype);
+            il.Emit(OpCodes.Stloc, curLocal);
+            il.Emit(OpCodes.Br, loopLabel);
+
+            il.MarkLabel(notFoundLabel);
+        }
+
         void EmitGetAndStash(string field)
         {
+            var stashLabel = il.DefineLabel();
             var skipLabel = il.DefineLabel();
             var fieldValLocal = il.DeclareLocal(_types.Object);
+
+            // fieldVal = GetProperty(descriptor, field)
             il.Emit(OpCodes.Ldarg_2);
             il.Emit(OpCodes.Ldstr, field);
             il.Emit(OpCodes.Call, runtime.GetProperty);
             il.Emit(OpCodes.Stloc, fieldValLocal);
+            // Defined value → stash it.
+            EmitBranchIfDefined(fieldValLocal, stashLabel);
+            // Undefined Get result: still present if an own/inherited accessor exists.
+            EmitBranchIfAccessorOnChain(field, stashLabel);
+            il.Emit(OpCodes.Br, skipLabel);
+
+            // stash: synthDict[field] = fieldVal, normalizing null → $Undefined so
+            // an accessor-only (setter-only) field records a present undefined value.
+            il.MarkLabel(stashLabel);
+            var haveValLabel = il.DefineLabel();
             il.Emit(OpCodes.Ldloc, fieldValLocal);
-            il.Emit(OpCodes.Brfalse, skipLabel);
-            il.Emit(OpCodes.Ldloc, fieldValLocal);
-            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-            il.Emit(OpCodes.Brtrue, skipLabel);
+            il.Emit(OpCodes.Brtrue, haveValLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Stloc, fieldValLocal);
+            il.MarkLabel(haveValLabel);
             il.Emit(OpCodes.Ldloc, synthDictLocal);
             il.Emit(OpCodes.Ldstr, field);
             il.Emit(OpCodes.Ldloc, fieldValLocal);

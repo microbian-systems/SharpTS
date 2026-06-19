@@ -480,6 +480,10 @@ public static class ObjectBuiltIns
         // attributes. Correct flags are required for the delete configurability
         // check in SharpTSObject.
         ApplyBooleanAttributes(descriptor, descriptorArg, interpreter);
+        // §6.2.5.5 also reads value/get/set through the prototype chain (honoring
+        // accessors); FromAnyObject only saw own fields. Re-derive them prototype-aware
+        // and record presence so omitted-vs-undefined is preserved downstream (#801).
+        ApplyValueAndAccessors(descriptor, descriptorArg, interpreter);
 
         // Handle Symbol-keyed property definition — route through Symbol storage.
         // Per ECMA-262 §10.1.6 / §6.2.5.6, a descriptor that omits `value` (only
@@ -491,7 +495,7 @@ public static class ObjectBuiltIns
         // this path against RegExp.prototype[Symbol.split].
         if (args[1] is SharpTSSymbol symKey)
         {
-            bool descriptorHasValue = DescriptorHasValueOrAccessor(descriptorArg);
+            bool descriptorHasValue = descriptor.HasValue;
             bool isAccessor = descriptor.Get != null || descriptor.Set != null;
             switch (target)
             {
@@ -553,7 +557,7 @@ public static class ObjectBuiltIns
                 {
                     fn.DefineAccessor(propertyKey, descriptor.Get, descriptor.Set);
                 }
-                else if (DescriptorHasValueOrAccessor(descriptorArg))
+                else if (descriptor.HasValue)
                 {
                     fn.SetProperty(propertyKey, descriptor.Value);
                 }
@@ -576,7 +580,7 @@ public static class ObjectBuiltIns
                 {
                     rx.DefineAccessor(propertyKey, descriptor.Get, descriptor.Set);
                 }
-                else if (DescriptorHasValueOrAccessor(descriptorArg))
+                else if (descriptor.HasValue)
                 {
                     rx.SetProperty(propertyKey, descriptor.Value);
                 }
@@ -594,7 +598,7 @@ public static class ObjectBuiltIns
                 {
                     promise.DefineAccessor(propertyKey, descriptor.Get, descriptor.Set);
                 }
-                else if (DescriptorHasValueOrAccessor(descriptorArg))
+                else if (descriptor.HasValue)
                 {
                     promise.SetOwnProperty(propertyKey, descriptor.Value);
                 }
@@ -610,41 +614,6 @@ public static class ObjectBuiltIns
         }
 
         return target;
-    }
-
-    /// <summary>
-    /// Returns true if the descriptor object explicitly contains a `value`,
-    /// `get`, or `set` key — i.e. it is a data or accessor descriptor, not an
-    /// attribute-only descriptor. ECMA-262 §6.2.5.6 distinguishes "field
-    /// absent" (preserve existing) from "field present" (overwrite). The
-    /// flattened SharpTSPropertyDescriptor record loses that distinction, so
-    /// we re-derive it from the source descriptor object's own keys.
-    /// </summary>
-    private static bool DescriptorHasValueOrAccessor(object descriptorArg)
-    {
-        switch (descriptorArg)
-        {
-            case SharpTSObject so:
-                return so.HasProperty("value") || so.HasProperty("get") || so.HasProperty("set");
-            case Dictionary<string, object?> d:
-                return d.ContainsKey("value") || d.ContainsKey("get") || d.ContainsKey("set");
-            case System.Collections.IDictionary id:
-                return id.Contains("value") || id.Contains("get") || id.Contains("set");
-            default:
-                // Compiled $Object: probe via reflection on HasProperty(string).
-                var t = descriptorArg.GetType();
-                var has = t.GetMethod("HasProperty",
-                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
-                    null, [typeof(string)], null);
-                if (has != null)
-                {
-                    bool Has(string n) => has.Invoke(descriptorArg, [n]) is bool b && b;
-                    return Has("value") || Has("get") || Has("set");
-                }
-                // Conservative fallback: assume value-bearing so we don't
-                // silently drop user descriptors on unknown types.
-                return true;
-        }
     }
 
     /// <summary>
@@ -1564,6 +1533,39 @@ public static class ObjectBuiltIns
     }
 
     /// <summary>
+    /// ECMA-262 §6.2.5.5 ToPropertyDescriptor reads <c>value</c>/<c>get</c>/<c>set</c>
+    /// with HasProperty/Get semantics — walking the descriptor object's prototype
+    /// chain and honoring accessors. <see cref="SharpTSPropertyDescriptor.FromAnyObject"/>
+    /// only sees own fields, so re-derive these prototype-aware with interpreter access
+    /// and record presence on the descriptor (#801). An inherited setter-only
+    /// <c>value</c> counts as a data descriptor whose value reads <c>undefined</c>,
+    /// which <see cref="Interpreter.HasProperty"/> detects even though Get yields
+    /// undefined for it.
+    /// </summary>
+    private static void ApplyValueAndAccessors(SharpTSPropertyDescriptor descriptor, object? descObj, Interpreter interpreter)
+    {
+        if (descObj is null) return;
+        // TryGetDescriptorField applies Get semantics with correct presence AND
+        // own-accessor shadowing (an own setter-only `value` shadows an inherited
+        // getter, yielding undefined) — plain Get would walk past it (#801).
+        if (interpreter.TryGetDescriptorField(descObj, "value", out var v))
+        {
+            descriptor.Value = v;
+            descriptor.HasValue = true;
+        }
+        if (interpreter.TryGetDescriptorField(descObj, "get", out var g))
+        {
+            descriptor.HasGet = true;
+            descriptor.Get = g as ISharpTSCallable;
+        }
+        if (interpreter.TryGetDescriptorField(descObj, "set", out var s))
+        {
+            descriptor.HasSet = true;
+            descriptor.Set = s as ISharpTSCallable;
+        }
+    }
+
+    /// <summary>
     /// ECMA-262 §10.1.6.3 ValidateAndApplyPropertyDescriptor: when redefining an
     /// EXISTING own property, attributes the descriptor omits are preserved from
     /// the current property rather than reset to false (<see cref="SharpTSPropertyDescriptor"/>
@@ -1592,9 +1594,14 @@ public static class ObjectBuiltIns
         if (!DescriptorSpecifies(descObj, "configurable", interpreter)) descriptor.Configurable = existing.Configurable;
     }
 
-    /// <summary>True when the source descriptor object explicitly provides <paramref name="attr"/>.</summary>
+    /// <summary>
+    /// True when the source descriptor object provides <paramref name="attr"/> —
+    /// own or inherited, including setter-only accessors (ECMA-262 §7.3.11
+    /// HasProperty semantics), so an inherited attribute is treated as specified
+    /// rather than preserved (#801).
+    /// </summary>
     private static bool DescriptorSpecifies(object? descObj, string attr, Interpreter interpreter)
-        => interpreter.GetProperty(descObj, attr) is not (null or SharpTSUndefined);
+        => interpreter.HasProperty(descObj, attr);
 
     /// <summary>
     /// Runtime helper for Object.create called from compiled code.

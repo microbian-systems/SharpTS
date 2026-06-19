@@ -514,6 +514,85 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// ECMA-262 §7.3.11 HasProperty(O, P): true when <paramref name="obj"/> or
+    /// anything on its prototype chain has an own data field OR an accessor
+    /// (getter or setter) named <paramref name="name"/>. Unlike the type-specific
+    /// own-only checks, this walks the prototype chain and — crucially for
+    /// §6.2.5.5 ToPropertyDescriptor (#801) — counts a setter-only accessor as
+    /// present even though <see cref="GetProperty"/> would read <c>undefined</c>
+    /// for it. Used to distinguish an omitted descriptor field from one explicitly
+    /// set to undefined.
+    /// </summary>
+    internal bool HasProperty(object? obj, string name)
+    {
+        for (int depth = 0; depth < 64 && obj is not (null or SharpTSUndefined); depth++)
+        {
+            if (obj is SharpTSObject so)
+            {
+                // SharpTSObject.HasProperty covers own fields + getters; add setters
+                // so a setter-only accessor registers as present.
+                if (so.HasProperty(name) || so.HasSetter(name)) return true;
+                obj = so.HasProperty("__proto__") ? so.GetProperty("__proto__") : null;
+                continue;
+            }
+            // Non-record receivers (instances, built-ins like RegExp, boxed
+            // primitives): defer to Get semantics over the full chain from here.
+            // A defined result means present; this misses only a setter-only
+            // accessor whose Get yields undefined, which does not arise for these
+            // receiver kinds in practice.
+            return GetProperty(obj, name) is not (null or SharpTSUndefined);
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Reads a descriptor field with ECMA-262 §7.3.2 Get semantics AND correct
+    /// presence (§7.3.11 HasProperty), used by ToPropertyDescriptor (#801).
+    /// Walks the prototype chain and stops at the first level that owns the
+    /// property: an own getter is invoked; an own SETTER-only accessor is present
+    /// with value undefined (and shadows any inherited getter — the case plain
+    /// <see cref="GetProperty"/> misses); an own data field returns its value.
+    /// Returns true when the field is present (so an explicit <c>value: undefined</c>
+    /// or a setter-only <c>value</c> is distinguished from an omitted field).
+    /// </summary>
+    internal bool TryGetDescriptorField(object? obj, string name, out object? value)
+    {
+        value = null;
+        for (int depth = 0; depth < 64 && obj is not (null or SharpTSUndefined); depth++)
+        {
+            if (obj is SharpTSObject so)
+            {
+                var getter = so.GetGetter(name);
+                if (getter != null)
+                {
+                    value = BindAccessorToObject(getter, so).Call(this, []);
+                    return true;
+                }
+                if (so.HasSetter(name))
+                {
+                    value = SharpTSUndefined.Instance; // setter-only accessor shadows inherited getter
+                    return true;
+                }
+                if (so.Fields.ContainsKey(name))
+                {
+                    value = so.GetProperty(name);
+                    return true;
+                }
+                obj = so.HasProperty("__proto__") ? so.GetProperty("__proto__") : null;
+                continue;
+            }
+            // Non-record receivers: fall back to HasProperty/Get from this level up.
+            if (HasProperty(obj, name))
+            {
+                value = GetProperty(obj, name);
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Core property access logic, shared between sync and async evaluation.
     /// Uses TypeCategoryResolver for unified type dispatch.
     /// </summary>
@@ -731,6 +810,27 @@ public partial class Interpreter
         var member = BuiltInRegistry.Instance.GetMemberByCategory(category, obj, memberName);
         if (member != null)
             return RuntimeValue.FromBoxed(BindBuiltInMember(member, obj));
+
+        // RegExp instances inherit user-set properties from the realm
+        // RegExp.prototype (built-in prototype mutability, #801/#474-adjacent).
+        // Own properties/accessors and built-in members were already resolved
+        // above; this final fallback reaches user assignments such as
+        // `RegExp.prototype.enumerable = true` and user-defined prototype getters,
+        // so they are visible on `new RegExp()` (and on descriptor reads, which
+        // route through this same path). Built-in prototype accessors/methods are
+        // handled earlier, so they take precedence and are never shadowed here.
+        if (obj is SharpTSRegExp)
+        {
+            var rxProto = GetRegExpPrototype();
+            var rxProtoGetter = rxProto.GetGetter(memberName);
+            if (rxProtoGetter != null)
+            {
+                var bound = rxProtoGetter is SharpTSFunction rxFn ? rxFn.BindThis(obj) : rxProtoGetter;
+                return RuntimeValue.FromBoxed(bound.Call(this, []));
+            }
+            if (rxProto.Fields.ContainsKey(memberName))
+                return RuntimeValue.FromBoxed(rxProto.GetProperty(memberName));
+        }
 
         return RuntimeValue.Undefined;
     }
