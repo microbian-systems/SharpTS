@@ -191,7 +191,14 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
                 // (Object.defineProperty(obj, "length", { get: ... })). Per spec,
                 // a throwing length getter aborts the whole method; we propagate
                 // by letting the ThrowException escape to the caller.
-                long len = ToLength(ReadArrayLikeProperty(obj, "length", interpreter));
+                object? rawLen = ReadArrayLikeProperty(obj, "length", interpreter);
+                // When the wrapper has no own `length` (absent = SharpTSUndefined),
+                // walk the prototype chain. A boxed Number/Boolean primitive
+                // (ToObject result) carries __primitiveType but no own indexed
+                // elements — consult *.prototype extras.
+                if (rawLen is null or SharpTSUndefined)
+                    rawLen = GetBoxedPrimitiveProtoExtra(obj, "length");
+                long len = ToLength(rawLen);
                 len = Math.Min(len, 1 << 20);
                 var list = new List<object?>((int)len);
                 for (int i = 0; i < len; i++)
@@ -199,8 +206,10 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
                     var key = i.ToString();
                     if (obj.HasGetter(key))
                         list.Add(ReadArrayLikeProperty(obj, key, interpreter));
+                    else if (obj.HasProperty(key))
+                        list.Add(obj.GetProperty(key));
                     else
-                        list.Add(obj.HasProperty(key) ? obj.GetProperty(key) : ArrayHole.Instance);
+                        list.Add(GetBoxedPrimitiveProtoExtra(obj, key) ?? ArrayHole.Instance);
                 }
                 tempArr = new SharpTSArray(list);
                 return true;
@@ -221,6 +230,45 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
                 tempArr = new SharpTSArray(list);
                 return true;
             }
+            case SharpTSNumberPrototype numProto:
+            {
+                long len = ToLength(numProto.HasExtra("length") ? numProto.TryGetExtra("length") : null);
+                len = Math.Min(len, 1 << 20);
+                var list = new List<object?>((int)len);
+                for (int i = 0; i < len; i++)
+                {
+                    var key = i.ToString();
+                    list.Add(numProto.HasExtra(key) ? numProto.TryGetExtra(key) : ArrayHole.Instance);
+                }
+                tempArr = new SharpTSArray(list);
+                return true;
+            }
+            case SharpTSBooleanPrototype boolProto:
+            {
+                long len = ToLength(boolProto.HasExtra("length") ? boolProto.TryGetExtra("length") : null);
+                len = Math.Min(len, 1 << 20);
+                var list = new List<object?>((int)len);
+                for (int i = 0; i < len; i++)
+                {
+                    var key = i.ToString();
+                    list.Add(boolProto.HasExtra(key) ? boolProto.TryGetExtra(key) : ArrayHole.Instance);
+                }
+                tempArr = new SharpTSArray(list);
+                return true;
+            }
+            case SharpTSStringPrototype strProto:
+            {
+                long len = ToLength(strProto.HasExtra("length") ? strProto.TryGetExtra("length") : null);
+                len = Math.Min(len, 1 << 20);
+                var list = new List<object?>((int)len);
+                for (int i = 0; i < len; i++)
+                {
+                    var key = i.ToString();
+                    list.Add(strProto.HasExtra(key) ? strProto.TryGetExtra(key) : ArrayHole.Instance);
+                }
+                tempArr = new SharpTSArray(list);
+                return true;
+            }
             // A primitive string receiver never reaches here: Call() runs it
             // through ToObject first, so it arrives as a boxed String wrapper
             // (SharpTSObject with `length` + indexed char slots) handled by the
@@ -228,6 +276,25 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
             default:
                 return false;
         }
+    }
+
+    /// <summary>
+    /// Returns the extra property value from the matching primitive prototype when
+    /// <paramref name="obj"/> is a boxed primitive wrapper produced by ToObject,
+    /// or null if the property is absent or the object is not a boxed primitive.
+    /// Used to implement ECMA-262 LengthOfArrayLike/Get prototype-chain walk for
+    /// Number and Boolean wrappers whose own property bags carry no indexed state.
+    /// </summary>
+    private static object? GetBoxedPrimitiveProtoExtra(SharpTSObject obj, string name)
+    {
+        if (!obj.HasProperty("__primitiveType")) return null;
+        return obj.GetProperty("__primitiveType") switch
+        {
+            "Number"  => SharpTSNumberPrototype.Instance.TryGetExtra(name),
+            "Boolean" => SharpTSBooleanPrototype.Instance.TryGetExtra(name),
+            "String"  => SharpTSStringPrototype.Instance.TryGetExtra(name),
+            _ => null
+        };
     }
 
     /// <summary>
