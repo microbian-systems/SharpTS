@@ -213,6 +213,16 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
             _il.Emit(OpCodes.Ldloc, temp);
             _il.Emit(OpCodes.Stfld, field);
 
+            // A captured-and-mutated parameter's live storage is the function display-class field,
+            // not the state-machine field the body no longer reads. Mirror the default into the DC
+            // field so a nested arrow observes the default rather than the omitted-arg $Undefined
+            // sentinel (#792). Non-captured params return false here and keep the SM-field-only path.
+            if (TryGetFunctionDCField(param.Name.Lexeme, out var dcField))
+            {
+                _il.Emit(OpCodes.Ldloc, temp);
+                StoreToDCField(dcField);
+            }
+
             _il.MarkLabel(skipDefault);
         }
     }
