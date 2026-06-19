@@ -865,6 +865,13 @@ public partial class TypeChecker
         _compatibilityCheckDepth = 0;
         _narrowingContextStack.Clear();
 
+        // Module/top-level declarations live in their own declared-type frame so that
+        // GetDeclaredType / IsDeclaredTypeTracked treat them like function locals (#743).
+        // Clear first: the checker is reused across REPL lines and may retain frames from a
+        // prior check (function frames are normally popped, but be defensive on early-exit).
+        _declaredVariableTypesStack.Clear();
+        PushDeclaredVariableScope();
+
         // Pre-define built-ins
         _environment.Define("console", new TypeInfo.Any());
         _environment.Define("Reflect", new TypeInfo.Any());
@@ -908,6 +915,13 @@ public partial class TypeChecker
         _ts2741Reported = null;
         _compatibilityCheckDepth = 0;
         _narrowingContextStack.Clear();
+
+        // Module/top-level declarations live in their own declared-type frame so that
+        // GetDeclaredType / IsDeclaredTypeTracked treat them like function locals (#743).
+        // Clear first: the checker is reused across REPL lines and may retain frames from a
+        // prior check (function frames are normally popped, but be defensive on early-exit).
+        _declaredVariableTypesStack.Clear();
+        PushDeclaredVariableScope();
 
         // Pre-define built-ins
         _environment.Define("console", new TypeInfo.Any());
