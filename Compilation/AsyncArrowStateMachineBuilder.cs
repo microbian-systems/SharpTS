@@ -37,6 +37,12 @@ public class AsyncArrowStateMachineBuilder
     // Self-boxed field for sharing this state machine with nested async arrows
     public FieldBuilder? SelfBoxedField { get; private set; }
 
+    // Dynamic `this` field for a standalone async FUNCTION EXPRESSION (HasOwnThis).
+    // Unlike a true arrow (lexical this), its `this` is bound at call time via
+    // fn.call/apply/bind, so it lives in its own field populated by the stub from
+    // the thread-local — not in a lexical capture field. Null for true arrows.
+    public FieldBuilder? OwnThisField { get; private set; }
+
     // Core state machine fields
     public FieldBuilder StateField { get; private set; } = null!;
     public FieldBuilder BuilderField { get; private set; } = null!;
@@ -279,6 +285,18 @@ public class AsyncArrowStateMachineBuilder
             LocalFields[localName] = field;
         }
 
+        // Async function expressions bind `this` dynamically at call time, so give
+        // them a dedicated field the stub fills from the thread-local receiver
+        // (see DefineStubMethod). True arrows capture `this` lexically instead.
+        if (Arrow.HasOwnThis)
+        {
+            OwnThisField = _stateMachineType.DefineField(
+                "<>4__this",
+                _types.Object,
+                FieldAttributes.Public
+            );
+        }
+
         // Define capture fields for variables from the enclosing (non-async) function
         // These will be passed to the stub method and stored in the state machine
         foreach (var captureName in Captures)
@@ -316,7 +334,7 @@ public class AsyncArrowStateMachineBuilder
     /// The stub takes (outer state machine boxed, params...) and returns Task&lt;object&gt;.
     /// For standalone arrows, there's no outer SM parameter but captures are passed.
     /// </summary>
-    public void DefineStubMethod(TypeBuilder programType)
+    public void DefineStubMethod(TypeBuilder programType, EmittedRuntime? runtime = null)
     {
         // Build parameter types list
         var paramTypes = new List<Type>();
@@ -388,6 +406,28 @@ public class AsyncArrowStateMachineBuilder
                 il.Emit(OpCodes.Stfld, captureField);
             }
             paramOffset = 1; // Skip the single capture-array arg when copying params
+        }
+
+        // Async function expressions (HasOwnThis) have a DYNAMIC `this` bound at
+        // call time — `fn.call(receiver)`, `fn.apply(...)`, `fn.bind(...)` — not a
+        // lexically-captured one. $TSFunction.InvokeWithThis stashes that receiver
+        // in the thread-local `_currentFunctionThis` before dispatching here, so
+        // snapshot it into the dedicated OwnThisField. Snapshotting at stub entry
+        // (synchronously, before any await) is what makes it survive state-machine
+        // suspension/resume on another thread. A null thread-local means a plain
+        // call → sloppy `this` (globalThis sentinel), matching
+        // LocalVariableResolver.LoadThis.
+        if (IsStandalone && Arrow.HasOwnThis && runtime != null && OwnThisField != null)
+        {
+            il.Emit(OpCodes.Ldloca, smLocal);
+            il.Emit(OpCodes.Ldsfld, runtime.CurrentFunctionThisField);
+            var thisNotNull = il.DefineLabel();
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Brtrue, thisNotNull);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+            il.MarkLabel(thisNotNull);
+            il.Emit(OpCodes.Stfld, OwnThisField);
         }
 
         // Copy parameters to state machine fields (in order!)

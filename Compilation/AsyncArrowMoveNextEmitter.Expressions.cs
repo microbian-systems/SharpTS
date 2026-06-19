@@ -18,6 +18,17 @@ public partial class AsyncArrowMoveNextEmitter
 
     protected override void EmitThis()
     {
+        // Standalone async function expression: `this` is bound dynamically at
+        // call time (fn.call/apply/bind) and snapshotted into OwnThisField by the
+        // stub — read it rather than a lexical capture.
+        if (_builder.IsStandalone && _builder.Arrow.HasOwnThis && _builder.OwnThisField != null)
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.OwnThisField);
+            SetStackUnknown();
+            return;
+        }
+
         // Load 'this' from outer state machine if captured
         if (_builder.Captures.Contains("this"))
         {
