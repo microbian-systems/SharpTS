@@ -39,6 +39,12 @@ public partial class Interpreter
         // must resume with its own generator (and scope) restored, even if interleaved event-loop work
         // ran another generator in the meantime (#752).
         var savedGen = CurrentAsyncGenerator;
+        // While suspended at this await the body is off the call stack, so a request issued during the
+        // gap is a legit concurrent next(), not re-entrancy. Clear the active generator's running guard
+        // and re-set it on resume (success or rejection — a body unwinding a rejected await is still
+        // synchronously on the stack), so a re-entrant next() after a genuinely-pending await is still
+        // caught (#771). No-op when no async generator is active.
+        savedGen?.MarkBodySuspended();
         try
         {
             return await task;
@@ -47,6 +53,7 @@ public partial class Interpreter
         {
             _environment = saved;
             CurrentAsyncGenerator = savedGen;
+            savedGen?.MarkBodyResumed();
         }
     }
 
