@@ -1209,6 +1209,12 @@ public partial class ILCompiler
                 ctx.CapturedFields = [];
             }
 
+            // Per-iteration cell capture (#650): mark which captured fields hold a
+            // StrongBox so the body dereferences Value on read/write.
+            var arrowCellFields = _closures.Analyzer.GetClosureCellFields(arrow);
+            if (arrowCellFields.Count > 0)
+                ctx.CellCapturedFieldNames = arrowCellFields;
+
             // Set the $entryPointDC field if this arrow captures top-level variables
             if (_closures.ArrowEntryPointDCFields.TryGetValue(arrow, out var entryPointDCField))
             {

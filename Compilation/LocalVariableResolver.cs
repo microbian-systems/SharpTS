@@ -37,6 +37,17 @@ public class LocalVariableResolver : IVariableResolver
     /// <inheritdoc />
     public StackType? TryLoadVariable(string name)
     {
+        // 0. Per-iteration loop-binding cell (#650): in the loop body / condition /
+        //    increment the binding is accessed through its StrongBox so closures that
+        //    captured the cell observe end-of-iteration mutations. Takes precedence
+        //    over the (now dead) plain local left by the initializer.
+        if (_ctx.CellBindingLocals.TryGetValue(name, out var loadCell))
+        {
+            _il.Emit(OpCodes.Ldloc, loadCell);
+            _il.Emit(OpCodes.Ldfld, _types.StrongBoxOfObjectValueField);
+            return StackType.Unknown;
+        }
+
         // 1. Parameters
         if (_ctx.TryGetParameter(name, out var argIndex))
         {
@@ -164,6 +175,15 @@ public class LocalVariableResolver : IVariableResolver
         {
             _il.Emit(OpCodes.Ldarg_0);
             _il.Emit(OpCodes.Ldfld, field);
+            // Per-iteration cell capture (#650): the field holds a StrongBox shared
+            // with the loop body; dereference Value to read the live binding.
+            if (_ctx.CellCapturedFieldNames?.Contains(name) == true)
+            {
+                // The field is object-typed but holds a StrongBox at runtime.
+                _il.Emit(OpCodes.Castclass, _types.StrongBoxOfObject);
+                _il.Emit(OpCodes.Ldfld, _types.StrongBoxOfObjectValueField);
+                return StackType.Unknown;
+            }
             return MapTypeToStackType(field.FieldType);
         }
 
@@ -211,6 +231,7 @@ public class LocalVariableResolver : IVariableResolver
     /// <inheritdoc />
     public bool HasVariable(string name)
     {
+        if (_ctx.CellBindingLocals.ContainsKey(name)) return true;
         if (_ctx.TryGetParameter(name, out _)) return true;
         if (_ctx.CapturedFunctionLocals?.Contains(name) == true &&
             _ctx.FunctionDisplayClassFields?.ContainsKey(name) == true) return true;
@@ -230,6 +251,18 @@ public class LocalVariableResolver : IVariableResolver
     /// <inheritdoc />
     public bool TryStoreVariable(string name)
     {
+        // 0. Per-iteration loop-binding cell (#650): write through the StrongBox so the
+        //    mutation is visible to closures that captured this iteration's cell.
+        if (_ctx.CellBindingLocals.TryGetValue(name, out var storeCell))
+        {
+            var cellTemp = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, cellTemp);
+            _il.Emit(OpCodes.Ldloc, storeCell);
+            _il.Emit(OpCodes.Ldloc, cellTemp);
+            _il.Emit(OpCodes.Stfld, _types.StrongBoxOfObjectValueField);
+            return true;
+        }
+
         // 1. Function display class fields (captured function-local vars)
         // Check this BEFORE regular locals to ensure we use the shared storage
         if (_ctx.CapturedFunctionLocals?.Contains(name) == true &&
@@ -380,6 +413,17 @@ public class LocalVariableResolver : IVariableResolver
             // This works for both value and reference type display classes
             var temp = _il.DeclareLocal(_types.Object);
             _il.Emit(OpCodes.Stloc, temp);
+            // Per-iteration cell capture (#650): the field holds a shared StrongBox —
+            // write through Value so the loop body and sibling closures see the update.
+            if (_ctx.CellCapturedFieldNames?.Contains(name) == true)
+            {
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldfld, field);
+                _il.Emit(OpCodes.Castclass, _types.StrongBoxOfObject);
+                _il.Emit(OpCodes.Ldloc, temp);
+                _il.Emit(OpCodes.Stfld, _types.StrongBoxOfObjectValueField);
+                return true;
+            }
             _il.Emit(OpCodes.Ldarg_0);
             _il.Emit(OpCodes.Ldloc, temp);
             _il.Emit(OpCodes.Stfld, field);

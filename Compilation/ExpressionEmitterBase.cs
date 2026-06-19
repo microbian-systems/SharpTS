@@ -1635,12 +1635,19 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             {
                 IL.Emit(OpCodes.Dup);
 
+                // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE so the
+                // closure shares this iteration's cell (the cell local is repointed to a fresh
+                // box each iteration). Checked first; cell bindings are never hoisted fields.
+                if (Ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
+                {
+                    IL.Emit(OpCodes.Ldloc, cellLocal);
+                }
                 // `this` is checked before the hoisted-variable map: the generator's
                 // hoisting analyzer can mint a state-machine field keyed "this" that the
                 // stub never populates, so resolving it via the map would snapshot null
                 // (NRE when the arrow dereferences `this`). The real receiver lives in the
                 // builder's dedicated ThisField (set by the instance-method stub).
-                if (capturedVar == "this" && GetThisField() is FieldBuilder thisField)
+                else if (capturedVar == "this" && GetThisField() is FieldBuilder thisField)
                 {
                     IL.Emit(OpCodes.Ldarg_0);
                     IL.Emit(OpCodes.Ldfld, thisField);

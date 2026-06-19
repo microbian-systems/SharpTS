@@ -821,6 +821,21 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Dup);
             }
 
+            // Per-iteration loop-binding cell (#650): write the new value through the
+            // StrongBox so closures that captured this iteration's cell observe it.
+            if (_ctx.CellBindingLocals.TryGetValue(v.Name.Lexeme, out var preCell))
+            {
+                if (isTypedDouble) IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                var cellTemp = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Stloc, cellTemp);
+                IL.Emit(OpCodes.Ldloc, preCell);
+                IL.Emit(OpCodes.Ldloc, cellTemp);
+                IL.Emit(OpCodes.Stfld, _ctx.Types.StrongBoxOfObjectValueField);
+                if (isTypedDouble) IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                SetStackUnknown();
+                return;
+            }
+
             // Check function display class first (before regular locals)
             if (_ctx.CapturedFunctionLocals?.Contains(v.Name.Lexeme) == true &&
                 _ctx.FunctionDisplayClassFields?.TryGetValue(v.Name.Lexeme, out var funcDCField) == true)
@@ -950,9 +965,21 @@ public partial class ILEmitter
                 }
                 var temp = IL.DeclareLocal(_ctx.Types.Object);
                 IL.Emit(OpCodes.Stloc, temp);
-                IL.Emit(OpCodes.Ldarg_0); // display class instance
-                IL.Emit(OpCodes.Ldloc, temp);
-                IL.Emit(OpCodes.Stfld, capturedField);
+                // Per-iteration cell capture (#650): write through the shared StrongBox.
+                if (_ctx.CellCapturedFieldNames?.Contains(v.Name.Lexeme) == true)
+                {
+                    IL.Emit(OpCodes.Ldarg_0);
+                    IL.Emit(OpCodes.Ldfld, capturedField);
+                    IL.Emit(OpCodes.Castclass, _ctx.Types.StrongBoxOfObject);
+                    IL.Emit(OpCodes.Ldloc, temp);
+                    IL.Emit(OpCodes.Stfld, _ctx.Types.StrongBoxOfObjectValueField);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldarg_0); // display class instance
+                    IL.Emit(OpCodes.Ldloc, temp);
+                    IL.Emit(OpCodes.Stfld, capturedField);
+                }
             }
             else if (_ctx.TopLevelStaticVars?.TryGetValue(v.Name.Lexeme, out var topLevelField) == true)
             {
@@ -1102,6 +1129,21 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Box, _ctx.Types.Double);
             }
 
+            // Per-iteration loop-binding cell (#650): write the new value through the
+            // StrongBox; the original value (still on the stack below) is the postfix result.
+            if (_ctx.CellBindingLocals.TryGetValue(v.Name.Lexeme, out var postCell))
+            {
+                if (isTypedDouble) IL.Emit(OpCodes.Box, _ctx.Types.Double);
+                var cellTemp = IL.DeclareLocal(_ctx.Types.Object);
+                IL.Emit(OpCodes.Stloc, cellTemp);
+                IL.Emit(OpCodes.Ldloc, postCell);
+                IL.Emit(OpCodes.Ldloc, cellTemp);
+                IL.Emit(OpCodes.Stfld, _ctx.Types.StrongBoxOfObjectValueField);
+                IL.Emit(OpCodes.Box, _ctx.Types.Double); // box the original (result)
+                SetStackUnknown();
+                return;
+            }
+
             // Check function display class first (before regular locals)
             if (_ctx.CapturedFunctionLocals?.Contains(v.Name.Lexeme) == true &&
                 _ctx.FunctionDisplayClassFields?.TryGetValue(v.Name.Lexeme, out var funcDCField) == true)
@@ -1229,9 +1271,21 @@ public partial class ILEmitter
                 }
                 var temp = IL.DeclareLocal(_ctx.Types.Object);
                 IL.Emit(OpCodes.Stloc, temp);
-                IL.Emit(OpCodes.Ldarg_0); // display class instance
-                IL.Emit(OpCodes.Ldloc, temp);
-                IL.Emit(OpCodes.Stfld, capturedField);
+                // Per-iteration cell capture (#650): write through the shared StrongBox.
+                if (_ctx.CellCapturedFieldNames?.Contains(v.Name.Lexeme) == true)
+                {
+                    IL.Emit(OpCodes.Ldarg_0);
+                    IL.Emit(OpCodes.Ldfld, capturedField);
+                    IL.Emit(OpCodes.Castclass, _ctx.Types.StrongBoxOfObject);
+                    IL.Emit(OpCodes.Ldloc, temp);
+                    IL.Emit(OpCodes.Stfld, _ctx.Types.StrongBoxOfObjectValueField);
+                }
+                else
+                {
+                    IL.Emit(OpCodes.Ldarg_0); // display class instance
+                    IL.Emit(OpCodes.Ldloc, temp);
+                    IL.Emit(OpCodes.Stfld, capturedField);
+                }
             }
             else if (_ctx.TopLevelStaticVars?.TryGetValue(v.Name.Lexeme, out var topLevelField) == true)
             {

@@ -200,6 +200,20 @@ public class TypeProvider
     public Type WeakReferenceOpen => Resolve("System.WeakReference`1");
     public Type WeakReferenceObject => MakeGenericType(WeakReferenceOpen, Object);
 
+    // Per-iteration loop-binding reference cell (#650). StrongBox<object> is a BCL
+    // type, so emitting it keeps compiled standalone DLLs free of a SharpTS.dll
+    // dependency. The body and every capturing closure share one StrongBox per
+    // iteration so closures observe end-of-iteration mutations of the loop variable.
+    public Type StrongBoxOpen => Resolve("System.Runtime.CompilerServices.StrongBox`1");
+    public Type StrongBoxOfObject => MakeGenericType(StrongBoxOpen, Object);
+
+    /// <summary>The <c>StrongBox&lt;object&gt;(object value)</c> constructor.</summary>
+    public ConstructorInfo StrongBoxOfObjectCtor =>
+        StrongBoxOfObject.GetConstructors().Single(c => c.GetParameters().Length == 1);
+
+    /// <summary>The public <c>StrongBox&lt;object&gt;.Value</c> field.</summary>
+    public FieldInfo StrongBoxOfObjectValueField => StrongBoxOfObject.GetField("Value")!;
+
     #endregion
 
     #region Tasks and Async

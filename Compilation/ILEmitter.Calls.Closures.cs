@@ -362,6 +362,16 @@ public partial class ILEmitter
                 // parent arrow; class-method arg0 for the outermost).
                 _resolver.LoadThis();
             }
+            else if (_ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
+            {
+                // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE
+                // (not its value) so the closure shares this iteration's cell and
+                // observes end-of-iteration mutations. The cell local is repointed to a
+                // fresh box each iteration, so closures in distinct iterations capture
+                // distinct cells. The field stays object-typed; only the closure body
+                // dereferences Value (see LocalVariableResolver / CellCapturedFieldNames).
+                IL.Emit(OpCodes.Ldloc, cellLocal);
+            }
             else if (_ctx.TryGetParameter(capturedVar, out var argIndex))
             {
                 IL.Emit(OpCodes.Ldarg, argIndex);

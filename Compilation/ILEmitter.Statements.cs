@@ -305,6 +305,19 @@ public partial class ILEmitter
             if (f.Initializer != null)
                 EmitStatement(f.Initializer);
 
+            // Per-iteration reference cells (#650): for a loop binding that the body
+            // both mutates and a closure captures, wrap its initial value in a fresh
+            // StrongBox and route all body/condition/increment access through the cell
+            // (registered in CellBindingLocals). Closures capture the cell by reference,
+            // so they observe end-of-iteration mutations; the copy-forward below gives
+            // each iteration its own cell.
+            var cellNames = _ctx.ClosureAnalyzer?.GetForLoopCells(f);
+            List<(string Name, LocalBuilder? Prior)>? activeCells = null;
+            if (cellNames != null && cellNames.Count > 0)
+            {
+                activeCells = EmitForLoopCellInit(cellNames);
+            }
+
             // Array hoist preamble: emit isinst checks for loop-invariant arrays
             var hoisted = EmitArrayHoistPreamble(f.Body, f.Condition, f.Increment);
 
@@ -327,6 +340,13 @@ public partial class ILEmitter
             EmitStatement(f.Body);
 
             builder.MarkLabel(continueLabel);
+            // CreatePerIterationEnvironment analog: copy each cell's end-of-body value
+            // into a FRESH cell BEFORE the increment, so the closures created this
+            // iteration keep the value they observed and the increment acts on the
+            // next iteration's binding.
+            if (activeCells != null)
+                EmitForLoopCellCopyForward(activeCells);
+
             if (f.Increment != null)
             {
                 EmitExpression(f.Increment);
@@ -340,6 +360,13 @@ public partial class ILEmitter
 
             // Pop hoisted cache
             if (hoisted) _ctx.HoistedArrayCaches.Pop();
+
+            if (activeCells != null)
+                foreach (var (name, prior) in activeCells)
+                {
+                    if (prior != null) _ctx.CellBindingLocals[name] = prior;
+                    else _ctx.CellBindingLocals.Remove(name);
+                }
 
             _ctx.Locals.ExitScope();
         }

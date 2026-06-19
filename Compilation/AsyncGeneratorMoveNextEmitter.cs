@@ -107,7 +107,9 @@ public partial class AsyncGeneratorMoveNextEmitter : StatementEmitterBase
             _il,
             _builder.GetVariableField,
             ctx.Locals,
-            _builder.ThisField);
+            _builder.ThisField,
+            ctx.CellBindingLocals,
+            ctx.Types.StrongBoxOfObjectValueField);
 
         // Define labels for each suspension resume point
         foreach (var suspensionPoint in _analysis.SuspensionPoints)

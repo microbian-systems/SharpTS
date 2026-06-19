@@ -75,6 +75,22 @@ public class ClosureAnalyzer : AstVisitorBase
     // O(1) lookup for whether any variable is captured (inverse of _captures)
     private readonly HashSet<string> _allCapturedVariables = [];
 
+    // Per-iteration reference-cell analysis (#650), run alongside capture analysis
+    // and reachable wherever this analyzer is threaded (via _ctx.ClosureAnalyzer).
+    private readonly PerIterationCellAnalyzer _cells = new();
+
+    /// <summary>
+    /// The <c>for (let/const …)</c> binding names in <paramref name="loop"/> that need
+    /// a per-iteration reference cell (#650); empty when none do.
+    /// </summary>
+    public HashSet<string> GetForLoopCells(Stmt.For loop) => _cells.GetForLoopCells(loop);
+
+    /// <summary>
+    /// The captured names in <paramref name="closure"/> that hold a per-iteration cell
+    /// (the closure body must dereference <c>StrongBox.Value</c>); empty when none do.
+    /// </summary>
+    public HashSet<string> GetClosureCellFields(object closure) => _cells.GetClosureCellFields(closure);
+
     /// <summary>
     /// Gets the captured variables for a given function/arrow AST node.
     /// </summary>
@@ -157,6 +173,10 @@ public class ClosureAnalyzer : AstVisitorBase
         foreach (var stmt in statements)
             Visit(stmt);
         _scopeStack.Pop();
+
+        // Per-iteration cell analysis (#650) is independent of capture-source state,
+        // so run it as its own pass over the same statements.
+        _cells.Analyze(statements);
     }
 
     /// <summary>

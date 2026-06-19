@@ -139,7 +139,8 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
         if (ctx.Runtime != null) _helpers.SetRuntime(ctx.Runtime);
 
         // Create variable resolver for hoisted fields, locals, and captured variables
-        _resolver = new AsyncArrowVariableResolver(_il, _builder, _locals);
+        _resolver = new AsyncArrowVariableResolver(_il, _builder, _locals,
+            ctx.CellBindingLocals, ctx.Types.StrongBoxOfObjectValueField);
 
         // Create labels for each await state
         for (int i = 0; i < _analysis.AwaitPointCount; i++)
