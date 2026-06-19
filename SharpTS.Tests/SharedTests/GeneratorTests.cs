@@ -1602,14 +1602,17 @@ public class GeneratorTests
 
     #region Generator function EXPRESSION closing over an enclosing function's local — issue #534
 
-    // The interpreter handles a generator expression that closes over an enclosing FUNCTION local:
-    // the lifter relocates it to the end of that function's body (keeping the local in lexical
-    // scope) rather than to module scope. The compiler's nested-generator lowering is incomplete
-    // (#501), so these run interpreted only — the compiler reports a clear "Yield not supported in
-    // this context" error for the same source (verified separately).
+    // A generator expression that closes over an enclosing FUNCTION local: the GeneratorArrowLifter
+    // relocates it to the end of that function's body (keeping the local in lexical scope) rather than
+    // to module scope. The interpreter runs that nested declaration natively. On the compile path the
+    // NestedFunctionLifter lambda-lifts it (the captured local becomes a leading parameter forwarded by
+    // an arrow); because the lift is appended at body end, the forwarding binding is HOISTED to the body
+    // top so the earlier reference resolves (#534). These run in BOTH modes. The decline cases below
+    // (this/arguments, rest/default params, self-recursion) instead stay nested and fail cleanly in
+    // compiled mode with "Yield not supported in this context", never a miscompile.
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void GeneratorExpression_ClosesOverFunctionLocal(ExecutionMode mode)
     {
         // The exact repro from issue #534.
@@ -1626,7 +1629,7 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void GeneratorExpression_ClosesOverFunctionParameter(ExecutionMode mode)
     {
         var source = """
@@ -1641,10 +1644,12 @@ public class GeneratorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void GeneratorExpression_ClosesOverLocalCapturesByReference(ExecutionMode mode)
     {
-        // Closures bind the variable, so a mutation before iteration is observed (not a snapshot).
+        // Closures bind the variable, so a mutation before iteration is observed (not a snapshot). In
+        // compiled mode the lambda-lift forwarding arrow reads the captured local live at call time, so
+        // hoisting it to the body top still observes the mutation.
         var source = """
             function outer() {
               let c = 1;
@@ -1658,6 +1663,64 @@ public class GeneratorTests
         Assert.Equal("[99]\n", TestHarness.Run(source, mode));
     }
 
+    [Fact]
+    public void GeneratorExpression_ClosesOverFunctionLocal_CompiledHoistsForwardReference()
+    {
+        // Directly pins the #534 compile-path fix: the lifted `function* __genArrow_N` is appended at
+        // the enclosing body's END, so its lambda-lift forwarding binding must be hoisted above the
+        // earlier `const g = …` reference. Before the fix this miscompiled to a runtime
+        // "Undefined variable '__genArrow_0'".
+        var source = """
+            function outer() {
+              let y = 5;
+              const g = function*() { yield y; };
+              return [...g()];
+            }
+            console.log(outer());
+            """;
+
+        Assert.Equal("[5]\n", TestHarness.RunCompiled(source));
+    }
+
+    // Decline cases: a capturing generator expression the lambda-lift cannot faithfully forward stays
+    // nested and fails cleanly in compiled mode ("Yield not supported in this context"), never a
+    // miscompile. The interpreter runs all of them natively.
+
+    [Fact]
+    public void GeneratorExpression_ClosesOverLocal_WithRestParam_CompiledFailsCleanly()
+    {
+        var source = """
+            function outer() {
+              let y = 5;
+              const g = function*(...rest: number[]) { yield y; };
+              return [...g()];
+            }
+            console.log(outer());
+            """;
+
+        Assert.Equal("[5]\n", TestHarness.Run(source, ExecutionMode.Interpreted));
+        var ex = Assert.Throws<CompileException>(() => TestHarness.RunCompiled(source));
+        Assert.Contains("Yield not supported", ex.Message);
+    }
+
+    [Fact]
+    public void GeneratorExpression_ClosesOverLocal_UsingThis_CompiledFailsCleanly()
+    {
+        // A body using `this` cannot be reached through the forwarding arrow (it has no receiver), so
+        // the lambda-lift declines and the generator stays nested.
+        var source = """
+            function outer(this: any) {
+              let y = 5;
+              const g = function*() { yield y; yield this; };
+              return [...g()].length;
+            }
+            console.log(outer.call({}));
+            """;
+
+        var ex = Assert.Throws<CompileException>(() => TestHarness.RunCompiled(source));
+        Assert.Contains("Yield not supported", ex.Message);
+    }
+
     #endregion
 
     #region Generator function EXPRESSION closing over a BLOCK-scoped binding — issue #678
@@ -1668,8 +1731,10 @@ public class GeneratorTests
     // would be out of scope. The GeneratorArrowLifter leaves it in place as an expression; the
     // interpreter runs it natively (SharpTSGenerator) and the type checker establishes the generator
     // context directly. These run interpreted-only: the compiler has no generator-expression IL path
-    // for a capturing generator and reports a clear "Yield not supported in this context" error (the
-    // same as #534's enclosing-function-local capture; asserted by the *_CompiledRejectsClearly test).
+    // for a generator that captures a block-scoped binding and reports a clear "Yield not supported in
+    // this context" error (the lift target sits outside the block, so unlike #534's enclosing-FUNCTION
+    // local — which is now lambda-lifted and runs in both modes — this cannot be lowered; asserted by
+    // the *_CompiledRejectsClearly test).
 
     [Theory]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
@@ -1826,9 +1891,9 @@ public class GeneratorTests
     public void GeneratorExpression_BlockScopedCapture_CompiledRejectsClearly()
     {
         // The compiler has no generator-expression IL path for a generator that closes over a
-        // block-scoped binding (it cannot be lifted, and nested-generator lowering is incomplete,
-        // #501). It must FAIL FAST with a clear message rather than crash or silently misbehave —
-        // matching #534's enclosing-function-local capture.
+        // block-scoped binding (it cannot be lifted out of its block, and nested-generator lowering is
+        // incomplete, #501). It must FAIL FAST with a clear message rather than crash or silently
+        // misbehave — matching the #534 enclosing-function-local decline cases (this/rest/recursion).
         var source = """
             for (const n of [1, 2]) {
               const g = function* () { yield n; };
