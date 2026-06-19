@@ -855,14 +855,15 @@ public partial class TypeChecker
             TypeInfo.AsyncGenerator asyncGenType when stmt.IsAsync => asyncGenType.YieldType,
             TypeInfo.AsyncIterator asyncItType when stmt.IsAsync => asyncItType.ElementType,
             TypeInfo.AsyncIterable asyncIter when stmt.IsAsync => asyncIter.ElementType,
-            // A hand-written object exposing [Symbol.iterator] is iterable structurally (#485). Limited to
-            // sync `for...of`; structural async-iterable objects ([Symbol.asyncIterator]) are not yet
-            // element-typed (the dedicated async records above are — #483) and stay lenient below (#662).
+            // A hand-written object exposing [Symbol.asyncIterator] is async-iterable structurally (#662).
+            _ when stmt.IsAsync && TryGetStructuralAsyncIterableElement(iterableType, out var asyncStructuralElem) => asyncStructuralElem,
+            // A hand-written object exposing [Symbol.iterator] is iterable structurally (#485).
             _ when !stmt.IsAsync && TryGetStructuralIterableElement(iterableType, out var structuralElem) => structuralElem,
             // A structural object with no [Symbol.iterator] is an iterator-only or plain object, not an
             // Iterable — tsc rejects the loop with TS2488 rather than binding `any` (#550). Gated to types
             // SharpTS can prove non-iterable so it never rejects code tsc accepts (see the helper). Async
-            // sources stay lenient — structural async-iterable typing is a separate gap (#662).
+            // sources remain lenient (no TS2488 analog for async — async non-iterability is rarer and not
+            // yet diagnosed).
             _ when !stmt.IsAsync && IsProvablyNonIterableStructuralObject(iterableType) =>
                 throw new TypeCheckException(
                     $" Type '{iterableType}' must have a '[Symbol.iterator]()' method that returns an iterator.",
