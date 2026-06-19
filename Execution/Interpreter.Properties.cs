@@ -1531,6 +1531,25 @@ public partial class Interpreter
             return value;
         }
 
+        // Number/Boolean/String.prototype are ordinary mutable objects per ECMA-262.
+        // Test262 assigns indexed elements and `length` before calling
+        // Array.prototype.* with a primitive as the receiver.
+        if (obj is SharpTSNumberPrototype numProto)
+        {
+            numProto.SetExtra(set.Name.Lexeme, value);
+            return value;
+        }
+        if (obj is SharpTSBooleanPrototype boolProto)
+        {
+            boolProto.SetExtra(set.Name.Lexeme, value);
+            return value;
+        }
+        if (obj is SharpTSStringPrototype strProto)
+        {
+            strProto.SetExtra(set.Name.Lexeme, value);
+            return value;
+        }
+
         var category = TypeCategoryResolver.ClassifyRuntime(obj);
         string memberName = set.Name.Lexeme;
         bool strictMode = _environment.IsStrictMode;

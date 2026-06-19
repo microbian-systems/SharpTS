@@ -46,15 +46,27 @@ public class SharpTSStringNamespace : ISharpTSCallable
 /// unbound <see cref="BuiltInMethod"/> via <see cref="StringBuiltIns"/>,
 /// wrapped so <c>String.prototype.trim.call(value)</c> throws a proper
 /// TypeError on null/undefined receivers and ToString-coerces every other
-/// receiver per ECMA-262 before dispatch.
+/// receiver per ECMA-262 before dispatch. Also accepts arbitrary user-assigned
+/// properties (ECMA-262: String.prototype is an ordinary object).
 /// </summary>
 public sealed class SharpTSStringPrototype
 {
     public static readonly SharpTSStringPrototype Instance = new();
     private SharpTSStringPrototype() { }
 
+    private Dictionary<string, object?>? _extras;
+    public bool HasExtra(string name) => _extras is not null && _extras.ContainsKey(name);
+    public object? TryGetExtra(string name) =>
+        _extras is not null && _extras.TryGetValue(name, out var v) ? v : null;
+    public void SetExtra(string name, object? value)
+    {
+        _extras ??= new Dictionary<string, object?>();
+        _extras[name] = value;
+    }
+
     public object? GetMember(string name)
     {
+        if (HasExtra(name)) return TryGetExtra(name);
         var method = StringBuiltIns.GetPrototypeMethod(name);
         if (method is null) return null;
         return new StringPrototypeMethodWrapper(name, method);
@@ -192,14 +204,28 @@ public class SharpTSNumberNamespace : ISharpTSCallable
 /// <c>Number.prototype</c>. Exposes registered Number instance methods
 /// (toFixed, toPrecision, toExponential, toString) as unbound callables
 /// wrapped to coerce the receiver to a number per ECMA-262.
+/// Also accepts arbitrary user-assigned properties (ECMA-262: Number.prototype is
+/// an ordinary object — Test262 sets indexed elements and <c>length</c> on it
+/// before invoking Array.prototype.* with a number primitive as the receiver).
 /// </summary>
 public sealed class SharpTSNumberPrototype
 {
     public static readonly SharpTSNumberPrototype Instance = new();
     private SharpTSNumberPrototype() { }
 
+    private Dictionary<string, object?>? _extras;
+    public bool HasExtra(string name) => _extras is not null && _extras.ContainsKey(name);
+    public object? TryGetExtra(string name) =>
+        _extras is not null && _extras.TryGetValue(name, out var v) ? v : null;
+    public void SetExtra(string name, object? value)
+    {
+        _extras ??= new Dictionary<string, object?>();
+        _extras[name] = value;
+    }
+
     public object? GetMember(string name)
     {
+        if (HasExtra(name)) return TryGetExtra(name);
         var method = NumberBuiltIns.GetPrototypeMethod(name);
         if (method is null) return null;
         return new NumberPrototypeMethodWrapper(name, method);
@@ -299,19 +325,35 @@ public class SharpTSBooleanNamespace : ISharpTSCallable
 /// <summary>
 /// <c>Boolean.prototype</c>. Exposes <c>toString</c> and <c>valueOf</c>
 /// per ECMA-262 as wrapper callables that throw TypeError on non-boolean
-/// receivers.
+/// receivers. Also accepts arbitrary user-assigned properties — Test262 sets
+/// indexed elements and <c>length</c> before calling Array.prototype.* with a
+/// boolean primitive as the receiver.
 /// </summary>
 public sealed class SharpTSBooleanPrototype
 {
     public static readonly SharpTSBooleanPrototype Instance = new();
     private SharpTSBooleanPrototype() { }
 
-    public object? GetMember(string name) => name switch
+    private Dictionary<string, object?>? _extras;
+    public bool HasExtra(string name) => _extras is not null && _extras.ContainsKey(name);
+    public object? TryGetExtra(string name) =>
+        _extras is not null && _extras.TryGetValue(name, out var v) ? v : null;
+    public void SetExtra(string name, object? value)
     {
-        "toString" => BooleanPrototypeMethodWrapper.ToStringInstance,
-        "valueOf" => BooleanPrototypeMethodWrapper.ValueOfInstance,
-        _ => null,
-    };
+        _extras ??= new Dictionary<string, object?>();
+        _extras[name] = value;
+    }
+
+    public object? GetMember(string name)
+    {
+        if (HasExtra(name)) return TryGetExtra(name);
+        return name switch
+        {
+            "toString" => BooleanPrototypeMethodWrapper.ToStringInstance,
+            "valueOf" => BooleanPrototypeMethodWrapper.ValueOfInstance,
+            _ => null,
+        };
+    }
 
     public override string ToString() => "[object Boolean]";
 }
