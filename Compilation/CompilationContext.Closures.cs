@@ -235,6 +235,31 @@ public partial class CompilationContext
     public Dictionary<ArrowFunction, Dictionary<object, FieldBuilder>>? ArrowScopeDCExtraFieldsByArrow { get; set; }
 
     // ============================================
+    // Per-iteration loop-binding reference cells (#650)
+    // ============================================
+
+    /// <summary>
+    /// For a <c>for (let/const …)</c> binding that needs a per-iteration reference
+    /// cell, the local holding the CURRENT iteration's <c>StrongBox&lt;object&gt;</c>.
+    /// Populated by the for-loop emitter while emitting the loop body and increment,
+    /// and consulted FIRST by <see cref="LocalVariableResolver"/> so loop-body reads
+    /// and writes go through <c>StrongBox.Value</c> rather than the (now dead) plain
+    /// local. Scoped: the emitter removes the entry on loop exit. Empty outside a
+    /// cell-bearing loop body.
+    /// </summary>
+    public Dictionary<string, LocalBuilder> CellBindingLocals { get; } = [];
+
+    /// <summary>
+    /// When emitting a closure body, the captured field names that hold a
+    /// per-iteration cell (a <c>StrongBox&lt;object&gt;</c>) rather than a plain
+    /// value. The resolver loads the captured field, then reads <c>StrongBox.Value</c>
+    /// for these names (and writes through it). Set from
+    /// <see cref="PerIterationCellAnalyzer.ClosureCellFields"/> when the closure
+    /// body's emit context is established.
+    /// </summary>
+    public HashSet<string>? CellCapturedFieldNames { get; set; }
+
+    // ============================================
     // Inner Function Support
     // ============================================
 

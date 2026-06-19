@@ -107,20 +107,105 @@ public class ForLoopPerIterationBindingTests
     // ---- Mutating the loop var inside the body is reflected in that iteration's capture ----
     // i becomes i+10 at capture time, then i-10 before the iteration ends, so the per-iteration
     // binding settles back to the loop value; the per-iteration copy then carries that forward.
-    // Interpreted-only: compiled mode SNAPSHOTS the loop var's value at closure-creation time
-    // (i+10 == 10/11/12) rather than reference-capturing the per-iteration binding (whose end-of-
-    // body value is 0/1/2). This snapshot-timing gap is uniform across compiled contexts (top
-    // level, sync/async function bodies) and is tracked by #650; a full fix needs a per-iteration
-    // binding cell that closures reference-capture. The interpreter reads the live binding slot,
-    // matching node (0,1,2).
+    // Compiled mode (#650) now allocates a per-iteration StrongBox cell for a loop binding that
+    // the body BOTH mutates AND a closure captures, so closures reference-capture the live cell
+    // (end-of-body value 0/1/2) instead of snapshotting the mid-body value (10/11/12). The cheap
+    // value-snapshot path (#649) still serves the common non-mutating case.
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void BodyMutatesLoopVar_CapturesLiveSlot(ExecutionMode mode)
     {
         var source = """
             const g: any[] = [];
             for (let i = 0; i < 3; i++) { i = i + 10; g.push(() => i); i = i - 10; }
             console.log(g.map((f: any) => f()).join(","));
+            """;
+        Assert.Equal("0,1,2\n", TestHarness.Run(source, mode));
+    }
+
+    // Same mutate-and-restore pattern inside a SYNC function body (cell lives as a local
+    // in the function frame). Exercises the function-context EmitFor path.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BodyMutatesLoopVar_SyncFunctionBody(ExecutionMode mode)
+    {
+        var source = """
+            function main(): string {
+                const g: any[] = [];
+                for (let i = 0; i < 3; i++) { i = i + 10; g.push(() => i); i = i - 10; }
+                return g.map((f: any) => f()).join(",");
+            }
+            console.log(main());
+            """;
+        Assert.Equal("0,1,2\n", TestHarness.Run(source, mode));
+    }
+
+    // The cell is shared by reference, so a closure that WRITES the loop binding mutates that
+    // iteration's binding and a sibling reader observes it. Each iteration k: writer increments
+    // binding k (k → k+1), reader returns k+1. node: 1,2,3.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BodyMutatesLoopVar_ClosureWritesThrough(ExecutionMode mode)
+    {
+        var source = """
+            const readers: any[] = [];
+            const writers: any[] = [];
+            for (let i = 0; i < 3; i++) { readers.push(() => i); writers.push(() => { i = i + 1; }); }
+            writers.forEach((w: any) => w());
+            console.log(readers.map((f: any) => f()).join(","));
+            """;
+        Assert.Equal("1,2,3\n", TestHarness.Run(source, mode));
+    }
+
+    // Same as above but the writer uses `i++` (postfix increment in a closure), exercising
+    // the increment emitter's captured-cell write-through path.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BodyMutatesLoopVar_ClosureIncrementsThrough(ExecutionMode mode)
+    {
+        var source = """
+            const readers: any[] = [];
+            const writers: any[] = [];
+            for (let i = 0; i < 3; i++) { readers.push(() => i); writers.push(() => { i++; }); }
+            writers.forEach((w: any) => w());
+            console.log(readers.map((f: any) => f()).join(","));
+            """;
+        Assert.Equal("1,2,3\n", TestHarness.Run(source, mode));
+    }
+
+    // Nested loops where BOTH loop vars are mutate-and-restored and captured by the inner
+    // closure — each needs its own cell, copied forward independently.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedLoops_BothBindingsMutated(ExecutionMode mode)
+    {
+        var source = """
+            const d: any[] = [];
+            for (let i = 0; i < 2; i++) {
+                for (let j = 0; j < 2; j++) {
+                    i = i + 5; j = j + 5;
+                    d.push(() => "" + i + j);
+                    i = i - 5; j = j - 5;
+                }
+            }
+            console.log(d.map((f: any) => f()).join(","));
+            """;
+        Assert.Equal("00,01,10,11\n", TestHarness.Run(source, mode));
+    }
+
+    // Async/generator contexts keep the mutate-and-restore gap on the snapshot path until
+    // the state-machine cell rework (#650 Phase 2); interpreted-only for now.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void BodyMutatesLoopVar_AsyncFunctionBody_InterpretedOnly(ExecutionMode mode)
+    {
+        var source = """
+            async function main() {
+                const g: any[] = [];
+                for (let i = 0; i < 3; i++) { i = i + 10; g.push(() => i); i = i - 10; }
+                console.log(g.map((f: any) => f()).join(","));
+            }
+            main();
             """;
         Assert.Equal("0,1,2\n", TestHarness.Run(source, mode));
     }

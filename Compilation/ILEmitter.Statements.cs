@@ -305,6 +305,19 @@ public partial class ILEmitter
             if (f.Initializer != null)
                 EmitStatement(f.Initializer);
 
+            // Per-iteration reference cells (#650): for a loop binding that the body
+            // both mutates and a closure captures, wrap its initial value in a fresh
+            // StrongBox and route all body/condition/increment access through the cell
+            // (registered in CellBindingLocals). Closures capture the cell by reference,
+            // so they observe end-of-iteration mutations; the copy-forward below gives
+            // each iteration its own cell.
+            var cellNames = _ctx.ClosureAnalyzer?.GetForLoopCells(f);
+            List<(string Name, LocalBuilder? Prior)>? activeCells = null;
+            if (cellNames != null && cellNames.Count > 0)
+            {
+                activeCells = EmitForLoopCellInit(cellNames);
+            }
+
             // Array hoist preamble: emit isinst checks for loop-invariant arrays
             var hoisted = EmitArrayHoistPreamble(f.Body, f.Condition, f.Increment);
 
@@ -327,6 +340,13 @@ public partial class ILEmitter
             EmitStatement(f.Body);
 
             builder.MarkLabel(continueLabel);
+            // CreatePerIterationEnvironment analog: copy each cell's end-of-body value
+            // into a FRESH cell BEFORE the increment, so the closures created this
+            // iteration keep the value they observed and the increment acts on the
+            // next iteration's binding.
+            if (activeCells != null)
+                EmitForLoopCellCopyForward(activeCells);
+
             if (f.Increment != null)
             {
                 EmitExpression(f.Increment);
@@ -341,11 +361,67 @@ public partial class ILEmitter
             // Pop hoisted cache
             if (hoisted) _ctx.HoistedArrayCaches.Pop();
 
+            if (activeCells != null)
+                foreach (var (name, prior) in activeCells)
+                {
+                    if (prior != null) _ctx.CellBindingLocals[name] = prior;
+                    else _ctx.CellBindingLocals.Remove(name);
+                }
+
             _ctx.Locals.ExitScope();
         }
         finally
         {
             _optimizedLoopCounterName = null;
+        }
+    }
+
+    /// <summary>
+    /// For each per-iteration cell binding (#650), wraps the loop variable's initial
+    /// value (already stored in its plain local by the initializer) in a fresh
+    /// <c>StrongBox&lt;object&gt;</c>, stores the box in a dedicated local, and registers
+    /// it in <see cref="CompilationContext.CellBindingLocals"/> so subsequent
+    /// body/condition/increment access dereferences the cell. Returns the names set up.
+    /// </summary>
+    private List<(string Name, LocalBuilder? Prior)> EmitForLoopCellInit(IEnumerable<string> cellNames)
+    {
+        var active = new List<(string, LocalBuilder?)>();
+        foreach (var name in cellNames)
+        {
+            var local = _ctx.Locals.GetLocal(name);
+            if (local == null) continue; // defensive: binding has no local slot
+
+            IL.Emit(OpCodes.Ldloc, local);
+            if (local.LocalType.IsValueType)
+                IL.Emit(OpCodes.Box, local.LocalType);
+            IL.Emit(OpCodes.Newobj, _ctx.Types.StrongBoxOfObjectCtor);
+
+            var cellLocal = IL.DeclareLocal(_ctx.Types.StrongBoxOfObject);
+            IL.Emit(OpCodes.Stloc, cellLocal);
+            // Save any shadowed outer cell of the same name (nested same-named loops)
+            // so it is restored on loop exit rather than dropped.
+            _ctx.CellBindingLocals.TryGetValue(name, out var prior);
+            _ctx.CellBindingLocals[name] = cellLocal;
+            active.Add((name, prior));
+        }
+        return active;
+    }
+
+    /// <summary>
+    /// ECMA-262 13.7.4 CreatePerIterationEnvironment analog: allocates a fresh cell for
+    /// each binding, copying the current cell's value forward. Closures created in the
+    /// just-finished iteration keep their (old) cell; the loop's increment then operates
+    /// on the new cell.
+    /// </summary>
+    private void EmitForLoopCellCopyForward(List<(string Name, LocalBuilder? Prior)> activeCells)
+    {
+        foreach (var (name, _) in activeCells)
+        {
+            var cellLocal = _ctx.CellBindingLocals[name];
+            IL.Emit(OpCodes.Ldloc, cellLocal);
+            IL.Emit(OpCodes.Ldfld, _ctx.Types.StrongBoxOfObjectValueField);
+            IL.Emit(OpCodes.Newobj, _ctx.Types.StrongBoxOfObjectCtor);
+            IL.Emit(OpCodes.Stloc, cellLocal);
         }
     }
 
