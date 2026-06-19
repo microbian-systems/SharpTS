@@ -709,6 +709,14 @@ public partial class AsyncGeneratorMoveNextEmitter
         {
             _il.Emit(OpCodes.Dup);
 
+            // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE.
+            if (_ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
+            {
+                _il.Emit(OpCodes.Ldloc, cellLocal);
+                _il.Emit(OpCodes.Stfld, field);
+                continue;
+            }
+
             var hoistedField = _builder.GetVariableField(capturedVar);
             if (hoistedField != null)
             {

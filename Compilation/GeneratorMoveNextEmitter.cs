@@ -85,7 +85,9 @@ public partial class GeneratorMoveNextEmitter : StatementEmitterBase
             _il,
             _builder.GetVariableField,
             ctx.Locals,
-            _builder.ThisField);
+            _builder.ThisField,
+            ctx.CellBindingLocals,
+            ctx.Types.StrongBoxOfObjectValueField);
 
         // Define labels for each yield resume point
         foreach (var yieldPoint in _analysis.YieldPoints)

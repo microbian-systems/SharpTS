@@ -65,6 +65,19 @@ public abstract partial class ExpressionEmitterBase
     /// </remarks>
     protected virtual void EmitStoreVariable(string name)
     {
+        // Per-iteration loop-binding cell (#650): write through the StrongBox. This base
+        // helper (used by state-machine increments/compound/logical assignment) hand-rolls
+        // the store instead of routing through the resolver, so the cell case is handled here.
+        if (Ctx.CellBindingLocals.TryGetValue(name, out var cell))
+        {
+            var cellTemp = IL.DeclareLocal(typeof(object));
+            IL.Emit(OpCodes.Stloc, cellTemp);
+            IL.Emit(OpCodes.Ldloc, cell);
+            IL.Emit(OpCodes.Ldloc, cellTemp);
+            IL.Emit(OpCodes.Stfld, Ctx.Types.StrongBoxOfObjectValueField);
+            return;
+        }
+
         var field = GetHoistedVariableField(name);
         if (field != null)
         {

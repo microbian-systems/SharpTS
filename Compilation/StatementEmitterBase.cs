@@ -439,6 +439,16 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         if (f.Initializer != null)
             EmitStatement(f.Initializer);
 
+        // Per-iteration reference cells (#650): see EmitForLoopCellInit. In a state-machine
+        // emitter the cell stays an IL local — valid because the analyzer only marks a loop
+        // when its body has no direct suspension point, so the whole loop runs within one
+        // MoveNext segment (the cell, a heap StrongBox, is captured by reference by closures
+        // and outlives the segment).
+        var cellNames = Ctx.ClosureAnalyzer?.GetForLoopCells(f);
+        List<(string Name, LocalBuilder? Prior)>? activeCells = null;
+        if (cellNames != null && cellNames.Count > 0)
+            activeCells = EmitForLoopCellInit(cellNames);
+
         var startLabel = IL.DefineLabel();
         var endLabel = IL.DefineLabel();
         var continueLabel = IL.DefineLabel();  // Points to increment
@@ -460,6 +470,8 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
 
         // Continue target: increment goes here
         IL.MarkLabel(continueLabel);
+        if (activeCells != null)
+            EmitForLoopCellCopyForward(activeCells);
         if (f.Increment != null)
         {
             EmitExpression(f.Increment);
@@ -471,8 +483,63 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         IL.MarkLabel(endLabel);
         ExitLoop();
 
+        if (activeCells != null)
+            foreach (var (name, prior) in activeCells)
+            {
+                if (prior != null) Ctx.CellBindingLocals[name] = prior;
+                else Ctx.CellBindingLocals.Remove(name);
+            }
+
         // Exit loop scope
         Ctx.Locals.ExitScope();
+    }
+
+    /// <summary>
+    /// For each per-iteration cell binding (#650), wraps the loop variable's initial value
+    /// (already stored in its plain local by the initializer) in a fresh
+    /// <c>StrongBox&lt;object&gt;</c>, stores the box in a dedicated local, and registers it in
+    /// <see cref="CompilationContext.CellBindingLocals"/> so subsequent body/condition/increment
+    /// access (and any capturing closure) goes through the cell. Returns the names set up, each
+    /// paired with any shadowed outer cell to restore on loop exit (nested same-named loops).
+    /// Shared by the sync <see cref="ILEmitter"/> override and the state-machine emitters.
+    /// </summary>
+    protected List<(string Name, LocalBuilder? Prior)> EmitForLoopCellInit(IEnumerable<string> cellNames)
+    {
+        var active = new List<(string, LocalBuilder?)>();
+        foreach (var name in cellNames)
+        {
+            var local = Ctx.Locals.GetLocal(name);
+            if (local == null) continue; // defensive: binding has no local slot
+
+            IL.Emit(OpCodes.Ldloc, local);
+            if (local.LocalType.IsValueType)
+                IL.Emit(OpCodes.Box, local.LocalType);
+            IL.Emit(OpCodes.Newobj, Ctx.Types.StrongBoxOfObjectCtor);
+
+            var cellLocal = IL.DeclareLocal(Ctx.Types.StrongBoxOfObject);
+            IL.Emit(OpCodes.Stloc, cellLocal);
+            Ctx.CellBindingLocals.TryGetValue(name, out var prior);
+            Ctx.CellBindingLocals[name] = cellLocal;
+            active.Add((name, prior));
+        }
+        return active;
+    }
+
+    /// <summary>
+    /// ECMA-262 13.7.4 CreatePerIterationEnvironment analog: allocates a fresh cell for each
+    /// binding, copying the current cell's value forward. Closures created in the just-finished
+    /// iteration keep their (old) cell; the loop's increment then operates on the new cell.
+    /// </summary>
+    protected void EmitForLoopCellCopyForward(List<(string Name, LocalBuilder? Prior)> activeCells)
+    {
+        foreach (var (name, _) in activeCells)
+        {
+            var cellLocal = Ctx.CellBindingLocals[name];
+            IL.Emit(OpCodes.Ldloc, cellLocal);
+            IL.Emit(OpCodes.Ldfld, Ctx.Types.StrongBoxOfObjectValueField);
+            IL.Emit(OpCodes.Newobj, Ctx.Types.StrongBoxOfObjectCtor);
+            IL.Emit(OpCodes.Stloc, cellLocal);
+        }
     }
 
     /// <summary>

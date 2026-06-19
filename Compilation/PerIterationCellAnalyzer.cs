@@ -93,12 +93,26 @@ public sealed class PerIterationCellAnalyzer : AstVisitorBase
         if (stmt.Increment != null) Visit(stmt.Increment);
 
         var bindings = CollectLoopBindingNames(stmt.Initializer);
-        // Phase 1: only loops in a fully synchronous context get cells (the sync
-        // ILEmitter.EmitFor is the only emitter that allocates them). A loop nested
-        // in an async/generator callable is lowered by the state-machine EmitFor
-        // family, which ignores cells — tracking it would let a capturing sync
-        // closure dereference a field that was never populated with a cell.
-        if (bindings == null || bindings.Count == 0 || _asyncDepth > 0)
+        // The cell is an IL local in every emitter (sync ILEmitter.EmitFor and the
+        // state-machine base EmitFor). A cell-as-local is only valid when the whole
+        // loop runs within a single execution segment — i.e. the loop body has no
+        // DIRECT await/yield (suspension inside a nested closure is fine). A loop
+        // whose body itself suspends would span multiple MoveNext calls, where a
+        // local does not survive; those stay on the value-snapshot path (the cell
+        // would need to be a hoisted state-machine field — deferred). In a fully
+        // synchronous context there is never a direct suspension, so this is a no-op
+        // for Phase 1.
+        //
+        // Covered emitters: sync (ILEmitter), async functions (AsyncMoveNextEmitter),
+        // and generators (GeneratorMoveNextEmitter / base hooks). Async ARROWS and ASYNC
+        // GENERATORS are deferred: their closure-capture paths don't yet snapshot the cell
+        // reference, so creating a cell there would make a capturing closure dereference a
+        // non-cell value at runtime. Leaving those on the snapshot path keeps them correct-
+        // by-interpretation and crash-free.
+        var enclosingClosure = _closureStack.Count > 0 ? _closureStack.Peek() : null;
+        if (bindings == null || bindings.Count == 0
+            || HasDirectSuspension(stmt.Body)
+            || IsDeferredCellContext(enclosingClosure))
         {
             Visit(stmt.Body);
             return;
@@ -285,4 +299,42 @@ public sealed class PerIterationCellAnalyzer : AstVisitorBase
         Stmt.Function f => f.IsAsync || f.IsGenerator,
         _ => false,
     };
+
+    /// <summary>
+    /// True for state-machine contexts whose closure-capture path does not yet snapshot a
+    /// per-iteration cell by reference (#650 follow-up): async arrows and async generators.
+    /// Loops directly enclosed by one of these are left on the value-snapshot path.
+    /// </summary>
+    private static bool IsDeferredCellContext(object? closure) => closure switch
+    {
+        Expr.ArrowFunction { IsAsync: true } => true,
+        Stmt.Function { IsAsync: true, IsGenerator: true } => true,
+        _ => false,
+    };
+
+    /// <summary>
+    /// True if <paramref name="body"/> contains an <c>await</c> or <c>yield</c> that would
+    /// suspend the ENCLOSING state machine — i.e. not nested inside another closure. A loop
+    /// with such a suspension spans multiple MoveNext calls, so its per-iteration cell could
+    /// not live as a local; such loops are left on the snapshot path.
+    /// </summary>
+    private static bool HasDirectSuspension(Stmt body)
+    {
+        var v = new DirectSuspensionVisitor();
+        v.Visit(body);
+        return v.Found;
+    }
+
+    private sealed class DirectSuspensionVisitor : AstVisitorBase
+    {
+        public bool Found { get; private set; }
+
+        protected override void VisitAwait(Expr.Await expr) => Found = true;
+        protected override void VisitYield(Expr.Yield expr) => Found = true;
+
+        // Do not descend into nested closures: their await/yield suspends THEM, not the
+        // loop's enclosing state machine.
+        protected override void VisitArrowFunction(Expr.ArrowFunction expr) { }
+        protected override void VisitFunction(Stmt.Function stmt) { }
+    }
 }

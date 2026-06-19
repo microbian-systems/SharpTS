@@ -21,6 +21,8 @@ public class AsyncArrowVariableResolver : IVariableResolver
     private readonly ILGenerator _il;
     private readonly AsyncArrowStateMachineBuilder _builder;
     private readonly Dictionary<string, LocalBuilder> _locals;
+    private readonly IReadOnlyDictionary<string, LocalBuilder>? _cellBindingLocals;
+    private readonly FieldInfo? _strongBoxValueField;
 
     /// <summary>
     /// Creates a new resolver for async arrow variable access.
@@ -28,19 +30,33 @@ public class AsyncArrowVariableResolver : IVariableResolver
     /// <param name="il">The IL generator for emitting instructions</param>
     /// <param name="builder">The async arrow state machine builder</param>
     /// <param name="locals">Dictionary of non-hoisted local variables</param>
+    /// <param name="cellBindingLocals">Per-iteration cell locals (#650), shared with the emitter; null disables cells.</param>
+    /// <param name="strongBoxValueField">The StrongBox&lt;object&gt;.Value field, for cell dereference.</param>
     public AsyncArrowVariableResolver(
         ILGenerator il,
         AsyncArrowStateMachineBuilder builder,
-        Dictionary<string, LocalBuilder> locals)
+        Dictionary<string, LocalBuilder> locals,
+        IReadOnlyDictionary<string, LocalBuilder>? cellBindingLocals = null,
+        FieldInfo? strongBoxValueField = null)
     {
         _il = il;
         _builder = builder;
         _locals = locals;
+        _cellBindingLocals = cellBindingLocals;
+        _strongBoxValueField = strongBoxValueField;
     }
 
     /// <inheritdoc />
     public StackType? TryLoadVariable(string name)
     {
+        // 0. Per-iteration loop-binding cell (#650): read through the StrongBox.
+        if (_cellBindingLocals != null && _cellBindingLocals.TryGetValue(name, out var loadCell))
+        {
+            _il.Emit(OpCodes.Ldloc, loadCell);
+            _il.Emit(OpCodes.Ldfld, _strongBoxValueField!);
+            return StackType.Unknown;
+        }
+
         // 1. Check if it's a parameter of this arrow
         if (_builder.ParameterFields.TryGetValue(name, out var paramField))
         {
@@ -81,6 +97,7 @@ public class AsyncArrowVariableResolver : IVariableResolver
     /// <inheritdoc />
     public bool HasVariable(string name)
     {
+        if (_cellBindingLocals != null && _cellBindingLocals.ContainsKey(name)) return true;
         if (_builder.ParameterFields.ContainsKey(name)) return true;
         if (_builder.LocalFields.ContainsKey(name)) return true;
         if (_builder.IsCaptured(name) && _builder.CapturedFieldMap.ContainsKey(name)) return true;
@@ -91,6 +108,17 @@ public class AsyncArrowVariableResolver : IVariableResolver
     /// <inheritdoc />
     public bool TryStoreVariable(string name)
     {
+        // 0. Per-iteration loop-binding cell (#650): write through the StrongBox.
+        if (_cellBindingLocals != null && _cellBindingLocals.TryGetValue(name, out var storeCell))
+        {
+            var cellTemp = _il.DeclareLocal(typeof(object));
+            _il.Emit(OpCodes.Stloc, cellTemp);
+            _il.Emit(OpCodes.Ldloc, storeCell);
+            _il.Emit(OpCodes.Ldloc, cellTemp);
+            _il.Emit(OpCodes.Stfld, _strongBoxValueField!);
+            return true;
+        }
+
         // 1. Check if it's a parameter of this arrow
         if (_builder.ParameterFields.TryGetValue(name, out var paramField))
         {

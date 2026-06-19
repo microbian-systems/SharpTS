@@ -66,8 +66,12 @@ public partial class AsyncArrowMoveNextEmitter
         {
             _il.Emit(OpCodes.Dup); // Keep display class instance on stack
 
-            // Load the captured variable using the capture-population loader
-            LoadVariableForCapture(capturedVar);
+            // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE, not its
+            // value (LoadVariableForCapture would deref the cell). The closure body derefs.
+            if (_ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
+                _il.Emit(OpCodes.Ldloc, cellLocal);
+            else
+                LoadVariableForCapture(capturedVar);
 
             _il.Emit(OpCodes.Stfld, field);
         }

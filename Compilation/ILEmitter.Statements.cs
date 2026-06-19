@@ -376,55 +376,6 @@ public partial class ILEmitter
         }
     }
 
-    /// <summary>
-    /// For each per-iteration cell binding (#650), wraps the loop variable's initial
-    /// value (already stored in its plain local by the initializer) in a fresh
-    /// <c>StrongBox&lt;object&gt;</c>, stores the box in a dedicated local, and registers
-    /// it in <see cref="CompilationContext.CellBindingLocals"/> so subsequent
-    /// body/condition/increment access dereferences the cell. Returns the names set up.
-    /// </summary>
-    private List<(string Name, LocalBuilder? Prior)> EmitForLoopCellInit(IEnumerable<string> cellNames)
-    {
-        var active = new List<(string, LocalBuilder?)>();
-        foreach (var name in cellNames)
-        {
-            var local = _ctx.Locals.GetLocal(name);
-            if (local == null) continue; // defensive: binding has no local slot
-
-            IL.Emit(OpCodes.Ldloc, local);
-            if (local.LocalType.IsValueType)
-                IL.Emit(OpCodes.Box, local.LocalType);
-            IL.Emit(OpCodes.Newobj, _ctx.Types.StrongBoxOfObjectCtor);
-
-            var cellLocal = IL.DeclareLocal(_ctx.Types.StrongBoxOfObject);
-            IL.Emit(OpCodes.Stloc, cellLocal);
-            // Save any shadowed outer cell of the same name (nested same-named loops)
-            // so it is restored on loop exit rather than dropped.
-            _ctx.CellBindingLocals.TryGetValue(name, out var prior);
-            _ctx.CellBindingLocals[name] = cellLocal;
-            active.Add((name, prior));
-        }
-        return active;
-    }
-
-    /// <summary>
-    /// ECMA-262 13.7.4 CreatePerIterationEnvironment analog: allocates a fresh cell for
-    /// each binding, copying the current cell's value forward. Closures created in the
-    /// just-finished iteration keep their (old) cell; the loop's increment then operates
-    /// on the new cell.
-    /// </summary>
-    private void EmitForLoopCellCopyForward(List<(string Name, LocalBuilder? Prior)> activeCells)
-    {
-        foreach (var (name, _) in activeCells)
-        {
-            var cellLocal = _ctx.CellBindingLocals[name];
-            IL.Emit(OpCodes.Ldloc, cellLocal);
-            IL.Emit(OpCodes.Ldfld, _ctx.Types.StrongBoxOfObjectValueField);
-            IL.Emit(OpCodes.Newobj, _ctx.Types.StrongBoxOfObjectCtor);
-            IL.Emit(OpCodes.Stloc, cellLocal);
-        }
-    }
-
     protected override void EmitIf(Stmt.If i)
     {
         // Check for dead code elimination optimization
