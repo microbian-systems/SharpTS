@@ -584,18 +584,27 @@ public class JSONTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void JSON_Stringify_PlainObjectWithPrimitiveValueField_NotUnwrapped(ExecutionMode mode)
     {
         // An ordinary object that merely has a __primitiveValue field (but no __primitiveType) is
-        // NOT a boxed wrapper and must serialize verbatim — the interpreter gates the unwrap on
-        // __primitiveType, matching the sibling NumberPrototypeMethodWrapper et al. (and the spec's
-        // [[NumberData]]/[[StringData]]/[[BooleanData]] internal-slot semantics). Compiled mode
-        // unwraps on __primitiveValue alone, so it diverges here (too loose) — tracked by #565.
+        // NOT a boxed wrapper and must serialize verbatim — the unwrap is gated on __primitiveType
+        // being a string, matching the spec's [[NumberData]]/[[StringData]]/[[BooleanData]] semantics.
         var source = """
             console.log(JSON.stringify({ __primitiveValue: 7 }));
             """;
         Assert.Equal("{\"__primitiveValue\":7}\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_PlainObjectWithPrimitiveValueField_WithSpace_NotUnwrapped(ExecutionMode mode)
+    {
+        // Same as above but exercises the StringifyFull code path (replacer/space present).
+        var source = """
+            console.log(JSON.stringify({ __primitiveValue: 7 }, null, 2));
+            """;
+        Assert.Equal("{\n  \"__primitiveValue\": 7\n}\n", TestHarness.Run(source, mode));
     }
 
     #endregion
