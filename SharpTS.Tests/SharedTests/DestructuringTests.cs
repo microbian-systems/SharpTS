@@ -341,6 +341,105 @@ public class DestructuringTests
 
     #endregion
 
+    #region Nested over a mixed (non-tuple) array literal (#783)
+
+    // `[[7], 8]` infers as `(number[] | number)[]`; without contextual typing the desugared `src[0]`
+    // is a non-indexable union and the nested `[m]` pattern fails to type-check. The binding pattern's
+    // shape is threaded as a tuple context so the literal infers as `[number[], number]`.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedDestructuring_MixedArrayLiteral_Declaration(ExecutionMode mode)
+    {
+        var source = """
+            const [[m], n] = [[7], 8];
+            console.log(m);
+            console.log(n);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("7\n8\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedDestructuring_MixedArrayLiteral_Assignment(ExecutionMode mode)
+    {
+        var source = """
+            let m = 0;
+            let n = 0;
+            [[m], n] = [[7], 8];
+            console.log(m);
+            console.log(n);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("7\n8\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedDestructuring_MixedArrayLiteral_ExplicitTupleAnnotation(ExecutionMode mode)
+    {
+        var source = """
+            const [[m], n]: [number[], number] = [[7], 8];
+            console.log(m);
+            console.log(n);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("7\n8\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedDestructuring_MixedArrayLiteral_DeepNesting(ExecutionMode mode)
+    {
+        var source = """
+            const [[[x]], y] = [[[1]], 2];
+            console.log(x);
+            console.log(y);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n2\n", output);
+    }
+
+    // Bonus: a flat mixed literal source now infers element types positionally (matching tsc), so the
+    // element methods (`toFixed`/`toUpperCase`) type-check instead of reporting a spurious error.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Destructuring_FlatMixedArrayLiteral_ElementTypesUsable(ExecutionMode mode)
+    {
+        var source = """
+            const [a, b] = [1, "two"];
+            console.log(a.toFixed(1));
+            console.log(b.toUpperCase());
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1.0\nTWO\n", output);
+    }
+
+    // Regression guard: a UNIFORM nested literal must stay an array (`number[]`), NOT be over-tupled —
+    // `a.push(...)` would fail to type-check on a fixed-length tuple.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedDestructuring_UniformArrayLiteral_StaysArray(ExecutionMode mode)
+    {
+        var source = """
+            const [a, b] = [[1, 2], [3, 4]];
+            a.push(9);
+            console.log(a.length);
+            console.log(b[0]);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("3\n3\n", output);
+    }
+
+    #endregion
+
     #region String Rest Element (#753)
 
     // #753: a rest element over a STRING source must collect a fresh ARRAY of characters, not bind

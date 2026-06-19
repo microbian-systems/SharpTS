@@ -404,7 +404,12 @@ public abstract record Stmt
     /// would otherwise default to <c>any</c> — suppressing TS2403 for a later <c>var z: number;</c>.
     /// The type checker infers the binding's declared type from this expression (widened, errors
     /// suppressed since they surface at the original site); the interpreter and IL compiler ignore it.</param>
-    public record Var(Token Name, string? TypeAnnotation, Expr? Initializer, bool HasDefiniteAssignmentAssertion = false, bool IsVar = false, TypeNode? TypeAnnotationNode = null, Expr? HoistTypeInferenceInitializer = null) : Stmt;
+    /// <param name="InitializerContext">A synthetic contextual type used ONLY to guide inference of the
+    /// initializer (not as the binding's declared type — it imposes no TS2322 compatibility check and the
+    /// inferred type is still kept). Set by the destructuring desugarer to carry the binding pattern's
+    /// shape so a mixed array literal source infers as a tuple instead of an array (#783). Erased at
+    /// runtime (interpreter and IL compiler ignore it).</param>
+    public record Var(Token Name, string? TypeAnnotation, Expr? Initializer, bool HasDefiniteAssignmentAssertion = false, bool IsVar = false, TypeNode? TypeAnnotationNode = null, Expr? HoistTypeInferenceInitializer = null, TypeNode? InitializerContext = null) : Stmt;
     /// <summary>
     /// Const variable declaration. Separate from Var for cleaner const-specific handling (e.g., unique symbol).
     /// Initializer is non-nullable since const always requires initialization.

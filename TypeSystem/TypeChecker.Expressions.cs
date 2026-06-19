@@ -60,6 +60,15 @@ public partial class TypeChecker
                 _typeMap.Set(expr, tupleType);
                 return tupleType;
             }
+            // The destructuring desugarer wraps the source in `__arrayDestructure(src)` (#685). Re-thread
+            // the contextual shape to the wrapped source so a mixed array literal infers as a tuple, then
+            // normalize as the plain call branch does (#783).
+            case Expr.Call { Callee: Expr.Variable { Name.Lexeme: BuiltInNames.ArrayDestructure }, Arguments: [var src] }:
+            {
+                var sourceType = NormalizeArrayDestructureSourceType(CheckExprWithContext(src, contextualType));
+                _typeMap.Set(expr, sourceType);
+                return sourceType;
+            }
             default:
                 return CheckExpr(expr);
         }

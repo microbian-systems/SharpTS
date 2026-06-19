@@ -204,7 +204,11 @@ public partial class TypeChecker
                 }
                 else
                 {
-                    initializerType = CheckExprWithContext(initializer, declaredType);
+                    // An un-annotated synthetic temp may carry a contextual shape (the destructuring
+                    // binding pattern) used ONLY to guide inference — never as the binding's type and with
+                    // no compatibility check; the inferred result below is still what's kept (#783).
+                    TypeInfo? context = declaredType ?? ResolveAnnotation(null, stmt.InitializerContext);
+                    initializerType = CheckExprWithContext(initializer, context);
                 }
 
                 if (declaredType != null)
