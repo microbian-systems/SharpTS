@@ -169,9 +169,18 @@ public partial class ILCompiler
     /// no such write-capture, leaving their state machines fully standalone. Covers both sync (#724)
     /// and async (#725) instance generator methods; static and plain methods use other paths.
     /// </summary>
-    private void RegisterGeneratorMethodFunctionDisplayClasses(Stmt.Class classStmt, string qualifiedClassName)
+    private void RegisterGeneratorMethodFunctionDisplayClasses(Stmt.Class classStmt, string qualifiedClassName) =>
+        RegisterGeneratorMethodFunctionDisplayClasses(classStmt.Methods, qualifiedClassName);
+
+    /// <summary>
+    /// Shared core of <see cref="RegisterGeneratorMethodFunctionDisplayClasses(Stmt.Class, string)"/>, reused
+    /// for class EXPRESSIONS (#789). <c>Expr.ClassExpr.Methods</c> is the same <c>List&lt;Stmt.Function&gt;</c>
+    /// element type as <c>Stmt.Class.Methods</c>, so both class kinds register their generator-method function
+    /// display classes through this single pass.
+    /// </summary>
+    private void RegisterGeneratorMethodFunctionDisplayClasses(IReadOnlyList<Stmt.Function> methods, string qualifiedClassName)
     {
-        foreach (var method in classStmt.Methods)
+        foreach (var method in methods)
         {
             if (method.Body == null || !method.IsGenerator || method.IsStatic)
                 continue;

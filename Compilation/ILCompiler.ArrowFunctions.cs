@@ -103,6 +103,13 @@ public partial class ILCompiler
     /// </summary>
     private void FinalizeArrowFunctionCollection()
     {
+        // #789: register function display classes for class-EXPRESSION generator methods whose arrows
+        // write a captured method local. Class declarations do this in Phase 4 (DefineClass); class
+        // expressions are only collected during the Phase-5 arrow walk, so the registration is sequenced
+        // here — after every module has been walked (all class-expr names assigned) and before the
+        // PropagateFunctionDCRequirements pass below, which needs the function DC fields already present.
+        RegisterClassExpressionGeneratorMethodFunctionDisplayClasses();
+
         // Propagate function DC requirements through arrow nesting
         // If an inner arrow needs $functionDC, parent arrows also need it
         PropagateFunctionDCRequirements();
@@ -823,11 +830,14 @@ public partial class ILCompiler
                 // body, so clear the immediate-callable marker while walking them.
                 var prevCallableCE = _currentEnclosingCallable;
                 _currentEnclosingCallable = null;
-                // Also collect arrows inside class expression methods
+                // Also collect arrows inside class expression methods. Walk each method via
+                // CollectArrowsFromStmt(method) — not its body statements directly — so the Stmt.Function
+                // case records the method as `_currentEnclosingFunctionStmt`, the arrow→method mapping
+                // PropagateFunctionDCRequirements needs to route a generator method's write-capture through
+                // its function display class (#789). Mirrors the Stmt.Class declaration path above.
                 foreach (var method in ce.Methods)
                     if (method.Body != null)
-                        foreach (var s in method.Body)
-                            CollectArrowsFromStmt(s);
+                        CollectArrowsFromStmt(method);
                 // Collect arrows in field initializers
                 foreach (var field in ce.Fields)
                     if (field.Initializer != null)
@@ -840,6 +850,21 @@ public partial class ILCompiler
                 _currentEnclosingCallable = prevCallableCE;
                 break;
         }
+    }
+
+    /// <summary>
+    /// #789: registers function display classes for class-EXPRESSION generator methods that write a
+    /// captured method local, mirroring the Phase-4 registration class declarations get via
+    /// <see cref="RegisterGeneratorMethodFunctionDisplayClasses(Stmt.Class, string)"/>. Uses the generated
+    /// class-expr name (assigned by <see cref="CollectClassExpression"/>) as the qualified name; the key is
+    /// only required to be internally consistent because the DC-key dictionaries are AST-identity-keyed.
+    /// Must run before <see cref="PropagateFunctionDCRequirements"/>.
+    /// </summary>
+    private void RegisterClassExpressionGeneratorMethodFunctionDisplayClasses()
+    {
+        foreach (var classExpr in _classExprs.ToDefine)
+            if (_classExprs.Names.TryGetValue(classExpr, out var name))
+                RegisterGeneratorMethodFunctionDisplayClasses(classExpr.Methods, name);
     }
 
     /// <summary>
