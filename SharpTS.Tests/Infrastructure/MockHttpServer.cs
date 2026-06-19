@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 
@@ -229,38 +230,68 @@ public class MockHttpServer : IDisposable
     }
 
     /// <summary>
-    /// Starts the server with retry logic for port binding.
+    /// Starts the server. Each attempt binds the listener, launches the accept loop, then probes
+    /// the server with a real loopback request before returning. A bind exception OR a server that
+    /// binds but never answers (a port that was reserved but is unhealthy, or an accept loop that
+    /// hasn't begun serving) re-rolls the port and retries. This makes <see cref="Start"/> not
+    /// return until the server has actually responded, eliminating the accept-timing race and
+    /// catching silent bad binds that the old bind-exception-only retry missed.
     /// </summary>
     public void Start()
     {
-        const int maxRetries = 3;
-        Exception? lastException = null;
+        const int maxAttempts = 5;
+        Exception? lastError = null;
 
-        for (int retry = 0; retry < maxRetries; retry++)
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
             try
             {
                 _listener.Start();
-                break; // Success
             }
-            catch (HttpListenerException ex) when (retry < maxRetries - 1)
+            catch (HttpListenerException ex)
             {
-                lastException = ex;
-                // Port may have been taken - try a new one
-                ReleasePort(Port);
-                _listener.Close();
-                _listener = new HttpListener();
-                Port = FindAndReservePort();
-                _listener.Prefixes.Add(BaseUrl);
-                Thread.Sleep(10); // Small delay before retry
+                lastError = ex;
+                RebuildOnNewPort();
+                continue;
             }
+
+            StartAcceptLoop();
+
+            if (ProbeReady(TimeSpan.FromSeconds(2)))
+            {
+                return; // Server is bound AND answering requests.
+            }
+
+            // Bound but never became ready: tear this listener down (which makes the accept loop's
+            // GetContextAsync throw HttpListenerException and exit) and re-roll the port.
+            lastError = new InvalidOperationException($"MockHttpServer on port {Port} never became ready");
+            try { _listener.Stop(); } catch { /* ignore */ }
+            RebuildOnNewPort();
         }
 
-        if (!_listener.IsListening)
-        {
-            throw lastException ?? new InvalidOperationException("Failed to start listener");
-        }
+        throw lastError ?? new InvalidOperationException("Failed to start MockHttpServer");
+    }
 
+    /// <summary>
+    /// Releases the current port and rebuilds a fresh listener on a newly reserved port.
+    /// Used between failed start attempts (bind exception or failed readiness probe).
+    /// </summary>
+    private void RebuildOnNewPort()
+    {
+        ReleasePort(Port);
+        try { _listener.Close(); } catch { /* ignore */ }
+        _listener = new HttpListener();
+        Port = FindAndReservePort();
+        _listener.Prefixes.Add(BaseUrl);
+        Thread.Sleep(10); // Small delay before retry
+    }
+
+    /// <summary>
+    /// Launches the background accept loop for the current listener. The loop exits on cancellation
+    /// (<see cref="Dispose"/>) or when the listener is stopped (a failed start attempt).
+    /// </summary>
+    private void StartAcceptLoop()
+    {
         _listenerTask = Task.Run(async () =>
         {
             while (!_cts.Token.IsCancellationRequested)
@@ -281,6 +312,35 @@ public class MockHttpServer : IDisposable
                 }
             }
         }, _cts.Token);
+    }
+
+    /// <summary>
+    /// Probes the server with a real loopback HTTP request until it answers or the budget elapses.
+    /// Any completed HTTP response (even a 404 for the sentinel path) proves the accept loop is
+    /// serving, so this never depends on a specific route being registered, and it deliberately
+    /// avoids user routes (including the /slow delay route).
+    /// </summary>
+    private bool ProbeReady(TimeSpan budget)
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromMilliseconds(400) };
+        var probeUrl = BaseUrl + "__ready__";
+        var deadline = DateTime.UtcNow + budget;
+
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                using var resp = client.GetAsync(probeUrl).GetAwaiter().GetResult();
+                return true; // Got an HTTP status back -> the server is serving.
+            }
+            catch
+            {
+                // Connection refused / reset / timeout: not ready yet.
+            }
+            Thread.Sleep(25);
+        }
+
+        return false;
     }
 
     private async Task HandleRequestAsync(HttpListenerContext context)
