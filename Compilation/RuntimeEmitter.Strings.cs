@@ -1712,7 +1712,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, validLabel);
 
         il.MarkLabel(throwLabel);
-        il.Emit(OpCodes.Ldstr, "Invalid code point");
+        // Include the offending value for parity with the interpreter and
+        // tsc/V8 (e.g. "Invalid code point -1"). dLocal holds the ToNumber
+        // result; route it through ToJsString (ECMA ToString → JS number
+        // formatting) so NaN/fractional/out-of-range values print correctly.
+        // This sits only on the cold error path, so the box has no hot cost.
+        il.Emit(OpCodes.Ldstr, "Invalid code point ");
+        il.Emit(OpCodes.Ldloc, dLocal);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String));
         il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
         il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);

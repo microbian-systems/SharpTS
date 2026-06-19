@@ -651,6 +651,21 @@ public class StringMethodTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_FromCodePoint_InvalidCodePoint_MessageIncludesValue(ExecutionMode mode)
+    {
+        // #731: the RangeError message must carry the offending code-point value
+        // for parity with the interpreter and tsc/V8 (compiled previously dropped it).
+        var source = """
+            try { String.fromCodePoint(-1); }
+            catch (e: any) { console.log(e.message); }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Invalid code point -1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void String_FromCodePoint_BasicBMP(ExecutionMode mode)
     {
         var source = """
