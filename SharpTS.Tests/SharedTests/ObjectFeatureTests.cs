@@ -2293,6 +2293,83 @@ public class ObjectFeatureTests
         Assert.Equal("10\n10\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_ReadsInheritedValueViaSetterOnlyAccessor(ExecutionMode mode)
+    {
+        // #801: ECMA-262 §6.2.5.5 ToPropertyDescriptor reads `value` via HasProperty/Get,
+        // walking the prototype chain. A descriptor whose `value` is an INHERITED
+        // setter-only accessor IS a data descriptor with value === undefined, so the
+        // target property must be overwritten to undefined (not preserved).
+        var source = """
+            const proto: any = {};
+            Object.defineProperty(proto, "value", { set() {} });
+            const Ctor: any = function () {};
+            Ctor.prototype = proto;
+            const child: any = new Ctor();
+            const o: any = { property: 120 };
+            Object.defineProperty(o, "property", child);
+            console.log(typeof o.property);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("undefined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_AttributeOnlyRedefinePreservesValue(ExecutionMode mode)
+    {
+        // #801: an attribute-only descriptor (no `value` key) must preserve the existing
+        // value rather than wiping it to the undefined sentinel.
+        var source = """
+            const o: any = { a: 42 };
+            Object.defineProperty(o, "a", { writable: false });
+            console.log(o.a);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Object_DefineProperty_ReadsInheritedEnumerableFromRegExpPrototype(ExecutionMode mode)
+    {
+        // #801: a descriptor's INHERITED `enumerable` (here via a user-set
+        // RegExp.prototype property) must be read through the prototype chain. RegExp
+        // instances expose user-set prototype properties (built-in prototype mutability).
+        // Interpreter-only: compiled $RegExp prototype mutability is tracked separately.
+        var source = """
+            (RegExp.prototype as any).enumerable = true;
+            const regObj: any = new RegExp();
+            const obj: any = {};
+            Object.defineProperty(obj, "property", regObj);
+            let seen = false;
+            for (const p in obj) if (p === "property") seen = true;
+            console.log(seen);
+            console.log((regObj as any).enumerable);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Object_RegExp_InheritsUserSetPrototypeProperty(ExecutionMode mode)
+    {
+        // #801/#474-adjacent: a plain user property set on RegExp.prototype is visible
+        // on RegExp instances via the prototype chain.
+        var source = """
+            (RegExp.prototype as any).foo = 1;
+            console.log((new RegExp() as any).foo);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n", output);
+    }
+
     // ========================
     // Object.defineProperties
     // ========================
