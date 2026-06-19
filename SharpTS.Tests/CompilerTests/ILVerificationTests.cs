@@ -1621,4 +1621,51 @@ public class ILVerificationTests
         Assert.Equal("[ x, x, x ]\n", output);
         Assert.Equal(output, TestHarness.RunInterpreted(source));
     }
+
+    // #445: function with a typed-array parameter (T[]) emits unverifiable IL at every call site.
+    // The strict CLR mapping of string[] is List<string> and number[] is List<double>, but the
+    // runtime value is always $TSArray/List<object>. ILVerify rejects the mismatch because generics
+    // are invariant — List<object> is not assignable to List<string>. Fixed in #643: CoerceParamSlotType
+    // falls back to object for any List<T> via IsDynamicRuntimeCollection, so the parameter slot (and
+    // the call-site target type) is object, which accepts any reference value.
+    // Covers all variants from the issue's characterization table: void/string/array returns,
+    // literal/variable args, number[] params, class methods, and inner functions.
+    [Fact]
+    public void TypedArrayParameter_PassesILVerification()
+    {
+        var source = """
+            function f1(items: string[]): void { console.log(items.length); }
+            f1(["a", "b"]);
+
+            function f2(items: string[]): void { console.log(items.length); }
+            const arr: string[] = ["x", "y", "z"];
+            f2(arr);
+
+            function f3(xs: number[]): void { console.log(xs[0]); }
+            f3([1, 2, 3]);
+
+            function f4(items: string[]): string { return items[0]; }
+            console.log(f4(["ok"]));
+
+            function f5(items: string[]): string[] { return items; }
+            console.log(f5(["r"])[0]);
+
+            class C {
+                process(items: string[]): number { return items.length; }
+            }
+            console.log(new C().process(["a", "b", "c"]));
+
+            function outer(): void {
+                function inner(xs: number[]): void { console.log(xs.length); }
+                inner([10, 20]);
+            }
+            outer();
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("2\n3\n1\nok\nr\n3\n2\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
 }
