@@ -202,4 +202,73 @@ public class ComputedSymbolMethodTests
 
         Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
     }
+
+    // #757: object literals accept the generator/async method modifiers (`*`, `async`, `async *`),
+    // including the computed symbol-keyed form, which previously failed to parse ("Expect property
+    // name"). The class-body parser already handled these (#592); this is the object-literal parser.
+    // Tests are kept free of dynamic `this` inside the generator (object generator methods lose
+    // `this` in both modes — pre-existing #775).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ObjectLiteral_ComputedGeneratorMethod_Iterates(ExecutionMode mode)
+    {
+        var source = """
+            const o = { *[Symbol.iterator]() { yield 1; yield 2; } };
+            for (const x of o) console.log(x);
+            """;
+
+        Assert.Equal("1\n2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ObjectLiteral_NamedGeneratorMethod_Iterates(ExecutionMode mode)
+    {
+        var source = """
+            const o = { *gen() { yield 10; yield 20; } };
+            for (const x of o.gen()) console.log(x);
+            """;
+
+        Assert.Equal("10\n20\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ObjectLiteral_AsyncMethod_Resolves(ExecutionMode mode)
+    {
+        var source = """
+            const o = { async foo() { return 5; } };
+            o.foo().then(v => console.log("async:", v));
+            """;
+
+        Assert.Equal("async: 5\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ObjectLiteral_AsyncGeneratorMethod_Iterates(ExecutionMode mode)
+    {
+        var source = """
+            const o = { async *ag() { yield 1; yield 2; } };
+            async function main() { for await (const x of o.ag()) console.log("ag:", x); }
+            main();
+            """;
+
+        Assert.Equal("ag: 1\nag: 2\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void ObjectLiteral_AsyncAsPropertyName_StillParses()
+    {
+        // `async` is a method/property modifier only before a property-name start or `*`; otherwise
+        // it remains an ordinary property name ({ async }, { async: 1 }, { async() {} }).
+        var source = """
+            const a = { async: 1 };
+            const b = { async() { return 2; } };
+            console.log(a.async, b.async());
+            """;
+
+        Assert.Equal("1 2\n", TestHarness.RunInterpreted(source));
+    }
 }
