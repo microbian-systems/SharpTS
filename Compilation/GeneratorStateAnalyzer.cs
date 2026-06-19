@@ -33,7 +33,12 @@ public class GeneratorStateAnalyzer : AstVisitorBase
         // Per-binding storage names for block-scoped let/const declarations that shadow an enclosing
         // binding, keyed by declaration/reference AST node (see GeneratorBlockScopeRenamer, #711). The
         // emitter consults the same map so each shadowing binding gets its own field/local.
-        IReadOnlyDictionary<object, string> BlockScopeRenames
+        IReadOnlyDictionary<object, string> BlockScopeRenames,
+        // Capturing-arrow node → (captured source name → renamed generator storage) (#767). When a
+        // shadowing binding that was renamed above is captured by an inner arrow, the arrow's field is
+        // sourced from the renamed storage instead of the outer same-named binding. Empty in the common
+        // case; null is treated as empty by the emitter.
+        IReadOnlyDictionary<object, IReadOnlyDictionary<string, string>>? BlockScopeCaptureRenames = null
     );
 
     // State during analysis
@@ -56,6 +61,9 @@ public class GeneratorStateAnalyzer : AstVisitorBase
     // Block-scope shadow renames for this function (#711). Maps a declaration/reference AST node to
     // the disambiguated storage name its binding uses; nodes absent from the map keep their lexeme.
     private IReadOnlyDictionary<object, string> _renames = new Dictionary<object, string>();
+    // Per-arrow capture-source pivot for renamed shadows captured by inner arrows (#767).
+    private IReadOnlyDictionary<object, IReadOnlyDictionary<string, string>> _captureRenames =
+        new Dictionary<object, IReadOnlyDictionary<string, string>>();
 
     /// <summary>
     /// Analyzes a generator function to determine yield points and hoisted variables.
@@ -66,7 +74,9 @@ public class GeneratorStateAnalyzer : AstVisitorBase
 
         // Disambiguate block-scoped let/const declarations that shadow an enclosing binding so the
         // hoisting decision below is made per-binding rather than per-name (#711).
-        _renames = GeneratorBlockScopeRenamer.Compute(func);
+        var renameResult = GeneratorBlockScopeRenamer.Compute(func);
+        _renames = renameResult.Renames;
+        _captureRenames = renameResult.CaptureRenames;
 
         // Collect parameters as variables that need hoisting
         HashSet<string> parameters = [];
@@ -106,7 +116,8 @@ public class GeneratorStateAnalyzer : AstVisitorBase
             HasYieldStar: _hasYieldStar,
             ForOfLoopsWithYield: [.. _forOfLoopsWithYield],
             ForInLoopsWithYield: [.. _forInLoopsWithYield],
-            BlockScopeRenames: _renames
+            BlockScopeRenames: _renames,
+            BlockScopeCaptureRenames: _captureRenames
         );
     }
 

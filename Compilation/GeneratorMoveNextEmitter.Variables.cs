@@ -11,6 +11,12 @@ public partial class GeneratorMoveNextEmitter
 
     private static Token RenameToken(Token original, string lexeme) =>
         new(original.Type, lexeme, original.Literal, original.Line, original.Start);
+
+    // #767: a nested-block shadow captured (read-only) by an inner arrow is renamed to its own storage;
+    // pivot the arrow's capture SOURCE to that storage so it reads the shadow's value, not the outer
+    // same-named binding's hoisted field. The base EmitCapturingArrowViaHooks consults this.
+    protected override string ResolveCaptureSourceName(Expr.ArrowFunction af, string capturedVar) =>
+        PivotCaptureSource(_analysis.BlockScopeCaptureRenames, af, capturedVar);
     // Expose the state machine's function display class field to the base arrow emitter so a
     // capturing arrow inside the generator body gets its $functionDC threaded in (#674).
     protected override FieldBuilder? GetFunctionDCField() => _builder.FunctionDCField;

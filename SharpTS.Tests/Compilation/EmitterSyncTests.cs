@@ -120,6 +120,7 @@ public class EmitterSyncTests
             "GetThisField",
             "GetHoistedVariableField",
             "GetFunctionDCField",   // #674: exposes <>__functionDC so the base arrow emitter threads it in
+            "ResolveCaptureSourceName", // #767: pivot a captured nested-block shadow's source to its renamed storage
             // --- Genuinely different behavior ---
             "EmitReturn",           // Generator return: set state -2, return false
             "EmitTryCatch",         // Generator exception handling
