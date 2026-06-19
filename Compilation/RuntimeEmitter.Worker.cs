@@ -936,6 +936,8 @@ public partial class RuntimeEmitter
 
         var endLabel = il.DefineLabel();
         var isEmittedSharedArrayBufferLabel = il.DefineLabel();
+        var isTSArrayLabel = il.DefineLabel();
+        var isTypedArrayLabel = il.DefineLabel();
         var isNumberLabel = il.DefineLabel();
         var unsupportedTypeLabel = il.DefineLabel();
         var argNotNullLabel = il.DefineLabel();
@@ -971,7 +973,7 @@ public partial class RuntimeEmitter
         // Check if arg is $SharedArrayBuffer (emitted type)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.SharedArrayBufferType);
-        il.Emit(OpCodes.Brfalse, isNumberLabel);
+        il.Emit(OpCodes.Brfalse, isTSArrayLabel);
 
         // It's $SharedArrayBuffer - use emitted buffer constructor
         il.Emit(OpCodes.Ldarg_0);  // buffer
@@ -981,6 +983,107 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, nullableIntLocal);  // length = null
         il.Emit(OpCodes.Newobj, bufferCtor);
         il.Emit(OpCodes.Br, endLabel);
+
+        // Check if arg is $Array (JS array literal like [1, 2, 3])
+        il.MarkLabel(isTSArrayLabel);
+        {
+            var loopStartLabel = il.DefineLabel();
+            var loopDoneLabel = il.DefineLabel();
+            var tsArrLocal = il.DeclareLocal(_types.Object);
+            var arrLengthLocal = il.DeclareLocal(_types.Int32);
+            var arrResultLocal = il.DeclareLocal(_types.Object);
+            var arrElemLocal = il.DeclareLocal(_types.Object);
+            var arrILocal = il.DeclareLocal(_types.Int32);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+            il.Emit(OpCodes.Brfalse, isTypedArrayLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+            il.Emit(OpCodes.Stloc, tsArrLocal);
+            il.Emit(OpCodes.Ldloc, tsArrLocal);
+            il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+            il.Emit(OpCodes.Callvirt, runtime.TSArrayLengthGetter);
+            il.Emit(OpCodes.Stloc, arrLengthLocal);
+            il.Emit(OpCodes.Ldloc, arrLengthLocal);
+            il.Emit(OpCodes.Newobj, lengthCtor);
+            il.Emit(OpCodes.Stloc, arrResultLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, arrILocal);
+            il.MarkLabel(loopStartLabel);
+            il.Emit(OpCodes.Ldloc, arrILocal);
+            il.Emit(OpCodes.Ldloc, arrLengthLocal);
+            il.Emit(OpCodes.Bge, loopDoneLabel);
+            il.Emit(OpCodes.Ldloc, tsArrLocal);
+            il.Emit(OpCodes.Ldloc, arrILocal);
+            il.Emit(OpCodes.Call, runtime.GetElement);
+            il.Emit(OpCodes.Stloc, arrElemLocal);
+            il.Emit(OpCodes.Ldloc, arrResultLocal);
+            il.Emit(OpCodes.Castclass, runtime.TypedArrayBaseType);
+            il.Emit(OpCodes.Ldloc, arrILocal);
+            il.Emit(OpCodes.Ldloc, arrElemLocal);
+            il.Emit(OpCodes.Callvirt, runtime.TypedArrayElementSet);
+            il.Emit(OpCodes.Ldloc, arrILocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, arrILocal);
+            il.Emit(OpCodes.Br, loopStartLabel);
+            il.MarkLabel(loopDoneLabel);
+            il.Emit(OpCodes.Ldloc, arrResultLocal);
+            il.Emit(OpCodes.Br, endLabel);
+        }
+
+        // Check if arg is $TypedArray (copy constructor from another typed array)
+        il.MarkLabel(isTypedArrayLabel);
+        {
+            var loopStartLabel = il.DefineLabel();
+            var loopDoneLabel = il.DefineLabel();
+            var srcTALocal = il.DeclareLocal(_types.Object);
+            var taLengthLocal = il.DeclareLocal(_types.Int32);
+            var taResultLocal = il.DeclareLocal(_types.Object);
+            var taElemLocal = il.DeclareLocal(_types.Object);
+            var taILocal = il.DeclareLocal(_types.Int32);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TypedArrayBaseType);
+            il.Emit(OpCodes.Brfalse, isNumberLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.TypedArrayBaseType);
+            il.Emit(OpCodes.Stloc, srcTALocal);
+            il.Emit(OpCodes.Ldloc, srcTALocal);
+            il.Emit(OpCodes.Castclass, runtime.TypedArrayBaseType);
+            il.Emit(OpCodes.Callvirt, runtime.TypedArrayLengthGetter);
+            il.Emit(OpCodes.Stloc, taLengthLocal);
+            il.Emit(OpCodes.Ldloc, taLengthLocal);
+            il.Emit(OpCodes.Newobj, lengthCtor);
+            il.Emit(OpCodes.Stloc, taResultLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, taILocal);
+            il.MarkLabel(loopStartLabel);
+            il.Emit(OpCodes.Ldloc, taILocal);
+            il.Emit(OpCodes.Ldloc, taLengthLocal);
+            il.Emit(OpCodes.Bge, loopDoneLabel);
+            il.Emit(OpCodes.Ldloc, srcTALocal);
+            il.Emit(OpCodes.Castclass, runtime.TypedArrayBaseType);
+            il.Emit(OpCodes.Ldloc, taILocal);
+            il.Emit(OpCodes.Callvirt, runtime.TypedArrayElementGet);
+            il.Emit(OpCodes.Stloc, taElemLocal);
+            il.Emit(OpCodes.Ldloc, taResultLocal);
+            il.Emit(OpCodes.Castclass, runtime.TypedArrayBaseType);
+            il.Emit(OpCodes.Ldloc, taILocal);
+            il.Emit(OpCodes.Ldloc, taElemLocal);
+            il.Emit(OpCodes.Callvirt, runtime.TypedArrayElementSet);
+            il.Emit(OpCodes.Ldloc, taILocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, taILocal);
+            il.Emit(OpCodes.Br, loopStartLabel);
+            il.MarkLabel(loopDoneLabel);
+            il.Emit(OpCodes.Ldloc, taResultLocal);
+            il.Emit(OpCodes.Br, endLabel);
+        }
 
         il.MarkLabel(isNumberLabel);
 

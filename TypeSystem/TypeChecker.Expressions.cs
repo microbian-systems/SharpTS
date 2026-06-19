@@ -366,6 +366,11 @@ public partial class TypeChecker
             case TypeInfo.Any:
                 elementType = new TypeInfo.Any();
                 return true;
+            case TypeInfo.TypedArray typed:
+                elementType = typed.ElementType.StartsWith("Big")
+                    ? (TypeInfo)new TypeInfo.BigInt()
+                    : new TypeInfo.Primitive(Parsing.TokenType.TYPE_NUMBER);
+                return true;
             default:
                 // A hand-written object exposing [Symbol.iterator] is spreadable structurally (#485).
                 return TryGetStructuralIterableElement(type, out elementType);
