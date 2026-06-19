@@ -415,42 +415,7 @@ public partial class RuntimeEmitter
         // primitive — without this, JSON.stringify(new Boolean(true)) returns
         // the marker dict instead of "true". Check both $Object and Dictionary
         // since either may be the receiver shape.
-        var notBoxedPrim = il.DefineLabel();
-        var checkBoxedDict = il.DefineLabel();
-        var doBoxedUnwrap = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
-        il.Emit(OpCodes.Brtrue, doBoxedUnwrap);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Brfalse, notBoxedPrim);
-        il.MarkLabel(doBoxedUnwrap);
-        // #565: only a genuine boxed wrapper (carrying a string __primitiveType tag)
-        // is unwrapped — an ordinary object that merely has a __primitiveValue field
-        // must serialize as a normal object, matching the interpreter and
-        // RuntimeEmitter.Json.StringifyFull.cs.
-        var boxedPrimType = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Ldstr, "__primitiveType");
-        il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Stloc, boxedPrimType);
-        il.Emit(OpCodes.Ldloc, boxedPrimType);
-        il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brfalse, notBoxedPrim);
-        var boxedPrimVal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Ldstr, "__primitiveValue");
-        il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Stloc, boxedPrimVal);
-        il.Emit(OpCodes.Ldloc, boxedPrimVal);
-        il.Emit(OpCodes.Brfalse, notBoxedPrim);
-        il.Emit(OpCodes.Ldloc, boxedPrimVal);
-        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brtrue, notBoxedPrim);
-        // Replace value with the unwrapped primitive and continue.
-        il.Emit(OpCodes.Ldloc, boxedPrimVal);
-        il.Emit(OpCodes.Stloc, valueLocal);
-        il.MarkLabel(notBoxedPrim);
+        EmitBoxedPrimitiveJsonCoerce(il, valueLocal, runtime);
 
         // Proxy materialization (#92): if value is SharpTSProxy, dispatch its
         // [[OwnPropertyKeys]] / [[Get]] traps and substitute a Dictionary so the
@@ -1062,6 +1027,82 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, sbLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// ECMA-262 §25.5.2.3 step 4 / §25.5.2.1 step 5: coerce a boxed
+    /// Number/String/Boolean wrapper held in <paramref name="valueLocal"/> to the
+    /// primitive JSON serializes. Number → <c>$Runtime.ToNumber</c>, String →
+    /// <c>$Runtime.ToJsString</c> (both run ECMA-262 ToPrimitive, honoring an own
+    /// <c>valueOf</c>/<c>toString</c> override — #574), Boolean → its
+    /// <c>__primitiveValue</c> (no coercion per spec). A non-wrapper value is left
+    /// unchanged. #565: only an object carrying a string <c>__primitiveType</c> tag
+    /// is treated as a wrapper. Mirrors
+    /// <c>Interpreter.TryCoerceBoxedPrimitiveForJson</c>; used by both the simple and
+    /// full (replacer/space) stringify helpers, and for a boxed Number/String
+    /// <c>space</c> argument.
+    /// </summary>
+    private void EmitBoxedPrimitiveJsonCoerce(ILGenerator il, LocalBuilder valueLocal, EmittedRuntime runtime)
+    {
+        var notBoxed = il.DefineLabel();
+        var doUnwrap = il.DefineLabel();
+        var done = il.DefineLabel();
+
+        // Only an $Object / Dictionary shape can be a wrapper.
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, doUnwrap);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, notBoxed);
+        il.MarkLabel(doUnwrap);
+
+        // tag = (string)GetProperty("__primitiveType"); must be a string (#565).
+        var tag = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveType");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Stloc, tag);
+        il.Emit(OpCodes.Ldloc, tag);
+        il.Emit(OpCodes.Brfalse, notBoxed);
+
+        var strEq = _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String);
+        var numberCase = il.DefineLabel();
+        var booleanCase = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldloc, tag);
+        il.Emit(OpCodes.Ldstr, "Number");
+        il.Emit(OpCodes.Call, strEq);
+        il.Emit(OpCodes.Brtrue, numberCase);
+        il.Emit(OpCodes.Ldloc, tag);
+        il.Emit(OpCodes.Ldstr, "Boolean");
+        il.Emit(OpCodes.Call, strEq);
+        il.Emit(OpCodes.Brtrue, booleanCase);
+
+        // String tag → ToString (string-hint ToPrimitive → toString first).
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.Emit(OpCodes.Br, done);
+
+        // Number tag → ToNumber (number-hint ToPrimitive → valueOf first).
+        il.MarkLabel(numberCase);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.Emit(OpCodes.Br, done);
+
+        // Boolean tag → [[BooleanData]] directly (no coercion per ECMA-262).
+        il.MarkLabel(booleanCase);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, valueLocal);
+
+        il.MarkLabel(notBoxed);
+        il.MarkLabel(done);
     }
 
 }

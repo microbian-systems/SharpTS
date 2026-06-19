@@ -47,61 +47,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "");
         il.Emit(OpCodes.Stloc, indentStrLocal);
 
-        // Stage 6s: ECMA-262 25.5.2 unbox Number/String wrappers before space typecheck.
-        // `JSON.stringify(obj, null, new Number(5))` should treat the wrapper as a
-        // primitive number per spec step 4 (`If space has a [[NumberData]] internal slot`).
-        // Boxed wrappers in compiled mode are $Object instances with `__primitiveType`
-        // and `__primitiveValue` marker fields (see RuntimeEmitter.BoxedPrimitives.cs).
+        // ECMA-262 25.5.2.1 step 5: a boxed Number/String wrapper `space` contributes
+        // its primitive (Number → ToNumber, String → ToString) before the numeric/
+        // string indent rules below — honoring an own valueOf/toString override (#574).
+        // See EmitBoxedPrimitiveJsonCoerce (RuntimeEmitter.Json.Stringify.cs).
         var spaceLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Stloc, spaceLocal);
-
-        // If space is $Object with __primitiveType == "Number"|"String", unbox.
-        var notWrapperLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, spaceLocal);
-        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
-        il.Emit(OpCodes.Brfalse, notWrapperLabel);
-        // GetProperty(space, "__primitiveType") - check for "Number" or "String"
-        il.Emit(OpCodes.Ldloc, spaceLocal);
-        il.Emit(OpCodes.Ldstr, "__primitiveType");
-        il.Emit(OpCodes.Call, runtime.GetProperty);
-        var typeTagLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Stloc, typeTagLocal);
-        // if typeTag is null/undefined, skip
-        il.Emit(OpCodes.Ldloc, typeTagLocal);
-        il.Emit(OpCodes.Brfalse, notWrapperLabel);
-        il.Emit(OpCodes.Ldloc, typeTagLocal);
-        il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brfalse, notWrapperLabel);
-        // If type tag is "Number" or "String", replace space with primitive value.
-        var isNumberTagLabel = il.DefineLabel();
-        var isStringTagLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, typeTagLocal);
-        il.Emit(OpCodes.Castclass, _types.String);
-        il.Emit(OpCodes.Ldstr, "Number");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brtrue, isNumberTagLabel);
-        il.Emit(OpCodes.Ldloc, typeTagLocal);
-        il.Emit(OpCodes.Castclass, _types.String);
-        il.Emit(OpCodes.Ldstr, "String");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brtrue, isStringTagLabel);
-        il.Emit(OpCodes.Br, notWrapperLabel);
-
-        il.MarkLabel(isNumberTagLabel);
-        il.Emit(OpCodes.Ldloc, spaceLocal);
-        il.Emit(OpCodes.Ldstr, "__primitiveValue");
-        il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Stloc, spaceLocal);
-        il.Emit(OpCodes.Br, notWrapperLabel);
-
-        il.MarkLabel(isStringTagLabel);
-        il.Emit(OpCodes.Ldloc, spaceLocal);
-        il.Emit(OpCodes.Ldstr, "__primitiveValue");
-        il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Stloc, spaceLocal);
-
-        il.MarkLabel(notWrapperLabel);
+        EmitBoxedPrimitiveJsonCoerce(il, spaceLocal, runtime);
 
         // if (space == null) goto spaceDoneLabel
         il.Emit(OpCodes.Ldloc, spaceLocal);
@@ -297,9 +250,12 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits code to convert List&lt;object?&gt; to HashSet&lt;string&gt;. Per ECMA-262
-    /// 25.5.2.1 step 4.b: strings pass through; numbers ToString-coerce; other
-    /// types are dropped. (Number/String wrapper objects per spec also coerce —
-    /// not handled here because compiled mode doesn't expose those wrappers.)
+    /// 25.5.2.1 step 4.b: strings pass through; numbers ToString-coerce; a boxed
+    /// <c>new String</c>/<c>new Number</c> wrapper (object with a [[StringData]]/
+    /// [[NumberData]] slot) ToString-coerces too — honoring an own toString/valueOf
+    /// override (#574, via <c>$Runtime.ToJsString</c>'s string-hint ToPrimitive);
+    /// other types are dropped. Mirrors
+    /// <c>Interpreter.TryCoerceReplacerArrayKey</c>.
     /// </summary>
     private void EmitConvertListToHashSet(ILGenerator il, LocalBuilder allowedKeysLocal, EmittedRuntime runtime)
     {
@@ -312,6 +268,7 @@ public partial class RuntimeEmitter
         var skipLabel = il.DefineLabel();
         var addLabel = il.DefineLabel();
         var keyLocal = il.DeclareLocal(_types.String);
+        var tagLocal = il.DeclareLocal(_types.String);
 
         // Cast replacer to List<object?>
         il.Emit(OpCodes.Ldarg_1);
@@ -350,11 +307,47 @@ public partial class RuntimeEmitter
         il.MarkLabel(notStringLabel);
 
         // if (elem is double) keyLocal = $Runtime.Stringify(elem)
+        var notDoubleLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, elemLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
-        il.Emit(OpCodes.Brfalse, skipLabel);
+        il.Emit(OpCodes.Brfalse, notDoubleLabel);
         il.Emit(OpCodes.Ldloc, elemLocal);
         il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Stloc, keyLocal);
+        il.Emit(OpCodes.Br, addLabel);
+
+        // else if elem is a boxed String/Number wrapper → ToString (#574).
+        // Only an $Object / Dictionary carrying a "Number"/"String" __primitiveType
+        // tag is a wrapper; any other object element is dropped per spec.
+        il.MarkLabel(notDoubleLabel);
+        var checkTagLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, elemLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, checkTagLabel);
+        il.Emit(OpCodes.Ldloc, elemLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+        il.MarkLabel(checkTagLabel);
+        il.Emit(OpCodes.Ldloc, elemLocal);
+        il.Emit(OpCodes.Ldstr, "__primitiveType");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Stloc, tagLocal);
+        il.Emit(OpCodes.Ldloc, tagLocal);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+        var strEq = _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String);
+        var wrapperKeyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, tagLocal);
+        il.Emit(OpCodes.Ldstr, "Number");
+        il.Emit(OpCodes.Call, strEq);
+        il.Emit(OpCodes.Brtrue, wrapperKeyLabel);
+        il.Emit(OpCodes.Ldloc, tagLocal);
+        il.Emit(OpCodes.Ldstr, "String");
+        il.Emit(OpCodes.Call, strEq);
+        il.Emit(OpCodes.Brfalse, skipLabel);
+        il.MarkLabel(wrapperKeyLabel);
+        il.Emit(OpCodes.Ldloc, elemLocal);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, keyLocal);
 
         il.MarkLabel(addLabel);
@@ -463,41 +456,10 @@ public partial class RuntimeEmitter
         // ECMA-262 25.5.2.3 step 9: skip callable values (return undefined).
         EmitFunctionSkipCheck(il, valueLocal, runtime);
 
-        // Boxed-primitive unwrap (ECMA-262 25.5.2.3 step 4.a-c). Mirrors the same
-        // logic in EmitJsonStringifyHelper. See that method for the rationale.
-        var notBoxedPrimFull = il.DefineLabel();
-        var doBoxedUnwrapFull = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
-        il.Emit(OpCodes.Brtrue, doBoxedUnwrapFull);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
-        il.Emit(OpCodes.Brfalse, notBoxedPrimFull);
-        il.MarkLabel(doBoxedUnwrapFull);
-        // #565: only a genuine boxed wrapper (carrying a string __primitiveType tag)
-        // is unwrapped — a plain object that merely has a __primitiveValue field must
-        // serialize as a normal object.
-        var boxedPrimTypeFull = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Ldstr, "__primitiveType");
-        il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Stloc, boxedPrimTypeFull);
-        il.Emit(OpCodes.Ldloc, boxedPrimTypeFull);
-        il.Emit(OpCodes.Isinst, _types.String);
-        il.Emit(OpCodes.Brfalse, notBoxedPrimFull);
-        var boxedPrimValFull = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldloc, valueLocal);
-        il.Emit(OpCodes.Ldstr, "__primitiveValue");
-        il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Stloc, boxedPrimValFull);
-        il.Emit(OpCodes.Ldloc, boxedPrimValFull);
-        il.Emit(OpCodes.Brfalse, notBoxedPrimFull);
-        il.Emit(OpCodes.Ldloc, boxedPrimValFull);
-        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brtrue, notBoxedPrimFull);
-        il.Emit(OpCodes.Ldloc, boxedPrimValFull);
-        il.Emit(OpCodes.Stloc, valueLocal);
-        il.MarkLabel(notBoxedPrimFull);
+        // Boxed-primitive unwrap (ECMA-262 25.5.2.3 step 4.a-c), honoring an own
+        // valueOf/toString override (#574). See EmitBoxedPrimitiveJsonCoerce
+        // (RuntimeEmitter.Json.Stringify.cs) for the rationale.
+        EmitBoxedPrimitiveJsonCoerce(il, valueLocal, runtime);
 
         // Proxy materialization (#92): if value is SharpTSProxy, dispatch its
         // [[OwnPropertyKeys]] / [[Get]] traps and substitute a Dictionary so the

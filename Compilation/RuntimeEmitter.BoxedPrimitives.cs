@@ -368,15 +368,25 @@ public partial class RuntimeEmitter
     /// <c>OrdinaryToPrimitive(hint)</c> → <c>valueOf()</c>. This is the cheap
     /// shortcut the spec endorses for boxed primitives specifically.
     /// </summary>
-    private void EmitUnwrapIfBoxed(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    /// <summary>
+    /// Defines the <c>UnwrapIfBoxed</c> MethodBuilder shell (no body). Emitted
+    /// early — before <c>Add</c>/<c>Stringify</c>/<c>Equals</c>, which reference
+    /// its token — while the body (<see cref="EmitUnwrapIfBoxedBody"/>) is filled
+    /// later, once <c>GetProperty</c>/<c>InvokeMethodValue</c>/<c>HasOwnPropertyHelper</c>
+    /// (which it calls for the #574 own-conversion dispatch) have been emitted.
+    /// </summary>
+    private void DeclareUnwrapIfBoxed(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        var method = typeBuilder.DefineMethod(
+        runtime.UnwrapIfBoxedMethod = typeBuilder.DefineMethod(
             "UnwrapIfBoxed",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Object,
             [_types.Object]);
-        runtime.UnwrapIfBoxedMethod = method;
+    }
 
+    private void EmitUnwrapIfBoxedBody(EmittedRuntime runtime)
+    {
+        var method = (MethodBuilder)runtime.UnwrapIfBoxedMethod;
         var il = method.GetILGenerator();
         var passThruLabel = il.DefineLabel();
 
@@ -387,7 +397,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
         il.Emit(OpCodes.Brfalse, passThruLabel);
 
-        // Must have __primitiveType marker (else it's a plain $Object).
+        // Must have __primitiveType marker (else it's a plain $Object — passed
+        // through unchanged so == / + treat it as an ordinary object).
         var typeMarkerLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSObjectType);
@@ -398,7 +409,54 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brfalse, passThruLabel);
 
-        // Read __primitiveValue and return it.
+        // #574: ECMA-262 7.1.1 ToPrimitive (default/number hint, used by == and +):
+        // OrdinaryToPrimitive tries valueOf first. An OWN valueOf override wins;
+        // otherwise the *inherited* valueOf — which for a boxed wrapper just yields
+        // its [[PrimitiveValue]] — already returns a primitive, so toString is never
+        // consulted. Hence: own valueOf (if any) → else __primitiveValue. An
+        // inherited prototype valueOf is NOT own (HasOwnPropertyHelper does not walk
+        // the prototype), so an un-overridden wrapper falls through to the slot read
+        // below, preserving prior behavior.
+        var emptyArgs = il.DeclareLocal(_types.ObjectArray);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, emptyArgs);
+
+        var afterValueOf = il.DefineLabel();
+        // if (!HasOwnPropertyHelper(arg, "valueOf")) goto afterValueOf
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "valueOf");
+        il.Emit(OpCodes.Call, runtime.HasOwnPropertyHelperMethod);
+        il.Emit(OpCodes.Brfalse, afterValueOf);
+        // fn = GetProperty(arg, "valueOf"); skip if missing
+        var fnLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "valueOf");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, fnLocal);
+        il.Emit(OpCodes.Ldloc, fnLocal);
+        il.Emit(OpCodes.Brfalse, afterValueOf);
+        // res = InvokeMethodValue(arg, fn, emptyArgs) — a throwing override
+        // propagates naturally.
+        var resLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, fnLocal);
+        il.Emit(OpCodes.Ldloc, emptyArgs);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Stloc, resLocal);
+        // An object result is not a primitive → fall back to the slot.
+        il.Emit(OpCodes.Ldloc, resLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, afterValueOf);
+        il.Emit(OpCodes.Ldloc, resLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, afterValueOf);
+        // Primitive (incl. null/undefined/string/number/bool) → return it.
+        il.Emit(OpCodes.Ldloc, resLocal);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(afterValueOf);
+
+        // Fallback: the wrapper's [[PrimitiveValue]] (≡ inherited valueOf).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, runtime.TSObjectType);
         il.Emit(OpCodes.Ldstr, "__primitiveValue");

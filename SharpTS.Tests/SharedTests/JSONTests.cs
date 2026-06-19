@@ -608,4 +608,129 @@ public class JSONTests
     }
 
     #endregion
+
+    #region JSON.stringify boxed wrapper valueOf/toString dispatch (#574)
+
+    // ECMA-262 25.5.2.3 step 4 / 25.5.2.1 steps 4.b & 5: a boxed wrapper coerces via
+    // ToNumber/ToString, which go through OrdinaryToPrimitive and so honor a user-
+    // overridden own valueOf/toString — not the raw [[PrimitiveValue]] slot.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_BoxedNumber_Value_HonorsValueOfOverride(ExecutionMode mode)
+    {
+        // value-number-object.js: a replacer returns a new Number whose own valueOf
+        // is overridden; ToNumber must call it (toString must NOT be reached).
+        var source = """
+            const replacer = function (_key: any, value: any): any {
+              if (value === "str") {
+                const num: any = new Number(42);
+                num.toString = function () { throw new Error("should not be called"); };
+                num.valueOf = function () { return 2; };
+                return num;
+              }
+              return value;
+            };
+            console.log(JSON.stringify(["str"], replacer));
+            """;
+        Assert.Equal("[2]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_BoxedString_Value_HonorsToStringOverride(ExecutionMode mode)
+    {
+        // value-string-object.js: a String wrapper with an own toString override
+        // serializes via that override (string-hint ToPrimitive → toString first).
+        var source = """
+            const s: any = new String("ignored");
+            s.toString = function () { return "OVERRIDE"; };
+            console.log(JSON.stringify(s));
+            """;
+        Assert.Equal("\"OVERRIDE\"\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_BoxedNumber_Space_HonorsValueOfOverride(ExecutionMode mode)
+    {
+        // space-number-object.js: space = new Number(1) with valueOf → 3 indents by 3.
+        var source = """
+            const num: any = new Number(1);
+            num.toString = function () { throw new Error("should not be called"); };
+            num.valueOf = function () { return 3; };
+            console.log(JSON.stringify({ k: 1 }, null, num));
+            """;
+        Assert.Equal("{\n   \"k\": 1\n}\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_BoxedString_Space_HonorsToStringOverride(ExecutionMode mode)
+    {
+        // space-string-object.js: space = new String with toString override is the indent.
+        var source = """
+            const s: any = new String("ignored");
+            s.toString = function () { return ">>"; };
+            console.log(JSON.stringify({ k: 1 }, null, s));
+            """;
+        Assert.Equal("{\n>>\"k\": 1\n}\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_ReplacerArray_BoxedNumber_UsesToString(ExecutionMode mode)
+    {
+        // replacer-array-number-object.js: a Number wrapper in the replacer array is a
+        // PropertyList key via ToString — its own toString (not valueOf) is used.
+        var source = """
+            const num: any = new Number(10);
+            num.toString = function () { return "toString"; };
+            num.valueOf = function () { throw new Error("should not be called"); };
+            const value: any = { 10: 1, toString: 2, valueOf: 3 };
+            console.log(JSON.stringify(value, [num]));
+            """;
+        Assert.Equal("{\"toString\":2}\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_ReplacerArray_BoxedString_UsedAsKey(ExecutionMode mode)
+    {
+        // replacer-array-string-object.js: a String wrapper element selects that key.
+        var source = """
+            const key: any = new String("z");
+            console.log(JSON.stringify({ z: 1, y: 2 }, [key]));
+            """;
+        Assert.Equal("{\"z\":1}\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_ReplacerArray_PlainNumber_CoercedToKey(ExecutionMode mode)
+    {
+        // ECMA-262 25.5.2.1 step 4.b: a plain Number element coerces to its ToString key.
+        var source = """
+            console.log(JSON.stringify({ a: 1, "2": 2, c: 3 }, ["a", 2, "c"]));
+            """;
+        Assert.Equal("{\"a\":1,\"2\":2,\"c\":3}\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void JSON_Stringify_BoxedNumber_AbruptValueOf_Propagates(ExecutionMode mode)
+    {
+        // value-number-object.js abrupt case: a throwing valueOf/toString must propagate.
+        var source = """
+            let threw = false;
+            const num: any = new Number(3.14);
+            num.toString = function () { throw new Error("boom"); };
+            num.valueOf = function () { throw new Error("boom"); };
+            try { JSON.stringify({ key: num }); } catch (e) { threw = true; }
+            console.log(threw);
+            """;
+        Assert.Equal("true\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
 }

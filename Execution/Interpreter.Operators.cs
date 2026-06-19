@@ -506,6 +506,36 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// ECMA-262 §25.5.2.1 step 4.b: coerce a replacer-array element to a
+    /// PropertyList key. A String stays as-is; a Number coerces via ToString;
+    /// an Object carrying a [[StringData]]/[[NumberData]] slot (a boxed
+    /// <c>new String</c>/<c>new Number</c> wrapper) coerces via ToString too —
+    /// honoring an own <c>toString</c>/<c>valueOf</c> override (#574, string hint
+    /// so <c>toString</c> is tried first). Any other element is ignored (returns
+    /// false). The interpreter and compiled JSON.stringify build their allowed-key
+    /// set through this rule.
+    /// </summary>
+    internal bool TryCoerceReplacerArrayKey(object? value, out string key)
+    {
+        key = "";
+        switch (value)
+        {
+            case string s:
+                key = s;
+                return true;
+            case double d:
+                key = Stringify(d);
+                return true;
+            case SharpTSObject obj when obj.GetProperty("__primitiveType") is "String" or "Number":
+                var sp = ToPrimitive(obj, PrimitiveHint.String);
+                key = sp as string ?? Stringify(sp);
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
     /// Evaluates the delete operator.
     /// </summary>
     /// <param name="delete">The delete expression AST node.</param>

@@ -194,4 +194,33 @@ public class PrimitiveWrapperTests
         var output = TestHarness.Run("console.log((new Boolean(true) as any).toString());", mode);
         Assert.Equal("true\n", output);
     }
+
+    // ── valueOf override honored in general ToPrimitive (#574) ───────────────
+    // ECMA-262 7.1.1: `+` and `==` ToPrimitive (default hint) an object operand,
+    // which calls an own valueOf override before reading the wrapper's slot.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Number_ValueOfOverride_HonoredInAddition(ExecutionMode mode)
+    {
+        var source = """
+            const n: any = new Number(1);
+            n.valueOf = function () { return 9; };
+            console.log(n + 1);
+            """;
+        Assert.Equal("10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Number_ValueOfOverride_HonoredInLooseEquality(ExecutionMode mode)
+    {
+        var source = """
+            const n: any = new Number(1);
+            n.valueOf = function () { return 9; };
+            console.log(n == 9);
+            console.log(n == 1);
+            """;
+        Assert.Equal("true\nfalse\n", TestHarness.Run(source, mode));
+    }
 }

@@ -519,12 +519,13 @@ public partial class RuntimeEmitter
         // Emit all methods - these are now in partial class files
         // Core utilities
 
-        // UnwrapIfBoxed must be emitted before Add/Equals/Stringify so those
-        // helpers can ToPrimitive boxed-primitive wrappers before the type-
-        // based dispatch ($Object → __primitiveValue per ECMA-262 §7.2.14
-        // and §13.10.1). Depends only on TSObjectType + TSObjectGetProperty,
-        // both already populated in EmitTSObjectClass (very early).
-        EmitUnwrapIfBoxed(typeBuilder, runtime);
+        // UnwrapIfBoxed's MethodBuilder must exist before Add/Equals/Stringify
+        // so those helpers can reference its token to ToPrimitive boxed-primitive
+        // wrappers before the type-based dispatch ($Object → __primitiveValue per
+        // ECMA-262 §7.2.14 and §13.10.1). Its BODY is filled later
+        // (EmitUnwrapIfBoxedBody, after EmitGetProperty) because the #574 own-
+        // conversion dispatch calls GetProperty/InvokeMethodValue/HasOwnPropertyHelper.
+        DeclareUnwrapIfBoxed(typeBuilder, runtime);
 
         EmitStringify(typeBuilder, runtime);
         // EmitStringRaw is moved later in this method (after ToJsString/
@@ -669,6 +670,10 @@ public partial class RuntimeEmitter
         // String/Number/Boolean populate shells already defined above
         // (before cctor) so the cctor can call them eagerly.
         EmitGetProperty(typeBuilder, runtime);
+        // Fill UnwrapIfBoxed's body now that GetProperty / InvokeMethodValue /
+        // HasOwnPropertyHelper are all emitted — its #574 own-conversion dispatch
+        // (own valueOf/toString before __primitiveValue) calls them.
+        EmitUnwrapIfBoxedBody(runtime);
         // Dynamic iterator-protocol bridge — must come after GetProperty +
         // InvokeMethodValue since its non-enumerator fallback calls both.
         EmitIteratorProtocolCall(typeBuilder, runtime);

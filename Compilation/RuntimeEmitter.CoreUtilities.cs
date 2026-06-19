@@ -2025,6 +2025,16 @@ public partial class RuntimeEmitter
         // natural string repr (`new Object(true).valueOf()` gives wrapper, not true).
         var primValLocal = il.DeclareLocal(_types.Object);
         var notBoxedLabel = il.DefineLabel();
+        // #574: an own (instance) toString override must win over the boxed
+        // __primitiveValue fast-path — ECMA-262 OrdinaryToPrimitive(O, "string")
+        // calls the own toString first. When the wrapper carries an own toString,
+        // defer to the OrdinaryToPrimitive section below (which invokes it). An
+        // inherited prototype toString is NOT own, so un-overridden wrappers still
+        // take the fast-path. (HasOwnPropertyHelper does not walk the prototype.)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "toString");
+        il.Emit(OpCodes.Call, runtime.HasOwnPropertyHelperMethod);
+        il.Emit(OpCodes.Brtrue, notBoxedLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "__primitiveValue");
         il.Emit(OpCodes.Call, runtime.GetProperty);
