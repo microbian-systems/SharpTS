@@ -23,6 +23,12 @@ public class SharpTSStringNamespace : ISharpTSCallable
         if (arg == null) return "null";
         if (arg is bool b) return b ? "true" : "false";
         if (arg is SharpTSArray arr) return arr.ToString();
+        // A boxed wrapper / plain object goes through ToString = ToPrimitive
+        // (string hint) then stringify, honoring an own toString override and
+        // unwrapping a bare wrapper to its primitive (#574). A raw Symbol is
+        // exempt from the ToString TypeError per §22.1.1.1 — fall through to its
+        // descriptive string.
+        if (arg is SharpTSObject) return interpreter.ToStringForStringCall(arg);
         return arg.ToString() ?? "";
     }
 

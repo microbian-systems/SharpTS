@@ -223,4 +223,88 @@ public class PrimitiveWrapperTests
             """;
         Assert.Equal("true\nfalse\n", TestHarness.Run(source, mode));
     }
+
+    // ── string coercion of wrappers: template literals & String() ────────────
+    // ECMA-262 7.1.1 (string hint): toString first. A bare wrapper yields its
+    // primitive's natural string; an own valueOf override does NOT affect a
+    // string coercion; an own toString override does. Interpreter and compiled
+    // must agree (the divergence these tests pin down).
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Number_Wrapper_TemplateLiteral_UsesPrimitive(ExecutionMode mode)
+    {
+        Assert.Equal("v:1\n", TestHarness.Run("const n: any = new Number(1); console.log(`v:${n}`);", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Number_Wrapper_TemplateLiteral_IgnoresValueOfOverride(ExecutionMode mode)
+    {
+        // String hint resolves toString first (inherited → primitive), so a
+        // valueOf override is never consulted: `${n}` is "1", not "9".
+        var source = """
+            const n: any = new Number(1);
+            n.valueOf = function () { return 9; };
+            console.log(`v:${n}`);
+            """;
+        Assert.Equal("v:1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Number_Wrapper_TemplateLiteral_HonorsToStringOverride(ExecutionMode mode)
+    {
+        var source = """
+            const n: any = new Number(1);
+            n.toString = function () { return "NUM"; };
+            console.log(`v:${n}`);
+            """;
+        Assert.Equal("v:NUM\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_Wrapper_TemplateLiteral_UsesPrimitive(ExecutionMode mode)
+    {
+        Assert.Equal("v:x\n", TestHarness.Run("const s: any = new String(\"x\"); console.log(`v:${s}`);", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_CallForm_CoercesBoxedNumber(ExecutionMode mode)
+    {
+        Assert.Equal("1\n", TestHarness.Run("console.log(String(new Number(1)));", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_CallForm_BoxedNumber_IgnoresValueOfOverride(ExecutionMode mode)
+    {
+        var source = """
+            const n: any = new Number(1);
+            n.valueOf = function () { return 9; };
+            console.log(String(n));
+            """;
+        Assert.Equal("1\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_CallForm_BoxedString_HonorsToStringOverride(ExecutionMode mode)
+    {
+        var source = """
+            const s: any = new String("x");
+            s.toString = function () { return "STR"; };
+            console.log(String(s));
+            """;
+        Assert.Equal("STR\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void String_CallForm_CoercesBoxedBoolean(ExecutionMode mode)
+    {
+        Assert.Equal("true\n", TestHarness.Run("console.log(String(new Boolean(true)));", mode));
+    }
 }

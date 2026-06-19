@@ -452,9 +452,18 @@ public partial class Interpreter
 
         string first = hint == PrimitiveHint.String ? "toString" : "valueOf";
         string second = hint == PrimitiveHint.String ? "valueOf" : "toString";
+        // An own override of the hint-preferred conversion always wins.
         if (TryCallOwnConversion(obj, first, out var r1)) return r1;
+        // For a boxed wrapper, the *inherited* preferred conversion
+        // (Number/String/Boolean.prototype.toString|valueOf) returns the
+        // [[PrimitiveValue]] and short-circuits before the second method is
+        // tried — so an own override of the *other* method must not leak into a
+        // string→valueOf or number→toString coercion (#574). Use the primitive
+        // directly. A plain object (no internal slot) keeps the two-step
+        // OrdinaryToPrimitive fallback.
+        if (isWrapper) return primitiveValue;
         if (TryCallOwnConversion(obj, second, out var r2)) return r2;
-        return isWrapper ? primitiveValue : value;
+        return value;
     }
 
     /// <summary>
@@ -504,6 +513,17 @@ public partial class Interpreter
                 return false;
         }
     }
+
+    /// <summary>
+    /// ECMA-262 ToString abstract operation for an object argument, used by the
+    /// <c>String(value)</c> call form: ToPrimitive(value, "string") then the
+    /// string form — so an own <c>toString</c> override on a boxed wrapper is
+    /// honored and a bare wrapper yields its primitive's natural string
+    /// (#574 / boxed-wrapper string coercion). Primitives pass straight to
+    /// <see cref="Stringify"/>.
+    /// </summary>
+    internal string ToStringForStringCall(object? value)
+        => Stringify(value is SharpTSObject ? ToPrimitive(value, PrimitiveHint.String) : value);
 
     /// <summary>
     /// ECMA-262 §25.5.2.1 step 4.b: coerce a replacer-array element to a
