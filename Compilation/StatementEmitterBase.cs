@@ -508,12 +508,15 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
         var active = new List<(string, LocalBuilder?)>();
         foreach (var name in cellNames)
         {
-            var local = Ctx.Locals.GetLocal(name);
-            if (local == null) continue; // defensive: binding has no local slot
-
-            IL.Emit(OpCodes.Ldloc, local);
-            if (local.LocalType.IsValueType)
-                IL.Emit(OpCodes.Box, local.LocalType);
+            // Load the binding's initial value through the resolver so this works whether the
+            // loop variable lives as an IL local (sync / async fn / generator) or a hoisted
+            // state-machine field (async arrow). The cell is not registered yet, so the
+            // resolver reads the underlying storage rather than recursing.
+            if (!Resolver.HasVariable(name)) continue; // defensive: binding has no slot
+            var st = Resolver.TryLoadVariable(name);
+            if (st == null) continue;
+            SetStackType(st.Value);
+            EnsureBoxed(); // box double/bool to object for StrongBox<object>
             IL.Emit(OpCodes.Newobj, Ctx.Types.StrongBoxOfObjectCtor);
 
             var cellLocal = IL.DeclareLocal(Ctx.Types.StrongBoxOfObject);

@@ -193,10 +193,10 @@ public class ForLoopPerIterationBindingTests
         Assert.Equal("00,01,10,11\n", TestHarness.Run(source, mode));
     }
 
-    // #650 Phase 2: the mutate-and-restore fix now works in state-machine contexts too
-    // (async function / generator / async generator), as long as the loop body has no
-    // direct await/yield — the per-iteration cell is an IL local that lives for the whole
-    // loop within one MoveNext segment. Loops whose body itself suspends remain on the
+    // #650 Phase 2 / #817: the mutate-and-restore fix works in all state-machine contexts
+    // (async function / generator / async generator / async arrow), as long as the loop body
+    // has no direct await/yield — the per-iteration cell is an IL local that lives for the
+    // whole loop within one MoveNext segment. Loops whose body itself suspends remain on the
     // snapshot path (cell-as-field is a further follow-up).
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
@@ -228,11 +228,10 @@ public class ForLoopPerIterationBindingTests
         Assert.Equal("0,1,2\n", TestHarness.Run(source, mode));
     }
 
-    // Interpreted-only: the per-iteration cell wiring for async generators is in place, but
-    // consuming a COMPILED async generator via `for await…of` is a separate, pre-existing gap
-    // (it hangs even without the mutation), so this can't be exercised compiled yet.
+    // Async generator: consumed via `.next()` (a compiled async generator consumed through
+    // `for await…of` is a separate pre-existing gap that hangs even without the mutation).
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void BodyMutatesLoopVar_AsyncGeneratorBody(ExecutionMode mode)
     {
         var source = """
@@ -242,18 +241,17 @@ public class ForLoopPerIterationBindingTests
                 yield g.map((f: any) => f()).join(",");
             }
             async function main() {
-                for await (const v of agen()) { console.log(v); }
+                const it: any = agen();
+                const r = await it.next();
+                console.log(r.value);
             }
             main();
             """;
         Assert.Equal("0,1,2\n", TestHarness.Run(source, mode));
     }
 
-    // Interpreted-only: async arrows are a deferred #650 context (their closure-capture path
-    // doesn't yet snapshot the per-iteration cell by reference), so the compiled path stays on
-    // the value-snapshot behavior. The interpreter is correct.
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void BodyMutatesLoopVar_AsyncArrowBody(ExecutionMode mode)
     {
         var source = """
