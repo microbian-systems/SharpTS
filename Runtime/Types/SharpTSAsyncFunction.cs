@@ -2,6 +2,7 @@ using SharpTS.Parsing;
 using SharpTS.Runtime;
 using SharpTS.Runtime.Exceptions;
 using SharpTS.Execution;
+using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
 
@@ -28,8 +29,12 @@ public interface ISharpTSAsyncCallable : ISharpTSCallable
 /// The synchronous Call method returns a <see cref="SharpTSPromise"/> immediately,
 /// while CallAsync executes the function body asynchronously.
 /// </remarks>
-public class SharpTSAsyncFunction : ISharpTSAsyncCallable
+public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
 {
+    // JS async functions are functions — categorize as Function so member
+    // access routes through FunctionBuiltIns (call/apply/bind/length/name).
+    public TypeCategory RuntimeCategory => TypeCategory.Function;
+
     private readonly Stmt.Function _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
@@ -123,6 +128,18 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable
         return new SharpTSAsyncFunction(_declaration, environment);
     }
 
+    /// <summary>
+    /// Rebinds <c>this</c> to an arbitrary value for <c>fn.call/apply/bind</c>.
+    /// Unlike <see cref="Bind(SharpTSInstance)"/> (used for method binding), the
+    /// receiver here may be any runtime value (a plain object, dictionary, etc.).
+    /// </summary>
+    public SharpTSAsyncFunction BindThisValue(object? thisObject)
+    {
+        RuntimeEnvironment environment = new(_closure);
+        environment.Define("this", thisObject);
+        return new SharpTSAsyncFunction(_declaration, environment);
+    }
+
     public SharpTSAsyncFunction BindStatic(SharpTSClass klass)
     {
         RuntimeEnvironment environment = new(_closure);
@@ -144,8 +161,12 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable
 /// For arrow functions (<c>HasOwnThis=false</c>), <c>this</c> is captured from the enclosing scope.
 /// For async function expressions (<c>HasOwnThis=true</c>), <c>this</c> is bound at call time.
 /// </remarks>
-public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable
+public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
 {
+    // JS async arrows / async function expressions are functions — categorize
+    // as Function so member access routes through FunctionBuiltIns.
+    public TypeCategory RuntimeCategory => TypeCategory.Function;
+
     private readonly Expr.ArrowFunction _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;

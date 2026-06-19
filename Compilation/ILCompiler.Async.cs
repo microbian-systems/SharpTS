@@ -249,7 +249,7 @@ public partial class ILCompiler
                     hasNestedChildren);
 
                 // Define the stub method that will be called to invoke the async arrow
-                arrowBuilder.DefineStubMethod(_programType);
+                arrowBuilder.DefineStubMethod(_programType, _runtime);
                 MarkPadsUndefined(arrowBuilder.StubMethod); // #640
 
                 _async.ArrowBuilders[arrowInfo.Arrow] = arrowBuilder;
@@ -265,7 +265,7 @@ public partial class ILCompiler
                 hasNestedAsyncArrows: hasNestedChildren);
 
             // Define the stub method that will be called to invoke the async arrow
-            arrowBuilder.DefineStubMethod(_programType);
+            arrowBuilder.DefineStubMethod(_programType, _runtime);
             MarkPadsUndefined(arrowBuilder.StubMethod); // #640
 
             _async.ArrowBuilders[arrowInfo.Arrow] = arrowBuilder;
@@ -1148,7 +1148,7 @@ public partial class ILCompiler
                 arrowAnalysis.HoistedLocals);
 
             // Define the stub method
-            arrowBuilder.DefineStubMethod(_programType);
+            arrowBuilder.DefineStubMethod(_programType, _runtime);
             MarkPadsUndefined(arrowBuilder.StubMethod); // #640
 
             // Store the builder

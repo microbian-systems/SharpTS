@@ -182,6 +182,22 @@ public static class FunctionBuiltIns
             return bound.Call(interp, args);
         }
 
+        // Async function expressions / async arrows with their own 'this' rebind
+        // the receiver; true async arrows ignore thisArg (lexical this). A null
+        // thisArg leaves the captured 'this' unchanged (mirrors the sync path).
+        if (callable is SharpTSAsyncArrowFunction asyncArrow)
+        {
+            if (asyncArrow.HasOwnThis && thisArg != null)
+                return asyncArrow.Bind(thisArg).Call(interp, args);
+            return asyncArrow.Call(interp, args);
+        }
+        if (callable is SharpTSAsyncFunction asyncFn)
+        {
+            return thisArg != null
+                ? asyncFn.BindThisValue(thisArg).Call(interp, args)
+                : asyncFn.Call(interp, args);
+        }
+
         // Array.prototype methods rebind their receiver via BindTo so that
         // Array.prototype.push.apply(target, items) pushes onto `target`.
         if (callable is SharpTSArrayUnboundMethod unbound)
@@ -313,6 +329,18 @@ public class BoundFunction : ISharpTSCallable
                 return boundArrow.CallV2(interpreter, combined);
             }
 
+            // Async function expressions (HasOwnThis) and async function
+            // declarations rebind 'this'; true async arrows capture lexically
+            // and fall through to the unbound target call below.
+            if (_target is SharpTSAsyncArrowFunction asyncArrow && asyncArrow.HasOwnThis)
+            {
+                return ((ISharpTSCallable)asyncArrow.Bind(_thisArg)).CallV2(interpreter, combined);
+            }
+            if (_target is SharpTSAsyncFunction asyncFn)
+            {
+                return ((ISharpTSCallable)asyncFn.BindThisValue(_thisArg)).CallV2(interpreter, combined);
+            }
+
             // Mirror the legacy Call path for BuiltInMethod (issue #101): the
             // V2 path is hit by JS-level invocation of a BoundFunction wrapping
             // a BuiltInMethod target (e.g. Function.prototype.call.bind(...)).
@@ -349,6 +377,18 @@ public class BoundFunction : ISharpTSCallable
             {
                 var boundArrow = arrow.Bind(_thisArg);
                 return boundArrow.Call(interpreter, combinedArgs);
+            }
+
+            // Async function expressions (HasOwnThis) and async function
+            // declarations rebind 'this'; true async arrows capture lexically
+            // and fall through to the unbound target call below.
+            if (_target is SharpTSAsyncArrowFunction asyncArrow && asyncArrow.HasOwnThis)
+            {
+                return asyncArrow.Bind(_thisArg).Call(interpreter, combinedArgs);
+            }
+            if (_target is SharpTSAsyncFunction asyncFn)
+            {
+                return asyncFn.BindThisValue(_thisArg).Call(interpreter, combinedArgs);
             }
 
             // Built-in methods read their receiver from the bound `_receiver`
