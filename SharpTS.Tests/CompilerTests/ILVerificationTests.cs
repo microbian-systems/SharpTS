@@ -1556,4 +1556,24 @@ public class ILVerificationTests
         Assert.Equal("undefined\nundefined\n", output);
         Assert.Equal(output, TestHarness.RunInterpreted(source));
     }
+
+    [Fact]
+    public void RestParam_StringConcatWithJoinCall_PassesILVerification()
+    {
+        // Issue #434: "p" + rest.join(",") caused BackwardBranch IL error because
+        // EmitGetListFromArrayOrList's typed-list conversion loop used a
+        // jump-to-condition pattern that placed the backward-branch target in dead
+        // code, making the stack height indeterminate when "p" was already on the
+        // evaluation stack.
+        var source = """
+            function h(...rest: any[]): string { return "p" + rest.join(","); }
+            console.log(h("a", "b"));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("pa,b\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
 }

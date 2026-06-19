@@ -542,7 +542,10 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         il.Emit(OpCodes.Callvirt, ctx.Runtime.TSArrayElementsGetter);
         il.Emit(OpCodes.Br, endLabel);
 
-        // Typed list path: convert IList to List<object?> via boxing loop
+        // Typed list path: convert IList to List<object?> via boxing loop.
+        // Loop uses condition-at-top so the backward-branch target (loopStart) is
+        // reachable from forward flow, keeping the IL verifiable even when the
+        // caller's evaluation stack is non-empty (e.g. left side of a + expr).
         il.MarkLabel(typedListLabel);
         var ilistLocal = il.DeclareLocal(ilistType);
         il.Emit(OpCodes.Ldloc, objLocal);
@@ -558,10 +561,13 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         var idxLocal = il.DeclareLocal(ctx.Types.Int32);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, idxLocal);
-        var loopCheck = il.DefineLabel();
-        var loopBody = il.DefineLabel();
-        il.Emit(OpCodes.Br, loopCheck);
-        il.MarkLabel(loopBody);
+        var loopStart = il.DefineLabel(); // condition at top — reachable via fall-through from init
+        var loopEnd   = il.DefineLabel();
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, idxLocal);
+        il.Emit(OpCodes.Ldloc, ilistLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Collections.ICollection).GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Bge, loopEnd); // exit if i >= count
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ldloc, ilistLocal);
         il.Emit(OpCodes.Ldloc, idxLocal);
@@ -571,11 +577,8 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Stloc, idxLocal);
-        il.MarkLabel(loopCheck);
-        il.Emit(OpCodes.Ldloc, idxLocal);
-        il.Emit(OpCodes.Ldloc, ilistLocal);
-        il.Emit(OpCodes.Callvirt, typeof(System.Collections.ICollection).GetProperty("Count")!.GetGetMethod()!);
-        il.Emit(OpCodes.Blt, loopBody);
+        il.Emit(OpCodes.Br, loopStart); // backward branch to a forward-reachable label
+        il.MarkLabel(loopEnd);
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Br, endLabel);
 
