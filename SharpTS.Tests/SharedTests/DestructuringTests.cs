@@ -644,4 +644,84 @@ public class DestructuringTests
     }
 
     #endregion
+
+    #region Defaulted Read Over a Source Lacking the Property (#796)
+
+    // #796: a destructuring property read carrying a DEFAULT, over a source whose static type does
+    // not declare that property, must NOT report a spurious "Property does not exist" (TS2339) — the
+    // default makes the access safe (tsc accepts these). Covers the declaration form and the shipped
+    // #780/#754 assignment forms, with empty/closed object sources.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Defaulted_OverEmptySource_Declaration(ExecutionMode mode)
+    {
+        var source = """
+            const { a = 5 } = {};
+            console.log(String(a));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("5\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Defaulted_OverEmptySource_AssignmentShorthandAndRename(ExecutionMode mode)
+    {
+        var source = """
+            let b; ({ b = 5 } = {});
+            let x; ({ a: x = 5 } = {});
+            console.log(String(b), String(x));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("5 5\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Defaulted_NestedPatternDefault_OverEmptyAndPresentSource(ExecutionMode mode)
+    {
+        // The inner default `{}` lacks `x`; the read must stay tolerant. With a present source the
+        // real value flows through; with an empty source the inner pattern reads undefined.
+        var source = """
+            let r; ({ p: { x: r } = {} } = { p: { x: 1 } });
+            let s; ({ p: { x: s } = {} } = {});
+            console.log(String(r), String(s));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1 undefined\n", output);
+    }
+
+    // #796: a source that DECLARES the property (even optional) still narrows the defaulted binding
+    // to the property type — the tolerance must not regress the well-typed case.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Defaulted_OverDeclaredOptionalSource_StillWorks(ExecutionMode mode)
+    {
+        var source = """
+            const o: { a?: number } = {};
+            const { a = 5 } = o;
+            console.log(String(a));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("5\n", output);
+    }
+
+    // #796 regression guard: a NON-defaulted read over a closed source must remain a TS2339 error,
+    // matching tsc (`const { a } = {}` is an error). The leniency applies only when a default exists.
+    [Fact]
+    public void NonDefaulted_OverEmptySource_IsTypeError()
+    {
+        var source = """
+            const { a } = {};
+            console.log(a);
+            """;
+
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    #endregion
 }

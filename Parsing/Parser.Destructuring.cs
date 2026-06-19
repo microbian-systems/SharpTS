@@ -140,7 +140,11 @@ public partial class Parser
 
     // ============== DESUGARING METHODS ==============
 
-    private Stmt DesugarArrayPattern(ArrayPattern pattern, Expr initializer)
+    // underDefault: true when this pattern is reached through an enclosing default, so its
+    // property reads must tolerate a missing property (typed as `undefined`) rather than report
+    // TS2339. Array index reads are already OOB-tolerant in the checker, so the flag only needs
+    // to ride through to nested object patterns. #796
+    private Stmt DesugarArrayPattern(ArrayPattern pattern, Expr initializer, bool underDefault = false)
     {
         List<Stmt> statements = [];
 
@@ -199,11 +203,11 @@ public partial class Parser
             }
             else if (element.Pattern is ArrayPattern nestedArray)
             {
-                statements.Add(DesugarArrayPattern(nestedArray, accessExpr));
+                statements.Add(DesugarArrayPattern(nestedArray, accessExpr, underDefault));
             }
             else if (element.Pattern is ObjectPattern nestedObj)
             {
-                statements.Add(DesugarObjectPattern(nestedObj, accessExpr));
+                statements.Add(DesugarObjectPattern(nestedObj, accessExpr, underDefault));
             }
 
             index++;
@@ -212,7 +216,9 @@ public partial class Parser
         return new Stmt.Sequence(statements);
     }
 
-    private Stmt DesugarObjectPattern(ObjectPattern pattern, Expr initializer)
+    // underDefault: see DesugarArrayPattern. A property whose own value carries a default also
+    // makes its read (and any nested pattern beneath it) tolerant. #796
+    private Stmt DesugarObjectPattern(ObjectPattern pattern, Expr initializer, bool underDefault = false)
     {
         List<Stmt> statements = [];
         List<string> usedKeys = [];
@@ -242,8 +248,12 @@ public partial class Parser
 
             usedKeys.Add(prop.Key.Lexeme);
 
+            // This read is tolerant if an enclosing pattern is defaulted, or this property itself
+            // carries a default (its read may be missing on the source — the default covers it). #796
+            bool propDefaulted = underDefault || prop.DefaultValue != null;
+
             // Access expression: _dest0.key
-            Expr accessExpr = new Expr.Get(new Expr.Variable(temp), prop.Key);
+            Expr accessExpr = new Expr.Get(new Expr.Variable(temp), prop.Key, Defaulted: propDefaulted);
 
             if (prop.Value is IdentifierPattern id)
             {
@@ -257,11 +267,11 @@ public partial class Parser
             }
             else if (prop.Value is ArrayPattern nestedArray)
             {
-                statements.Add(DesugarArrayPattern(nestedArray, accessExpr));
+                statements.Add(DesugarArrayPattern(nestedArray, accessExpr, propDefaulted));
             }
             else if (prop.Value is ObjectPattern nestedObj)
             {
-                statements.Add(DesugarObjectPattern(nestedObj, accessExpr));
+                statements.Add(DesugarObjectPattern(nestedObj, accessExpr, propDefaulted));
             }
         }
 
@@ -295,17 +305,20 @@ public partial class Parser
         return new Expr.DestructuringAssign(stmts, new Expr.Variable(rhsTemp), RawTarget: pattern, RawDefault: value);
     }
 
-    private void LowerAssignmentTarget(Expr target, Expr source, List<Stmt> stmts, int line)
+    // underDefault: true when this target sits beneath an enclosing default (`{p: {x} = {}}`), so
+    // its property reads must tolerate a missing property (typed as `undefined`) rather than report
+    // TS2339. Threaded through to MakePropertyAccess; array index reads are already OOB-tolerant. #796
+    private void LowerAssignmentTarget(Expr target, Expr source, List<Stmt> stmts, int line, bool underDefault = false)
     {
         switch (Unwrap(target))
         {
-            case Expr.ArrayLiteral arr: LowerArrayAssignmentTarget(arr, source, stmts, line); break;
-            case Expr.ObjectLiteral obj: LowerObjectAssignmentTarget(obj, source, stmts, line); break;
+            case Expr.ArrayLiteral arr: LowerArrayAssignmentTarget(arr, source, stmts, line, underDefault); break;
+            case Expr.ObjectLiteral obj: LowerObjectAssignmentTarget(obj, source, stmts, line, underDefault); break;
             default: stmts.Add(new Stmt.Expression(MakeAssignmentExpr(target, source))); break;
         }
     }
 
-    private void LowerArrayAssignmentTarget(Expr.ArrayLiteral arr, Expr source, List<Stmt> stmts, int line)
+    private void LowerArrayAssignmentTarget(Expr.ArrayLiteral arr, Expr source, List<Stmt> stmts, int line, bool underDefault = false)
     {
         // _srcN = __arrayDestructure(source) — normalize any iterable to an indexable array (#685).
         Token srcTemp = GenerateTempVar(line);
@@ -320,15 +333,15 @@ public partial class Parser
             if (element is Expr.Spread spread)
             {
                 // Rest: target = _srcN.slice(i). Must be the final element.
-                LowerAssignmentTarget(spread.Expression, MakeSliceCall(src, i, line), stmts, line);
+                LowerAssignmentTarget(spread.Expression, MakeSliceCall(src, i, line), stmts, line, underDefault);
                 break;
             }
 
-            LowerElementWithDefault(element, new Expr.GetIndex(src, new Expr.Literal((double)i)), stmts, line);
+            LowerElementWithDefault(element, new Expr.GetIndex(src, new Expr.Literal((double)i)), stmts, line, underDefault);
         }
     }
 
-    private void LowerObjectAssignmentTarget(Expr.ObjectLiteral obj, Expr source, List<Stmt> stmts, int line)
+    private void LowerObjectAssignmentTarget(Expr.ObjectLiteral obj, Expr source, List<Stmt> stmts, int line, bool underDefault = false)
     {
         // _srcN = source — object patterns read properties directly (no iterator normalization).
         Token srcTemp = GenerateTempVar(line);
@@ -341,14 +354,14 @@ public partial class Parser
             if (prop.IsSpread)
             {
                 // Rest: target = __objectRest(_srcN, [usedKeys]). Must be last.
-                LowerAssignmentTarget(prop.Value, MakeObjectRestCall(src, usedKeys, line), stmts, line);
+                LowerAssignmentTarget(prop.Value, MakeObjectRestCall(src, usedKeys, line), stmts, line, underDefault);
                 break;
             }
             if (prop.Kind is not Expr.ObjectPropertyKind.Value || prop.Key is null)
                 throw new Exception("Invalid assignment target.");  // getters/setters/methods aren't patterns
 
-            Expr access = MakePropertyAccess(src, prop.Key, usedKeys);
-            LowerElementWithDefault(prop.Value, access, stmts, line);
+            Expr access = MakePropertyAccess(src, prop.Key, usedKeys, underDefault);
+            LowerElementWithDefault(prop.Value, access, stmts, line, underDefault);
         }
     }
 
@@ -356,35 +369,36 @@ public partial class Parser
     // that the eager parser captured as an Assign (variable target) or Set/SetIndex/SetPrivate (member
     // target). The default is applied only when the read is `undefined` (ECMA-262 AssignmentElement),
     // via the shared DefaultIfUndefined helper (#784).
-    private void LowerElementWithDefault(Expr element, Expr access, List<Stmt> stmts, int line)
+    private void LowerElementWithDefault(Expr element, Expr access, List<Stmt> stmts, int line, bool underDefault = false)
     {
         switch (Unwrap(element))
         {
             case Expr.Assign def:
                 LowerAssignmentTarget(new Expr.Variable(def.Name),
-                    DefaultIfUndefined(access, def.Value, stmts, line), stmts, line);
+                    DefaultIfUndefined(access, def.Value, stmts, line), stmts, line, underDefault);
                 break;
             case Expr.Set def:
                 LowerAssignmentTarget(new Expr.Get(def.Object, def.Name),
-                    DefaultIfUndefined(access, def.Value, stmts, line), stmts, line);
+                    DefaultIfUndefined(access, def.Value, stmts, line), stmts, line, underDefault);
                 break;
             case Expr.SetIndex def:
                 LowerAssignmentTarget(new Expr.GetIndex(def.Object, def.Index),
-                    DefaultIfUndefined(access, def.Value, stmts, line), stmts, line);
+                    DefaultIfUndefined(access, def.Value, stmts, line), stmts, line, underDefault);
                 break;
             case Expr.SetPrivate def:
                 LowerAssignmentTarget(new Expr.GetPrivate(def.Object, def.Name),
-                    DefaultIfUndefined(access, def.Value, stmts, line), stmts, line);
+                    DefaultIfUndefined(access, def.Value, stmts, line), stmts, line, underDefault);
                 break;
             case Expr.DestructuringAssign { RawTarget: { } rawTarget, RawDefault: { } rawDefault }:
                 // A nested pattern WITH a default (`[[a] = []]`, `{p: {x} = {}}`): the eager parser lowered
                 // the inner `[a] = []` to a DestructuringAssign but kept its raw (target, default), so
                 // re-lower the inner pattern against the defaulted access — discarding the inner node's
-                // pre-built statements, which bound against the wrong (inner-rhs) source (#779).
-                LowerAssignmentTarget(rawTarget, DefaultIfUndefined(access, rawDefault, stmts, line), stmts, line);
+                // pre-built statements, which bound against the wrong (inner-rhs) source (#779). The inner
+                // pattern sits beneath this default, so its reads must tolerate a missing property (#796).
+                LowerAssignmentTarget(rawTarget, DefaultIfUndefined(access, rawDefault, stmts, line), stmts, line, underDefault: true);
                 break;
             default:
-                LowerAssignmentTarget(element, access, stmts, line);
+                LowerAssignmentTarget(element, access, stmts, line, underDefault);
                 break;
         }
     }
@@ -396,6 +410,9 @@ public partial class Parser
     // Shared by both the declaration desugaring and the #754 assignment-destructuring lowering. #784
     private Expr DefaultIfUndefined(Expr access, Expr defaultValue, List<Stmt> stmts, int line)
     {
+        // The read is now covered by a default, so a missing property must type as `undefined`
+        // (the ternary below supplies the default) rather than reporting TS2339. #796
+        if (access is Expr.Get g && !g.Defaulted) access = g with { Defaulted = true };
         Token valueTemp = GenerateTempVar(line);
         stmts.Add(new Stmt.Var(valueTemp, null, access));
         Expr isUndefined = new Expr.Binary(
@@ -414,13 +431,13 @@ public partial class Parser
         _ => throw new Exception("Invalid assignment target.")
     };
 
-    private Expr MakePropertyAccess(Expr src, Expr.PropertyKey key, List<Expr> usedKeys)
+    private Expr MakePropertyAccess(Expr src, Expr.PropertyKey key, List<Expr> usedKeys, bool underDefault = false)
     {
         switch (key)
         {
             case Expr.IdentifierKey ik:
                 usedKeys.Add(new Expr.Literal(ik.Name.Lexeme));
-                return new Expr.Get(src, ik.Name);
+                return new Expr.Get(src, ik.Name, Defaulted: underDefault);
             case Expr.LiteralKey lk:
                 string name = lk.Literal.Type == TokenType.STRING
                     ? (string)lk.Literal.Literal!

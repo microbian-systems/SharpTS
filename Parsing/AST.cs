@@ -148,7 +148,12 @@ public abstract record Expr
         string? RedeclarationTypeAnnotation = null,
         TypeNode? RedeclarationTypeAnnotationNode = null) : Expr;
     public record Call(Expr Callee, Token Paren, List<string>? TypeArgs, List<Expr> Arguments, bool Optional = false) : Expr;
-    public record Get(Expr Object, Token Name, bool Optional = false) : Expr;
+    // Defaulted: this property read was synthesized by destructuring desugaring and is covered
+    // by a default (its own, or a default on an enclosing pattern). The type checker treats a
+    // missing property as `undefined` for such reads instead of reporting TS2339, since the
+    // wrapping `=== undefined ? default : read` ternary (or an enclosing default) supplies the
+    // value. A non-defaulted read stays strict (`const { a } = {}` is still an error). See #796.
+    public record Get(Expr Object, Token Name, bool Optional = false, bool Defaulted = false) : Expr;
     public record Set(Expr Object, Token Name, Expr Value) : Expr;
     /// <summary>Private field access: obj.#field</summary>
     public record GetPrivate(Expr Object, Token Name) : Expr;
