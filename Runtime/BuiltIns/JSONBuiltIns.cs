@@ -234,9 +234,16 @@ public static class JSONBuiltIns
 
         if (replacerArray != null)
         {
-            allowedKeys = replacerArray
-                .OfType<string>()
-                .ToHashSet();
+            // ECMA-262 25.5.2.1 step 4.b: build PropertyList from the replacer
+            // array. A String element is used as-is; a Number or a boxed
+            // String/Number wrapper is coerced via ToString (honoring an own
+            // toString/valueOf — #574); any other element is ignored.
+            allowedKeys = new HashSet<string>();
+            foreach (var element in replacerArray)
+            {
+                if (interp.TryCoerceReplacerArrayKey(element, out var coercedKey))
+                    allowedKeys.Add(coercedKey);
+            }
         }
 
         var sb = new StringBuilder();

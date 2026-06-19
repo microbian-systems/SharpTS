@@ -1885,9 +1885,32 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(notSymbolLabel);
 
-        // return Stringify(value);
+        // An object-like value ($Object / Dictionary / List) coerces via
+        // ToJsString — the spec ToString → OrdinaryToPrimitive(string) protocol,
+        // which honors an own toString override and unwraps a boxed wrapper to
+        // its primitive (#574). Plain Stringify returns "[object Object]" for a
+        // wrapper, which is wrong for template literals / string concat. Primitive
+        // values stay on the cheap Stringify path.
+        var objectLikeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, objectLikeLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, objectLikeLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brtrue, objectLikeLabel);
+
+        // return Stringify(value);  (primitives)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Ret);
+
+        // return ToJsString(value);  (object-like)
+        il.MarkLabel(objectLikeLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Ret);
     }
 
@@ -2025,6 +2048,16 @@ public partial class RuntimeEmitter
         // natural string repr (`new Object(true).valueOf()` gives wrapper, not true).
         var primValLocal = il.DeclareLocal(_types.Object);
         var notBoxedLabel = il.DefineLabel();
+        // #574: an own (instance) toString override must win over the boxed
+        // __primitiveValue fast-path — ECMA-262 OrdinaryToPrimitive(O, "string")
+        // calls the own toString first. When the wrapper carries an own toString,
+        // defer to the OrdinaryToPrimitive section below (which invokes it). An
+        // inherited prototype toString is NOT own, so un-overridden wrappers still
+        // take the fast-path. (HasOwnPropertyHelper does not walk the prototype.)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "toString");
+        il.Emit(OpCodes.Call, runtime.HasOwnPropertyHelperMethod);
+        il.Emit(OpCodes.Brtrue, notBoxedLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "__primitiveValue");
         il.Emit(OpCodes.Call, runtime.GetProperty);
