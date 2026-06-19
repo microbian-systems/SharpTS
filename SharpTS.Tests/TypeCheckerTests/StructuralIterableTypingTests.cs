@@ -268,6 +268,46 @@ public class StructuralIterableTypingTests
         Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
     }
 
+    // ---- Structural objects can satisfy an AsyncGenerator<T> target (#549, async parallel of #485 gap 2) ----
+
+    [Fact]
+    public void StructuralAsyncIterableIterator_AssignableToAsyncGenerator_Accepted()
+    {
+        var source = """
+            const it = {
+              next(): Promise<IteratorResult<number>> { return Promise.resolve({ value: 1, done: false }); },
+              [Symbol.asyncIterator]() { return this; }
+            };
+            const g: AsyncGenerator<number> = it;
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void StructuralAsyncIterator_NotIterable_NotAssignableToAsyncGenerator_Rejected()
+    {
+        // A bare async iterator (no [Symbol.asyncIterator]) is not an AsyncIterableIterator, so it cannot be
+        // an AsyncGenerator.
+        var source = """
+            const it = { next(): Promise<IteratorResult<number>> { return Promise.resolve({ value: 1, done: false }); } };
+            const g: AsyncGenerator<number> = it;
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void StructuralAsyncGenerator_ElementMismatch_Rejected()
+    {
+        var source = """
+            const it = {
+              next(): Promise<IteratorResult<number>> { return Promise.resolve({ value: 1, done: false }); },
+              [Symbol.asyncIterator]() { return this; }
+            };
+            const g: AsyncGenerator<string> = it;
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
     // ---- Structural for...of / spread / yield* (#485 gap 3) ----
 
     [Fact]

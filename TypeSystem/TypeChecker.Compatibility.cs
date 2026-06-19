@@ -915,9 +915,20 @@ public partial class TypeChecker
                 TryGetStructuralIterableElement(actual, out _))
                 return IsCompatible(expGen.YieldType, genElem);
         }
-        if (expected is TypeInfo.AsyncGenerator expAsyncGen && actual is TypeInfo.AsyncGenerator actAsyncGen)
+        if (expected is TypeInfo.AsyncGenerator expAsyncGen)
         {
-            return IsCompatible(expAsyncGen.YieldType, actAsyncGen.YieldType);
+            if (actual is TypeInfo.AsyncGenerator actAsyncGen)
+                return IsCompatible(expAsyncGen.YieldType, actAsyncGen.YieldType);
+            // A structural object satisfies AsyncGenerator<T1> when it is at least an AsyncIterableIterator —
+            // it exposes BOTH the async iterator protocol (next returning Promise<IteratorResult<T>>) AND the
+            // async iterable protocol ([Symbol.asyncIterator]); its element comes from the Promise-unwrapped
+            // next().value and is checked against T1 (#549, async parallel of #485 / the sync Generator arm
+            // above). Requiring both protocols keeps a bare async `{ next() {…} }` — an AsyncIterator, handled
+            // by its own arm below — from passing. Dedicated AsyncIterator records are invisible to the
+            // structural lookup, so the asymmetric relations stay rejected.
+            if (TryGetStructuralAsyncIteratorElement(actual, out var asyncGenElem) &&
+                TryGetStructuralAsyncIterableElement(actual, out _))
+                return IsCompatible(expAsyncGen.YieldType, asyncGenElem);
         }
 
         // AsyncIterator<T1>/AsyncIterableIterator<T1> (#483, async parallel of the sync Iterator arm above):
