@@ -914,6 +914,115 @@ public class WorkerThreadsTests
         Assert.Contains("recv:sync-got:hello", output);
     }
 
+    /// <summary>
+    /// #465: parent creates a <c>MessageChannel</c> and distributes each end to a
+    /// different worker; Workers A and B communicate directly through the channel —
+    /// the parent is not in the message path. In compiled mode each worker adopts its
+    /// port via <c>CompiledMessagePortBridge</c>, and the <c>_onEnqueue</c> hooks
+    /// installed by each bridge make posting event-driven across both workers.
+    /// In interpreter mode the cross-thread <c>SharpTSMessagePort</c> delivery handles
+    /// both ends.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_SplitChannel_WorkersCanCommunicateDirectly(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_a.ts"] = """
+                const port: any = workerData.port;
+                port.on("message", (m: any) => {
+                    port.postMessage("a-echo:" + m);
+                    port.close();
+                    postMessage("a-done");
+                });
+                """,
+            ["worker_b.ts"] = """
+                const port: any = workerData.port;
+                port.on("message", (m: any) => {
+                    port.close();
+                    postMessage("b-got:" + m);
+                });
+                port.postMessage("ping");
+                """,
+            ["main.ts"] = """
+                import { Worker, MessageChannel } from "worker_threads";
+                const { port1, port2 } = new MessageChannel();
+                const wa = new Worker(__dirname + "/worker_a.ts", {
+                    workerData: { port: port1 },
+                    transferList: [port1],
+                });
+                const wb = new Worker(__dirname + "/worker_b.ts", {
+                    workerData: { port: port2 },
+                    transferList: [port2],
+                });
+                wa.on("message", (m: any) => console.log(m));
+                wb.on("message", (m: any) => console.log(m));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("a-done", output);
+        Assert.Contains("b-got:a-echo:ping", output);
+    }
+
+    /// <summary>
+    /// #465: two workers exchange multiple messages through a split channel, verifying
+    /// that each delivery is event-driven (the idle worker wakes on each post and
+    /// processes in-order). Worker B pings three times; Worker A echoes each one back;
+    /// messages are serialised by awaiting each reply before sending the next. Worker B
+    /// accumulates the echoes and reports them to the parent in its final postMessage so
+    /// the parent can log them on the main thread (worker console.log is not guaranteed
+    /// to reach the captured output before the harness returns).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_SplitChannel_MultipleRoundTrips(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_a.ts"] = """
+                const port: any = workerData.port;
+                let n = 0;
+                port.on("message", (m: any) => {
+                    n++;
+                    port.postMessage("a-echo:" + m);
+                    if (n >= 3) { port.close(); postMessage("a-done"); }
+                });
+                """,
+            ["worker_b.ts"] = """
+                const port: any = workerData.port;
+                let got = 0;
+                let report = "";
+                port.on("message", (m: any) => {
+                    report += (got === 0 ? "" : ",") + m;
+                    got++;
+                    if (got < 3) port.postMessage("ping" + (got + 1));
+                    else { port.close(); postMessage("b-recvd:" + report); }
+                });
+                port.postMessage("ping1");
+                """,
+            ["main.ts"] = """
+                import { Worker, MessageChannel } from "worker_threads";
+                const { port1, port2 } = new MessageChannel();
+                const wa = new Worker(__dirname + "/worker_a.ts", {
+                    workerData: { port: port1 },
+                    transferList: [port1],
+                });
+                const wb = new Worker(__dirname + "/worker_b.ts", {
+                    workerData: { port: port2 },
+                    transferList: [port2],
+                });
+                wa.on("message", (m: any) => console.log(m));
+                wb.on("message", (m: any) => console.log(m));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("a-done", output);
+        Assert.Contains("b-recvd:a-echo:ping1,a-echo:ping2,a-echo:ping3", output);
+    }
+
     #endregion
 
     #region Worker scripts in module mode (#410)
