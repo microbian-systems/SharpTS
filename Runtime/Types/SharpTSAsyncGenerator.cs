@@ -319,8 +319,32 @@ public class SharpTSAsyncGenerator : ITypeCategorized
             }
         }
 
-        // Sync iterable (array, Map, Set, string, custom iterator): iterate lazily, suspending the outer
-        // for each element. An abrupt resume realizes the control-flow exception to unwind the outer.
+        // Custom iterator objects (those with [Symbol.iterator] and a next(v) that
+        // consumes its argument) are driven manually so the outer's resume value is
+        // forwarded as the argument to next(v) (ECMA-262 §14.4.14, #503).
+        if (_interpreter.TryGetCustomIteratorProtocol(iterable, out var iterObj, out var nextFn))
+        {
+            object? sentValue = SharpTSUndefined.Instance;
+            while (true)
+            {
+                var result = nextFn!.Call(_interpreter, [sentValue]);
+                (bool done, object? innerValue) = ReadIteratorResult(result);
+                if (done) return innerValue ?? SharpTSUndefined.Instance;
+                GeneratorResume resume = await SuspendAtYieldAsync(innerValue);
+                switch (resume.Kind)
+                {
+                    case GeneratorResumeKind.Return:
+                    case GeneratorResumeKind.Throw:
+                        resume.Realize();
+                        return null; // unreachable
+                    default:
+                        sentValue = resume.Value;
+                        break;
+                }
+            }
+        }
+
+        // Built-in iterables (arrays, strings, Maps, Sets): next() ignores resume value.
         foreach (object? element in _interpreter.GetIterableElements(iterable))
         {
             GeneratorResume resume = await SuspendAtYieldAsync(element);
