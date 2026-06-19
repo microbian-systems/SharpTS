@@ -161,7 +161,10 @@ public partial class Parser
             null,
             [initializer]
         );
-        statements.Add(new Stmt.Var(temp, null, normalizedInit));
+        // Carry the pattern's shape as a contextual type so a mixed array-literal source (`[[7], 8]`)
+        // infers as a tuple instead of an array — otherwise `_dest[0]` is a non-indexable union and a
+        // nested pattern (`[m]`) fails to type-check (#783). Erased at runtime.
+        statements.Add(new Stmt.Var(temp, null, normalizedInit, InitializerContext: BuildArrayPatternShape(pattern)));
 
         int index = 0;
         foreach (var element in pattern.Elements)
@@ -278,6 +281,67 @@ public partial class Parser
         return new Stmt.Sequence(statements);
     }
 
+    // ============== CONTEXTUAL SHAPE FROM BINDING PATTERN (#783) ==============
+    // A mixed array literal (`[[7], 8]`) infers as the array `(number[] | number)[]` rather than the
+    // tuple `[number[], number]`, so the desugared positional read `_dest[0]` is a non-indexable union
+    // and a nested pattern (`[m]`) fails to type-check. tsc avoids this by using the binding pattern as a
+    // contextual type. These helpers reconstruct that shape as a synthetic `TupleTypeNode` attached to
+    // the source temp's `InitializerContext`: only positions whose binding is itself a nested array get a
+    // recursive tuple context; every other position gets `unknown`, which never triggers tuple inference
+    // (so uniform-nested literals like `[[1,2],[3,4]]` stay arrays, matching tsc). A trailing rest becomes
+    // a `...unknown[]` element so arity filtering still admits the literal.
+
+    private static TypeNode BuildArrayPatternShape(ArrayPattern pattern)
+    {
+        var elements = new List<TupleElementNode>(pattern.Elements.Count);
+        foreach (var element in pattern.Elements)
+        {
+            if (!element.IsHole && element.Pattern is RestPattern)
+            {
+                elements.Add(new TupleElementNode(null, UnknownArrayShape(pattern.Line), IsOptional: false, IsRest: true, pattern.Line));
+                break;
+            }
+            TypeNode shape = !element.IsHole && element.Pattern is ArrayPattern nested
+                ? BuildArrayPatternShape(nested)
+                : UnknownShape(pattern.Line);
+            elements.Add(new TupleElementNode(null, shape, IsOptional: false, IsRest: false, pattern.Line));
+        }
+        return new TupleTypeNode(elements, pattern.Line);
+    }
+
+    private static TypeNode BuildArrayLiteralShape(Expr.ArrayLiteral arr, int line)
+    {
+        var elements = new List<TupleElementNode>(arr.Elements.Count);
+        for (int i = 0; i < arr.Elements.Count; i++)
+        {
+            if (arr.IsHole(i))
+            {
+                elements.Add(new TupleElementNode(null, UnknownShape(line), IsOptional: false, IsRest: false, line));
+                continue;
+            }
+            Expr element = Unwrap(arr.Elements[i]);
+            if (element is Expr.Spread)
+            {
+                elements.Add(new TupleElementNode(null, UnknownArrayShape(line), IsOptional: false, IsRest: true, line));
+                break;
+            }
+            // A nested array target — directly (`[[m], n]`) or with a default that the eager parser
+            // captured as a DestructuringAssign carrying the raw target (`[[a] = []]`, #779).
+            Expr.ArrayLiteral? nested = element switch
+            {
+                Expr.ArrayLiteral lit => lit,
+                Expr.DestructuringAssign { RawTarget: { } raw } when Unwrap(raw) is Expr.ArrayLiteral rawLit => rawLit,
+                _ => null
+            };
+            TypeNode shape = nested != null ? BuildArrayLiteralShape(nested, line) : UnknownShape(line);
+            elements.Add(new TupleElementNode(null, shape, IsOptional: false, IsRest: false, line));
+        }
+        return new TupleTypeNode(elements, line);
+    }
+
+    private static TypeNode UnknownShape(int line) => new NamedTypeNode("unknown", null, line);
+    private static TypeNode UnknownArrayShape(int line) => new ArrayTypeNode(UnknownShape(line), line);
+
     // ============== ASSIGNMENT DESTRUCTURING (#754) ==============
     // `[a, b] = rhs` / `({a, b} = rhs)` assign to EXISTING l-values (not new bindings). The target has
     // already been parsed as an array/object literal (the eager-parse cover grammar); here it is
@@ -297,8 +361,11 @@ public partial class Parser
     {
         var stmts = new List<Stmt>();
         // _destN = rhs — evaluate the source exactly once; it is also the expression's result value.
+        // Carry the target pattern's shape as a contextual type so a mixed array-literal rhs infers as
+        // a tuple, not an array union — keeping nested targets (`[[m], n] = [[7], 8]`) indexable (#783).
         Token rhsTemp = GenerateTempVar(line);
-        stmts.Add(new Stmt.Var(rhsTemp, null, value));
+        TypeNode? rhsShape = Unwrap(pattern) is Expr.ArrayLiteral patternArr ? BuildArrayLiteralShape(patternArr, line) : null;
+        stmts.Add(new Stmt.Var(rhsTemp, null, value, InitializerContext: rhsShape));
         LowerAssignmentTarget(pattern, new Expr.Variable(rhsTemp), stmts, line);
         // Retain the raw (pattern, default) so this node can be re-lowered if it turns out to be a nested
         // element WITH a default (`[[a] = []]`) — see LowerElementWithDefault (#779).
