@@ -482,4 +482,63 @@ public class GeneratorArrowBodyTests
 
         Assert.Equal("11,12,13\n", TestHarness.Run(source, mode));
     }
+
+    // #792: a defaulted parameter that is ALSO captured-and-mutated by a nested arrow. The default
+    // prologue (#737) wrote the default to the state-machine field, but a captured parameter's live
+    // storage is the function DC field (#674/#724/#725) — so an omitted argument left the arrow
+    // reading the $Undefined sentinel (NaN for value defaults, the missing string for ref defaults).
+    // Only the omitted-arg path was broken; supplying the argument always worked.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_DefaultedParamCapturedByArrow_OmittedUsesDefault(ExecutionMode mode)
+    {
+        // value-type default, captured by a forEach arrow — free-function generator.
+        var source = """
+            function* g(acc: number = 5): Generator<number> { [1, 2, 3].forEach(n => acc += n); yield acc; }
+            console.log([...g()][0]);
+            """;
+
+        Assert.Equal("11\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_DefaultedParamCapturedByArrow_SuppliedWins(ExecutionMode mode)
+    {
+        // Regression guard: a supplied argument must beat the default on the captured path too.
+        var source = """
+            function* g(acc: number = 5): Generator<number> { [1, 2, 3].forEach(n => acc += n); yield acc; }
+            console.log([...g(100)][0]);
+            """;
+
+        Assert.Equal("106\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_RefDefaultedParamCapturedByArrow_InstanceMethod(ExecutionMode mode)
+    {
+        // reference-type (string) default, captured — instance generator method.
+        var source = """
+            class C { *gen(s: string = "x"): Generator<string> { [1, 2, 3].forEach(n => s += n); yield s; } }
+            console.log([...new C().gen()][0]);
+            console.log([...new C().gen("Y")][0]);
+            """;
+
+        Assert.Equal("x123\nY123\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_DefaultedParamCapturedByArrow_OmittedUsesDefault(ExecutionMode mode)
+    {
+        // value-type default, captured — async generator.
+        var source = """
+            async function* ag(acc: number = 5) { [1, 2, 3].forEach(n => acc += n); yield acc; }
+            (async () => { for await (const v of ag()) console.log(v); })();
+            """;
+
+        Assert.Equal("11\n", TestHarness.Run(source, mode));
+    }
 }
