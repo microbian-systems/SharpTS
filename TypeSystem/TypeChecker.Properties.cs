@@ -128,6 +128,29 @@ public partial class TypeChecker
         }
         objType = ResolveMappedTypeForAccess(objType);
 
+        // A property read synthesized by destructuring desugaring that is covered by a default
+        // (its own, or a default on an enclosing pattern) tolerates a missing property: type it as
+        // `undefined` instead of reporting TS2339, since the wrapping ternary / enclosing default
+        // supplies the value. A non-defaulted read stays strict (`const { a } = {}` still errors). #796
+        if (get.Defaulted)
+        {
+            try { return ResolveMemberType(get, objType); }
+            catch (TypeCheckException ex) when (ex.Diagnostic.TsCode == "TS2339")
+            {
+                return new TypeInfo.Undefined();
+            }
+        }
+
+        return ResolveMemberType(get, objType);
+    }
+
+    /// <summary>
+    /// Resolves the type of a property read on an already-evaluated receiver type, dispatching by
+    /// type category. Throws TS2339 when the member is absent. Shared by <see cref="CheckGet"/>'s
+    /// strict and (#796) defaulted-destructuring-tolerant paths.
+    /// </summary>
+    private TypeInfo ResolveMemberType(Expr.Get get, TypeInfo objType)
+    {
         var category = TypeCategoryResolver.Classify(objType);
         string memberName = get.Name.Lexeme;
 
