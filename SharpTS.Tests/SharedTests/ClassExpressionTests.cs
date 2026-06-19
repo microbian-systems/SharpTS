@@ -511,4 +511,63 @@ public class ClassExpressionTests
     }
 
     #endregion
+
+    #region Inferred Method Return Propagation (#793)
+
+    // A class EXPRESSION's un-annotated method return must reach call sites, exactly as it does
+    // for a class declaration (#658/#661/#687). Before #793 the inferred generator return came
+    // back as Generator<Void>, so `for (const n of new C(...).gen()) sum += n` failed type-check
+    // with "Compound assignment requires numeric operands".
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_InferredGeneratorMethodReturn_ReachesCallSite(ExecutionMode mode)
+    {
+        var source = """
+            const Range = class {
+                constructor(public start: number, public end: number) {}
+                *gen() { for (let i = this.start; i < this.end; i++) yield i; }
+            };
+            let sum = 0;
+            for (const n of new Range(1, 5).gen()) sum += n;
+            console.log(sum);
+            """;
+
+        Assert.Equal("10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_InferredPlainMethodReturn_ReachesCallSite(ExecutionMode mode)
+    {
+        var source = """
+            const Calc = class {
+                add(a: number, b: number) { return a + b; }
+            };
+            const x: number = new Calc().add(2, 3);
+            console.log(x * 2);
+            """;
+
+        Assert.Equal("10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_InferredAsyncMethodReturn_ReachesCallSite(ExecutionMode mode)
+    {
+        var source = """
+            const Box = class {
+                async getAsync(n: number) { return n + 1; }
+            };
+            async function main() {
+                const v: number = await new Box().getAsync(4);
+                console.log(v * 2);
+            }
+            main();
+            """;
+
+        Assert.Equal("10\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
 }

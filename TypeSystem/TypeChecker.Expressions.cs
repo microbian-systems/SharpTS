@@ -1893,10 +1893,13 @@ public partial class TypeChecker
 
                 TypeInfo returnType = method.ReturnType != null
                     ? ToTypeInfo(method.ReturnType)
-                    : new TypeInfo.Void();
+                    : new TypeInfo.Inferred();
 
-                // Wrap return type for generator/async generator methods
-                if (method.IsGenerator)
+                // Wrap return type for generator/async generator methods (skip when inferring).
+                // An un-annotated generator method stays a plain <inferred> placeholder so the
+                // inferred-return resolution pass below turns it into Generator<yieldType> (#793,
+                // mirroring CheckClassDeclaration).
+                if (method.ReturnType != null && method.IsGenerator)
                 {
                     if (method.IsAsync && returnType is not TypeInfo.AsyncGenerator)
                     {
@@ -2101,6 +2104,12 @@ public partial class TypeChecker
         _environment = classEnv;
         _currentClass = classTypeForBody is TypeInfo.Class c ? c : mutableClass.Freeze();
 
+        // Set when a method's inferred (un-annotated) return type is resolved during the body
+        // pass below. The class was frozen with <inferred> placeholders before this pass, so when
+        // this is true the frozen class is rebuilt and re-published afterwards (#793; mirrors the
+        // class-declaration path #658/#661).
+        bool anyInferredMethodReturnResolved = false;
+
         try
         {
             foreach (var method in classExpr.Methods.Where(m => m.Body != null))
@@ -2150,6 +2159,8 @@ public partial class TypeChecker
 
                 TypeEnvironment previousEnvFunc = _environment;
                 TypeInfo? previousReturnFunc = _currentFunctionReturnType;
+                var previousInferredFunc = _inferredReturnTypes;
+                var previousInferredYieldFunc = _inferredYieldTypes;
                 bool previousInStatic = _inStaticMethod;
                 bool previousInAsyncFunc = _inAsyncFunction;
                 bool previousInGeneratorFunc = _inGeneratorFunction;
@@ -2157,8 +2168,19 @@ public partial class TypeChecker
                 int previousSwitchDepthFunc = _switchDepth;
                 var previousActiveLabelsFunc = new Dictionary<string, bool>(_activeLabels);
 
+                bool inferringMethodReturn = methodType.ReturnType is TypeInfo.Inferred;
                 _environment = methodEnv;
-                _currentFunctionReturnType = methodType.ReturnType;
+                if (inferringMethodReturn)
+                {
+                    _inferredReturnTypes = new List<TypeInfo>();
+                    _currentFunctionReturnType = new TypeInfo.Inferred();
+                }
+                else
+                {
+                    _currentFunctionReturnType = methodType.ReturnType;
+                }
+                // Collect yield operand types only while inferring a generator method's type (#548).
+                _inferredYieldTypes = inferringMethodReturn && method.IsGenerator ? new List<TypeInfo>() : null;
                 _inStaticMethod = method.IsStatic;
                 _inAsyncFunction = method.IsAsync;
                 _inGeneratorFunction = method.IsGenerator;
@@ -2177,11 +2199,63 @@ public partial class TypeChecker
                         // that may hold the undefined sentinel.
                         MarkUndefinedReachableNumericSlots(method.Body, method.Parameters);
                     }
+
+                    // Resolve inferred method return type (#793; mirrors CheckClassDeclaration).
+                    if (inferringMethodReturn && method.Body != null)
+                    {
+                        var collected = _inferredReturnTypes!;
+                        _inferredReturnTypes = null;
+
+                        TypeInfo inferredReturn;
+                        if (collected.Count == 0)
+                        {
+                            inferredReturn = new TypeInfo.Void();
+                        }
+                        else
+                        {
+                            var distinct = collected.Distinct(TypeInfoEqualityComparer.Instance).ToList();
+                            inferredReturn = CollapseOrCreateUnion(distinct);
+                        }
+
+                        // A generator method's type argument is its YIELD type (#548), not the
+                        // `return`-derived inferredReturn; a non-generator async method wraps in Promise.
+                        // The resolved type is re-published below (anyInferredMethodReturnResolved), so
+                        // `new C().m()` reads the real Generator<…>/Promise<…> at the call site rather
+                        // than the `<inferred>` placeholder.
+                        if (method.IsGenerator)
+                            inferredReturn = BuildInferredGeneratorType(_inferredYieldTypes!, method.IsAsync);
+                        else if (method.IsAsync && inferredReturn is not TypeInfo.Void)
+                            inferredReturn = new TypeInfo.Promise(inferredReturn);
+
+                        // Update the method type in the class. Computed symbol-keyed methods are keyed
+                        // by their @@name (e.g. @@iterator); an arbitrary computed key (no well-known
+                        // @@name) carries no static member to update.
+                        var updatedMethodType = new TypeInfo.Function(methodType.ParamTypes, inferredReturn, methodType.RequiredParams, methodType.HasRestParam, methodType.ThisType, methodType.ParamNames);
+                        string? mName = method.ComputedKey != null
+                            ? TryGetWellKnownSymbolMemberName(method.ComputedKey)
+                            : method.Name.Lexeme;
+                        if (mName != null)
+                        {
+                            if (method.IsPrivate)
+                            {
+                                if (method.IsStatic) mutableClass.StaticPrivateMethods[mName] = updatedMethodType;
+                                else mutableClass.PrivateMethods[mName] = updatedMethodType;
+                            }
+                            else
+                            {
+                                if (method.IsStatic) mutableClass.StaticMethods[mName] = updatedMethodType;
+                                else mutableClass.Methods[mName] = updatedMethodType;
+                            }
+                            anyInferredMethodReturnResolved = true;
+                        }
+                    }
                 }
                 finally
                 {
                     _environment = previousEnvFunc;
                     _currentFunctionReturnType = previousReturnFunc;
+                    _inferredReturnTypes = previousInferredFunc;
+                    _inferredYieldTypes = previousInferredYieldFunc;
                     _inStaticMethod = previousInStatic;
                     _inAsyncFunction = previousInAsyncFunc;
                     _inGeneratorFunction = previousInGeneratorFunc;
@@ -2268,6 +2342,36 @@ public partial class TypeChecker
         {
             _environment = prevEnv;
             _currentClass = prevClass;
+        }
+
+        // Publish method return types inferred during the body pass. The class was frozen with
+        // <inferred> placeholders before the body could be checked, so the frozen Class the binding
+        // (`const C = class …`) and the TypeMap (read by the compiler) hold still carry the
+        // placeholder for every un-annotated method. Rebuild the frozen form from the now-resolved
+        // mutable state, re-register the TypeMap, and recompute the result type returned below.
+        // Unlike a class declaration, a class expression publishes nothing to the outer environment —
+        // its resolved type flows out solely through the return value and the TypeMap (#793).
+        if (anyInferredMethodReturnResolved)
+        {
+            mutableClass.ResetFrozenCache();
+            if (classTypeParams != null && classTypeParams.Count > 0)
+            {
+                var refrozenCore = mutableClass.Freeze();
+                _typeMap.SetClassType(className, refrozenCore);
+                _typeMap.SetClassExprType(classExpr, refrozenCore);
+                classExprResultType = mutableClass.FreezeGeneric(classTypeParams);
+            }
+            else
+            {
+                var refrozen = mutableClass.Freeze();
+                _typeMap.SetClassType(className, refrozen);
+                _typeMap.SetClassExprType(classExpr, refrozen);
+                classExprResultType = refrozen;
+            }
+            // Structural compatibility results cache on CacheKey() (carries the stable DeclarationId),
+            // so any comparison made against the placeholder during the body pass must not be reused.
+            _compatibilityCache = null;
+            _identityCompatibilityCache = null;
         }
 
         // Return the class type (not an instance). For a generic class expression this is the
