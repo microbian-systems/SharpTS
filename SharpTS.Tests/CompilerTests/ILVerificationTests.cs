@@ -1576,4 +1576,49 @@ public class ILVerificationTests
         Assert.Equal("pa,b\n", output);
         Assert.Equal(output, TestHarness.RunInterpreted(source));
     }
+
+    [Fact]
+    public void ForLoopPushAndTwoPartStringConcatWithJoin_PassesILVerification()
+    {
+        // Issue #437: "[ " + parts.join(",") triggered BackwardBranch when parts.push()
+        // was called in a preceding for-loop, because EmitGetListFromArrayOrList's
+        // typed-list loop had a jump-to-condition backward branch target in dead code.
+        // Fixed by #434 (condition-at-top loop in ArrayEmitter).
+        var source = """
+            function f(n: number): string {
+              const parts: string[] = [];
+              for (let i = 0; i < n; i++) { parts.push("x"); }
+              return "[ " + parts.join(", ");
+            }
+            console.log(f(3));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("[ x, x, x\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void ForLoopPushAndThreePartStringConcatWithJoin_PassesILVerification()
+    {
+        // Issue #437: "[ " + parts.join(", ") + " ]" (3-part concat via
+        // StringConcatOptimizer → EmitStringConcatWithOverload) also triggered
+        // BackwardBranch. Same root cause and fix as the 2-part variant above.
+        var source = """
+            function f(n: number): string {
+              const parts: string[] = [];
+              for (let i = 0; i < n; i++) { parts.push("x"); }
+              return "[ " + parts.join(", ") + " ]";
+            }
+            console.log(f(3));
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("[ x, x, x ]\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
 }
