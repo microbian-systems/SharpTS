@@ -255,7 +255,9 @@ public abstract record TypeInfo
         public FrozenDictionary<string, TypeInfo> StaticMethods => Core.StaticMethods;
         public FrozenDictionary<string, TypeInfo> StaticProperties => Core.StaticProperties;
         public FrozenDictionary<string, AccessModifier> MethodAccess => Core.MethodAccess;
+        public FrozenDictionary<string, AccessModifier> StaticMethodAccess => Core.StaticMethodAccessMap;
         public FrozenDictionary<string, AccessModifier> FieldAccess => Core.FieldAccess;
+        public FrozenDictionary<string, AccessModifier> StaticFieldAccess => Core.StaticFieldAccessMap;
         public FrozenSet<string> ReadonlyFields => Core.ReadonlyFields;
         public FrozenDictionary<string, TypeInfo> Getters => Core.Getters;
         public FrozenDictionary<string, TypeInfo> Setters => Core.Setters;
@@ -315,7 +317,9 @@ public abstract record TypeInfo
         public Dictionary<string, TypeInfo> StaticMethods { get; } = [];
         public Dictionary<string, TypeInfo> StaticProperties { get; } = [];
         public Dictionary<string, AccessModifier> MethodAccess { get; } = [];
+        public Dictionary<string, AccessModifier> StaticMethodAccess { get; } = [];
         public Dictionary<string, AccessModifier> FieldAccess { get; } = [];
+        public Dictionary<string, AccessModifier> StaticFieldAccess { get; } = [];
         public HashSet<string> ReadonlyFields { get; } = [];
         public Dictionary<string, TypeInfo> Getters { get; } = [];
         public Dictionary<string, TypeInfo> Setters { get; } = [];
@@ -367,7 +371,9 @@ public abstract record TypeInfo
                 StringIndexType,
                 NumberIndexType,
                 SymbolIndexType,
-                DeclarationId);
+                DeclarationId,
+                StaticMethodAccess.Count > 0 ? StaticMethodAccess.ToFrozenDictionary() : null,
+                StaticFieldAccess.Count > 0 ? StaticFieldAccess.ToFrozenDictionary() : null);
             return _frozenCore;
         }
 
@@ -1349,7 +1355,9 @@ public abstract record TypeInfo
         public FrozenDictionary<string, TypeInfo> StaticMethods => Core.StaticMethods;
         public FrozenDictionary<string, TypeInfo> StaticProperties => Core.StaticProperties;
         public FrozenDictionary<string, AccessModifier> MethodAccess => Core.MethodAccess;
+        public FrozenDictionary<string, AccessModifier> StaticMethodAccess => Core.StaticMethodAccessMap;
         public FrozenDictionary<string, AccessModifier> FieldAccess => Core.FieldAccess;
+        public FrozenDictionary<string, AccessModifier> StaticFieldAccess => Core.StaticFieldAccessMap;
         public FrozenSet<string> ReadonlyFields => Core.ReadonlyFields;
         public FrozenDictionary<string, TypeInfo> Getters => Core.Getters;
         public FrozenDictionary<string, TypeInfo> Setters => Core.Setters;

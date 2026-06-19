@@ -456,6 +456,7 @@ public partial class TypeChecker
                 var staticProps = GetStaticProperties(current);
                 if (staticProps != null && staticProps.TryGetValue(set.Name.Lexeme, out var staticPropType))
                 {
+                    EnforceStaticMemberAccess(current, set.Name);
                     TypeInfo valueType = CheckExpr(set.Value);
                     if (!IsCompatible(staticPropType, valueType))
                     {
@@ -811,10 +812,12 @@ public partial class TypeChecker
                 var staticProps = GetStaticProperties(current);
                 if (staticMethods != null && staticMethods.TryGetValue(memberName.Lexeme, out var staticMethodType))
                 {
+                    EnforceStaticMemberAccess(current, memberName);
                     return staticMethodType;
                 }
                 if (staticProps != null && staticProps.TryGetValue(memberName.Lexeme, out var staticPropType))
                 {
+                    EnforceStaticMemberAccess(current, memberName);
                     return staticPropType;
                 }
                 current = GetSuperclass(current);
