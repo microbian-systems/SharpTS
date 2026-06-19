@@ -103,16 +103,10 @@ public sealed class PerIterationCellAnalyzer : AstVisitorBase
         // synchronous context there is never a direct suspension, so this is a no-op
         // for Phase 1.
         //
-        // Covered emitters: sync (ILEmitter), async functions (AsyncMoveNextEmitter),
-        // and generators (GeneratorMoveNextEmitter / base hooks). Async ARROWS and ASYNC
-        // GENERATORS are deferred: their closure-capture paths don't yet snapshot the cell
-        // reference, so creating a cell there would make a capturing closure dereference a
-        // non-cell value at runtime. Leaving those on the snapshot path keeps them correct-
-        // by-interpretation and crash-free.
-        var enclosingClosure = _closureStack.Count > 0 ? _closureStack.Peek() : null;
-        if (bindings == null || bindings.Count == 0
-            || HasDirectSuspension(stmt.Body)
-            || IsDeferredCellContext(enclosingClosure))
+        // Covered emitters: sync (ILEmitter), async functions, generators, async arrows, and
+        // async generators — all read/write the cell through their resolver / base store helper
+        // and snapshot the cell reference in their closure-capture path.
+        if (bindings == null || bindings.Count == 0 || HasDirectSuspension(stmt.Body))
         {
             Visit(stmt.Body);
             return;
@@ -297,18 +291,6 @@ public sealed class PerIterationCellAnalyzer : AstVisitorBase
     {
         Expr.ArrowFunction a => a.IsAsync || a.IsGenerator,
         Stmt.Function f => f.IsAsync || f.IsGenerator,
-        _ => false,
-    };
-
-    /// <summary>
-    /// True for state-machine contexts whose closure-capture path does not yet snapshot a
-    /// per-iteration cell by reference (#650 follow-up): async arrows and async generators.
-    /// Loops directly enclosed by one of these are left on the value-snapshot path.
-    /// </summary>
-    private static bool IsDeferredCellContext(object? closure) => closure switch
-    {
-        Expr.ArrowFunction { IsAsync: true } => true,
-        Stmt.Function { IsAsync: true, IsGenerator: true } => true,
         _ => false,
     };
 

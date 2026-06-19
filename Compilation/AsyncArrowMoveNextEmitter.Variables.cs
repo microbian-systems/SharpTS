@@ -112,6 +112,18 @@ public partial class AsyncArrowMoveNextEmitter
         EnsureBoxed();
         _il.Emit(OpCodes.Dup);
 
+        // Per-iteration loop-binding cell (#650/#817): write through the StrongBox.
+        if (_ctx != null && _ctx.CellBindingLocals.TryGetValue(name, out var assignCell))
+        {
+            var cellTmp = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, cellTmp);
+            _il.Emit(OpCodes.Ldloc, assignCell);
+            _il.Emit(OpCodes.Ldloc, cellTmp);
+            _il.Emit(OpCodes.Stfld, _types.StrongBoxOfObjectValueField);
+            SetStackUnknown();
+            return;
+        }
+
         // A capture promoted into the enclosing function's display class (#625) is written through
         // `outer.functionDC.field = value` (the DC is a reference type, so the store is verifiable),
         // not by mutating the boxed value-type state machine in place. Checked first.
@@ -158,6 +170,17 @@ public partial class AsyncArrowMoveNextEmitter
 
     private void StoreVariable(string name)
     {
+        // Per-iteration loop-binding cell (#650/#817): write through the StrongBox.
+        if (_ctx != null && _ctx.CellBindingLocals.TryGetValue(name, out var cell))
+        {
+            var t = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, t);
+            _il.Emit(OpCodes.Ldloc, cell);
+            _il.Emit(OpCodes.Ldloc, t);
+            _il.Emit(OpCodes.Stfld, _types.StrongBoxOfObjectValueField);
+            return;
+        }
+
         // A capture promoted into the enclosing function's display class (#625) is stored through
         // `outer.functionDC.field`. Checked first so it wins over any (now-unused) hoisted SM field.
         if (TryGetOuterFunctionDCField(name, out var dcStoreField))
