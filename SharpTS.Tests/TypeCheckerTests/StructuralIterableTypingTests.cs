@@ -549,4 +549,87 @@ public class StructuralIterableTypingTests
         var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
         Assert.Equal("TS2488", ex.Diagnostic.TsCode);
     }
+
+    // ---- Structural for await...of — [Symbol.asyncIterator] objects are element-typed (#662) ----
+
+    [Fact]
+    public void StructuralForAwaitOf_InterfaceAnnotated_ElementTyped()
+    {
+        // An interface declaring [Symbol.asyncIterator](): AsyncIterator<number> is async-iterable; the
+        // element type is number, so assigning the loop variable to string is TS2322.
+        var source = """
+            interface AsyncSrc { [Symbol.asyncIterator](): AsyncIterator<number>; }
+            async function run(x: AsyncSrc): Promise<void> {
+              for await (const v of x) { const s: string = v; }
+            }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2322", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void StructuralForAwaitOf_ObjectLiteralWithAsyncGenFactory_ElementTyped()
+    {
+        // Object literal whose [Symbol.asyncIterator]() returns an AsyncGenerator<number>: the switch
+        // in TryGetStructuralAsyncIterableElement matches the AsyncGenerator record, yielding number.
+        var source = """
+            async function* agen(): AsyncGenerator<number> { yield 42; }
+            const obj = { [Symbol.asyncIterator]() { return agen(); } };
+            async function run(): Promise<void> {
+              for await (const v of obj) { const s: string = v; }
+            }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2322", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void StructuralForAwaitOf_StructuralIteratorFactory_ElementTyped()
+    {
+        // Object literal whose [Symbol.asyncIterator]() returns a hand-written iterator
+        // ({ next(): Promise<IteratorResult<number>> }) — element type extracted via
+        // TryGetStructuralAsyncIteratorElement (Promise unwrap + value field).
+        var source = """
+            const obj = {
+              [Symbol.asyncIterator]() {
+                return {
+                  async next(): Promise<IteratorResult<number>> { return { value: 1, done: false }; }
+                };
+              }
+            };
+            async function run(): Promise<void> {
+              for await (const v of obj) { const s: string = v; }
+            }
+            """;
+        var ex = Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+        Assert.Equal("TS2322", ex.Diagnostic.TsCode);
+    }
+
+    [Fact]
+    public void StructuralForAwaitOf_CorrectElementType_Accepted()
+    {
+        // Same structural shape but the loop body uses the correct type — no error.
+        var source = """
+            async function* agen(): AsyncGenerator<number> { yield 42; }
+            const obj = { [Symbol.asyncIterator]() { return agen(); } };
+            async function run(): Promise<void> {
+              for await (const v of obj) { const n: number = v; }
+            }
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void ForAwaitOf_ObjectWithoutAsyncIterator_StaysLenient()
+    {
+        // An object without [Symbol.asyncIterator] does not resolve structurally, so the loop variable
+        // falls through to `any` — no error (async non-iterability is not yet diagnosed statically).
+        var source = """
+            const plain = { x: 1 };
+            async function run(): Promise<void> {
+              for await (const v of plain) { const s: string = v; }
+            }
+            """;
+        TestHarness.RunInterpreted(source);
+    }
 }

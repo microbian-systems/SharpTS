@@ -72,6 +72,26 @@ public partial class TypeChecker
     };
 
     /// <summary>
+    /// Derives the element type of a structural ASYNC ITERATOR source — an object that exposes a callable
+    /// <c>next()</c> whose return type is <c>Promise&lt;IteratorResult&lt;T&gt;&gt;</c>. The async mirror of
+    /// <see cref="TryGetStructuralIteratorElement"/>: the Promise wrapping is resolved via
+    /// <see cref="ResolveAwaitedType"/> before reading <c>value</c>. Returns false when there is no callable
+    /// <c>next</c>.
+    /// </summary>
+    private bool TryGetStructuralAsyncIteratorElement(TypeInfo source, out TypeInfo elementType)
+    {
+        elementType = null!;
+        var nextMember = GetMemberType(source, "next");
+        if (!IsCallableMember(nextMember)) return false;
+
+        // next() on an async iterator returns Promise<IteratorResult<T>>; unwrap the Promise first.
+        TypeInfo? nextReturn = GetCallableReturnType(nextMember);
+        TypeInfo iterResult = nextReturn is null ? new TypeInfo.Any() : ResolveAwaitedType(nextReturn);
+        elementType = ExtractIteratorResultValue(iterResult);
+        return true;
+    }
+
+    /// <summary>
     /// Derives the element type of a structural ITERABLE source — an object exposing
     /// <c>[Symbol.iterator](): Iterator&lt;T&gt;</c>. In declared/interface types the method is the named
     /// member <c>@@iterator</c>; in object literals a symbol-keyed method lands in the symbol index
@@ -286,7 +306,10 @@ public partial class TypeChecker
             case TypeInfo.AsyncIterator ait: elementType = ait.ElementType; return true;
             case TypeInfo.AsyncGenerator ag: elementType = ag.YieldType; return true;
             case TypeInfo.AsyncIterable ai: elementType = ai.ElementType; return true;
-            default: elementType = new TypeInfo.Any(); return true;
+            default:
+                if (TryGetStructuralAsyncIteratorElement(iterator, out elementType)) return true;
+                elementType = new TypeInfo.Any();
+                return true;
         }
     }
 }
