@@ -116,15 +116,52 @@ public partial class TypeChecker
             var staticProps = GetStaticProperties(current);
             if (staticMethods != null && staticMethods.TryGetValue(memberName.Lexeme, out var staticMethodType))
             {
+                EnforceStaticMemberAccess(current, memberName);
                 return staticMethodType;
             }
             if (staticProps != null && staticProps.TryGetValue(memberName.Lexeme, out var staticPropType))
             {
+                EnforceStaticMemberAccess(current, memberName);
                 return staticPropType;
             }
             current = GetSuperclass(current);
         }
         return new TypeInfo.Any();
+    }
+
+    /// <summary>
+    /// Enforces <c>private</c>/<c>protected</c> visibility for a static member (method or
+    /// field/property) declared on <paramref name="declaringClass"/> when accessed as
+    /// <c>Class.member</c>. Static members carry their own access maps
+    /// (<see cref="ClassMetadataCore.StaticMethodAccessMap"/> /
+    /// <see cref="ClassMetadataCore.StaticFieldAccessMap"/>), distinct from instance members,
+    /// so a same-named static/instance pair don't clobber each other's visibility (issue #722).
+    /// No-op for public members or non-class types.
+    /// </summary>
+    private void EnforceStaticMemberAccess(TypeInfo declaringClass, Token memberName)
+    {
+        AccessModifier access;
+        var staticMethodAccess = GetStaticMethodAccess(declaringClass);
+        var staticFieldAccess = GetStaticFieldAccess(declaringClass);
+        if (staticMethodAccess != null && staticMethodAccess.TryGetValue(memberName.Lexeme, out var ma))
+            access = ma;
+        else if (staticFieldAccess != null && staticFieldAccess.TryGetValue(memberName.Lexeme, out var fa))
+            access = fa;
+        else
+            return;
+        if (access == AccessModifier.Public)
+            return;
+
+        var declName = GetClassName(declaringClass);
+        if (access == AccessModifier.Private && _currentClass?.Name != declName)
+        {
+            throw new TypeCheckException($" Property '{memberName.Lexeme}' is private and only accessible within class '{declName}'.", tsCode: "TS2341");
+        }
+        var declClass = AsClass(declaringClass);
+        if (access == AccessModifier.Protected && declClass != null && !IsSubclassOf(_currentClass, declClass))
+        {
+            throw new TypeCheckException($" Property '{memberName.Lexeme}' is protected and only accessible within class '{declName}' and its subclasses.", tsCode: "TS2445");
+        }
     }
 
     /// <summary>

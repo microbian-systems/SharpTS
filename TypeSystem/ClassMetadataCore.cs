@@ -30,7 +30,9 @@ public sealed record ClassMetadataCore(
     TypeInfo? StringIndexType = null,
     TypeInfo? NumberIndexType = null,
     TypeInfo? SymbolIndexType = null,
-    int DeclarationId = 0
+    int DeclarationId = 0,
+    FrozenDictionary<string, AccessModifier>? StaticMethodAccess = null,
+    FrozenDictionary<string, AccessModifier>? StaticFieldAccess = null
 )
 {
     /// <summary>True when the class declares any index signature.</summary>
@@ -60,4 +62,22 @@ public sealed record ClassMetadataCore(
     /// <summary>Static private method types with empty dictionary fallback.</summary>
     public FrozenDictionary<string, TypeInfo> StaticPrivateMethodTypes =>
         StaticPrivateMethods ?? FrozenDictionary<string, TypeInfo>.Empty;
+
+    /// <summary>
+    /// Access modifiers for static methods, keyed by name. Kept separate from
+    /// <see cref="MethodAccess"/> (instance methods) so a static and an instance
+    /// method sharing a name don't overwrite each other's visibility (issue #722).
+    /// Empty dictionary fallback.
+    /// </summary>
+    public FrozenDictionary<string, AccessModifier> StaticMethodAccessMap =>
+        StaticMethodAccess ?? FrozenDictionary<string, AccessModifier>.Empty;
+
+    /// <summary>
+    /// Access modifiers for static fields/properties, keyed by name. Kept separate
+    /// from <see cref="FieldAccess"/> (instance fields) so a static and an instance
+    /// field sharing a name don't overwrite each other's visibility (issue #722).
+    /// Empty dictionary fallback.
+    /// </summary>
+    public FrozenDictionary<string, AccessModifier> StaticFieldAccessMap =>
+        StaticFieldAccess ?? FrozenDictionary<string, AccessModifier>.Empty;
 }

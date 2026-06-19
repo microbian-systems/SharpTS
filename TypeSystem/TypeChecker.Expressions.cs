@@ -1940,14 +1940,14 @@ public partial class TypeChecker
                     mutableClass.StaticMethods[memberName] = computedFunc;
                 else
                     mutableClass.Methods[memberName] = computedFunc;
-                mutableClass.MethodAccess[memberName] = method.Access;
+                (method.IsStatic ? mutableClass.StaticMethodAccess : mutableClass.MethodAccess)[memberName] = method.Access;
             }
 
             // Collect method signatures (computed-key methods handled above)
-            var methodGroups = classExpr.Methods.Where(m => m.ComputedKey == null).GroupBy(m => m.Name.Lexeme).ToList();
+            var methodGroups = classExpr.Methods.Where(m => m.ComputedKey == null).GroupBy(m => (m.IsStatic, Name: m.Name.Lexeme)).ToList();
             foreach (var group in methodGroups)
             {
-                string methodName = group.Key;
+                string methodName = group.Key.Name;
                 var methods = group.ToList();
 
                 var signatures = methods.Where(m => m.Body == null && !m.IsAbstract).ToList();
@@ -1975,7 +1975,7 @@ public partial class TypeChecker
                         mutableClass.StaticMethods[methodName] = overloadedFunc;
                     else
                         mutableClass.Methods[methodName] = overloadedFunc;
-                    mutableClass.MethodAccess[methodName] = implementation.Access;
+                    (implementation.IsStatic ? mutableClass.StaticMethodAccess : mutableClass.MethodAccess)[methodName] = implementation.Access;
                 }
                 else if (implementations.Count == 1)
                 {
@@ -1985,7 +1985,7 @@ public partial class TypeChecker
                         mutableClass.StaticMethods[methodName] = funcType;
                     else
                         mutableClass.Methods[methodName] = funcType;
-                    mutableClass.MethodAccess[methodName] = method.Access;
+                    (method.IsStatic ? mutableClass.StaticMethodAccess : mutableClass.MethodAccess)[methodName] = method.Access;
                 }
                 else if (implementations.Count > 1)
                 {
@@ -2006,7 +2006,7 @@ public partial class TypeChecker
                 else
                     mutableClass.FieldTypes[fieldName] = fieldType;
 
-                mutableClass.FieldAccess[fieldName] = field.Access;
+                (field.IsStatic ? mutableClass.StaticFieldAccess : mutableClass.FieldAccess)[fieldName] = field.Access;
                 if (field.IsReadonly)
                     mutableClass.ReadonlyFields.Add(fieldName);
             }

@@ -848,8 +848,14 @@ public partial class TypeChecker
     private static FrozenDictionary<string, AccessModifier>? GetMethodAccess(TypeInfo? classType) =>
         ClassInfoAccessor.Get(classType, c => c.MethodAccess, gc => gc.MethodAccess);
 
+    private static FrozenDictionary<string, AccessModifier>? GetStaticMethodAccess(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.StaticMethodAccess, gc => gc.StaticMethodAccess);
+
     private static FrozenDictionary<string, AccessModifier>? GetFieldAccess(TypeInfo? classType) =>
         ClassInfoAccessor.Get(classType, c => c.FieldAccess, gc => gc.FieldAccess);
+
+    private static FrozenDictionary<string, AccessModifier>? GetStaticFieldAccess(TypeInfo? classType) =>
+        ClassInfoAccessor.Get(classType, c => c.StaticFieldAccess, gc => gc.StaticFieldAccess);
 
     private static FrozenSet<string>? GetReadonlyFields(TypeInfo? classType) =>
         ClassInfoAccessor.Get(classType, c => c.ReadonlyFields, gc => gc.ReadonlyFields);

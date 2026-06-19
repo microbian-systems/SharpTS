@@ -109,4 +109,57 @@ public class ClassMethodNameTests
     // by field openers. Methods named `get`/`set` are the practical case
     // that user code and stdlib hit (URLSearchParams etc.); fields with
     // these names are vanishingly rare.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticAndInstanceMethod_ShareName(ExecutionMode mode)
+    {
+        // Issue #722: static members live on the constructor, instance members
+        // on the prototype — same name is valid (tsc accepts it). The type
+        // checker must not flag this as duplicate implementations.
+        var source = """
+            class C {
+                run() { return "instance"; }
+                static run() { return "static"; }
+            }
+            console.log(C.run(), new C().run());
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("static instance\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StaticOverload_Coexists_WithInstanceMethod_SameName(ExecutionMode mode)
+    {
+        // Overload resolution must still run independently per namespace: an
+        // overloaded static `make` alongside a plain instance `make`.
+        var source = """
+            class C {
+                make(): string { return "instance"; }
+                static make(x: number): string;
+                static make(x: string): string;
+                static make(x: number | string): string { return "static:" + x; }
+            }
+            console.log(C.make(1), C.make("a"), new C().make());
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("static:1 static:a instance\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_StaticAndInstanceMethod_ShareName(ExecutionMode mode)
+    {
+        // Same fix applies to class expressions (issue #722, site 3).
+        var source = """
+            const C = class {
+                run() { return "instance"; }
+                static run() { return "static"; }
+            };
+            console.log(C.run(), new C().run());
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("static instance\n", output);
+    }
 }
