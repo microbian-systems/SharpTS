@@ -301,6 +301,60 @@ public class ArrayBufferTests
 
     #endregion
 
+    #region TypedArray Array-literal Constructor Tests (#782)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedArray_FromArrayLiteral_CopiesElements(ExecutionMode mode)
+    {
+        var source = @"
+            const x = new Uint8Array([1, 2, 3]);
+            console.log(x[0], x[1], x[2], x.length);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1 2 3 3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedArray_Int32_FromArrayLiteral_CopiesElements(ExecutionMode mode)
+    {
+        var source = @"
+            const y = new Int32Array([100, 200, -300]);
+            console.log(y[0], y[2], y.length);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("100 -300 3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedArray_CopyFromTypedArray(ExecutionMode mode)
+    {
+        var source = @"
+            const a = new Uint8Array([10, 20, 30]);
+            const b = new Uint8Array(a);
+            console.log(b[0], b[1], b[2]);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("10 20 30\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void TypedArray_Spread_ProducesArray(ExecutionMode mode)
+    {
+        var source = @"
+            const arr = new Uint8Array([5, 10, 15]);
+            const spread = [...arr];
+            console.log(spread[0], spread[1], spread[2]);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("5 10 15\n", output);
+    }
+
+    #endregion
+
     #region Mixed ArrayBuffer and SharedArrayBuffer Tests
 
     [Theory]

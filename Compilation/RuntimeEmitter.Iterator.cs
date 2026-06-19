@@ -487,6 +487,51 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notTSArrayLabel);
 
+        // 1b. Fast path for emitted $TypedArray — only present when program uses typed arrays.
+        if (runtime.TypedArrayBaseType != null)
+        {
+            var notTypedArrayLabel = il.DefineLabel();
+            var taLoopStartLabel = il.DefineLabel();
+            var taLoopDoneLabel = il.DefineLabel();
+            var taSrcLocal = il.DeclareLocal(_types.Object);
+            var taLenLocal = il.DeclareLocal(_types.Int32);
+            var taILocal = il.DeclareLocal(_types.Int32);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TypedArrayBaseType);
+            il.Emit(OpCodes.Brfalse, notTypedArrayLabel);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.TypedArrayBaseType);
+            il.Emit(OpCodes.Stloc, taSrcLocal);
+            il.Emit(OpCodes.Ldloc, taSrcLocal);
+            il.Emit(OpCodes.Castclass, runtime.TypedArrayBaseType);
+            il.Emit(OpCodes.Callvirt, runtime.TypedArrayLengthGetter);
+            il.Emit(OpCodes.Stloc, taLenLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, taILocal);
+            il.MarkLabel(taLoopStartLabel);
+            il.Emit(OpCodes.Ldloc, taILocal);
+            il.Emit(OpCodes.Ldloc, taLenLocal);
+            il.Emit(OpCodes.Bge, taLoopDoneLabel);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, taSrcLocal);
+            il.Emit(OpCodes.Castclass, runtime.TypedArrayBaseType);
+            il.Emit(OpCodes.Ldloc, taILocal);
+            il.Emit(OpCodes.Callvirt, runtime.TypedArrayElementGet);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+            il.Emit(OpCodes.Ldloc, taILocal);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, taILocal);
+            il.Emit(OpCodes.Br, taLoopStartLabel);
+            il.MarkLabel(taLoopDoneLabel);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(notTypedArrayLabel);
+        }
+
         // 1. If obj is already List<object>, return it directly (fast path for arrays)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
