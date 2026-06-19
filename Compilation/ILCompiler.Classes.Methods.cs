@@ -676,6 +676,11 @@ public partial class ILCompiler
             }
         }
 
+        // #790: emit override-arity bridges so a base-typed call reaches a derived override that
+        // adds trailing optional/default params (whose wider CLR arity would otherwise take a new
+        // vtable slot instead of overriding the base).
+        EmitOverrideArityBridges(typeBuilder, classStmt, qualifiedClassName);
+
         // Emit computed symbol-keyed method bodies (#647). Before the static constructor so the
         // registry registrations there can reference them.
         EmitSymbolMethods(typeBuilder, qualifiedClassName, fieldsField);
@@ -699,6 +704,132 @@ public partial class ILCompiler
 
         // Emit ES2022 private method bodies
         EmitPrivateMethodBodies(typeBuilder, classStmt, fieldsField, qualifiedClassName);
+    }
+
+    /// <summary>
+    /// #790: For a derived instance method that overrides a base method by adding trailing
+    /// optional/default parameters, the override's CLR arity differs from the base (e.g.
+    /// <c>Derived.m(double, object)</c> vs <c>Base.m(double)</c>), so it takes a NEW vtable slot
+    /// instead of overriding — and a base-typed call (<c>(b: Base).m(3)</c>) dispatches to the base
+    /// method, never reaching the override. (The same-<i>arity</i> case is handled by
+    /// <see cref="ParameterTypeResolver"/>'s hierarchy-consistent widening, #705/#723/#787.)
+    ///
+    /// This emits, for each shorter ancestor signature of the method, a synthetic <c>virtual</c>
+    /// (non-newslot, so it auto-overrides) bridge matching that ancestor's exact CLR signature,
+    /// forwarding to the derived full method with the missing trailing params filled by the
+    /// <c>$Undefined</c>/null sentinel. The full method's existing default prologue then fires the
+    /// defaults in order — identical to what a direct call site does via <c>EmitOmittedArgument</c>,
+    /// so a default may reference an earlier param (#698). Forwarding via <c>callvirt</c> means a
+    /// base-/mid-typed call lands on the most-derived implementation in deeper chains.
+    ///
+    /// Scoped to sync (return type <c>object</c>) instance methods: an async/generator ancestor has
+    /// a different return type, so a CLR override is impossible.
+    /// </summary>
+    private void EmitOverrideArityBridges(TypeBuilder typeBuilder, Stmt.Class classStmt, string qualifiedClassName)
+    {
+        if (!_classes.InstanceMethods.TryGetValue(qualifiedClassName, out var ownMethods))
+            return;
+
+        foreach (var method in classStmt.Methods.Where(m =>
+                     m.Body != null && !m.IsStatic && !m.IsPrivate && !m.IsAbstract &&
+                     !m.IsAsync && !m.IsGenerator && m.ComputedKey == null &&
+                     m.Name.Lexeme != "constructor"))
+        {
+            string name = method.Name.Lexeme;
+            if (!ownMethods.TryGetValue(name, out var fullBuilder))
+                continue;
+
+            var fullParams = fullBuilder.GetParameters();
+            int fullArity = fullParams.Length;
+            if (fullArity == 0)
+                continue; // cannot add trailing params below arity 0
+
+            // Collect the distinct shorter ancestor CLR signatures (one bridge per arity, nearest
+            // ancestor wins). Each distinct ancestor arity is a separate vtable slot to override.
+            var byArity = new Dictionary<int, Type[]>();
+            string? current = _classes.Superclass.GetValueOrDefault(qualifiedClassName);
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            while (current != null && visited.Add(current))
+            {
+                if (_classes.InstanceMethods.TryGetValue(current, out var ancMethods) &&
+                    ancMethods.TryGetValue(name, out var ancBuilder))
+                {
+                    var ancParams = ancBuilder.GetParameters();
+                    int ancArity = ancParams.Length;
+                    // Only a strictly-shorter, object-returning (sync) ancestor signature whose
+                    // shared prefix matches ours can be bridged: the bridge must equal the ancestor
+                    // slot's signature to bind, and forward those args into our full method.
+                    if (ancArity < fullArity && !byArity.ContainsKey(ancArity) &&
+                        ancBuilder.ReturnType == typeof(object) &&
+                        PrefixTypesMatch(ancParams, fullParams, ancArity))
+                    {
+                        byArity[ancArity] = ancParams.Select(p => p.ParameterType).ToArray();
+                    }
+                }
+                current = _classes.Superclass.GetValueOrDefault(current);
+            }
+
+            foreach (var (bridgeArity, bridgeSig) in byArity)
+            {
+                var bridge = typeBuilder.DefineMethod(
+                    name,
+                    MethodAttributes.Public | MethodAttributes.Virtual,
+                    typeof(object),
+                    bridgeSig);
+
+                var il = bridge.GetILGenerator();
+                il.Emit(OpCodes.Ldarg_0);                       // this
+                for (int i = 0; i < bridgeArity; i++)
+                    il.Emit(OpCodes.Ldarg, i + 1);              // forward provided args
+                for (int i = bridgeArity; i < fullArity; i++)
+                    EmitOmittedBridgeArgument(il, fullParams[i].ParameterType);
+                il.Emit(OpCodes.Callvirt, fullBuilder);         // dispatch to most-derived full method
+                il.Emit(OpCodes.Ret);
+            }
+        }
+    }
+
+    /// <summary>True when the first <paramref name="count"/> parameter types of two signatures are
+    /// identical — a precondition for the override bridge to forward args without conversion.</summary>
+    private static bool PrefixTypesMatch(ParameterInfo[] a, ParameterInfo[] b, int count)
+    {
+        for (int i = 0; i < count; i++)
+            if (a[i].ParameterType != b[i].ParameterType)
+                return false;
+        return true;
+    }
+
+    /// <summary>
+    /// Emits the omitted-argument sentinel for a trailing slot the bridge does not receive, mirroring
+    /// <c>EmitOmittedArgument</c>: an <c>object</c> slot (every widened optional/defaulted param) gets
+    /// the emitted runtime's <c>$Undefined</c> sentinel — which fires the default prologue and is
+    /// observable through <c>typeof</c>/<c>=== undefined</c>; a value-type slot gets its CLR default;
+    /// a not-widened reference-typed default (e.g. <c>string</c>) gets <c>null</c>, on which the
+    /// prologue still fires. Standalone-safe: references the emitted <c>UndefinedInstance</c> field,
+    /// not SharpTS.dll.
+    /// </summary>
+    private void EmitOmittedBridgeArgument(System.Reflection.Emit.ILGenerator il, Type slotType)
+    {
+        if (slotType == typeof(object))
+        {
+            if (_runtime != null)
+                il.Emit(OpCodes.Ldsfld, _runtime.UndefinedInstance);
+            else
+                il.Emit(OpCodes.Ldnull);
+        }
+        else if (slotType == typeof(double)) { il.Emit(OpCodes.Ldc_R8, 0.0); }
+        else if (slotType == typeof(int)) { il.Emit(OpCodes.Ldc_I4_0); }
+        else if (slotType == typeof(bool)) { il.Emit(OpCodes.Ldc_I4_0); }
+        else if (slotType == typeof(float)) { il.Emit(OpCodes.Ldc_R4, 0.0f); }
+        else if (slotType == typeof(long)) { il.Emit(OpCodes.Ldc_I8, 0L); }
+        else if (slotType.IsValueType)
+        {
+            var local = il.DeclareLocal(slotType);
+            il.Emit(OpCodes.Ldloca, local);
+            il.Emit(OpCodes.Initobj, slotType);
+            il.Emit(OpCodes.Ldloc, local);
+        }
+        else { il.Emit(OpCodes.Ldnull); }
     }
 
     /// <summary>

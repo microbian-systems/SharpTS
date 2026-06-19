@@ -246,6 +246,95 @@ public class ClassMethodDefaultParameterTests
         Assert.Equal("D:D\n", TestHarness.Run(source, mode));
     }
 
+    // ---- Different-arity override: derived adds trailing optional/default params (#790) ----
+    // A base-typed call must reach the derived override even though its wider CLR arity would
+    // otherwise take a new vtable slot. Fixed by emitting a base-arity override bridge.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Override_DerivedAddsValueTypeDefault_BaseTypedDispatchesToDerived(ExecutionMode mode)
+    {
+        var source = """
+            class Base { m(x: number): number { return x; } }
+            class Derived extends Base { m(x: number, y: number = 100): number { return x + y; } }
+            const b: Base = new Derived();
+            console.log(b.m(3));
+            """;
+        Assert.Equal("103\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Override_DerivedAddsReferenceTypeDefault_BaseTypedDispatchesToDerived(ExecutionMode mode)
+    {
+        // Reference-type added default proves the gap is dispatch, not default-firing.
+        var source = """
+            class B2 { g(x: number): string { return "x" + x; } }
+            class D2 extends B2 { g(x: number, s: string = "Z"): string { return "x" + x + s; } }
+            const b2: B2 = new D2();
+            console.log(b2.g(3));
+            """;
+        Assert.Equal("x3Z\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Override_DerivedAddsNoDefaultOptional_BaseTypedDispatchesToDerived(ExecutionMode mode)
+    {
+        // Added optional with no default: the derived runs with the param undefined.
+        var source = """
+            class Base { m(x: number): string { return "B:" + x; } }
+            class Derived extends Base { m(x: number, y?: number): string { return "D:" + x + ":" + (y === undefined ? "u" : y); } }
+            const b: Base = new Derived();
+            console.log(b.m(3));
+            """;
+        Assert.Equal("D:3:u\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Override_DerivedAddsMultipleDefaults_BaseTypedDispatchesToDerived(ExecutionMode mode)
+    {
+        var source = """
+            class P { f(a: number): string { return "P:" + a; } }
+            class Q extends P { f(a: number, b: number = 7, c: string = "z"): string { return "Q:" + a + ":" + b + ":" + c; } }
+            const p: P = new Q();
+            console.log(p.f(1));
+            """;
+        Assert.Equal("Q:1:7:z\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Override_ThreeLevelChain_BaseAndMidTypedReachMostDerived(ExecutionMode mode)
+    {
+        // Each level adds an arity; both a base-typed and a mid-typed call must land on L2.
+        var source = """
+            class L0 { m(x: number): string { return "L0:" + x; } }
+            class L1 extends L0 { m(x: number, y: number = 1): string { return "L1:" + x + ":" + y; } }
+            class L2 extends L1 { m(x: number, y: number = 1, z: number = 2): string { return "L2:" + x + ":" + y + ":" + z; } }
+            const asL0: L0 = new L2();
+            const asL1: L1 = new L2();
+            console.log(asL0.m(3));
+            console.log(asL1.m(3));
+            """;
+        Assert.Equal("L2:3:1:2\nL2:3:1:2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Override_DerivedAddsDefault_DirectCallStillWorks(ExecutionMode mode)
+    {
+        // Regression: the direct (derived-typed) call path is unaffected by the bridge.
+        var source = """
+            class Base { m(x: number): number { return x; } }
+            class Derived extends Base { m(x: number, y: number = 100): number { return x + y; } }
+            const d = new Derived();
+            console.log(d.m(3));
+            """;
+        Assert.Equal("103\n", TestHarness.Run(source, mode));
+    }
+
     // ---- Value-type defaults on (virtual) instance & static methods (#723/#737) ----
 
     [Theory]
