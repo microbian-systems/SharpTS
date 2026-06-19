@@ -137,6 +137,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(symbolOkLabel);
 
+        // #791: a non-symbol computed method key (string/number, e.g. `["dyn"]()` / `[1]()`) is
+        // registered here too. Normalize it to its property-key string so it matches the form the
+        // lookup side produces (a named access uses the literal string; an index access uses
+        // ToJsString(key)); a numeric key would otherwise store as a boxed double and never match.
+        // Symbols pass through unchanged so symbol-keyed methods/accessors still share their slot.
+        var keyNormalizedLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
+        il.Emit(OpCodes.Brtrue, keyNormalizedLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Starg_S, (byte)1);
+        il.MarkLabel(keyNormalizedLabel);
+
         // if (!_symbolAccessors.TryGetValue(owner, out inner)) { inner = new(); _symbolAccessors[owner] = inner; }
         var haveInner = il.DefineLabel();
         il.Emit(OpCodes.Ldsfld, field);

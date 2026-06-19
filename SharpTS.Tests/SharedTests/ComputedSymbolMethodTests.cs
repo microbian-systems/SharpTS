@@ -77,11 +77,11 @@ public class ComputedSymbolMethodTests
         Assert.Equal("3\n", TestHarness.Run(source, mode));
     }
 
-    // Compiled mode: a non-symbol computed key (`[KEY]()` with KEY a string) would need a
-    // dynamically-named .NET method; the symbol-method registry only backs symbol keys, and named
-    // access doesn't consult it. Interpreter-only; tracked as a follow-up in #791.
+    // #791: non-symbol computed keys (string/number) fold to a string-named method. Bodies emit as
+    // synthetic $symmethod_N and register in the symbol-method registry under the property-key string;
+    // named/string-index access consults the registry as a fallback in $IHasFields.GetProperty.
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void NonSymbolComputedMethodKey_FoldsToNamedMethod(ExecutionMode mode)
     {
         var source = """
@@ -91,6 +91,64 @@ public class ComputedSymbolMethodTests
             """;
 
         Assert.Equal("42\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void StringLiteralComputedMethodKey_BothAccessForms(ExecutionMode mode)
+    {
+        // Literal key, accessed both by name and by string index.
+        var source = """
+            class C { ["dyn"]() { return 42; } }
+            const c = new C() as any;
+            console.log(c.dyn());
+            console.log(c["dyn"]());
+            """;
+
+        Assert.Equal("42\n42\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void MutableLocalComputedMethodKey_FoldsToNamedMethod(ExecutionMode mode)
+    {
+        // Fully dynamic form: the key is a mutable local, unknowable at compile time.
+        var source = """
+            let k = "dyn";
+            class C { [k]() { return 42; } }
+            console.log((new C() as any).dyn());
+            """;
+
+        Assert.Equal("42\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NumericComputedMethodKey_FoldsToStringKey(ExecutionMode mode)
+    {
+        // A numeric key folds to its property-key string ("1"), reachable via either index form.
+        var source = """
+            class C { [1]() { return 7; } }
+            const c = new C() as any;
+            console.log(c[1]());
+            console.log(c["1"]());
+            """;
+
+        Assert.Equal("7\n7\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void InheritedComputedMethodKey_ResolvesOnSubclass(ExecutionMode mode)
+    {
+        // A computed key declared on the base resolves through the subclass via the base-chain walk.
+        var source = """
+            class Base { ["inh"]() { return 99; } }
+            class Derived extends Base {}
+            console.log((new Derived() as any).inh());
+            """;
+
+        Assert.Equal("99\n", TestHarness.Run(source, mode));
     }
 
     [Theory]

@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Parsing;
@@ -363,6 +364,11 @@ public partial class ILCompiler
                 if (methodName == "constructor")
                     continue;
 
+                // #791: synthetic computed-method bodies ($symmethod_N) are not user-dispatchable
+                // by their internal name — they resolve via the registry fallback below.
+                if (methodName.StartsWith("$symmethod_", System.StringComparison.Ordinal))
+                    continue;
+
                 var nextLabel = il.DefineLabel();
 
                 // if (name == "methodName") return new $TSFunction(this, methodBuilder);
@@ -397,6 +403,32 @@ public partial class ILCompiler
 
                 il.MarkLabel(nextLabel);
             }
+        }
+
+        // 3b. #791: non-symbol (string/number) computed method keys. Their bodies are emitted as
+        // $symmethod_N and registered in the symbol-method registry under the property-key string
+        // (RegisterSymbolMethod), but named/string-index access (obj.dyn, obj["dyn"]) funnels here
+        // rather than through the symbol-key branch, so consult the registry as a fallback. Gated on
+        // this class declaring a computed method to keep the common no-computed-method path untouched.
+        // FindSymbolMethod walks the receiver's base chain, so an inherited key still resolves once
+        // base-fallthrough reaches the declaring class's GetProperty.
+        if (classStmt.Methods.Any(m => m.ComputedKey != null && m.Body != null))
+        {
+            var noStrMethodLabel = il.DefineLabel();
+            var strMethodLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, _runtime.FindSymbolMethod);
+            il.Emit(OpCodes.Stloc, strMethodLocal);
+            il.Emit(OpCodes.Ldloc, strMethodLocal);
+            il.Emit(OpCodes.Brfalse, noStrMethodLabel);
+            // return new $TSFunction(this, (MethodInfo)mi)  — receiver-bound, mirroring the symbol path.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldloc, strMethodLocal);
+            il.Emit(OpCodes.Castclass, _types.MethodInfo);
+            il.Emit(OpCodes.Newobj, _runtime.TSFunctionCtor);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(noStrMethodLabel);
         }
 
         // 4. Not found on this class — delegate to the base class's GetProperty
@@ -674,6 +706,11 @@ public partial class ILCompiler
             {
                 // Skip constructor
                 if (methodName == "constructor")
+                    continue;
+
+                // #791: synthetic computed-method bodies ($symmethod_N) are not user-dispatchable
+                // by their internal name — they resolve via the registry fallback below.
+                if (methodName.StartsWith("$symmethod_", System.StringComparison.Ordinal))
                     continue;
 
                 var nextLabel = il.DefineLabel();
