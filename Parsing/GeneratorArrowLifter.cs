@@ -30,8 +30,14 @@ namespace SharpTS.Parsing;
 /// that body is checked (#522). A generator expression that DOES close over an enclosing function's
 /// local is instead lifted to the end of that enclosing function's body, so the lifted declaration
 /// keeps the local in lexical scope (#534). The interpreter runs such nested generator declarations
-/// natively; the compiler's nested-generator lowering is still incomplete (#501/#532) and reports a
-/// clear "Yield not supported in this context" compile error for that case.</para>
+/// natively. On the compile path the <see cref="SharpTS.Compilation.NestedFunctionLifter"/> lambda-lifts
+/// it (the captured local becomes a leading parameter forwarded by an arrow); because this lift is
+/// appended at the body END, the forwarding binding is hoisted to the body top so the earlier reference
+/// resolves — so a generator expression closing over a PLAIN enclosing function's local now runs in both
+/// modes (#534). Cases the lambda-lift cannot forward (a body using <c>this</c>/<c>arguments</c>,
+/// rest/default params, self-recursion, or an enclosing function that is itself a state machine) stay
+/// nested and fail cleanly with a "Yield not supported in this context" compile error, never a
+/// miscompile.</para>
 ///
 /// <para><b>Traversal.</b> The rewriter descends through every expression- and statement-bearing AST
 /// position so a generator expression is found wherever it is legal to write one — call/IIFE position
@@ -70,8 +76,9 @@ internal sealed class GeneratorArrowLifter
     /// the reference. Such a generator is left in place as an expression instead (#678): the interpreter
     /// runs generator expressions natively (<c>SharpTSArrowGeneratorFunction</c>) and the type checker
     /// establishes the generator context directly (<c>CheckArrowFunction</c>). The compiler has no
-    /// generator-expression IL path; it reports a clear "Yield not supported in this context" error for
-    /// the capturing case — the same outcome as #534's enclosing-function-local capture.
+    /// generator-expression IL path and cannot lift this out of its block, so it reports a clear
+    /// "Yield not supported in this context" error — unlike a capture of an enclosing FUNCTION local,
+    /// which is lambda-lifted and runs in both modes (#534).
     /// </summary>
     private readonly List<HashSet<string>> _blockScopes = new();
 

@@ -61,17 +61,28 @@ internal sealed class NestedFunctionLifter
     private readonly ClosureAnalyzer _analyzer;
     private readonly HashSet<Stmt.Function> _safeCandidates;
     private readonly Dictionary<Stmt.Function, List<string>> _lambdaForwards;
+    /// <summary>
+    /// The subset of <see cref="_lambdaForwards"/> that capture an enclosing FUNCTION scope (#583 §1 /
+    /// #534), as opposed to a module-level block/loop binding (#622). A function-scope capture is
+    /// read live (by reference) through the enclosing function's display class at call time, never by
+    /// value at arrow creation, so its forwarding binding is HOISTED to the top of the body (like a
+    /// real function declaration). A module-block/loop capture instead stays in place so each loop
+    /// iteration rebuilds a fresh arrow over that iteration's binding.
+    /// </summary>
+    private readonly HashSet<Stmt.Function> _hoistedForwards;
     private readonly List<Stmt.Function> _lifted = new();
     private int _counter;
 
     private NestedFunctionLifter(
         ClosureAnalyzer analyzer,
         HashSet<Stmt.Function> safeCandidates,
-        Dictionary<Stmt.Function, List<string>> lambdaForwards)
+        Dictionary<Stmt.Function, List<string>> lambdaForwards,
+        HashSet<Stmt.Function> hoistedForwards)
     {
         _analyzer = analyzer;
         _safeCandidates = safeCandidates;
         _lambdaForwards = lambdaForwards;
+        _hoistedForwards = hoistedForwards;
     }
 
     /// <summary>
@@ -106,6 +117,11 @@ internal sealed class NestedFunctionLifter
         // forwarded by an in-place arrow that closes over it (see LambdaLiftCandidate). Maps such a
         // function to the ordered list of capture names to forward.
         var lambdaForwards = new Dictionary<Stmt.Function, List<string>>(ReferenceEqualityComparer.Instance);
+        // The subset of lambdaForwards that capture an enclosing FUNCTION scope (#534/#583 §1): their
+        // forwarding binding is hoisted to the body top (matching function-declaration hoisting) so a
+        // forward reference resolves. Module-block/loop captures (#622) are NOT added here — they stay
+        // in place for per-iteration freshness.
+        var hoistedForwards = new HashSet<Stmt.Function>(ReferenceEqualityComparer.Instance);
         foreach (var f in scan.Candidates)
         {
             bool isModuleBlock = scan.ModuleBlockEnclosingBindings.TryGetValue(f, out var blockBindings);
@@ -121,7 +137,10 @@ internal sealed class NestedFunctionLifter
             if (!IsNonCapturing(analyzer, f))
             {
                 if (!isModuleBlock && TryComputeFunctionCaptureForward(analyzer, f, out var fnForwarded))
+                {
                     lambdaForwards[f] = fnForwarded;
+                    hoistedForwards.Add(f);
+                }
                 continue;
             }
 
@@ -154,7 +173,7 @@ internal sealed class NestedFunctionLifter
         }
         if (safe.Count == 0 && lambdaForwards.Count == 0) return module;
 
-        var lifter = new NestedFunctionLifter(analyzer, safe, lambdaForwards);
+        var lifter = new NestedFunctionLifter(analyzer, safe, lambdaForwards, hoistedForwards);
         var rewritten = lifter.ProcessTopLevel(module);
         if (lifter._lifted.Count == 0) return module;
 
@@ -499,12 +518,28 @@ internal sealed class NestedFunctionLifter
                 }
                 if (_lambdaForwards.TryGetValue(f, out var forwarded))
                 {
-                    // Capturing relocation: replace the declaration IN PLACE with a forwarding
-                    // arrow. In-place (not hoisted) so the arrow snapshots each captured binding
-                    // where they are all in scope and assigned — the type checker has already
-                    // guaranteed that ordering, rejecting any earlier reference.
+                    // Capturing relocation: replace the declaration with a forwarding arrow.
+                    //
+                    // Function-scope captures (#534/#583 §1) whose enclosing function is a PLAIN
+                    // function are HOISTED to the top of this body (alongside non-capturing aliases):
+                    // there the forwarding arrow reads its captures live (by reference) at call time, so
+                    // an earlier creation position is harmless — and hoisting matches function-declaration
+                    // hoisting, so the forward reference the GeneratorArrowLifter creates (it appends the
+                    // lifted `function* __genArrow_N` at body END) resolves.
+                    //
+                    // When the enclosing function is itself a state machine (generator/async), a
+                    // forwarding arrow snapshots its captures at CREATION, not at call, so hoisting it
+                    // above the captured local's assignment would read a stale value. Keep those in
+                    // place (the existing #583 §1 decl-before-use behavior). Module-block/loop captures
+                    // (#622) likewise stay in place so each loop iteration rebuilds a fresh arrow over
+                    // that iteration's binding.
                     result ??= new List<Stmt>(body.GetRange(0, i));
-                    result.Add(LambdaLiftCandidate(f, forwarded));
+                    bool hoist = _hoistedForwards.Contains(f) && !enclosingIsStateMachine;
+                    var binding = LambdaLiftCandidate(f, forwarded, hoisted: hoist);
+                    if (hoist)
+                        (aliases ??= new List<Stmt>()).Add(binding);
+                    else
+                        result.Add(binding);
                     continue;
                 }
             }
@@ -551,15 +586,21 @@ internal sealed class NestedFunctionLifter
         => new Stmt.Var(original, TypeAnnotation: null, Initializer: new Expr.Variable(fresh), IsVar: true);
 
     /// <summary>
-    /// Lambda-lifts a capturing module-block declaration: relocates it to a top-level declaration
-    /// whose leading parameters are the captured bindings (<paramref name="forwarded"/>), and returns
-    /// a block-scoped <c>let &lt;name&gt; = (&lt;params&gt;) =&gt; &lt;fresh&gt;(&lt;captures&gt;,
-    /// &lt;params&gt;);</c> arrow that stands in for it at its original position. The arrow closes over
-    /// the captured bindings and forwards them, so a generator/async relocated this way — which the
-    /// compiler cannot emit as a capturing closure directly — still observes its captures, and each
-    /// loop iteration builds a fresh arrow over that iteration's bindings (#622).
+    /// Lambda-lifts a capturing declaration: relocates it to a top-level declaration whose leading
+    /// parameters are the captured bindings (<paramref name="forwarded"/>), and returns a
+    /// <c>&lt;name&gt; = (&lt;params&gt;) =&gt; &lt;fresh&gt;(&lt;captures&gt;, &lt;params&gt;);</c> arrow
+    /// that stands in for it. The arrow closes over the captured bindings and forwards them, so a
+    /// generator/async relocated this way — which the compiler cannot emit as a capturing closure
+    /// directly — still observes its captures.
+    ///
+    /// <para>When <paramref name="hoisted"/> is true (a function-scope capture, #534/#583 §1), the
+    /// binding is a function-scoped <c>var</c> the caller hoists to the body top, matching
+    /// function-declaration hoisting so a forward reference resolves; the arrow reads its captures live
+    /// at call time, so the earlier creation position is harmless. When false (a module-level block/loop
+    /// capture, #622), it is a block-scoped <c>let</c> the caller leaves in place, so each loop
+    /// iteration rebuilds a fresh arrow over that iteration's bindings.</para>
     /// </summary>
-    private Stmt LambdaLiftCandidate(Stmt.Function f, List<string> forwarded)
+    private Stmt LambdaLiftCandidate(Stmt.Function f, List<string> forwarded, bool hoisted)
     {
         var freshName = $"__nestedFn_{f.Name.Lexeme}_{_counter++}";
         var freshToken = new Token(TokenType.IDENTIFIER, freshName, null, f.Name.Line);
@@ -604,9 +645,10 @@ internal sealed class NestedFunctionLifter
             IsAsync: false,
             IsGenerator: false);
 
-        // Block-scoped `let`: doesn't leak past its block and is re-bound per loop iteration,
-        // matching block-scoped function-declaration semantics.
-        return new Stmt.Var(f.Name, TypeAnnotation: null, Initializer: arrow, IsVar: false);
+        // Function-scope capture (#534): a `var` the caller hoists to the body top, matching
+        // function-declaration hoisting. Module-block/loop capture (#622): a block-scoped `let` left
+        // in place, re-bound per loop iteration.
+        return new Stmt.Var(f.Name, TypeAnnotation: null, Initializer: arrow, IsVar: hoisted);
     }
 
     private Stmt ProcessStmt(Stmt stmt, bool enclosingIsStateMachine)

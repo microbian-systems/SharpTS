@@ -362,25 +362,31 @@ public class NestedFunctionLiftingTests
         Assert.Equal("0,1,2\n", TestHarness.RunCompiled(source));
     }
 
-    // ── Documented limitation #583 §1: capturing an enclosing FUNCTION scope is NOT lifted ───────
-    // Lambda-lifting forwards captured module-level block/loop bindings; a nested state-machine
-    // function that captures a local of an enclosing FUNCTION still cannot be lowered (it stays
-    // nested and fails to compile, a clean failure — never a miscompile). This pins the interpreter
-    // behaviour and asserts the compiler does not miscompile it.
+    // ── #534/#583 §1: capturing an enclosing FUNCTION scope IS lambda-lifted ─────────────────────
+    // A nested state-machine declaration that captures a local of an enclosing FUNCTION is lambda-
+    // lifted (the captured local becomes a leading parameter forwarded by an arrow); it runs in both
+    // modes. The decl-before-use form is pinned by GeneratorClosureCaptureTests; this pins the
+    // FORWARD-reference form (#534): the reference precedes the declaration, so the forwarding binding
+    // must be hoisted to the body top. The enclosing function here is PLAIN — a forwarding arrow in a
+    // plain body reads its captures live at call time, so hoisting it above the local's assignment is
+    // safe. (When the enclosing function is itself a state machine the arrow snapshots at creation, so
+    // that forward-reference case stays a documented limitation.)
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    public void CapturingNestedGenerator_Interpreted(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CapturingNestedGenerator_ForwardReference_IsLifted(ExecutionMode mode)
     {
         var source = """
-            function* outer(): Generator<number> {
+            function outer(): number[] {
                 const x = 10;
-                function* inner(): Generator<number> { yield x; }
-                yield* inner();
+                const g = inner;
+                const r = [...g()];
+                function* inner(): Generator<number> { yield x; yield x + 1; }
+                return r;
             }
-            for (const v of outer()) console.log(v);
+            console.log(outer().join(","));
             """;
-        Assert.Equal("10\n", TestHarness.Run(source, mode));
+        Assert.Equal("10,11\n", TestHarness.Run(source, mode));
     }
 
     // A block declaration that uses `this`/`arguments`, or has rest/default parameters, is declined
