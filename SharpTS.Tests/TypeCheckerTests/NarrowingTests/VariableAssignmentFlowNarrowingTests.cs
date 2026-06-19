@@ -13,8 +13,10 @@ namespace SharpTS.Tests.TypeCheckerTests.NarrowingTests;
 ///
 /// The narrowed type is the declared union filtered to the members the RHS can be
 /// (<c>NarrowToDeclaredSlot</c>), so literal members survive and the declared type is the fallback
-/// when nothing narrows. Only function-local/parameter variables are narrowed — module-level
-/// variables are not tracked in the declared-type stack, so they stay at the declared type.
+/// when nothing narrows. Both function-local/parameter and module/top-level variables are tracked in
+/// the declared-type stack (#743 pushes a module frame in <c>Check</c>/<c>CheckWithRecovery</c>), so
+/// post-write narrowing applies at module scope too — assignments are still checked against the
+/// declared type, not the narrowed one.
 /// </summary>
 public class VariableAssignmentFlowNarrowingTests
 {
@@ -184,6 +186,53 @@ public class VariableAssignmentFlowNarrowingTests
                     x.toFixed(2);
                 }
             }
+            """;
+
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void ModuleScope_GuardThenReassignToOtherMember_Allowed()
+    {
+        // #743 Bug 1: at module scope `g = 42` was checked against the guard-narrowed `string` instead
+        // of the declared `string | number`, producing a spurious "Cannot assign" error. tsc accepts
+        // this — the assignment is checked against the DECLARED type. The same code in a function
+        // already worked because function locals were tracked in the declared-type stack.
+        var source = """
+            let g: string | number = "s";
+            if (typeof g === "string") {
+                g = 42;
+            }
+            console.log(g);
+            """;
+
+        Assert.Equal("42\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void ModuleScope_WriteThenRead_NarrowsToRhsType()
+    {
+        // #743 Bug 2: post-write narrowing (#653) is gated on tracked variables, so module-level
+        // `x = "hi"` previously left `x` at `string | null` and `x.length` reported a false
+        // "possibly null". With the module declared-type frame, the write narrows `x` to string.
+        var source = """
+            let x: string | null = null;
+            x = "hi";
+            console.log(x.length);
+            """;
+
+        Assert.Equal("2\n", TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void ModuleScope_AssignOutsideDeclaredType_StillRejected()
+    {
+        // Regression guard: tracking module vars must not weaken assignment checking. An assignment
+        // outside the declared type is still rejected (checked against the declared type, which is now
+        // correctly recorded rather than read back from a narrowed binding).
+        var source = """
+            let n: number = 1;
+            n = "s";
             """;
 
         Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
