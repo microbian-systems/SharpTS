@@ -262,12 +262,14 @@ public partial class GeneratorMoveNextEmitter
         // before the setup above, so the field already holds the live value (#400/#414).
         _helpers.RehydrateLiveSpillsAfterResume();
 
-        // Drive the delegate one step. Two paths converge on a single value via valueTemp:
+        // Drive the delegate one step. Three paths converge on a single value via valueTemp:
         //   - $IGenerator (a delegated SharpTS generator): call next(this.SentField) so the
         //     outer's resume value reaches the inner's suspended yield (#476). The result is
         //     a { value, done } record.
-        //   - IEnumerator (arrays, $IteratorWrapper, etc.): MoveNext()/Current, which carry
-        //     no resume slot — the sent value is irrelevant to those iterators.
+        //   - $IteratorWrapper (custom iterator objects with [Symbol.iterator]): call
+        //     MoveNextWithSent(this.SentField) to forward the sent value to next(v) (#503).
+        //   - Plain IEnumerator (arrays, Maps, Sets, etc.): MoveNext()/Current with no
+        //     resume slot — the sent value is irrelevant to those iterators.
         var valueTemp = _il.DeclareLocal(typeof(object));
         var genResultLocal = _il.DeclareLocal(typeof(object));
         var yieldStarResultLocal = _il.DeclareLocal(typeof(object));
@@ -279,6 +281,11 @@ public partial class GeneratorMoveNextEmitter
             driveViaGeneratorLabel = _il.DefineLabel();
             genDoneLabel = _il.DefineLabel();
         }
+        var iteratorWrapperType = _ctx?.Runtime?.IteratorWrapperType;
+        var moveNextWithSent = _ctx?.Runtime?.IteratorWrapperMoveNextWithSent;
+        Label plainEnumeratorLabel = default;
+        if (iteratorWrapperType != null && moveNextWithSent != null)
+            plainEnumeratorLabel = _il.DefineLabel();
 
         // #526: an external return()/throw() injected while suspended at this yield* is forwarded
         // into the delegate (ECMA-262 §14.4.14): return() runs the delegate's finally, then the outer
@@ -297,7 +304,32 @@ public partial class GeneratorMoveNextEmitter
             _il.Emit(OpCodes.Brtrue, driveViaGeneratorLabel);
         }
 
-        // IEnumerator path: advance, then read Current into valueTemp.
+        // $IteratorWrapper path: call MoveNextWithSent(SentField) so the outer's resume value
+        // is forwarded as the argument to the custom iterator's next(v) (ECMA-262 §14.4.14, #503).
+        if (iteratorWrapperType != null && moveNextWithSent != null)
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, delegatedField);
+            _il.Emit(OpCodes.Isinst, iteratorWrapperType);
+            _il.Emit(OpCodes.Brfalse, plainEnumeratorLabel);
+
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, delegatedField);
+            _il.Emit(OpCodes.Castclass, iteratorWrapperType);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.SentField);
+            _il.Emit(OpCodes.Call, moveNextWithSent);
+            _il.Emit(OpCodes.Brfalse, loopEnd);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, delegatedField);
+            _il.Emit(OpCodes.Callvirt, current);
+            _il.Emit(OpCodes.Stloc, valueTemp);
+            _il.Emit(OpCodes.Br, haveValueLabel);
+
+            _il.MarkLabel(plainEnumeratorLabel);
+        }
+
+        // Plain IEnumerator path (arrays, Maps, Sets, etc.): advance, then read Current into valueTemp.
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldfld, delegatedField);
         _il.Emit(OpCodes.Callvirt, moveNext);

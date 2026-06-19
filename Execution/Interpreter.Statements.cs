@@ -768,6 +768,87 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// Extracts the raw iterator object and its bound <c>next</c> callable from a custom iterable
+    /// (one that carries <c>[Symbol.iterator]</c>). Used by <c>yield*</c> delegation to drive the
+    /// iterator manually so the outer generator's resume value can be forwarded as the argument to
+    /// <c>next(v)</c> (ECMA-262 §14.4.14, #503).
+    /// </summary>
+    /// <returns>
+    /// <c>true</c> when a custom iterator was found; <c>false</c> for built-in iterables (arrays,
+    /// strings, Maps, Sets) that have no <c>[Symbol.iterator]</c> in the runtime.
+    /// </returns>
+    internal bool TryGetCustomIteratorProtocol(
+        object? iterable,
+        out object? iteratorObj,
+        out ISharpTSCallable? nextFn)
+    {
+        iteratorObj = null;
+        nextFn = null;
+
+        object? iteratorFn = null;
+        object? thisForBind = null;
+
+        if (iterable is SharpTSObject obj)
+        {
+            iteratorFn = obj.GetBySymbol(SharpTSSymbol.Iterator);
+            thisForBind = obj;
+        }
+        else if (iterable is SharpTSInstance inst)
+        {
+            iteratorFn = inst.GetBySymbol(SharpTSSymbol.Iterator);
+            if (iteratorFn == null && inst.GetClass().FindSymbolMethod(SharpTSSymbol.Iterator) is { } sym)
+                iteratorFn = SharpTSClass.BindMethod(sym, inst);
+            thisForBind = inst;
+        }
+
+        if (iteratorFn == null) return false;
+
+        // Bind 'this' and call to get the iterator object.
+        if (iteratorFn is SharpTSArrowFunction arrowFn && thisForBind != null)
+            iteratorFn = arrowFn.Bind(thisForBind);
+
+        object? iterator = iteratorFn is ISharpTSCallable callableIter
+            ? callableIter.Call(this, [])
+            : iteratorFn is SharpTSFunction fn
+                ? fn.Call(this, [])
+                : null;
+
+        if (iterator == null) return false;
+
+        // A generator returned by [Symbol.iterator]() is driven directly (it doesn't
+        // expose a data-property next()); let the caller fall through to GetIterableElements.
+        if (iterator is IEnumerable<object?> and not SharpTSObject and not SharpTSInstance)
+            return false;
+
+        // Extract and bind the 'next' method from the iterator object.
+        object? nextMethod = null;
+        if (iterator is SharpTSObject iterObj)
+        {
+            nextMethod = iterObj.GetProperty("next");
+        }
+        else if (iterator is SharpTSInstance iterInst)
+        {
+            nextMethod = iterInst.GetRawField("next");
+            if (nextMethod == null)
+            {
+                var tok = new Token(TokenType.IDENTIFIER, "next", null, 0);
+                try { nextMethod = iterInst.Get(tok); } catch { }
+            }
+        }
+
+        if (nextMethod is SharpTSArrowFunction arrow)
+            nextMethod = arrow.Bind(iterator);
+        else if (nextMethod is SharpTSFunction nfn && iterator is SharpTSInstance nInst)
+            nextMethod = nfn.Bind(nInst);
+
+        if (nextMethod is not ISharpTSCallable callable) return false;
+
+        iteratorObj = iterator;
+        nextFn = callable;
+        return true;
+    }
+
+    /// <summary>
     /// Attempts to get an iterator from an object using the Symbol.iterator protocol.
     /// </summary>
     /// <returns>An enumerable of values if the object has a Symbol.iterator, null otherwise.</returns>

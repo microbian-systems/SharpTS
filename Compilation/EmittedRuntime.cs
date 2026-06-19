@@ -1389,11 +1389,13 @@ public class EmittedRuntime
     public ConstructorBuilder IteratorWrapperCtor { get; set; } = null!;
 
     // Iterator protocol helper methods
-    public MethodBuilder GetIteratorFunction { get; set; } = null!;  // Returns iterator function or null
-    public MethodBuilder InvokeIteratorNext { get; set; } = null!;   // Calls next() on iterator
-    public MethodBuilder GetIteratorDone { get; set; } = null!;      // Extracts done from result
-    public MethodBuilder GetIteratorValue { get; set; } = null!;     // Extracts value from result
-    public MethodBuilder IterateToList { get; set; } = null!;        // Converts any iterable to List<object>
+    public MethodBuilder GetIteratorFunction { get; set; } = null!;              // Returns iterator function or null
+    public MethodBuilder InvokeIteratorNext { get; set; } = null!;              // Calls next() on iterator (no sent value)
+    public MethodBuilder InvokeIteratorNextWithSent { get; set; } = null!;      // Calls next(sent) forwarding resume value (#503)
+    public MethodBuilder GetIteratorDone { get; set; } = null!;                 // Extracts done from result
+    public MethodBuilder GetIteratorValue { get; set; } = null!;                // Extracts value from result
+    public MethodBuilder IterateToList { get; set; } = null!;                   // Converts any iterable to List<object>
+    public MethodBuilder IteratorWrapperMoveNextWithSent { get; set; } = null!; // $IteratorWrapper.MoveNextWithSent(sent) (#503)
 
     // Generator interface ($IGenerator extends IEnumerator<object> with Return/Throw)
     public TypeBuilder GeneratorInterfaceType { get; set; } = null!;

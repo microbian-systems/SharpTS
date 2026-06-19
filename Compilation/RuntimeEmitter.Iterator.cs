@@ -124,6 +124,43 @@ public partial class RuntimeEmitter
         moveNextIl.Emit(OpCodes.Ldc_I4_1);
         moveNextIl.Emit(OpCodes.Ret);
 
+        // Method: bool MoveNextWithSent(object? sent) — forwards sent value to next(v) (#503).
+        // Called by the yield* drive loop instead of MoveNext() when the delegate is a
+        // $IteratorWrapper so the outer generator's resume value reaches the iterator's next(v).
+        var moveNextWithSent = typeBuilder.DefineMethod(
+            "MoveNextWithSent",
+            MethodAttributes.Public | MethodAttributes.HideBySig,
+            _types.Boolean,
+            [_types.Object]
+        );
+        runtime.IteratorWrapperMoveNextWithSent = moveNextWithSent;
+        var mwsIl = moveNextWithSent.GetILGenerator();
+
+        var mwsResultLocal = mwsIl.DeclareLocal(_types.Object);
+
+        // var result = InvokeIteratorNextWithSent(_iterator, sent);
+        mwsIl.Emit(OpCodes.Ldarg_0);
+        mwsIl.Emit(OpCodes.Ldfld, iteratorField);
+        mwsIl.Emit(OpCodes.Ldarg_1);               // sent value
+        mwsIl.Emit(OpCodes.Call, runtime.InvokeIteratorNextWithSent);
+        mwsIl.Emit(OpCodes.Stloc, mwsResultLocal);
+
+        mwsIl.Emit(OpCodes.Ldloc, mwsResultLocal);
+        mwsIl.Emit(OpCodes.Call, runtime.GetIteratorDone);
+
+        var mwsNotDoneLabel = mwsIl.DefineLabel();
+        mwsIl.Emit(OpCodes.Brfalse, mwsNotDoneLabel);
+        mwsIl.Emit(OpCodes.Ldc_I4_0);
+        mwsIl.Emit(OpCodes.Ret);
+
+        mwsIl.MarkLabel(mwsNotDoneLabel);
+        mwsIl.Emit(OpCodes.Ldarg_0);
+        mwsIl.Emit(OpCodes.Ldloc, mwsResultLocal);
+        mwsIl.Emit(OpCodes.Call, runtime.GetIteratorValue);
+        mwsIl.Emit(OpCodes.Stfld, currentField);
+        mwsIl.Emit(OpCodes.Ldc_I4_1);
+        mwsIl.Emit(OpCodes.Ret);
+
         // Method: void Reset() - throws NotSupportedException
         var reset = typeBuilder.DefineMethod(
             "Reset",
@@ -162,6 +199,7 @@ public partial class RuntimeEmitter
         EmitGetIteratorDone(typeBuilder, runtime);
         EmitGetIteratorValue(typeBuilder, runtime);
         EmitInvokeIteratorNext(typeBuilder, runtime);
+        EmitInvokeIteratorNextWithSent(typeBuilder, runtime);
         EmitGetIteratorFunction(typeBuilder, runtime);
     }
 
@@ -256,6 +294,59 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, nextMethodLocal);    // nextMethod
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Newarr, _types.Object);     // empty args array
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Ret);
+
+        // Throw error if next is null
+        il.MarkLabel(throwLabel);
+        il.Emit(OpCodes.Ldstr, "Runtime Error: Iterator must have a next() method.");
+        il.Emit(OpCodes.Newobj, _types.ExceptionCtorString);
+        il.Emit(OpCodes.Throw);
+    }
+
+    /// <summary>
+    /// Emits InvokeIteratorNextWithSent: gets the 'next' method from iterator and calls it with
+    /// a sent value argument, forwarding the outer generator's resume value (ECMA-262 §14.4.14, #503).
+    /// Signature: object InvokeIteratorNextWithSent(object iterator, object sent)
+    /// </summary>
+    private void EmitInvokeIteratorNextWithSent(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "InvokeIteratorNextWithSent",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]  // iterator, sent
+        );
+        runtime.InvokeIteratorNextWithSent = method;
+
+        var il = method.GetILGenerator();
+        var throwLabel = il.DefineLabel();
+        var nextMethodLocal = il.DeclareLocal(_types.Object);
+        var argsLocal = il.DeclareLocal(_types.Object.MakeArrayType());
+
+        // Get "next" property from iterator
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "next");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, nextMethodLocal);
+
+        // Check if null
+        il.Emit(OpCodes.Ldloc, nextMethodLocal);
+        il.Emit(OpCodes.Brfalse, throwLabel);
+
+        // Build args array: new object[] { sent }
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, argsLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_1);               // sent value
+        il.Emit(OpCodes.Stelem_Ref);
+
+        // Call InvokeMethodValue(iterator, nextMethod, args) to properly bind 'this'
+        il.Emit(OpCodes.Ldarg_0);               // iterator (receiver/"this")
+        il.Emit(OpCodes.Ldloc, nextMethodLocal);
+        il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
         il.Emit(OpCodes.Ret);
 

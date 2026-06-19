@@ -253,6 +253,63 @@ public class GeneratorTests
         Assert.Equal("R:15\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_YieldStar_CustomIterator_ForwardsNextSentValue(ExecutionMode mode)
+    {
+        // ECMA-262 §14.4.14: the value passed to the outer's next(v) must be forwarded
+        // to a non-generator custom iterator's next(v) as well (issue #503).
+        var source = """
+            function makeEcho() {
+              let started = false;
+              return {
+                [Symbol.iterator]() { return this; },
+                next(v: any) {
+                  const out = started ? `got:${v}` : "start";
+                  started = true;
+                  return { value: out, done: false };
+                },
+              };
+            }
+            function* outer() { yield* makeEcho() as any; }
+            const it = outer();
+            console.log(it.next().value);
+            console.log(it.next(42).value);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("start\ngot:42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_YieldStar_CustomIterator_ForwardsMultipleSentValues(ExecutionMode mode)
+    {
+        // Each successive next(v) on the outer must be forwarded to the custom iterator's next(v).
+        var source = """
+            function makeEcho() {
+              let started = false;
+              return {
+                [Symbol.iterator]() { return this; },
+                next(v: any) {
+                  const out = started ? `got:${v}` : "start";
+                  started = true;
+                  return { value: out, done: false };
+                },
+              };
+            }
+            function* outer() { yield* makeEcho() as any; }
+            const it = outer();
+            console.log(it.next().value);
+            console.log(it.next(1).value);
+            console.log(it.next(2).value);
+            console.log(it.next(3).value);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("start\ngot:1\ngot:2\ngot:3\n", output);
+    }
+
     #endregion
 
     #region Control Flow
