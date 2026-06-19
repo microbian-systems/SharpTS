@@ -525,6 +525,73 @@ public class NominalTypingTests
         Assert.Contains("Type Error", ex.Message);
     }
 
+    // #756: a class may declare it implements the built-in iterable-protocol interfaces
+    // (Iterable<T>, AsyncIterable<T>, …) — validated structurally via [Symbol.iterator]() etc.
+
+    [Fact]
+    public void ClassImplementsIterable_Compatible()
+    {
+        var source = """
+            class Range implements Iterable<number> {
+                *[Symbol.iterator](): Iterator<number> { yield 1; yield 2; }
+            }
+            for (const x of new Range()) console.log(x);
+            """;
+
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("1\n2\n", result);
+    }
+
+    [Fact]
+    public void ClassImplementsAsyncIterable_Compatible()
+    {
+        var source = """
+            class AR implements AsyncIterable<number> {
+                async *[Symbol.asyncIterator](): AsyncIterator<number> { yield 1; }
+            }
+            console.log("ok");
+            """;
+
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("ok\n", result);
+    }
+
+    [Fact]
+    public void ClassExpressionImplementsIterable_Compatible()
+    {
+        var source = """
+            const Range = class implements Iterable<number> {
+                *[Symbol.iterator](): Iterator<number> { yield 7; }
+            };
+            for (const x of new Range()) console.log(x);
+            """;
+
+        var result = TestHarness.RunInterpreted(source);
+        Assert.Equal("7\n", result);
+    }
+
+    [Fact]
+    public void ClassDoesNotImplementIterable_Fails()
+    {
+        var source = """
+            class Bad implements Iterable<number> { x = 1; }
+            """;
+
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
+        Assert.Contains("incorrectly implements", ex.Message);
+    }
+
+    [Fact]
+    public void ClassImplementsUnknownName_StillFails()
+    {
+        var source = """
+            class C implements NotAThing {}
+            """;
+
+        var ex = Assert.ThrowsAny<Exception>(() => TestHarness.RunInterpreted(source));
+        Assert.Contains("is not an interface", ex.Message);
+    }
+
     #endregion
 
     #region Abstract Classes

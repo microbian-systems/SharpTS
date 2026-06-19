@@ -809,6 +809,24 @@ public partial class Parser
                         continue;
                     }
 
+                    // Generator / async method modifiers: { *gen() {} }, { async fn() {} },
+                    // { async *gen() {} } and their computed/string/number-keyed forms (#757). The key
+                    // forms below already dispatch to ParseObjectMethodShorthand on a following '(', so
+                    // the modifiers just need to be threaded through. `async` is a modifier only when
+                    // followed by a property-name start or `*`; otherwise it is a property named `async`
+                    // ({ async }, { async: 1 }, { async() {} }).
+                    bool isMethodAsync = false;
+                    bool isMethodGenerator = false;
+                    if (Check(TokenType.ASYNC) && (IsPropertyNameStart(PeekNext().Type) || PeekNext().Type == TokenType.STAR))
+                    {
+                        Advance();
+                        isMethodAsync = true;
+                    }
+                    if (Match(TokenType.STAR))
+                    {
+                        isMethodGenerator = true;
+                    }
+
                     // Accessor shorthand: { get foo() {} }, { set foo(v) {} }.
                     // Disambiguate from a property literally named `get`/`set`:
                     //   { get }       shorthand            (next is `,` or `}`)
@@ -901,7 +919,7 @@ public partial class Parser
 
                         if (Check(TokenType.LEFT_PAREN))
                         {
-                            var methodExpr = ParseObjectMethodShorthand();
+                            var methodExpr = ParseObjectMethodShorthand(isMethodAsync, isMethodGenerator);
                             properties.Add(new Expr.Property(new Expr.ComputedKey(keyExpr), methodExpr));
                             continue;
                         }
@@ -921,7 +939,7 @@ public partial class Parser
 
                         if (Check(TokenType.LEFT_PAREN))
                         {
-                            var methodExpr = ParseObjectMethodShorthand();
+                            var methodExpr = ParseObjectMethodShorthand(isMethodAsync, isMethodGenerator);
                             properties.Add(new Expr.Property(key, methodExpr));
                             continue;
                         }
@@ -940,7 +958,7 @@ public partial class Parser
 
                         if (Check(TokenType.LEFT_PAREN))
                         {
-                            var methodExpr = ParseObjectMethodShorthand();
+                            var methodExpr = ParseObjectMethodShorthand(isMethodAsync, isMethodGenerator);
                             properties.Add(new Expr.Property(key, methodExpr));
                             continue;
                         }
@@ -959,7 +977,7 @@ public partial class Parser
                     if (Check(TokenType.LEFT_PAREN))
                     {
                         // Method shorthand: { fn() {} }
-                        value = ParseObjectMethodShorthand();
+                        value = ParseObjectMethodShorthand(isMethodAsync, isMethodGenerator);
                     }
                     else if (Match(TokenType.COLON))
                     {
@@ -1051,7 +1069,7 @@ public partial class Parser
     /// values, and an optional <c>this:</c> parameter (TypeScript).
     /// Returns an ArrowFunction with <c>HasOwnThis=true</c>.
     /// </summary>
-    private Expr.ArrowFunction ParseObjectMethodShorthand()
+    private Expr.ArrowFunction ParseObjectMethodShorthand(bool isAsync = false, bool isGenerator = false)
     {
         Consume(TokenType.LEFT_PAREN, "Expect '(' in method shorthand.");
 
@@ -1161,7 +1179,9 @@ public partial class Parser
             ExpressionBody: null,
             BlockBody: body,
             ReturnType: returnType,
-            HasOwnThis: true);
+            HasOwnThis: true,
+            IsAsync: isAsync,
+            IsGenerator: isGenerator);
     }
 
     private Expr ParseTemplateLiteral()

@@ -65,6 +65,56 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// The built-in iterable-protocol interfaces a class may legally list in its <c>implements</c>
+    /// clause. These are NOT user-declared <c>interface</c>s (so they are absent from the type
+    /// environment) but lib types resolved generically — a class satisfies them structurally via a
+    /// <c>[Symbol.iterator]()</c> / <c>[Symbol.asyncIterator]()</c> member (#592, #756).
+    /// </summary>
+    private static readonly HashSet<string> IterableProtocolInterfaceNames =
+    [
+        "Iterable", "Iterator", "IterableIterator",
+        "AsyncIterable", "AsyncIterator", "AsyncIterableIterator",
+    ];
+
+    /// <summary>
+    /// Resolves an <c>implements</c>-clause name to a built-in iterable-protocol type when the name is
+    /// one of the six protocol interfaces (<c>Iterable&lt;T&gt;</c>, <c>AsyncIterable&lt;T&gt;</c>, …).
+    /// These names never reach the type environment as <see cref="TypeInfo.Interface"/>s, so the normal
+    /// <c>implements</c> resolution rejects them as "not an interface" even when the class genuinely
+    /// implements the protocol; this restores the lib-type resolution used in annotation position. The
+    /// element type defaults to <c>any</c> when no type argument is supplied. Returns false for any
+    /// other name (including other built-in generics such as <c>Array</c>/<c>Map</c>), leaving the
+    /// caller's existing "is not an interface" diagnostic intact (#756).
+    /// </summary>
+    private bool TryResolveIterableProtocolInterface(string name, List<string>? typeArgStrings, out TypeInfo protocolType)
+    {
+        protocolType = null!;
+        if (!IterableProtocolInterfaceNames.Contains(name))
+            return false;
+
+        List<TypeInfo> resolvedArgs = typeArgStrings is { Count: > 0 }
+            ? typeArgStrings.Select(ta => ToTypeInfo(ta)).ToList()
+            : [new TypeInfo.Any()];
+
+        protocolType = ResolveGenericType(name, resolvedArgs);
+        return true;
+    }
+
+    /// <summary>
+    /// Validates that a class structurally implements a built-in iterable-protocol interface (resolved by
+    /// <see cref="TryResolveIterableProtocolInterface"/>). Reuses the assignment-compatibility engine: a
+    /// class instance is checked against the protocol target, which probes the class's
+    /// <c>@@iterator</c>/<c>@@asyncIterator</c> member exactly as a <c>for...of</c>/<c>for await</c> would.
+    /// Throws TS2420 (the same code the structural interface check uses) when the class does not satisfy
+    /// the protocol (#756).
+    /// </summary>
+    private void ValidateProtocolInterfaceImplementation(TypeInfo classType, TypeInfo protocolType, string className)
+    {
+        if (!IsCompatible(protocolType, new TypeInfo.Instance(classType)))
+            throw new TypeCheckException($" Class '{className}' incorrectly implements interface '{protocolType}'.", tsCode: "TS2420");
+    }
+
+    /// <summary>
     /// Validates that a class method signature is compatible with an interface method signature.
     /// For interface implementation, the class method must:
     /// 1. Accept at least as many required parameters as the interface method requires
