@@ -773,8 +773,10 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
 
             il.MarkLabel(genStartLabel);
 
-            // Call next() which returns Task<object>
+            // Call next(undefined) which returns Task<object>; for-await-of passes undefined as the sent
+            // value (#473 — next() now takes one argument matching the $IAsyncGenerator interface).
             il.Emit(OpCodes.Ldloc, asyncGenLocal);
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
             il.Emit(OpCodes.Callvirt, runtime.AsyncGeneratorNextMethod);
 
             // Await the Task<object>

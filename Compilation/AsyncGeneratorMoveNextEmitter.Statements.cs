@@ -227,10 +227,12 @@ public partial class AsyncGeneratorMoveNextEmitter
 
         _il.MarkLabel(startLabel);
 
-        // result = await iterator.next()  — suspends if next() is not yet settled.
+        // result = await iterator.next(undefined)  — suspends if next() is not yet settled.
+        // for-await-of never sends a value; pass undefined (#473 — next() now takes one argument).
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldfld, iteratorField);
         _il.Emit(OpCodes.Castclass, asyncGenInterface);
+        _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
         _il.Emit(OpCodes.Callvirt, _ctx.Runtime.AsyncGeneratorNextMethod);  // Task<object>
         SetStackUnknown();
         EmitAwaitFromValueOnStack(nextState);

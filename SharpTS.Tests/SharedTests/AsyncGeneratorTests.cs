@@ -1540,4 +1540,107 @@ public class AsyncGeneratorTests
     }
 
     #endregion
+
+    #region Sent Value Tests (next(v) — issue #473)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_NextWithSentValue_PlainYield(ExecutionMode mode)
+    {
+        // The resumed `yield` expression evaluates to the value passed to next(v) (ECMA-262 §27.6.3.6).
+        var source = """
+            async function* gen() {
+                const r = yield 1;
+                yield r + 10;
+            }
+            async function main() {
+                const g = gen();
+                const first = await g.next();
+                console.log(first.value);
+                const second = await g.next(42);
+                console.log(second.value);
+            }
+            main();
+            """;
+
+        Assert.Equal("1\n52\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_FirstNextIgnoresSentValue(ExecutionMode mode)
+    {
+        // The first next() call always ignores its sent value — yield evaluates to undefined
+        // (ECMA-262 §27.6.3.6 step 1: "If value is not present, let value be undefined").
+        var source = """
+            async function* gen() {
+                const r = yield 1;
+                yield String(r);
+            }
+            async function main() {
+                const g = gen();
+                await g.next("ignored");
+                const second = await g.next("hello");
+                console.log(second.value);
+            }
+            main();
+            """;
+
+        Assert.Equal("hello\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_NextWithSentValue_Accumulator(ExecutionMode mode)
+    {
+        // Sum accumulates sent values across multiple next(v) calls.
+        var source = """
+            async function* accumulator() {
+                let sum = 0;
+                while (true) {
+                    const n = yield sum;
+                    sum = sum + (n as number);
+                }
+            }
+            async function main() {
+                const g = accumulator();
+                await g.next();
+                const a = await g.next(10);
+                console.log(a.value);
+                const b = await g.next(20);
+                console.log(b.value);
+                const c = await g.next(5);
+                console.log(c.value);
+            }
+            main();
+            """;
+
+        Assert.Equal("10\n30\n35\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_NextWithSentValue_NullAndUndefined(ExecutionMode mode)
+    {
+        // next(null) delivers null; bare next() delivers undefined (not null).
+        var source = """
+            async function* gen() {
+                const a = yield 1;
+                const b = yield 2;
+                yield String(a) + " " + String(b);
+            }
+            async function main() {
+                const g = gen();
+                await g.next();
+                await g.next(null);
+                const r = await g.next();
+                console.log(r.value);
+            }
+            main();
+            """;
+
+        Assert.Equal("null undefined\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
 }

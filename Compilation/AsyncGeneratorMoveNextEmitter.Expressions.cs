@@ -86,10 +86,11 @@ public partial class AsyncGeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ldc_I4_M1);
         _il.Emit(OpCodes.Stfld, _builder.StateField);
 
-        // 7. The resumed `yield` expression evaluates to `undefined` (e.g. `const r = yield 1` → r is
-        // undefined). Load the emitted `$Undefined` sentinel, not CLR null which would surface as JS
-        // `null` (#481, async analog of #443). next(v) forwarding a sent value is the separate gap #473.
-        _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
+        // 7. The resumed `yield` expression evaluates to the value passed to next(v) — stored in SentField
+        // by next() before driving MoveNextAsync (#473). Bare next() seeds SentField to $Undefined so
+        // `const r = yield 1` without a sent value gives undefined, not null (#481/#443 analog).
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, _builder.SentField);
         SetStackUnknown();
     }
 
@@ -229,10 +230,14 @@ public partial class AsyncGeneratorMoveNextEmitter
         var asyncLoopEnd = _il.DefineLabel();
         _il.MarkLabel(asyncLoopLabel);
 
-        // result = await delegated.next()  — leaves the { value, done } dict on the stack
+        // result = await delegated.next(SentField) — forward the outer sent value to the inner generator
+        // (#473). The inner generator ignores the argument on its first call (per spec), so passing
+        // SentField on initial entry (which holds undefined or the outer first-next value) is safe.
         _il.Emit(OpCodes.Ldarg_0);
         _il.Emit(OpCodes.Ldfld, delegatedField);
         _il.Emit(OpCodes.Castclass, _ctx!.Runtime!.AsyncGeneratorInterfaceType);
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, _builder.SentField);
         _il.Emit(OpCodes.Callvirt, _ctx.Runtime.AsyncGeneratorNextMethod);
         SetStackUnknown();
         EmitAwaitFromValueOnStack(awaitState);
