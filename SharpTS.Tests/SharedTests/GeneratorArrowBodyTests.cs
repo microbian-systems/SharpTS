@@ -541,4 +541,93 @@ public class GeneratorArrowBodyTests
 
         Assert.Equal("11\n", TestHarness.Run(source, mode));
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_ClassExpressionMethodWritesCapturedBinding(ExecutionMode mode)
+    {
+        // #789: the class-EXPRESSION analogue of #724. Class expressions are only collected during the
+        // Phase-5 arrow walk, so their generator-method function display classes are registered in
+        // FinalizeArrowFunctionCollection (before PropagateFunctionDCRequirements) rather than DefineClass.
+        var source = """
+            const C = class {
+              *gen(arr: number[]) {
+                let sum = 0;
+                arr.forEach(n => sum += n);
+                yield sum;
+              }
+            };
+            console.log([...new C().gen([1, 2, 3])].join(","));
+            """;
+
+        Assert.Equal("6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_ClassExpressionMethodMutatesCapturedParameter(ExecutionMode mode)
+    {
+        // #789: the mutated capture is a method PARAMETER (value-typed in the stub) — class-expr analogue
+        // of the #724 parameter case.
+        var source = """
+            const C = class { *gen(acc: number) { [1, 2, 3].forEach(n => acc += n); yield acc; } };
+            console.log(new C().gen(100).next().value);
+            """;
+
+        Assert.Equal("106\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_ClassExpressionMethodMixesThisAndMutatedLocal(ExecutionMode mode)
+    {
+        // #789: the arrow reads `this` (state machine ThisField) AND writes a captured local (function DC)
+        // in the same callback — class-expr analogue of the #724 this+local case.
+        var source = """
+            const C = class {
+              base = 10;
+              *gen() { let s = 0; [1, 2, 3].forEach(n => s += n + this.base); yield s; }
+            };
+            console.log(new C().gen().next().value);
+            """;
+
+        Assert.Equal("36\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_ClassExpressionMethodCapturedWriteSurvivesAcrossYield(ExecutionMode mode)
+    {
+        // #789: the mutated capture is live across a yield — the DC lives on a state-machine field so it
+        // persists across the suspension (class-expr analogue of the #724 cross-yield case).
+        var source = """
+            const C = class {
+              *gen() { let s = 0; yield "b:" + s; [1, 2, 3].forEach(n => s += n); yield "a:" + s; }
+            };
+            const it = new C().gen();
+            console.log(it.next().value + "|" + it.next().value);
+            """;
+
+        Assert.Equal("b:0|a:6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ClassExpressionMethodWritesCapturedBinding(ExecutionMode mode)
+    {
+        // #789: the async-generator class-EXPRESSION analogue of #725 — the function DC is registered in
+        // FinalizeArrowFunctionCollection and wired into the method's (reference-type) state machine.
+        var source = """
+            const C = class {
+              async *gen() {
+                let s = 0;
+                [1, 2, 3].forEach(n => s += n);
+                yield s;
+              }
+            };
+            (async () => { for await (const v of new C().gen()) console.log(v); })();
+            """;
+
+        Assert.Equal("6\n", TestHarness.Run(source, mode));
+    }
 }
