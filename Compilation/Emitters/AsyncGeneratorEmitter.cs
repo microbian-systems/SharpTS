@@ -29,7 +29,18 @@ public sealed class AsyncGeneratorEmitter : ITypeEmitterStrategy
                 emitter.EmitBoxIfNeeded(receiver);
                 // Cast to $IAsyncGenerator interface
                 il.Emit(OpCodes.Castclass, ctx.Runtime.AsyncGeneratorInterfaceType);
-                // Call next() which returns Task<object>
+                // Emit the sent value: user-supplied argument or undefined (#473).
+                // An omitted argument delivers undefined to the resumed yield expression.
+                if (arguments.Count > 0)
+                {
+                    emitter.EmitExpression(arguments[0]);
+                    emitter.EmitBoxIfNeeded(arguments[0]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldsfld, ctx.Runtime.UndefinedInstance);
+                }
+                // Call next(sentValue) which returns Task<object>
                 il.Emit(OpCodes.Callvirt, ctx.Runtime.AsyncGeneratorNextMethod);
                 return true;
 

@@ -392,6 +392,9 @@ public partial class AsyncMoveNextEmitter
         }
         else
         {
+            // for-await-of never sends a value; pass undefined so the yield expression sees undefined
+            // (not null) if the consumer somehow observes it (#473).
+            _il.Emit(OpCodes.Ldsfld, _ctx.Runtime.UndefinedInstance);
             _il.Emit(OpCodes.Callvirt, _ctx.Runtime.AsyncGeneratorNextMethod);
         }
         _il.Emit(OpCodes.Stloc, stepLocal);

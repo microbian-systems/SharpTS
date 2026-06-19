@@ -39,14 +39,14 @@ public partial class RuntimeEmitter
         );
         runtime.AsyncGeneratorInterfaceType = interfaceBuilder;
 
-        // Define next() method: Task<object> next()
-        // This wraps MoveNextAsync + Current into a single async call returning iterator result
+        // Define next(object sentValue) method: Task<object> next(object)
+        // sentValue is the value delivered as the result of the suspended yield expression (#473).
         // Using lowercase to match JavaScript API
         var nextMethod = interfaceBuilder.DefineMethod(
             "next",
             MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Abstract | MethodAttributes.HideBySig | MethodAttributes.NewSlot,
             _types.TaskOfObject,
-            Type.EmptyTypes
+            [_types.Object]
         );
         runtime.AsyncGeneratorNextMethod = nextMethod;
 

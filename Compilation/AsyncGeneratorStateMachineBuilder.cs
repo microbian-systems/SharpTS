@@ -59,6 +59,11 @@ public class AsyncGeneratorStateMachineBuilder
     // MoveNextAsync until the stack overflows (#542). Set/cleared by <DriveOnce> and return()'s drive.
     public FieldBuilder ExecutingField { get; private set; } = null!;
 
+    // The value passed to next(v) — delivered as the result of the yield expression that suspended the
+    // generator (ECMA-262 §27.6.3.6, #473). Stored by next() before driving; read in MoveNextAsync on the
+    // yield resume path. Seeded to $Undefined in the ctor so bare next() / for-await-of yields undefined.
+    public FieldBuilder SentField { get; private set; } = null!;
+
     // Tail of the request chain (ECMA-262 §27.6.3 AsyncGeneratorQueue, modeled as a Task chain): the
     // Task<object> of the most recently enqueued next(). A new next() awaits this before driving, so
     // overlapping next() calls run in FIFO order instead of re-entering MoveNextAsync concurrently and
@@ -174,6 +179,13 @@ public class AsyncGeneratorStateMachineBuilder
             FieldAttributes.Private
         );
 
+        // <>3__sent — value delivered to the resumed yield expression (#473); seeded to undefined in ctor.
+        SentField = _stateMachineType.DefineField(
+            "<>3__sent",
+            _types.Object,
+            FieldAttributes.Private
+        );
+
         // Define delegated enumerator field for yield* expressions (typed as object to hold either sync or async enumerators)
         if (analysis.HasYieldStar)
         {
@@ -264,6 +276,14 @@ public class AsyncGeneratorStateMachineBuilder
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_M1);
         il.Emit(OpCodes.Stfld, StateField);
+        // Seed <>3__sent to $Undefined so bare next() / for-await-of delivers undefined to the resumed
+        // yield expression, not null (#473, mirrors sync-gen ctor — GeneratorStateMachineBuilder).
+        if (SentField != null && _runtime?.UndefinedInstance != null)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldsfld, _runtime.UndefinedInstance);
+            il.Emit(OpCodes.Stfld, SentField);
+        }
         il.Emit(OpCodes.Ret);
     }
 
@@ -379,12 +399,13 @@ public class AsyncGeneratorStateMachineBuilder
             [_types.Task, _types.Object]
         );
 
-        // next() method - returns Task<object> with { value, done }
+        // next(object sentValue) method - returns Task<object> with { value, done }
+        // sentValue is delivered as the result of the suspended yield expression (#473).
         NextMethod = _stateMachineType.DefineMethod(
             "next",
             MethodAttributes.Public | MethodAttributes.Virtual | MethodAttributes.Final | MethodAttributes.HideBySig | MethodAttributes.NewSlot,
             _types.TaskOfObject,
-            Type.EmptyTypes
+            [_types.Object]
         );
 
         EmitNextMethodBody();
@@ -425,6 +446,12 @@ public class AsyncGeneratorStateMachineBuilder
         // self-reentrant case, that queued request can never run before the suspended body it sits behind —
         // a deadlock, matching Node, rather than the old stack overflow).
         EmitThrowIfExecutingAsync(il);
+
+        // Stash the sent value so the resumed yield expression reads the right value (#473).
+        // Stored before either the fast or slow drive path runs MoveNextAsync.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, SentField);
 
         var prevLocal = il.DeclareLocal(_types.Task);
         var resultLocal = il.DeclareLocal(_types.TaskOfObject);
