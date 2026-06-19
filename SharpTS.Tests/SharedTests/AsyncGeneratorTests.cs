@@ -1209,6 +1209,36 @@ public class AsyncGeneratorTests
         Assert.Equal("caught: TypeError Async generator is already running\n", TestHarness.Run(source, mode));
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ReentrantNext_AfterPendingAwait_Rejects(ExecutionMode mode)
+    {
+        // Re-entrancy issued *after* a genuinely-pending (setTimeout-backed) await — once the body has
+        // suspended and resumed, the guard used to be back to false and the self-advancing next() was
+        // silently enqueued behind the body that awaits it, stalling the chain with no output. The
+        // running guard now tracks "body synchronously on the stack" across await/yield resume spans
+        // (toggled at the AwaitPreservingEnvironment chokepoint), so this rejects with the same
+        // catchable TypeError as the synchronous-prefix form above (#771). Interpreter-only: compiled
+        // mode still stalls this pathological self-referential pattern (as does Node), recorded as a
+        // follow-up tail of #542.
+        var source = """
+            const h: any = {};
+            function later(): Promise<number> { return new Promise(res => setTimeout(() => res(0), 5)); }
+            async function* g() { await later(); await h.it.next(); yield 1; }
+            h.it = g();
+            async function main() {
+              try {
+                for await (const v of h.it) { console.log("v" + v); }
+              } catch (e: any) {
+                console.log("caught: " + e.name + " " + e.message);
+              }
+            }
+            main();
+            """;
+
+        Assert.Equal("caught: TypeError Async generator is already running\n", TestHarness.Run(source, mode));
+    }
+
     #endregion
 
     #region Genuinely-async awaits and request queuing (#631 / #542)

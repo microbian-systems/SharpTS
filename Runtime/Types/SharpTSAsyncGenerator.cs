@@ -77,10 +77,30 @@ public class SharpTSAsyncGenerator : ITypeCategorized
     // Set while the body is SuspendedYield: completed by the resuming request to wake the body.
     private TaskCompletionSource<Request>? _pendingResume;
 
-    // True only while the body runs its initial synchronous segment (between the first next() and the
-    // first suspension). A next/return/throw observing this is the body advancing itself synchronously
-    // (re-entrancy), which a real queue can't serve here without deadlocking the body it blocks (#542).
+    // True whenever the body is synchronously on the call stack — between a resume (start, await
+    // completion, or yield resume) and its next suspension/completion. A next/return/throw observing
+    // this is the body advancing itself synchronously (re-entrancy), which a real queue can't serve
+    // here without deadlocking the body it blocks (#542, #771). Cleared at every suspend point (await
+    // via AwaitPreservingEnvironment, yield via SuspendAtYieldAsync) and on completion (CompleteBody),
+    // re-set on each resume. Safe to toggle unconditionally: the interpreter is single-threaded, so an
+    // external request can only fire while the body is suspended (flag false) — the spurious-true
+    // windows are uninterruptible synchronous segments.
     private bool _running;
+
+    /// <summary>
+    /// Marks the body as suspended (off the call stack) at an await. Called by
+    /// <see cref="Interpreter.AwaitPreservingEnvironment"/> — the chokepoint every guest await routes
+    /// through — just before it suspends, so a concurrent request issued during a genuine async gap is
+    /// queued rather than misread as re-entrancy (#771).
+    /// </summary>
+    internal void MarkBodySuspended() => _running = false;
+
+    /// <summary>
+    /// Marks the body as resumed (back synchronously on the call stack) after an await. Paired with
+    /// <see cref="MarkBodySuspended"/>; runs on both the resolved and rejected resume paths (a body
+    /// unwinding a rejected await is still synchronously on the stack).
+    /// </summary>
+    internal void MarkBodyResumed() => _running = true;
 
     public SharpTSAsyncGenerator(List<Stmt> body, RuntimeEnvironment environment, Interpreter interpreter)
     {
@@ -258,7 +278,12 @@ public class SharpTSAsyncGenerator : ITypeCategorized
         _state = State.SuspendedYield;
         req.Completion.SetResult(new SharpTSIteratorResult(value, done: false));
 
+        // The body is now off the stack until a request resumes it, so a request arriving in this
+        // window is a normal resume (or a legit concurrent next), not re-entrancy — clear the guard
+        // and re-set it once the body is back on the stack (#771).
+        _running = false;
         Request next = await TakeNextRequestAsync();
+        _running = true;
 
         _interpreter.SetEnvironment(genEnv);
         _interpreter.CurrentAsyncGenerator = this;
@@ -362,6 +387,10 @@ public class SharpTSAsyncGenerator : ITypeCategorized
     private void CompleteBody(object? completionValue, Exception? pendingException)
     {
         _state = State.Completed;
+        // The body's final segment ran synchronously after an await/yield resume that set _running;
+        // clear it so a post-completion next()/return()/throw() settles normally rather than being
+        // rejected as re-entrancy (#771).
+        _running = false;
         Request? req = _currentRequest;
         _currentRequest = null;
         if (req != null)
