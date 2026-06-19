@@ -244,7 +244,7 @@ public partial class TypeChecker
     /// iterables are intentionally excluded (a sync iterable is not an async iterable). Returns false for
     /// non-async-iterable types (callers decide between an error and a fall-through to <c>any</c>).
     /// </summary>
-    private static bool TryGetAsyncIterableElementType(TypeInfo type, out TypeInfo elementType)
+    private bool TryGetAsyncIterableElementType(TypeInfo type, out TypeInfo elementType)
     {
         switch (type)
         {
@@ -252,9 +252,41 @@ public partial class TypeChecker
             case TypeInfo.AsyncIterator ait: elementType = ait.ElementType; return true;
             case TypeInfo.AsyncGenerator ag: elementType = ag.YieldType; return true;
             case TypeInfo.Any: elementType = new TypeInfo.Any(); return true;
+            case TypeInfo.Record or TypeInfo.Interface or TypeInfo.Instance:
+                return TryGetStructuralAsyncIterableElement(type, out elementType);
             default:
                 elementType = null!;
                 return false;
+        }
+    }
+
+    /// <summary>
+    /// Derives the element type of a structural ASYNC-ITERABLE source — an object exposing
+    /// <c>[Symbol.asyncIterator](): AsyncIterator&lt;T&gt;</c>. The async mirror of
+    /// <see cref="TryGetStructuralIterableElement"/>: a class's <c>[Symbol.asyncIterator]()</c> member
+    /// lands as the named <c>@@asyncIterator</c> member (#592), and an object literal's symbol-keyed
+    /// method in the symbol index signature. Needed so a class declaring <c>implements AsyncIterable&lt;T&gt;</c>
+    /// validates structurally (#756). Returns false when no async-iterator factory exists.
+    /// </summary>
+    private bool TryGetStructuralAsyncIterableElement(TypeInfo source, out TypeInfo elementType)
+    {
+        elementType = null!;
+
+        TypeInfo? iteratorFactory = GetMemberType(source, "@@asyncIterator");
+        if (!IsCallableMember(iteratorFactory) && source is TypeInfo.Record { SymbolIndexType: { } symIndex })
+            iteratorFactory = symIndex;   // object-literal [Symbol.asyncIterator]() lands in the symbol index
+        if (!IsCallableMember(iteratorFactory))
+            return false;
+
+        TypeInfo? iterator = GetCallableReturnType(iteratorFactory);
+        if (iterator is null) { elementType = new TypeInfo.Any(); return true; }
+
+        switch (iterator)
+        {
+            case TypeInfo.AsyncIterator ait: elementType = ait.ElementType; return true;
+            case TypeInfo.AsyncGenerator ag: elementType = ag.YieldType; return true;
+            case TypeInfo.AsyncIterable ai: elementType = ai.ElementType; return true;
+            default: elementType = new TypeInfo.Any(); return true;
         }
     }
 }
