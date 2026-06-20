@@ -1014,6 +1014,27 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// Binds the dynamic receiver when a method-bearing value is read off an object literal as
+    /// <c>obj.method</c>. Covers ordinary function-expression / object-method shorthand
+    /// (<see cref="SharpTSArrowFunction"/> with <c>HasOwnThis</c>) and — for #775 — generator function
+    /// expressions / object generator methods in both their lifted declaration form
+    /// (<see cref="SharpTSGeneratorFunction"/> / <see cref="SharpTSAsyncGeneratorFunction"/> with
+    /// <c>HasDynamicThis</c>) and their in-place expression form
+    /// (<see cref="SharpTSArrowGeneratorFunction"/> / <see cref="SharpTSAsyncArrowGeneratorFunction"/> with
+    /// <c>HasOwnThis</c>, left in place when they close over a block-scoped binding). Returns null when the
+    /// value is not a receiver-bound method (caller returns it unchanged).
+    /// </summary>
+    private static ISharpTSCallable? TryBindReceiverForMethodAccess(object? value, object receiver) => value switch
+    {
+        SharpTSArrowFunction af when af.HasOwnThis => af.Bind(receiver),
+        SharpTSArrowGeneratorFunction sag when sag.HasOwnThis => sag.Bind(receiver),
+        SharpTSAsyncArrowGeneratorFunction saag when saag.HasOwnThis => saag.Bind(receiver),
+        SharpTSGeneratorFunction gf when gf.HasDynamicThis => gf.BindToReceiver(receiver),
+        SharpTSAsyncGeneratorFunction agf when agf.HasDynamicThis => agf.BindToReceiver(receiver),
+        _ => null,
+    };
+
+    /// <summary>
     /// Evaluates property access on a record/object literal, walking the __proto__
     /// chain when the property is not an own property. JS spec: property access
     /// traverses the prototype chain until a match or null is reached.
@@ -1033,11 +1054,10 @@ public partial class Interpreter
         if (simpleObj.HasProperty(memberName))
         {
             var value = simpleObj.GetProperty(memberName);
-            // Bind 'this' for function expressions and object method shorthand (HasOwnThis=true)
-            if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
-            {
-                return arrowFunc.Bind(simpleObj);
-            }
+            // Bind 'this' for function expressions and object method shorthand (HasOwnThis=true),
+            // including generator / async-generator methods (#775).
+            if (TryBindReceiverForMethodAccess(value, simpleObj) is { } boundMethod)
+                return boundMethod;
             return value;
         }
 
@@ -1057,10 +1077,8 @@ public partial class Interpreter
             if (proto.HasProperty(memberName))
             {
                 var value = proto.GetProperty(memberName);
-                if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
-                {
-                    return arrowFunc.Bind(simpleObj);
-                }
+                if (TryBindReceiverForMethodAccess(value, simpleObj) is { } boundMethod)
+                    return boundMethod;
                 return value;
             }
             object? next = proto.HasProperty("__proto__") ? proto.GetProperty("__proto__") : null;
@@ -1109,10 +1127,8 @@ public partial class Interpreter
         if (simpleObj.HasProperty(memberName))
         {
             var value = simpleObj.GetProperty(memberName);
-            if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
-            {
-                return RuntimeValue.FromObject(arrowFunc.Bind(simpleObj));
-            }
+            if (TryBindReceiverForMethodAccess(value, simpleObj) is { } boundMethod)
+                return RuntimeValue.FromObject(boundMethod);
             return RuntimeValue.FromBoxed(value);
         }
 
@@ -1134,10 +1150,8 @@ public partial class Interpreter
                 if (proto.HasProperty(memberName))
                 {
                     var value = proto.GetProperty(memberName);
-                    if (value is SharpTSArrowFunction arrowFunc && arrowFunc.HasOwnThis)
-                    {
-                        return RuntimeValue.FromObject(arrowFunc.Bind(simpleObj));
-                    }
+                    if (TryBindReceiverForMethodAccess(value, simpleObj) is { } boundMethod)
+                        return RuntimeValue.FromObject(boundMethod);
                     return RuntimeValue.FromBoxed(value);
                 }
                 object? next = proto.HasProperty("__proto__") ? proto.GetProperty("__proto__") : null;

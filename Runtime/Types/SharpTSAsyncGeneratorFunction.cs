@@ -13,16 +13,31 @@ namespace SharpTS.Runtime.Types;
 /// </remarks>
 /// <seealso cref="SharpTSAsyncGenerator"/>
 /// <seealso cref="SharpTSGeneratorFunction"/>
-public class SharpTSAsyncGeneratorFunction : ISharpTSCallable
+public class SharpTSAsyncGeneratorFunction : ISharpTSCallable, IReceiverBindable
 {
     private readonly Stmt.Function _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    /// <summary>A dynamic receiver was bound, so <see cref="Call"/> binds <c>this</c> to
+    /// <see cref="_boundThis"/> rather than defaulting it to undefined.</summary>
+    private readonly bool _thisBound;
+    private readonly object? _boundThis;
+    private readonly SharpTSClass? _boundSuper;
 
-    public SharpTSAsyncGeneratorFunction(Stmt.Function declaration, RuntimeEnvironment closure)
+    /// <summary>
+    /// True when this is an async generator declaration lifted from a <c>HasOwnThis</c> async generator
+    /// expression / object method (#775). Binds its own dynamic <c>this</c>.
+    /// </summary>
+    public bool HasDynamicThis => _declaration.HasDynamicThis;
+
+    public SharpTSAsyncGeneratorFunction(Stmt.Function declaration, RuntimeEnvironment closure,
+        bool thisBound = false, object? boundThis = null, SharpTSClass? boundSuper = null)
     {
         _declaration = declaration;
         _closure = closure;
+        _thisBound = thisBound;
+        _boundThis = boundThis;
+        _boundSuper = boundSuper;
         _arity = declaration.Parameters?.Count ?? 0;
     }
 
@@ -32,6 +47,20 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable
     {
         // Create a new environment for this generator invocation
         RuntimeEnvironment environment = new(_closure);
+
+        // #775: an async generator expression / object method binds its own dynamic `this`. The bound
+        // receiver (or globalThis for a plain call) is defined in the generator's OWN body environment,
+        // NOT a parent scope, so a captured enclosing-function local keeps its lexical scope distance.
+        if (_thisBound)
+        {
+            environment.Define("this", _boundThis);
+            if (_boundSuper != null)
+                environment.Define("super", _boundSuper);
+        }
+        else if (_declaration.HasDynamicThis)
+        {
+            environment.Define("this", SharpTSGlobalThis.Instance); // sloppy-mode `this` = globalThis (#775)
+        }
 
         // Bind parameters to arguments
         ParameterBinder.Bind(_declaration.Parameters ?? [], arguments, environment, interpreter);
@@ -45,20 +74,14 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable
     /// Creates a bound version with 'this' set for method calls.
     /// </summary>
     public SharpTSAsyncGeneratorFunction Bind(SharpTSInstance instance)
-    {
-        RuntimeEnvironment boundEnv = new(_closure);
-        boundEnv.Define("this", instance);
-        return new SharpTSAsyncGeneratorFunction(_declaration, boundEnv);
-    }
+        => new(_declaration, _closure, thisBound: true, boundThis: instance);
+
+    /// <summary>Binds an arbitrary receiver (object async generator method / <c>.call</c> / <c>.apply</c>) (#775).</summary>
+    public ISharpTSCallable BindToReceiver(object receiver)
+        => new SharpTSAsyncGeneratorFunction(_declaration, _closure, thisBound: true, boundThis: receiver);
 
     public SharpTSAsyncGeneratorFunction BindStatic(SharpTSClass klass)
-    {
-        RuntimeEnvironment boundEnv = new(_closure);
-        boundEnv.Define("this", klass);
-        if (klass.Superclass != null)
-            boundEnv.Define("super", klass.Superclass);
-        return new SharpTSAsyncGeneratorFunction(_declaration, boundEnv);
-    }
+        => new(_declaration, _closure, thisBound: true, boundThis: klass, boundSuper: klass.Superclass);
 
     public override string ToString() => $"[async function* {_declaration.Name?.Lexeme ?? "anonymous"}]";
 }
@@ -76,11 +99,15 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable
 /// </remarks>
 /// <seealso cref="SharpTSAsyncGenerator"/>
 /// <seealso cref="SharpTSArrowGeneratorFunction"/>
-public class SharpTSAsyncArrowGeneratorFunction : ISharpTSCallable
+public class SharpTSAsyncArrowGeneratorFunction : ISharpTSCallable, IReceiverBindable
 {
     private readonly Expr.ArrowFunction _declaration;
     private readonly RuntimeEnvironment _closure;
     private readonly int _arity;
+    /// <summary>A dynamic receiver was bound (via <see cref="Bind"/>), so <see cref="Call"/> binds
+    /// <c>this</c> to <see cref="_boundThis"/> rather than defaulting it to undefined.</summary>
+    private readonly bool _thisBound;
+    private readonly object? _boundThis;
 
     /// <summary>
     /// Whether this has its own <c>this</c> binding (a <c>function*</c> expression) rather than
@@ -88,11 +115,13 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSCallable
     /// </summary>
     public bool HasOwnThis { get; }
 
-    public SharpTSAsyncArrowGeneratorFunction(Expr.ArrowFunction declaration, RuntimeEnvironment closure, bool hasOwnThis = false)
+    public SharpTSAsyncArrowGeneratorFunction(Expr.ArrowFunction declaration, RuntimeEnvironment closure, bool hasOwnThis = false, bool thisBound = false, object? boundThis = null)
     {
         _declaration = declaration;
         _closure = closure;
         HasOwnThis = hasOwnThis;
+        _thisBound = thisBound;
+        _boundThis = boundThis;
         _arity = declaration.Parameters.Count(p => p.DefaultValue == null && !p.IsRest && !p.IsOptional);
     }
 
@@ -107,6 +136,12 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSCallable
         {
             environment.Define(_declaration.Name.Lexeme, this);
         }
+        // #775: a `function*` expression binds its own dynamic `this`; the bound receiver (or globalThis for
+        // a plain call) is defined in the generator's OWN body environment, NOT a parent scope.
+        if (_thisBound)
+            environment.Define("this", _boundThis);
+        else if (HasOwnThis)
+            environment.Define("this", SharpTSGlobalThis.Instance); // sloppy-mode `this` = globalThis (#775)
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         // Generator expressions always have a block body (the parser never produces an
@@ -116,11 +151,10 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSCallable
 
     /// <summary>Binds <c>this</c>. Only applicable for function expressions with HasOwnThis=true.</summary>
     public SharpTSAsyncArrowGeneratorFunction Bind(object thisObject)
-    {
-        RuntimeEnvironment boundEnv = new(_closure);
-        boundEnv.Define("this", thisObject);
-        return new SharpTSAsyncArrowGeneratorFunction(_declaration, boundEnv, hasOwnThis: true);
-    }
+        => new(_declaration, _closure, hasOwnThis: true, thisBound: true, boundThis: thisObject);
+
+    /// <summary>Receiver-binding entry point for the method-call / <c>.call</c> / <c>.apply</c> path (#775).</summary>
+    public ISharpTSCallable BindToReceiver(object receiver) => Bind(receiver);
 
     public override string ToString() => $"[async function* {_declaration.Name?.Lexeme ?? "anonymous"}]";
 }

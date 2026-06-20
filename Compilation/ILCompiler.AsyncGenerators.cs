@@ -26,9 +26,14 @@ public partial class ILCompiler
         // Analyze the async generator function for yield/await points and hoisted variables
         var analysis = _asyncGenerators.Analyzer.Analyze(funcStmt);
 
+        // #775: a free-function async generator binds its own dynamic `this`; when its body uses `this`
+        // the stub captures the active dynamic receiver into <>4__this at creation time (see
+        // EmitGeneratorStubMethod for the sync rationale).
+        bool hasDynamicThis = analysis.UsesThis;
+
         // Create the state machine builder
         var smBuilder = new AsyncGeneratorStateMachineBuilder(_moduleBuilder, _types, _asyncGenerators.StateMachineCounter++);
-        smBuilder.DefineStateMachine(funcName, analysis, isInstanceMethod: false, runtime: _runtime);
+        smBuilder.DefineStateMachine(funcName, analysis, isInstanceMethod: false, runtime: _runtime, hasDynamicThis: hasDynamicThis);
 
         _asyncGenerators.StateMachines[qualifiedName] = smBuilder;
         _asyncGenerators.Functions[qualifiedName] = funcStmt;
@@ -125,6 +130,24 @@ public partial class ILCompiler
 
         // Create new instance of the state machine using the constructor builder
         il.Emit(OpCodes.Newobj, smBuilder.Constructor);
+
+        // #775: capture the active dynamic `this` into <>4__this (see EmitGeneratorStubMethod for the
+        // full rationale — the thread-local receiver is gone by the time MoveNextAsync runs lazily).
+        if (smBuilder.ThisField != null && _runtime?.CurrentFunctionThisField != null)
+        {
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldsfld, _runtime.CurrentFunctionThisField);
+            if (_runtime.GlobalThisSingletonField != null)
+            {
+                var thisNotNull = il.DefineLabel();
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Brtrue, thisNotNull);
+                il.Emit(OpCodes.Pop);
+                il.Emit(OpCodes.Ldsfld, _runtime.GlobalThisSingletonField);
+                il.MarkLabel(thisNotNull);
+            }
+            il.Emit(OpCodes.Stfld, smBuilder.ThisField);
+        }
 
         // Copy parameters to state machine fields
         for (int i = 0; i < funcStmt.Parameters.Count; i++)

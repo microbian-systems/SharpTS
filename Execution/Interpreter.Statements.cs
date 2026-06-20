@@ -860,10 +860,11 @@ public partial class Interpreter
             var iteratorFn = obj.GetBySymbol(SharpTSSymbol.Iterator);
             if (iteratorFn != null)
             {
-                // Bind 'this' to the object if it's an arrow function
-                if (iteratorFn is SharpTSArrowFunction arrowFunc)
+                // Bind 'this' to the object for a function expression / object method shorthand,
+                // including generator forms (`[Symbol.iterator]: function*(){ this... }`, #775).
+                if (TryBindReceiverForMethodAccess(iteratorFn, obj) is { } boundIteratorFn)
                 {
-                    iteratorFn = arrowFunc.Bind(obj);
+                    iteratorFn = boundIteratorFn;
                 }
                 return EnumerateWithIteratorProtocol(iteratorFn);
             }
@@ -881,10 +882,11 @@ public partial class Interpreter
             }
             if (iteratorFn != null)
             {
-                // Bind 'this' to the instance if it's an arrow function
-                if (iteratorFn is SharpTSArrowFunction arrowFunc)
+                // Bind 'this' to the instance for a function expression / object method shorthand,
+                // including generator forms (#775).
+                if (TryBindReceiverForMethodAccess(iteratorFn, inst) is { } boundIteratorFn)
                 {
-                    iteratorFn = arrowFunc.Bind(inst);
+                    iteratorFn = boundIteratorFn;
                 }
                 return EnumerateWithIteratorProtocol(iteratorFn);
             }

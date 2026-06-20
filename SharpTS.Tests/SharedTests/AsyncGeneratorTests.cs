@@ -45,6 +45,48 @@ public class AsyncGeneratorTests
         Assert.Equal("1 false\n2 false\n3 false\nundefined true\n", output);
     }
 
+    [Fact]
+    public void AsyncGenerator_ObjectMethod_ReadsThis_Interpreted()
+    {
+        // #775: an object async-generator method reads instance state via `this`. Interpreter only:
+        // the compiled async-generator object-METHOD value-call (`o.gen()`) inside an async function does
+        // not yet thread the receiver into the state machine (a pre-existing async-codegen gap, tracked
+        // separately). The `.call`/`.apply` async path works in both modes — see the test below.
+        var source = """
+            const o = { v: 7, async *gen() { yield this.v; yield this.v + 1; } };
+            async function main() {
+                const it = o.gen();
+                let r = await it.next();
+                console.log(r.value);
+                r = await it.next();
+                console.log(r.value);
+            }
+            main();
+            """;
+
+        Assert.Equal("7\n8\n", TestHarness.Run(source, ExecutionMode.Interpreted));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorFunctionExpression_DotCallBindsThis(ExecutionMode mode)
+    {
+        // #775: an `async function*` expression bound via `.call` reads `this`.
+        var source = """
+            async function* g() { yield this.x; yield this.x + 1; }
+            async function main() {
+                const it = (g as any).call({ x: 9 });
+                let r = await it.next();
+                console.log(r.value);
+                r = await it.next();
+                console.log(r.value);
+            }
+            main();
+            """;
+
+        Assert.Equal("9\n10\n", TestHarness.Run(source, mode));
+    }
+
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncGenerator_EmptyGenerator_ReturnsDoneImmediately(ExecutionMode mode)
