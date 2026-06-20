@@ -1,8 +1,8 @@
-import { countPrimes } from "./lib/algorithms.ts";
+import { arrayMethodWork } from "./lib/algorithms.ts";
 import { bench } from "./lib/bench.ts";
 
 const params: number[] = [1000, 10000, 100000];
 for (let p: number = 0; p < params.length; p++) {
     const n: number = params[p];
-    bench("count-primes", n, () => countPrimes(n));
+    bench("array-methods", n, () => arrayMethodWork(n));
 }

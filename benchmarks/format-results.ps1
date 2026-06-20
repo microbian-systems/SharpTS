@@ -31,11 +31,16 @@ Write-Output @"
 **Environment:** .NET $DotNetVersion | Node.js $NodeVersion | Bun $BunVersion | $os $arch
 **Date:** $(Get-Date -Format 'yyyy-MM-dd')
 
+Per-call mean ms with sample standard deviation (lower is better). Per-call
+minimums are kept in the raw results artifact for deeper analysis.
+
 | Benchmark | Param | Interpreter (ms) | Compiled (ms) | Node.js (ms) | Bun (ms) | Compiled vs Node |
 |-----------|-------|------------------:|--------------:|--------------:|---------:|-----------------:|
 "@
 
-# Parse results into a dictionary keyed by "bench|param"
+# Parse results into a dictionary keyed by "bench|param".
+# Each line is: <runtime>|<bench>:<param>:<mean>:<min>:<stdev>
+# (older <mean>-only lines are still accepted: min/stdev default to absent).
 $data = [ordered]@{}
 foreach ($line in Get-Content $ResultsFile) {
     if (-not $line.Trim()) { continue }
@@ -44,13 +49,25 @@ foreach ($line in Get-Content $ResultsFile) {
     $fields = $parts[1] -split ':'
     $bench = $fields[0]
     $param = $fields[1]
-    $ms = $fields[2]
     $key = "$bench|$param"
 
     if (-not $data.Contains($key)) {
         $data[$key] = @{}
     }
-    $data[$key][$runtime] = $ms
+    $data[$key][$runtime] = @{
+        mean  = $fields[2]
+        stdev = if ($fields.Count -ge 5) { $fields[4] } else { $null }
+    }
+}
+
+# Render a runtime cell as "mean ±stdev" (or just "mean", or "-" if absent).
+function Format-Cell($entry, $runtime) {
+    if (-not $entry.ContainsKey($runtime)) { return '-' }
+    $m = $entry[$runtime]
+    if ($null -ne $m.stdev -and $m.stdev -ne '') {
+        return "$($m.mean) ±$($m.stdev)"
+    }
+    return "$($m.mean)"
 }
 
 foreach ($key in $data.Keys) {
@@ -59,16 +76,16 @@ foreach ($key in $data.Keys) {
     $param = $kp[1]
     $entry = $data[$key]
 
-    $interp = if ($entry.ContainsKey('interpreter')) { $entry['interpreter'] } else { '-' }
-    $comp   = if ($entry.ContainsKey('compiled'))    { $entry['compiled'] }    else { '-' }
-    $njs    = if ($entry.ContainsKey('node'))         { $entry['node'] }        else { '-' }
-    $bun    = if ($entry.ContainsKey('bun'))          { $entry['bun'] }         else { '-' }
+    $interp = Format-Cell $entry 'interpreter'
+    $comp   = Format-Cell $entry 'compiled'
+    $njs    = Format-Cell $entry 'node'
+    $bun    = Format-Cell $entry 'bun'
 
     $ratio = '-'
-    if ($comp -ne '-' -and $njs -ne '-') {
-        $njsNum = [double]$njs
+    if ($entry.ContainsKey('compiled') -and $entry.ContainsKey('node')) {
+        $njsNum = [double]$entry['node'].mean
         if ($njsNum -gt 0) {
-            $ratio = '{0:F2}x' -f ([double]$comp / $njsNum)
+            $ratio = '{0:F2}x' -f ([double]$entry['compiled'].mean / $njsNum)
         }
     }
 
