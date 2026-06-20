@@ -71,6 +71,27 @@ public partial class ILCompiler
         if (asyncCapturedVars.Count > 0)
             _closures.AsyncCapturedVarsExclusion[qualifiedFunctionName] = asyncCapturedVars;
 
+        // #837: a nested-block let/const that shadows an enclosing binding and is merely READ by an
+        // inner arrow is now renamed (#767), recording a capture-source pivot. Keep its SOURCE name out
+        // of the name-keyed function DC so the arrow body's read resolves to the arrow's own pivot-aware
+        // snapshot field instead of the shared `$functionDC.<name>` (the resolver prefers the function DC
+        // over the per-arrow field, so the name colliding there is what leaks the outer value). The keys
+        // of BlockScopeCaptureRenames are exactly those read-only-captured renamed shadows (names written
+        // inside any closure are off-limits and never appear). Gate on the promoted-written set so a
+        // same-named mutated capture stays in the DC for verifiable mutation (#625).
+        var readOnlyRenamedShadows = new HashSet<string>();
+        if (analysis.BlockScopeCaptureRenames != null)
+            foreach (var perArrow in analysis.BlockScopeCaptureRenames.Values)
+                readOnlyRenamedShadows.UnionWith(perArrow.Keys);
+        readOnlyRenamedShadows.ExceptWith(promotedToFunctionDC);
+        if (readOnlyRenamedShadows.Count > 0)
+        {
+            if (_closures.AsyncCapturedVarsExclusion.TryGetValue(qualifiedFunctionName, out var existing))
+                existing.UnionWith(readOnlyRenamedShadows);
+            else
+                _closures.AsyncCapturedVarsExclusion[qualifiedFunctionName] = readOnlyRenamedShadows;
+        }
+
         DefineFunctionDisplayClass(funcStmt, qualifiedFunctionName);
 
         // If a function DC was created, add a field on the state machine to hold it
@@ -296,9 +317,11 @@ public partial class ILCompiler
 
         // Disambiguate nested-block let/const shadows so the hoisting decision below is per-binding
         // rather than per-name (#766, async analog of #711).
-        // An async arrow likewise shares its captures by name with inner closures, so keep read-only
-        // captured shadows off-limits (arrowReadCapturesShareStorage: true). #767.
-        var renameResult = GeneratorBlockScopeRenamer.Compute(arrow, arrowReadCapturesShareStorage: true);
+        // A shadow merely READ by a nested arrow is renamed and a capture-source pivot recorded (#767):
+        // an async arrow does not lift read-only captures into a name-keyed function display class (only
+        // promoted WRITTEN captures, #682/#625), so the inner arrow's read flows through the per-arrow
+        // snapshot path the pivot redirects — no DC exclusion is needed here, unlike async functions (#837).
+        var renameResult = GeneratorBlockScopeRenamer.Compute(arrow, arrowReadCapturesShareStorage: false);
         _arrowBlockScopeRenames = renameResult.Renames;
         _arrowBlockScopeCaptureRenames = renameResult.CaptureRenames;
 

@@ -256,21 +256,18 @@ public class AsyncBlockScopeShadowTests
 
     #endregion
 
-    #region Known residual: async-function read-capture of a shadow shares name-keyed storage (#767)
+    #region Read-capture of a shadow by an inner arrow (#837, async analog of #767)
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void AsyncFunction_NestedBlockShadow_CapturedByArrow_Interpreted(ExecutionMode mode)
+    public void AsyncFunction_NestedBlockShadow_CapturedByArrow(ExecutionMode mode)
     {
-        // Interpreter is correct in both directions and is the reference. Compiled async FUNCTIONS lift
-        // EVERY captured local (read or write) into a name-keyed function display class, so a read-only
-        // arrow capture of a renamed shadow cannot use the per-arrow snapshot pivot that fixes #767 for
-        // (async) generators. Such shadows are therefore kept OFF-LIMITS to renaming in async-function /
-        // async-arrow contexts (no regression from the prior #766 behaviour); a full fix needs the
-        // function DC itself to become rename-aware. This test pins the interpreter contract; the
-        // compiled async-function residual is tracked separately.
-        if (mode == ExecutionMode.Compiled) return;
-
+        // An inner block const that shadows an outer binding AND is read by a nested arrow gets its own
+        // slot; the arrow reads the inner value while the outer keeps its own (#837). Compiled async
+        // FUNCTIONS used to lift every captured local into a name-keyed function display class, so a
+        // read-only arrow capture of the shadow collided with the outer binding on one DC field (leaked
+        // 5,5). The fix renames the shadow (#767 pivot) and excludes it from the function DC so the
+        // arrow's read flows through the per-arrow snapshot path the pivot redirects.
         var source = """
             async function af(): Promise<string> {
               const out: string[] = [];
@@ -289,6 +286,65 @@ public class AsyncBlockScopeShadowTests
             """;
 
         Assert.Equal("5,100\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncArrow_NestedBlockShadow_CapturedByArrow(ExecutionMode mode)
+    {
+        // Async-ARROW analog of the above (#837): the shadow read by an inner arrow gets its own slot.
+        var source = """
+            const af = async (): Promise<string> => {
+              const out: string[] = [];
+              const r = 100;
+              {
+                const r = 5;
+                const f = () => r;
+                await Promise.resolve(0);
+                out.push(String(f()));
+              }
+              out.push(String(r));
+              return out.join(",");
+            };
+            async function main() { console.log(await af()); }
+            main();
+            """;
+
+        Assert.Equal("5,100\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncFunction_TwoShadowsReadCapturedByDistinctArrows(ExecutionMode mode)
+    {
+        // Two independent nested-block shadows, each read by its own arrow, must each get their own slot
+        // without cross-contamination (#837). Confirms the exclusion handles more than one renamed shadow.
+        var source = """
+            async function af(): Promise<string> {
+              const out: string[] = [];
+              const r = 100;
+              const s = 200;
+              {
+                const r = 5;
+                const f = () => r;
+                await Promise.resolve(0);
+                out.push(String(f()));
+              }
+              {
+                const s = 9;
+                const g = () => s;
+                await Promise.resolve(0);
+                out.push(String(g()));
+              }
+              out.push(String(r));
+              out.push(String(s));
+              return out.join(",");
+            }
+            async function main() { console.log(await af()); }
+            main();
+            """;
+
+        Assert.Equal("5,9,100,200\n", TestHarness.Run(source, mode));
     }
 
     #endregion
