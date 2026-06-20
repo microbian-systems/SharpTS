@@ -13,50 +13,32 @@ namespace SharpTS.Tests.SharedTests.BuiltInModules;
 /// </summary>
 public class DnsRecordTypeTests
 {
-    /// <summary>
-    /// Runs a DNS test module, skipping (rather than failing) when the live query hung.
-    /// <para>
-    /// The network tests below issue a real query to the system resolver. The bodies already
-    /// tolerate a resolver <i>error</i> (callback err / promise reject), but a <i>hang</i> —
-    /// the resolver never answering, common on CI agents and especially macOS — drains the
-    /// event loop with no output, so the harness returns "" and the test false-reds (tracked by
-    /// #495/#387; the deep fix is a query timeout in the compiled dns runtime). Empty output is
-    /// the unambiguous hang signature: each test prints at least one line on success or
-    /// tolerated error, and a genuine regression surfaces as wrong output (still asserted). Skip
-    /// on that signature so the suite stays deterministic without masking real breakage. The
-    /// behavioral assertions are pinned by the deterministic fake-server suites regardless.
-    /// </para>
-    /// </summary>
-    private static string RunDns(Dictionary<string, string> files, string entryPoint, ExecutionMode mode)
-    {
-        var output = TestHarness.RunModules(files, entryPoint, mode);
-        Skip.If(output.Length == 0, "live DNS query timed out on this agent (flaky CI resolver); see #495/#387");
-        return output;
-    }
+    #region Live smoke tests (opt-in [Trait Category=LiveNetwork], excluded from CI)
 
-    #region Live smoke tests (network-tolerant)
+    // A single callback-based and a single promise-based live query against a
+    // stable public domain. Tagged LiveNetwork so CI (which runs
+    // --filter "Category!=LiveNetwork") never runs them; a developer can run them
+    // on demand. Exact-value behavioral coverage is pinned by the deterministic
+    // fake-server suites (DnsFakeServerModuleTests); these only assert the real
+    // resolver is reachable and returns the right shape.
 
-    // A single callback-based and a single promise-based live query. Success
-    // asserts the result shape; a transient resolver failure (err / throw) is
-    // treated as a skip — live DNS on CI runners is a known flake source, and
-    // the behavioral assertions are pinned by the fake-server suites.
-
-    [SkippableTheory]
+    [Theory]
+    [Trait("Category", "LiveNetwork")]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void LiveSmoke_ResolveMx_Callback(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import * as dns from 'dns';
-                dns.resolveMx('google.com', (err: any, addresses: any) => {
+                dns.resolveMx('{{LiveNetworkHosts.Stable}}', (err: any, addresses: any) => {
                     if (err === null) {
                         console.log(Array.isArray(addresses));
                         console.log(addresses.length > 0);
                         console.log(typeof addresses[0].exchange === 'string');
                         console.log(typeof addresses[0].priority === 'number');
                     } else {
-                        // Transient resolver failure on CI — skip
+                        // Transient resolver failure tolerated — live smoke test.
                         console.log(true);
                         console.log(true);
                         console.log(true);
@@ -66,26 +48,27 @@ public class DnsRecordTypeTests
                 """
         };
 
-        var output = RunDns(files, "main.ts", mode);
+        var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Equal("true\ntrue\ntrue\ntrue\n", output);
     }
 
-    [SkippableTheory]
+    [Theory]
+    [Trait("Category", "LiveNetwork")]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void LiveSmoke_ResolveNs_Promise(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import dns from 'dns/promises';
                 async function main() {
                     try {
-                        const nameservers = await dns.resolveNs('google.com');
+                        const nameservers = await dns.resolveNs('{{LiveNetworkHosts.Stable}}');
                         console.log(Array.isArray(nameservers));
                         console.log(nameservers.length > 0);
                         console.log(typeof nameservers[0] === 'string');
                     } catch (e) {
-                        // Transient resolver failure on CI — skip
+                        // Transient resolver failure tolerated — live smoke test.
                         console.log(true);
                         console.log(true);
                         console.log(true);
@@ -95,58 +78,15 @@ public class DnsRecordTypeTests
                 """
         };
 
-        var output = RunDns(files, "main.ts", mode);
+        var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Equal("true\ntrue\ntrue\n", output);
     }
 
     #endregion
 
-    #region Error Handling Tests
-
-    [SkippableTheory]
-    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void ResolveMx_InvalidDomain_CallsBackWithError(ExecutionMode mode)
-    {
-        var files = new Dictionary<string, string>
-        {
-            ["main.ts"] = """
-                import * as dns from 'dns';
-                dns.resolveMx('this.definitely.does.not.exist.example', (err: any, records: any) => {
-                    console.log(err !== null);
-                    console.log(records === null);
-                });
-                """
-        };
-
-        var output = RunDns(files, "main.ts", mode);
-        Assert.Equal("true\ntrue\n", output);
-    }
-
-    [SkippableTheory]
-    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void ResolveNs_InvalidDomain_Promise_Rejects(ExecutionMode mode)
-    {
-        var files = new Dictionary<string, string>
-        {
-            ["main.ts"] = """
-                import dns from 'dns/promises';
-                async function main() {
-                    try {
-                        await dns.resolveNs('this.definitely.does.not.exist.example');
-                        console.log('no error');
-                    } catch (e) {
-                        console.log('error caught');
-                    }
-                }
-                main();
-                """
-        };
-
-        var output = RunDns(files, "main.ts", mode);
-        Assert.Equal("error caught\n", output);
-    }
-
-    #endregion
+    // NXDOMAIN error-path coverage (resolveMx callback-error / resolveNs promise-reject)
+    // lives in DnsFakeServerModuleTests.ResolveMx_Nxdomain_CallsBackWithError and
+    // ResolveNs_Nxdomain_Promise_Rejects — deterministic, both runtimes, no live network.
 
     #region API surface tests (no network)
 

@@ -37,9 +37,12 @@ public class HttpModuleTests : IDisposable
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void FetchReturnsPromise(ExecutionMode mode)
     {
-        // Test that fetch returns something with .then
-        var source = """
-            const p = fetch('http://example.com');
+        // Test that fetch returns something with .then. Point at the local server
+        // (like every sibling fetch test) rather than the real internet: a request
+        // to an unreachable host keeps the event loop alive until the 30s timeout,
+        // which false-reds CI on a flaky runner (#495).
+        var source = $$"""
+            const p = fetch('{{_server.BaseUrl}}status/200');
             console.log(typeof p.then);
             """;
         var output = TestHarness.Run(source, mode);

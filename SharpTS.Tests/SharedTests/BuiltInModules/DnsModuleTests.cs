@@ -162,16 +162,20 @@ public class DnsModuleTests
         Assert.Equal("true\ntrue\n", output);
     }
 
+    // LiveNetwork: dns.lookup uses the OS resolver (getaddrinfo), which has no
+    // SHARPTS_DNS_SERVER redirect seam, so a real NXDOMAIN answer requires the live
+    // resolver. Tagged so CI excludes it; run on demand to verify the error path.
     [Theory]
+    [Trait("Category", "LiveNetwork")]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Dns_Lookup_InvalidHostname_Throws(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import { lookup } from 'dns';
                 try {
-                    lookup('this.hostname.definitely.does.not.exist.example');
+                    lookup('{{LiveNetworkHosts.Nonexistent}}');
                     console.log('no error');
                 } catch (e) {
                     console.log('error thrown');
@@ -247,14 +251,15 @@ public class DnsModuleTests
     }
 
     [Theory]
+    [Trait("Category", "LiveNetwork")]
     [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Dns_Lookup_Callback_InvalidHostname_ReceivesError(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
         {
-            ["main.ts"] = """
+            ["main.ts"] = $$"""
                 import { lookup } from 'dns';
-                lookup('this.hostname.definitely.does.not.exist.example', (err: any, address: any) => {
+                lookup('{{LiveNetworkHosts.Nonexistent}}', (err: any, address: any) => {
                     console.log(err !== null);
                     console.log(address === null);
                 });
