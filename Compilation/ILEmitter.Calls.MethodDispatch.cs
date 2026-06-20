@@ -14,6 +14,17 @@ public partial class ILEmitter
     {
         string methodName = methodGet.Name.Lexeme;
 
+        // Promoted typed-array local push (#857/#860): append unboxed elements directly to the
+        // bare List<T> via the typed helper — bypassing ArrayEmitter's $Array unwrap/copy and the
+        // per-element boxing. Handled here (not in ArrayEmitter) because EnsureDouble/EnsureBoolean
+        // live on the main emitter. Only fires when the receiver is a promoted local (typed slot).
+        if (methodName == "push" && !methodGet.Optional && methodGet.Object is Expr.Variable pushVar
+            && _ctx.TryGetPromotedArrayLocal(pushVar.Name.Lexeme) is { } pushProm)
+        {
+            EmitPromotedArrayPush(pushProm.Local, pushProm.Descriptor, arguments);
+            return;
+        }
+
         // Try direct dispatch for known class instance methods
         TypeSystem.TypeInfo? objType = _ctx.TypeMap?.Get(methodGet.Object);
         if (TryEmitDirectMethodCall(methodGet.Object, objType, methodName, arguments))

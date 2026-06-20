@@ -812,6 +812,8 @@ public partial class RuntimeEmitter
         EmitArrayForEach(typeBuilder, runtime);
         EmitArrayForEachDirect(typeBuilder, runtime);
         EmitArrayPush(typeBuilder, runtime);
+        EmitArrayPushTyped(typeBuilder, runtime, ArrayElements.Double);
+        EmitArrayPushTyped(typeBuilder, runtime, ArrayElements.Bool);
         EmitArrayPushProto(typeBuilder, runtime);
         EmitArrayFind(typeBuilder, runtime);
         EmitArrayFindDirect(typeBuilder, runtime);

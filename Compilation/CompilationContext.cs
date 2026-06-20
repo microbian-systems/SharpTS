@@ -253,6 +253,23 @@ public partial class CompilationContext
         return null;
     }
 
+    /// <summary>
+    /// If <paramref name="variableName"/> currently binds to a promoted typed-array local
+    /// (a slot whose CLR type is <c>List&lt;double&gt;</c>/<c>List&lt;bool&gt;</c>, declared by
+    /// the #857/#860 promotion path), returns its <see cref="LocalBuilder"/> and descriptor;
+    /// otherwise null. The slot's CLR type is the single source of truth, so this is
+    /// automatically scope-correct under shadowing and never misfires for a captured/object
+    /// local. No other code path declares a user local with a typed-list slot.
+    /// </summary>
+    public (LocalBuilder Local, ArrayElementsDescriptor Descriptor)? TryGetPromotedArrayLocal(string variableName)
+    {
+        if (!Locals.TryGetLocal(variableName, out var local)) return null;
+        var slotType = Locals.GetLocalType(variableName);
+        if (slotType == Types.ListOfDouble) return (local, ArrayElements.Double);
+        if (slotType == Types.ListOfBool) return (local, ArrayElements.Bool);
+        return null;
+    }
+
     // Exception block tracking for proper return handling
     public int ExceptionBlockDepth { get; set; } = 0;
     public LocalBuilder? ReturnValueLocal { get; set; }

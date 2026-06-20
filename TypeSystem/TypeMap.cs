@@ -20,6 +20,7 @@ public class TypeMap
     private readonly HashSet<Expr> _undefinedReachableReturns = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<object> _undefinedReachableNumericLocals = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Stmt.Parameter> _undefinedReachableNumericParams = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Token, TokenType> _promotableArrayLocals = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// Associates an expression with its resolved type.
@@ -119,6 +120,29 @@ public class TypeMap
     /// </summary>
     public bool IsUndefinedReachableNumericParam(Stmt.Parameter param) =>
         _undefinedReachableNumericParams.Contains(param);
+
+    /// <summary>
+    /// Flags a <c>number[]</c>/<c>boolean[]</c>-typed local <c>const</c>/<c>let</c> declaration whose
+    /// initializer is an empty array literal and which is provably non-escaping (only used via
+    /// index get/set, <c>.length</c>, and <c>push</c>/<c>pop</c>). The compiler promotes such a local
+    /// to a concrete <c>List&lt;double&gt;</c>/<c>List&lt;bool&gt;</c> CLR slot with unboxed element access
+    /// (#857/#860), instead of the default <c>object</c>/<c>$Array</c> slot. <paramref name="elementToken"/>
+    /// is the element primitive token (<c>TYPE_NUMBER</c> or <c>TYPE_BOOLEAN</c>) so the compiler can pick the
+    /// backing list type without re-deriving it. Keyed by reference on the declaration's <em>name token</em>
+    /// (stable across both <c>Stmt.Var</c> and <c>Stmt.Const</c> — the latter is re-wrapped into a synthetic
+    /// <c>Stmt.Var</c> at emit time but reuses the same name <see cref="Token"/>). Purely a compiler hint —
+    /// set by the IL compiler's promotion analyzer, not by the type checker.
+    /// </summary>
+    public void MarkPromotableArrayLocal(Token nameToken, TokenType elementToken) =>
+        _promotableArrayLocals[nameToken] = elementToken;
+
+    /// <summary>
+    /// If the declaration with name token <paramref name="nameToken"/> was flagged by
+    /// <see cref="MarkPromotableArrayLocal"/>, returns true and sets <paramref name="elementToken"/> to the
+    /// element primitive token; otherwise false.
+    /// </summary>
+    public bool IsPromotableArrayLocal(Token nameToken, out TokenType elementToken) =>
+        _promotableArrayLocals.TryGetValue(nameToken, out elementToken);
 
     /// <summary>
     /// Gets the resolved type for an expression, or null if not found.
