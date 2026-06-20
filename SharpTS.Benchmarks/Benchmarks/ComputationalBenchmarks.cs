@@ -6,119 +6,105 @@ using SharpTS.Benchmarks.Infrastructure;
 
 namespace SharpTS.Benchmarks.Benchmarks;
 
-/// <summary>
-/// Computational algorithm benchmarks comparing SharpTS-compiled TypeScript
-/// against idiomatic C# and equivalent C# (dynamic types).
-/// Tests function call overhead, loop performance, and array operations.
-/// </summary>
-[MemoryDiagnoser]
-[RankColumn]
-[Orderer(SummaryOrderPolicy.FastestToSlowest)]
-public class ComputationalBenchmarks
+// Computational algorithm benchmarks: SharpTS-compiled TypeScript vs idiomatic
+// C# (native types — the performance ceiling) vs "equivalent" C# (object?/boxing
+// — an approximation of the dynamic-typing tax).
+//
+// One class per algorithm so each carries a single [Params] axis. (A single
+// class with three independent [Params] would run BenchmarkDotNet's full
+// Cartesian product — every method across all 27 combinations — even though
+// each method reads only one param, ~9x of which is wasted/duplicated work.)
+//
+// The TypeScript bodies come from benchmarks/scripts/lib/algorithms.ts — the
+// same file the cross-runtime shell harness runs — so both systems measure
+// identical code. The functions are reached through a cached
+// Func<double,double> delegate, keeping reflection out of the timed region.
+
+/// <summary>Shared embedded-resource loading + compiled-delegate resolution.</summary>
+public abstract class ComputationalBenchmarkBase
 {
-    private Assembly _tsAssembly = null!;
-    private MethodInfo _tsFibonacci = null!;
-    private MethodInfo _tsFactorial = null!;
-    private MethodInfo _tsCountPrimes = null!;
+    private const string ResourceName = "SharpTS.Benchmarks.algorithms.ts";
 
-    [Params(10, 20, 30)]
-    public int FibN { get; set; }
-
-    [Params(20, 50, 100)]
-    public int FactN { get; set; }
-
-    [Params(1000, 10000, 100000)]
-    public int PrimeN { get; set; }
-
-    [GlobalSetup]
-    public void Setup()
+    protected static Func<double, double> LoadCompiled(string functionName)
     {
-        // Load embedded TypeScript source
-        var assembly = typeof(ComputationalBenchmarks).Assembly;
-        using var stream = assembly.GetManifestResourceStream(
-            "SharpTS.Benchmarks.TypeScriptSources.Computational.ts")
-            ?? throw new InvalidOperationException("Could not find embedded resource Computational.ts");
+        var assembly = typeof(ComputationalBenchmarkBase).Assembly;
+        using var stream = assembly.GetManifestResourceStream(ResourceName)
+            ?? throw new InvalidOperationException($"Could not find embedded resource {ResourceName}");
         using var reader = new StreamReader(stream);
         var tsSource = reader.ReadToEnd();
 
-        // Pre-compile TypeScript (cached across iterations)
-        var dllPath = CompilationCache.GetOrCompile(tsSource, "Computational");
-
-        // Load assembly into process
-        _tsAssembly = BenchmarkHarness.LoadCompiledAssembly(dllPath, "computational");
-
-        // Cache method references (avoid reflection overhead in benchmark loop)
-        _tsFibonacci = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "fibonacci");
-        _tsFactorial = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "factorial");
-        _tsCountPrimes = BenchmarkHarness.GetCompiledMethod(_tsAssembly, "countPrimes");
+        // Compiled once and cached across all three algorithm classes.
+        var dllPath = CompilationCache.GetOrCompile(tsSource, "Algorithms");
+        var tsAssembly = BenchmarkHarness.LoadCompiledAssembly(dllPath, "algorithms");
+        return BenchmarkHarness.GetCompiledNumberFunc(tsAssembly, functionName);
     }
+}
 
-    // ==================== Fibonacci Benchmarks ====================
+[MemoryDiagnoser]
+[RankColumn]
+[Orderer(SummaryOrderPolicy.FastestToSlowest)]
+public class FibonacciBenchmarks : ComputationalBenchmarkBase
+{
+    private Func<double, double> _fibonacci = null!;
+
+    [Params(10, 20, 30)]
+    public int N { get; set; }
+
+    [GlobalSetup]
+    public void Setup() => _fibonacci = LoadCompiled("fibonacci");
 
     [Benchmark]
-    [BenchmarkCategory("Fibonacci")]
-    public object? SharpTS_Fibonacci()
-    {
-        return BenchmarkHarness.InvokeCompiled(_tsFibonacci, (double)FibN);
-    }
+    public double SharpTS() => _fibonacci(N);
 
     [Benchmark]
-    [BenchmarkCategory("Fibonacci")]
-    public int Idiomatic_Fibonacci()
-    {
-        return IdiomaticCSharp.Fibonacci(FibN);
-    }
+    public int Idiomatic() => IdiomaticCSharp.Fibonacci(N);
 
     [Benchmark]
-    [BenchmarkCategory("Fibonacci")]
-    public object? Equivalent_Fibonacci()
-    {
-        return EquivalentCSharp.Fibonacci(FibN);
-    }
+    public object? Equivalent() => EquivalentCSharp.Fibonacci((double)N);
+}
 
-    // ==================== Factorial Benchmarks ====================
+[MemoryDiagnoser]
+[RankColumn]
+[Orderer(SummaryOrderPolicy.FastestToSlowest)]
+public class FactorialBenchmarks : ComputationalBenchmarkBase
+{
+    private Func<double, double> _factorial = null!;
 
-    [Benchmark]
-    [BenchmarkCategory("Factorial")]
-    public object? SharpTS_Factorial()
-    {
-        return BenchmarkHarness.InvokeCompiled(_tsFactorial, (double)FactN);
-    }
+    [Params(20, 50, 100)]
+    public int N { get; set; }
 
-    [Benchmark]
-    [BenchmarkCategory("Factorial")]
-    public long Idiomatic_Factorial()
-    {
-        return IdiomaticCSharp.Factorial(FactN);
-    }
+    [GlobalSetup]
+    public void Setup() => _factorial = LoadCompiled("factorial");
 
     [Benchmark]
-    [BenchmarkCategory("Factorial")]
-    public object? Equivalent_Factorial()
-    {
-        return EquivalentCSharp.Factorial(FactN);
-    }
-
-    // ==================== Count Primes Benchmarks ====================
+    public double SharpTS() => _factorial(N);
 
     [Benchmark]
-    [BenchmarkCategory("CountPrimes")]
-    public object? SharpTS_CountPrimes()
-    {
-        return BenchmarkHarness.InvokeCompiled(_tsCountPrimes, (double)PrimeN);
-    }
+    public long Idiomatic() => IdiomaticCSharp.Factorial(N);
 
     [Benchmark]
-    [BenchmarkCategory("CountPrimes")]
-    public int Idiomatic_CountPrimes()
-    {
-        return IdiomaticCSharp.CountPrimes(PrimeN);
-    }
+    public object? Equivalent() => EquivalentCSharp.Factorial((double)N);
+}
+
+[MemoryDiagnoser]
+[RankColumn]
+[Orderer(SummaryOrderPolicy.FastestToSlowest)]
+public class CountPrimesBenchmarks : ComputationalBenchmarkBase
+{
+    private Func<double, double> _countPrimes = null!;
+
+    [Params(1000, 10000, 100000)]
+    public int N { get; set; }
+
+    [GlobalSetup]
+    public void Setup() => _countPrimes = LoadCompiled("countPrimes");
 
     [Benchmark]
-    [BenchmarkCategory("CountPrimes")]
-    public object? Equivalent_CountPrimes()
-    {
-        return EquivalentCSharp.CountPrimes(PrimeN);
-    }
+    public double SharpTS() => _countPrimes(N);
+
+    [Benchmark]
+    public int Idiomatic() => IdiomaticCSharp.CountPrimes(N);
+
+    [Benchmark]
+    public object? Equivalent() => EquivalentCSharp.CountPrimes((double)N);
 }

@@ -26,6 +26,9 @@
   <!-- Embed TypeScript source files as resources for pre-compilation -->
   <ItemGroup>
     <EmbeddedResource Include="TypeScriptSources\**\*.ts" />
+    <!-- Shared with the cross-runtime shell harness (benchmarks/scripts/lib)
+         so both benchmark systems measure byte-identical algorithm sources. -->
+    <EmbeddedResource Include="..\benchmarks\scripts\lib\algorithms.ts" LogicalName="SharpTS.Benchmarks.algorithms.ts" />
   </ItemGroup>
 
   <!-- Create output directory for pre-compiled DLLs -->

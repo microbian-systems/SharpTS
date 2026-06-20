@@ -94,13 +94,33 @@ public static class BenchmarkHarness
                 var programType = assembly.GetType("$Program")
                     ?? throw new InvalidOperationException("Could not find $Program type in compiled assembly");
 
-                method = programType.GetMethod(functionName, BindingFlags.Public | BindingFlags.Static)
-                    ?? throw new InvalidOperationException($"Could not find method '{functionName}' in $Program type");
+                // Plain top-level functions compile to `$Program.<name>`. When the
+                // source uses `export function <name>` (so the same file can be
+                // imported by the shell harness), the compiler mangles the static
+                // method to `$Program.$M_<module>_<name>`. Accept either form.
+                var statics = programType.GetMethods(BindingFlags.Public | BindingFlags.Static);
+                method = Array.Find(statics, m => m.Name == functionName)
+                    ?? Array.Find(statics, m => m.Name.EndsWith("_" + functionName, StringComparison.Ordinal))
+                    ?? throw new InvalidOperationException(
+                        $"Could not find method '{functionName}' (or a '*_{functionName}' export) in $Program type");
 
                 _methodCache[cacheKey] = method;
             }
             return method;
         }
+    }
+
+    /// <summary>
+    /// Returns a strongly-typed delegate for a compiled `number -> number`
+    /// function, avoiding per-call reflection (<see cref="MethodInfo.Invoke"/>)
+    /// and argument boxing inside the measured region. Top-level TypeScript
+    /// functions annotated <c>(n: number): number</c> compile to
+    /// <c>static double f(double)</c>.
+    /// </summary>
+    public static Func<double, double> GetCompiledNumberFunc(Assembly assembly, string functionName)
+    {
+        var method = GetCompiledMethod(assembly, functionName);
+        return method.CreateDelegate<Func<double, double>>();
     }
 
     /// <summary>
