@@ -161,6 +161,30 @@ public partial class ILEmitter
             return;
         }
 
+        // Non-escaping direct-call arrow (#858): `const add = (a) => a + i;` whose value is only ever
+        // invoked by name. For a CAPTURING arrow, store the bare display-class instance in a typed local
+        // (CLR type = the display class) instead of a $TSFunction wrapper; the function-value call fast
+        // path then emits a direct `callvirt Invoke` with unboxed typed args, skipping the per-call
+        // reflective dispatch. Non-capturing direct-call arrows fall through to the normal wrapper path
+        // (there is no display class to key the call site on — left as a follow-up). Reached only after
+        // the capture branches above, so a name captured by a nested closure (excluded by the analyzer
+        // anyway) is never routed here. The call site re-checks the slot's CLR type, so this binding and
+        // the direct call stay consistent even across same-named bindings in other scopes.
+        if (v.Initializer is Expr.ArrowFunction directCallArrow &&
+            _ctx.DirectCallArrowBindings.TryGetValue(v.Name.Lexeme, out var boundArrow) &&
+            ReferenceEquals(boundArrow, directCallArrow) &&
+            _ctx.DisplayClasses.TryGetValue(directCallArrow, out var directCallDisplayClass))
+        {
+            var arrowLocal = _ctx.Locals.DeclareLocal(v.Name.Lexeme, directCallDisplayClass);
+            if (EmitCapturingArrowDisplayInstance(directCallArrow, directCallDisplayClass))
+            {
+                IL.Emit(OpCodes.Stloc, arrowLocal);
+                return;
+            }
+            // Display-instance construction declined (missing ctor) — fall through to the generic
+            // path, which re-emits the arrow as a $TSFunction wrapper into a fresh object local.
+        }
+
         // Typed-array-local promotion (#857/#860): a provably non-escaping number[]/boolean[]
         // local with an empty-array-literal initializer gets a concrete List<double>/List<bool>
         // slot, so index get/set, .length, and push/pop lower to direct typed ops with no
