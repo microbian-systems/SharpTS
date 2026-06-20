@@ -270,6 +270,31 @@ public partial class CompilationContext
         return null;
     }
 
+    /// <summary>
+    /// Resolves the generated shape struct for a promoted object-literal local by its canonical shape
+    /// key (#862), or null if shapes are not threaded into this context / the key is unknown. Used at the
+    /// declaration site to pick the struct type to declare the local with.
+    /// </summary>
+    public ObjectShapeTypeInfo? TryGetObjectShapeType(string canonicalKey) =>
+        ObjectShapes?.ByKey.GetValueOrDefault(canonicalKey);
+
+    /// <summary>
+    /// If <paramref name="variableName"/> currently binds to a promoted object-literal local (a slot
+    /// whose CLR type is one of the generated <c>$Shape_N</c> structs, #862), returns its
+    /// <see cref="LocalBuilder"/> and shape info; otherwise null. The slot's CLR type is the single
+    /// source of truth, so this is automatically scope-correct under shadowing and never misfires for a
+    /// captured/object local — no other code path declares a user local with a shape-struct slot.
+    /// </summary>
+    public (LocalBuilder Local, ObjectShapeTypeInfo Shape)? TryGetPromotedObjectLocal(string variableName)
+    {
+        if (ObjectShapes == null) return null;
+        if (!Locals.TryGetLocal(variableName, out var local)) return null;
+        var slotType = Locals.GetLocalType(variableName);
+        if (slotType != null && ObjectShapes.ByClrType.TryGetValue(slotType, out var shape))
+            return (local, shape);
+        return null;
+    }
+
     // Exception block tracking for proper return handling
     public int ExceptionBlockDepth { get; set; } = 0;
     public LocalBuilder? ReturnValueLocal { get; set; }

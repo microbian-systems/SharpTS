@@ -21,6 +21,7 @@ public class TypeMap
     private readonly HashSet<object> _undefinedReachableNumericLocals = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Stmt.Parameter> _undefinedReachableNumericParams = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Token, TokenType> _promotableArrayLocals = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<Token, ObjectShapeInfo> _promotableObjectLocals = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
     /// Associates an expression with its resolved type.
@@ -143,6 +144,33 @@ public class TypeMap
     /// </summary>
     public bool IsPromotableArrayLocal(Token nameToken, out TokenType elementToken) =>
         _promotableArrayLocals.TryGetValue(nameToken, out elementToken);
+
+    /// <summary>
+    /// Flags a <c>const</c>/<c>let</c> object-literal local declaration whose literal has a fixed,
+    /// statically-known primitive shape and which is provably non-escaping (only used via constant-key
+    /// field read/write). The IL compiler promotes such a local to a generated value-type "shape" struct
+    /// with typed fields (#862) instead of the default <c>Dictionary&lt;string, object&gt;</c>. Keyed by
+    /// reference on the declaration's <em>name token</em> (stable across both <c>Stmt.Var</c> and
+    /// <c>Stmt.Const</c>). Purely a compiler hint — set by the IL compiler's promotion analyzer, not by
+    /// the type checker.
+    /// </summary>
+    public void MarkPromotableObjectLocal(Token nameToken, ObjectShapeInfo shape) =>
+        _promotableObjectLocals[nameToken] = shape;
+
+    /// <summary>
+    /// If the declaration with name token <paramref name="nameToken"/> was flagged by
+    /// <see cref="MarkPromotableObjectLocal"/>, returns true and sets <paramref name="shape"/> to its
+    /// shape; otherwise false.
+    /// </summary>
+    public bool IsPromotableObjectLocal(Token nameToken, out ObjectShapeInfo shape) =>
+        _promotableObjectLocals.TryGetValue(nameToken, out shape!);
+
+    /// <summary>
+    /// All distinct shapes flagged by <see cref="MarkPromotableObjectLocal"/> (one entry per marked
+    /// local; the IL compiler de-duplicates by <see cref="ObjectShapeInfo.CanonicalKey"/> when defining
+    /// the generated types). Empty when no object local was promoted.
+    /// </summary>
+    public IEnumerable<ObjectShapeInfo> PromotableObjectLocalShapes => _promotableObjectLocals.Values;
 
     /// <summary>
     /// Gets the resolved type for an expression, or null if not found.

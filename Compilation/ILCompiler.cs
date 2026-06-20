@@ -426,7 +426,9 @@ public partial class ILCompiler
         Phase2_AnalyzeClosures(statements);
         ArrayLocalPromotionAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
         NonEscapingArrowLocalAnalyzer.Analyze(statements, _closures.DirectCallArrowBindings, _closures.Analyzer);
+        ObjectLocalPromotionAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
         Phase3_CreateProgramType();
+        DefineObjectShapeTypes();
         PreScanBuiltInModuleImports(statements);
         Phase4_DefineDeclarations(statements);
         Phase5_CollectArrowFunctions(statements);
@@ -706,11 +708,57 @@ public partial class ILCompiler
     }
 
     /// <summary>
+    /// Defines one generated value-type <c>$Shape_N</c> struct per distinct promotable object-literal
+    /// shape (#862), de-duplicated by canonical key. Each field becomes a typed public field
+    /// (<c>number</c>→<c>double</c>, <c>boolean</c>→<c>bool</c>, <c>string</c>→<c>string</c>). The structs
+    /// reference only BCL types, so compiled output stays standalone (no SharpTS.dll dependency). They are
+    /// finalized (<c>CreateType</c>) at the top of the finalize phase, before any type that uses them.
+    /// </summary>
+    private void DefineObjectShapeTypes()
+    {
+        if (_typeMap == null) return;
+        foreach (var shape in _typeMap.PromotableObjectLocalShapes)
+        {
+            if (_closures.ObjectShapes.ByKey.ContainsKey(shape.CanonicalKey)) continue;
+
+            var structType = _moduleBuilder.DefineType(
+                $"$Shape_{_closures.ObjectShapes.Counter++}",
+                TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.SequentialLayout,
+                _types.ValueType);
+
+            var fieldBuilders = new Dictionary<string, FieldBuilder>(StringComparer.Ordinal);
+            foreach (var (name, kind) in shape.Fields)
+            {
+                var clr = kind switch
+                {
+                    TokenType.TYPE_NUMBER => _types.Double,
+                    TokenType.TYPE_BOOLEAN => _types.Boolean,
+                    _ => _types.String,
+                };
+                fieldBuilders[name] = structType.DefineField(name, clr, FieldAttributes.Public);
+            }
+
+            var info = new ObjectShapeTypeInfo
+            {
+                ClrType = structType,
+                Fields = shape.Fields.Select(f => (f.Name, f.Kind)).ToList(),
+                FieldBuilders = fieldBuilders,
+            };
+            _closures.ObjectShapes.ByKey[shape.CanonicalKey] = info;
+            _closures.ObjectShapes.ByClrType[structType] = info;
+        }
+    }
+
+    /// <summary>
     /// Phase 9: Finalize all types by calling CreateType().
     /// </summary>
     private void Phase9_FinalizeTypes()
     {
         _unionGenerator?.FinalizeAllUnionTypes();
+
+        // Finalize generated object-literal shape structs (#862) before any type that uses them.
+        foreach (var info in _closures.ObjectShapes.ByKey.Values)
+            ((TypeBuilder)info.ClrType).CreateType();
 
         // Finalize entry-point display class first (needed by closures)
         _closures.EntryPointDisplayClass?.CreateType();
@@ -908,7 +956,9 @@ public partial class ILCompiler
         Phase2_AnalyzeClosures(allStatements);
         ArrayLocalPromotionAnalyzer.Analyze(allStatements, _typeMap, _closures.Analyzer);
         NonEscapingArrowLocalAnalyzer.Analyze(allStatements, _closures.DirectCallArrowBindings, _closures.Analyzer);
+        ObjectLocalPromotionAnalyzer.Analyze(allStatements, _typeMap, _closures.Analyzer);
         Phase3_CreateProgramType();
+        DefineObjectShapeTypes();
         // Scope each module's named-import bindings to that module so local
         // aliases like __platform don't collide between stdlib modules.
         foreach (var m in modules)
@@ -1166,6 +1216,10 @@ public partial class ILCompiler
         ILLabelValidator.SweepConstructors(allTypes);
 
         _unionGenerator?.FinalizeAllUnionTypes();
+
+        // Finalize generated object-literal shape structs (#862) before any type that uses them.
+        foreach (var info in _closures.ObjectShapes.ByKey.Values)
+            ((TypeBuilder)info.ClrType).CreateType();
 
         // Finalize entry-point display class first (needed by closures)
         _closures.EntryPointDisplayClass?.CreateType();
