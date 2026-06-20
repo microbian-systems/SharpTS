@@ -116,10 +116,6 @@ public partial class AsyncMoveNextEmitter : StatementEmitterBase, IEmitterContex
     private LocalBuilder? _currentTryCatchExceptionLocal = null;
     private Label? _currentTryCatchSkipLabel = null;
 
-    // For return inside try with finally-with-awaits: track pending return
-    private LocalBuilder? _pendingReturnFlagLocal = null;
-    private Label? _afterFinallyLabel = null;
-
     // @lock decorator support for async methods
     private Label _lockResumeLabel;  // Resume point after lock acquisition await
 
