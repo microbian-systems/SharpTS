@@ -130,6 +130,14 @@ public partial class ILCompiler
         // as `arr.map((x) => …)`. Module-scope only: nested `const` bindings
         // would need scope-aware shadowing; punt to v2.
         public Dictionary<string, Expr.ArrowFunction> ConstArrowBindings { get; } = [];
+
+        // `const NAME = (args) => …` local bindings whose arrow provably never escapes — only ever
+        // invoked by name as `NAME(args)`. The emitter stores the bare display-class instance in a
+        // typed local and the call site emits a direct `callvirt Invoke`, skipping the per-call
+        // $TSFunction wrapper + reflective InvokeMethodValue dispatch (#858). Populated by
+        // NonEscapingArrowLocalAnalyzer; the fast path only fires for capturing arrows whose in-scope
+        // local slot type matches the display class (so a same-named binding elsewhere never hits it).
+        public Dictionary<string, Expr.ArrowFunction> DirectCallArrowBindings { get; } = [];
         public Dictionary<Expr.ArrowFunction, TypeBuilder> DisplayClasses { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<Expr.ArrowFunction, Dictionary<string, FieldBuilder>> DisplayClassFields { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<Expr.ArrowFunction, ConstructorBuilder> DisplayClassConstructors { get; } = new(ReferenceEqualityComparer.Instance);

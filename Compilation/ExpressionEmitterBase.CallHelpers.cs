@@ -320,8 +320,61 @@ public abstract partial class ExpressionEmitterBase
             return;
         }
 
+        // Non-escaping direct-call arrow (#858): `add(i)` where `add` is a non-escaping const-bound
+        // CAPTURING arrow stored as a bare display-class instance in a typed local (see
+        // EmitVarDeclaration). Emit a direct `callvirt Invoke` with unboxed typed args, skipping the
+        // per-call $TSFunction wrapper + reflective InvokeMethodValue dispatch. Gated on the in-scope
+        // slot's CLR type matching the display class, so a same-named binding in another scope (a
+        // parameter, an object local, an async state-machine field) never hits this path.
+        if (TryEmitDirectCallArrow(c))
+            return;
+
         // Function value call with spread support
         EmitFunctionValueCall(c);
+    }
+
+    /// <summary>
+    /// Fast path for a non-escaping const-bound capturing arrow invoked by name (#858). Returns false
+    /// (caller falls back to the generic value-call) unless every guard holds: the callee is a bare,
+    /// non-optional variable flagged by <see cref="NonEscapingArrowLocalAnalyzer"/>; the arrow is
+    /// capturing (has a display class) with a known Invoke method; the in-scope local for that name is
+    /// the typed display-class slot the binding emitter produced; the call has no spread / type
+    /// arguments and matches the declared arity; and no argument can suspend (defensive for state-machine
+    /// emitters that inherit this method but never produce the typed local).
+    /// </summary>
+    private bool TryEmitDirectCallArrow(Expr.Call c)
+    {
+        if (c.Callee is not Expr.Variable arrowVar || c.Optional)
+            return false;
+        if (c.TypeArgs is { Count: > 0 })
+            return false;
+        if (Ctx.DirectCallArrowBindings == null ||
+            !Ctx.DirectCallArrowBindings.TryGetValue(arrowVar.Name.Lexeme, out var arrow))
+            return false;
+        if (!Ctx.DisplayClasses.TryGetValue(arrow, out var displayClass) ||
+            !Ctx.ArrowMethods.TryGetValue(arrow, out var invoke))
+            return false;
+        if (!Ctx.Locals.TryGetLocal(arrowVar.Name.Lexeme, out var arrowLocal) ||
+            arrowLocal.LocalType != displayClass)
+            return false;
+
+        var parameters = invoke.GetParameters();
+        if (c.Arguments.Count != parameters.Length)
+            return false;
+        if (c.Arguments.Any(a => a is Expr.Spread) || AnyContainsSuspension(c.Arguments))
+            return false;
+
+        // Receiver (display instance) first, then each argument converted to its declared parameter
+        // slot — value-typed params (double/bool) stay unboxed, so no per-call boxing or object[].
+        IL.Emit(OpCodes.Ldloc, arrowLocal);
+        for (int i = 0; i < c.Arguments.Count; i++)
+        {
+            EmitExpression(c.Arguments[i]);
+            EmitConversionForParameter(c.Arguments[i], parameters[i].ParameterType);
+        }
+        IL.Emit(OpCodes.Callvirt, invoke);
+        BoxReturnValueIfNeeded(invoke.ReturnType);
+        return true;
     }
 
     /// <summary>

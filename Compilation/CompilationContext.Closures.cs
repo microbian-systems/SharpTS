@@ -21,6 +21,12 @@ public partial class CompilationContext
     // gets the same direct-delegate dispatch as the inline-arrow form.
     public Dictionary<string, ArrowFunction> ConstArrowBindings { get; set; } = [];
 
+    // Non-escaping `const NAME = (args) => …` local bindings (#858). Populated by
+    // NonEscapingArrowLocalAnalyzer. EmitVarDeclaration stores the bare display instance in a typed
+    // local for these (capturing arrows only), and the function-value call fast path emits a direct
+    // `callvirt Invoke` instead of the per-call $TSFunction wrapper + reflective InvokeMethodValue.
+    public Dictionary<string, ArrowFunction> DirectCallArrowBindings { get; set; } = [];
+
     // ============================================
     // Self-referential capture write-back (issue #421)
     // ============================================
