@@ -781,43 +781,114 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         if (af.Parameters.Count > 1) return false;
         foreach (var p in af.Parameters)
         {
-            if (p.Type != null) return false;
+            // Annotated params (p.Type != null) are now supported via a boxed
+            // adapter (#861) — see the typed-param path below. Rest/optional/
+            // defaulted params still bail (they need the reflective arg shape).
             if (p.IsRest || p.IsOptional) return false;
             if (p.DefaultValue != null) return false;
         }
         if (!ctx.ArrowMethods.TryGetValue(af, out var staticMethod)) return false;
 
-        // Static method's parameter types are guaranteed to be `object` by the
-        // AST-no-annotation check (ParameterTypeResolver falls back to object).
-        // Return type is the discriminator: type inference may yield `object`
-        // (any-typed bodies) or `bool` (predicate bodies like `v => v > 10`).
-        // The first uses Func<object, object>; the second uses Func<object, bool>
-        // where the helper variant exists. Phase B: capturing arrows now go
-        // through emitter.TryEmitArrowAsDelegate, which builds the display
-        // instance + binds the delegate to its Invoke method.
-        var ret = staticMethod.ReturnType;
-        System.Reflection.Emit.MethodBuilder chosenHelper;
-        Type funcType;
-        if (ret == ctx.Types.Object)
+        var sParams = staticMethod.GetParameters();
+        bool allParamsObject = true;
+        foreach (var sp in sParams)
+            if (sp.ParameterType != ctx.Types.Object) { allParamsObject = false; break; }
+
+        if (allParamsObject)
         {
-            chosenHelper = helperMethod;
-            funcType = typeof(Func<object, object>);
-        }
-        else if (ret == ctx.Types.Boolean && boolHelper != null)
-        {
-            chosenHelper = boolHelper;
-            funcType = typeof(Func<object, bool>);
-        }
-        else
-        {
-            return false;
+            // Untyped fast path (unchanged). The arrow's static method already has
+            // `object` parameter slots (unannotated params; ParameterTypeResolver
+            // falls back to object), so it binds directly to Func<object, …>. The
+            // return type is the discriminator: `object` (any-typed body) uses
+            // Func<object, object> + helperMethod; `bool` (predicate body like
+            // `v => v > 10`) uses Func<object, bool> + boolHelper where present.
+            // Capturing arrows go through emitter.TryEmitArrowAsDelegate, which
+            // builds the display instance + binds to its Invoke method.
+            var ret = staticMethod.ReturnType;
+            System.Reflection.Emit.MethodBuilder chosenHelper;
+            Type funcType;
+            if (ret == ctx.Types.Object)
+            {
+                chosenHelper = helperMethod;
+                funcType = typeof(Func<object, object>);
+            }
+            else if (ret == ctx.Types.Boolean && boolHelper != null)
+            {
+                chosenHelper = boolHelper;
+                funcType = typeof(Func<object, bool>);
+            }
+            else
+            {
+                return false;
+            }
+
+            if (!emitter.TryEmitArrowAsDelegate(af, funcType))
+                return false;
+            ctx.IL.Emit(OpCodes.Call, chosenHelper);
+            return true;
         }
 
-        if (!emitter.TryEmitArrowAsDelegate(af, funcType))
+        // Typed-param adapter path (#861): an annotated callback compiles to a
+        // typed static method (e.g. double(double)/bool(double)) that cannot bind
+        // to Func<object, object> directly. Bind a per-arrow boxed adapter that
+        // marshals object↔typed around the arrow call, then drive the existing
+        // object-callback helper. The boxed bool predicate result is handled by
+        // the helper's own IsTruthy (so the boolHelper/Direct-bool variant is a
+        // later refinement, #861 L4).
+        if (!TryBindTypedArrowAdapter(emitter, af, staticMethod, funcArity: 1))
             return false;
-        ctx.IL.Emit(OpCodes.Call, chosenHelper);
+        ctx.IL.Emit(OpCodes.Call, helperMethod);
         return true;
     }
+
+    /// <summary>
+    /// Binds a per-arrow boxed adapter (object(object[,object])) for an annotated,
+    /// non-capturing callback arrow to a Func&lt;object,…&gt; of
+    /// <paramref name="funcArity"/> parameters, leaving the delegate on the stack
+    /// for the caller to pass to an Array*Direct helper. Returns false (reflective
+    /// fallback) for capturing arrows or any non-marshallable param/return type.
+    /// </summary>
+    private static bool TryBindTypedArrowAdapter(
+        IEmitterContext emitter,
+        Expr.ArrowFunction af,
+        System.Reflection.Emit.MethodBuilder staticMethod,
+        int funcArity)
+    {
+        var ctx = emitter.Context;
+        // Capturing arrows (display class) need an instance receiver — defer to the
+        // reflective path (#861 L3).
+        if (ctx.DisplayClasses.ContainsKey(af)) return false;
+        // The adapter is emitted onto the arrow's declaring $Program type. Using the
+        // arrow's DeclaringType (rather than ctx.ProgramType, which is only set on
+        // the module-top-level context) lets the adapter path fire inside function
+        // and method bodies too — the dominant case for the array-methods benchmark.
+        if (staticMethod.DeclaringType is not TypeBuilder programType) return false;
+
+        // Marshallable gate: stay in the reflective path's no-arg-conversion regime
+        // (concrete double/bool/string, or object) so the adapter's unbox/cast
+        // matches MethodInvoker semantics exactly. Union/nullable params already
+        // widen to object in ParameterTypeResolver, so a non-object slot here is a
+        // concrete value/reference type.
+        if (!IsAdapterMarshallable(ctx, staticMethod.ReturnType)) return false;
+        foreach (var sp in staticMethod.GetParameters())
+            if (!IsAdapterMarshallable(ctx, sp.ParameterType)) return false;
+
+        var adapter = ctx.ArrowBoxedAdapters.GetOrEmit(programType, staticMethod, funcArity);
+        Type funcType = funcArity == 2
+            ? typeof(Func<object, object, object>)
+            : typeof(Func<object, object>);
+        var funcCtor = funcType.GetConstructor([typeof(object), typeof(IntPtr)])!;
+
+        // Non-capturing static adapter: target = null, ldftn the adapter.
+        ctx.IL.Emit(OpCodes.Ldnull);
+        ctx.IL.Emit(OpCodes.Ldftn, adapter);
+        ctx.IL.Emit(OpCodes.Newobj, funcCtor);
+        return true;
+    }
+
+    private static bool IsAdapterMarshallable(CompilationContext ctx, Type t)
+        => t == ctx.Types.Object || t == ctx.Types.Double
+        || t == ctx.Types.Boolean || t == ctx.Types.String;
 
     /// <summary>
     /// Reduce-specific fast path: the callback is binary
@@ -839,17 +910,32 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         if (af.Parameters.Count != 2) return false;
         foreach (var p in af.Parameters)
         {
-            if (p.Type != null) return false;
+            // Annotated params now supported via a boxed adapter (#861).
             if (p.IsRest || p.IsOptional) return false;
             if (p.DefaultValue != null) return false;
         }
         if (!ctx.ArrowMethods.TryGetValue(af, out var staticMethod)) return false;
-        if (staticMethod.ReturnType != ctx.Types.Object) return false;
 
-        var func3 = typeof(Func<object, object, object>);
-        // Stack: [list]. Build delegate (capturing or non-capturing).
-        if (!emitter.TryEmitArrowAsDelegate(af, func3))
-            return false;
+        var sParams = staticMethod.GetParameters();
+        bool allObject = staticMethod.ReturnType == ctx.Types.Object;
+        if (allObject)
+            foreach (var sp in sParams)
+                if (sp.ParameterType != ctx.Types.Object) { allObject = false; break; }
+
+        // Stack: [list]. Build the (acc, element) => newAcc delegate.
+        if (allObject)
+        {
+            // Untyped fast path (unchanged): object(object,object) binds directly.
+            if (!emitter.TryEmitArrowAsDelegate(af, typeof(Func<object, object, object>)))
+                return false;
+        }
+        else
+        {
+            // Annotated reducer (e.g. double(double,double)): bridge via a boxed
+            // adapter object(object,object).
+            if (!TryBindTypedArrowAdapter(emitter, af, staticMethod, funcArity: 2))
+                return false;
+        }
         // Push initial value (boxed object).
         emitter.EmitExpression(arguments[1]);
         emitter.EmitBoxIfNeeded(arguments[1]);

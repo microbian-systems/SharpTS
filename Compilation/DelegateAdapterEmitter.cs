@@ -159,7 +159,13 @@ public class DelegateAdapterEmitter
     /// TS <c>number</c>, <c>bool</c> stays boxed bool, reference types pass through.
     /// Mirrors the interpreter's <c>DotNetMarshaller.WrapReturn</c> for the common primitives.
     /// </summary>
-    private void EmitBoxForTS(ILGenerator il, Type paramType)
+    /// <remarks>
+    /// <c>internal static</c> so the boxed-callback adapter emitter for array HOFs
+    /// (<see cref="ArrowBoxedAdapterEmitter"/>, #861) shares the exact same
+    /// box/unbox conventions — keeping <c>number</c>↔boxed-<c>double</c> etc.
+    /// consistent across every emitted marshalling site.
+    /// </remarks>
+    internal static void EmitBoxForTS(ILGenerator il, Type paramType)
     {
         if (!paramType.IsValueType)
         {
@@ -209,7 +215,13 @@ public class DelegateAdapterEmitter
     /// delegate's declared return type. void: pop. object: no-op. value types: unbox via
     /// boxed-double (matching <see cref="EmitBoxForTS"/>). Reference types: castclass.
     /// </summary>
-    private void EmitUnboxForReturn(ILGenerator il, Type returnType)
+    /// <remarks>
+    /// <c>internal static</c>: also used by <see cref="ArrowBoxedAdapterEmitter"/>
+    /// (#861) to coerce a boxed array element into an arrow's typed parameter slot
+    /// (the inverse role), so the unbox/cast matches the reflective
+    /// <c>MethodInvoker</c> path exactly.
+    /// </remarks>
+    internal static void EmitUnboxForReturn(ILGenerator il, Type returnType)
     {
         if (returnType == typeof(void))
         {

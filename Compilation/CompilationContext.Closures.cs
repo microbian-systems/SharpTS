@@ -16,6 +16,13 @@ public partial class CompilationContext
     // Arrow function methods (arrow node -> method info)
     public Dictionary<ArrowFunction, MethodBuilder> ArrowMethods { get; set; } = [];
 
+    // Boxed-callback adapters for annotated-param array HOF callbacks (#861).
+    // Lazily created (no constructor plumbing needed); emits per-arrow
+    // object(object[,object]) adapters on $Program so a typed arrow can bind to
+    // the Func<object,…> the Array*Direct helpers expect.
+    private ArrowBoxedAdapterEmitter? _arrowBoxedAdapters;
+    internal ArrowBoxedAdapterEmitter ArrowBoxedAdapters => _arrowBoxedAdapters ??= new ArrowBoxedAdapterEmitter();
+
     // Module-scope const → literal-arrow bindings. Iterator-helper fast paths
     // look up `Expr.Variable` callbacks here so `const sq = x => x*x; arr.map(sq)`
     // gets the same direct-delegate dispatch as the inline-arrow form.
