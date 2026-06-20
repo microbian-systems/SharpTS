@@ -716,8 +716,8 @@ This document tracks Node.js module and API implementation status in SharpTS.
 | `ALL` | ✅ | Return all addresses hint |
 | **Async Resolution** | | |
 | `resolve` | ✅ | Async callback-based; supports rrtype parameter (A, AAAA, MX, TXT, SRV, CNAME, NS, SOA, PTR, CAA, NAPTR) |
-| `resolve4` | ✅ | Async callback-based; resolves IPv4 addresses |
-| `resolve6` | ✅ | Async callback-based; resolves IPv6 addresses |
+| `resolve4` | ✅ | Async callback-based; resolves IPv4 via the DNS wire protocol (c-ares-style, honors `SHARPTS_DNS_SERVER`; does not read the hosts file — use `lookup` for that) |
+| `resolve6` | ✅ | Async callback-based; resolves IPv6 via the DNS wire protocol (c-ares-style; does not read the hosts file) |
 | `reverse` | ✅ | Async callback-based; reverse DNS lookup |
 | `resolveMx` | ✅ | MX records → `[{ exchange, priority }]` |
 | `resolveTxt` | ✅ | TXT records → `string[][]` (chunks per record) |

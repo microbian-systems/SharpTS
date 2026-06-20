@@ -1,3 +1,4 @@
+using SharpTS.Runtime.BuiltIns.Modules;
 using SharpTS.Tests.Infrastructure;
 using Xunit;
 
@@ -172,30 +173,39 @@ public class DnsResolverTests
 
     #endregion
 
-    #region Resolver.resolve4 with default servers (localhost)
+    #region Resolver.resolve4 against a fake server (setServers)
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void Resolver_Resolve4_Localhost_CallbackStyle(ExecutionMode mode)
+    public void Resolver_Resolve4_FakeServer_CallbackStyle(ExecutionMode mode)
     {
-        var files = new Dictionary<string, string>
+        // resolve4 uses the DNS wire protocol; point the Resolver at a loopback fake
+        // server via setServers (no env redirect needed) for a deterministic A record.
+        using var server = new FakeDnsServer((request, _) =>
         {
-            ["main.ts"] = """
-                import { Resolver } from 'dns';
-                const resolver = new Resolver();
-                resolver.resolve4('localhost', (err: any, addresses: string[]) => {
-                    if (err) {
-                        console.log('error: ' + err.code);
-                    } else {
-                        console.log(Array.isArray(addresses));
-                        console.log(addresses.length > 0);
-                        console.log(addresses[0] === '127.0.0.1');
-                    }
-                });
-                """
-        };
+            var qtype = DnsPackets.QueryType(request);
+            return qtype == DnsWireProtocol.TypeA
+                ? DnsPackets.Response(request, 0, DnsPackets.Record(qtype, DnsPackets.A("127.0.0.1")))
+                : DnsPackets.Response(request, 3);
+        });
 
-        var output = TestHarness.RunModules(files, "main.ts", mode);
+        var source = $$"""
+            import { Resolver } from 'dns';
+            const resolver = new Resolver();
+            resolver.setServers(['{{server.Address}}']);
+            resolver.resolve4('fake.test', (err: any, addresses: string[]) => {
+                if (err) {
+                    console.log('error: ' + err.code);
+                } else {
+                    console.log(Array.isArray(addresses));
+                    console.log(addresses.length > 0);
+                    console.log(addresses[0] === '127.0.0.1');
+                }
+            });
+            """;
+
+        var output = TestHarness.RunModules(
+            new Dictionary<string, string> { ["main.ts"] = source }, "main.ts", mode);
         Assert.Equal("true\ntrue\ntrue\n", output);
     }
 

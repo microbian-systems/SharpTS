@@ -613,6 +613,7 @@ public partial class RuntimeEmitter
         // Wire protocol query types
         const int qtMX = 15, qtTXT = 16, qtSRV = 33, qtCNAME = 5, qtNS = 2;
         const int qtSOA = 6, qtPTR = 12, qtCAA = 257, qtNAPTR = 35;
+        const int qtA = 1, qtAAAA = 28;
 
         // === MX section — DnsDoQuery returns pre-parsed List<object?> of dicts ===
         il.MarkLabel(mxLabel);
@@ -665,14 +666,14 @@ public partial class RuntimeEmitter
         EmitDnsResolveViaWireProtocol(il, runtime, hostnameLocal, resultLocal, qtNAPTR, wrapWithConvertList: true);
         il.Emit(OpCodes.Br, returnLabel);
 
-        // === A section (uses System.Net.Dns) ===
+        // === A section — wire protocol (List<object?> of IP strings) ===
         il.MarkLabel(aLabel);
-        EmitDnsResolveAddresses(il, runtime, hostnameLocal, resultLocal, AddressFamily.InterNetwork);
+        EmitDnsResolveViaWireProtocol(il, runtime, hostnameLocal, resultLocal, qtA, wrapWithConvertList: false);
         il.Emit(OpCodes.Br, returnLabel);
 
-        // === AAAA section (uses System.Net.Dns) ===
+        // === AAAA section — wire protocol (List<object?> of IP strings) ===
         il.MarkLabel(aaaaLabel);
-        EmitDnsResolveAddresses(il, runtime, hostnameLocal, resultLocal, AddressFamily.InterNetworkV6);
+        EmitDnsResolveViaWireProtocol(il, runtime, hostnameLocal, resultLocal, qtAAAA, wrapWithConvertList: false);
         il.Emit(OpCodes.Br, returnLabel);
 
         // === Unknown rrtype ===
@@ -722,84 +723,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, value);
         il.Emit(OpCodes.Callvirt, strEquals);
         il.Emit(OpCodes.Brtrue, target);
-    }
-
-    /// <summary>
-    /// Emits IL for A/AAAA resolution using System.Net.Dns.GetHostEntry.
-    /// Stores $Array result in resultLocal.
-    /// </summary>
-    private void EmitDnsResolveAddresses(ILGenerator il, EmittedRuntime runtime,
-        LocalBuilder hostnameLocal, LocalBuilder resultLocal, AddressFamily family)
-    {
-        // Dns.GetHostEntry(hostname)
-        il.Emit(OpCodes.Ldloc, hostnameLocal);
-        il.Emit(OpCodes.Call, typeof(Dns).GetMethod("GetHostEntry", [typeof(string)])!);
-        var hostEntryLocal = il.DeclareLocal(typeof(IPHostEntry));
-        il.Emit(OpCodes.Stloc, hostEntryLocal);
-
-        // Get AddressList
-        il.Emit(OpCodes.Ldloc, hostEntryLocal);
-        il.Emit(OpCodes.Callvirt, typeof(IPHostEntry).GetProperty("AddressList")!.GetGetMethod()!);
-        var addressListLocal = il.DeclareLocal(typeof(IPAddress[]));
-        il.Emit(OpCodes.Stloc, addressListLocal);
-
-        // Build list of matching addresses
-        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
-        var listLocal = il.DeclareLocal(_types.ListOfObject);
-        il.Emit(OpCodes.Stloc, listLocal);
-
-        var indexLocal = il.DeclareLocal(typeof(int));
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, indexLocal);
-        var loopStart = il.DefineLabel();
-        var loopCond = il.DefineLabel();
-        il.Emit(OpCodes.Br, loopCond);
-
-        il.MarkLabel(loopStart);
-        // Check address family
-        il.Emit(OpCodes.Ldloc, addressListLocal);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Callvirt, typeof(IPAddress).GetProperty("AddressFamily")!.GetGetMethod()!);
-        il.Emit(OpCodes.Ldc_I4, (int)family);
-        var skipLabel = il.DefineLabel();
-        il.Emit(OpCodes.Bne_Un, skipLabel);
-
-        // Match - add to list
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Ldloc, addressListLocal);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IPAddress), "ToString"));
-        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
-
-        il.MarkLabel(skipLabel);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, indexLocal);
-
-        il.MarkLabel(loopCond);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldloc, addressListLocal);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Blt, loopStart);
-
-        // Check if empty
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetPropertyGetter(_types.ListOfObject, "Count"));
-        var notEmptyLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brtrue, notEmptyLabel);
-
-        il.Emit(OpCodes.Ldc_I4, (int)SocketError.HostNotFound);
-        il.Emit(OpCodes.Newobj, typeof(SocketException).GetConstructor([typeof(int)])!);
-        il.Emit(OpCodes.Throw);
-
-        il.MarkLabel(notEmptyLabel);
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
-        il.Emit(OpCodes.Stloc, resultLocal);
     }
 
     /// <summary>
@@ -3477,72 +3400,12 @@ public partial class RuntimeEmitter
 
         il.BeginExceptionBlock();
 
-        // Call DnsLookup(hostname, family_number) - returns { address, family } but we need array of strings
-        // Use System.Net.Dns.GetHostEntry directly for array result
-        // hostname.ToString()
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-
-        // Call Dns.GetHostEntry(hostname) -> IPHostEntry
-        il.Emit(OpCodes.Call, typeof(Dns).GetMethod("GetHostEntry", [typeof(string)])!);
-        var hostEntryLocal = il.DeclareLocal(typeof(IPHostEntry));
-        il.Emit(OpCodes.Stloc, hostEntryLocal);
-
-        // Get AddressList
-        il.Emit(OpCodes.Ldloc, hostEntryLocal);
-        il.Emit(OpCodes.Callvirt, typeof(IPHostEntry).GetProperty("AddressList")!.GetGetMethod()!);
-        var addressListLocal = il.DeclareLocal(typeof(IPAddress[]));
-        il.Emit(OpCodes.Stloc, addressListLocal);
-
-        // Build List<object> of matching addresses
-        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
-        var listLocal = il.DeclareLocal(_types.ListOfObject);
-        il.Emit(OpCodes.Stloc, listLocal);
-
-        // for (int i = 0; i < addressList.Length; i++)
-        var indexLocal = il.DeclareLocal(typeof(int));
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, indexLocal);
-        var loopStart = il.DefineLabel();
-        var loopCond = il.DefineLabel();
-        il.Emit(OpCodes.Br, loopCond);
-
-        il.MarkLabel(loopStart);
-        // if (addressList[i].AddressFamily == target)
-        il.Emit(OpCodes.Ldloc, addressListLocal);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Callvirt, typeof(IPAddress).GetProperty("AddressFamily")!.GetGetMethod()!);
-        il.Emit(OpCodes.Ldc_I4, family == 4 ? (int)AddressFamily.InterNetwork : (int)AddressFamily.InterNetworkV6);
-        var skipLabel = il.DefineLabel();
-        il.Emit(OpCodes.Bne_Un, skipLabel);
-
-        // list.Add(address.ToString())
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Ldloc, addressListLocal);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IPAddress), "ToString"));
-        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
-
-        il.MarkLabel(skipLabel);
-        // i++
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, indexLocal);
-
-        // i < addressList.Length
-        il.MarkLabel(loopCond);
-        il.Emit(OpCodes.Ldloc, indexLocal);
-        il.Emit(OpCodes.Ldloc, addressListLocal);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Blt, loopStart);
-
-        // Create $Array from list
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
+        // resultLocal = DnsResolveRecord(hostname, "A"|"AAAA") — A/AAAA via the emitted
+        // DNS wire protocol (honors SHARPTS_DNS_SERVER, Node/c-ares semantics — no
+        // hosts-file lookup), mirroring the interpreter. Returns a $Array of IP strings.
+        il.Emit(OpCodes.Ldarg_0); // hostname (object)
+        il.Emit(OpCodes.Ldstr, family == 4 ? "A" : "AAAA");
+        il.Emit(OpCodes.Call, runtime.DnsResolveRecord);
         il.Emit(OpCodes.Stloc, resultLocal);
 
         // callback.Invoke([null, result])
@@ -3720,52 +3583,21 @@ public partial class RuntimeEmitter
 
         il.BeginExceptionBlock();
 
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
-        il.Emit(OpCodes.Call, typeof(Dns).GetMethod("GetHostEntry", [typeof(string)])!);
-        var hostEntryLocal = il.DeclareLocal(typeof(IPHostEntry));
-        il.Emit(OpCodes.Stloc, hostEntryLocal);
-
-        // Build list from all addresses
-        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
-        var listLocal = il.DeclareLocal(_types.ListOfObject);
-        il.Emit(OpCodes.Stloc, listLocal);
-
-        il.Emit(OpCodes.Ldloc, hostEntryLocal);
-        il.Emit(OpCodes.Callvirt, typeof(IPHostEntry).GetProperty("AddressList")!.GetGetMethod()!);
-        var addrArrayLocal = il.DeclareLocal(typeof(IPAddress[]));
-        il.Emit(OpCodes.Stloc, addrArrayLocal);
-
-        var idxLocal = il.DeclareLocal(typeof(int));
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, idxLocal);
-        var loopS = il.DefineLabel();
-        var loopC = il.DefineLabel();
-        il.Emit(OpCodes.Br, loopC);
-        il.MarkLabel(loopS);
-
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Ldloc, addrArrayLocal);
-        il.Emit(OpCodes.Ldloc, idxLocal);
-        il.Emit(OpCodes.Ldelem_Ref);
-        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IPAddress), "ToString"));
-        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add")!);
-
-        il.Emit(OpCodes.Ldloc, idxLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, idxLocal);
-        il.MarkLabel(loopC);
-        il.Emit(OpCodes.Ldloc, idxLocal);
-        il.Emit(OpCodes.Ldloc, addrArrayLocal);
-        il.Emit(OpCodes.Ldlen);
-        il.Emit(OpCodes.Conv_I4);
-        il.Emit(OpCodes.Blt, loopS);
-
-        // Create $Array
+        // resultLocal = DnsResolveRecord(hostname, rrtype ?? "A") — A/AAAA and the
+        // default rrtype route through the emitted DNS wire protocol (honors
+        // SHARPTS_DNS_SERVER, Node/c-ares semantics), mirroring the interpreter.
+        // Returns a $Array of IP strings.
+        il.Emit(OpCodes.Ldarg_0); // hostname (object)
+        il.Emit(OpCodes.Ldloc, rrtypeLocal);
+        il.Emit(OpCodes.Isinst, _types.String); // rrtype string, or null
+        il.Emit(OpCodes.Dup);
+        var haveRrtypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, haveRrtypeLabel);
+        il.Emit(OpCodes.Pop);          // drop null
+        il.Emit(OpCodes.Ldstr, "A");   // default rrtype
+        il.MarkLabel(haveRrtypeLabel);
+        il.Emit(OpCodes.Call, runtime.DnsResolveRecord);
         var resultLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
         il.Emit(OpCodes.Stloc, resultLocal);
 
         // callback(null, result)

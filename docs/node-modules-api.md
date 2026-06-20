@@ -989,6 +989,13 @@ sock.bind(41234);
 
 DNS resolution.
 
+> **`resolve*` vs `lookup`:** `resolve`/`resolve4`/`resolve6`/`resolveMx`/… use the DNS
+> wire protocol — like Node's c-ares resolver — querying the configured DNS server
+> (override with the `SHARPTS_DNS_SERVER` env var). They do **not** consult the OS hosts
+> file. `lookup`/`lookupService` use the OS resolver (`getaddrinfo`), which does read the
+> hosts file. Consequently `resolve4('localhost')` typically returns `ENOTFOUND`, whereas
+> `lookup('localhost')` returns `127.0.0.1` — matching Node.
+
 ### Top-level Methods
 
 `lookup`, `lookupService`, `resolve`, `resolve4`, `resolve6`, `resolveCaa`, `resolveCname`, `resolveMx`, `resolveNs`, `resolvePtr`, `resolveSoa`, `resolveSrv`, `resolveTxt`, `resolveAny`, `reverse`, `getServers`, `setServers`.
