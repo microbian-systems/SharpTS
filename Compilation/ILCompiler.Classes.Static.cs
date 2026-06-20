@@ -586,11 +586,10 @@ public partial class ILCompiler
             hasLock: hasLock
         );
 
-        // #682: wire a function display class for captures a direct-child async arrow writes (same as
-        // instance methods). The "::static::" infix keeps the key distinct from an instance method of
-        // the same class+name (statics and instance members share a name space in TS).
-        string methodDCKey = SetupAsyncMethodFunctionDC(
-            smBuilder, $"{className}::static::{method.Name.Lexeme}", analysis);
+        // #682/#follow-up: attach the static method's function display class (registered in Phase 4) to
+        // the state machine — shares verifiable reference storage for both async-arrow and nested
+        // sync-arrow captured writes. Null when nothing is shared.
+        string? methodDCKey = SetupAsyncMethodFunctionDC(smBuilder, method);
 
         // Build state machines for any async arrows found in this method
         DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder);

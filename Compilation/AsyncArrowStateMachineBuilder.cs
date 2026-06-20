@@ -73,6 +73,17 @@ public class AsyncArrowStateMachineBuilder
     // The captures this arrow needs from outer scope
     public HashSet<string> Captures { get; }
 
+    // Follow-up to #838: the <>__functionDC field holding this async arrow's own reference-type function
+    // display class, shared with a nested SYNC arrow that writes one of the arrow's captured locals. Null
+    // unless RegisterAsyncArrowFunctionDisplayClasses registered a DC for this arrow. The ctor is stored so
+    // the stub can instantiate it once on entry.
+    public FieldBuilder? FunctionDCField { get; private set; }
+    public ConstructorBuilder? FunctionDCCtor { get; private set; }
+    // The DC's (storage name → field) map, so this arrow's own MoveNext routes a DC-resident local's
+    // read/write through `this.<>__functionDC.field`. Kept on the builder rather than the context so it
+    // never collides with the OuterFunctionDCField relay's use of ctx.FunctionDisplayClassFields.
+    public Dictionary<string, FieldBuilder> FunctionDCFieldMap { get; } = [];
+
     // Methods
     public MethodBuilder MoveNextMethod { get; private set; } = null!;
     public MethodBuilder SetStateMachineMethod { get; private set; } = null!;
@@ -330,6 +341,22 @@ public class AsyncArrowStateMachineBuilder
     }
 
     /// <summary>
+    /// Follow-up to #838: adds the <c>&lt;&gt;__functionDC</c> field that holds this async arrow's own
+    /// reference-type function display class (shared with a nested sync arrow that writes one of the
+    /// arrow's captured locals). Must be called after <see cref="DefineStateMachine"/> /
+    /// <see cref="DefineStateMachineStandalone"/> (the state-machine type must exist) and before
+    /// <c>CreateType</c>. The stub instantiates it once on entry; the ctor is stored here for that.
+    /// </summary>
+    public void DefineFunctionDisplayClassField(Type dcType, ConstructorBuilder dcCtor,
+        IReadOnlyDictionary<string, FieldBuilder> dcFields)
+    {
+        FunctionDCField = _stateMachineType.DefineField("<>__functionDC", dcType, FieldAttributes.Public);
+        FunctionDCCtor = dcCtor;
+        foreach (var (name, field) in dcFields)
+            FunctionDCFieldMap[name] = field;
+    }
+
+    /// <summary>
     /// Defines and emits the stub method that creates the state machine when the arrow is invoked.
     /// The stub takes (outer state machine boxed, params...) and returns Task&lt;object&gt;.
     /// For standalone arrows, there's no outer SM parameter but captures are passed.
@@ -439,6 +466,10 @@ public class AsyncArrowStateMachineBuilder
             il.Emit(OpCodes.Ldarg, i + paramOffset);
             il.Emit(OpCodes.Stfld, paramField);
         }
+
+        // (Follow-up to #838: this arrow's own function DC is instantiated in the MoveNext prologue, not
+        // here — the DC field is attached only in Phase 5/6, after this stub is defined in Phase 4 for a
+        // nested arrow. The prologue null-guards so it runs exactly once on initial entry.)
 
         // sm.<>t__builder = AsyncTaskMethodBuilder<object>.Create();
         il.Emit(OpCodes.Ldloca, smLocal);

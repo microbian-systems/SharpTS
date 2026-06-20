@@ -45,8 +45,33 @@ public partial class ILCompiler
 
         // Create function-level display class for captured locals (same as sync functions).
         // This enables closure mutation sharing between the async state machine and sync inner arrows.
-        // Variables also captured by async arrows are excluded since they use the hoisted field mechanism.
-        _closures.FunctionAstNodes[qualifiedFunctionName] = funcStmt;
+        RegisterAsyncFunctionDisplayClass(funcStmt, qualifiedFunctionName, analysis);
+
+        // If a function DC was created, add a field on the state machine to hold it
+        if (_closures.FunctionDisplayClasses.TryGetValue(qualifiedFunctionName, out var funcDC))
+        {
+            smBuilder.DefineFunctionDisplayClassField(funcDC);
+        }
+
+        // Build state machines for any async arrows found in this function
+        DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder);
+    }
+
+    /// <summary>
+    /// Registers the function-level display class ($functionDC) for an async free function OR async
+    /// method, keyed by <paramref name="key"/>. Lifts the captured locals a nested SYNC arrow shares —
+    /// minus the ones an async arrow captures (those use the boxed-outer hoisted-field path), keeping the
+    /// direct-child async-arrow WRITES that #625 promotes for verifiable mutation. Excludes read-only
+    /// renamed shadows from the name-keyed DC (#837) and makes the DC rename-aware for write-captured
+    /// shadows (#838) via <c>DefineFunctionDisplayClass</c> → <c>ApplyWriteCaptureRenames</c>. Records the
+    /// AST node so the arrow-collection (<see cref="PropagateFunctionDCRequirements"/>) can resolve a
+    /// nested sync arrow's enclosing scope back to this DC. Does NOT attach the state-machine field — the
+    /// caller does that once its <c>smBuilder</c> exists (free functions inline; methods in phase 7).
+    /// </summary>
+    private void RegisterAsyncFunctionDisplayClass(
+        Stmt.Function funcStmt, string key, AsyncStateAnalyzer.AsyncFunctionAnalysis analysis)
+    {
+        _closures.FunctionAstNodes[key] = funcStmt;
 
         // Collect variables captured by async arrows. By default these can't use the function DC —
         // they're read through the boxed outer state machine in the arrow's MoveNext.
@@ -69,7 +94,7 @@ public partial class ILCompiler
 
         // Filter out (still-)async-captured vars before creating the DC
         if (asyncCapturedVars.Count > 0)
-            _closures.AsyncCapturedVarsExclusion[qualifiedFunctionName] = asyncCapturedVars;
+            _closures.AsyncCapturedVarsExclusion[key] = asyncCapturedVars;
 
         // #837: a nested-block let/const that shadows an enclosing binding and is merely READ by an
         // inner arrow is now renamed (#767), recording a capture-source pivot. Keep its SOURCE name out
@@ -86,27 +111,58 @@ public partial class ILCompiler
         readOnlyRenamedShadows.ExceptWith(promotedToFunctionDC);
         if (readOnlyRenamedShadows.Count > 0)
         {
-            if (_closures.AsyncCapturedVarsExclusion.TryGetValue(qualifiedFunctionName, out var existing))
+            if (_closures.AsyncCapturedVarsExclusion.TryGetValue(key, out var existing))
                 existing.UnionWith(readOnlyRenamedShadows);
             else
-                _closures.AsyncCapturedVarsExclusion[qualifiedFunctionName] = readOnlyRenamedShadows;
+                _closures.AsyncCapturedVarsExclusion[key] = readOnlyRenamedShadows;
         }
 
-        // #838: an async function body is retokenized by the block-scope renamer, so make its function DC
+        // #838: an async body is retokenized by the block-scope renamer, so make its function DC
         // rename-aware — a write-captured nested-block shadow gets its own renamed field instead of
         // colliding with the outer same-named binding on a single name-keyed cell (matching the existing
         // generator path). Recomputed here (deterministic, same flag the AsyncStateAnalyzer used).
         var blockScopeRenames = GeneratorBlockScopeRenamer.Compute(funcStmt, arrowReadCapturesShareStorage: false);
-        DefineFunctionDisplayClass(funcStmt, qualifiedFunctionName, blockScopeRenames);
+        DefineFunctionDisplayClass(funcStmt, key, blockScopeRenames);
+    }
 
-        // If a function DC was created, add a field on the state machine to hold it
-        if (_closures.FunctionDisplayClasses.TryGetValue(qualifiedFunctionName, out var funcDC))
+    // Maps an async METHOD's AST node to the function-display-class key registered for it in Phase 4
+    // (RegisterAsyncMethodFunctionDisplayClasses). The phase-7 emit (SetupAsyncMethodFunctionDC) reads
+    // this to attach/wire the state machine's function DC without reconstructing a key string. Keyed by
+    // AST identity so phase-4 registration and phase-7 emission agree. Mirrors the generator-method map.
+    private readonly Dictionary<Stmt.Function, string> _asyncMethodFunctionDCKeys =
+        new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Phase-4 registration (called from <see cref="DefineClass"/> / the class-expression analog) of the
+    /// function display class for each async (non-generator) method whose nested SYNC arrow shares a
+    /// captured method local — the async-method analogue of
+    /// <c>RegisterGeneratorMethodFunctionDisplayClasses</c>. Must run before phase-5
+    /// <see cref="PropagateFunctionDCRequirements"/> so a nested sync arrow can resolve its enclosing
+    /// method back to this DC (via <c>FunctionAstNodes</c>) and route its write through <c>$functionDC</c>
+    /// instead of a by-value snapshot. <see cref="SetupAsyncMethodFunctionDC"/> later reads the recorded
+    /// key to attach/wire the state machine's DC. No-op for methods with no such capture.
+    /// </summary>
+    private void RegisterAsyncMethodFunctionDisplayClasses(IReadOnlyList<Stmt.Function> methods, string qualifiedClassName)
+    {
+        foreach (var method in methods)
         {
-            smBuilder.DefineFunctionDisplayClassField(funcDC);
-        }
+            if (method.Body == null || method.IsGenerator || !method.IsAsync)
+                continue;
 
-        // Build state machines for any async arrows found in this function
-        DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder);
+            // Match the key shape SetupAsyncMethodFunctionDC used (instance "::", static "::static::"),
+            // qualified by class name so modules/overloads don't collide. The key is stored and later
+            // retrieved by AST identity, so it is never reconstructed from the emitted type name.
+            string infix = method.IsStatic ? "::static::" : "::";
+            string key = $"{qualifiedClassName}{infix}{method.Name.Lexeme}";
+
+            var analysis = _async.Analyzer.Analyze(method);
+            RegisterAsyncFunctionDisplayClass(method, key, analysis);
+
+            // Only track the key when a DC was actually created (captured locals to share); otherwise the
+            // method stays fully standalone and phase-7 leaves it alone (methodDCKey null).
+            if (_closures.FunctionDisplayClasses.ContainsKey(key))
+                _asyncMethodFunctionDCKeys[method] = key;
+        }
     }
 
     /// <summary>
@@ -148,33 +204,54 @@ public partial class ILCompiler
     /// from free-function registry keys (which never contain "::"). Returns <paramref name="dcKey"/> so
     /// the caller can thread it to <see cref="EmitAsyncStubMethod"/> and <see cref="WireAsyncMethodFunctionDC"/>.
     /// </summary>
-    private string SetupAsyncMethodFunctionDC(AsyncStateMachineBuilder smBuilder, string dcKey,
-        AsyncStateAnalyzer.AsyncFunctionAnalysis analysis)
+    private string? SetupAsyncMethodFunctionDC(AsyncStateMachineBuilder smBuilder, Stmt.Function method)
     {
-        var promoted = ComputeArrowWrittenCapturesToPromote(analysis.AsyncArrows);
-        if (promoted.Count > 0)
-        {
-            RegisterFunctionDisplayClass(dcKey, promoted);
-            if (_closures.FunctionDisplayClasses.TryGetValue(dcKey, out var dc))
-                smBuilder.DefineFunctionDisplayClassField(dc);
-        }
+        // The method's whole function DC (sync-arrow shares + #625 promoted async-arrow writes + #838
+        // renamed shadows) is built in Phase 4 (RegisterAsyncMethodFunctionDisplayClasses); here we only
+        // ATTACH the already-registered DC's field to the state machine. Null when the method shares no
+        // captured local (fully standalone), leaving its state machine unchanged.
+        if (!_asyncMethodFunctionDCKeys.TryGetValue(method, out var dcKey))
+            return null;
+        if (_closures.FunctionDisplayClasses.TryGetValue(dcKey, out var dc))
+            smBuilder.DefineFunctionDisplayClassField(dc);
         return dcKey;
     }
 
     /// <summary>
     /// #682: wires <paramref name="ctx"/> so the async method body (AsyncMoveNextEmitter) reads/writes
-    /// the promoted captures via <c>this.functionDC.field</c> and a nested async arrow
+    /// the DC captures via <c>this.functionDC.field</c> and a nested async arrow
     /// (AsyncArrowMoveNextEmitter, sharing this ctx) reaches them via <c>outer.functionDC.field</c>.
-    /// No-op when nothing was promoted (no DC field on the state machine).
+    /// No-op when the method has no function DC (null key / no DC field on the state machine).
     /// </summary>
-    private void WireAsyncMethodFunctionDC(CompilationContext ctx, AsyncStateMachineBuilder smBuilder, string dcKey)
+    private void WireAsyncMethodFunctionDC(CompilationContext ctx, AsyncStateMachineBuilder smBuilder, string? dcKey)
     {
-        if (smBuilder.FunctionDCField != null &&
+        if (dcKey != null && smBuilder.FunctionDCField != null &&
             _closures.FunctionDisplayClassFields.TryGetValue(dcKey, out var dcFields))
         {
             ctx.FunctionDisplayClassFields = dcFields;
             ctx.CapturedFunctionLocals = new HashSet<string>(dcFields.Keys);
             ctx.OuterFunctionDCField = smBuilder.FunctionDCField;
+            // Let the MoveNext populate a nested sync arrow's $functionDC from this method's DC
+            // (AsyncMoveNextEmitter.EmitArrowFunction), so the sync arrow shares the DC reference.
+            ctx.ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null;
+        }
+    }
+
+    /// <summary>
+    /// Follow-up to #838: attaches the function display class registered for <paramref name="arrow"/> (an
+    /// async arrow with a nested sync-arrow write-capture) to its state-machine builder, so a nested sync
+    /// arrow shares the reference (the MoveNext prologue instantiates it). No-op when no DC was registered.
+    /// Called in Phase 6 (before EmitAsyncArrowMoveNext) — not Phase 4 — because the async-arrow DC is
+    /// registered in Phase 5 (RegisterAsyncArrowFunctionDisplayClasses), after the arrow's stub is built.
+    /// </summary>
+    private void AttachAsyncArrowFunctionDC(AsyncArrowStateMachineBuilder builder, Expr.ArrowFunction arrow)
+    {
+        if (_closures.AsyncArrowDCKeys.TryGetValue(arrow, out var key) &&
+            _closures.FunctionDisplayClasses.TryGetValue(key, out var dc) &&
+            _closures.FunctionDisplayClassCtors.TryGetValue(key, out var ctor) &&
+            _closures.FunctionDisplayClassFields.TryGetValue(key, out var dcFields))
+        {
+            builder.DefineFunctionDisplayClassField(dc, ctor, dcFields);
         }
     }
 
@@ -708,6 +785,9 @@ public partial class ILCompiler
             {
                 if (_async.ArrowBuilders.TryGetValue(arrowInfo.Arrow, out var arrowBuilder))
                 {
+                    // Follow-up to #838: attach this nested arrow's function DC (registered in Phase 5)
+                    // before its MoveNext is emitted (the prologue instantiates it) and before CreateType.
+                    AttachAsyncArrowFunctionDC(arrowBuilder, arrowInfo.Arrow);
                     EmitAsyncArrowMoveNext(arrowBuilder, arrowInfo.Arrow, ctx);
                 }
             }
@@ -797,6 +877,9 @@ public partial class ILCompiler
             // actually placed in its DC are listed here, so a name present means "route via DC".
             FunctionDisplayClassFields = parentCtx.FunctionDisplayClassFields,
             OuterFunctionDCField = parentCtx.OuterFunctionDCField,
+            // Follow-up to #838: lets this nested async arrow's MoveNext populate a nested sync arrow's
+            // $functionDC from this arrow's OWN DC (EmitCapturingArrowInAsyncArrow).
+            ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null,
         };
 
         // Create arrow-specific emitter
@@ -999,13 +1082,11 @@ public partial class ILCompiler
             hasLock: hasLock
         );
 
-        // #682: a direct-child async arrow that WRITES a captured method-local must mutate it through
-        // a reference-type function display class, not the boxed value-type state machine (unverifiable
-        // unbox → readonly pointer). Async methods have no function-DC by default; wire one. The
-        // "::static::" infix keeps a static method's key distinct from an instance member of the same name.
-        string dcInfix = isInstanceMethod ? "::" : "::static::";
-        string methodDCKey = SetupAsyncMethodFunctionDC(
-            smBuilder, $"{methodBuilder.DeclaringType!.Name}{dcInfix}{methodBuilder.Name}", analysis);
+        // #682/#follow-up: attach the method's function display class (registered in Phase 4) to the
+        // state machine so a direct-child async arrow's write AND a nested sync arrow's write/read share
+        // verifiable reference storage instead of the boxed value-type state machine. Null when nothing
+        // is shared.
+        string? methodDCKey = SetupAsyncMethodFunctionDC(smBuilder, method);
 
         // Build state machines for any async arrows found in this method
         DefineAsyncArrowStateMachines(analysis.AsyncArrows, smBuilder);
@@ -1124,6 +1205,8 @@ public partial class ILCompiler
         {
             if (_async.ArrowBuilders.TryGetValue(arrowInfo.Arrow, out var arrowBuilder))
             {
+                // Follow-up to #838: attach this nested arrow's function DC before MoveNext + CreateType.
+                AttachAsyncArrowFunctionDC(arrowBuilder, arrowInfo.Arrow);
                 EmitAsyncArrowMoveNext(arrowBuilder, arrowInfo.Arrow, ctx);
             }
         }
@@ -1228,6 +1311,10 @@ public partial class ILCompiler
                 continue;
             }
 
+            // Follow-up to #838: attach this standalone arrow's function DC (registered in Phase 5)
+            // before its MoveNext is emitted (the prologue instantiates it) and before CreateType.
+            AttachAsyncArrowFunctionDC(arrowBuilder, arrow);
+
             if (_arrowToModule.TryGetValue(arrow, out var arrowModule))
             {
                 _modules.CurrentPath = NormalizeToEmissionPath(arrowModule);
@@ -1310,7 +1397,10 @@ public partial class ILCompiler
                 EntryPointDisplayClassFields = BuildEntryPointDisplayClassFieldsForModule(_modules.CurrentPath),
                 CapturedTopLevelVars = BuildCapturedTopLevelVarsForModule(_modules.CurrentPath),
                 ArrowEntryPointDCFields = _closures.ArrowEntryPointDCFields.Count > 0 ? _closures.ArrowEntryPointDCFields : null,
-                EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField
+                EntryPointDisplayClassStaticField = _closures.EntryPointDisplayClassStaticField,
+                // Follow-up to #838: lets this standalone async arrow's MoveNext populate a nested sync
+                // arrow's $functionDC from this arrow's OWN DC (EmitCapturingArrowInAsyncArrow).
+                ArrowFunctionDCFields = _closures.ArrowFunctionDCFields.Count > 0 ? _closures.ArrowFunctionDCFields : null
             };
 
             // Create arrow-specific emitter

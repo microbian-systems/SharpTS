@@ -75,6 +75,10 @@ public partial class ILCompiler
         // external (@DotNetType) classes, which return above without an emitted body.
         RegisterGeneratorMethodFunctionDisplayClasses(classStmt, qualifiedClassName);
 
+        // Same, for async (non-generator) methods whose nested sync arrow writes a captured method local,
+        // before Phase 5's PropagateFunctionDCRequirements runs.
+        RegisterAsyncMethodFunctionDisplayClasses(classStmt.Methods, qualifiedClassName);
+
         // Set TypeAttributes.Abstract if the class is abstract
         TypeAttributes typeAttrs = TypeAttributes.Public | TypeAttributes.Class;
         if (classStmt.IsAbstract)
