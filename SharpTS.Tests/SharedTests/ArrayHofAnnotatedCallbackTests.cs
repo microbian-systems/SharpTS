@@ -162,12 +162,14 @@ public class ArrayHofAnnotatedCallbackTests
         Assert.Equal("10,21,32\n", TestHarness.Run(source, mode));
     }
 
+    // ── #861 L3: capturing annotated arrows (instance adapter on the display class) ──
+
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void CapturingAnnotatedArrow_FallsBack(ExecutionMode mode)
+    public void CapturingAnnotatedArrow_Map(ExecutionMode mode)
     {
-        // Capturing arrow → adapter path is skipped (needs an instance receiver);
-        // reflective fallback must still produce the captured value correctly.
+        // Capturing arrow → instance adapter on the display class (L3); the captured value must
+        // marshal correctly through the adapter.
         var source = """
             function f(): string {
                 const a: number[] = [1, 2, 3];
@@ -177,6 +179,59 @@ public class ArrayHofAnnotatedCallbackTests
             console.log(f());
             """;
         Assert.Equal("11,12,13\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CapturingAnnotatedArrow_Reduce(ExecutionMode mode)
+    {
+        var source = """
+            function f(): number {
+                const a: number[] = [1, 2, 3, 4, 5];
+                const base: number = 100;
+                return a.reduce((acc: number, x: number): number => acc + x + base, 0);
+            }
+            console.log(f());
+            """;
+        Assert.Equal("515\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CapturingAnnotatedArrow_PerIterationFreshCapture(ExecutionMode mode)
+    {
+        // The display instance must be built FRESH at each call so each closure captures the
+        // current loop variable, not a shared one.
+        var source = """
+            function f(): string {
+                const fns: number[] = [];
+                for (let i: number = 0; i < 3; i++) {
+                    const arr: number[] = [10, 20];
+                    fns.push(arr.map((x: number): number => x + i)[0]);
+                }
+                return fns.join(",");
+            }
+            console.log(f());
+            """;
+        Assert.Equal("10,11,12\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CapturingAnnotatedArrow_Chained(ExecutionMode mode)
+    {
+        // Capturing arrows across a chained map().filter().reduce() (L1 capturing adapter + L2 round-trip).
+        var source = """
+            function f(): number {
+                const a: number[] = [1, 2, 3, 4, 5];
+                const m: number = 3;
+                return a.map((x: number): number => x * m)
+                        .filter((x: number): boolean => x > m)
+                        .reduce((s: number, x: number): number => s + x, 0);
+            }
+            console.log(f());
+            """;
+        Assert.Equal("42\n", TestHarness.Run(source, mode));
     }
 
     [Theory]

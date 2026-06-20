@@ -50,45 +50,54 @@ internal sealed class ArrowBoxedAdapterEmitter
     private readonly Dictionary<(MethodBuilder, int), MethodBuilder> _cache = [];
 
     /// <summary>
-    /// Returns the boxed adapter for <paramref name="typedArrow"/> bound to a
-    /// delegate of <paramref name="funcArity"/> object parameters, emitting it on
-    /// <paramref name="programType"/> (the arrow's declaring <c>$Program</c> type)
-    /// on first request.
+    /// Returns the boxed adapter for <paramref name="arrowMethod"/> bound to a delegate of
+    /// <paramref name="funcArity"/> object parameters, emitting it on <paramref name="carrierType"/>
+    /// on first request. <paramref name="instance"/> selects the carrier shape:
+    /// <list type="bullet">
+    ///   <item>false (#861 L1): a STATIC adapter on <c>$Program</c> calling the non-capturing
+    ///         static arrow (<c>&lt;&gt;Arrow_N</c>).</item>
+    ///   <item>true (#861 L3): an INSTANCE adapter on the capturing arrow's display class, calling
+    ///         <c>this.Invoke(...)</c>; the caller binds it to <c>(displayInstance, ldftn adapter)</c>.</item>
+    /// </list>
     /// </summary>
-    public MethodBuilder GetOrEmit(TypeBuilder programType, MethodBuilder typedArrow, int funcArity)
+    public MethodBuilder GetOrEmit(TypeBuilder carrierType, MethodBuilder arrowMethod, int funcArity, bool instance)
     {
-        var key = (typedArrow, funcArity);
+        var key = (arrowMethod, funcArity);
         if (_cache.TryGetValue(key, out var existing)) return existing;
 
         var objectType = typeof(object);
         var adapterParams = new Type[funcArity];
         for (int i = 0; i < funcArity; i++) adapterParams[i] = objectType;
 
-        // Assembly-visible static, matching the arrow methods on $Program it calls
-        // into. Name keyed off the arrow's unique method name (e.g. <>Arrow_5) so
-        // two contexts emitting adapters onto the same $Program never collide.
-        var adapter = programType.DefineMethod(
-            $"{typedArrow.Name}$box{funcArity}",
-            MethodAttributes.Assembly | MethodAttributes.Static,
+        // Name keyed off the arrow method's name ($Program-unique <>Arrow_N for static; "Invoke"
+        // for instance, where the per-arrow display class scopes it). Assembly-visible.
+        var attrs = MethodAttributes.Assembly | (instance ? 0 : MethodAttributes.Static);
+        var adapter = carrierType.DefineMethod(
+            $"{arrowMethod.Name}$box{funcArity}",
+            attrs,
             objectType,
             adapterParams);
 
         var il = adapter.GetILGenerator();
-        var arrowParams = typedArrow.GetParameters();
+        var arrowParams = arrowMethod.GetParameters();
+        // For an instance adapter arg0 is `this` (pushed first as the Invoke receiver); the delegate
+        // args then start at arg1. A static adapter's delegate args start at arg0.
+        int argBase = instance ? 1 : 0;
+        if (instance)
+            il.Emit(OpCodes.Ldarg_0);
 
-        // Load only as many args as the arrow actually declares, coercing each
-        // boxed object into its typed parameter slot. A 0-/1-param arrow under a
-        // 2-arg delegate (or 1-arg delegate) simply ignores the surplus args.
+        // Load only as many args as the arrow actually declares, coercing each boxed object into its
+        // typed parameter slot. A 0-/1-param arrow under a wider delegate ignores the surplus args.
         for (int i = 0; i < arrowParams.Length; i++)
         {
-            EmitLdarg(il, i);
+            EmitLdarg(il, argBase + i);
             DelegateAdapterEmitter.EmitUnboxForReturn(il, arrowParams[i].ParameterType);
         }
 
-        il.Emit(OpCodes.Call, typedArrow);
+        il.Emit(instance ? OpCodes.Callvirt : OpCodes.Call, arrowMethod);
 
         // Rebox the typed result back to object for the Func<object,…> contract.
-        DelegateAdapterEmitter.EmitBoxForTS(il, typedArrow.ReturnType);
+        DelegateAdapterEmitter.EmitBoxForTS(il, arrowMethod.ReturnType);
         il.Emit(OpCodes.Ret);
 
         _cache[key] = adapter;

@@ -897,37 +897,45 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
     private static bool TryBindTypedArrowAdapter(
         IEmitterContext emitter,
         Expr.ArrowFunction af,
-        System.Reflection.Emit.MethodBuilder staticMethod,
+        System.Reflection.Emit.MethodBuilder arrowMethod,
         int funcArity)
     {
         var ctx = emitter.Context;
-        // Capturing arrows (display class) need an instance receiver — defer to the
-        // reflective path (#861 L3).
-        if (ctx.DisplayClasses.ContainsKey(af)) return false;
-        // The adapter is emitted onto the arrow's declaring $Program type. Using the
-        // arrow's DeclaringType (rather than ctx.ProgramType, which is only set on
-        // the module-top-level context) lets the adapter path fire inside function
-        // and method bodies too — the dominant case for the array-methods benchmark.
-        if (staticMethod.DeclaringType is not TypeBuilder programType) return false;
 
-        // Marshallable gate: stay in the reflective path's no-arg-conversion regime
-        // (concrete double/bool/string, or object) so the adapter's unbox/cast
-        // matches MethodInvoker semantics exactly. Union/nullable params already
-        // widen to object in ParameterTypeResolver, so a non-object slot here is a
-        // concrete value/reference type.
-        if (!IsAdapterMarshallable(ctx, staticMethod.ReturnType)) return false;
-        foreach (var sp in staticMethod.GetParameters())
-            if (!IsAdapterMarshallable(ctx, sp.ParameterType)) return false;
+        // Marshallable gate (shared): stay in the reflective path's no-arg-conversion regime
+        // (concrete double/bool/string, or object) so the adapter's unbox/cast matches MethodInvoker
+        // semantics exactly. Union/nullable params already widen to object in ParameterTypeResolver, so
+        // a non-object slot here is a concrete value/reference type.
+        if (!IsAdapterMarshallable(ctx, arrowMethod.ReturnType)) return false;
+        foreach (var p in arrowMethod.GetParameters())
+            if (!IsAdapterMarshallable(ctx, p.ParameterType)) return false;
 
-        var adapter = ctx.ArrowBoxedAdapters.GetOrEmit(programType, staticMethod, funcArity);
         Type funcType = funcArity == 2
             ? typeof(Func<object, object, object>)
             : typeof(Func<object, object>);
         var funcCtor = funcType.GetConstructor([typeof(object), typeof(IntPtr)])!;
 
-        // Non-capturing static adapter: target = null, ldftn the adapter.
+        if (ctx.DisplayClasses.TryGetValue(af, out var displayClass))
+        {
+            // #861 L3: capturing arrow — arrowMethod is the instance Invoke on the display class.
+            // Emit an INSTANCE adapter, build the display instance (capturing live locals), then bind
+            // (displayInstance, ldftn adapter). The display instance is built fresh at the call site,
+            // exactly as the reflective $TSFunction path does.
+            var adapter = ctx.ArrowBoxedAdapters.GetOrEmit(displayClass, arrowMethod, funcArity, instance: true);
+            if (!emitter.TryEmitCapturingArrowDisplayInstance(af))
+                return false;                                          // Stack: [displayInstance]
+            ctx.IL.Emit(OpCodes.Ldftn, adapter);
+            ctx.IL.Emit(OpCodes.Newobj, funcCtor);
+            return true;
+        }
+
+        // #861 L1: non-capturing arrow — arrowMethod is a static method on its declaring $Program type.
+        // Using DeclaringType (rather than ctx.ProgramType, set only on the top-level context) lets the
+        // adapter fire inside function/method bodies too. Bind (null, ldftn adapter).
+        if (arrowMethod.DeclaringType is not TypeBuilder programType) return false;
+        var staticAdapter = ctx.ArrowBoxedAdapters.GetOrEmit(programType, arrowMethod, funcArity, instance: false);
         ctx.IL.Emit(OpCodes.Ldnull);
-        ctx.IL.Emit(OpCodes.Ldftn, adapter);
+        ctx.IL.Emit(OpCodes.Ldftn, staticAdapter);
         ctx.IL.Emit(OpCodes.Newobj, funcCtor);
         return true;
     }
