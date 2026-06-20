@@ -836,10 +836,13 @@ public partial class ILCompiler
             return;
         }
 
-        // Handle async methods via state machine
+        // Async (non-generator) methods route through the same async state-machine emitter as
+        // class declarations (#776), mirroring the async-generator line above. The earlier stub
+        // emitted the body synchronously and returned Task.FromResult(null), so `return <value>`
+        // produced a raw value (breaking `.then`) and an `await` in the body emitted invalid IL.
         if (method.IsAsync)
         {
-            EmitClassExpressionAsyncMethod(classExpr, typeBuilder, method, methodBuilder, fieldsField);
+            EmitAsyncMethodBody(methodBuilder, method, fieldsField);
             return;
         }
 
@@ -909,9 +912,14 @@ public partial class ILCompiler
             return;
         }
 
+        // Async (non-generator) static methods route through the shared async state-machine
+        // emitter (#776), mirroring the static async-generator line above. EmitAsyncMethodBody
+        // takes the methodBuilder directly (deriving SM name/lock fields from its DeclaringType),
+        // so it works for the class-expression builder — unlike the declaration's
+        // EmitStaticAsyncMethodBody, which re-resolves from the declaration registry.
         if (method.IsAsync)
         {
-            EmitClassExpressionStaticAsyncMethod(classExpr, typeBuilder, method, methodBuilder);
+            EmitAsyncMethodBody(methodBuilder, method, fieldsField: null, isInstanceMethod: false);
             return;
         }
 
@@ -1120,101 +1128,6 @@ public partial class ILCompiler
             // sentinel instead of CLR null. (#588)
             EmitDefaultReturnValue(il, methodBuilder.ReturnType);
             il.Emit(OpCodes.Ret);
-        }
-    }
-
-    /// <summary>
-    /// Emits an async instance method for a class expression using state machine.
-    /// </summary>
-    private void EmitClassExpressionAsyncMethod(
-        Expr.ClassExpr classExpr,
-        TypeBuilder typeBuilder,
-        Stmt.Function method,
-        MethodBuilder methodBuilder,
-        FieldInfo fieldsField)
-    {
-        // For now, emit a simple wrapper that runs synchronously and returns Task.FromResult
-        // Full state machine support can be added later if needed
-        var il = methodBuilder.GetILGenerator();
-        var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, fieldsField);
-        ctx.IsInstanceMethod = true;
-
-        // Define parameters with typed parameter types from method signature
-        var methodParams = methodBuilder.GetParameters();
-        for (int i = 0; i < method.Parameters.Count; i++)
-        {
-            Type? paramType = i < methodParams.Length ? methodParams[i].ParameterType : null;
-            ctx.DefineParameter(method.Parameters[i].Name.Lexeme, i + 1, paramType);
-        }
-
-        var emitter = new ILEmitter(ctx);
-        emitter.EmitDefaultParameters(method.Parameters, true);
-
-        // Emit body statements
-        if (method.Body != null)
-        {
-            foreach (var stmt in method.Body)
-            {
-                emitter.EmitStatement(stmt);
-            }
-        }
-
-        // Return Task.FromResult(null)
-        if (!emitter.HasDeferredReturns)
-        {
-            il.Emit(OpCodes.Ldnull);
-            il.Emit(OpCodes.Call, typeof(Task).GetMethod("FromResult")!.MakeGenericMethod(typeof(object)));
-            il.Emit(OpCodes.Ret);
-        }
-        else
-        {
-            emitter.FinalizeReturns();
-        }
-    }
-
-    /// <summary>
-    /// Emits an async static method for a class expression.
-    /// </summary>
-    private void EmitClassExpressionStaticAsyncMethod(
-        Expr.ClassExpr classExpr,
-        TypeBuilder typeBuilder,
-        Stmt.Function method,
-        MethodBuilder methodBuilder)
-    {
-        var il = methodBuilder.GetILGenerator();
-        var ctx = CreateClassExpressionContext(il, classExpr, typeBuilder, null);
-        ctx.IsInstanceMethod = false;
-
-        // Define parameters with typed parameter types from method signature
-        var methodParams = methodBuilder.GetParameters();
-        for (int i = 0; i < method.Parameters.Count; i++)
-        {
-            Type? paramType = i < methodParams.Length ? methodParams[i].ParameterType : null;
-            ctx.DefineParameter(method.Parameters[i].Name.Lexeme, i, paramType);
-        }
-
-        var emitter = new ILEmitter(ctx);
-        emitter.EmitDefaultParameters(method.Parameters, false);
-
-        // Emit body statements
-        if (method.Body != null)
-        {
-            foreach (var stmt in method.Body)
-            {
-                emitter.EmitStatement(stmt);
-            }
-        }
-
-        // Return Task.FromResult(null)
-        if (!emitter.HasDeferredReturns)
-        {
-            il.Emit(OpCodes.Ldnull);
-            il.Emit(OpCodes.Call, typeof(Task).GetMethod("FromResult")!.MakeGenericMethod(typeof(object)));
-            il.Emit(OpCodes.Ret);
-        }
-        else
-        {
-            emitter.FinalizeReturns();
         }
     }
 }

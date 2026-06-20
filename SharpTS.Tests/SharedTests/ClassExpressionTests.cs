@@ -510,6 +510,52 @@ public class ClassExpressionTests
         Assert.Equal("5\n6\n", TestHarness.Run(source, mode));
     }
 
+    // #776: a class-EXPRESSION async (non-generator) method must compile to a real async state
+    // machine returning a Promise. The compiled path previously emitted a synchronous stub that
+    // returned the raw value, so `.then` threw (Double is not a Task) and an `await` in the body
+    // emitted invalid IL. The interpreter and type-checker (#793) already handled these.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_AsyncMethod_ThenReceivesValue(ExecutionMode mode)
+    {
+        var source = """
+            const C = class { async m() { return 5; } };
+            (new C().m() as Promise<number>).then(v => console.log(v));
+            """;
+
+        Assert.Equal("5\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_StaticAsyncMethod_ThenReceivesValue(ExecutionMode mode)
+    {
+        var source = """
+            const C = class { static async m() { return 7; } };
+            (C.m() as Promise<number>).then(v => console.log(v));
+            """;
+
+        Assert.Equal("7\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ClassExpression_AsyncMethod_AwaitsAndReadsInstanceField(ExecutionMode mode)
+    {
+        // A real suspension point (await) plus a `this` field read proves the state machine and
+        // fieldsField wiring, not just a value passthrough.
+        var source = """
+            const C = class {
+                v = 10;
+                async m(n: number) { const x = await Promise.resolve(n); return x + this.v; }
+            };
+            async function main() { console.log(await new C().m(5)); }
+            main();
+            """;
+
+        Assert.Equal("15\n", TestHarness.Run(source, mode));
+    }
+
     #endregion
 
     #region Inferred Method Return Propagation (#793)
