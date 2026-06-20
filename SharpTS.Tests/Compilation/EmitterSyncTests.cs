@@ -70,6 +70,13 @@ public class EmitterSyncTests
             "EmitLogicalAssign",    // #766: route a shadowing logical assignment to its own slot
             "EmitPrefixIncrement",  // #766: route a shadowing prefix ++/-- to its own slot
             "EmitPostfixIncrement", // #766: route a shadowing postfix ++/-- to its own slot
+            // --- #774: non-local exits must run an enclosing flag-based finally first (async-fn #500/#559) ---
+            "EmitBreak",            // Route a break leaving a try-with-awaits through its finally(s)
+            "EmitContinue",         // Route a continue leaving a try-with-awaits through its finally(s)
+            "EnterLoop",            // Loops share the unified _exitScopes stack with finally scopes
+            "ExitLoop",             // (so break/continue can find the finallys between them and the loop)
+            "get_CurrentLoop",      // Loop lookups read _exitScopes instead of the base loop stack
+            "FindLabeledLoop",      // Labeled loop lookups read _exitScopes
         },
         [typeof(AsyncArrowMoveNextEmitter)] = new()
         {

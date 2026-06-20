@@ -298,4 +298,204 @@ public class AsyncFinallyTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("try op\ncatch op\ncaught: error\nfinally op\ndone\n", output);
     }
+
+    // --- #774: a non-local exit (break/continue/return) leaving a try whose body awaits must still
+    // run the try's finally. Previously the compiled state machine jumped straight to the loop label,
+    // skipping the (now flag-based) finally. ---
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Finally_ContinueOutOfTryWithAwait_RunsFinally(ExecutionMode mode)
+    {
+        // The issue repro: `continue` crosses the finally on iteration i==1.
+        var source = """
+            function delay(v: number): Promise<number> { return new Promise(r => r(v)); }
+            async function main(): Promise<void> {
+                let log = "";
+                for (let i = 0; i < 3; i++) {
+                    try {
+                        const x = await delay(i);
+                        if (x === 1) continue;
+                        log += "b" + x;
+                    } finally {
+                        log += "f" + i;
+                    }
+                }
+                console.log(log);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("b0f0f1b2f2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Finally_BreakOutOfTryWithAwait_RunsFinally(ExecutionMode mode)
+    {
+        var source = """
+            function delay(v: number): Promise<number> { return new Promise(r => r(v)); }
+            async function main(): Promise<void> {
+                let log = "";
+                for (let i = 0; i < 3; i++) {
+                    try {
+                        const x = await delay(i);
+                        if (x === 1) break;
+                        log += "b" + x;
+                    } finally {
+                        log += "f" + i;
+                    }
+                }
+                console.log(log);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("b0f0f1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Finally_ContinueOutOfTryWithAwait_AwaitingFinally_RunsFinally(ExecutionMode mode)
+    {
+        // The finally itself awaits — previously dropped entirely on the continue.
+        var source = """
+            function delay(v: number): Promise<number> { return new Promise(r => r(v)); }
+            async function main(): Promise<void> {
+                let log = "";
+                for (let i = 0; i < 3; i++) {
+                    try {
+                        const x = await delay(i);
+                        if (x === 1) continue;
+                        log += "b" + x;
+                    } finally {
+                        await delay(0);
+                        log += "f" + i;
+                    }
+                }
+                console.log(log);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("b0f0f1b2f2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Finally_ReturnOutOfTryWithAwait_NoAwaitFinally_RunsFinally(ExecutionMode mode)
+    {
+        // The `return` half: a no-await finally was previously only run when the finally itself awaited.
+        // The finally logs (observable side effect) and the returned value is delivered afterwards.
+        var source = """
+            function delay(v: number): Promise<number> { return new Promise(r => r(v)); }
+            async function compute(): Promise<string> {
+                try {
+                    const x = await delay(5);
+                    if (x === 5) return "ret" + x;
+                    return "z";
+                } finally {
+                    console.log("finally ran");
+                }
+            }
+            async function main(): Promise<void> {
+                const r = await compute();
+                console.log(r);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("finally ran\nret5\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Finally_BreakOutOfNestedTriesWithAwait_RunsBothFinallysInnermostFirst(ExecutionMode mode)
+    {
+        var source = """
+            function delay(v: number): Promise<number> { return new Promise(r => r(v)); }
+            async function main(): Promise<void> {
+                let log = "";
+                for (let i = 0; i < 2; i++) {
+                    try {
+                        try {
+                            const x = await delay(i);
+                            if (x === 0) continue;
+                            log += "b" + x;
+                        } finally {
+                            log += "i" + i;
+                        }
+                    } finally {
+                        log += "o" + i;
+                    }
+                }
+                console.log(log);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("i0o0b1i1o1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Finally_LabeledBreakOutOfTryWithAwait_RunsFinally(ExecutionMode mode)
+    {
+        var source = """
+            function delay(v: number): Promise<number> { return new Promise(r => r(v)); }
+            async function main(): Promise<void> {
+                let log = "";
+                outer: for (let i = 0; i < 2; i++) {
+                    for (let j = 0; j < 2; j++) {
+                        try {
+                            const x = await delay(j);
+                            if (x === 1) break outer;
+                            log += i + "" + j;
+                        } finally {
+                            log += "f";
+                        }
+                    }
+                }
+                console.log(log);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("00ff\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Finally_BreakTargetingLoopInsideTryWithAwait_DoesNotRunFinally(ExecutionMode mode)
+    {
+        // Regression: a break whose target loop is *inside* the try crosses no finally, so the finally
+        // must run only once (on normal completion of the try), not on the inner break.
+        var source = """
+            function delay(v: number): Promise<number> { return new Promise(r => r(v)); }
+            async function main(): Promise<void> {
+                let log = "";
+                try {
+                    for (let i = 0; i < 3; i++) {
+                        const x = await delay(i);
+                        if (x === 1) break;
+                        log += "b" + x;
+                    }
+                    log += "t";
+                } finally {
+                    log += "f";
+                }
+                console.log(log);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("b0tf\n", output);
+    }
 }

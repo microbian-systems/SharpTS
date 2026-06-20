@@ -24,14 +24,22 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Stloc, _returnValueLocal);
         }
 
-        // If we're inside a try with finally-with-awaits, set pending return flag
-        // and jump to after-finally label (which will then complete the return)
-        if (_pendingReturnFlagLocal != null && _afterFinallyLabel != null)
+        // If a flag-based finally lies between this return and the function boundary, run it (and any
+        // outer ones) before completing: stash the return value in a state-machine field (an await in
+        // the finally would lose the IL local across the suspension), then route through the finally(s).
+        // The return terminal restores the value into _returnValueLocal and leaves to SetResult (#774).
+        var chain = ActiveFinallyFrames();
+        if (chain.Count > 0)
         {
-            _il.Emit(OpCodes.Ldc_I4_1);
-            _il.Emit(OpCodes.Stloc, _pendingReturnFlagLocal);
-            // Use Leave to exit the protected region to the after-finally label
-            _il.Emit(OpCodes.Leave, _afterFinallyLabel.Value);
+            if (_returnValueLocal != null)
+            {
+                _il.Emit(OpCodes.Ldarg_0);
+                _il.Emit(OpCodes.Ldloc, _returnValueLocal);
+                _il.Emit(OpCodes.Stfld, GetPendingReturnValueField());
+            }
+
+            RegisterReturnTerminal();
+            RouteThroughFinallys(chain, ExitCodeReturn, _ctx!.ExceptionBlockDepth > 0 ? OpCodes.Leave : OpCodes.Br);
             return;
         }
 

@@ -94,25 +94,18 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Ldnull);
         _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
 
-        // If there are awaits in finally, set up pending return tracking
-        // This allows return statements inside try to defer to after finally runs
-        LocalBuilder? pendingReturnLocal = null;
-        Label? afterFinallyLabel = null;
-        var previousPendingReturnLocal = _pendingReturnFlagLocal;
-        var previousAfterFinallyLabel = _afterFinallyLabel;
-
-        if (hasAwaitsInFinally && t.FinallyBlock != null)
+        // A finally must run on every path that leaves the try — including a non-local break / continue
+        // / return that crosses it. Push a FinallyScope before emitting the try body so those exits
+        // (emitted at the top level by EmitTryBodyWithAwaits / EmitReturn) route through it before
+        // transferring control; the cleanup label is the finally's entry. The frame stays open across
+        // the catch too, so an exit from the catch body runs this finally as well (#774).
+        FinallyScope? frame = null;
+        Label cleanupLabel = default;
+        if (t.FinallyBlock != null)
         {
-            pendingReturnLocal = _il.DeclareLocal(typeof(bool));
-            afterFinallyLabel = _il.DefineLabel();
-
-            // Initialize pending return flag to false
-            _il.Emit(OpCodes.Ldc_I4_0);
-            _il.Emit(OpCodes.Stloc, pendingReturnLocal);
-
-            // Set context for return statements to use
-            _pendingReturnFlagLocal = pendingReturnLocal;
-            _afterFinallyLabel = afterFinallyLabel;
+            cleanupLabel = _il.DefineLabel();
+            frame = new FinallyScope { CleanupLabel = cleanupLabel };
+            _exitScopes.Add(frame);
         }
 
         if (hasAwaitsInTry)
@@ -123,7 +116,10 @@ public partial class AsyncMoveNextEmitter
         else if (hasAwaitsInFinally)
         {
             // No awaits in try but awaits in finally - need to capture exception from try
-            // so we can run the finally with awaits before rethrowing
+            // so we can run the finally with awaits before rethrowing. The try body runs inside a real
+            // IL exception block, so a non-local exit crossing it must Leave, not Br — bump
+            // ExceptionBlockDepth so EmitBranchToLabel / the routing pick Leave to the cleanup (#774).
+            _ctx!.ExceptionBlockDepth++;
             _il.BeginExceptionBlock();
             foreach (var stmt in t.TryBlock)
                 EmitStatement(stmt);
@@ -134,10 +130,13 @@ public partial class AsyncMoveNextEmitter
             _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
 
             _il.EndExceptionBlock();
+            _ctx!.ExceptionBlockDepth--;
         }
         else
         {
-            // No awaits in try or finally - use normal try block
+            // No awaits in try or finally - use normal try block. Same real-IL-block reasoning as above:
+            // bump ExceptionBlockDepth so a non-local exit crossing this try Leaves to the cleanup (#774).
+            _ctx!.ExceptionBlockDepth++;
             _il.BeginExceptionBlock();
             foreach (var stmt in t.TryBlock)
                 EmitStatement(stmt);
@@ -149,7 +148,14 @@ public partial class AsyncMoveNextEmitter
                 _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
             }
             _il.EndExceptionBlock();
+            _ctx!.ExceptionBlockDepth--;
         }
+
+        // Cleanup entry: normal completion falls here, and a routed non-local exit branches here. The
+        // catch is gated on caughtExceptionLocal below, which is null on every exit path, so those
+        // paths skip the catch and flow straight into the finally (#774).
+        if (frame != null)
+            _il.MarkLabel(cleanupLabel);
 
         // Check if we need to run catch block
         if (t.CatchBlock != null)
@@ -196,13 +202,14 @@ public partial class AsyncMoveNextEmitter
             _il.MarkLabel(skipCatchLabel);
         }
 
+        // The finally itself is outside its own scope: an exit within the finally body runs the
+        // *enclosing* finallys, not this one. Pop before emitting the body (#774).
+        if (frame != null)
+            _exitScopes.RemoveAt(_exitScopes.Count - 1);
+
         // Finally block - must always execute
         if (t.FinallyBlock != null)
         {
-            // Mark label for return statements inside try to jump to finally
-            if (afterFinallyLabel != null)
-                _il.MarkLabel(afterFinallyLabel.Value);
-
             if (hasAwaitsInFinally)
             {
                 // Finally with awaits - need special handling
@@ -216,6 +223,11 @@ public partial class AsyncMoveNextEmitter
                 foreach (var stmt in t.FinallyBlock)
                     EmitStatement(stmt);
             }
+
+            // Dispatch any pending non-local exit (return / break / continue) that routed through this
+            // finally: run the terminal action, or chain to the next outer finally (#774). On a normal
+            // or exception path <>pendingExit is 0 and this falls through unchanged.
+            EmitFinallyDispatch(frame!);
 
             // After finally, check if we need to rethrow a pending exception
             // (but only if there was no catch block that handled it)
@@ -232,24 +244,7 @@ public partial class AsyncMoveNextEmitter
 
                 _il.MarkLabel(noExceptionLabel);
             }
-
-            // After finally, check if there was a pending return
-            if (pendingReturnLocal != null)
-            {
-                var noPendingReturnLabel = _il.DefineLabel();
-                _il.Emit(OpCodes.Ldloc, pendingReturnLocal);
-                _il.Emit(OpCodes.Brfalse, noPendingReturnLabel);
-
-                // Pending return - jump to set result
-                _il.Emit(OpCodes.Leave, _setResultLabel);
-
-                _il.MarkLabel(noPendingReturnLabel);
-            }
         }
-
-        // Restore previous context
-        _pendingReturnFlagLocal = previousPendingReturnLocal;
-        _afterFinallyLabel = previousAfterFinallyLabel;
 
         _il.MarkLabel(afterTryCatchLabel);
     }
