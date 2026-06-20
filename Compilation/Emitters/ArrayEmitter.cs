@@ -13,46 +13,62 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
     /// Attempts to emit IL for a method call on an array receiver.
     /// </summary>
     public bool TryEmitMethodCall(IEmitterContext emitter, Expr receiver, string methodName, List<Expr> arguments)
+        => TryEmitMethodCall(emitter, receiver, methodName, arguments, leaveResultAsBareList: false);
+
+    /// <summary>
+    /// Core array-method emitter. <paramref name="leaveResultAsBareList"/> is set by the chained-stage
+    /// fast path (#861 L2): when this call's array result flows DIRECTLY into another array-method call,
+    /// the returnsNewArray <c>$Array</c> wrap is skipped so the bare <c>List&lt;object&gt;</c> feeds
+    /// straight into the next stage — eliminating the wrap-then-unwrap round-trip.
+    /// </summary>
+    private bool TryEmitMethodCall(IEmitterContext emitter, Expr receiver, string methodName, List<Expr> arguments, bool leaveResultAsBareList)
     {
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Emit the array object
-        emitter.EmitExpression(receiver);
-        emitter.EmitBoxIfNeeded(receiver);
-
-        // Handle both List<object> and $Array types
-        // For $Array, extract the Elements property.
-        // The returned local holds the ORIGINAL receiver, used below for
-        // identity-preserving methods (sort/reverse/fill/copyWithin) and to
-        // wrap "new array" method results back into $Array so downstream
-        // code sees a $Array whenever the input was one.
-        var receiverLocal = EmitGetListFromArrayOrList(il, ctx);
-
-        // Methods whose spec says "return this" — the caller expects the same
-        // reference the receiver started with. Since we unwrapped to a List,
-        // the runtime helper returns the inner List, not the $Array wrapper;
-        // to preserve `arr === arr.sort()` we stash the wrapper and push it
-        // back at the end.
+        // Methods whose spec says "return this" — the caller expects the same reference the receiver
+        // started with (sort/reverse/fill/copyWithin). Since we unwrap to a List, the helper returns the
+        // inner List, not the $Array wrapper; to preserve `arr === arr.sort()` we stash the wrapper and
+        // push it back at the end.
         bool returnsReceiver = methodName is "sort" or "reverse" or "fill" or "copyWithin";
-        // Methods whose spec says "return a new Array" — we want callers to
-        // continue seeing a $Array after them (not a bare List<object?>), so
-        // downstream array methods / runtime dispatch still match.
-        bool returnsNewArray = methodName is
-            "slice" or "concat" or "map" or "filter" or "flat" or "flatMap"
-            or "splice" or "toReversed" or "toSorted" or "toSpliced" or "with";
+        // Methods whose spec says "return a new Array" — callers should keep seeing a $Array after them
+        // (not a bare List<object?>), so downstream array methods / runtime dispatch still match.
+        bool returnsNewArray = IsReturnsNewArrayMethod(methodName);
 
         // #850: when an argument can suspend (await/yield), evaluating it while the receiver list sits
-        // on the IL evaluation stack produces invalid IL across a state-machine suspension
-        // (PathStackDepth — the stack differs between the "awaiter completed" and post-resume paths).
-        // Pre-spill the receiver and every argument into await-safe locals (registered so they survive
-        // the MoveNext re-entry; plain locals in the synchronous emitter, so non-async codegen is
-        // unchanged), then restore the list on the stack so each case below emits exactly as before but
-        // sources its arguments from the pre-spilled locals. Only the plain-argument methods are
-        // affected; the callback methods (map/filter/find/...) dispatch their arrow from the AST and
-        // never trigger this — an arrow body's await belongs to its own state machine.
+        // on the IL evaluation stack produces invalid IL across a state-machine suspension. Pre-spill the
+        // receiver + args into await-safe locals (callback methods never trigger this — an arrow body's
+        // await belongs to its own state machine).
+        bool plainArgSuspension = arguments.Count > 0 && MethodTakesPlainArgs(methodName)
+            && emitter.ArgsContainSuspension(arguments);
+
+        // The receiver local holds the ORIGINAL receiver, used by returnsReceiver methods and the
+        // suspension spill below; unused for the other methods.
+        LocalBuilder receiverLocal;
+
+        // #861 L2: if the receiver is itself an array-method call producing a fresh array via THIS
+        // emitter (e.g. the a.map(f) in a.map(f).filter(g)), emit it leaving a bare List<object> (its
+        // $Array wrap suppressed) and skip the unwrap here — killing the round-trip at the boundary. The
+        // intermediate array is anonymous (it can only be this one call's receiver), so dropping its
+        // $Array identity is unobservable. Disabled when the outer method needs the original receiver
+        // wrapper (returnsReceiver) or pre-spills suspending plain args (the chained receiver would sit
+        // on the stack across the suspension).
+        if (!returnsReceiver && !plainArgSuspension
+            && TryEmitChainedArrayReceiverAsBareList(emitter, receiver))
+        {
+            // Bare List<object> already on the stack; receiverLocal is never read in this path.
+            receiverLocal = il.DeclareLocal(ctx.Types.ListOfObject);
+        }
+        else
+        {
+            // General path: emit the array object and unwrap $Array → List<object>.
+            emitter.EmitExpression(receiver);
+            emitter.EmitBoxIfNeeded(receiver);
+            receiverLocal = EmitGetListFromArrayOrList(il, ctx);
+        }
+
         LocalBuilder[]? argLocals = null;
-        if (arguments.Count > 0 && MethodTakesPlainArgs(methodName) && emitter.ArgsContainSuspension(arguments))
+        if (plainArgSuspension)
         {
             var listSafe = emitter.SpillStackToObjectLocal();      // [list] -> await-safe local
             il.Emit(OpCodes.Ldloc, receiverLocal);                 // the original receiver must also
@@ -355,8 +371,38 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 return false;
         }
 
-        EmitPostCallAdjust(il, ctx, receiverLocal, returnsReceiver, returnsNewArray);
+        // #861 L2: when this result flows straight into a chained array call, skip the $Array wrap and
+        // leave the bare List<object> on the stack for the next stage.
+        if (!(leaveResultAsBareList && returnsNewArray))
+            EmitPostCallAdjust(il, ctx, receiverLocal, returnsReceiver, returnsNewArray);
         return true;
+    }
+
+    /// <summary>The methods whose spec result is a freshly-allocated array (kept as a $Array for callers).</summary>
+    private static bool IsReturnsNewArrayMethod(string methodName) => methodName is
+        "slice" or "concat" or "map" or "filter" or "flat" or "flatMap"
+        or "splice" or "toReversed" or "toSorted" or "toSpliced" or "with";
+
+    /// <summary>
+    /// #861 L2 chained-stage detection. If <paramref name="receiver"/> is a call to a fresh-array-
+    /// producing array method on an array receiver (the <c>a.map(f)</c> in <c>a.map(f).filter(g)</c>),
+    /// emit that inner call leaving a bare <c>List&lt;object&gt;</c> on the stack — its <c>$Array</c> wrap
+    /// suppressed — and return true. The intermediate array is anonymous (it can only be this one outer
+    /// call's receiver), so dropping its <c>$Array</c> identity is unobservable. Returns false (emitting
+    /// nothing) otherwise.
+    /// </summary>
+    private bool TryEmitChainedArrayReceiverAsBareList(IEmitterContext emitter, Expr receiver)
+    {
+        if (receiver is not Expr.Call { Optional: false, Callee: Expr.Get { Optional: false } innerGet } innerCall)
+            return false;
+        string innerMethod = innerGet.Name.Lexeme;
+        // Must be a returnsNewArray method handled by THIS emitter (so it leaves a List on the stack).
+        if (!IsReturnsNewArrayMethod(innerMethod)) return false;
+        // The inner call's receiver must statically be an array, so the inner call goes through this
+        // emitter's returnsNewArray path and the recursion leaves a List<object> (not some other value).
+        if (emitter.Context.TypeMap?.Get(innerGet.Object) is not SharpTS.TypeSystem.TypeInfo.Array)
+            return false;
+        return TryEmitMethodCall(emitter, innerGet.Object, innerMethod, innerCall.Arguments, leaveResultAsBareList: true);
     }
 
     /// <summary>

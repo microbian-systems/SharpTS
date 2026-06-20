@@ -194,6 +194,71 @@ public class ArrayHofAnnotatedCallbackTests
         Assert.Equal("2,3,4,5,6\n", TestHarness.Run(source, mode));
     }
 
+    // ── #861 L2: chained-stage round-trip elimination ──
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ChainedMapFilter_AssignedToArrayVariable(ExecutionMode mode)
+    {
+        // The final stage's result is consumed as an array value, so its $Array wrap must be
+        // preserved (only the intermediate map result drops it). `.join` then works on it.
+        var source = """
+            function f(): string {
+                const a: number[] = [1, 2, 3, 4, 5];
+                const r = a.map((x: number): number => x * 2).filter((x: number): boolean => x > 4);
+                return r.join(",");
+            }
+            console.log(f());
+            """;
+        Assert.Equal("6,8,10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ChainedMapFilter_LengthOnResult(ExecutionMode mode)
+    {
+        // .length on the chain result requires the final $Array wrap to survive.
+        var source = """
+            function f(): number {
+                const a: number[] = [1, 2, 3, 4, 5];
+                return a.map((x: number): number => x * 2).filter((x: number): boolean => x > 5).length;
+            }
+            console.log(f());
+            """;
+        Assert.Equal("3\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ChainedMapSlice_MixedCallbackAndPlainArgs(ExecutionMode mode)
+    {
+        // Inner map (callback) feeds outer slice (plain args) — the bare List must flow across the
+        // boundary and slice must consume it correctly.
+        var source = """
+            function f(): string {
+                const a: number[] = [1, 2, 3, 4, 5];
+                return a.map((x: number): number => x * 2).slice(1, 3).join(",");
+            }
+            console.log(f());
+            """;
+        Assert.Equal("4,6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ChainedFilterMap_UntypedAndAnnotatedMixed(ExecutionMode mode)
+    {
+        // Inner filter is annotated, outer map is untyped — both stages chain through a bare List.
+        var source = """
+            function f(): string {
+                const a: number[] = [1, 2, 3, 4, 5, 6];
+                return a.filter((x: number): boolean => x % 2 === 0).map(x => x * 10).join(",");
+            }
+            console.log(f());
+            """;
+        Assert.Equal("20,40,60\n", TestHarness.Run(source, mode));
+    }
+
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ConstBoundAnnotatedCallback_Resolves(ExecutionMode mode)
