@@ -281,19 +281,26 @@ public partial class ILCompiler
     // nested arrow is a separate AnalyzeAsyncArrow pass — the Expr.ArrowFunction walker case is a no-op,
     // so this field is never clobbered mid-walk). Mirrors the renamer wiring in the visitor analyzers.
     private IReadOnlyDictionary<object, string> _arrowBlockScopeRenames = new Dictionary<object, string>();
+    private IReadOnlyDictionary<object, IReadOnlyDictionary<string, string>> _arrowBlockScopeCaptureRenames =
+        new Dictionary<object, IReadOnlyDictionary<string, string>>();
 
     /// <summary>Storage name for an async-arrow declaration/reference node (#766), or the lexeme unchanged.</summary>
     private string ArrowStorageName(object node, string lexeme) =>
         _arrowBlockScopeRenames.TryGetValue(node, out var renamed) ? renamed : lexeme;
 
-    private (int AwaitCount, HashSet<string> HoistedLocals, IReadOnlyDictionary<object, string> Renames) AnalyzeAsyncArrow(Expr.ArrowFunction arrow)
+    private (int AwaitCount, HashSet<string> HoistedLocals, IReadOnlyDictionary<object, string> Renames,
+        IReadOnlyDictionary<object, IReadOnlyDictionary<string, string>> CaptureRenames) AnalyzeAsyncArrow(Expr.ArrowFunction arrow)
     {
         var awaitCount = 0;
         var seenAwait = false;
 
         // Disambiguate nested-block let/const shadows so the hoisting decision below is per-binding
         // rather than per-name (#766, async analog of #711).
-        _arrowBlockScopeRenames = GeneratorBlockScopeRenamer.Compute(arrow);
+        // An async arrow likewise shares its captures by name with inner closures, so keep read-only
+        // captured shadows off-limits (arrowReadCapturesShareStorage: true). #767.
+        var renameResult = GeneratorBlockScopeRenamer.Compute(arrow, arrowReadCapturesShareStorage: true);
+        _arrowBlockScopeRenames = renameResult.Renames;
+        _arrowBlockScopeCaptureRenames = renameResult.CaptureRenames;
 
         // Clear and reuse pooled HashSets
         _async.DeclaredVars.Clear();
@@ -332,7 +339,7 @@ public partial class ILCompiler
         foreach (var param in arrow.Parameters)
             hoistedLocals.Remove(param.Name.Lexeme);
 
-        return (awaitCount, hoistedLocals, _arrowBlockScopeRenames);
+        return (awaitCount, hoistedLocals, _arrowBlockScopeRenames, _arrowBlockScopeCaptureRenames);
     }
 
     private void AnalyzeArrowStmtForAwaits(Stmt stmt, ref int awaitCount, ref bool seenAwait,
@@ -710,7 +717,10 @@ public partial class ILCompiler
             [], // No nested async arrows handled yet
             // #766: carry the block-scope shadow renames so the arrow emitter routes a shadowing
             // nested-block let/const to its own storage instead of the outer binding's hoisted field.
-            BlockScopeRenames: arrowAnalysis.Renames
+            BlockScopeRenames: arrowAnalysis.Renames,
+            // #767: carry the capture-source pivot so a renamed shadow captured by a nested arrow is
+            // sourced from its own storage.
+            BlockScopeCaptureRenames: arrowAnalysis.CaptureRenames
         );
 
         // Create a new context for arrow MoveNext emission
@@ -1209,7 +1219,9 @@ public partial class ILCompiler
                 false, // UsesThis - standalone arrows don't have 'this' binding by default
                 [],    // No nested async arrows handled in this pass
                 // #766: carry the block-scope shadow renames into the standalone arrow emitter too.
-                BlockScopeRenames: arrowAnalysis.Renames
+                BlockScopeRenames: arrowAnalysis.Renames,
+                // #767: carry the capture-source pivot into the standalone arrow emitter too.
+                BlockScopeCaptureRenames: arrowAnalysis.CaptureRenames
             );
 
             // Determine if this arrow is inside a class (for private field access)

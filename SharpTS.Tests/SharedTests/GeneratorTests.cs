@@ -2221,6 +2221,74 @@ public class GeneratorTests
         Assert.Equal("[1, 2]\n", TestHarness.Run(source, mode));
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_NestedBlockShadow_CapturedByArrow_DoesNotLeak(ExecutionMode mode)
+    {
+        // An inner block const that shadows an outer body-level const AND is read by a nested arrow
+        // must get its own slot; the arrow reads the inner value while the outer binding keeps its own
+        // (#767, the residual closure-capture case left open by #711). Compiled previously yielded
+        // [5, 5] because the inner binding was left un-renamed to avoid desyncing the name-keyed capture.
+        var source = """
+            function* g(): Generator<number> {
+              const r = 100;
+              {
+                const r = 5;
+                const f = () => r;
+                yield f();
+              }
+              yield r;
+            }
+            console.log([...g()]);
+            """;
+
+        Assert.Equal("[5, 100]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_OuterBindingCapturedByArrow_StaysCorrect(ExecutionMode mode)
+    {
+        // The arrow captures the OUTER binding (declared before the shadowing block); the inner shadow
+        // is renamed but the capture must still resolve to the un-renamed outer storage (#767 soundness:
+        // pivoting only fires for captures that bind to a renamed shadow).
+        var source = """
+            function* g(): Generator<number> {
+              const r = 100;
+              const cap = () => r;
+              { const r = 5; yield r; }
+              yield cap();
+            }
+            console.log([...g()]);
+            """;
+
+        Assert.Equal("[5, 100]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_TwoArrows_CaptureInnerAndOuterShadows(ExecutionMode mode)
+    {
+        // Two arrows in distinct scopes each capture a different binding of the same name. Each arrow's
+        // captured field must be sourced from the binding it lexically refers to (#767, per-arrow pivot).
+        var source = """
+            function* g(): Generator<number> {
+              const r = 1;
+              const outer = () => r;
+              {
+                const r = 2;
+                const inner = () => r;
+                yield inner();
+                yield outer();
+              }
+              yield r;
+            }
+            console.log([...g()]);
+            """;
+
+        Assert.Equal("[2, 1, 1]\n", TestHarness.Run(source, mode));
+    }
+
     #endregion
 
     #region Optional-chain string-method yield short-circuit parity (#709)

@@ -4,6 +4,31 @@ using SharpTS.Parsing.Visitors;
 namespace SharpTS.Compilation;
 
 /// <summary>
+/// Result of <see cref="GeneratorBlockScopeRenamer.Compute(Stmt.Function)"/>: the per-binding storage
+/// renames for the state-machine body plus the per-arrow capture-source pivot (#767).
+/// </summary>
+/// <param name="Renames">
+/// Declaration/reference AST node → disambiguated storage name, for nodes in the STATE-MACHINE body
+/// (not inside a nested closure). Consumed by the analyzer (hoist decision) and the MoveNext emitter
+/// (retoken before field/local access). Empty when nothing shadows.
+/// </param>
+/// <param name="CaptureRenames">
+/// Capturing-arrow node → (captured source name → renamed generator storage). When an arrow lexically
+/// captures a shadowing block-scoped binding that <see cref="Renames"/> moved to its own storage, the
+/// arrow's display-class field must be sourced from that storage rather than the outer same-named
+/// binding. The capture-population step consults this map to pivot the SOURCE of the field (the arrow's
+/// own DC field keeps the original name). Empty unless a renamed shadow is closure-captured.
+/// </param>
+internal sealed record BlockScopeRenameResult(
+    IReadOnlyDictionary<object, string> Renames,
+    IReadOnlyDictionary<object, IReadOnlyDictionary<string, string>> CaptureRenames)
+{
+    public static readonly BlockScopeRenameResult Empty = new(
+        new Dictionary<object, string>(),
+        new Dictionary<object, IReadOnlyDictionary<string, string>>());
+}
+
+/// <summary>
 /// Computes per-binding storage names for block-scoped (<c>let</c>/<c>const</c>) declarations inside a
 /// suspension state-machine body that <em>shadow</em> an enclosing binding of the same name.
 /// </summary>
@@ -22,16 +47,24 @@ namespace SharpTS.Compilation;
 /// <see cref="GeneratorStateAnalyzer"/> and <see cref="GeneratorMoveNextEmitter"/> consult the map so the
 /// hoist-vs-local decision and the field/local access become per-binding instead of per-name.
 ///
+/// Closure interaction (#767): a shadowing binding that an inner <em>arrow</em> reads is still renamed,
+/// and the renamer additionally records, per capturing arrow, the source name → storage mapping so the
+/// capture-population step sources the arrow's field from the renamed generator storage rather than the
+/// outer same-named binding. The arrow's own display-class field keeps the original name (the arrow body
+/// is compiled in its own context and is never rewritten). Two shapes the capture pivot cannot honour
+/// stay OFF-LIMITS (left unrenamed, the conservative #711 behaviour): a binding <em>written</em> inside
+/// any closure (it flows through the name-keyed <c>$functionDC</c> path, #674/#725), and a binding read
+/// by a nested <em>non-arrow</em> function/class (it flows through the name-keyed lambda-lift path).
+///
 /// Restrictions that keep the rewrite sound:
 /// <list type="bullet">
 /// <item>Only <c>let</c>/<c>const</c> (<see cref="Stmt.Const"/>, <see cref="Stmt.Var"/> with
 /// <c>IsVar == false</c>) declarations are renamed. <c>for</c>/<c>for-of</c>/<c>for-in</c>/<c>catch</c>
 /// introduce scopes (so shadowing is detected accurately) but their loop-variable / catch-parameter
 /// bindings are left alone.</item>
-/// <item>A binding whose name is referenced by any nested closure (arrow/function/class) is left
-/// untouched: those names flow through the closure-capture machinery (keyed by name), which this pass
-/// does not rewrite, so renaming them would desync the capture (and the captured-name path shares the
-/// same field, so it is never a renamed binding).</item>
+/// <item>Declarations and references INSIDE a nested closure are never added to <see cref="Renames"/>
+/// — the closure compiles in its own context. The walk descends into arrows only to resolve which
+/// renamed generator binding each capture refers to (the <see cref="CaptureRenames"/> side-map).</item>
 /// </list>
 /// No AST node is mutated and none is created, so TypeMap / ClosureAnalyzer node identity is preserved.
 /// The walk is deterministic, so independent <see cref="GeneratorStateAnalyzer.Analyze"/> calls over the
@@ -41,31 +74,49 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
 {
     // Keyed by AST-node reference (records use value equality, so reference identity is mandatory here).
     private readonly Dictionary<object, string> _renames = new(ReferenceEqualityComparer.Instance);
+    // Capturing-arrow node → (captured source name → renamed generator storage). Reference-identity keyed.
+    private readonly Dictionary<object, Dictionary<string, string>> _captureSources = new(ReferenceEqualityComparer.Instance);
     // Scope stack of name -> storage-name (storage == name when the binding is not renamed).
     private readonly List<Dictionary<string, string>> _scopes = [];
-    private readonly HashSet<string> _closureReferenced = [];
+    // Names a closure makes off-limits to renaming (written in any closure, or read by a non-arrow
+    // function/class). See CaptureClassifier.
+    private readonly HashSet<string> _renameOffLimits = [];
     private int _counter;
+    // Depth of nested arrows currently being walked (0 == directly in the state-machine body).
+    private int _arrowDepth;
+    // The outermost arrow (directly in the state-machine body) currently being walked; captures of
+    // renamed generator bindings — at any nesting depth below it — are recorded against this arrow,
+    // because its display class is what the capture-population step populates.
+    private Expr.ArrowFunction? _currentTopArrow;
 
     /// <summary>
-    /// Returns the node→storage-name map for <paramref name="func"/>, empty when nothing shadows.
+    /// Returns the renames + capture-source pivot for <paramref name="func"/>; empty when nothing shadows.
     /// </summary>
-    public static IReadOnlyDictionary<object, string> Compute(Stmt.Function func) =>
-        Compute(func.Name.Lexeme, func.Parameters, func.Body);
+    /// <param name="arrowReadCapturesShareStorage">
+    /// When true, a binding merely READ by a nested arrow is also off-limits to renaming, because the
+    /// enclosing context lifts every captured local — read or write — into a name-keyed shared display
+    /// class (async free functions / async arrows: <c>ILCompiler.DefineFunctionDisplayClass</c>), so
+    /// renaming the body side would desync the closure's by-name read. Generators and async generators
+    /// pass false: they lift only captured-AND-mutated locals, so a read-only arrow capture flows through
+    /// the per-arrow snapshot path the capture pivot can redirect (#767).
+    /// </param>
+    public static BlockScopeRenameResult Compute(Stmt.Function func, bool arrowReadCapturesShareStorage = false) =>
+        Compute(func.Name.Lexeme, func.Parameters, func.Body, arrowReadCapturesShareStorage);
 
     /// <summary>
     /// Arrow-function overload (#766). Arrows have no self-name, and only a block body can hold
     /// block-scoped declarations (an expression-bodied arrow has none, so it has no shadows to rename).
     /// </summary>
-    public static IReadOnlyDictionary<object, string> Compute(Expr.ArrowFunction arrow) =>
-        Compute(selfName: null, arrow.Parameters, arrow.BlockBody);
+    public static BlockScopeRenameResult Compute(Expr.ArrowFunction arrow, bool arrowReadCapturesShareStorage = false) =>
+        Compute(selfName: null, arrow.Parameters, arrow.BlockBody, arrowReadCapturesShareStorage);
 
-    private static IReadOnlyDictionary<object, string> Compute(
-        string? selfName, List<Stmt.Parameter> parameters, List<Stmt>? body)
+    private static BlockScopeRenameResult Compute(
+        string? selfName, List<Stmt.Parameter> parameters, List<Stmt>? body, bool arrowReadCapturesShareStorage)
     {
         var renamer = new GeneratorBlockScopeRenamer();
-        if (body == null) return renamer._renames;   // expression-bodied arrow: nothing to rename
+        if (body == null) return BlockScopeRenameResult.Empty;   // expression-bodied arrow: nothing to rename
 
-        new ClosureReferenceCollector(renamer._closureReferenced).Run(body);
+        new CaptureClassifier(renamer._renameOffLimits, arrowReadCapturesShareStorage).Run(body);
 
         renamer.PushScope();
         // The callable's own name is in scope inside the body (a named function expression can call
@@ -80,7 +131,13 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
             renamer.Visit(stmt);
         renamer.PopScope();
 
-        return renamer._renames;
+        if (renamer._renames.Count == 0 && renamer._captureSources.Count == 0)
+            return BlockScopeRenameResult.Empty;
+
+        var captures = new Dictionary<object, IReadOnlyDictionary<string, string>>(ReferenceEqualityComparer.Instance);
+        foreach (var (arrow, names) in renamer._captureSources)
+            captures[arrow] = names;
+        return new BlockScopeRenameResult(renamer._renames, captures);
     }
 
     private Dictionary<string, string> CurrentScope => _scopes[^1];
@@ -101,12 +158,16 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
         return null;
     }
 
+    /// <summary>
+    /// Declares a state-machine-body block-scoped binding (only reached when <c>_arrowDepth == 0</c>),
+    /// renaming it to its own storage when it shadows an enclosing binding and is not off-limits.
+    /// </summary>
     private void DeclareBlockScoped(object node, string name)
     {
         // Same-scope redeclaration is a TypeScript error; keep the first binding.
         if (CurrentScope.ContainsKey(name)) return;
 
-        if (ShadowsEnclosing(name) && !_closureReferenced.Contains(name))
+        if (ShadowsEnclosing(name) && !_renameOffLimits.Contains(name))
         {
             var storage = $"<{name}>__bs{_counter++}";
             CurrentScope[name] = storage;
@@ -121,8 +182,23 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
     private void RecordRef(object node, string name)
     {
         var storage = Resolve(name);
-        if (storage != null && storage != name)
+        if (storage == null || storage == name) return;
+
+        if (_arrowDepth == 0)
+        {
+            // Reference in the state-machine body: retoken at emit so the read/write lands on the
+            // shadow's own field/local.
             _renames[node] = storage;
+        }
+        else if (_currentTopArrow != null)
+        {
+            // Reference inside a nested arrow that lexically binds to a renamed generator shadow:
+            // record the source pivot so the arrow's captured field is populated from that storage.
+            // The reference node itself is NOT renamed (the arrow body compiles in its own context).
+            if (!_captureSources.TryGetValue(_currentTopArrow, out var names))
+                _captureSources[_currentTopArrow] = names = [];
+            names[name] = storage;
+        }
     }
 
     #region Declarations
@@ -130,12 +206,22 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
     protected override void VisitConst(Stmt.Const stmt)
     {
         base.VisitConst(stmt);   // initializer is evaluated before the binding enters scope
+        if (_arrowDepth > 0)
+        {
+            CurrentScope.TryAdd(stmt.Name.Lexeme, stmt.Name.Lexeme);   // arrow-local: resolution only, never renamed
+            return;
+        }
         DeclareBlockScoped(stmt, stmt.Name.Lexeme);
     }
 
     protected override void VisitVar(Stmt.Var stmt)
     {
         base.VisitVar(stmt);
+        if (_arrowDepth > 0)
+        {
+            CurrentScope.TryAdd(stmt.Name.Lexeme, stmt.Name.Lexeme);   // arrow-local: resolution only, never renamed
+            return;
+        }
         if (stmt.IsVar)
         {
             // `var` is function-scoped: record it in the bottom scope so a later block-scoped
@@ -251,9 +337,31 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
 
     #endregion
 
-    #region Opaque nodes (own scopes, not hoisted into this generator)
+    #region Nested closures
 
-    protected override void VisitArrowFunction(Expr.ArrowFunction expr) { }
+    /// <summary>
+    /// Descends into a nested arrow with its own scope so a reference inside it that lexically binds to
+    /// a renamed generator shadow is recorded as a capture-source pivot (#767). Declarations inside the
+    /// arrow are the arrow's own bindings (resolution only, never renamed). The arrow's body compiles in
+    /// its own context, so no reference node inside it is added to <see cref="_renames"/>.
+    /// </summary>
+    protected override void VisitArrowFunction(Expr.ArrowFunction expr)
+    {
+        bool isTop = _arrowDepth == 0;
+        if (isTop) _currentTopArrow = expr;
+        _arrowDepth++;
+        PushScope();
+        foreach (var p in expr.Parameters)
+            CurrentScope[p.Name.Lexeme] = p.Name.Lexeme;   // arrow params shadow but are the arrow's own
+        base.VisitArrowFunction(expr);   // default traversal: param defaults + expression/block body
+        PopScope();
+        _arrowDepth--;
+        if (isTop) _currentTopArrow = null;
+    }
+
+    // Non-arrow functions and classes rebind/lift their captures through name-keyed machinery the
+    // capture pivot does not cover, so a binding they read is already OFF-LIMITS (CaptureClassifier).
+    // Their interiors contribute no renames or pivots; do not descend.
     protected override void VisitFunction(Stmt.Function stmt) { }
     protected override void VisitClass(Stmt.Class stmt) { }
     protected override void VisitClassExpr(Expr.ClassExpr expr) { }
@@ -261,30 +369,87 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
     #endregion
 
     /// <summary>
-    /// Collects every variable name referenced anywhere inside a nested closure (arrow / function /
-    /// class) of the generator body. Names in this set are off-limits to renaming because the closure
-    /// capture machinery keys them by source name and this pass does not rewrite closure interiors.
+    /// Classifies which names are off-limits to renaming because a nested closure flows them through
+    /// name-keyed machinery the capture pivot cannot honour: a name WRITTEN inside any closure (the
+    /// <c>$functionDC</c> shared-storage path, #674/#725) or a name READ inside a non-arrow function /
+    /// class (the lambda-lift path). A name only READ inside an arrow stays renameable — the renamer
+    /// pivots that arrow's capture source to the renamed storage (#767).
     /// </summary>
-    private sealed class ClosureReferenceCollector : AstVisitorBase
+    private sealed class CaptureClassifier : AstVisitorBase
     {
-        private readonly HashSet<string> _names;
-        private int _depth;
+        private readonly HashSet<string> _offLimits;
+        // True when even a read by an arrow shares name-keyed storage (async functions / arrows).
+        private readonly bool _arrowReadsOffLimits;
+        private int _closureDepth;   // inside any closure (arrow / function / class)
+        private int _nonArrowDepth;  // inside a function / class (not an arrow)
 
-        public ClosureReferenceCollector(HashSet<string> names) => _names = names;
+        public CaptureClassifier(HashSet<string> offLimits, bool arrowReadsOffLimits)
+        {
+            _offLimits = offLimits;
+            _arrowReadsOffLimits = arrowReadsOffLimits;
+        }
 
         public void Run(List<Stmt> body)
         {
             foreach (var s in body) Visit(s);
         }
 
-        protected override void VisitArrowFunction(Expr.ArrowFunction expr) { _depth++; base.VisitArrowFunction(expr); _depth--; }
-        protected override void VisitFunction(Stmt.Function stmt) { _depth++; base.VisitFunction(stmt); _depth--; }
-        protected override void VisitClass(Stmt.Class stmt) { _depth++; base.VisitClass(stmt); _depth--; }
-        protected override void VisitClassExpr(Expr.ClassExpr expr) { _depth++; base.VisitClassExpr(expr); _depth--; }
+        protected override void VisitArrowFunction(Expr.ArrowFunction expr)
+        {
+            _closureDepth++;
+            base.VisitArrowFunction(expr);
+            _closureDepth--;
+        }
 
-        protected override void VisitVariable(Expr.Variable expr) { if (_depth > 0) _names.Add(expr.Name.Lexeme); }
-        protected override void VisitAssign(Expr.Assign expr) { if (_depth > 0) _names.Add(expr.Name.Lexeme); base.VisitAssign(expr); }
-        protected override void VisitCompoundAssign(Expr.CompoundAssign expr) { if (_depth > 0) _names.Add(expr.Name.Lexeme); base.VisitCompoundAssign(expr); }
-        protected override void VisitLogicalAssign(Expr.LogicalAssign expr) { if (_depth > 0) _names.Add(expr.Name.Lexeme); base.VisitLogicalAssign(expr); }
+        protected override void VisitFunction(Stmt.Function stmt) { Enter(); base.VisitFunction(stmt); Exit(); }
+        protected override void VisitClass(Stmt.Class stmt) { Enter(); base.VisitClass(stmt); Exit(); }
+        protected override void VisitClassExpr(Expr.ClassExpr expr) { Enter(); base.VisitClassExpr(expr); Exit(); }
+
+        private void Enter() { _closureDepth++; _nonArrowDepth++; }
+        private void Exit() { _closureDepth--; _nonArrowDepth--; }
+
+        // Reads referenced by a non-arrow closure are off-limits (lambda-lift keys by name). Reads by an
+        // arrow are off-limits only when the enclosing context shares read captures by name (async).
+        protected override void VisitVariable(Expr.Variable expr)
+        {
+            if (_nonArrowDepth > 0 || (_arrowReadsOffLimits && _closureDepth > 0))
+                _offLimits.Add(expr.Name.Lexeme);
+        }
+
+        // Writes inside ANY closure are off-limits (captured-and-mutated → $functionDC, keyed by name).
+        protected override void VisitAssign(Expr.Assign expr)
+        {
+            MarkWrite(expr.Name.Lexeme);
+            base.VisitAssign(expr);
+        }
+
+        protected override void VisitCompoundAssign(Expr.CompoundAssign expr)
+        {
+            MarkWrite(expr.Name.Lexeme);
+            base.VisitCompoundAssign(expr);
+        }
+
+        protected override void VisitLogicalAssign(Expr.LogicalAssign expr)
+        {
+            MarkWrite(expr.Name.Lexeme);
+            base.VisitLogicalAssign(expr);
+        }
+
+        protected override void VisitPrefixIncrement(Expr.PrefixIncrement expr)
+        {
+            if (expr.Operand is Expr.Variable v) MarkWrite(v.Name.Lexeme);
+            base.VisitPrefixIncrement(expr);
+        }
+
+        protected override void VisitPostfixIncrement(Expr.PostfixIncrement expr)
+        {
+            if (expr.Operand is Expr.Variable v) MarkWrite(v.Name.Lexeme);
+            base.VisitPostfixIncrement(expr);
+        }
+
+        private void MarkWrite(string name)
+        {
+            if (_closureDepth > 0) _offLimits.Add(name);
+        }
     }
 }

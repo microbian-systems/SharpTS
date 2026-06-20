@@ -71,7 +71,8 @@ public partial class AsyncArrowMoveNextEmitter
             if (_ctx.CellBindingLocals.TryGetValue(capturedVar, out var cellLocal))
                 _il.Emit(OpCodes.Ldloc, cellLocal);
             else
-                LoadVariableForCapture(capturedVar);
+                // #767: pivot a captured nested-block shadow to its renamed storage (identity otherwise).
+                LoadVariableForCapture(PivotCaptureSource(_analysis.BlockScopeCaptureRenames, af, capturedVar));
 
             _il.Emit(OpCodes.Stfld, field);
         }

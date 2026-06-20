@@ -722,7 +722,10 @@ public partial class AsyncGeneratorMoveNextEmitter
                 continue;
             }
 
-            var hoistedField = _builder.GetVariableField(capturedVar);
+            // #767: pivot a captured nested-block shadow to its renamed storage (identity otherwise).
+            var sourceVar = PivotCaptureSource(_analysis.BlockScopeCaptureRenames, af, capturedVar);
+
+            var hoistedField = _builder.GetVariableField(sourceVar);
             if (hoistedField != null)
             {
                 _il.Emit(OpCodes.Ldarg_0);
@@ -733,7 +736,7 @@ public partial class AsyncGeneratorMoveNextEmitter
                 _il.Emit(OpCodes.Ldarg_0);
                 _il.Emit(OpCodes.Ldfld, _builder.ThisField);
             }
-            else if (_ctx.Locals.TryGetLocal(capturedVar, out var local))
+            else if (_ctx.Locals.TryGetLocal(sourceVar, out var local))
             {
                 _il.Emit(OpCodes.Ldloc, local);
             }

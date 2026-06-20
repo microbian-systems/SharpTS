@@ -1596,6 +1596,29 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// shared GetHoistedVariableField / GetThisField hooks so a single implementation serves any
     /// emitter that uses the base <see cref="EmitArrowFunction"/>.
     /// </summary>
+    /// <summary>
+    /// Pivots the SOURCE name a capturing arrow reads its display-class field from (#767). When a
+    /// nested-block <c>let</c>/<c>const</c> that shadows an enclosing binding is renamed to its own
+    /// storage and an inner arrow captures it, the arrow's field must be populated from that storage,
+    /// not the outer same-named binding. The default is identity (no shadow); GeneratorMoveNextEmitter
+    /// overrides it. The async / async-generator / async-arrow emitters apply the same pivot inline via
+    /// <see cref="PivotCaptureSource"/> in their own capture-population loops.
+    /// </summary>
+    protected virtual string ResolveCaptureSourceName(Expr.ArrowFunction af, string capturedVar) => capturedVar;
+
+    /// <summary>
+    /// Looks up the renamed generator storage for <paramref name="capturedVar"/> as captured by
+    /// <paramref name="af"/> in <paramref name="captureRenames"/> (#767), or returns the name unchanged.
+    /// Shared by every state-machine capture-population path.
+    /// </summary>
+    protected static string PivotCaptureSource(
+        IReadOnlyDictionary<object, IReadOnlyDictionary<string, string>>? captureRenames,
+        Expr.ArrowFunction af, string capturedVar) =>
+        captureRenames != null
+        && captureRenames.TryGetValue(af, out var names)
+        && names.TryGetValue(capturedVar, out var storage)
+            ? storage : capturedVar;
+
     private void EmitCapturingArrowViaHooks(Expr.ArrowFunction af, MethodBuilder method, ConstructorBuilder displayCtor)
     {
         IL.Emit(OpCodes.Newobj, displayCtor);
@@ -1635,6 +1658,11 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
             {
                 IL.Emit(OpCodes.Dup);
 
+                // #767: a captured nested-block shadow was renamed to its own generator storage; source
+                // the field from that storage rather than the outer same-named binding. The arrow's own
+                // DC field (`field`) keeps the original name. Identity for non-shadow captures.
+                var sourceVar = ResolveCaptureSourceName(af, capturedVar);
+
                 // Per-iteration cell capture (#650): snapshot the StrongBox REFERENCE so the
                 // closure shares this iteration's cell (the cell local is repointed to a fresh
                 // box each iteration). Checked first; cell bindings are never hoisted fields.
@@ -1652,12 +1680,12 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
                     IL.Emit(OpCodes.Ldarg_0);
                     IL.Emit(OpCodes.Ldfld, thisField);
                 }
-                else if (GetHoistedVariableField(capturedVar) is FieldBuilder hoistedField)
+                else if (GetHoistedVariableField(sourceVar) is FieldBuilder hoistedField)
                 {
                     IL.Emit(OpCodes.Ldarg_0);
                     IL.Emit(OpCodes.Ldfld, hoistedField);
                 }
-                else if (Ctx.Locals.TryGetLocal(capturedVar, out var local))
+                else if (Ctx.Locals.TryGetLocal(sourceVar, out var local))
                 {
                     IL.Emit(OpCodes.Ldloc, local);
                 }
