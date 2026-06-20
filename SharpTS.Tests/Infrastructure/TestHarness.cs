@@ -71,11 +71,11 @@ public static class TestHarness
     /// <param name="entryPoint">Path to the entry point module</param>
     /// <param name="mode">Execution mode (Interpreted or Compiled)</param>
     /// <returns>Captured console output</returns>
-    public static string RunModules(Dictionary<string, string> files, string entryPoint, ExecutionMode mode)
+    public static string RunModules(Dictionary<string, string> files, string entryPoint, ExecutionMode mode, TimeSpan? timeout = null)
     {
         return mode switch
         {
-            ExecutionMode.Interpreted => RunModulesInterpreted(files, entryPoint),
+            ExecutionMode.Interpreted => RunModulesInterpreted(files, entryPoint, timeout),
             ExecutionMode.Compiled => RunModulesCompiled(files, entryPoint),
             _ => throw new ArgumentOutOfRangeException(nameof(mode))
         };
@@ -654,13 +654,15 @@ public static class TestHarness
     /// <param name="files">Dictionary mapping file paths to source code</param>
     /// <param name="entryPoint">The entry point file path (e.g., "./main.ts")</param>
     /// <returns>Captured console output</returns>
-    public static string RunModulesInterpreted(Dictionary<string, string> files, string entryPoint)
+    public static string RunModulesInterpreted(Dictionary<string, string> files, string entryPoint, TimeSpan? timeout = null)
     {
+        var effectiveTimeout = timeout ?? DefaultTimeout;
+
         // Tests using __dirname / __filename / cluster.fork need files to exist on a real
         // disk path that the runtime can stat / spawn workers against; route those through
         // the disk-based path. Everything else uses the in-memory virtual file system.
         if (RequiresRealDisk(files.Values))
-            return RunModulesInterpretedOnDisk(files, entryPoint);
+            return RunModulesInterpretedOnDisk(files, entryPoint, effectiveTimeout);
 
         // Build an in-memory virtual file system instead of writing to %TEMP%. Concurrent
         // disk operations on Windows serialize through the kernel/AV — measured 1.4× speedup
@@ -686,11 +688,11 @@ public static class TestHarness
 
         try
         {
-            if (task.Wait(DefaultTimeout))
+            if (task.Wait(effectiveTimeout))
                 return task.Result;
 
             throw new TimeoutException(
-                $"Interpreted module execution exceeded {DefaultTimeout.TotalSeconds}s timeout.");
+                $"Interpreted module execution exceeded {effectiveTimeout.TotalSeconds}s timeout.");
         }
         catch (AggregateException ex)
         {
@@ -783,8 +785,10 @@ public static class TestHarness
     /// then runs the interpreter in-process. Used for tests that depend on real-disk paths
     /// (<c>__dirname</c>, <c>cluster.fork</c>) — see <see cref="RequiresRealDisk"/>.
     /// </summary>
-    private static string RunModulesInterpretedOnDisk(Dictionary<string, string> files, string entryPoint)
+    private static string RunModulesInterpretedOnDisk(Dictionary<string, string> files, string entryPoint, TimeSpan? timeout = null)
     {
+        var effectiveTimeout = timeout ?? DefaultTimeout;
+
         var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_module_test_{Guid.NewGuid()}");
         Directory.CreateDirectory(tempDir);
 
@@ -819,10 +823,10 @@ public static class TestHarness
 
             try
             {
-                if (task.Wait(DefaultTimeout))
+                if (task.Wait(effectiveTimeout))
                     return task.Result;
                 throw new TimeoutException(
-                    $"Interpreted module execution exceeded {DefaultTimeout.TotalSeconds}s timeout.");
+                    $"Interpreted module execution exceeded {effectiveTimeout.TotalSeconds}s timeout.");
             }
             catch (AggregateException ex) when (ex.InnerExceptions.Count == 1)
             {
