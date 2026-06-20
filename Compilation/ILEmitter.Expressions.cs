@@ -338,9 +338,11 @@ public partial class ILEmitter
         }
 
         // 1. Function display class fields (captured function-local vars)
-        // Check this BEFORE regular locals to ensure we use the shared storage
-        if (_ctx.CapturedFunctionLocals?.Contains(a.Name.Lexeme) == true &&
-            _ctx.FunctionDisplayClassFields?.TryGetValue(a.Name.Lexeme, out var funcDCField) == true)
+        // Check this BEFORE regular locals to ensure we use the shared storage.
+        // #838: remap a write-captured block-scope shadow to its renamed DC storage key in an arrow body.
+        var assignDCName = _ctx.ResolveFunctionDCFieldName(a.Name.Lexeme);
+        if (_ctx.CapturedFunctionLocals?.Contains(assignDCName) == true &&
+            _ctx.FunctionDisplayClassFields?.TryGetValue(assignDCName, out var funcDCField) == true)
         {
             EmitBoxIfNeeded(a.Value);
             IL.Emit(OpCodes.Dup);

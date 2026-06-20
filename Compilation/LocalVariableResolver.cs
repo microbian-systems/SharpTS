@@ -67,9 +67,15 @@ public class LocalVariableResolver : IVariableResolver
         }
 
         // 2. Function display class fields (captured function-local vars)
-        // Check this BEFORE regular locals to ensure we use the shared storage
-        if (_ctx.CapturedFunctionLocals?.Contains(name) == true &&
-            _ctx.FunctionDisplayClassFields?.TryGetValue(name, out var funcDCField) == true)
+        // Check this BEFORE regular locals to ensure we use the shared storage.
+        // #838: in an arrow body, a captured write-shadow's DC field is keyed by its renamed storage
+        // (<name>__bsN), not the bare name — remap before the lookup so the arrow's `name` reaches the
+        // shadow's field rather than the outer same-named binding's field.
+        var dcName = _ctx.CurrentArrowFunctionDCFieldRenames is { } funcDCRenames &&
+                     funcDCRenames.TryGetValue(name, out var renamedStorage)
+            ? renamedStorage : name;
+        if (_ctx.CapturedFunctionLocals?.Contains(dcName) == true &&
+            _ctx.FunctionDisplayClassFields?.TryGetValue(dcName, out var funcDCField) == true)
         {
             if (_ctx.FunctionDisplayClassLocal != null)
             {
@@ -264,9 +270,14 @@ public class LocalVariableResolver : IVariableResolver
         }
 
         // 1. Function display class fields (captured function-local vars)
-        // Check this BEFORE regular locals to ensure we use the shared storage
-        if (_ctx.CapturedFunctionLocals?.Contains(name) == true &&
-            _ctx.FunctionDisplayClassFields?.TryGetValue(name, out var funcDCField) == true)
+        // Check this BEFORE regular locals to ensure we use the shared storage.
+        // #838: remap a captured write-shadow's name to its renamed DC storage key in an arrow body
+        // (mirror of the load path), so the write lands on the shadow's field, not the outer binding's.
+        var dcName = _ctx.CurrentArrowFunctionDCFieldRenames is { } funcDCRenames &&
+                     funcDCRenames.TryGetValue(name, out var renamedStorage)
+            ? renamedStorage : name;
+        if (_ctx.CapturedFunctionLocals?.Contains(dcName) == true &&
+            _ctx.FunctionDisplayClassFields?.TryGetValue(dcName, out var funcDCField) == true)
         {
             var temp = _il.DeclareLocal(_types.Object);
             _il.Emit(OpCodes.Stloc, temp);

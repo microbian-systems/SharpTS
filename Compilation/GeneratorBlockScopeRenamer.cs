@@ -13,18 +13,30 @@ namespace SharpTS.Compilation;
 /// (retoken before field/local access). Empty when nothing shadows.
 /// </param>
 /// <param name="CaptureRenames">
-/// Capturing-arrow node → (captured source name → renamed generator storage). When an arrow lexically
-/// captures a shadowing block-scoped binding that <see cref="Renames"/> moved to its own storage, the
-/// arrow's display-class field must be sourced from that storage rather than the outer same-named
-/// binding. The capture-population step consults this map to pivot the SOURCE of the field (the arrow's
-/// own DC field keeps the original name). Empty unless a renamed shadow is closure-captured.
+/// Capturing-arrow node → (captured source name → renamed generator storage), for shadows an arrow only
+/// READS. When an arrow lexically captures a shadowing block-scoped binding that <see cref="Renames"/>
+/// moved to its own storage, the arrow's by-value display-class field must be sourced from that storage
+/// rather than the outer same-named binding. The capture-population step consults this map to pivot the
+/// SOURCE of the field (the arrow's own DC field keeps the original name). Empty unless a renamed
+/// read-only shadow is closure-captured.
+/// </param>
+/// <param name="WriteCaptureRenames">
+/// Capturing-arrow node → (captured source name → renamed generator storage), for shadows an arrow
+/// WRITES (so they are lifted into the shared, name-keyed function display class <c>$functionDC</c>,
+/// #674/#725). Unlike <see cref="CaptureRenames"/> (a by-value snapshot pivot), these drive the
+/// rename-aware DC: the DC field is registered under the renamed storage, and the arrow body's
+/// read/write of the capture is remapped to <c>$functionDC.&lt;name&gt;__bsN</c> instead of the outer
+/// same-named binding's field (#838). A shadow both read and written by the same arrow is recorded here
+/// (a write makes it DC-backed). Empty unless a renamed write-captured shadow exists.
 /// </param>
 internal sealed record BlockScopeRenameResult(
     IReadOnlyDictionary<object, string> Renames,
-    IReadOnlyDictionary<object, IReadOnlyDictionary<string, string>> CaptureRenames)
+    IReadOnlyDictionary<object, IReadOnlyDictionary<string, string>> CaptureRenames,
+    IReadOnlyDictionary<object, IReadOnlyDictionary<string, string>> WriteCaptureRenames)
 {
     public static readonly BlockScopeRenameResult Empty = new(
         new Dictionary<object, string>(),
+        new Dictionary<object, IReadOnlyDictionary<string, string>>(),
         new Dictionary<object, IReadOnlyDictionary<string, string>>());
 }
 
@@ -47,14 +59,17 @@ internal sealed record BlockScopeRenameResult(
 /// <see cref="GeneratorStateAnalyzer"/> and <see cref="GeneratorMoveNextEmitter"/> consult the map so the
 /// hoist-vs-local decision and the field/local access become per-binding instead of per-name.
 ///
-/// Closure interaction (#767): a shadowing binding that an inner <em>arrow</em> reads is still renamed,
-/// and the renamer additionally records, per capturing arrow, the source name → storage mapping so the
-/// capture-population step sources the arrow's field from the renamed generator storage rather than the
-/// outer same-named binding. The arrow's own display-class field keeps the original name (the arrow body
-/// is compiled in its own context and is never rewritten). Two shapes the capture pivot cannot honour
-/// stay OFF-LIMITS (left unrenamed, the conservative #711 behaviour): a binding <em>written</em> inside
-/// any closure (it flows through the name-keyed <c>$functionDC</c> path, #674/#725), and a binding read
-/// by a nested <em>non-arrow</em> function/class (it flows through the name-keyed lambda-lift path).
+/// Closure interaction (#767/#838): a shadowing binding that an inner <em>arrow</em> reads or writes is
+/// still renamed, and the renamer records, per capturing arrow, the source name → storage mapping. A
+/// READ-only capture is recorded in <see cref="BlockScopeRenameResult.CaptureRenames"/> so the
+/// capture-population step sources the arrow's by-value field from the renamed generator storage (#767);
+/// a WRITE capture is recorded in <see cref="BlockScopeRenameResult.WriteCaptureRenames"/> so the
+/// rename-aware <c>$functionDC</c> registers its shared field under the renamed storage and the arrow
+/// body's access is redirected there (#838). The arrow body is compiled in its own context and its
+/// reference nodes are never rewritten — only the source pivot is recorded. One shape the capture pivot
+/// still cannot honour stays OFF-LIMITS (left unrenamed, the conservative #711 behaviour): a binding read
+/// or written by a nested <em>non-arrow</em> function/class (it flows through the name-keyed lambda-lift
+/// path the pivot cannot redirect).
 ///
 /// Restrictions that keep the rewrite sound:
 /// <list type="bullet">
@@ -74,13 +89,20 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
 {
     // Keyed by AST-node reference (records use value equality, so reference identity is mandatory here).
     private readonly Dictionary<object, string> _renames = new(ReferenceEqualityComparer.Instance);
-    // Capturing-arrow node → (captured source name → renamed generator storage). Reference-identity keyed.
+    // Capturing-arrow node → (captured source name → renamed generator storage), for READ-only captures
+    // (by-value snapshot pivot). Reference-identity keyed.
     private readonly Dictionary<object, Dictionary<string, string>> _captureSources = new(ReferenceEqualityComparer.Instance);
+    // Capturing-arrow node → (captured source name → renamed generator storage), for WRITE captures
+    // (shared $functionDC, #838). Reference-identity keyed.
+    private readonly Dictionary<object, Dictionary<string, string>> _writeCaptureSources = new(ReferenceEqualityComparer.Instance);
     // Scope stack of name -> storage-name (storage == name when the binding is not renamed).
     private readonly List<Dictionary<string, string>> _scopes = [];
-    // Names a closure makes off-limits to renaming (written in any closure, or read by a non-arrow
-    // function/class). See CaptureClassifier.
+    // Names a closure makes off-limits to renaming: read by a non-arrow function/class, or written under a
+    // non-arrow function/class (both name-keyed lambda-lift paths the capture pivot cannot honour).
     private readonly HashSet<string> _renameOffLimits = [];
+    // Names WRITTEN inside an arrow only (no intervening non-arrow function/class): renameable and
+    // DC-backed — the arrow's accesses route to the shared $functionDC field (#674/#725/#838).
+    private readonly HashSet<string> _writeCaptured = [];
     private int _counter;
     // Depth of nested arrows currently being walked (0 == directly in the state-machine body).
     private int _arrowDepth;
@@ -116,7 +138,7 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
         var renamer = new GeneratorBlockScopeRenamer();
         if (body == null) return BlockScopeRenameResult.Empty;   // expression-bodied arrow: nothing to rename
 
-        new CaptureClassifier(renamer._renameOffLimits, arrowReadCapturesShareStorage).Run(body);
+        new CaptureClassifier(renamer._renameOffLimits, renamer._writeCaptured, arrowReadCapturesShareStorage).Run(body);
 
         renamer.PushScope();
         // The callable's own name is in scope inside the body (a named function expression can call
@@ -131,13 +153,16 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
             renamer.Visit(stmt);
         renamer.PopScope();
 
-        if (renamer._renames.Count == 0 && renamer._captureSources.Count == 0)
+        if (renamer._renames.Count == 0 && renamer._captureSources.Count == 0 && renamer._writeCaptureSources.Count == 0)
             return BlockScopeRenameResult.Empty;
 
         var captures = new Dictionary<object, IReadOnlyDictionary<string, string>>(ReferenceEqualityComparer.Instance);
         foreach (var (arrow, names) in renamer._captureSources)
             captures[arrow] = names;
-        return new BlockScopeRenameResult(renamer._renames, captures);
+        var writeCaptures = new Dictionary<object, IReadOnlyDictionary<string, string>>(ReferenceEqualityComparer.Instance);
+        foreach (var (arrow, names) in renamer._writeCaptureSources)
+            writeCaptures[arrow] = names;
+        return new BlockScopeRenameResult(renamer._renames, captures, writeCaptures);
     }
 
     private Dictionary<string, string> CurrentScope => _scopes[^1];
@@ -192,11 +217,14 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
         }
         else if (_currentTopArrow != null)
         {
-            // Reference inside a nested arrow that lexically binds to a renamed generator shadow:
-            // record the source pivot so the arrow's captured field is populated from that storage.
-            // The reference node itself is NOT renamed (the arrow body compiles in its own context).
-            if (!_captureSources.TryGetValue(_currentTopArrow, out var names))
-                _captureSources[_currentTopArrow] = names = [];
+            // Reference inside a nested arrow that lexically binds to a renamed generator shadow. The
+            // reference node itself is NOT renamed (the arrow body compiles in its own context); instead
+            // the source name → storage pivot is recorded so the emit phase can redirect it. A WRITE
+            // capture is DC-backed (the arrow shares $functionDC.<storage>, #838); a read-only capture is
+            // snapshot-backed (the arrow's by-value field is sourced from <storage>, #767).
+            var sink = _writeCaptured.Contains(name) ? _writeCaptureSources : _captureSources;
+            if (!sink.TryGetValue(_currentTopArrow, out var names))
+                sink[_currentTopArrow] = names = [];
             names[name] = storage;
         }
     }
@@ -369,23 +397,32 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
     #endregion
 
     /// <summary>
-    /// Classifies which names are off-limits to renaming because a nested closure flows them through
-    /// name-keyed machinery the capture pivot cannot honour: a name WRITTEN inside any closure (the
-    /// <c>$functionDC</c> shared-storage path, #674/#725) or a name READ inside a non-arrow function /
-    /// class (the lambda-lift path). A name only READ inside an arrow stays renameable — the renamer
-    /// pivots that arrow's capture source to the renamed storage (#767).
+    /// Classifies, for each name a nested closure flows through name-keyed machinery, whether it is
+    /// off-limits to renaming or renameable-but-DC-backed:
+    /// <list type="bullet">
+    /// <item>READ inside a non-arrow function / class, or WRITTEN under a non-arrow function / class →
+    /// OFF-LIMITS (the lambda-lift path keys by the original name, which the capture pivot cannot
+    /// redirect).</item>
+    /// <item>WRITTEN inside an arrow only (no intervening non-arrow function / class) → WRITE-CAPTURED:
+    /// renameable, with the arrow's accesses routed to the shared <c>$functionDC.&lt;storage&gt;</c>
+    /// (#674/#725/#838).</item>
+    /// <item>READ-only inside an arrow → renameable via the by-value snapshot pivot (#767).</item>
+    /// </list>
     /// </summary>
     private sealed class CaptureClassifier : AstVisitorBase
     {
         private readonly HashSet<string> _offLimits;
+        private readonly HashSet<string> _writeCaptured;
         // True when even a read by an arrow shares name-keyed storage (async functions / arrows).
         private readonly bool _arrowReadsOffLimits;
-        private int _closureDepth;   // inside any closure (arrow / function / class)
-        private int _nonArrowDepth;  // inside a function / class (not an arrow)
+        private int _closureDepth;     // inside any closure (arrow / function / class)
+        private int _nonArrowDepth;    // inside a function / class (not an arrow)
+        private int _asyncArrowDepth;  // inside an async arrow (its writes use the unwired promotion path)
 
-        public CaptureClassifier(HashSet<string> offLimits, bool arrowReadsOffLimits)
+        public CaptureClassifier(HashSet<string> offLimits, HashSet<string> writeCaptured, bool arrowReadsOffLimits)
         {
             _offLimits = offLimits;
+            _writeCaptured = writeCaptured;
             _arrowReadsOffLimits = arrowReadsOffLimits;
         }
 
@@ -397,7 +434,9 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
         protected override void VisitArrowFunction(Expr.ArrowFunction expr)
         {
             _closureDepth++;
+            if (expr.IsAsync) _asyncArrowDepth++;
             base.VisitArrowFunction(expr);
+            if (expr.IsAsync) _asyncArrowDepth--;
             _closureDepth--;
         }
 
@@ -447,9 +486,14 @@ internal sealed class GeneratorBlockScopeRenamer : AstVisitorBase
             base.VisitPostfixIncrement(expr);
         }
 
+        // A write under a non-arrow function / class flows through the name-keyed lambda-lift path, and a
+        // write inside an async arrow flows through the async-arrow promotion path (#625/#682) which is
+        // NOT rename-aware — both stay off-limits. A write inside a SYNC arrow only flows through the
+        // shared $functionDC, which the rename-aware DC redirects (#838), so it stays renameable.
         private void MarkWrite(string name)
         {
-            if (_closureDepth > 0) _offLimits.Add(name);
+            if (_nonArrowDepth > 0 || _asyncArrowDepth > 0) _offLimits.Add(name);
+            else if (_closureDepth > 0) _writeCaptured.Add(name);
         }
     }
 }

@@ -116,7 +116,45 @@ public partial class ILCompiler
         var perIteration = _closures.Analyzer.GetPerIterationLoopBindings(funcStmt);
         if (perIteration.Count > 0)
             result.ExceptWith(perIteration);
+        // #838: a write-captured nested-block shadow gets its own renamed DC field so it does not collide
+        // with the outer same-named binding on a single name-keyed cell.
+        ApplyWriteCaptureRenames(result, GeneratorBlockScopeRenamer.Compute(funcStmt));
         return result;
+    }
+
+    /// <summary>
+    /// Makes a name-keyed mutated-captured set rename-aware (#838). For every write-captured block-scope
+    /// shadow the renamer disambiguated (arrow → source name → renamed storage), adds the renamed storage
+    /// as its own display-class field (ADDITIVE — the original name stays so an un-renamed outer capture
+    /// of the same name keeps its own field) and records the per-arrow source → storage remap so the
+    /// arrow body's read/write of the capture is redirected to the renamed field at emit time. No-op when
+    /// nothing was write-captured-and-renamed (the common case), leaving the DC field set unchanged.
+    /// </summary>
+    private void ApplyWriteCaptureRenames(HashSet<string> mutatedCaptured, BlockScopeRenameResult renames)
+    {
+        if (renames.WriteCaptureRenames.Count == 0)
+            return;
+        foreach (var (arrowNode, names) in renames.WriteCaptureRenames)
+        {
+            if (arrowNode is not Expr.ArrowFunction arrow)
+                continue;
+            Dictionary<string, string>? perArrow = null;
+            foreach (var (name, storage) in names)
+            {
+                // Only lift names that are genuinely captured-and-mutated here; a renamed shadow whose
+                // outer name is not in the set was not a generator capture and needs no DC field.
+                if (!mutatedCaptured.Contains(name))
+                    continue;
+                mutatedCaptured.Add(storage);
+                (perArrow ??= [])[name] = storage;
+            }
+            if (perArrow == null)
+                continue;
+            if (_closures.ArrowFunctionDCFieldRenames.TryGetValue(arrow, out var existing))
+                foreach (var (k, v) in perArrow) existing[k] = v;
+            else
+                _closures.ArrowFunctionDCFieldRenames[arrow] = perArrow;
+        }
     }
 
     /// <summary>

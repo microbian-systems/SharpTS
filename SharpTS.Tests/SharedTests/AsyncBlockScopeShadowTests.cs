@@ -348,4 +348,64 @@ public class AsyncBlockScopeShadowTests
     }
 
     #endregion
+
+    #region Write-capture of a shadow by an inner sync arrow (#838, write analog of #767)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncFunction_NestedBlockShadow_WriteCapturedByArrow(ExecutionMode mode)
+    {
+        // An inner block let that shadows an outer binding AND is WRITTEN by a nested sync arrow gets its
+        // own renamed shared $functionDC slot; the arrow's read/write land on the inner binding while the
+        // outer keeps its own (#838). Compiled previously collided on a single name-keyed DC field.
+        var source = """
+            async function af(): Promise<string> {
+              const out: string[] = [];
+              const r = 100;
+              {
+                let r = 5;
+                const f = () => { r = r + 1; return r; };
+                await Promise.resolve(0);
+                out.push(String(f()));
+                out.push(String(r));
+              }
+              out.push(String(r));
+              return out.join(",");
+            }
+            async function main() { console.log(await af()); }
+            main();
+            """;
+
+        Assert.Equal("6,6,100\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_NestedBlockShadow_WriteCapturedByArrow(ExecutionMode mode)
+    {
+        // Async-GENERATOR analog (#838): the write-captured shadow gets its own renamed DC field, shared
+        // between the generator body and the sync arrow, without colliding with the outer same-named const.
+        var source = """
+            async function* mut(): AsyncGenerator<number> {
+              const r = 100;
+              {
+                let r = 5;
+                const f = () => { r = r + 1; return r; };
+                yield f();
+                yield r;
+              }
+              yield r;
+            }
+            async function main() {
+              const out: number[] = [];
+              for await (const x of mut()) out.push(x);
+              console.log(out.join(","));
+            }
+            main();
+            """;
+
+        Assert.Equal("6,6,100\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
 }

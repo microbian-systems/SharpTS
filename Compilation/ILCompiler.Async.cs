@@ -92,7 +92,12 @@ public partial class ILCompiler
                 _closures.AsyncCapturedVarsExclusion[qualifiedFunctionName] = readOnlyRenamedShadows;
         }
 
-        DefineFunctionDisplayClass(funcStmt, qualifiedFunctionName);
+        // #838: an async function body is retokenized by the block-scope renamer, so make its function DC
+        // rename-aware — a write-captured nested-block shadow gets its own renamed field instead of
+        // colliding with the outer same-named binding on a single name-keyed cell (matching the existing
+        // generator path). Recomputed here (deterministic, same flag the AsyncStateAnalyzer used).
+        var blockScopeRenames = GeneratorBlockScopeRenamer.Compute(funcStmt, arrowReadCapturesShareStorage: false);
+        DefineFunctionDisplayClass(funcStmt, qualifiedFunctionName, blockScopeRenames);
 
         // If a function DC was created, add a field on the state machine to hold it
         if (_closures.FunctionDisplayClasses.TryGetValue(qualifiedFunctionName, out var funcDC))

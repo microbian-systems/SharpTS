@@ -145,6 +145,29 @@ public partial class CompilationContext
     public FieldBuilder? CurrentArrowFunctionDCField { get; set; }
 
     /// <summary>
+    /// When inside an arrow body, maps a captured variable's source name to the renamed storage key of
+    /// its function-display-class field (#838). A nested-block <c>let</c>/<c>const</c> that shadows an
+    /// enclosing binding and is WRITTEN by this arrow is lifted into the shared <c>$functionDC</c> under a
+    /// disambiguated storage name (<c>&lt;r&gt;__bsN</c>), while the outer same-named binding keeps the
+    /// field <c>r</c>. Without this remap the arrow's <c>r</c> would resolve to the outer field and the
+    /// two bindings would collide. <see cref="LocalVariableResolver"/> maps the name through this table
+    /// before the <see cref="CapturedFunctionLocals"/> / <see cref="FunctionDisplayClassFields"/> lookup.
+    /// Null when the arrow captures no renamed write-shadow (the common case).
+    /// </summary>
+    public Dictionary<string, string>? CurrentArrowFunctionDCFieldRenames { get; set; }
+
+    /// <summary>
+    /// Maps a captured variable's source name to the key under which its function-display-class field is
+    /// registered (#838). In an arrow body this redirects a write-captured block-scope shadow to its
+    /// renamed storage (<c>&lt;r&gt;__bsN</c>) so reads and writes reach the shadow's field instead of the
+    /// outer same-named binding's. Returns <paramref name="name"/> unchanged when no remap applies (the
+    /// common case). Consulted by every function-DC load/store site — <see cref="LocalVariableResolver"/>
+    /// and the hand-rolled assignment / increment / declaration paths in <c>ILEmitter</c>.
+    /// </summary>
+    public string ResolveFunctionDCFieldName(string name) =>
+        CurrentArrowFunctionDCFieldRenames is { } m && m.TryGetValue(name, out var storage) ? storage : name;
+
+    /// <summary>
     /// For an async arrow's MoveNext: the <c>&lt;&gt;__functionDC</c> field on the enclosing async
     /// function's state machine. Combined with <see cref="FunctionDisplayClassFields"/>, it lets the
     /// arrow read/write captured locals that were promoted into the (reference-type) function display
