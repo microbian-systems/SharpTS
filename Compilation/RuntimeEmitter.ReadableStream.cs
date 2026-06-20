@@ -995,6 +995,10 @@ public partial class RuntimeEmitter
         var writeArgsLocal = il.DeclareLocal(_types.ObjectArray);
         var resultObjLocal = il.DeclareLocal(_types.Object);
         var reasonLocal = il.DeclareLocal(_types.Object);
+        // Scratch slot for the Task<object> the pump cooperatively waits on (read
+        // then write reuse it — read is fully consumed before the write). See
+        // EmitCooperativeAwaitTaskOrSignal (#448).
+        var coopTaskLocal = il.DeclareLocal(_types.TaskOfObject);
 
         // Extract opts.signal. Null opts, missing field, or $Undefined all
         // normalise to null so the per-iteration check can Brfalse cleanly.
@@ -1168,10 +1172,20 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(signalOkLabel);
 
-        // Call this.Read() → Task<object>; sync-await
+        // Call this.Read() → Task<object>. For a sync-pull source the task is
+        // already completed and the cooperative wait returns immediately. For a
+        // push-style source the task parks on a pending TCS that only an
+        // event-loop callback (e.g. setTimeout → controller.enqueue) can settle,
+        // so we must drive the loop instead of blocking the main thread in
+        // GetResult() — otherwise the pump deadlocks (#448). On a mid-pipe abort
+        // the wait branches back to loopTop (the signal check runs teardown); on a
+        // never-settling read it gives up to donePathLabel (graceful close).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, readMethod);
-        EmitSyncAwaitTaskOfObject(il, awaiterLocal);
+        il.Emit(OpCodes.Stloc, coopTaskLocal);
+        EmitCooperativeAwaitTaskOrSignal(il, runtime, coopTaskLocal, signalLocal, loopTop, donePathLabel);
+        il.Emit(OpCodes.Ldloc, coopTaskLocal);
+        EmitSyncAwaitTaskOfObject(il, awaiterLocal); // completed → returns immediately
         il.Emit(OpCodes.Stloc, resultObjLocal);
 
         // Cast to Dictionary<string, object?>
@@ -1210,7 +1224,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, writeCallableLocal);      // callable
         il.Emit(OpCodes.Ldloc, writeArgsLocal);          // args
         il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
-        EmitUnwrapResultToTask(il, runtime, awaiterLocal);
+        // Cooperative wait for the write too: a push-style WritableStream whose
+        // write() resolves later through the event loop would otherwise deadlock
+        // the sync pump the same way a push source read does (#448).
+        EmitCooperativeUnwrapResultToTask(il, runtime, awaiterLocal, signalLocal, coopTaskLocal, loopTop, donePathLabel);
 
         il.Emit(OpCodes.Br, loopTop);
 
@@ -1278,6 +1295,172 @@ public partial class RuntimeEmitter
         il.MarkLabel(notPromiseLabel);
 
         il.MarkLabel(doneLabel);
+    }
+
+    /// <summary>
+    /// Cooperative variant of <see cref="EmitUnwrapResultToTask"/> for the pump's
+    /// main-loop <c>writer.write()</c> await. Normalises the <c>object</c> result on
+    /// the stack to a <c>Task&lt;object&gt;</c> (direct task, <c>$Promise</c>, or
+    /// nothing), then drives the event loop via
+    /// <see cref="EmitCooperativeAwaitTaskOrSignal"/> instead of blocking — so a
+    /// push-style <c>WritableStream</c> whose <c>write()</c> settles through the loop
+    /// doesn't deadlock the pump (#448). On abort it branches to
+    /// <paramref name="abortLabel"/>; on a never-settling write to
+    /// <paramref name="quiesceLabel"/>.
+    /// </summary>
+    private void EmitCooperativeUnwrapResultToTask(
+        ILGenerator il, EmittedRuntime runtime, LocalBuilder awaiterLocal,
+        LocalBuilder signalLocal, LocalBuilder coopTaskLocal,
+        Label abortLabel, Label quiesceLabel)
+    {
+        // Stack: [object result]
+        var resultLocal = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        var notTaskLabel = il.DefineLabel();
+        var notPromiseLabel = il.DefineLabel();
+        var haveTaskLabel = il.DefineLabel();
+        var doneLabel = il.DefineLabel();
+
+        // if (result is Task<object> t) { coopTask = t; goto haveTask }
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Isinst, _types.TaskOfObject);
+        il.Emit(OpCodes.Brfalse, notTaskLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Castclass, _types.TaskOfObject);
+        il.Emit(OpCodes.Stloc, coopTaskLocal);
+        il.Emit(OpCodes.Br, haveTaskLabel);
+
+        // else if (result is $Promise p) { coopTask = p.GetValueAsync(); goto haveTask }
+        il.MarkLabel(notTaskLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+        il.Emit(OpCodes.Brfalse, notPromiseLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Castclass, runtime.TSPromiseType);
+        il.Emit(OpCodes.Callvirt, runtime.TSPromiseGetValueAsync);
+        il.Emit(OpCodes.Stloc, coopTaskLocal);
+        il.Emit(OpCodes.Br, haveTaskLabel);
+
+        // else: nothing to await
+        il.MarkLabel(notPromiseLabel);
+        il.Emit(OpCodes.Br, doneLabel);
+
+        il.MarkLabel(haveTaskLabel);
+        EmitCooperativeAwaitTaskOrSignal(il, runtime, coopTaskLocal, signalLocal, abortLabel, quiesceLabel);
+        il.Emit(OpCodes.Ldloc, coopTaskLocal);
+        EmitSyncAwaitTaskOfObject(il, awaiterLocal); // completed → returns immediately
+        il.Emit(OpCodes.Pop);
+
+        il.MarkLabel(doneLabel);
+    }
+
+    /// <summary>
+    /// Emits a cooperative wait for the <c>Task&lt;object&gt;</c> already stored in
+    /// <paramref name="coopTaskLocal"/>: loops driving <c>$EventLoop.PumpOnce()</c>
+    /// (drain queue + fire timers + 1ms tick) until the task completes, the abort
+    /// signal fires, or the loop stays quiescent past the give-up window. This lets
+    /// a push-style read/write that only an event-loop callback can settle make
+    /// progress without the synchronous pump blocking the main thread (#448).
+    /// </summary>
+    /// <remarks>
+    /// On normal completion control falls through with the (now completed) task left
+    /// in <paramref name="coopTaskLocal"/> for the caller to <c>GetResult()</c>
+    /// immediately. On a mid-pipe abort it branches to <paramref name="abortLabel"/>
+    /// (the pump's loop top, whose signal check runs writer.abort + source.cancel
+    /// teardown). On a never-settling task it branches to
+    /// <paramref name="quiesceLabel"/> (the pump's done path → graceful close) after
+    /// a 250ms quiescence window, mirroring <c>$EventLoop.WaitForTask</c>'s backstop
+    /// so a producerless source can't hang the process. Stack on entry/exit (the
+    /// fall-through and both branch targets): empty. References only emitted
+    /// <c>$EventLoop</c>/<c>$Runtime</c> members, so the stream stays standalone.
+    /// </remarks>
+    private void EmitCooperativeAwaitTaskOrSignal(
+        ILGenerator il, EmittedRuntime runtime,
+        LocalBuilder coopTaskLocal, LocalBuilder signalLocal,
+        Label abortLabel, Label quiesceLabel)
+    {
+        // Continuous quiescent wall-clock time before concluding the task can never
+        // settle — same time-based backstop as $EventLoop.WaitForTask.
+        const long QuiescentMsBeforeGiveUp = 250;
+
+        var quiescentStartLocal = il.DeclareLocal(typeof(long));
+        var waitLoopTop = il.DefineLabel();
+        var notAbortedLabel = il.DefineLabel();
+        var notCompletedAfterPump = il.DefineLabel();
+        var busyResetLabel = il.DefineLabel();
+        var startStreakLabel = il.DefineLabel();
+        var completedLabel = il.DefineLabel();
+
+        var isCompletedGetter = typeof(Task).GetProperty("IsCompleted")!.GetGetMethod()!;
+        var tickCount64Getter = typeof(Environment).GetProperty("TickCount64")!.GetGetMethod()!;
+
+        // quiescentStart = -1
+        il.Emit(OpCodes.Ldc_I8, -1L);
+        il.Emit(OpCodes.Stloc, quiescentStartLocal);
+
+        il.MarkLabel(waitLoopTop);
+
+        // if (task.IsCompleted) goto completed
+        il.Emit(OpCodes.Ldloc, coopTaskLocal);
+        il.Emit(OpCodes.Callvirt, isCompletedGetter);
+        il.Emit(OpCodes.Brtrue, completedLabel);
+
+        // Abort check (isinst-guarded, same as the pump's loop-top check):
+        // if (signal != null && signal is Dictionary && AbortSignalGetAborted(signal)) goto abort
+        il.Emit(OpCodes.Ldloc, signalLocal);
+        il.Emit(OpCodes.Brfalse, notAbortedLabel);
+        il.Emit(OpCodes.Ldloc, signalLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brfalse, notAbortedLabel);
+        il.Emit(OpCodes.Ldloc, signalLocal);
+        il.Emit(OpCodes.Call, runtime.AbortSignalGetAborted);
+        il.Emit(OpCodes.Brtrue, abortLabel);
+        il.MarkLabel(notAbortedLabel);
+
+        // busy = $EventLoop.GetInstance().PumpOnce()
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Callvirt, runtime.EventLoopPumpOnce);
+        // Stack: [busy]
+
+        // if (task.IsCompleted) { pop busy; goto completed }
+        il.Emit(OpCodes.Ldloc, coopTaskLocal);
+        il.Emit(OpCodes.Callvirt, isCompletedGetter);
+        il.Emit(OpCodes.Brfalse, notCompletedAfterPump);
+        il.Emit(OpCodes.Pop); // discard busy
+        il.Emit(OpCodes.Br, completedLabel);
+        il.MarkLabel(notCompletedAfterPump);
+        // Stack: [busy]
+
+        // if (busy != 0) { quiescentStart = -1; loop } — Brtrue consumes busy
+        il.Emit(OpCodes.Brtrue, busyResetLabel);
+
+        // idle: track the quiescent streak.
+        //   if (quiescentStart < 0) quiescentStart = TickCount64
+        //   else if (TickCount64 - quiescentStart >= grace) goto quiesce
+        il.Emit(OpCodes.Ldloc, quiescentStartLocal);
+        il.Emit(OpCodes.Ldc_I8, 0L);
+        il.Emit(OpCodes.Blt, startStreakLabel);
+        il.Emit(OpCodes.Call, tickCount64Getter);
+        il.Emit(OpCodes.Ldloc, quiescentStartLocal);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Ldc_I8, QuiescentMsBeforeGiveUp);
+        il.Emit(OpCodes.Bge, quiesceLabel);
+        il.Emit(OpCodes.Br, waitLoopTop);
+
+        il.MarkLabel(startStreakLabel);
+        il.Emit(OpCodes.Call, tickCount64Getter);
+        il.Emit(OpCodes.Stloc, quiescentStartLocal);
+        il.Emit(OpCodes.Br, waitLoopTop);
+
+        // busy: reset the idle streak and loop
+        il.MarkLabel(busyResetLabel);
+        il.Emit(OpCodes.Ldc_I8, -1L);
+        il.Emit(OpCodes.Stloc, quiescentStartLocal);
+        il.Emit(OpCodes.Br, waitLoopTop);
+
+        // Completed: fall through with the task ready for an immediate sync-await.
+        il.MarkLabel(completedLabel);
     }
 
     /// <summary>

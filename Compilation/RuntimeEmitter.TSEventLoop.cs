@@ -102,6 +102,9 @@ public partial class RuntimeEmitter
         // WaitForTask(Task)
         EmitEventLoopWaitForTask(typeBuilder, runtime);
 
+        // PumpOnce() — single cooperative tick for the PipeTo pump (#448)
+        EmitEventLoopPumpOnce(typeBuilder, runtime);
+
         typeBuilder.CreateType();
 
         // Emit the SynchronizationContext that routes await continuations back to
@@ -620,5 +623,101 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Call, typeof(Thread).GetMethod("Sleep", [_types.Int32])!);
         il.Emit(OpCodes.Br, loopTop);
+    }
+
+    /// <summary>
+    /// Emits <c>$EventLoop.PumpOnce()</c> — one cooperative tick of the loop body
+    /// shared with <see cref="EmitEventLoopWaitForTask"/>, minus the task/quiescence
+    /// tracking: drain every queued continuation, fire due timers via
+    /// <c>_timerProcessor</c> (= <c>$Runtime.ProcessPendingTimers</c>, which also
+    /// flushes microtasks), then sleep 1ms. Returns <c>1</c> while work is still
+    /// pending (a timer is due later, an active handle is open, or the queue is
+    /// non-empty) and <c>0</c> once idle.
+    /// </summary>
+    /// <remarks>
+    /// The synchronous <c>$ReadableStream.PipeTo</c> pump calls this in a loop while
+    /// a push-style <c>Read()</c>/<c>Write()</c> task is still pending, so an
+    /// event-loop-driven producer (e.g. a <c>setTimeout</c> that calls
+    /// <c>controller.enqueue</c>) can run and settle the task — instead of the pump
+    /// blocking the main thread in <c>GetResult()</c> and starving the loop (#448).
+    /// Abort-signal and quiescence handling stay in the pump itself: <c>$EventLoop</c>
+    /// is emitted before <c>$Runtime</c>, so it cannot reference
+    /// <c>AbortSignalGetAborted</c>, whereas the later-emitted pump can. References
+    /// only this type's own fields plus the BCL, so the pure-IL stream stays
+    /// standalone (no SharpTS.dll dependency).
+    /// </remarks>
+    private void EmitEventLoopPumpOnce(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "PumpOnce",
+            MethodAttributes.Public,
+            _types.Int32,
+            Type.EmptyTypes
+        );
+        runtime.EventLoopPumpOnce = method;
+
+        var il = method.GetILGenerator();
+        var waitMsLocal = il.DeclareLocal(_types.Int32);
+        var actionLocal = il.DeclareLocal(typeof(Action));
+
+        var drainTop = il.DefineLabel();
+        var drainEnd = il.DefineLabel();
+        var skipTimers = il.DefineLabel();
+        var busyLabel = il.DefineLabel();
+        var sleepLabel = il.DefineLabel();
+
+        // Drain queued callbacks on THIS (event-loop) thread — same rationale as
+        // WaitForTask: Posted await continuations / TCS resolutions live here and
+        // running them may settle the read/write the pump is waiting on.
+        il.MarkLabel(drainTop);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _eventLoopQueueField);
+        il.Emit(OpCodes.Ldloca, actionLocal);
+        il.Emit(OpCodes.Callvirt, typeof(ConcurrentQueue<Action>).GetMethod("TryDequeue", [typeof(Action).MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, drainEnd);
+        il.Emit(OpCodes.Ldloc, actionLocal);
+        il.Emit(OpCodes.Callvirt, typeof(Action).GetMethod("Invoke")!);
+        il.Emit(OpCodes.Br, drainTop);
+        il.MarkLabel(drainEnd);
+
+        // waitMs = -1; if (_timerProcessor != null) waitMs = _timerProcessor.Invoke();
+        // Invoke fires due timers (their callbacks may enqueue a chunk / settle the
+        // task) and returns ms until the next timer, or -1 when none are scheduled.
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Stloc, waitMsLocal);
+        il.Emit(OpCodes.Ldsfld, _eventLoopTimerProcessorField);
+        il.Emit(OpCodes.Brfalse, skipTimers);
+        il.Emit(OpCodes.Ldsfld, _eventLoopTimerProcessorField);
+        il.Emit(OpCodes.Callvirt, typeof(Func<int>).GetMethod("Invoke")!);
+        il.Emit(OpCodes.Stloc, waitMsLocal);
+        il.MarkLabel(skipTimers);
+
+        // Sleep 1ms before reporting, matching WaitForTask's per-iteration tick so
+        // a tight pump loop doesn't spin the CPU.
+        il.MarkLabel(sleepLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Call, typeof(Thread).GetMethod("Sleep", [_types.Int32])!);
+
+        // busy = waitMs >= 0 || _activeHandles > 0 || !_queue.IsEmpty
+        il.Emit(OpCodes.Ldloc, waitMsLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bge, busyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _eventLoopActiveHandlesField);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bgt, busyLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _eventLoopQueueField);
+        il.Emit(OpCodes.Callvirt, typeof(ConcurrentQueue<Action>).GetProperty("IsEmpty")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, busyLabel);
+
+        // idle → return 0
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+
+        // busy → return 1
+        il.MarkLabel(busyLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Ret);
     }
 }
