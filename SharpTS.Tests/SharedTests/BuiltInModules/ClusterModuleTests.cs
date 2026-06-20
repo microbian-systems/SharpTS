@@ -25,16 +25,49 @@ public class ClusterModuleTests : IDisposable
     }
 
     /// <summary>
-    /// Allocates a free TCP port by binding to port 0 and reading the assigned port.
-    /// The listener is stopped immediately, freeing the port for the test to use.
+    /// Fork+port tests spin up worker threads, bind a real OS port, and round-trip a request.
+    /// Under load that can take noticeably longer than a plain module run, so they use a higher
+    /// timeout than <see cref="TestHarness.DefaultTimeout"/> (issue #747).
+    /// </summary>
+    private static readonly TimeSpan PortTestTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Allocates a free TCP loopback port for a cluster test to bind. Binds to port 0 to let the
+    /// OS assign a free port, then releases it so the guest interpreter can re-bind it. That
+    /// release→re-bind handoff has a TOCTOU window, so the candidate is verified bindable once
+    /// more before being returned, re-rolling if a racing test claimed it in between.
     /// </summary>
     private static int GetFreePort()
     {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
+        const int attempts = 5;
+        for (int i = 0; i < attempts; i++)
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+            listener.Stop();
+
+            // Confirm the port is still free after the release; if a concurrent test grabbed it
+            // in the gap, re-roll rather than hand back a contended port.
+            try
+            {
+                var verify = new TcpListener(IPAddress.Loopback, port);
+                verify.Start();
+                verify.Stop();
+                return port;
+            }
+            catch (SocketException)
+            {
+                // Port taken between Stop() and the verify bind — try again.
+            }
+        }
+
+        // Fall back to a plain OS-assigned port if every verification raced (extremely unlikely).
+        var fallback = new TcpListener(IPAddress.Loopback, 0);
+        fallback.Start();
+        int fallbackPort = ((IPEndPoint)fallback.LocalEndpoint).Port;
+        fallback.Stop();
+        return fallbackPort;
     }
 
     #region Import and Basic Properties
@@ -434,7 +467,7 @@ public class ClusterModuleTests : IDisposable
                 """
         };
 
-        var output = TestHarness.RunModules(files, "main.ts", mode);
+        var output = TestHarness.RunModules(files, "main.ts", mode, PortTestTimeout);
         Assert.Contains("responses: 4", output);
     }
 
@@ -490,7 +523,7 @@ public class ClusterModuleTests : IDisposable
                 """
         };
 
-        var output = TestHarness.RunModules(files, "main.ts", mode);
+        var output = TestHarness.RunModules(files, "main.ts", mode, PortTestTimeout);
         Assert.Contains("after kill: worker-", output);
     }
 
@@ -538,7 +571,7 @@ public class ClusterModuleTests : IDisposable
                 """
         };
 
-        var output = TestHarness.RunModules(files, "main.ts", mode);
+        var output = TestHarness.RunModules(files, "main.ts", mode, PortTestTimeout);
         Assert.Contains("port was working", output);
         Assert.Contains("worker exited", output);
     }
@@ -591,7 +624,7 @@ public class ClusterModuleTests : IDisposable
                 """
         };
 
-        var output = TestHarness.RunModules(files, "main.ts", mode);
+        var output = TestHarness.RunModules(files, "main.ts", mode, PortTestTimeout);
         Assert.Contains("http response: worker-", output);
     }
 
