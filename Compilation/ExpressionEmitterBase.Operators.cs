@@ -424,6 +424,11 @@ public abstract partial class ExpressionEmitterBase
         // Store object (registered so an await inside ls.Value persists it — #400)
         var objLocal = SpillBoxed(ls.Object);
 
+        // Logical assignment reads first → a nullish base throws the *read*-worded
+        // guest TypeError before the short-circuit check (#733).
+        if (!IsNullPlaceholderGlobal(ls.Object))
+            EmitThrowIfReceiverUndefined(objLocal, ls.Name.Lexeme, isWrite: false);
+
         // Get current value
         IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Ldstr, ls.Name.Lexeme);
@@ -458,6 +463,11 @@ public abstract partial class ExpressionEmitterBase
         // Store object and index (registered so an await inside lsi.Value persists them — #400)
         var objLocal = SpillBoxed(lsi.Object);
         var indexLocal = SpillBoxed(lsi.Index);
+
+        // Logical assignment reads first → a nullish base throws the *read*-worded
+        // guest TypeError before the short-circuit check (#733).
+        if (!IsNullPlaceholderGlobal(lsi.Object))
+            EmitThrowIfUndefinedIndexReceiver(objLocal, indexLocal, isWrite: false);
 
         // Get current value
         IL.Emit(OpCodes.Ldloc, objLocal);
@@ -543,6 +553,11 @@ public abstract partial class ExpressionEmitterBase
         // an await inside cs.Value persists them across the suspension (#400).
         var objTemp = SpillBoxed(cs.Object);
 
+        // Compound assignment reads first → a nullish base throws the *read*-worded
+        // guest TypeError before GetProperty (which would otherwise no-op) (#733).
+        if (!IsNullPlaceholderGlobal(cs.Object))
+            EmitThrowIfReceiverUndefined(objTemp, cs.Name.Lexeme, isWrite: false);
+
         IL.Emit(OpCodes.Ldloc, objTemp);
         IL.Emit(OpCodes.Ldstr, cs.Name.Lexeme);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
@@ -577,6 +592,11 @@ public abstract partial class ExpressionEmitterBase
         // persists them across the suspension (#400).
         var objTemp = SpillBoxed(csi.Object);
         var indexTemp = SpillBoxed(csi.Index);
+
+        // Compound assignment reads first → a nullish base throws the *read*-worded
+        // guest TypeError before GetIndex (which would otherwise no-op) (#733).
+        if (!IsNullPlaceholderGlobal(csi.Object))
+            EmitThrowIfUndefinedIndexReceiver(objTemp, indexTemp, isWrite: false);
 
         IL.Emit(OpCodes.Ldloc, objTemp);
         IL.Emit(OpCodes.Ldloc, indexTemp);

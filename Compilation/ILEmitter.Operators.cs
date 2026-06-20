@@ -661,6 +661,11 @@ public partial class ILEmitter
         var objLocal = IL.DeclareLocal(_ctx.Types.Object);
         IL.Emit(OpCodes.Stloc, objLocal);
 
+        // Logical assignment reads first → a nullish base throws the *read*-worded
+        // guest TypeError before the short-circuit check (#733).
+        if (!IsNullPlaceholderGlobal(ls.Object))
+            EmitThrowIfReceiverUndefined(objLocal, ls.Name.Lexeme, isWrite: false);
+
         // Get current property value
         IL.Emit(OpCodes.Ldloc, objLocal);
         IL.Emit(OpCodes.Ldstr, ls.Name.Lexeme);
@@ -729,6 +734,11 @@ public partial class ILEmitter
         EmitBoxIfNeeded(lsi.Index);
         var indexLocal = IL.DeclareLocal(_ctx.Types.Object);
         IL.Emit(OpCodes.Stloc, indexLocal);
+
+        // Logical assignment reads first → a nullish base throws the *read*-worded
+        // guest TypeError before the short-circuit check (#733).
+        if (!IsNullPlaceholderGlobal(lsi.Object))
+            EmitThrowIfUndefinedIndexReceiver(objLocal, indexLocal, isWrite: false);
 
         // Get current value at index
         IL.Emit(OpCodes.Ldloc, objLocal);
@@ -1554,6 +1564,10 @@ public partial class ILEmitter
         // Get current value: GetProperty(obj, name)
         EmitExpression(cs.Object);
         EmitBoxIfNeeded(cs.Object);
+        // Compound assignment reads first → a nullish base throws the *read*-worded
+        // guest TypeError before GetProperty (which would otherwise no-op) (#733).
+        if (!IsNullPlaceholderGlobal(cs.Object))
+            EmitThrowIfUndefinedReceiverOnStack(cs.Name.Lexeme);
         IL.Emit(OpCodes.Ldstr, cs.Name.Lexeme);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.GetProperty);
 
@@ -1582,11 +1596,26 @@ public partial class ILEmitter
         // 2. Apply operation
         // 3. Store back
 
-        // Get current value: GetIndex(obj, index)
+        // Spill receiver and index once so the read-guard and the write reuse them
+        // (also avoids re-evaluating side-effecting subexpressions twice).
         EmitExpression(csi.Object);
         EmitBoxIfNeeded(csi.Object);
+        var objLocal = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, objLocal);
+
         EmitExpression(csi.Index);
         EmitBoxIfNeeded(csi.Index);
+        var indexLocal = IL.DeclareLocal(_ctx.Types.Object);
+        IL.Emit(OpCodes.Stloc, indexLocal);
+
+        // Compound assignment reads first → a nullish base throws the *read*-worded
+        // guest TypeError before GetIndex (which would otherwise no-op) (#733).
+        if (!IsNullPlaceholderGlobal(csi.Object))
+            EmitThrowIfUndefinedIndexReceiver(objLocal, indexLocal, isWrite: false);
+
+        // Get current value: GetIndex(obj, index)
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Ldloc, indexLocal);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.GetIndex);
 
         // Apply operation
@@ -1596,10 +1625,8 @@ public partial class ILEmitter
         var resultLocal = IL.DeclareLocal(_ctx.Types.Object);
         IL.Emit(OpCodes.Stloc, resultLocal);
 
-        EmitExpression(csi.Object);
-        EmitBoxIfNeeded(csi.Object);
-        EmitExpression(csi.Index);
-        EmitBoxIfNeeded(csi.Index);
+        IL.Emit(OpCodes.Ldloc, objLocal);
+        IL.Emit(OpCodes.Ldloc, indexLocal);
         IL.Emit(OpCodes.Ldloc, resultLocal);
         IL.Emit(OpCodes.Call, _ctx.Runtime!.SetIndex);
 
