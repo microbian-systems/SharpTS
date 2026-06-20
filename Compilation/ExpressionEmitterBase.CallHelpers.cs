@@ -334,13 +334,22 @@ public abstract partial class ExpressionEmitterBase
     }
 
     /// <summary>
-    /// Fast path for a non-escaping const-bound capturing arrow invoked by name (#858). Returns false
-    /// (caller falls back to the generic value-call) unless every guard holds: the callee is a bare,
-    /// non-optional variable flagged by <see cref="NonEscapingArrowLocalAnalyzer"/>; the arrow is
-    /// capturing (has a display class) with a known Invoke method; the in-scope local for that name is
-    /// the typed display-class slot the binding emitter produced; the call has no spread / type
-    /// arguments and matches the declared arity; and no argument can suspend (defensive for state-machine
-    /// emitters that inherit this method but never produce the typed local).
+    /// Fast path for a non-escaping const-bound arrow invoked by name (#858 and its follow-up). Returns
+    /// false (caller falls back to the generic value-call) unless every guard holds: the callee is a
+    /// bare, non-optional variable flagged by <see cref="NonEscapingArrowLocalAnalyzer"/> with a known
+    /// arrow method; the call has no spread / type arguments and matches the declared arity; and no
+    /// argument can suspend (defensive for state-machine emitters that inherit this method but never
+    /// produce the binding). Two shapes are handled, both keyed on the *actual in-scope binding* so a
+    /// same-named parameter/local in another scope can never match:
+    /// <list type="bullet">
+    ///   <item><b>capturing</b> — the arrow has a display class; the binding stored the bare display
+    ///   instance in a typed local. Keyed on that local's CLR type; emitted as `callvirt Invoke` with
+    ///   the instance as receiver.</item>
+    ///   <item><b>non-capturing</b> — the arrow is a static method with no instance; the binding tagged
+    ///   its in-scope slot with the arrow node. Keyed on that tag; emitted as a direct `call` (no
+    ///   receiver).</item>
+    /// </list>
+    /// Either way value-typed params (double/bool) stay unboxed — no per-call boxing or object[].
     /// </summary>
     private bool TryEmitDirectCallArrow(Expr.Call c)
     {
@@ -349,31 +358,43 @@ public abstract partial class ExpressionEmitterBase
         if (c.TypeArgs is { Count: > 0 })
             return false;
         if (Ctx.DirectCallArrowBindings == null ||
-            !Ctx.DirectCallArrowBindings.TryGetValue(arrowVar.Name.Lexeme, out var arrow))
-            return false;
-        if (!Ctx.DisplayClasses.TryGetValue(arrow, out var displayClass) ||
-            !Ctx.ArrowMethods.TryGetValue(arrow, out var invoke))
-            return false;
-        if (!Ctx.Locals.TryGetLocal(arrowVar.Name.Lexeme, out var arrowLocal) ||
-            arrowLocal.LocalType != displayClass)
+            !Ctx.DirectCallArrowBindings.TryGetValue(arrowVar.Name.Lexeme, out var arrow) ||
+            !Ctx.ArrowMethods.TryGetValue(arrow, out var method))
             return false;
 
-        var parameters = invoke.GetParameters();
+        // Resolve and validate the in-scope binding. Capturing → typed display-class local; non-capturing
+        // → tagged marker slot. A miss on either keying means this name is NOT our optimized binding here.
+        LocalBuilder? receiver = null;
+        if (Ctx.DisplayClasses.TryGetValue(arrow, out var displayClass))
+        {
+            if (!Ctx.Locals.TryGetLocal(arrowVar.Name.Lexeme, out var arrowLocal) ||
+                arrowLocal.LocalType != displayClass)
+                return false;
+            receiver = arrowLocal;
+        }
+        else
+        {
+            if (!Ctx.Locals.TryGetTag(arrowVar.Name.Lexeme, out var tag) || !ReferenceEquals(tag, arrow))
+                return false;
+        }
+
+        var parameters = method.GetParameters();
         if (c.Arguments.Count != parameters.Length)
             return false;
         if (c.Arguments.Any(a => a is Expr.Spread) || AnyContainsSuspension(c.Arguments))
             return false;
 
-        // Receiver (display instance) first, then each argument converted to its declared parameter
-        // slot — value-typed params (double/bool) stay unboxed, so no per-call boxing or object[].
-        IL.Emit(OpCodes.Ldloc, arrowLocal);
+        // Receiver (display instance) first for the capturing/instance call; none for the static call.
+        // Then each argument converted to its declared parameter slot.
+        if (receiver != null)
+            IL.Emit(OpCodes.Ldloc, receiver);
         for (int i = 0; i < c.Arguments.Count; i++)
         {
             EmitExpression(c.Arguments[i]);
             EmitConversionForParameter(c.Arguments[i], parameters[i].ParameterType);
         }
-        IL.Emit(OpCodes.Callvirt, invoke);
-        BoxReturnValueIfNeeded(invoke.ReturnType);
+        IL.Emit(receiver != null ? OpCodes.Callvirt : OpCodes.Call, method);
+        BoxReturnValueIfNeeded(method.ReturnType);
         return true;
     }
 

@@ -165,11 +165,10 @@ public partial class ILEmitter
         // invoked by name. For a CAPTURING arrow, store the bare display-class instance in a typed local
         // (CLR type = the display class) instead of a $TSFunction wrapper; the function-value call fast
         // path then emits a direct `callvirt Invoke` with unboxed typed args, skipping the per-call
-        // reflective dispatch. Non-capturing direct-call arrows fall through to the normal wrapper path
-        // (there is no display class to key the call site on — left as a follow-up). Reached only after
-        // the capture branches above, so a name captured by a nested closure (excluded by the analyzer
-        // anyway) is never routed here. The call site re-checks the slot's CLR type, so this binding and
-        // the direct call stay consistent even across same-named bindings in other scopes.
+        // reflective dispatch. Reached only after the capture branches above, so a name captured by a
+        // nested closure (excluded by the analyzer anyway) is never routed here. The call site re-checks
+        // the slot's CLR type, so this binding and the direct call stay consistent even across same-named
+        // bindings in other scopes.
         if (v.Initializer is Expr.ArrowFunction directCallArrow &&
             _ctx.DirectCallArrowBindings.TryGetValue(v.Name.Lexeme, out var boundArrow) &&
             ReferenceEquals(boundArrow, directCallArrow) &&
@@ -183,6 +182,24 @@ public partial class ILEmitter
             }
             // Display-instance construction declined (missing ctor) — fall through to the generic
             // path, which re-emits the arrow as a $TSFunction wrapper into a fresh object local.
+        }
+
+        // Non-capturing variant of the above (#858 follow-up): `const id = (x) => x + 5; id(37)`. A
+        // non-capturing arrow compiles to a STATIC method on $Program (no display class, no instance),
+        // so there is no typed slot to key the call site on. Emit NOTHING for the binding (an arrow
+        // literal has no observable side effect and the analyzer proved every use is a direct call), and
+        // tag the in-scope binding with the arrow node so the call site can recognize it and emit a
+        // direct `call` to the static method. The tag is scope-managed by LocalsManager, so a same-named
+        // parameter/local elsewhere (no tag) can never hit the fast path. This also removes the per-call
+        // $TSFunction wrapper allocation entirely (it was rebuilt every loop iteration before).
+        if (v.Initializer is Expr.ArrowFunction staticCallArrow &&
+            _ctx.DirectCallArrowBindings.TryGetValue(v.Name.Lexeme, out var staticBoundArrow) &&
+            ReferenceEquals(staticBoundArrow, staticCallArrow) &&
+            !_ctx.DisplayClasses.ContainsKey(staticCallArrow) &&
+            _ctx.ArrowMethods.ContainsKey(staticCallArrow))
+        {
+            _ctx.Locals.DeclareLocal(v.Name.Lexeme, _ctx.Types.Object, tag: staticCallArrow);
+            return;
         }
 
         // Non-escaping object-literal local (#862): a provably non-escaping `const o = { x: …, y: … }`

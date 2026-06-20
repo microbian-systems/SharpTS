@@ -21,25 +21,31 @@ namespace SharpTS.Compilation;
 public class LocalsManager(ILGenerator il)
 {
     // Stack-based storage to support variable shadowing
-    // Each variable name maps to a stack of (LocalBuilder, Type) pairs
-    private readonly Dictionary<string, Stack<(LocalBuilder Local, Type Type)>> _localStacks = [];
+    // Each variable name maps to a stack of (LocalBuilder, Type, Tag) entries. Tag is an optional,
+    // emitter-defined marker attached to the binding (e.g. the Expr.ArrowFunction node of a
+    // non-capturing non-escaping direct-call arrow, #858 follow-up): it lets a call site key off the
+    // *actual in-scope binding* rather than the bare name, so a same-named parameter/local in another
+    // scope (which carries no tag) can never be mistaken for it. Block-scoped like the local itself.
+    private readonly Dictionary<string, Stack<(LocalBuilder Local, Type Type, object? Tag)>> _localStacks = [];
 
     // Track which variables were declared in each scope for cleanup
     private readonly Stack<List<string>> _scopes = new([[]]);
 
-    public LocalBuilder DeclareLocal(string name, Type type)
+    public LocalBuilder DeclareLocal(string name, Type type) => DeclareLocal(name, type, tag: null);
+
+    public LocalBuilder DeclareLocal(string name, Type type, object? tag)
     {
         var local = il.DeclareLocal(type);
 
         // Get or create the stack for this variable name
         if (!_localStacks.TryGetValue(name, out var stack))
         {
-            stack = new Stack<(LocalBuilder, Type)>();
+            stack = new Stack<(LocalBuilder, Type, object?)>();
             _localStacks[name] = stack;
         }
 
         // Push the new local onto the stack (shadows any outer variable with same name)
-        stack.Push((local, type));
+        stack.Push((local, type, tag));
 
         // Track that this name was declared in the current scope
         _scopes.Peek().Add(name);
@@ -74,11 +80,11 @@ public class LocalsManager(ILGenerator il)
     {
         if (!_localStacks.TryGetValue(name, out var stack))
         {
-            stack = new Stack<(LocalBuilder, Type)>();
+            stack = new Stack<(LocalBuilder, Type, object?)>();
             _localStacks[name] = stack;
         }
 
-        stack.Push((local, local.LocalType));
+        stack.Push((local, local.LocalType, null));
 
         if (_scopes.Count > 0)
             _scopes.Peek().Add(name);
@@ -99,6 +105,22 @@ public class LocalsManager(ILGenerator il)
 
     public bool HasLocal(string name) =>
         _localStacks.TryGetValue(name, out var stack) && stack.Count > 0;
+
+    /// <summary>
+    /// Gets the optional emitter-defined tag attached to the in-scope binding for <paramref name="name"/>
+    /// (see <see cref="DeclareLocal(string, Type, object?)"/>). Returns false when the name is unbound or
+    /// its current binding carries no tag.
+    /// </summary>
+    public bool TryGetTag(string name, out object? tag)
+    {
+        if (_localStacks.TryGetValue(name, out var stack) && stack.Count > 0)
+        {
+            tag = stack.Peek().Tag;
+            return tag != null;
+        }
+        tag = null;
+        return false;
+    }
 
     /// <summary>
     /// Returns true if we're inside a nested scope (scope depth > 1).
