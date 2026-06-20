@@ -425,8 +425,14 @@ public abstract record Stmt
     /// <c>[Symbol.iterator]() {}</c>); Name is then a synthetic <c>&lt;computed&gt;</c> token and the
     /// key expression is evaluated at class-definition time (interpreter) / registered as a
     /// symbol method (compiler).
+    /// HasDynamicThis is set ONLY on a synthetic generator declaration lifted from a
+    /// <c>HasOwnThis</c> generator function expression / object generator method
+    /// (<see cref="SharpTS.Parsing.GeneratorArrowLifter"/>). It means "this stub binds its own
+    /// dynamic receiver": the compiler threads a leading <c>__this</c> argument into the generator
+    /// state machine's <c>&lt;&gt;4__this</c> field, and the interpreter binds the call receiver
+    /// (defaulting to <c>undefined</c>) so <c>this</c> inside the body resolves (#775).
     /// </summary>
-    public record Function(Token Name, List<TypeParam>? TypeParams, string? ThisType, List<Parameter> Parameters, List<Stmt>? Body, string? ReturnType, bool IsStatic = false, AccessModifier Access = AccessModifier.Public, bool IsAbstract = false, bool IsOverride = false, bool IsAsync = false, bool IsGenerator = false, List<Decorator>? Decorators = null, bool IsPrivate = false, bool IsDeclare = false, Expr? ComputedKey = null) : Stmt;
+    public record Function(Token Name, List<TypeParam>? TypeParams, string? ThisType, List<Parameter> Parameters, List<Stmt>? Body, string? ReturnType, bool IsStatic = false, AccessModifier Access = AccessModifier.Public, bool IsAbstract = false, bool IsOverride = false, bool IsAsync = false, bool IsGenerator = false, List<Decorator>? Decorators = null, bool IsPrivate = false, bool IsDeclare = false, Expr? ComputedKey = null, bool HasDynamicThis = false) : Stmt;
     public record Parameter(Token Name, string? Type, Expr? DefaultValue = null, bool IsRest = false, bool IsParameterProperty = false, AccessModifier? Access = null, bool IsReadonly = false, bool IsOptional = false, List<Decorator>? Decorators = null);
     /// <summary>
     /// Class field declaration. For computed property names (e.g., [Symbol("key")]: type),

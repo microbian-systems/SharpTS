@@ -246,7 +246,7 @@ internal sealed class NestedFunctionLifter
             if (p.IsRest || p.DefaultValue != null)
                 return false;
 
-        if (UsesThisOrArguments(f.Body))
+        if (DeclinesForThisOrArguments(f))
             return false;
 
         // Ordinal sort gives a deterministic parameter order shared by the relocated declaration's
@@ -276,7 +276,7 @@ internal sealed class NestedFunctionLifter
             if (p.IsRest || p.DefaultValue != null)
                 return false;
 
-        if (UsesThisOrArguments(f.Body))
+        if (DeclinesForThisOrArguments(f))
             return false;
 
         // Self-recursion can't be lambda-lifted here: the relocated body's self-calls must resolve to the
@@ -295,15 +295,28 @@ internal sealed class NestedFunctionLifter
     }
 
     /// <summary>
-    /// True if any statement in <paramref name="body"/> reads <c>this</c> or <c>arguments</c>.
-    /// Deliberately over-approximates: it descends through nested function/arrow boundaries (which
-    /// rebind both), so a nested function's own <c>this</c> also trips it. A false positive only
-    /// declines a lambda-lift (a clean failure), never miscompiles.
+    /// Whether a candidate must be declined because its body reads <c>this</c> or <c>arguments</c> that
+    /// a plain top-level function reached through a forwarding arrow could not supply. A non-generator
+    /// declines on either. A GENERATOR declines only on <c>arguments</c> (#775): a <c>function*</c>
+    /// expression binds its own dynamic <c>this</c>, and the compiled free-function generator stub
+    /// threads that receiver in via the thread-local <c>$TSFunction._currentFunctionThis</c> (captured
+    /// into <c>&lt;&gt;4__this</c> at creation), so a <c>this</c>-using generator body lambda-lifts fine.
     /// </summary>
-    private static bool UsesThisOrArguments(List<Stmt>? body)
+    private static bool DeclinesForThisOrArguments(Stmt.Function f) =>
+        f.IsGenerator ? UsesThisOrArguments(f.Body, includeThis: false)
+                      : UsesThisOrArguments(f.Body, includeThis: true);
+
+    /// <summary>
+    /// True if any statement in <paramref name="body"/> reads <c>arguments</c> (and, when
+    /// <paramref name="includeThis"/> is set, <c>this</c>). Deliberately over-approximates: it descends
+    /// through nested function/arrow boundaries (which rebind both), so a nested function's own
+    /// <c>this</c>/<c>arguments</c> also trips it. A false positive only declines a lambda-lift (a clean
+    /// failure), never miscompiles.
+    /// </summary>
+    private static bool UsesThisOrArguments(List<Stmt>? body, bool includeThis = true)
     {
         if (body == null) return false;
-        var scanner = new ThisArgumentsScanner();
+        var scanner = new ThisArgumentsScanner(includeThis);
         foreach (var stmt in body)
         {
             scanner.Visit(stmt);
@@ -312,12 +325,13 @@ internal sealed class NestedFunctionLifter
         return scanner.Found;
     }
 
-    private sealed class ThisArgumentsScanner : Parsing.Visitors.AstVisitorBase
+    private sealed class ThisArgumentsScanner(bool includeThis) : Parsing.Visitors.AstVisitorBase
     {
         public bool Found { get; private set; }
 
         protected override void VisitThis(Expr.This expr)
         {
+            if (!includeThis) return;
             Found = true;
             ShouldContinue = false;
         }

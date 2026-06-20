@@ -198,6 +198,16 @@ public static class FunctionBuiltIns
                 : asyncFn.Call(interp, args);
         }
 
+        // Generator / async-generator function values (declarations and `function*` expressions) have
+        // their own dynamic `this`; .call/.apply rebind the receiver (#775). A null thisArg leaves the
+        // body's `this` defaulting to undefined (the wrapper's own Call handles that).
+        if (callable is SharpTSGeneratorFunction or SharpTSAsyncGeneratorFunction
+            or SharpTSArrowGeneratorFunction or SharpTSAsyncArrowGeneratorFunction)
+        {
+            var target = thisArg != null ? ((IReceiverBindable)callable).BindToReceiver(thisArg) : callable;
+            return target.Call(interp, args);
+        }
+
         // Array.prototype methods rebind their receiver via BindTo so that
         // Array.prototype.push.apply(target, items) pushes onto `target`.
         if (callable is SharpTSArrayUnboundMethod unbound)
@@ -341,6 +351,13 @@ public class BoundFunction : ISharpTSCallable
                 return ((ISharpTSCallable)asyncFn.BindThisValue(_thisArg)).CallV2(interpreter, combined);
             }
 
+            // Generator / async-generator function values rebind their dynamic `this` (#775).
+            if (_target is SharpTSGeneratorFunction or SharpTSAsyncGeneratorFunction
+                or SharpTSArrowGeneratorFunction or SharpTSAsyncArrowGeneratorFunction)
+            {
+                return ((IReceiverBindable)_target).BindToReceiver(_thisArg).CallV2(interpreter, combined);
+            }
+
             // Mirror the legacy Call path for BuiltInMethod (issue #101): the
             // V2 path is hit by JS-level invocation of a BoundFunction wrapping
             // a BuiltInMethod target (e.g. Function.prototype.call.bind(...)).
@@ -389,6 +406,13 @@ public class BoundFunction : ISharpTSCallable
             if (_target is SharpTSAsyncFunction asyncFn)
             {
                 return asyncFn.BindThisValue(_thisArg).Call(interpreter, combinedArgs);
+            }
+
+            // Generator / async-generator function values rebind their dynamic `this` (#775).
+            if (_target is SharpTSGeneratorFunction or SharpTSAsyncGeneratorFunction
+                or SharpTSArrowGeneratorFunction or SharpTSAsyncArrowGeneratorFunction)
+            {
+                return ((IReceiverBindable)_target).BindToReceiver(_thisArg).Call(interpreter, combinedArgs);
             }
 
             // Built-in methods read their receiver from the bound `_receiver`

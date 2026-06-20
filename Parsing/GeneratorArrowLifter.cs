@@ -817,7 +817,11 @@ internal sealed class GeneratorArrowLifter
             Body: rewrittenBody,
             ReturnType: af.ReturnType,
             IsAsync: af.IsAsync,
-            IsGenerator: true);
+            IsGenerator: true,
+            // #775: a HasOwnThis generator expression / object generator method binds its own
+            // dynamic receiver. Carry that need onto the lifted declaration so both back ends can
+            // thread the call receiver into the generator body's `this`.
+            HasDynamicThis: af.HasOwnThis);
 
         // Lift into the nearest enclosing function if the body closes over one of the enclosing
         // functions' locals (#534); otherwise to the module body (#522). Lifting into the enclosing

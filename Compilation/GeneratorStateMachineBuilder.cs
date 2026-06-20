@@ -122,12 +122,17 @@ public class GeneratorStateMachineBuilder
     /// <param name="methodName">Name of the generator method (used in type name)</param>
     /// <param name="analysis">Analysis results from GeneratorStateAnalyzer</param>
     /// <param name="isInstanceMethod">True if this is an instance method (needs 'this' hoisting)</param>
+    /// <param name="hasDynamicThis">True for a free-function stub lifted from a <c>HasOwnThis</c> generator
+    /// expression / object generator method (#775): it carries its own dynamic receiver in a leading
+    /// <c>__this</c> stub argument rather than an IL instance <c>this</c>, so it still needs the
+    /// <c>&lt;&gt;4__this</c> field even though it is a static stub.</param>
     /// <param name="runtime">Optional runtime reference for $IGenerator interface</param>
     public void DefineStateMachine(
         string methodName,
         GeneratorStateAnalyzer.GeneratorFunctionAnalysis analysis,
         bool isInstanceMethod = false,
-        EmittedRuntime? runtime = null)
+        EmittedRuntime? runtime = null,
+        bool hasDynamicThis = false)
     {
         _runtime = runtime;
 
@@ -169,8 +174,10 @@ public class GeneratorStateMachineBuilder
         _hoisting.DefineHoistedEnumerators(analysis.ForOfLoopsWithYield, _types.IEnumerator);
         _hoisting.DefineHoistedForInState(analysis.ForInLoopsWithYield, _types.ListOfObject, _types.Int32);
 
-        // Define 'this' field for instance methods that use 'this'
-        if (isInstanceMethod && analysis.UsesThis)
+        // Define 'this' field for instance methods that use 'this', and for a free-function generator
+        // stub that binds its own dynamic receiver (#775 — a `HasOwnThis` generator expression / object
+        // generator method, threaded in via a leading `__this` stub argument).
+        if ((isInstanceMethod || hasDynamicThis) && analysis.UsesThis)
         {
             ThisField = _stateMachineType.DefineField(
                 "<>4__this",

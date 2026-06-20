@@ -104,11 +104,15 @@ public class AsyncGeneratorStateMachineBuilder
     /// <summary>
     /// Defines the complete state machine class type with all fields and method stubs.
     /// </summary>
+    /// <param name="hasDynamicThis">True for a free-function async-generator stub that binds its own
+    /// dynamic receiver (#775): it captures the active thread-local <c>this</c> into <c>&lt;&gt;4__this</c>
+    /// at creation time even though it is a static stub.</param>
     public void DefineStateMachine(
         string methodName,
         AsyncGeneratorStateAnalyzer.AsyncGeneratorFunctionAnalysis analysis,
         bool isInstanceMethod = false,
-        EmittedRuntime? runtime = null)
+        EmittedRuntime? runtime = null,
+        bool hasDynamicThis = false)
     {
         _runtime = runtime;
 
@@ -148,8 +152,10 @@ public class AsyncGeneratorStateMachineBuilder
         // Define hoisted enumerators for for...of loops containing suspensions (yield/await)
         _hoisting.DefineHoistedEnumerators(analysis.ForOfLoopsWithSuspension, _types.IEnumerator);
 
-        // Define 'this' field for instance methods that use 'this'
-        if (isInstanceMethod && analysis.UsesThis)
+        // Define 'this' field for instance methods that use 'this', and for a free-function async
+        // generator stub that binds its own dynamic receiver (#775 — a `HasOwnThis` async generator
+        // expression / object method, captured from the thread-local receiver at creation time).
+        if ((isInstanceMethod || hasDynamicThis) && analysis.UsesThis)
         {
             ThisField = _stateMachineType.DefineField(
                 "<>4__this",

@@ -1703,11 +1703,13 @@ public class GeneratorTests
         Assert.Contains("Yield not supported", ex.Message);
     }
 
-    [Fact]
-    public void GeneratorExpression_ClosesOverLocal_UsingThis_CompiledFailsCleanly()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_ClosesOverLocal_UsingThis_ThreadsDynamicThis(ExecutionMode mode)
     {
-        // A body using `this` cannot be reached through the forwarding arrow (it has no receiver), so
-        // the lambda-lift declines and the generator stays nested.
+        // #775: a generator function expression that closes over an enclosing-function local AND uses
+        // `this` lambda-lifts and threads its own dynamic `this`. Called plainly (`g()`), `this` is the
+        // sloppy-mode receiver (globalThis), so the body simply yields two values — length 2.
         var source = """
             function outer(this: any) {
               let y = 5;
@@ -1717,8 +1719,112 @@ public class GeneratorTests
             console.log(outer.call({}));
             """;
 
-        var ex = Assert.Throws<CompileException>(() => TestHarness.RunCompiled(source));
-        Assert.Contains("Yield not supported", ex.Message);
+        Assert.Equal("2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorExpression_ClosesOverLocal_UsingThis_DotCallBindsReceiver(ExecutionMode mode)
+    {
+        // #775: the generator captures an enclosing-function local (`mult`) AND reads `this` via a bound
+        // receiver (`.call`). Both the captured local and the dynamic receiver must resolve.
+        var source = """
+            function outer() {
+              let mult = 3;
+              const g = function*() { yield this.base * mult; yield this.base + mult; };
+              return [...(g as any).call({ base: 10 })];
+            }
+            console.log(outer().join(","));
+            """;
+
+        Assert.Equal("30,13\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
+
+    #region Generator function expression / object generator method dynamic `this` — issue #775
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ObjectGeneratorMethod_ReadsThis(ExecutionMode mode)
+    {
+        // The canonical case from the issue: an object generator method reads instance state via `this`.
+        var source = """
+            const o = { v: 5, *gen() { yield this.v; yield this.v + 1; } };
+            for (const x of o.gen()) console.log(x);
+            """;
+
+        Assert.Equal("5\n6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorFunctionExpression_DotCallBindsThis(ExecutionMode mode)
+    {
+        var source = """
+            function* g() { yield this.x; }
+            const o = { x: 9 };
+            for (const v of (g as any).call(o)) console.log(v);
+            """;
+
+        Assert.Equal("9\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GeneratorFunctionExpression_AssignedAsMethod_BindsThis(ExecutionMode mode)
+    {
+        var source = """
+            const o: any = { v: 42 };
+            o.gen = function*() { yield this.v; };
+            console.log([...o.gen()].join(","));
+            """;
+
+        Assert.Equal("42\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ObjectSymbolIteratorGenerator_ReadsThis(ExecutionMode mode)
+    {
+        // The canonical MDN iterator pattern: a `[Symbol.iterator]` generator reading `this`.
+        var source = """
+            const o = {
+              vals: [10, 20],
+              [Symbol.iterator]: function*() { for (const v of this.vals) yield v; }
+            };
+            for (const x of o) console.log(x);
+            """;
+
+        Assert.Equal("10\n20\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NamedGeneratorFunctionExpression_ReadsThis(ExecutionMode mode)
+    {
+        var source = """
+            const o: any = { base: 100 };
+            o.gen = function* gen() { yield this.base; yield this.base + 1; };
+            console.log([...o.gen()].join(","));
+            """;
+
+        Assert.Equal("100,101\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PlainGeneratorFunctionExpressionCall_ThisIsSloppyGlobal(ExecutionMode mode)
+    {
+        // A `function*` expression called plainly (no receiver) binds `this` to the sloppy-mode global
+        // (consistent with a non-generator function expression), not an unbound-variable error. Both
+        // back ends model sloppy `this` as a globalThis object → typeof is "object".
+        var source = """
+            const g = function*() { yield typeof this; };
+            console.log([...g()].join(","));
+            """;
+
+        Assert.Equal("object\n", TestHarness.Run(source, mode));
     }
 
     #endregion

@@ -39,9 +39,18 @@ public partial class ILCompiler
         // Analyze the generator function for yield points and hoisted variables
         var analysis = _generators.Analyzer.Analyze(funcStmt);
 
+        // #775: a free-function generator binds its own dynamic `this` (it is a `function*`, never an
+        // arrow). When its body uses `this`, the stub captures the active dynamic receiver — the
+        // thread-local `$TSFunction._currentFunctionThis`, set by InvokeWithThis for an `o.gen()` /
+        // `.call(recv)` value-call — into the state machine's <>4__this field at creation time, since
+        // the thread-local is gone by the time MoveNext runs lazily. A plain direct `g()` call leaves it
+        // at the globalThis sentinel (sloppy `this`). This mirrors how a non-generator `function(){ this.x }`
+        // declaration threads `this`, so direct calls keep their signature (no synthetic `__this` param).
+        bool hasDynamicThis = analysis.UsesThis;
+
         // Create the state machine builder
         var smBuilder = new GeneratorStateMachineBuilder(_moduleBuilder, _types, _generators.StateMachineCounter++);
-        smBuilder.DefineStateMachine(funcName, analysis, isInstanceMethod: false, runtime: _runtime);
+        smBuilder.DefineStateMachine(funcName, analysis, isInstanceMethod: false, runtime: _runtime, hasDynamicThis: hasDynamicThis);
 
         _generators.StateMachines[qualifiedName] = smBuilder;
         _generators.Functions[qualifiedName] = funcStmt;
@@ -245,6 +254,27 @@ public partial class ILCompiler
 
         // Create new instance of the state machine using the constructor builder
         il.Emit(OpCodes.Newobj, smBuilder.Constructor);
+
+        // #775: capture the active dynamic `this` into the state machine's <>4__this field. The stub
+        // runs eagerly (when the generator is created), while MoveNext runs lazily — by then the
+        // thread-local receiver is gone, so it must be snapshotted here. The receiver is the thread-local
+        // `$TSFunction._currentFunctionThis` (set by InvokeWithThis for an `o.gen()` / `.call(recv)`
+        // value-call), coerced null → globalThis sentinel to match LocalVariableResolver.LoadThis.
+        if (smBuilder.ThisField != null && _runtime?.CurrentFunctionThisField != null)
+        {
+            il.Emit(OpCodes.Dup);       // Keep state machine reference on stack
+            il.Emit(OpCodes.Ldsfld, _runtime.CurrentFunctionThisField);
+            if (_runtime.GlobalThisSingletonField != null)
+            {
+                var thisNotNull = il.DefineLabel();
+                il.Emit(OpCodes.Dup);
+                il.Emit(OpCodes.Brtrue, thisNotNull);
+                il.Emit(OpCodes.Pop);
+                il.Emit(OpCodes.Ldsfld, _runtime.GlobalThisSingletonField);
+                il.MarkLabel(thisNotNull);
+            }
+            il.Emit(OpCodes.Stfld, smBuilder.ThisField);
+        }
 
         // Copy parameters to state machine fields
         for (int i = 0; i < funcStmt.Parameters.Count; i++)
