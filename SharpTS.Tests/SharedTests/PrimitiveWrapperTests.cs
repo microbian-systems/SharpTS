@@ -117,6 +117,26 @@ public class PrimitiveWrapperTests
         Assert.Equal("false\n", output);
     }
 
+    // ── Symbol: bare not an instance, Object(sym) wrapper is (#449) ───────────
+    // Symbol has no `new` form, so its only boxed form is `Object(Symbol())`.
+    // A bare symbol primitive is NOT an instance; the boxed wrapper IS.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_Bare_NotInstanceofSymbol(ExecutionMode mode)
+    {
+        var output = TestHarness.Run("console.log((Symbol('s') as any) instanceof Symbol);", mode);
+        Assert.Equal("false\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Symbol_Boxed_InstanceofSymbol(ExecutionMode mode)
+    {
+        var output = TestHarness.Run("console.log((Object(Symbol('s')) as any) instanceof Symbol);", mode);
+        Assert.Equal("true\n", output);
+    }
+
     // ── call form still coerces (no wrapper) ────────────────────────────────
 
     [Theory]

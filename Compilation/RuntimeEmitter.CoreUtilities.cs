@@ -3764,6 +3764,11 @@ public partial class RuntimeEmitter
         CheckBoxed(_types.Boolean, "Boolean");
         CheckBoxed(_types.Double,  "Number");
         CheckBoxed(_types.String,  "String");
+        // Symbol lowers to the $TSSymbol Type token, so a bare $TSSymbol would
+        // otherwise reach the IsAssignableFrom($TSSymbol, $TSSymbol) fallback and
+        // wrongly match. Terminal like the wrappers above: true iff `instance` is
+        // a boxed Symbol wrapper (`Object(sym)`), false for a bare symbol (#449).
+        CheckBoxed(runtime.TSSymbolType, "Symbol");
 
         // `x instanceof Promise`: the Promise identifier resolves to
         // typeof(Task<object?>), but $Promise instances (and #242 Promise

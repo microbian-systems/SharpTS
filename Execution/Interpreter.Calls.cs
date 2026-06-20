@@ -779,6 +779,10 @@ public partial class Interpreter
                 // constructor) — brand-check the runtime instance type (#246).
                 "AbortSignal" => left is SharpTSAbortSignal,
                 "AbortController" => left is SharpTSAbortController,
+                // A boxed Symbol wrapper (`Object(sym)`) carries the __primitiveType
+                // marker; a bare SharpTSSymbol is not a SharpTSObject so stays false,
+                // per ECMA-262 OrdinaryHasInstance (#449).
+                "Symbol" => IsBoxedPrimitiveOfType(left, "Symbol"),
                 _ => false
             };
         }
