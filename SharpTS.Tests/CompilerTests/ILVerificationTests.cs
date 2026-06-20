@@ -945,9 +945,10 @@ public class ILVerificationTests
     // through a display class leaves a statically-object value against the slot,
     // which previously failed IL verification (StackUnexpected). No castclass is
     // safe here (it would crash on $Undefined), so the slot is dropped to object.
-    // Verified separately from run: reference-assembly compilation (used by
-    // CompileVerifyAndRun) trips a distinct, pre-existing $TSFunction.ctor reflection
-    // bug for this captured-var arrow shape — see #343.
+    // #343: reference-assembly compilation (used by CompileVerifyAndRun) used to trip
+    // a BadImageFormatException constructing $TSFunction over this captured-var arrow —
+    // root-caused to PEPacker emitting nil MethodDef ParamList row-pointers, fixed in
+    // NickNa.PEPacker 1.0.2. This now exercises the ref-asm runtime path end to end.
     [Fact]
     public void InferredStringReturn_CapturedVarArrow_PassesILVerification()
     {
@@ -962,10 +963,8 @@ public class ILVerificationTests
             console.log(outer());
             """;
 
-        var errors = TestHarness.CompileAndVerifyOnly(source);
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
         Assert.Empty(errors);
-
-        var output = TestHarness.RunCompiled(source);
         Assert.Equal("ab\n", output);
     }
 
