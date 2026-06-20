@@ -118,6 +118,21 @@ public static class NonEscapingArrowLocalAnalyzer
         protected override void VisitVariable(Expr.Variable expr) =>
             Disqualified.Add(expr.Name.Lexeme);
 
+        protected override void VisitAssign(Expr.Assign expr)
+        {
+            // `f = …` rebinds the name — the original arrow is no longer the only value, so it must NOT
+            // be optimized. The assignment target is a Token (not an Expr.Variable), so the VisitVariable
+            // catch-all never sees it; disqualify explicitly. (A `let f = arrow; f = arrow2;` case.)
+            Disqualified.Add(expr.Name.Lexeme);
+            base.VisitAssign(expr);
+        }
+
+        protected override void VisitCompoundAssign(Expr.CompoundAssign expr)
+        {
+            Disqualified.Add(expr.Name.Lexeme);
+            base.VisitCompoundAssign(expr);
+        }
+
         private static bool IsEligibleArrow(Expr.ArrowFunction af) =>
             !af.IsAsync && !af.IsGenerator && af.Name == null && !af.HasOwnThis &&
             af.Parameters.All(p => !p.IsRest && !p.IsOptional && p.DefaultValue == null);

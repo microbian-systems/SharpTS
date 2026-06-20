@@ -203,4 +203,92 @@ public class NonEscapingArrowDirectCallTests
         // (1+0)+(1+10)+(1+20)+(1+30)+(1+40) = 5 + 100 = 105
         Assert.Equal("105\n", TestHarness.Run(source, mode));
     }
+
+    // ---- #858 follow-up: non-capturing arrows compile to a direct static `call` ----
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NonCapturingArrow_InLoop_IsCorrect(ExecutionMode mode)
+    {
+        // The main perf shape: a non-capturing arrow declared and called every iteration. Previously
+        // rebuilt a $TSFunction wrapper per iteration; now emits nothing for the binding and a direct
+        // static call. Must stay correct.
+        var source = """
+            function work(n: number): number {
+                let sum = 0;
+                for (let i = 0; i < n; i++) {
+                    const idPlus = (x: number): number => x + 5;
+                    sum = sum + idPlus(i);
+                }
+                return sum;
+            }
+            console.log(work(1000));
+            """;
+        // sum(i + 5) for i in 0..999 = (999*1000/2) + 5*1000 = 499500 + 5000 = 504500
+        Assert.Equal("504500\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NonCapturingArrow_MultipleArgs_AndBooleanReturn(ExecutionMode mode)
+    {
+        var source = """
+            function run(): number {
+                const mulNC = (a: number, b: number): number => a * b;
+                const isBigNC = (a: number): boolean => a > 10;
+                let total = 0;
+                for (let i = 0; i < 5; i++) {
+                    const p = mulNC(i, 3);
+                    if (isBigNC(p)) { total = total + p; }
+                }
+                return total;
+            }
+            console.log(run());
+            """;
+        // products: 0,3,6,9,12 -> only 12 > 10 -> total 12
+        Assert.Equal("12\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NonCapturingAndCapturing_InSameFunction_BothCorrect(ExecutionMode mode)
+    {
+        // A non-capturing arrow (static call) and a capturing arrow (callvirt Invoke) coexist; the two
+        // direct-call shapes must not interfere.
+        var source = """
+            function work(n: number): number {
+                let sum = 0;
+                for (let i = 0; i < n; i++) {
+                    const constNC = (x: number): number => x * 2;
+                    const capCAP = (x: number): number => x + i;
+                    sum = sum + constNC(i) + capCAP(i);
+                }
+                return sum;
+            }
+            console.log(work(100));
+            """;
+        // sum over i in 0..99 of (i*2) + (i+i) = sum(4i) = 4 * (99*100/2) = 4 * 4950 = 19800
+        Assert.Equal("19800\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NonCapturingArrow_NameAlsoAParameterElsewhere_StaysCorrect(ExecutionMode mode)
+    {
+        // Scope-collision guard for the non-capturing path: `dup` is an optimized non-capturing arrow in
+        // run() AND a function parameter in callIt() that is itself called as `dup(3)`. The analyzer's
+        // single-declaration guard counts only the const (params aren't counted), so `dup` IS optimized
+        // in run() — but callIt()'s `dup(3)` must dispatch to ITS parameter, not run()'s static method.
+        // The call site keys on the scope-managed tag, so callIt (which never tagged `dup`) takes the
+        // generic value-call. A regression here would make callIt() return 3+1000=1003 instead of 6.
+        var source = """
+            function callIt(dup: (n: number) => number): number { return dup(3); }
+            function run(): number {
+                const dup = (x: number): number => x + 1000;
+                return dup(5);
+            }
+            console.log(run() + "," + callIt((q: number): number => q * 2));
+            """;
+        Assert.Equal("1005,6\n", TestHarness.Run(source, mode));
+    }
 }
