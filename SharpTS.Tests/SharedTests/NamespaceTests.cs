@@ -817,4 +817,84 @@ public class NamespaceTests
     }
 
     #endregion
+
+    #region Nested namespace reference to the enclosing namespace by its OWN dotted name (#745)
+
+    // Distinct from #665 (bare references to enclosing MEMBERS): here a nested member names the
+    // ENCLOSING namespace itself (or an ancestor) by its own dotted name. The checker previously
+    // rejected this ("Undefined variable 'O'") in both modes because CheckNamespace binds the
+    // namespace's own name only AFTER its body — including nested bodies — is fully checked.
+    // CheckNamespace now self-binds its own name into its body scope during the first pass.
+    // Scope note: only first-pass `types` members (nested namespaces, classes, etc.) resolve via
+    // the own dotted name; an enclosing function/var by the namespace's own name (`O.outerFunc()`)
+    // is not covered — its bare form works via #665.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedNamespace_ReferencesEnclosingNamespaceByOwnDottedName(ExecutionMode mode)
+    {
+        // The exact issue repro: O.B.f names O by its own name to reach O.A.g.
+        var code = @"
+            namespace O {
+                export namespace A { export function g() { return 5; } }
+                export namespace B { export function f() { return O.A.g(); } }
+            }
+            console.log(O.B.f());
+        ";
+        Assert.Equal("5\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DeeplyNested_ReferencesOutermostNamespaceByDottedName(ExecutionMode mode)
+    {
+        // A three-level-deep member names the outermost namespace by its own dotted name.
+        var code = @"
+            namespace Outer {
+                export namespace X { export function v() { return 9; } }
+                export namespace Mid {
+                    export namespace Inner {
+                        export function f() { return Outer.X.v(); }
+                    }
+                }
+            }
+            console.log(Outer.Mid.Inner.f());
+        ";
+        Assert.Equal("9\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedNamespace_BareAndOwnDottedNameCoexist(ExecutionMode mode)
+    {
+        // The same body uses both the bare sibling form (A.g(), #665) and the own dotted name
+        // (O.A.g(), #745) — both must resolve to the same member.
+        var code = @"
+            namespace O {
+                export namespace A { export function g() { return 5; } }
+                export namespace B { export function f() { return A.g() + O.A.g(); } }
+            }
+            console.log(O.B.f());
+        ";
+        Assert.Equal("10\n", TestHarness.Run(code, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NestedNamespace_OwnDottedNameIsUnambiguousVsSameNamedTopLevel(ExecutionMode mode)
+    {
+        // A top-level A exists, but the dotted path O.A is unambiguous: it resolves the nested
+        // O.A (5), never the top-level A (100).
+        var code = @"
+            namespace A { export function g() { return 100; } }
+            namespace O {
+                export namespace A { export function g() { return 5; } }
+                export namespace B { export function f() { return O.A.g(); } }
+            }
+            console.log(O.B.f());
+        ";
+        Assert.Equal("5\n", TestHarness.Run(code, mode));
+    }
+
+    #endregion
 }

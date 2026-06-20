@@ -79,6 +79,19 @@ public partial class TypeChecker
             foreach (var member in ns.Members)
             {
                 CollectNamespaceMemberType(member, types);
+                // Self-bind THIS namespace's own name into its own body scope from the members
+                // collected so far, so a later nested-namespace member body checked in this same
+                // pass can reference the enclosing namespace by its own dotted name (`O.A.g()`
+                // from inside O.B.f). Source order: `A` precedes `B` in the repro, so `A` is
+                // already in `types` when B's body is checked. DefineNamespace merges on repeat,
+                // so re-calling each iteration is safe. This binding lives only inside the
+                // namespace scope and is discarded at scope exit; the outer binding still happens
+                // after the body (below). Only first-pass `types` members (nested namespaces,
+                // classes, interfaces, enums, type aliases) resolve via the own dotted name —
+                // functions/vars enter `values` only in the second pass, so `O.outerFunc()` by the
+                // enclosing namespace's own name is not covered (the bare form works via #665). (#745)
+                _environment.DefineNamespace(name, new TypeInfo.Namespace(
+                    name, types.ToFrozenDictionary(), values.ToFrozenDictionary()));
             }
 
             // Second pass: fully type-check all members. In recovery mode, check each member
