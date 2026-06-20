@@ -375,20 +375,6 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Whether <paramref name="type"/> is <c>null</c>, <c>undefined</c>, or a union composed only of
-    /// those. Property access on such a bare nullish type is not yet rejected by the checker (only a
-    /// union that ALSO has a real member is — see <c>CheckGetOnUnion</c>), so post-write variable
-    /// narrowing (#653) refuses to narrow a variable down to one, lest it drop a "possibly null/
-    /// undefined" diagnostic a later access must still raise.
-    /// </summary>
-    private static bool IsPurelyNullish(TypeInfo type) => type switch
-    {
-        TypeInfo.Null or TypeInfo.Undefined => true,
-        TypeInfo.Union u => u.FlattenedTypes.All(IsPurelyNullish),
-        _ => false
-    };
-
-    /// <summary>
     /// Invalidates property narrowings for an object when it's passed to a function
     /// that might mutate it. Only affects mutable property narrowings, not the object itself.
     /// Readonly properties are preserved since they can't be mutated.

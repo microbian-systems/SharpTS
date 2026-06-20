@@ -125,9 +125,8 @@ public class VariableAssignmentFlowNarrowingTests
     [Fact]
     public void Reassign_NullValue_StaysNullableAndRejectsNonNullSlot()
     {
-        // Writing `null` keeps the variable nullable (a purely-nullish slot is deliberately NOT
-        // installed — see IsPurelyNullish — so a later access still raises "possibly null"). Returning
-        // it from a non-nullable `string` function is therefore still rejected.
+        // Writing `null` narrows the variable to bare `null` (#742). Returning it from a non-nullable
+        // `string` function is therefore still rejected (`null` is not assignable to `string`).
         var source = """
             function f(x: string | null): string {
                 x = null;
@@ -142,9 +141,8 @@ public class VariableAssignmentFlowNarrowingTests
     [Fact]
     public void Reassign_NullThenAccess_StillRejected()
     {
-        // Soundness: `x = null` followed by a property access must still error. Narrowing to a bare
-        // `null` would lose this (bare-nullish access isn't flagged yet), so the declared union is
-        // kept and `x.length` reports the nullish access.
+        // Soundness: `x = null` followed by a property access must still error. The variable narrows
+        // to bare `null` (#742) and `x.length` is flagged directly as access on a possibly-null type.
         var source = """
             function f(x: string | null): number {
                 x = null;

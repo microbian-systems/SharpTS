@@ -1151,7 +1151,7 @@ public class GeneratorTryFinallyTests
     [InlineData("function* g() { try { try { yield 0; throw 'a'; } catch (e) { try { throw 'b'; } catch (e2) { throw 'c'; } } } catch (e) { console.log(e); } yield 1; } for (const v of g()) {}")]
     [InlineData("function* g() { try { try { yield 0; } finally { try { throw 'b'; } catch (e2) { throw 'c'; } } } catch (e) { console.log(e); } } for (const v of g()) {}")]
     [InlineData("function* g() { try { try { yield 0; throw 'a'; } catch (e) { try { throw 'b'; } catch (e2) { throw 'c'; } } finally { console.log('f'); } } catch (e) { console.log(e); } } for (const v of g()) {}")]
-    [InlineData("function* g() { try { try { yield 0; throw 'a'; } catch (e) { const u = undefined; u.foo(); } } catch (e) { console.log('caught'); } } for (const v of g()) {}")]
+    [InlineData("function* g() { try { try { yield 0; throw 'a'; } catch (e) { const u: any = undefined; u.foo(); } } catch (e) { console.log('caught'); } } for (const v of g()) {}")]
     public void GeneratorTryFinallyWithYield_EmitsVerifiableIL(string source)
     {
         var errors = TestHarness.CompileAndVerifyOnly(source);
