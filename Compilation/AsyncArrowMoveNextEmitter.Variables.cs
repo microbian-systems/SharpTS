@@ -35,6 +35,16 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
+        // Follow-up to #838: a local of THIS async arrow that a nested sync arrow writes lives in the
+        // arrow's own function DC (reference type), so read it through `this.<>__functionDC.field`.
+        if (TryGetOwnFunctionDCField(name, out var ownReadField))
+        {
+            EmitLoadOwnFunctionDC();
+            _il.Emit(OpCodes.Ldfld, ownReadField);
+            SetStackUnknown();
+            return;
+        }
+
         // Try resolver first (params, locals, hoisted, captured)
         var stackType = _resolver!.TryLoadVariable(name);
         if (stackType != null)
@@ -138,6 +148,18 @@ public partial class AsyncArrowMoveNextEmitter
             return;
         }
 
+        // Follow-up to #838: write a DC-resident local through `this.<>__functionDC.field = value`.
+        if (TryGetOwnFunctionDCField(name, out var ownAssignField))
+        {
+            var temp = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, temp);     // consume the duplicated value
+            EmitLoadOwnFunctionDC();
+            _il.Emit(OpCodes.Ldloc, temp);
+            _il.Emit(OpCodes.Stfld, ownAssignField);
+            SetStackUnknown();                 // remaining copy is the assignment's value
+            return;
+        }
+
         // Check if it's a captured top-level variable in entry-point display class
         if (_ctx?.CapturedTopLevelVars?.Contains(name) == true &&
             _ctx.EntryPointDisplayClassFields?.TryGetValue(name, out var entryPointField) == true &&
@@ -190,6 +212,19 @@ public partial class AsyncArrowMoveNextEmitter
             EmitLoadOuterFunctionDC();
             _il.Emit(OpCodes.Ldloc, temp);
             _il.Emit(OpCodes.Stfld, dcStoreField);
+            return;
+        }
+
+        // Follow-up to #838: store a DC-resident local through `this.<>__functionDC.field` (covers the
+        // body's own `let r = …` declaration, which routes through EmitStoreVariable). Checked first so it
+        // wins over any (now-unused) hoisted SM field.
+        if (TryGetOwnFunctionDCField(name, out var ownStoreField))
+        {
+            var temp = _il.DeclareLocal(_types.Object);
+            _il.Emit(OpCodes.Stloc, temp);
+            EmitLoadOwnFunctionDC();
+            _il.Emit(OpCodes.Ldloc, temp);
+            _il.Emit(OpCodes.Stfld, ownStoreField);
             return;
         }
 
@@ -392,6 +427,23 @@ public partial class AsyncArrowMoveNextEmitter
         _il.Emit(OpCodes.Ldfld, _builder.OuterStateMachineField!);
         _il.Emit(OpCodes.Unbox, _builder.OuterStateMachineType!);
         _il.Emit(OpCodes.Ldfld, _ctx!.OuterFunctionDCField!);
+    }
+
+    // Follow-up to #838: this arrow's OWN function display class (a reference type held on its state
+    // machine), shared with a nested sync arrow that writes one of the arrow's locals. The field map is
+    // on the builder so it never collides with the OuterFunctionDCField relay above.
+    private bool TryGetOwnFunctionDCField(string name, out FieldBuilder dcField)
+    {
+        dcField = null!;
+        return _builder.FunctionDCField != null
+            && _builder.FunctionDCFieldMap.TryGetValue(name, out dcField!);
+    }
+
+    // Pushes `this.<>__functionDC` (a class reference); the caller's ldfld/stfld on it is verifiable.
+    private void EmitLoadOwnFunctionDC()
+    {
+        _il.Emit(OpCodes.Ldarg_0);
+        _il.Emit(OpCodes.Ldfld, _builder.FunctionDCField!);
     }
 
     // Const declarations, compound/logical assignment, and increment/decrement reach the variable

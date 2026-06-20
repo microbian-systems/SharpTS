@@ -39,7 +39,13 @@ public partial class ILCompiler
     // name qualification isn't available here. The AST node is stable; we
     // resolve it to the qualified name at propagate time via FunctionAstNodes.
     private readonly Dictionary<Expr.ArrowFunction, Stmt.Function> _arrowEnclosingFunction = new(ReferenceEqualityComparer.Instance);
+    // Follow-up to #838: the nearest enclosing ASYNC ARROW of each collected arrow. An async arrow plays
+    // the role of a "function" scope for a nested sync arrow that captures-and-writes one of its locals:
+    // PropagateFunctionDCRequirements resolves the sync arrow's DC source to the async arrow's display
+    // class. Separate from _arrowEnclosingFunction because the enclosing scope is an Expr.ArrowFunction.
+    private readonly Dictionary<Expr.ArrowFunction, Expr.ArrowFunction> _arrowEnclosingAsyncArrow = new(ReferenceEqualityComparer.Instance);
     private Stmt.Function? _currentEnclosingFunctionStmt;
+    private Expr.ArrowFunction? _currentEnclosingAsyncArrow;
     private Expr.ArrowFunction? _currentParentArrow;
     private string? _currentCollectClassName;
     // The IMMEDIATELY enclosing callable (Expr.ArrowFunction or Stmt.Function) during
@@ -109,6 +115,11 @@ public partial class ILCompiler
         // here — after every module has been walked (all class-expr names assigned) and before the
         // PropagateFunctionDCRequirements pass below, which needs the function DC fields already present.
         RegisterClassExpressionGeneratorMethodFunctionDisplayClasses();
+
+        // Follow-up to #838: register a function display class for each async arrow whose own local is
+        // captured-and-written by a nested SYNC arrow, before PropagateFunctionDCRequirements (which
+        // resolves those sync arrows to the async arrow's DC).
+        RegisterAsyncArrowFunctionDisplayClasses();
 
         // Propagate function DC requirements through arrow nesting
         // If an inner arrow needs $functionDC, parent arrows also need it
@@ -463,6 +474,11 @@ public partial class ILCompiler
                     var previousEnclosing = _currentEnclosingFunctionName;
                     var previousEnclosingStmt = _currentEnclosingFunctionStmt;
                     var previousCallable = _currentEnclosingCallable;
+                    // A nested function declaration is a lambda-lift boundary: an arrow inside it captures
+                    // from the function, not the enclosing async arrow. Clear the async-arrow cursor so a
+                    // deeper arrow is not mis-attributed to the async arrow's function DC (#838 follow-up).
+                    var previousEnclosingAsyncArrowFn = _currentEnclosingAsyncArrow;
+                    _currentEnclosingAsyncArrow = null;
                     if (_functionNestingDepth == 0)
                     {
                         // Top-level function: use its qualified name as enclosing context
@@ -479,6 +495,7 @@ public partial class ILCompiler
                     _currentEnclosingFunctionName = previousEnclosing;
                     _currentEnclosingFunctionStmt = previousEnclosingStmt;
                     _currentEnclosingCallable = previousCallable;
+                    _currentEnclosingAsyncArrow = previousEnclosingAsyncArrowFn;
                 }
                 foreach (var p in f.Parameters)
                     if (p.DefaultValue != null)
@@ -649,13 +666,24 @@ public partial class ILCompiler
                     _arrowEnclosingFunction[af] = _currentEnclosingFunctionStmt;
                 }
 
+                // Follow-up to #838: record the nearest enclosing async arrow so a nested sync arrow can
+                // resolve a write-capture to that async arrow's function DC. Recorded for descendants of
+                // an async arrow (the async arrow itself maps to its own outer async arrow, if any).
+                if (_currentEnclosingAsyncArrow != null)
+                {
+                    _arrowEnclosingAsyncArrow[af] = _currentEnclosingAsyncArrow;
+                }
+
                 // Track parent arrow for function DC propagation
                 _arrowParent[af] = _currentParentArrow;
                 _arrowEnclosingCallable[af] = _currentEnclosingCallable;
                 var previousParent = _currentParentArrow;
                 var previousCallable = _currentEnclosingCallable;
+                var previousEnclosingAsyncArrow = _currentEnclosingAsyncArrow;
                 _currentParentArrow = af;
                 _currentEnclosingCallable = af;
+                if (af.IsAsync)
+                    _currentEnclosingAsyncArrow = af;
 
                 // Entering an arrow body is the same as entering a function body for the
                 // purpose of "inner function declaration" classification: `function X() {}`
@@ -676,6 +704,7 @@ public partial class ILCompiler
 
                 _currentParentArrow = previousParent;
                 _currentEnclosingCallable = previousCallable;
+                _currentEnclosingAsyncArrow = previousEnclosingAsyncArrow;
                 break;
             case Expr.Binary b:
                 CollectArrowsFromExpr(b.Left);
@@ -864,7 +893,77 @@ public partial class ILCompiler
     {
         foreach (var classExpr in _classExprs.ToDefine)
             if (_classExprs.Names.TryGetValue(classExpr, out var name))
+            {
                 RegisterGeneratorMethodFunctionDisplayClasses(classExpr.Methods, name);
+                RegisterAsyncMethodFunctionDisplayClasses(classExpr.Methods, name);
+            }
+    }
+
+    private int _asyncArrowDCCounter;
+
+    /// <summary>
+    /// Follow-up to #838: registers a function display class for each async arrow whose OWN local is
+    /// captured-and-written by a nested SYNC arrow, so that write shares verifiable reference storage on
+    /// the async arrow's state machine (the async-arrow analogue of free async functions / async methods).
+    /// Runs in Phase 5 before <see cref="PropagateFunctionDCRequirements"/>, which resolves the nested sync
+    /// arrow's DC source to this DC via <see cref="ClosureCompilationState.AsyncArrowDCKeys"/>. No-op for
+    /// async arrows with no such write-capture (the common case).
+    /// </summary>
+    private void RegisterAsyncArrowFunctionDisplayClasses()
+    {
+        foreach (var (arrow, _) in _collectedArrows)
+        {
+            if (!arrow.IsAsync) continue;
+
+            var members = ComputeAsyncArrowSyncWriteCaptures(arrow);
+            if (members.Count == 0) continue;
+
+            string key = $"$asyncArrow${_asyncArrowDCCounter++}";
+
+            // #838 (additive): expands `members` with renamed storage keys for write-captured shadows AND
+            // records ArrowFunctionDCFieldRenames[nestedSyncArrow] so the sync arrow's body resolves the
+            // renamed field generically (main's CurrentArrowFunctionDCFieldRenames path).
+            ApplyWriteCaptureRenames(members, GeneratorBlockScopeRenamer.Compute(arrow));
+
+            RegisterFunctionDisplayClass(key, members);
+            if (_closures.FunctionDisplayClasses.ContainsKey(key))
+                _closures.AsyncArrowDCKeys[arrow] = key;
+        }
+    }
+
+    /// <summary>
+    /// The async arrow's OWN locals (captured by an inner closure) that a nested SYNC arrow WRITES — the
+    /// member set of the async arrow's function display class. Mirrors the generator path: per nested sync
+    /// arrow, the names it assigns AND captures; intersected with the async arrow's captured locals so only
+    /// its own bindings are lifted (transitive captures stay on their existing path). Parameters and
+    /// per-iteration loop bindings (#649) are excluded.
+    /// </summary>
+    private HashSet<string> ComputeAsyncArrowSyncWriteCaptures(Expr.ArrowFunction asyncArrow)
+    {
+        var capturedLocals = _closures.Analyzer.GetCapturedLocals(asyncArrow);
+        if (capturedLocals.Count == 0) return [];
+
+        var writes = new HashSet<string>();
+        foreach (var (arrow, _) in _collectedArrows)
+        {
+            if (arrow.IsAsync) continue;   // only SYNC arrows share through the async arrow's function DC
+            if (!_arrowEnclosingAsyncArrow.TryGetValue(arrow, out var encl) || !ReferenceEquals(encl, asyncArrow))
+                continue;
+            var w = CapturedWriteAnalysis.CollectImmediateWrites(arrow);
+            w.IntersectWith(_closures.Analyzer.GetCaptures(arrow));
+            writes.UnionWith(w);
+        }
+        if (writes.Count == 0) return [];
+
+        var result = new HashSet<string>(capturedLocals);
+        result.IntersectWith(writes);
+        // Parameters stay on their hoisted fields (the stub seeds only the DC's locals); a
+        // captured-written async-arrow PARAMETER stays on the existing path (rare; out of scope here).
+        foreach (var p in asyncArrow.Parameters)
+            result.Remove(p.Name.Lexeme);
+        var perIteration = _closures.Analyzer.GetPerIterationLoopBindings(asyncArrow);
+        if (perIteration.Count > 0) result.ExceptWith(perIteration);
+        return result;
     }
 
     /// <summary>
@@ -911,17 +1010,28 @@ public partial class ILCompiler
 
         foreach (var (arrow, captures) in _collectedArrows)
         {
-            if (!_arrowEnclosingFunction.TryGetValue(arrow, out var enclosingStmt))
-                continue;
-            var enclosingFuncName = ResolveQualifiedName(enclosingStmt);
-            if (enclosingFuncName == null)
-                continue;
-            if (!_closures.FunctionDisplayClassFields.TryGetValue(enclosingFuncName, out var funcDCFields))
-                continue;
-            if (captures.Any(c => funcDCFields.ContainsKey(c)))
+            // (1) Enclosing Stmt.Function's display class (free functions / methods). Membership is by
+            // plain ContainsKey: #838 renames are ADDITIVE (ApplyWriteCaptureRenames keeps the source
+            // name AND adds the renamed storage key), so a write-captured shadow's source name is present.
+            if (_arrowEnclosingFunction.TryGetValue(arrow, out var enclosingStmt) &&
+                ResolveQualifiedName(enclosingStmt) is string enclosingFuncName &&
+                _closures.FunctionDisplayClassFields.TryGetValue(enclosingFuncName, out var funcDCFields) &&
+                captures.Any(funcDCFields.ContainsKey))
             {
                 _arrowsNeedingFunctionDC.Add(arrow);
                 _closures.ArrowFunctionDCSource[arrow] = enclosingFuncName;
+                continue;
+            }
+
+            // (2) Follow-up to #838: enclosing ASYNC ARROW's display class — a sync arrow that
+            // captures-and-writes one of the async arrow's own locals routes through that DC.
+            if (_arrowEnclosingAsyncArrow.TryGetValue(arrow, out var enclAsyncArrow) &&
+                _closures.AsyncArrowDCKeys.TryGetValue(enclAsyncArrow, out var asyncKey) &&
+                _closures.FunctionDisplayClassFields.TryGetValue(asyncKey, out var asyncDCFields) &&
+                captures.Any(asyncDCFields.ContainsKey))
+            {
+                _arrowsNeedingFunctionDC.Add(arrow);
+                _closures.ArrowFunctionDCSource[arrow] = asyncKey;
             }
         }
 
@@ -934,6 +1044,14 @@ public partial class ILCompiler
             {
                 if (_arrowParent.TryGetValue(arrow, out var parent) && parent != null)
                 {
+                    // Follow-up to #838: stop at the async arrow that OWNS the DC the child sources from —
+                    // it reaches its own DC via `this.<>__functionDC`, not a threaded $functionDC field, so
+                    // it must not be marked as needing one passed in.
+                    if (_closures.AsyncArrowDCKeys.TryGetValue(parent, out var parentOwnKey) &&
+                        _closures.ArrowFunctionDCSource.TryGetValue(arrow, out var childSrc) &&
+                        parentOwnKey == childSrc)
+                        continue;
+
                     if (!_arrowsNeedingFunctionDC.Contains(parent))
                     {
                         _arrowsNeedingFunctionDC.Add(parent);

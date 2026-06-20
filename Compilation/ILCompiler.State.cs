@@ -199,6 +199,13 @@ public partial class ILCompiler
         // Maps arrow functions to the function display class they need access to
         public Dictionary<Expr.ArrowFunction, string> ArrowFunctionDCSource { get; } = new(ReferenceEqualityComparer.Instance);
 
+        // Follow-up to #838: maps an ASYNC ARROW to the synthetic function-display-class key registered
+        // for it — its own locals that a nested sync arrow captures-and-writes are lifted into a
+        // reference-type DC on the async arrow's state machine, letting the async arrow play the role of a
+        // "function" scope for nested sync arrows. Key shape "$asyncArrow$N" is disjoint from real
+        // function keys. Registered in RegisterAsyncArrowFunctionDisplayClasses (Phase 5, pre-propagate).
+        public Dictionary<Expr.ArrowFunction, string> AsyncArrowDCKeys { get; } = new(ReferenceEqualityComparer.Instance);
+
         // ============================================
         // Scope display classes (for callable-local vars captured by nested closures).
         // Keys are the OWNING callable's AST node: Expr.ArrowFunction, or Stmt.Function

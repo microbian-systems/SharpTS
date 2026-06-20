@@ -159,6 +159,21 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
         // State dispatch switch
         EmitStateDispatch();
 
+        // Follow-up to #838: instantiate this arrow's own function display class once, so a nested sync
+        // arrow that writes one of the arrow's locals shares the reference cell. Null-guarded: a resume
+        // re-enters MoveNext but the field is already set, so it is created exactly once on initial entry.
+        if (_builder.FunctionDCField != null && _builder.FunctionDCCtor != null)
+        {
+            var dcAlreadySet = _il.DefineLabel();
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldfld, _builder.FunctionDCField);
+            _il.Emit(OpCodes.Brtrue, dcAlreadySet);
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Newobj, _builder.FunctionDCCtor);
+            _il.Emit(OpCodes.Stfld, _builder.FunctionDCField);
+            _il.MarkLabel(dcAlreadySet);
+        }
+
         // Apply parameter defaults on initial entry (#646). Placed after the state-dispatch
         // switch so a resume (state >= 0) jumps straight to its await label past this code; on
         // initial entry (state -1) the switch falls through to here. Arrow parameter fields are
