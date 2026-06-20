@@ -127,10 +127,11 @@ public partial class AsyncStateAnalyzer : AstVisitorBase
 
         // Disambiguate block-scoped let/const declarations that shadow an enclosing binding so the
         // hoisting decision below is made per-binding rather than per-name (#766, async analog of #711).
-        // Async free functions lift every captured local (read or write) into a name-keyed function
-        // display class, so a read-only arrow capture cannot use the per-arrow snapshot pivot — keep
-        // such shadows off-limits (arrowReadCapturesShareStorage: true). #767.
-        var renameResult = GeneratorBlockScopeRenamer.Compute(func, arrowReadCapturesShareStorage: true);
+        // A shadow merely READ by a nested arrow is renamed and a capture-source pivot recorded (#767):
+        // DefineAsyncFunction excludes such read-only-captured renamed shadows from the name-keyed
+        // function display class so the arrow's read flows through the per-arrow snapshot path the pivot
+        // redirects, instead of colliding with the outer same-named binding on one DC field (#837).
+        var renameResult = GeneratorBlockScopeRenamer.Compute(func, arrowReadCapturesShareStorage: false);
         _renames = renameResult.Renames;
         _captureRenames = renameResult.CaptureRenames;
 
