@@ -238,6 +238,35 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    // Typed push for promoted number[]/boolean[] locals (#857/#860): appends an
+    // unboxed double/bool to a bare List<T> and returns the new length. No frozen/
+    // sealed check — a promoted local is provably non-escaping and so can never be
+    // Object.freeze'd (that needs an argument-pass escape, which disqualifies promotion).
+    private void EmitArrayPushTyped(TypeBuilder typeBuilder, EmittedRuntime runtime, ArrayElementsDescriptor desc)
+    {
+        var listType = desc.GetListType(_types);
+        var elemType = desc.GetElementType(_types);
+        var method = typeBuilder.DefineMethod(
+            $"ArrayPush{desc.Kind}",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [listType, elemType]
+        );
+        if (desc.Kind == ArrayElementsKind.Double) runtime.ArrayPushDouble = method;
+        else runtime.ArrayPushBool = method;
+
+        var il = method.GetILGenerator();
+        // list.Add(value)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, listType.GetMethod("Add", [elemType])!);
+        // return (double)list.Count
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(listType, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitArrayPush(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(

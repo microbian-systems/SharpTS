@@ -1,0 +1,227 @@
+using SharpTS.Parsing;
+using SharpTS.Parsing.Visitors;
+using SharpTS.TypeSystem;
+
+namespace SharpTS.Compilation;
+
+/// <summary>
+/// Whole-program analysis that flags <c>number[]</c>/<c>boolean[]</c> local declarations which can be
+/// promoted from the default <c>object</c>/<c>$Array</c> slot to a concrete <c>List&lt;double&gt;</c>/
+/// <c>List&lt;bool&gt;</c> CLR slot with unboxed element access (#857 / #860). Results are written into the
+/// <see cref="TypeMap"/> via <see cref="TypeMap.MarkPromotableArrayLocal"/>; the IL emitter (EmitVar and
+/// the index/length/push fast paths) consults them.
+///
+/// <para>This is the deliberately-conservative first cut: a local is promoted only when it is provably
+/// non-escaping, so a bare <c>List&lt;T&gt;</c> (which is NOT a <c>$Array</c> and cannot represent holes,
+/// sparseness, or <c>$Array</c> identity) is never observed anywhere that needs those semantics. A
+/// candidate <c>x</c> qualifies iff ALL hold:</para>
+/// <list type="number">
+///   <item>declared <c>const</c>/<c>let</c> with an empty array-literal initializer (<c>[]</c>);</item>
+///   <item>every use resolves the array element type to <c>number</c> or <c>boolean</c>;</item>
+///   <item>the ONLY uses are <c>x[i]</c> read, <c>x[i] = v</c> write, <c>x.length</c>, and
+///         <c>x.push(...)</c> — any other appearance of the bare variable (argument pass, return, store,
+///         spread, <c>for…of</c>, <c>===</c>, reassignment, <c>delete x[i]</c>, <c>pop</c>/any other
+///         method or property) disqualifies it;</item>
+///   <item>the name is declared exactly once in the whole program (conservative guard against scope
+///         ambiguity / shadowing without full scope resolution);</item>
+///   <item>the name is not captured by any closure (a captured local is routed to an <c>object</c>
+///         display-class field, never a typed slot).</item>
+/// </list>
+///
+/// <para>The catch-all is <see cref="Visitor.VisitVariable"/>: any bare variable occurrence that was not
+/// consumed by a permitted-use override disqualifies the name. The permitted-use overrides deliberately do
+/// NOT recurse into the receiver variable, so only the safe shapes survive.</para>
+/// </summary>
+public static class ArrayLocalPromotionAnalyzer
+{
+    public static void Analyze(List<Stmt> program, TypeMap? typeMap, ClosureAnalyzer? closures)
+    {
+        if (typeMap == null) return;
+
+        var visitor = new Visitor(typeMap);
+        foreach (var stmt in program)
+            visitor.Visit(stmt);
+
+        foreach (var (name, nameToken) in visitor.Candidates)
+        {
+            if (visitor.Disqualified.Contains(name)) continue;
+            if (visitor.DeclCount.GetValueOrDefault(name) != 1) continue;
+            if (!visitor.ElementToken.TryGetValue(name, out var token)) continue; // no Double/Bool use seen
+            if (closures?.IsVariableCaptured(name) == true) continue;
+            typeMap.MarkPromotableArrayLocal(nameToken, token);
+        }
+    }
+
+    private sealed class Visitor(TypeMap typeMap) : AstVisitorBase
+    {
+        private readonly TypeMap _typeMap = typeMap;
+
+        /// <summary>name → candidate declaration's name token (empty-array-literal local).</summary>
+        public Dictionary<string, Token> Candidates { get; } = new();
+
+        /// <summary>How many times each name is declared anywhere (any kind of binding).</summary>
+        public Dictionary<string, int> DeclCount { get; } = new();
+
+        /// <summary>name → element primitive token (TYPE_NUMBER / TYPE_BOOLEAN), from its first typed use.</summary>
+        public Dictionary<string, TokenType> ElementToken { get; } = new();
+
+        /// <summary>Names with at least one disqualifying occurrence.</summary>
+        public HashSet<string> Disqualified { get; } = new();
+
+        protected override void VisitVar(Stmt.Var stmt) =>
+            HandleDeclaration(stmt.Name, stmt.Initializer);
+
+        protected override void VisitConst(Stmt.Const stmt) =>
+            HandleDeclaration(stmt.Name, stmt.Initializer);
+
+        private void HandleDeclaration(Token name, Expr? initializer)
+        {
+            var lexeme = name.Lexeme;
+            DeclCount[lexeme] = DeclCount.GetValueOrDefault(lexeme) + 1;
+
+            if (initializer is Expr.ArrayLiteral { Elements.Count: 0 } && !Candidates.ContainsKey(lexeme))
+                Candidates[lexeme] = name;
+
+            // Visit the initializer for completeness ([] has no sub-uses, but a
+            // non-candidate initializer may reference other arrays).
+            if (initializer != null)
+                Visit(initializer);
+        }
+
+        protected override void VisitGetIndex(Expr.GetIndex expr)
+        {
+            // `x[i]` read — permitted when receiver is a bare variable. Record the
+            // element kind and visit only the index (NOT the receiver variable).
+            if (expr.Object is Expr.Variable v && !expr.Optional)
+                NotePermittedReceiver(v);
+            else
+                Visit(expr.Object);
+            Visit(expr.Index);
+        }
+
+        protected override void VisitSetIndex(Expr.SetIndex expr)
+        {
+            // `x[i] = v` write — permitted receiver; visit index and value only.
+            if (expr.Object is Expr.Variable v)
+            {
+                NotePermittedReceiver(v);
+                // A written value whose static type admits the `undefined` sentinel
+                // (any/unknown/…) would be coerced to NaN/false by the typed setter,
+                // diverging from the general path that preserves it. Disqualify — the
+                // array analogue of the #367/#372 numeric-slot taint guard.
+                if (ValueAdmitsUndefinedSentinel(expr.Value))
+                    Disqualified.Add(v.Name.Lexeme);
+            }
+            else
+                Visit(expr.Object);
+            Visit(expr.Index);
+            Visit(expr.Value);
+        }
+
+        protected override void VisitGet(Expr.Get expr)
+        {
+            // `x.length` — permitted; skip the receiver variable. Any other
+            // property access on a bare variable falls through to VisitVariable
+            // (disqualifying), which is what we want.
+            if (expr.Name.Lexeme == "length" && expr.Object is Expr.Variable v && !expr.Optional)
+            {
+                NotePermittedReceiver(v);
+                return;
+            }
+            Visit(expr.Object);
+        }
+
+        protected override void VisitCall(Expr.Call expr)
+        {
+            // `x.push(args)` — permitted; visit the args but skip the receiver
+            // variable. Every other call shape recurses normally, so a receiver
+            // passed as an argument, or any non-push method, is caught. (pop is
+            // intentionally excluded from this first cut: its empty→undefined
+            // result can't sit in an unboxed typed slot.)
+            if (expr.Callee is Expr.Get { Object: Expr.Variable v, Optional: false } get
+                && get.Name.Lexeme == "push")
+            {
+                NotePermittedReceiver(v);
+                // Same undefined-sentinel guard as index writes: a pushed value that
+                // can be undefined would be coerced by the typed helper.
+                foreach (var arg in expr.Arguments)
+                {
+                    if (ValueAdmitsUndefinedSentinel(arg))
+                        Disqualified.Add(v.Name.Lexeme);
+                    Visit(arg);
+                }
+                return;
+            }
+            base.VisitCall(expr);
+        }
+
+        protected override void VisitAssign(Expr.Assign expr)
+        {
+            // `x = ...` rebinds the slot — disqualify. (Only the empty-literal
+            // initializer is supported; any later store could be a $Array or a
+            // value the typed slot can't hold.)
+            Disqualified.Add(expr.Name.Lexeme);
+            base.VisitAssign(expr);
+        }
+
+        protected override void VisitCompoundAssign(Expr.CompoundAssign expr)
+        {
+            Disqualified.Add(expr.Name.Lexeme);
+            base.VisitCompoundAssign(expr);
+        }
+
+        protected override void VisitDelete(Expr.Delete expr)
+        {
+            // `delete x[i]` creates a hole a List<T> cannot represent — disqualify
+            // the base variable of the deleted operand.
+            var target = expr.Operand;
+            while (true)
+            {
+                if (target is Expr.GetIndex gi) { target = gi.Object; continue; }
+                if (target is Expr.Get g) { target = g.Object; continue; }
+                break;
+            }
+            if (target is Expr.Variable v)
+                Disqualified.Add(v.Name.Lexeme);
+            base.VisitDelete(expr);
+        }
+
+        protected override void VisitVariable(Expr.Variable expr)
+        {
+            // Catch-all: any bare variable occurrence not consumed by a permitted-use
+            // override above is an escape (returned, passed, spread, compared, etc.).
+            Disqualified.Add(expr.Name.Lexeme);
+        }
+
+        private void NotePermittedReceiver(Expr.Variable v)
+        {
+            // Resolve the element kind from the receiver's static array type (as
+            // ArrayHoistAnalyzer does). Only Double/Bool arrays are promotable; an
+            // Object-kind array (string[]/union[]) disqualifies the name.
+            if (ElementToken.ContainsKey(v.Name.Lexeme)) return;
+            var desc = ArrayElements.Resolve(_typeMap.Get(v));
+            if (desc == null) return; // not statically an array here — leave undecided
+            if (desc.Kind == ArrayElementsKind.Object || desc.ElementTokenType is not { } tok)
+            {
+                Disqualified.Add(v.Name.Lexeme);
+                return;
+            }
+            ElementToken[v.Name.Lexeme] = tok;
+        }
+
+        /// <summary>
+        /// True if <paramref name="value"/>'s static type can carry the runtime <c>undefined</c>
+        /// sentinel (<c>any</c>/<c>unknown</c>/<c>undefined</c>, or a union containing one). Mirrors
+        /// the type checker's <c>TypeAdmitsUndefinedSentinel</c> — a value the typed element setter
+        /// would silently coerce to NaN/false instead of preserving as undefined.
+        /// </summary>
+        private bool ValueAdmitsUndefinedSentinel(Expr value) => Admits(_typeMap.Get(value));
+
+        private static bool Admits(TypeInfo? type) => type switch
+        {
+            TypeInfo.Any or TypeInfo.Unknown or TypeInfo.Undefined => true,
+            TypeInfo.Union u => u.Types.Any(Admits),
+            _ => false
+        };
+    }
+}

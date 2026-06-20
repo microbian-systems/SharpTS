@@ -424,6 +424,7 @@ public partial class ILCompiler
         Phase0_ExtractNamespace(statements);
         Phase1_EmitRuntimeTypes();
         Phase2_AnalyzeClosures(statements);
+        ArrayLocalPromotionAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
         Phase3_CreateProgramType();
         PreScanBuiltInModuleImports(statements);
         Phase4_DefineDeclarations(statements);
@@ -904,6 +905,7 @@ public partial class ILCompiler
         ModulePhase0_ExtractNamespaces(modules);
         Phase1_EmitRuntimeTypes();
         Phase2_AnalyzeClosures(allStatements);
+        ArrayLocalPromotionAnalyzer.Analyze(allStatements, _typeMap, _closures.Analyzer);
         Phase3_CreateProgramType();
         // Scope each module's named-import bindings to that module so local
         // aliases like __platform don't collide between stdlib modules.

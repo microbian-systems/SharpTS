@@ -161,6 +161,25 @@ public partial class ILEmitter
             return;
         }
 
+        // Typed-array-local promotion (#857/#860): a provably non-escaping number[]/boolean[]
+        // local with an empty-array-literal initializer gets a concrete List<double>/List<bool>
+        // slot, so index get/set, .length, and push/pop lower to direct typed ops with no
+        // element boxing or per-access isinst dispatch. Reached only AFTER the capture branches
+        // above, so a captured local (routed to an object display-class field) is never promoted —
+        // and the index/length/push fast paths key off the slot's CLR type via LocalsManager, so a
+        // captured name (which has no typed local) can never accidentally hit them.
+        if (_ctx.TypeMap != null && _ctx.TypeMap.IsPromotableArrayLocal(v.Name, out var promoElemTok))
+        {
+            var promoDesc = promoElemTok == TokenType.TYPE_NUMBER ? ArrayElements.Double : ArrayElements.Bool;
+            var promoListType = promoDesc.GetListType(_ctx.Types);
+            var promoLocal = _ctx.Locals.DeclareLocal(v.Name.Lexeme, promoListType);
+            // The initializer is guaranteed (by the analyzer) to be an empty array literal `[]`,
+            // so build the backing list directly instead of routing through CreateArray/$Array.
+            IL.Emit(OpCodes.Newobj, _ctx.Types.GetDefaultConstructor(promoListType));
+            IL.Emit(OpCodes.Stloc, promoLocal);
+            return;
+        }
+
         // Determine if this local can use unboxed double type
         Type localType = CanUseUnboxedLocal(v) ? _ctx.Types.Double : _ctx.Types.Object;
         var local = _ctx.Locals.DeclareLocal(v.Name.Lexeme, localType);
@@ -455,10 +474,12 @@ public partial class ILEmitter
         var candidates = ArrayHoistAnalyzer.AnalyzeFor(body, condition, increment, _ctx.TypeMap);
         if (candidates.Count == 0) return false;
 
-        // Exclude variables already hoisted by an outer loop
+        // Exclude variables already hoisted by an outer loop, and promoted typed-array
+        // locals (#857/#860) — their slot is already a concrete List<T>, so the index
+        // fast paths read it directly; hoisting would only emit a dead isinst + local.
         foreach (var name in candidates.Keys.ToList())
         {
-            if (_ctx.TryGetHoistedArray(name) != null)
+            if (_ctx.TryGetHoistedArray(name) != null || _ctx.TryGetPromotedArrayLocal(name) != null)
                 candidates.Remove(name);
         }
         if (candidates.Count == 0) return false;

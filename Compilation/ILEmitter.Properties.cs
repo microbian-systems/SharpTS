@@ -250,6 +250,18 @@ public partial class ILEmitter
                 return;
         }
 
+        // Promoted typed-array local `.length` (#857): direct List<T>.Count, no GetLength/isinst.
+        if (!g.Optional && g.Name.Lexeme == "length" && g.Object is Expr.Variable promVarLen
+            && _ctx.TryGetPromotedArrayLocal(promVarLen.Name.Lexeme) is { } promLen)
+        {
+            var listType = promLen.Descriptor.GetListType(_ctx.Types);
+            IL.Emit(OpCodes.Ldloc, promLen.Local);
+            IL.Emit(OpCodes.Callvirt, _ctx.Types.GetProperty(listType, "Count").GetGetMethod()!);
+            IL.Emit(OpCodes.Conv_R8);
+            SetStackType(StackType.Double);
+            return;
+        }
+
         // Try direct getter dispatch for known class instance types
         TypeInfo? objType = _ctx.TypeMap?.Get(g.Object);
         if (TryEmitDirectGetterCall(g.Object, objType, g.Name.Lexeme))
@@ -737,6 +749,47 @@ public partial class ILEmitter
             return;
         }
 
+        // Promoted typed-array local (#857): the slot IS a List<double>/List<bool>, so read
+        // directly with no isinst dispatch and no $Array indirection. An out-of-range read must
+        // yield `undefined` (JS semantics) — NOT throw, which a bare get_Item would, and which would
+        // regress arrays that were previously $Array-backed (e.g. boolean[]). List.get_Item also
+        // can't return the undefined sentinel from a value-type slot, so the result is boxed at the
+        // OOB/in-range merge (the #860 unboxed-element read is deferred — see plan B3). Even boxed,
+        // this still drops the per-access isinst ladder and the $Array virtual dispatch. The
+        // `(uint)i >= (uint)Count` compare folds the negative-index case into the OOB branch.
+        if (!gi.Optional && gi.Object is Expr.Variable promVarGet
+            && _ctx.TryGetPromotedArrayLocal(promVarGet.Name.Lexeme) is { } promGet)
+        {
+            var listType = promGet.Descriptor.GetListType(_ctx.Types);
+            var oobLabel = IL.DefineLabel();
+            var endLabel = IL.DefineLabel();
+
+            EmitExpressionAsDouble(gi.Index);
+            IL.Emit(OpCodes.Conv_I4);
+            var idxLocal = IL.DeclareLocal(_ctx.Types.Int32);
+            IL.Emit(OpCodes.Stloc, idxLocal);
+
+            IL.Emit(OpCodes.Ldloc, idxLocal);
+            IL.Emit(OpCodes.Ldloc, promGet.Local);
+            IL.Emit(OpCodes.Callvirt, _ctx.Types.GetProperty(listType, "Count").GetGetMethod()!);
+            IL.Emit(OpCodes.Bge_Un, oobLabel); // unsigned: i < 0 reads as huge, also branches to OOB
+
+            // In range: box(list[i]) so this branch converges on `object` with the OOB branch.
+            IL.Emit(OpCodes.Ldloc, promGet.Local);
+            IL.Emit(OpCodes.Ldloc, idxLocal);
+            IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(listType, "get_Item", _ctx.Types.Int32));
+            IL.Emit(OpCodes.Box, promGet.Descriptor.GetElementType(_ctx.Types));
+            IL.Emit(OpCodes.Br, endLabel);
+
+            // Out of range: undefined (matches the interpreter and the $Array path).
+            IL.MarkLabel(oobLabel);
+            IL.Emit(OpCodes.Ldsfld, _ctx.Runtime!.UndefinedInstance);
+
+            IL.MarkLabel(endLabel);
+            SetStackUnknown();
+            return;
+        }
+
         // Descriptor-driven fast path: when receiver is statically known to be an array,
         // emit direct List<T> access — skips runtime type dispatch,
         // index boxing, and Convert.ToInt32(object) overhead.
@@ -893,6 +946,30 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Call, _ctx.Runtime!.GlobalThisSetProperty);
             IL.Emit(OpCodes.Ldloc, valueTemp); // expression result
             SetStackUnknown();
+            return;
+        }
+
+        // Promoted typed-array local (#857/#860): the slot IS a List<double>/List<bool>, so write
+        // directly via the typed auto-extend setter — no isinst dispatch, no value boxing. Value is
+        // evaluated before index, matching the hoisted path's ordering.
+        if (si.Object is Expr.Variable promVarSet
+            && _ctx.TryGetPromotedArrayLocal(promVarSet.Name.Lexeme) is { } promSet)
+        {
+            EmitExpression(si.Value);
+            if (promSet.Descriptor.Kind == ArrayElementsKind.Double) EnsureDouble();
+            else EnsureBoolean();
+            var valLocal = IL.DeclareLocal(promSet.Descriptor.GetElementType(_ctx.Types));
+            IL.Emit(OpCodes.Stloc, valLocal);
+
+            IL.Emit(OpCodes.Ldloc, promSet.Local);
+            EmitExpressionAsDouble(si.Index);
+            IL.Emit(OpCodes.Conv_I4);
+            IL.Emit(OpCodes.Ldloc, valLocal);
+            IL.Emit(OpCodes.Call, promSet.Descriptor.GetSetArrayElementMethod(_ctx.Runtime!));
+
+            // Assignment expression result: the (unboxed) assigned value.
+            IL.Emit(OpCodes.Ldloc, valLocal);
+            SetStackType(promSet.Descriptor.StackType);
             return;
         }
 
@@ -1063,6 +1140,42 @@ public partial class ILEmitter
         }
 
         IL.Emit(OpCodes.Ldloc, valueLocalGeneric);
+    }
+
+    /// <summary>
+    /// Emits <c>x.push(args)</c> for a promoted typed-array local (#857/#860): append each
+    /// (unboxed) argument directly to the bare <c>List&lt;T&gt;</c> via the typed
+    /// <c>ArrayPush{Double,Bool}</c> helper, leaving the final length (a JS number) as the
+    /// expression result. No <c>$Array</c> unwrap/copy and no per-element boxing.
+    /// </summary>
+    private void EmitPromotedArrayPush(LocalBuilder list, ArrayElementsDescriptor desc, List<Expr> arguments)
+    {
+        var pushMethod = desc.Kind == ArrayElementsKind.Double
+            ? _ctx.Runtime!.ArrayPushDouble
+            : _ctx.Runtime!.ArrayPushBool;
+
+        if (arguments.Count == 0)
+        {
+            // push() with no args returns the current length.
+            var listType = desc.GetListType(_ctx.Types);
+            IL.Emit(OpCodes.Ldloc, list);
+            IL.Emit(OpCodes.Callvirt, _ctx.Types.GetProperty(listType, "Count").GetGetMethod()!);
+            IL.Emit(OpCodes.Conv_R8);
+            SetStackType(StackType.Double);
+            return;
+        }
+
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            IL.Emit(OpCodes.Ldloc, list);
+            EmitExpression(arguments[i]);
+            if (desc.Kind == ArrayElementsKind.Double) EnsureDouble();
+            else EnsureBoolean();
+            IL.Emit(OpCodes.Call, pushMethod);
+            if (i < arguments.Count - 1)
+                IL.Emit(OpCodes.Pop); // discard intermediate length; keep only the final one
+        }
+        SetStackType(StackType.Double);
     }
 
     /// <summary>

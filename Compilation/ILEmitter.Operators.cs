@@ -44,6 +44,27 @@ public partial class ILEmitter
                     break;
                 }
 
+                // If both operands are statically string, emit a direct
+                // String.Concat(string, string) — skipping the dynamic
+                // $Runtime.Add type-dispatch + ToNumber/ToString probing every
+                // call. This is the 2-operand string concat the 3+-part chain
+                // optimizer (TryEmitStringConcatChain, MinPartsForOptimization=3)
+                // does not cover, e.g. `s = s + "ab"`. Both-string only: a
+                // non-string operand would need StringifyCoerce, whose
+                // string-hint ToPrimitive can diverge from `+`'s default-hint
+                // ToPrimitive for objects with differing valueOf/toString —
+                // those stay on the sound $Runtime.Add path.
+                if (IsStringPlusOperation(b))
+                {
+                    EmitExpression(b.Left);
+                    EnsureString();
+                    EmitExpression(b.Right);
+                    EnsureString();
+                    IL.Emit(OpCodes.Call, _ctx.Types.GetMethod(_ctx.Types.String, "Concat", _ctx.Types.String, _ctx.Types.String));
+                    SetStackType(StackType.String);
+                    break;
+                }
+
                 // Fallback: Use runtime Add() which handles string concat and mixed types
                 EmitExpression(b.Left);
                 EmitBoxIfNeeded(b.Left);
@@ -1733,6 +1754,18 @@ public partial class ILEmitter
         var rightType = _ctx.TypeMap.Get(b.Right);
 
         return IsNumericType(leftType) && IsNumericType(rightType);
+    }
+
+    private bool IsStringPlusOperation(Expr.Binary b)
+    {
+        // Both operands statically string — `+` is pure concatenation with no
+        // ToPrimitive ambiguity, so it can lower to String.Concat(string,string).
+        if (_ctx.TypeMap == null) return false;
+
+        var leftType = _ctx.TypeMap.Get(b.Left);
+        var rightType = _ctx.TypeMap.Get(b.Right);
+
+        return IsStringTypeInfo(leftType) && IsStringTypeInfo(rightType);
     }
 
     private bool IsStringComparison(Expr.Binary b)
