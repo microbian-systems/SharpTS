@@ -867,6 +867,13 @@ public partial class Interpreter
     {
         object? obj = (await EvaluateAsync(logical.Object)).ToObject();
 
+        // Logical assignment reads first → nullish base throws the *read*-worded
+        // guest TypeError before the short-circuit check (#733).
+        if (obj is null or SharpTSUndefined)
+        {
+            ThrowCannotReadProperty(obj, logical.Name.Lexeme);
+        }
+
         if (!TryGetPropertyRV(obj, logical.Name, out RuntimeValue currentRV))
         {
             throw new InterpreterException($"Only instances and objects have fields. Cannot logical-get '{logical.Name.Lexeme}' on {obj?.GetType().Name ?? "null"}.");

@@ -191,6 +191,127 @@ public class NullishMemberAccessTests
         Assert.Equal("threw ran=true\n", TestHarness.Run(source, mode));
     }
 
+    // ----- compound / logical writes on null/undefined (#733) -----
+    // These read the property first (GetValue), so per spec they throw the
+    // *read*-worded message, NOT the "setting" wording of a plain `o.x = v`.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void UndefinedDotCompound_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = $$"""
+            const o: any = undefined;
+            try { o.foo += 1; console.log("NOTHROW"); }
+            {{ProbeFull}}
+            """;
+        Assert.Equal(
+            "object true TypeError |Cannot read properties of undefined (reading 'foo')\n",
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NullDotCompound_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = $$"""
+            const o: any = null;
+            try { o.foo += 1; console.log("NOTHROW"); }
+            {{ProbeFull}}
+            """;
+        Assert.Equal(
+            "object true TypeError |Cannot read properties of null (reading 'foo')\n",
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void UndefinedDotLogicalNullish_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = $$"""
+            const o: any = undefined;
+            try { o.foo ??= 1; console.log("NOTHROW"); }
+            {{ProbeFull}}
+            """;
+        Assert.Equal(
+            "object true TypeError |Cannot read properties of undefined (reading 'foo')\n",
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NullDotLogicalOr_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = $$"""
+            const o: any = null;
+            try { o.foo ||= 1; console.log("NOTHROW"); }
+            {{ProbeFull}}
+            """;
+        Assert.Equal(
+            "object true TypeError |Cannot read properties of null (reading 'foo')\n",
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void UndefinedIndexCompound_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = $$"""
+            const o: any = undefined;
+            try { o[0] += 1; console.log("NOTHROW"); }
+            {{ProbeFull}}
+            """;
+        Assert.Equal(
+            "object true TypeError |Cannot read properties of undefined (reading '0')\n",
+            TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NullIndexLogicalNullish_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = $$"""
+            const o: any = null;
+            try { o[0] ??= 1; console.log("NOTHROW"); }
+            {{ProbeFull}}
+            """;
+        Assert.Equal(
+            "object true TypeError |Cannot read properties of null (reading '0')\n",
+            TestHarness.Run(source, mode));
+    }
+
+    // Exercises the base (state-machine) compound/logical emitter + EvaluateLogicalSetAsync.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void UndefinedDotLogical_InsideAsync_ThrowsTypeError(ExecutionMode mode)
+    {
+        var source = $$"""
+            async function run(): Promise<void> {
+                const o: any = undefined;
+                try { o.foo ??= 1; console.log("NOTHROW"); }
+                {{ProbeFull}}
+            }
+            run();
+            """;
+        Assert.Equal(
+            "object true TypeError |Cannot read properties of undefined (reading 'foo')\n",
+            TestHarness.Run(source, mode));
+    }
+
+    // Regression: compound/logical assignment on a real receiver still works.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DefinedReceiver_CompoundAndLogical_StillWork(ExecutionMode mode)
+    {
+        var source = """
+            const o: any = { n: 1, arr: [10] };
+            o.n += 4;
+            o.missing ??= 7;
+            o.arr[0] += 5;
+            console.log(o.n, o.missing, o.arr[0]);
+            """;
+        Assert.Equal("5 7 15\n", TestHarness.Run(source, mode));
+    }
+
     // ----- async context exercises the base (state-machine) emitter -----
 
     [Theory]

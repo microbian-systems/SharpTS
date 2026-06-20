@@ -44,6 +44,13 @@ public partial class Interpreter
     {
         object? obj = Evaluate(compound.Object);
 
+        // ECMA-262: a compound assignment reads first (GetValue), so a nullish base
+        // throws the *read*-worded guest TypeError before any operation (#733).
+        if (obj is null or SharpTSUndefined)
+        {
+            ThrowCannotReadProperty(obj, compound.Name.Lexeme);
+        }
+
         if (TryGetPropertyRV(obj, compound.Name, out RuntimeValue currentRV))
         {
             RuntimeValue addValue = EvaluateRV(compound.Value);
@@ -70,6 +77,12 @@ public partial class Interpreter
     {
         object? obj = Evaluate(compound.Object);
         object? index = Evaluate(compound.Index);
+
+        // Nullish base reads first → *read*-worded guest TypeError (#733).
+        if (obj is null or SharpTSUndefined)
+        {
+            ThrowCannotReadProperty(obj, index?.ToString() ?? "");
+        }
 
         if (obj is SharpTSArray array && index is double idx)
         {
@@ -123,6 +136,13 @@ public partial class Interpreter
     {
         object? obj = Evaluate(logical.Object);
 
+        // Logical assignment reads first → nullish base throws the *read*-worded
+        // guest TypeError before the short-circuit check (#733).
+        if (obj is null or SharpTSUndefined)
+        {
+            ThrowCannotReadProperty(obj, logical.Name.Lexeme);
+        }
+
         if (!TryGetPropertyRV(obj, logical.Name, out RuntimeValue currentRV))
         {
             throw new InterpreterException($"Only instances and objects have fields. Cannot logical-get '{logical.Name.Lexeme}' on {obj?.GetType().Name ?? "null"}.");
@@ -157,6 +177,12 @@ public partial class Interpreter
     {
         object? obj = Evaluate(logical.Object);
         object? index = Evaluate(logical.Index);
+
+        // Nullish base reads first → *read*-worded guest TypeError (#733).
+        if (obj is null or SharpTSUndefined)
+        {
+            ThrowCannotReadProperty(obj, index?.ToString() ?? "");
+        }
 
         if (obj is SharpTSArray array && index is double idx)
         {
