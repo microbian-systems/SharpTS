@@ -778,6 +778,122 @@ public class StreamsWebSemanticTests
         Assert.DoesNotContain("pipe-completed-normally", output);
     }
 
+    /// <remarks>
+    /// #448 — push-style source piped with no signal. <c>start</c> captures the
+    /// controller; the only chunk is <c>enqueue</c>d (and the stream
+    /// <c>close</c>d) later from a <c>setTimeout</c> callback. The first
+    /// <c>this.Read()</c> inside the pump parks on a pending
+    /// <c>TaskCompletionSource</c> that only the timer can settle.
+    ///
+    /// <para>Before the fix the compiled pump sync-awaited that read with
+    /// <c>GetAwaiter().GetResult()</c> on the main thread, starving the loop: the
+    /// enqueue timer could never run, so the process hung. The fix makes the
+    /// read/write awaits cooperative — the pump drives <c>$EventLoop.PumpOnce()</c>
+    /// (drain queue + fire timers) while the task is pending (see
+    /// <c>RuntimeEmitter.EmitCooperativeAwaitTaskOrSignal</c> /
+    /// <c>EmitEventLoopPumpOnce</c>), so the timer fires, the read resolves, and
+    /// the chunk flows. The interpreter already handled this via its real async
+    /// pump (<c>WebStreamsHelpers.PipeTo</c>).</para>
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ReadableStream_PipeTo_PushSourceViaTimer(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                let ctrl: any;
+                const source = new ReadableStream({ start(c) { ctrl = c; } });
+                const dest = new WritableStream({ write(chunk) { console.log("wrote " + chunk); } });
+                setTimeout(() => { ctrl.enqueue("x"); ctrl.close(); }, 10);
+                async function run() {
+                    await source.pipeTo(dest);
+                    console.log("done");
+                }
+                run();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("wrote x\ndone\n", output);
+    }
+
+    /// <remarks>
+    /// #448 residual gap — a signal-bearing pipe over a push source that never
+    /// produces, with a <b>delayed</b> abort (<c>setTimeout(() => ac.abort(),
+    /// 50)</c>). The #355 loop-top pump fires once before the abort is due, then
+    /// the parking read used to block the main thread forever. With the
+    /// cooperative wait the pump keeps driving the loop, the abort timer fires
+    /// mid-wait, the in-loop signal check observes it, and the pump branches back
+    /// to its loop top to run the abort/cancel/reject teardown. CompiledOnly: the
+    /// interpreter abort-pipe end-to-end assertion is load-flaky (see
+    /// <see cref="ReadableStream_PipeTo_AbortSignalCancelsSourceAndAbortsDest"/>),
+    /// whereas the compiled pump runs synchronously and is deterministic.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void ReadableStream_PipeTo_PushSourceDelayedAbort_Compiled(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                const ac = new AbortController();
+                const source = new ReadableStream({ start(c) { /* never enqueues */ } });
+                const dest = new WritableStream({
+                    write(chunk) { /* accept everything */ },
+                    abort(reason) { console.log("dest-aborted"); }
+                });
+                setTimeout(() => ac.abort(), 50);
+                async function run() {
+                    try {
+                        await source.pipeTo(dest, { signal: ac.signal });
+                        console.log("pipe-completed-normally");
+                    } catch (e) {
+                        console.log("pipe-rejected");
+                    }
+                }
+                run();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("dest-aborted", output);
+        Assert.Contains("pipe-rejected", output);
+        Assert.DoesNotContain("pipe-completed-normally", output);
+    }
+
+    /// <remarks>
+    /// #448 write-side — a push-style destination whose <c>write()</c> settles
+    /// later through the event loop (here a microtask via
+    /// <c>Promise.resolve().then</c>). The pump's main-loop write await is
+    /// cooperative too (see <c>EmitCooperativeUnwrapResultToTask</c>), so a write
+    /// that can only resolve once the loop runs doesn't deadlock the synchronous
+    /// pump the way a push source read does. CompiledOnly: this is a compiled-pump
+    /// gap; the interpreter's async pump already awaits writes.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void ReadableStream_PipeTo_PushStyleWrite_Compiled(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                const source = new ReadableStream({ start(c) { c.enqueue("a"); c.close(); } });
+                const dest = new WritableStream({
+                    write(chunk) { return Promise.resolve().then(() => { console.log("wrote " + chunk); }); }
+                });
+                async function run() {
+                    await source.pipeTo(dest);
+                    console.log("done");
+                }
+                run();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("wrote a\ndone\n", output);
+    }
+
     /// <summary>
     /// Verifies that erroring a <c>$ReadableStream</c> that has a parked
     /// reader rejects the pending-reads queue via <c>TrySetException</c>.

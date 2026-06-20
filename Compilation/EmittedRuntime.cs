@@ -2812,6 +2812,18 @@ public class EmittedRuntime
     public MethodBuilder EventLoopRun { get; set; } = null!;
     public MethodBuilder EventLoopWake { get; set; } = null!;
     public MethodBuilder EventLoopWaitForTask { get; set; } = null!;
+
+    /// <summary>
+    /// <c>$EventLoop.PumpOnce()</c> — drives one cooperative tick of the loop
+    /// (drain queued continuations, fire due timers, 1ms idle sleep) and returns
+    /// <c>1</c> if work is still pending (a timer is due later, an active handle
+    /// is open, or the queue is non-empty) or <c>0</c> when idle/quiescent. Used
+    /// by the synchronous <c>$ReadableStream.PipeTo</c> pump to wait for a
+    /// push-style (event-loop-driven) read/write without blocking the loop (#448).
+    /// Signal-agnostic by design: the abort check lives in the pump, which (unlike
+    /// the early-emitted <c>$EventLoop</c>) can reference <c>AbortSignalGetAborted</c>.
+    /// </summary>
+    public MethodBuilder EventLoopPumpOnce { get; set; } = null!;
     public FieldBuilder EventLoopTimerProcessorField { get; set; } = null!;
 
     /// <summary>
