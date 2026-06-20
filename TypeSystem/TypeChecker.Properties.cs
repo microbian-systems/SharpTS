@@ -151,6 +151,21 @@ public partial class TypeChecker
     /// </summary>
     private TypeInfo ResolveMemberType(Expr.Get get, TypeInfo objType)
     {
+        // A bare `null`/`undefined` receiver has no properties — `tsc` rejects access on it (TS2339
+        // for `undefined`, TS2531 for `null`), just as it does for a union containing them (see
+        // CheckGetOnUnion). Optional chaining (`x?.p`) short-circuits to `undefined` instead. Without
+        // this guard these types classify to TypeCategory.Null/Undefined, miss the dispatch switch
+        // below, and silently yield `any`. #742
+        switch (objType)
+        {
+            case TypeInfo.Undefined:
+                if (get.Optional) return new TypeInfo.Undefined();
+                throw new TypeCheckException($"Property '{get.Name.Lexeme}' does not exist on type 'undefined'.", get.Name.Line, tsCode: "TS2339");
+            case TypeInfo.Null:
+                if (get.Optional) return new TypeInfo.Undefined();
+                throw new TypeCheckException("Object is possibly 'null'.", get.Name.Line, tsCode: "TS2531");
+        }
+
         var category = TypeCategoryResolver.Classify(objType);
         string memberName = get.Name.Lexeme;
 

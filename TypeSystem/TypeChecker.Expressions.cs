@@ -1663,20 +1663,18 @@ public partial class TypeChecker
         // narrows `o.x` to `string`). The narrowed binding lives in the current lexical scope and is
         // discarded at its block's join, so it does not leak a too-narrow type past a conditional.
         //
-        // Two guards keep this sound and non-regressive:
-        //   * Only TRACKED (function-local/parameter) variables narrow. Module/top-level variables are
-        //     not in the declared-type stack, so GetDeclaredType falls back to the environment for
-        //     them — narrowing the binding would then corrupt the declared type a later assignment
-        //     checks against.
-        //   * A purely-nullish narrowed slot (`null`/`undefined`) is NOT installed; the variable keeps
-        //     its declared type. Property access on a bare `null`/`undefined` type is not yet flagged
-        //     (only on a union containing them — see CheckGetOnUnion), so narrowing `x = undefined` to
-        //     `undefined` would silently drop the "possibly undefined" error that a later `x.length`
-        //     must still raise (#570/#556). Keeping the declared union preserves that diagnostic.
+        // One guard keeps this sound and non-regressive: only TRACKED (function-local/parameter)
+        // variables narrow. Module/top-level variables are not in the declared-type stack, so
+        // GetDeclaredType falls back to the environment for them — narrowing the binding would then
+        // corrupt the declared type a later assignment checks against.
+        //
+        // A purely-nullish narrowed slot (`null`/`undefined`) IS installed: `x = undefined` narrows
+        // to `undefined` (parity with the property-write narrowing of #48). A later `x.length` is now
+        // flagged directly on the bare nullish type (ResolveMemberType, #742), so narrowing no longer
+        // risks dropping the "possibly null/undefined" diagnostic.
         var postAssignType = declaredType;
         if (IsDeclaredTypeTracked(assign.Name.Lexeme)
-            && NarrowToDeclaredSlot(declaredType, valueType) is { } narrowedSlot
-            && !IsPurelyNullish(narrowedSlot))
+            && NarrowToDeclaredSlot(declaredType, valueType) is { } narrowedSlot)
         {
             postAssignType = narrowedSlot;
         }
