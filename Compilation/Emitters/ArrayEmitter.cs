@@ -42,6 +42,28 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
             "slice" or "concat" or "map" or "filter" or "flat" or "flatMap"
             or "splice" or "toReversed" or "toSorted" or "toSpliced" or "with";
 
+        // #850: when an argument can suspend (await/yield), evaluating it while the receiver list sits
+        // on the IL evaluation stack produces invalid IL across a state-machine suspension
+        // (PathStackDepth — the stack differs between the "awaiter completed" and post-resume paths).
+        // Pre-spill the receiver and every argument into await-safe locals (registered so they survive
+        // the MoveNext re-entry; plain locals in the synchronous emitter, so non-async codegen is
+        // unchanged), then restore the list on the stack so each case below emits exactly as before but
+        // sources its arguments from the pre-spilled locals. Only the plain-argument methods are
+        // affected; the callback methods (map/filter/find/...) dispatch their arrow from the AST and
+        // never trigger this — an arrow body's await belongs to its own state machine.
+        LocalBuilder[]? argLocals = null;
+        if (arguments.Count > 0 && MethodTakesPlainArgs(methodName) && emitter.ArgsContainSuspension(arguments))
+        {
+            var listSafe = emitter.SpillStackToObjectLocal();      // [list] -> await-safe local
+            il.Emit(OpCodes.Ldloc, receiverLocal);                 // the original receiver must also
+            receiverLocal = emitter.SpillStackToObjectLocal();     // survive the suspension (returnsReceiver methods)
+            argLocals = new LocalBuilder[arguments.Count];
+            for (int i = 0; i < arguments.Count; i++)
+                argLocals[i] = emitter.SpillBoxedArg(arguments[i]);   // suspensions happen here, with a clear stack
+            il.Emit(OpCodes.Ldloc, listSafe);
+            il.Emit(OpCodes.Castclass, ctx.Types.ListOfObject);    // restore [list]
+        }
+
         switch (methodName)
         {
             case "pop":
@@ -56,16 +78,16 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 // JS `arr.unshift(a, b, c)` prepends all args in order: [a,b,c,...orig].
                 // ArrayUnshift(list, el) inserts one element at the start, so iterate
                 // in reverse to preserve the final order.
-                EmitVariadicListMutation(emitter, arguments, ctx.Runtime!.ArrayUnshift, reverse: true);
+                EmitVariadicListMutation(emitter, arguments, ctx.Runtime!.ArrayUnshift, reverse: true, argLocals);
                 break;
 
             case "push":
                 // JS `arr.push(a, b, c)` appends all args. Iterate forward.
-                EmitVariadicListMutation(emitter, arguments, ctx.Runtime!.ArrayPush, reverse: false);
+                EmitVariadicListMutation(emitter, arguments, ctx.Runtime!.ArrayPush, reverse: false, argLocals);
                 break;
 
             case "slice":
-                EmitArgsArray(emitter, arguments);
+                EmitArgsArray(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArraySlice);
                 break;
 
@@ -172,24 +194,27 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
             }
 
             case "reduce":
-                if (TryEmitReduceDirectCall(emitter, arguments))
+                // The direct-call fast path re-evaluates the callback/initial-value from the AST, so
+                // skip it when arguments were pre-spilled for await-safety (#850) and use the
+                // argLocals-aware array path instead.
+                if (argLocals == null && TryEmitReduceDirectCall(emitter, arguments))
                     break;
-                EmitArgsArray(emitter, arguments);
+                EmitArgsArray(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayReduce);
                 break;
 
             case "reduceRight":
-                EmitArgsArray(emitter, arguments);
+                EmitArgsArray(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayReduceRight);
                 break;
 
             case "join":
-                EmitSingleArgOrNull(emitter, arguments);
+                EmitSingleArgOrNull(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayJoin);
                 break;
 
             case "concat":
-                EmitArgsArray(emitter, arguments);
+                EmitArgsArray(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayConcat);
                 break;
 
@@ -198,28 +223,35 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 break;
 
             case "flat":
-                EmitSingleArgOrNull(emitter, arguments);
+                EmitSingleArgOrNull(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFlat);
                 break;
 
             case "flatMap":
-                EmitSingleArgOrNull(emitter, arguments);
+                EmitSingleArgOrNull(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFlatMap);
                 break;
 
             case "includes":
-                EmitSingleArgOrNull(emitter, arguments);
+                EmitSingleArgOrNull(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayIncludes);
                 break;
 
             case "indexOf":
             case "lastIndexOf":
                 // searchElement (arg 0) + optional fromIndex (arg 1).
-                EmitSingleArgOrNull(emitter, arguments);
+                EmitSingleArgOrNull(emitter, arguments, argLocals);
                 if (arguments.Count >= 2)
                 {
-                    emitter.EmitExpression(arguments[1]);
-                    emitter.EmitBoxIfNeeded(arguments[1]);
+                    if (argLocals != null)
+                    {
+                        il.Emit(OpCodes.Ldloc, argLocals[1]);
+                    }
+                    else
+                    {
+                        emitter.EmitExpression(arguments[1]);
+                        emitter.EmitBoxIfNeeded(arguments[1]);
+                    }
                 }
                 else
                 {
@@ -230,22 +262,22 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 break;
 
             case "sort":
-                EmitSingleArgOrNull(emitter, arguments);
+                EmitSingleArgOrNull(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArraySort);
                 break;
 
             case "toSorted":
-                EmitSingleArgOrNull(emitter, arguments);
+                EmitSingleArgOrNull(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayToSorted);
                 break;
 
             case "splice":
-                EmitArgsArray(emitter, arguments);
+                EmitArgsArray(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArraySplice);
                 break;
 
             case "toSpliced":
-                EmitArgsArray(emitter, arguments);
+                EmitArgsArray(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayToSpliced);
                 break;
 
@@ -277,22 +309,22 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 break;
 
             case "with":
-                EmitArgsArray(emitter, arguments);
+                EmitArgsArray(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayWith);
                 break;
 
             case "at":
-                EmitSingleArgOrNull(emitter, arguments);
+                EmitSingleArgOrNull(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayAt);
                 break;
 
             case "fill":
-                EmitArgsArray(emitter, arguments);
+                EmitArgsArray(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayFill);
                 break;
 
             case "copyWithin":
-                EmitArgsArray(emitter, arguments);
+                EmitArgsArray(emitter, arguments, argLocals);
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayCopyWithin);
                 break;
 
@@ -592,17 +624,40 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
     }
 
     /// <summary>
-    /// Emits a single argument or null if no arguments provided.
+    /// Array methods that evaluate plain-expression arguments (via <see cref="EmitVariadicListMutation"/>,
+    /// <see cref="EmitArgsArray"/>, <see cref="EmitSingleArgOrNull"/>, or inline) rather than dispatching
+    /// a callback arrow from the AST. Only these can hit the #850 stack-spill bug when an argument
+    /// contains <c>await</c>/<c>yield</c>, so only these get await-safe argument pre-spilling. The
+    /// callback methods (map/filter/forEach/find/findIndex/some/every/findLast/findLastIndex) are
+    /// excluded — their arrow argument is matched on the AST before evaluation, and a nested arrow's
+    /// <c>await</c> belongs to its own state machine (never reported by ArgsContainSuspension).
     /// </summary>
-    private static void EmitSingleArgOrNull(IEmitterContext emitter, List<Expr> arguments)
+    private static bool MethodTakesPlainArgs(string methodName) => methodName is
+        "push" or "unshift" or "slice" or "reduce" or "reduceRight" or "join" or "concat" or
+        "flat" or "flatMap" or "includes" or "indexOf" or "lastIndexOf" or "sort" or "toSorted" or
+        "splice" or "toSpliced" or "with" or "at" or "fill" or "copyWithin";
+
+    /// <summary>
+    /// Emits a single argument or null if no arguments provided. When <paramref name="argLocals"/> is
+    /// supplied (await-safe pre-spilled args, #850) the value is loaded from the local rather than
+    /// re-evaluated.
+    /// </summary>
+    private static void EmitSingleArgOrNull(IEmitterContext emitter, List<Expr> arguments, LocalBuilder[]? argLocals = null)
     {
         var ctx = emitter.Context;
         var il = ctx.IL;
 
         if (arguments.Count > 0)
         {
-            emitter.EmitExpression(arguments[0]);
-            emitter.EmitBoxIfNeeded(arguments[0]);
+            if (argLocals != null)
+            {
+                il.Emit(OpCodes.Ldloc, argLocals[0]);
+            }
+            else
+            {
+                emitter.EmitExpression(arguments[0]);
+                emitter.EmitBoxIfNeeded(arguments[0]);
+            }
         }
         else
         {
@@ -817,7 +872,13 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
     /// <summary>
     /// Emits all arguments as an object array.
     /// </summary>
-    private static void EmitArgsArray(IEmitterContext emitter, List<Expr> arguments)
+    /// <summary>
+    /// Builds an <c>object[]</c> of the (boxed) arguments on the stack. When <paramref name="argLocals"/>
+    /// is supplied (await-safe pre-spilled args, #850) each element is loaded from its local rather than
+    /// re-evaluated — needed because building the array inline would leave the receiver list (and the
+    /// partially built array) on the IL stack across a suspending argument.
+    /// </summary>
+    private static void EmitArgsArray(IEmitterContext emitter, List<Expr> arguments, LocalBuilder[]? argLocals = null)
     {
         var ctx = emitter.Context;
         var il = ctx.IL;
@@ -828,8 +889,15 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         {
             il.Emit(OpCodes.Dup);
             il.Emit(OpCodes.Ldc_I4, i);
-            emitter.EmitExpression(arguments[i]);
-            emitter.EmitBoxIfNeeded(arguments[i]);
+            if (argLocals != null)
+            {
+                il.Emit(OpCodes.Ldloc, argLocals[i]);
+            }
+            else
+            {
+                emitter.EmitExpression(arguments[i]);
+                emitter.EmitBoxIfNeeded(arguments[i]);
+            }
             il.Emit(OpCodes.Stelem_Ref);
         }
     }
@@ -846,13 +914,15 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
     /// (needed for unshift so the final order matches JS: `unshift(a,b,c)` yields
     /// <c>[a,b,c,...orig]</c>).
     /// </summary>
-    private static void EmitVariadicListMutation(IEmitterContext emitter, List<Expr> arguments, System.Reflection.Emit.MethodBuilder runtimeMethod, bool reverse)
+    private static void EmitVariadicListMutation(IEmitterContext emitter, List<Expr> arguments, System.Reflection.Emit.MethodBuilder runtimeMethod, bool reverse, LocalBuilder[]? argLocals = null)
     {
         var ctx = emitter.Context;
         var il = ctx.IL;
 
         // Stash the list in a local so we can reuse it across iterations and then
-        // read its Count at the end.
+        // read its Count at the end. (When an argument suspends the list has already been
+        // moved to an await-safe local by the caller and the args pre-spilled into argLocals,
+        // so no suspension occurs in the loop below and this plain local never crosses one — #850.)
         var listLocal = il.DeclareLocal(ctx.Types.ListOfObject);
         il.Emit(OpCodes.Stloc, listLocal);
 
@@ -870,8 +940,15 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         {
             int i = reverse ? arguments.Count - 1 - step : step;
             il.Emit(OpCodes.Ldloc, listLocal);
-            emitter.EmitExpression(arguments[i]);
-            emitter.EmitBoxIfNeeded(arguments[i]);
+            if (argLocals != null)
+            {
+                il.Emit(OpCodes.Ldloc, argLocals[i]);
+            }
+            else
+            {
+                emitter.EmitExpression(arguments[i]);
+                emitter.EmitBoxIfNeeded(arguments[i]);
+            }
             il.Emit(OpCodes.Call, runtimeMethod);
             il.Emit(OpCodes.Pop); // discard the per-element count return
         }

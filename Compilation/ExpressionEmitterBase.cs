@@ -360,6 +360,14 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
         return _helpers.SpillStoreObject();
     }
 
+    // IEmitterContext spill seam (#850): exposes the await-safe spilling already used by the generic
+    // call path so type-emitter strategies (ArrayEmitter, etc.) can pre-spill arguments instead of
+    // evaluating them while the receiver sits on the IL stack. In the synchronous ILEmitter these
+    // resolve to plain locals, so non-async codegen is unchanged.
+    bool IEmitterContext.ArgsContainSuspension(IReadOnlyList<Expr> args) => AnyContainsSuspension(args);
+    LocalBuilder IEmitterContext.SpillBoxedArg(Expr arg) => SpillBoxed(arg);
+    LocalBuilder IEmitterContext.SpillStackToObjectLocal() => _helpers.SpillStoreObject();
+
     /// <summary>
     /// Emits a binary operator expression. Default boxes both operands and delegates to TryEmitBinaryOperator.
     /// ILEmitter overrides with stack-type-tracked fast paths.

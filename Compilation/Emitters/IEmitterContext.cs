@@ -87,6 +87,31 @@ public interface IEmitterContext
     void EmitOmittedArgument(Type slotType);
 
     /// <summary>
+    /// True when evaluating any of <paramref name="args"/> can suspend the enclosing state machine
+    /// (contains an <c>await</c>/<c>yield</c>). Type-emitter strategies use this to decide whether a
+    /// fast path must spill arguments before touching the receiver: leaving the receiver (or a partly
+    /// built array) on the IL stack across a suspension produces invalid IL (#850). Always false in the
+    /// synchronous emitter.
+    /// </summary>
+    bool ArgsContainSuspension(IReadOnlyList<Expr> args);
+
+    /// <summary>
+    /// Evaluates <paramref name="arg"/>, boxes it, and spills it into an await-safe object local (one
+    /// that persists across a MoveNext re-entry in state-machine emitters; a plain local in the
+    /// synchronous emitter). Use to pre-evaluate call arguments that can suspend so the suspension
+    /// happens with a clear stack. Stack: [] -&gt; [].
+    /// </summary>
+    LocalBuilder SpillBoxedArg(Expr arg);
+
+    /// <summary>
+    /// Pops the boxed object reference on top of the stack into an await-safe local (persisted across
+    /// a MoveNext re-entry in state-machine emitters; a plain local in the synchronous emitter) and
+    /// returns it. Use to move an already-evaluated receiver off the stack before spilling arguments
+    /// that can suspend. Stack: [value] -&gt; [].
+    /// </summary>
+    LocalBuilder SpillStackToObjectLocal();
+
+    /// <summary>
     /// Emits IL that constructs a delegate of the given type pointing at the
     /// arrow's compiled body. For non-capturing arrows: <c>new Func(null, ldftn staticMethod)</c>.
     /// For capturing arrows: allocate the display class instance, populate
