@@ -1,7 +1,8 @@
 param(
     [string]$ResultsFile = (Join-Path ([System.IO.Path]::GetTempPath()) 'bench-results/results.txt'),
     [string]$DotNetVersion,
-    [string]$NodeVersion
+    [string]$NodeVersion,
+    [string]$BunVersion
 )
 
 if (-not $DotNetVersion) {
@@ -9,6 +10,9 @@ if (-not $DotNetVersion) {
 }
 if (-not $NodeVersion) {
     $NodeVersion = try { node -v } catch { 'unknown' }
+}
+if (-not $BunVersion) {
+    $BunVersion = try { bun --version } catch { 'n/a' }
 }
 
 $ErrorActionPreference = 'Stop'
@@ -24,11 +28,11 @@ $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
 Write-Output @"
 ## SharpTS Cross-Runtime Benchmark Results
 
-**Environment:** .NET $DotNetVersion | Node.js $NodeVersion | $os $arch
+**Environment:** .NET $DotNetVersion | Node.js $NodeVersion | Bun $BunVersion | $os $arch
 **Date:** $(Get-Date -Format 'yyyy-MM-dd')
 
-| Benchmark | Param | Interpreter (ms) | Compiled (ms) | Node.js (ms) | Compiled vs Node |
-|-----------|-------|------------------:|--------------:|--------------:|-----------------:|
+| Benchmark | Param | Interpreter (ms) | Compiled (ms) | Node.js (ms) | Bun (ms) | Compiled vs Node |
+|-----------|-------|------------------:|--------------:|--------------:|---------:|-----------------:|
 "@
 
 # Parse results into a dictionary keyed by "bench|param"
@@ -58,6 +62,7 @@ foreach ($key in $data.Keys) {
     $interp = if ($entry.ContainsKey('interpreter')) { $entry['interpreter'] } else { '-' }
     $comp   = if ($entry.ContainsKey('compiled'))    { $entry['compiled'] }    else { '-' }
     $njs    = if ($entry.ContainsKey('node'))         { $entry['node'] }        else { '-' }
+    $bun    = if ($entry.ContainsKey('bun'))          { $entry['bun'] }         else { '-' }
 
     $ratio = '-'
     if ($comp -ne '-' -and $njs -ne '-') {
@@ -67,5 +72,5 @@ foreach ($key in $data.Keys) {
         }
     }
 
-    Write-Output "| $bench | $param | $interp | $comp | $njs | $ratio |"
+    Write-Output "| $bench | $param | $interp | $comp | $njs | $bun | $ratio |"
 }

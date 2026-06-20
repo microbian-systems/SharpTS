@@ -78,6 +78,17 @@ try {
         $nodeOutput | Where-Object { $_ -match '^BENCH:' } | ForEach-Object {
             "node|$($_ -replace '^BENCH:','')"
         } | Add-Content $ResultsFile
+
+        # --- Bun ---
+        if (Get-Command bun -ErrorAction SilentlyContinue) {
+            Write-Host '  [bun] running...'
+            $bunOutput = & bun run $script.FullName 2>$null
+            $bunOutput | Where-Object { $_ -match '^BENCH:' } | ForEach-Object {
+                "bun|$($_ -replace '^BENCH:','')"
+            } | Add-Content $ResultsFile
+        } else {
+            Write-Host '  [bun] not installed, skipping'
+        }
     }
 } finally {
     Remove-Item -Recurse -Force $compileTmpDir -ErrorAction SilentlyContinue
