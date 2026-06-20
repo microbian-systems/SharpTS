@@ -1258,6 +1258,12 @@ public partial class ILCompiler
                     ctx.FunctionDisplayClassFields = funcDCFields;
                     ctx.CapturedFunctionLocals = [.. funcDCFields.Keys];
                 }
+
+                // #838: redirect this arrow's write-captured block-scope shadows to their renamed DC
+                // storage keys so they reach the shadow's field rather than the outer same-named binding.
+                ctx.CurrentArrowFunctionDCFieldRenames =
+                    _closures.ArrowFunctionDCFieldRenames.TryGetValue(arrow, out var dcFieldRenames)
+                        ? dcFieldRenames : null;
             }
 
             // Set the $arrowDC field if this arrow captures arrow-scope variables

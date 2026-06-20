@@ -221,7 +221,14 @@ public partial class ILCompiler
     /// Creates a display class for a function's captured local variables.
     /// This is needed when local variables are captured by inner arrow functions.
     /// </summary>
-    private void DefineFunctionDisplayClass(Stmt.Function funcStmt, string qualifiedFunctionName)
+    /// <param name="blockScopeRenames">
+    /// When non-null (state-machine contexts whose body is retokenized by <see cref="GeneratorBlockScopeRenamer"/>,
+    /// i.e. async functions), makes the DC rename-aware: a write-captured nested-block shadow is registered
+    /// under its renamed storage so it does not collide with the outer same-named binding (#838). Pass null
+    /// for plain sync functions (their bodies are not retokenized, so the DC must stay name-keyed).
+    /// </param>
+    private void DefineFunctionDisplayClass(Stmt.Function funcStmt, string qualifiedFunctionName,
+        BlockScopeRenameResult? blockScopeRenames = null)
     {
         // Check if this function has local variables that are captured by inner closures
         var capturedLocals = _closures.Analyzer.GetCapturedLocals(funcStmt);
@@ -251,6 +258,15 @@ public partial class ILCompiler
             capturedLocals.ExceptWith(exclusions);
             if (capturedLocals.Count == 0)
                 return;
+        }
+
+        // #838: in a retokenized state-machine body (async functions), split a write-captured nested-block
+        // shadow into its own renamed DC field and record the per-arrow remap for the arrow body resolver.
+        if (blockScopeRenames is { } renames && renames.WriteCaptureRenames.Count > 0)
+        {
+            var renameAware = new HashSet<string>(capturedLocals);
+            ApplyWriteCaptureRenames(renameAware, renames);
+            capturedLocals = renameAware;
         }
 
         RegisterFunctionDisplayClass(qualifiedFunctionName, capturedLocals);

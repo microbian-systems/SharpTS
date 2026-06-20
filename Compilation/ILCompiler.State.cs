@@ -191,6 +191,11 @@ public partial class ILCompiler
         // Maps arrow functions to their $functionDC field (if they capture function-level vars)
         public Dictionary<Expr.ArrowFunction, FieldBuilder> ArrowFunctionDCFields { get; } = new(ReferenceEqualityComparer.Instance);
 
+        // Maps an arrow to (captured source name -> renamed $functionDC storage key) for write-captured
+        // block-scope shadows it lifts into the shared function DC under a disambiguated name (#838).
+        // Consumed when emitting the arrow body to set CompilationContext.CurrentArrowFunctionDCFieldRenames.
+        public Dictionary<Expr.ArrowFunction, Dictionary<string, string>> ArrowFunctionDCFieldRenames { get; } = new(ReferenceEqualityComparer.Instance);
+
         // Maps arrow functions to the function display class they need access to
         public Dictionary<Expr.ArrowFunction, string> ArrowFunctionDCSource { get; } = new(ReferenceEqualityComparer.Instance);
 

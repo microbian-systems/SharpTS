@@ -2289,6 +2289,93 @@ public class GeneratorTests
         Assert.Equal("[2, 1, 1]\n", TestHarness.Run(source, mode));
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_NestedBlockShadow_WriteCapturedByArrow_DoesNotLeak(ExecutionMode mode)
+    {
+        // An inner block let that shadows an outer body-level const AND is WRITTEN by a nested arrow must
+        // get its own shared function-DC slot; the arrow's read/write land on the inner binding while the
+        // outer keeps its own (#838, the write-capture residual left open by #767/#674). Compiled
+        // previously yielded 6,6,6 because the inner shadow was left un-renamed and collided with the
+        // outer binding on the single name-keyed $functionDC field.
+        var source = """
+            function* mut(): Generator<number> {
+              const r = 100;
+              {
+                let r = 5;
+                const f = () => { r = r + 1; return r; };
+                yield f();
+                yield r;
+              }
+              yield r;
+            }
+            console.log([...mut()].join(","));
+            """;
+
+        Assert.Equal("6,6,100\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_NestedBlockShadow_WriteCapturedByArrow_IncrementForms(ExecutionMode mode)
+    {
+        // The arrow mutates the renamed write-shadow through ++ and += (distinct hand-rolled DC store
+        // sites from a plain assignment); all must target the shadow's renamed field, not the outer one (#838).
+        var source = """
+            function* mut(): Generator<number> {
+              const r = 100;
+              {
+                let r = 5;
+                const f = () => { r++; r += 2; return r; };
+                yield f();
+                yield r;
+              }
+              yield r;
+            }
+            console.log([...mut()].join(","));
+            """;
+
+        Assert.Equal("8,8,100\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_TwoWriteShadows_CapturedByDistinctArrows(ExecutionMode mode)
+    {
+        // Two independent nested-block write-shadows, each written by its own arrow, must each get their
+        // own renamed DC field without cross-contamination, and the outer bindings stay untouched (#838).
+        var source = """
+            function* g(): Generator<number> {
+              const r = 100; const s = 200;
+              { let r = 5; const f = () => { r = r + 1; return r; }; yield f(); yield r; }
+              { let s = 9; const h = () => { s = s + 1; return s; }; yield h(); yield s; }
+              yield r; yield s;
+            }
+            console.log([...g()].join(","));
+            """;
+
+        Assert.Equal("6,6,10,10,100,200\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Generator_NonShadowWriteCapture_StillShared(ExecutionMode mode)
+    {
+        // Regression guard: the classic #674 write-capture WITHOUT shadowing must keep sharing the outer
+        // binding's storage (no rename, name-keyed DC) after the #838 rename-aware DC change.
+        var source = """
+            function* g(): Generator<number> {
+              let sum = 0;
+              const add = (n: number) => { sum += n; };
+              add(5); yield sum;
+              add(3); yield sum;
+            }
+            console.log([...g()].join(","));
+            """;
+
+        Assert.Equal("5,8\n", TestHarness.Run(source, mode));
+    }
+
     #endregion
 
     #region Optional-chain string-method yield short-circuit parity (#709)

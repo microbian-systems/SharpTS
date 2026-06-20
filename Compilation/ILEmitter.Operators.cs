@@ -846,9 +846,11 @@ public partial class ILEmitter
                 return;
             }
 
-            // Check function display class first (before regular locals)
-            if (_ctx.CapturedFunctionLocals?.Contains(v.Name.Lexeme) == true &&
-                _ctx.FunctionDisplayClassFields?.TryGetValue(v.Name.Lexeme, out var funcDCField) == true)
+            // Check function display class first (before regular locals).
+            // #838: remap a write-captured block-scope shadow to its renamed DC storage key in an arrow body.
+            var preIncDCName = _ctx.ResolveFunctionDCFieldName(v.Name.Lexeme);
+            if (_ctx.CapturedFunctionLocals?.Contains(preIncDCName) == true &&
+                _ctx.FunctionDisplayClassFields?.TryGetValue(preIncDCName, out var funcDCField) == true)
             {
                 // Store to function display class field (always boxed)
                 if (isTypedDouble)
@@ -1154,9 +1156,11 @@ public partial class ILEmitter
                 return;
             }
 
-            // Check function display class first (before regular locals)
-            if (_ctx.CapturedFunctionLocals?.Contains(v.Name.Lexeme) == true &&
-                _ctx.FunctionDisplayClassFields?.TryGetValue(v.Name.Lexeme, out var funcDCField) == true)
+            // Check function display class first (before regular locals).
+            // #838: remap a write-captured block-scope shadow to its renamed DC storage key in an arrow body.
+            var postIncDCName = _ctx.ResolveFunctionDCFieldName(v.Name.Lexeme);
+            if (_ctx.CapturedFunctionLocals?.Contains(postIncDCName) == true &&
+                _ctx.FunctionDisplayClassFields?.TryGetValue(postIncDCName, out var funcDCField) == true)
             {
                 // Store to function display class field (always boxed)
                 if (isTypedDouble)
