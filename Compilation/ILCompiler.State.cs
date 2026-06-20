@@ -138,6 +138,11 @@ public partial class ILCompiler
         // NonEscapingArrowLocalAnalyzer; the fast path only fires for capturing arrows whose in-scope
         // local slot type matches the display class (so a same-named binding elsewhere never hits it).
         public Dictionary<string, Expr.ArrowFunction> DirectCallArrowBindings { get; } = [];
+
+        // Generated value-type "shape" structs for promoted object-literal locals (#862). Populated
+        // after ObjectLocalPromotionAnalyzer by DefineObjectShapeTypes; the declaration site keys in by
+        // canonical shape key, and the property get/set fast paths key in by the local slot's CLR type.
+        public ObjectShapeRegistry ObjectShapes { get; } = new();
         public Dictionary<Expr.ArrowFunction, TypeBuilder> DisplayClasses { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<Expr.ArrowFunction, Dictionary<string, FieldBuilder>> DisplayClassFields { get; } = new(ReferenceEqualityComparer.Instance);
         public Dictionary<Expr.ArrowFunction, ConstructorBuilder> DisplayClassConstructors { get; } = new(ReferenceEqualityComparer.Instance);

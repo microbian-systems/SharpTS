@@ -27,6 +27,13 @@ public partial class CompilationContext
     // `callvirt Invoke` instead of the per-call $TSFunction wrapper + reflective InvokeMethodValue.
     public Dictionary<string, ArrowFunction> DirectCallArrowBindings { get; set; } = [];
 
+    // Generated value-type "shape" structs for promoted object-literal locals (#862). Shared
+    // program-wide (populated by DefineObjectShapeTypes after analysis). EmitVarDeclaration resolves the
+    // struct by canonical shape key for a promoted local; the property get/set fast paths recognise a
+    // promoted local from its slot's CLR type via ByClrType. See TryGetObjectShapeType /
+    // TryGetPromotedObjectLocal.
+    public ObjectShapeRegistry? ObjectShapes { get; set; }
+
     // ============================================
     // Self-referential capture write-back (issue #421)
     // ============================================

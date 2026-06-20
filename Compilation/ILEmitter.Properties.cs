@@ -20,6 +20,21 @@ public partial class ILEmitter
         // CommonJS: `module.exports` reads → ldsfld $exports
         if (TryEmitCjsGet(g)) return;
 
+        // Promoted object-literal shape struct (#862): `o.KEY` reads the typed struct field directly
+        // (ldloca + ldfld) — no Dictionary lookup, no string hash, no unbox. Keyed off the slot's CLR
+        // type, so it is scope-correct and never misfires for a non-promoted local. The analyzer
+        // guarantees KEY is one of the shape's fields. Must precede the TypeInfo.Record fast path below:
+        // a promoted local is also Record-typed, but its slot is a struct, not a Dictionary.
+        if (!g.Optional && g.Object is Expr.Variable shapeVarGet
+            && _ctx.TryGetPromotedObjectLocal(shapeVarGet.Name.Lexeme) is { } poGet
+            && poGet.Shape.FieldBuilders.TryGetValue(g.Name.Lexeme, out var fbGet))
+        {
+            IL.Emit(OpCodes.Ldloca, poGet.Local);
+            IL.Emit(OpCodes.Ldfld, fbGet);
+            SetStackTypeForFieldType(fbGet.FieldType);
+            return;
+        }
+
         // Syntactic shortcut: `arguments.length` → load $Arguments._length
         // directly. The static-type-driven dispatch path emits .NET
         // List<object>.Count (via a helper that bypasses GetProperty),
@@ -486,6 +501,26 @@ public partial class ILEmitter
         SetStackUnknown();
     }
 
+    /// <summary>
+    /// Coerces the value currently on the stack to a promoted shape struct field's CLR type (#862).
+    /// The analyzer guarantees the value's static kind already matches the field, so the underlying
+    /// Ensure* helper is a no-op in practice — it only fixes an unexpected boxed/widened representation.
+    /// </summary>
+    private void EnsureForFieldType(Type fieldType)
+    {
+        if (fieldType == _ctx.Types.Double) EnsureDouble();
+        else if (fieldType == _ctx.Types.Boolean) EnsureBoolean();
+        else EnsureString();
+    }
+
+    /// <summary>Sets the stack-type tracker to match a promoted shape struct field's CLR type (#862).</summary>
+    private void SetStackTypeForFieldType(Type fieldType)
+    {
+        if (fieldType == _ctx.Types.Double) SetStackType(StackType.Double);
+        else if (fieldType == _ctx.Types.Boolean) SetStackType(StackType.Boolean);
+        else SetStackType(StackType.String);
+    }
+
     protected override void EmitSet(Expr.Set s)
     {
         // CommonJS: `module.exports = X` writes → stsfld $exports
@@ -516,6 +551,27 @@ public partial class ILEmitter
             IL.Emit(OpCodes.Call, _ctx.Types.GetPropertySetter(_ctx.Types.Environment, "ExitCode"));
             IL.Emit(OpCodes.Conv_R8); // Convert back to double for JS number
             IL.Emit(OpCodes.Box, _ctx.Types.Double);
+            return;
+        }
+
+        // Promoted object-literal shape struct (#862): `o.KEY = v` writes the typed struct field
+        // directly (ldloca + stfld) — no Dictionary, no freeze/seal probe, no boxing. The expression's
+        // result is the assigned value (typed). Keyed off the slot's CLR type (scope-correct). The
+        // analyzer guarantees KEY ∈ shape and v's static kind matches the field. Must precede the
+        // TypeInfo.Record fast path below (a promoted local is Record-typed but slot is a struct).
+        if (s.Object is Expr.Variable shapeVarSet
+            && _ctx.TryGetPromotedObjectLocal(shapeVarSet.Name.Lexeme) is { } poSet
+            && poSet.Shape.FieldBuilders.TryGetValue(s.Name.Lexeme, out var fbSet))
+        {
+            EmitExpression(s.Value);
+            EnsureForFieldType(fbSet.FieldType);
+            var valueTemp = IL.DeclareLocal(fbSet.FieldType);
+            IL.Emit(OpCodes.Stloc, valueTemp);
+            IL.Emit(OpCodes.Ldloca, poSet.Local);
+            IL.Emit(OpCodes.Ldloc, valueTemp);
+            IL.Emit(OpCodes.Stfld, fbSet);
+            IL.Emit(OpCodes.Ldloc, valueTemp); // expression result: the assigned value
+            SetStackTypeForFieldType(fbSet.FieldType);
             return;
         }
 

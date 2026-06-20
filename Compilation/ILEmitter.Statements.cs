@@ -202,6 +202,34 @@ public partial class ILEmitter
             return;
         }
 
+        // Non-escaping object-literal local (#862): a provably non-escaping `const o = { x: …, y: … }`
+        // whose literal has a fixed, statically-known primitive shape is promoted to a generated
+        // value-type "shape" struct local with typed fields. Field reads/writes (`o.x`) lower to direct
+        // ldfld/stfld — no Dictionary, no string hash, no boxing — and a non-escaping struct local is
+        // register-promoted by the JIT. Reached only after the capture branches above (a captured name is
+        // excluded by the analyzer). Falls through to the generic Dictionary path if shapes aren't
+        // threaded into this context (e.g. async/generator bodies, which never consult the mark).
+        if (_ctx.TypeMap != null && v.Initializer is Expr.ObjectLiteral shapeLit
+            && _ctx.TypeMap.IsPromotableObjectLocal(v.Name, out var objShape)
+            && _ctx.TryGetObjectShapeType(objShape.CanonicalKey) is { } shapeType)
+        {
+            var structLocal = _ctx.Locals.DeclareLocal(v.Name.Lexeme, shapeType.ClrType);
+            IL.Emit(OpCodes.Ldloca, structLocal);
+            IL.Emit(OpCodes.Initobj, shapeType.ClrType);
+            // Evaluate every field initializer in source order (preserving side effects), even a field
+            // never read later, and store into its typed struct field.
+            foreach (var prop in shapeLit.Properties)
+            {
+                var fieldName = ((Expr.IdentifierKey)prop.Key!).Name.Lexeme;
+                var fb = shapeType.FieldBuilders[fieldName];
+                IL.Emit(OpCodes.Ldloca, structLocal);
+                EmitExpression(prop.Value);
+                EnsureForFieldType(fb.FieldType);
+                IL.Emit(OpCodes.Stfld, fb);
+            }
+            return;
+        }
+
         // Typed-array-local promotion (#857/#860): a provably non-escaping number[]/boolean[]
         // local with an empty-array-literal initializer gets a concrete List<double>/List<bool>
         // slot, so index get/set, .length, and push/pop lower to direct typed ops with no

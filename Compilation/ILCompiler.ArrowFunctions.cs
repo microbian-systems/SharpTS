@@ -1259,6 +1259,7 @@ public partial class ILCompiler
             ArrowMethods = _closures.ArrowMethods,
             ConstArrowBindings = _closures.ConstArrowBindings,
             DirectCallArrowBindings = _closures.DirectCallArrowBindings,
+            ObjectShapes = _closures.ObjectShapes,
             DisplayClasses = _closures.DisplayClasses,
             DisplayClassFields = _closures.DisplayClassFields,
             DisplayClassConstructors = _closures.DisplayClassConstructors,
