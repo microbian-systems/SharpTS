@@ -318,6 +318,23 @@ public partial class ILEmitter
         // rest of the module body and ultimately trips PathStackDepth at the final ret.
         if (TryEmitCjsAssign(a)) return;
 
+        // Promoted string-accumulator append (#857): `s = s + E` where `s` is a StringBuilder slot.
+        // Emit `sb.Append(E)` instead of evaluating `s + E` (String.Concat) and storing — turning the
+        // O(n²) accumulation into O(n). The analyzer promotes `s` only when every such append is in
+        // statement position, so the Append-returned builder left on the stack is the single value
+        // `Stmt.Expression` pops (the discarded assignment-expression result).
+        if (a.Value is Expr.Binary { Operator.Type: TokenType.PLUS, Left: Expr.Variable accLeft } accBin
+            && accLeft.Name.Lexeme == a.Name.Lexeme
+            && _ctx.TryGetPromotedStringAccumulator(a.Name.Lexeme) is { } accSb)
+        {
+            IL.Emit(OpCodes.Ldloc, accSb);
+            EmitExpression(accBin.Right);
+            EnsureString();
+            IL.Emit(OpCodes.Callvirt, _ctx.Types.StringBuilderAppendString);
+            SetStackUnknown();
+            return;
+        }
+
         EmitExpression(a.Value);
 
         // 0. Per-iteration loop-binding cell (#650): write through the StrongBox so the

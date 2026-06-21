@@ -439,6 +439,20 @@ public partial class ILEmitter
 
     protected override void EmitCompoundAssign(Expr.CompoundAssign ca)
     {
+        // Promoted string-accumulator append (#857): `s += E` where `s` is a StringBuilder slot →
+        // `sb.Append(E)`. Promotion guarantees statement position, so the Append-returned builder on the
+        // stack is the value Stmt.Expression pops. See EmitAssign and StringAccumulatorPromotionAnalyzer.
+        if (ca.Operator.Type == TokenType.PLUS_EQUAL
+            && _ctx.TryGetPromotedStringAccumulator(ca.Name.Lexeme) is { } accSb)
+        {
+            IL.Emit(OpCodes.Ldloc, accSb);
+            EmitExpression(ca.Value);
+            EnsureString();
+            IL.Emit(OpCodes.Callvirt, _ctx.Types.StringBuilderAppendString);
+            SetStackUnknown();
+            return;
+        }
+
         var local = _ctx.Locals.GetLocal(ca.Name.Lexeme);
         FieldBuilder? topLevelField = null;
         _ctx.TopLevelStaticVars?.TryGetValue(ca.Name.Lexeme, out topLevelField);

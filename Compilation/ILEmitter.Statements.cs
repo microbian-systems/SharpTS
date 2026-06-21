@@ -249,6 +249,23 @@ public partial class ILEmitter
             return;
         }
 
+        // Append-only string-accumulator promotion (#857): a provably non-escaping `string` local with
+        // a string-literal initializer, used only via `s = s + str`/`s += str` (statement position),
+        // `s.length`, and `s.charCodeAt(i)`, is backed by a StringBuilder slot — turning O(n²) repeated
+        // String.Concat (each copies the whole accumulator) into amortized-O(1) Append. StringBuilder
+        // .Length and the [i] indexer are UTF-16 code units, identical to JS .length/charCodeAt, so those
+        // reads need no materialization. Reached only AFTER the capture branches above (the analyzer
+        // excludes captured names); the append/length/charCodeAt fast paths key off the slot's CLR type.
+        if (_ctx.TypeMap != null && _ctx.TypeMap.IsPromotableStringAccumulator(v.Name)
+            && v.Initializer is Expr.Literal { Value: string seedStr })
+        {
+            var sbLocal = _ctx.Locals.DeclareLocal(v.Name.Lexeme, _ctx.Types.StringBuilder);
+            IL.Emit(OpCodes.Ldstr, seedStr);
+            IL.Emit(OpCodes.Newobj, _ctx.Types.StringBuilderStringCtor);
+            IL.Emit(OpCodes.Stloc, sbLocal);
+            return;
+        }
+
         // Determine if this local can use unboxed double type
         Type localType = CanUseUnboxedLocal(v) ? _ctx.Types.Double : _ctx.Types.Object;
         var local = _ctx.Locals.DeclareLocal(v.Name.Lexeme, localType);

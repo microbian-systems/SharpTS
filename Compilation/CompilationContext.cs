@@ -271,6 +271,19 @@ public partial class CompilationContext
     }
 
     /// <summary>
+    /// If <paramref name="variableName"/> currently binds to a promoted string-accumulator local
+    /// (a slot whose CLR type is <c>StringBuilder</c>, declared by the #857 promotion path), returns its
+    /// <see cref="LocalBuilder"/>; otherwise null. The slot's CLR type is the single source of truth, so
+    /// this is automatically scope-correct under shadowing and never misfires for a captured/object local
+    /// (no other code path declares a user local with a <c>StringBuilder</c> slot).
+    /// </summary>
+    public LocalBuilder? TryGetPromotedStringAccumulator(string variableName)
+    {
+        if (!Locals.TryGetLocal(variableName, out var local)) return null;
+        return Locals.GetLocalType(variableName) == Types.StringBuilder ? local : null;
+    }
+
+    /// <summary>
     /// Resolves the generated shape struct for a promoted object-literal local by its canonical shape
     /// key (#862), or null if shapes are not threaded into this context / the key is unknown. Used at the
     /// declaration site to pick the struct type to declare the local with.

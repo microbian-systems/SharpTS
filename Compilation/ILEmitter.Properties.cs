@@ -277,6 +277,18 @@ public partial class ILEmitter
             return;
         }
 
+        // Promoted string-accumulator `.length` (#857): direct StringBuilder.Length. .NET StringBuilder
+        // .Length is UTF-16 code units, identical to JS string .length — no materialization.
+        if (!g.Optional && g.Name.Lexeme == "length" && g.Object is Expr.Variable accLenVar
+            && _ctx.TryGetPromotedStringAccumulator(accLenVar.Name.Lexeme) is { } accLenSb)
+        {
+            IL.Emit(OpCodes.Ldloc, accLenSb);
+            IL.Emit(OpCodes.Callvirt, _ctx.Types.GetProperty(_ctx.Types.StringBuilder, "Length").GetGetMethod()!);
+            IL.Emit(OpCodes.Conv_R8);
+            SetStackType(StackType.Double);
+            return;
+        }
+
         // Try direct getter dispatch for known class instance types
         TypeInfo? objType = _ctx.TypeMap?.Get(g.Object);
         if (TryEmitDirectGetterCall(g.Object, objType, g.Name.Lexeme))
@@ -1232,6 +1244,47 @@ public partial class ILEmitter
                 IL.Emit(OpCodes.Pop); // discard intermediate length; keep only the final one
         }
         SetStackType(StackType.Double);
+    }
+
+    /// <summary>
+    /// Emits <c>s.charCodeAt(i)</c> for a promoted string-accumulator (StringBuilder slot): reads the
+    /// UTF-16 code unit directly via the <c>this[int]</c> indexer (identical to JS charCodeAt), with an
+    /// out-of-range (incl. negative, via unsigned compare) result of NaN. Leaves a boxed double, matching
+    /// the string-method call convention. See EmitMethodCall and StringAccumulatorPromotionAnalyzer.
+    /// </summary>
+    private void EmitPromotedStringCharCodeAt(LocalBuilder sb, List<Expr> arguments)
+    {
+        var getLength = _ctx.Types.GetProperty(_ctx.Types.StringBuilder, "Length").GetGetMethod()!;
+        var getChars = _ctx.Types.GetMethod(_ctx.Types.StringBuilder, "get_Chars", _ctx.Types.Int32);
+
+        var idxLocal = IL.DeclareLocal(_ctx.Types.Int32);
+        if (arguments.Count > 0) EmitExpressionAsDouble(arguments[0]);
+        else IL.Emit(OpCodes.Ldc_R8, 0.0);
+        IL.Emit(OpCodes.Conv_I4);
+        IL.Emit(OpCodes.Stloc, idxLocal);
+
+        var oob = IL.DefineLabel();
+        var end = IL.DefineLabel();
+
+        // if ((uint)idx >= (uint)sb.Length) -> NaN (unsigned fold catches negative indices too)
+        IL.Emit(OpCodes.Ldloc, idxLocal);
+        IL.Emit(OpCodes.Ldloc, sb);
+        IL.Emit(OpCodes.Callvirt, getLength);
+        IL.Emit(OpCodes.Bge_Un, oob);
+
+        IL.Emit(OpCodes.Ldloc, sb);
+        IL.Emit(OpCodes.Ldloc, idxLocal);
+        IL.Emit(OpCodes.Callvirt, getChars);
+        IL.Emit(OpCodes.Conv_R8);
+        IL.Emit(OpCodes.Box, _ctx.Types.Double);
+        IL.Emit(OpCodes.Br, end);
+
+        IL.MarkLabel(oob);
+        IL.Emit(OpCodes.Ldc_R8, double.NaN);
+        IL.Emit(OpCodes.Box, _ctx.Types.Double);
+
+        IL.MarkLabel(end);
+        SetStackUnknown();
     }
 
     /// <summary>
