@@ -807,6 +807,7 @@ public partial class RuntimeEmitter
         EmitArrayMap(typeBuilder, runtime);
         EmitArrayMapDirect(typeBuilder, runtime);
         EmitArrayMapDouble(typeBuilder, runtime);
+        EmitArrayFilterDouble(typeBuilder, runtime);
         EmitArrayFilter(typeBuilder, runtime);
         EmitArrayFilterDirect(typeBuilder, runtime);
         EmitArrayFilterDirectBool(typeBuilder, runtime);

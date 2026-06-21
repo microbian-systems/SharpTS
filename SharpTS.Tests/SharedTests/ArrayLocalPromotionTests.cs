@@ -377,4 +377,44 @@ public class ArrayLocalPromotionTests
 
         Assert.Equal("3\n10\n12\n", TestHarness.Run(source, mode));
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedFilter_ThenLength(ExecutionMode mode)
+    {
+        var source = """
+            function f(): number {
+                const arr: number[] = [];
+                for (let i: number = 0; i < 10; i++) { arr.push(i); }
+                const evens = arr.filter((x: number): boolean => x % 2 === 0);
+                let s: number = 0;
+                for (let i: number = 0; i < evens.length; i++) { s = s + evens[i]; }
+                return s;
+            }
+            console.log(f());
+            """;
+
+        // evens [0,2,4,6,8] → 20
+        Assert.Equal("20\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedPipeline_MapFilterReduce(ExecutionMode mode)
+    {
+        // The full array-methods benchmark shape: build → map → filter → reduce, every stage typed.
+        var source = """
+            function arrayMethodWork(n: number): number {
+                const arr: number[] = [];
+                for (let i: number = 0; i < n; i++) { arr.push(i); }
+                const doubled = arr.map((x: number): number => x * 2);
+                const evens = doubled.filter((x: number): boolean => x % 4 === 0);
+                return evens.reduce((acc: number, x: number): number => acc + x, 0);
+            }
+            console.log(arrayMethodWork(10));
+            """;
+
+        // arr 0..9 → doubled [0,2,..,18] → evens (x%4===0) [0,4,8,12,16] → 40
+        Assert.Equal("40\n", TestHarness.Run(source, mode));
+    }
 }

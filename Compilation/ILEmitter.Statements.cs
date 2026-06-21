@@ -245,12 +245,13 @@ public partial class ILEmitter
             // at emit time from the already-declared source slot, so a List<double> result is only
             // ever produced into a List<double> slot (never escaping into $Array context).
             bool emptyInit = v.Initializer is Expr.ArrayLiteral { Elements.Count: 0 } or null;
-            System.Reflection.Emit.LocalBuilder mapSrc = null!;
-            System.Reflection.Emit.MethodBuilder mapperMethod = null!;
-            bool typedMapInit = promoElemTok == TokenType.TYPE_NUMBER
-                && TryResolveTypedDoubleMapInit(v.Initializer, out mapSrc, out mapperMethod);
+            System.Reflection.Emit.LocalBuilder hofSrc = null!;
+            System.Reflection.Emit.MethodBuilder hofArrow = null!;
+            bool hofIsFilter = false;
+            bool typedHofInit = promoElemTok == TokenType.TYPE_NUMBER
+                && TryResolveTypedDoubleHofInit(v.Initializer, out hofSrc, out hofArrow, out hofIsFilter);
 
-            if (emptyInit || typedMapInit)
+            if (emptyInit || typedHofInit)
             {
                 var promoDesc = promoElemTok == TokenType.TYPE_NUMBER ? ArrayElements.Double : ArrayElements.Bool;
                 var promoListType = promoDesc.GetListType(_ctx.Types);
@@ -261,12 +262,21 @@ public partial class ILEmitter
                 }
                 else
                 {
-                    // result = ArrayMapDouble(src, (double x) => …) — direct typed delegate, no boxing.
-                    IL.Emit(OpCodes.Ldloc, mapSrc);
+                    // result = ArrayMapDouble/ArrayFilterDouble(src, <typed arrow>) — direct typed
+                    // delegate (no boxed adapter), produces a fresh List<double> with no element boxing.
+                    IL.Emit(OpCodes.Ldloc, hofSrc);
                     IL.Emit(OpCodes.Ldnull);
-                    IL.Emit(OpCodes.Ldftn, mapperMethod);
-                    IL.Emit(OpCodes.Newobj, typeof(Func<double, double>).GetConstructor([typeof(object), typeof(IntPtr)])!);
-                    IL.Emit(OpCodes.Call, _ctx.Runtime!.ArrayMapDouble);
+                    IL.Emit(OpCodes.Ldftn, hofArrow);
+                    if (hofIsFilter)
+                    {
+                        IL.Emit(OpCodes.Newobj, typeof(Func<double, bool>).GetConstructor([typeof(object), typeof(IntPtr)])!);
+                        IL.Emit(OpCodes.Call, _ctx.Runtime!.ArrayFilterDouble);
+                    }
+                    else
+                    {
+                        IL.Emit(OpCodes.Newobj, typeof(Func<double, double>).GetConstructor([typeof(object), typeof(IntPtr)])!);
+                        IL.Emit(OpCodes.Call, _ctx.Runtime!.ArrayMapDouble);
+                    }
                 }
                 IL.Emit(OpCodes.Stloc, promoLocal);
                 return;
@@ -354,33 +364,39 @@ public partial class ILEmitter
     }
 
     /// <summary>
-    /// Resolves <paramref name="init"/> as a typed-double <c>src.map(cb)</c> (#861 typed-HOF pipeline):
-    /// true iff <c>src</c> currently binds to a promoted <c>List&lt;double&gt;</c> slot and <c>cb</c> is an
-    /// inline, non-capturing arrow compiled to <c>double(double)</c>. On success yields the source list
-    /// local and the mapper's typed static method, which bind directly to <c>Func&lt;double,double&gt;</c>
-    /// for <c>ArrayMapDouble</c>. Decided at emit time (source declared earlier in source order), so the
-    /// typed result is only produced when the source is genuinely typed.
+    /// Resolves <paramref name="init"/> as a typed-double <c>src.map(cb)</c> or <c>src.filter(cb)</c>
+    /// (#861 typed-HOF pipeline): true iff <c>src</c> currently binds to a promoted <c>List&lt;double&gt;</c>
+    /// slot and <c>cb</c> is an inline, non-capturing arrow compiled to <c>double(double)</c> (map) or
+    /// <c>bool(double)</c> (filter). On success yields the source list local, the arrow's typed static
+    /// method (binds directly to <c>Func&lt;double,double&gt;</c>/<c>Func&lt;double,bool&gt;</c>), and
+    /// whether it is filter. Decided at emit time (source declared earlier in source order), so a typed
+    /// List&lt;double&gt; result is only produced when the source is genuinely typed.
     /// </summary>
-    private bool TryResolveTypedDoubleMapInit(
+    private bool TryResolveTypedDoubleHofInit(
         Expr? init,
         out System.Reflection.Emit.LocalBuilder srcList,
-        out System.Reflection.Emit.MethodBuilder mapperMethod)
+        out System.Reflection.Emit.MethodBuilder arrowMethod,
+        out bool isFilter)
     {
         srcList = null!;
-        mapperMethod = null!;
+        arrowMethod = null!;
+        isFilter = false;
         if (init is not Expr.Call { Callee: Expr.Get { Object: Expr.Variable v, Optional: false } get } call)
             return false;
-        if (get.Name.Lexeme != "map") return false;
+        bool isMap = get.Name.Lexeme == "map";
+        isFilter = get.Name.Lexeme == "filter";
+        if (!isMap && !isFilter) return false;
         if (call.Arguments.Count != 1 || call.Arguments[0] is not Expr.ArrowFunction af) return false;
         if (_ctx.TryGetPromotedArrayLocal(v.Name.Lexeme) is not { Descriptor.Kind: ArrayElementsKind.Double } prom)
             return false;
         if (_ctx.DisplayClasses.ContainsKey(af)) return false;               // capturing → not directly bindable
         if (!_ctx.ArrowMethods.TryGetValue(af, out var m)) return false;
-        if (m.ReturnType != _ctx.Types.Double) return false;
+        var expectedReturn = isFilter ? _ctx.Types.Boolean : _ctx.Types.Double;
+        if (m.ReturnType != expectedReturn) return false;
         var ps = m.GetParameters();
         if (ps.Length != 1 || ps[0].ParameterType != _ctx.Types.Double) return false;
         srcList = prom.Local;
-        mapperMethod = m;
+        arrowMethod = m;
         return true;
     }
 

@@ -125,7 +125,9 @@ public static class ArrayLocalPromotionAnalyzer
         private bool IsPromotableArrayInitializer(Expr? init) =>
             init is Expr.ArrayLiteral { Elements.Count: 0 }
             || (init is Expr.Call { Callee: Expr.Get { Object: Expr.Variable, Name.Lexeme: "map", Optional: false } } mc
-                && IsTypedNonCapturingNumericMapper(mc.Arguments));
+                && IsTypedNonCapturingNumericMapper(mc.Arguments))
+            || (init is Expr.Call { Callee: Expr.Get { Object: Expr.Variable, Name.Lexeme: "filter", Optional: false } } fc
+                && IsTypedNonCapturingNumericPredicate(fc.Arguments));
 
         protected override void VisitGetIndex(Expr.GetIndex expr)
         {
@@ -223,7 +225,39 @@ public static class ArrayLocalPromotionAnalyzer
                 foreach (var arg in expr.Arguments) Visit(arg);
                 return;
             }
+
+            // `x.filter(predicate)` over a number[] with a typed, non-capturing number→bool predicate —
+            // permitted receiver (ArrayFilterDouble drives a Func<double,bool> over the bare List<double>
+            // into a fresh List<double>, no boxing). Same result-promotion rules as map.
+            if (expr.Callee is Expr.Get { Object: Expr.Variable fv, Optional: false } fget
+                && fget.Name.Lexeme == "filter"
+                && IsNumberArrayReceiver(fv)
+                && IsTypedNonCapturingNumericPredicate(expr.Arguments))
+            {
+                NotePermittedReceiver(fv);
+                foreach (var arg in expr.Arguments) Visit(arg);
+                return;
+            }
             base.VisitCall(expr);
+        }
+
+        /// <summary>
+        /// True if <paramref name="arguments"/> is a single inline, non-capturing arrow with one
+        /// annotated <c>number</c> param and a <c>boolean</c> body — the shape the typed
+        /// <c>ArrayFilterDouble</c> fast path binds to a <c>Func&lt;double,bool&gt;</c>.
+        /// </summary>
+        private bool IsTypedNonCapturingNumericPredicate(List<Expr> arguments)
+        {
+            if (arguments.Count != 1) return false;
+            if (arguments[0] is not Expr.ArrowFunction af) return false;
+            if (af.IsAsync || af.IsGenerator || af.HasOwnThis) return false;
+            if (af.Parameters.Count != 1) return false;
+            var p = af.Parameters[0];
+            if (p.IsRest || p.IsOptional || p.DefaultValue != null) return false;
+            if (p.Type != "number") return false;
+            if (af.ReturnType != null && af.ReturnType != "boolean") return false;
+            if (_closures?.GetCaptures(af).Count > 0) return false;
+            return true;
         }
 
         /// <summary>
