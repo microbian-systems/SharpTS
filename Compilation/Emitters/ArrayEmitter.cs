@@ -877,13 +877,17 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         // Typed-param adapter path (#861): an annotated callback compiles to a
         // typed static method (e.g. double(double)/bool(double)) that cannot bind
         // to Func<object, object> directly. Bind a per-arrow boxed adapter that
-        // marshals object↔typed around the arrow call, then drive the existing
-        // object-callback helper. The boxed bool predicate result is handled by
-        // the helper's own IsTruthy (so the boolHelper/Direct-bool variant is a
-        // later refinement, #861 L4).
-        if (!TryBindTypedArrowAdapter(emitter, af, staticMethod, funcArity: 1))
+        // marshals object↔typed around the arrow call, then drive the matching
+        // Array*Direct helper.
+        //
+        // #861 L4: when the predicate arrow returns `bool` and a Func<object, bool>
+        // helper variant exists (filter/find/findIndex/some/every), emit a
+        // bool-returning adapter and call that variant — skipping the per-element
+        // result box + IsTruthy the object helper would otherwise do.
+        bool wantBool = boolHelper != null && staticMethod.ReturnType == ctx.Types.Boolean;
+        if (!TryBindTypedArrowAdapter(emitter, af, staticMethod, funcArity: 1, boolReturn: wantBool))
             return false;
-        ctx.IL.Emit(OpCodes.Call, helperMethod);
+        ctx.IL.Emit(OpCodes.Call, wantBool ? boolHelper! : helperMethod);
         return true;
     }
 
@@ -898,7 +902,8 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         IEmitterContext emitter,
         Expr.ArrowFunction af,
         System.Reflection.Emit.MethodBuilder arrowMethod,
-        int funcArity)
+        int funcArity,
+        bool boolReturn)
     {
         var ctx = emitter.Context;
 
@@ -910,9 +915,11 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         foreach (var p in arrowMethod.GetParameters())
             if (!IsAdapterMarshallable(ctx, p.ParameterType)) return false;
 
-        Type funcType = funcArity == 2
-            ? typeof(Func<object, object, object>)
-            : typeof(Func<object, object>);
+        // boolReturn (#861 L4) binds Func<object, bool> for a bool-returning predicate so the
+        // *DirectBool helper consumes an unboxed bool. Only the 1-arg predicate helpers pass it.
+        Type funcType = boolReturn
+            ? typeof(Func<object, bool>)
+            : (funcArity == 2 ? typeof(Func<object, object, object>) : typeof(Func<object, object>));
         var funcCtor = funcType.GetConstructor([typeof(object), typeof(IntPtr)])!;
 
         if (ctx.DisplayClasses.TryGetValue(af, out var displayClass))
@@ -921,7 +928,7 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
             // Emit an INSTANCE adapter, build the display instance (capturing live locals), then bind
             // (displayInstance, ldftn adapter). The display instance is built fresh at the call site,
             // exactly as the reflective $TSFunction path does.
-            var adapter = ctx.ArrowBoxedAdapters.GetOrEmit(displayClass, arrowMethod, funcArity, instance: true);
+            var adapter = ctx.ArrowBoxedAdapters.GetOrEmit(displayClass, arrowMethod, funcArity, instance: true, boolReturn: boolReturn);
             if (!emitter.TryEmitCapturingArrowDisplayInstance(af))
                 return false;                                          // Stack: [displayInstance]
             ctx.IL.Emit(OpCodes.Ldftn, adapter);
@@ -933,7 +940,7 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         // Using DeclaringType (rather than ctx.ProgramType, set only on the top-level context) lets the
         // adapter fire inside function/method bodies too. Bind (null, ldftn adapter).
         if (arrowMethod.DeclaringType is not TypeBuilder programType) return false;
-        var staticAdapter = ctx.ArrowBoxedAdapters.GetOrEmit(programType, arrowMethod, funcArity, instance: false);
+        var staticAdapter = ctx.ArrowBoxedAdapters.GetOrEmit(programType, arrowMethod, funcArity, instance: false, boolReturn: boolReturn);
         ctx.IL.Emit(OpCodes.Ldnull);
         ctx.IL.Emit(OpCodes.Ldftn, staticAdapter);
         ctx.IL.Emit(OpCodes.Newobj, funcCtor);
@@ -987,7 +994,7 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         {
             // Annotated reducer (e.g. double(double,double)): bridge via a boxed
             // adapter object(object,object).
-            if (!TryBindTypedArrowAdapter(emitter, af, staticMethod, funcArity: 2))
+            if (!TryBindTypedArrowAdapter(emitter, af, staticMethod, funcArity: 2, boolReturn: false))
                 return false;
         }
         // Push initial value (boxed object).

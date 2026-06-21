@@ -218,6 +218,40 @@ public class ArrayHofAnnotatedCallbackTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CapturingBooleanPredicate_Filter(ExecutionMode mode)
+    {
+        // L3 (capturing instance adapter) + L4 (bool-returning adapter → *DirectBool): a captured
+        // threshold in a typed boolean predicate must still filter correctly.
+        var source = """
+            function f(): string {
+                const a: number[] = [1, 2, 3, 4, 5, 6];
+                const t: number = 3;
+                return a.filter((x: number): boolean => x > t).join(",");
+            }
+            console.log(f());
+            """;
+        Assert.Equal("4,5,6\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BooleanPredicate_SomeEvery_ShortCircuit(ExecutionMode mode)
+    {
+        // L4 bool adapter under the short-circuiting some/every must agree with the reflective path.
+        var source = """
+            function f(): string {
+                const a: number[] = [2, 4, 6, 7, 8];
+                const someOdd = a.some((x: number): boolean => x % 2 === 1);
+                const allEven = a.every((x: number): boolean => x % 2 === 0);
+                return someOdd + "," + allEven;
+            }
+            console.log(f());
+            """;
+        Assert.Equal("true,false\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void CapturingAnnotatedArrow_Chained(ExecutionMode mode)
     {
         // Capturing arrows across a chained map().filter().reduce() (L1 capturing adapter + L2 round-trip).
