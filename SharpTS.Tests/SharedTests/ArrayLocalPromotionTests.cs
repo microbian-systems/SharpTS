@@ -244,4 +244,33 @@ public class ArrayLocalPromotionTests
 
         Assert.Equal("6\n", TestHarness.Run(source, mode));
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Promoted_PerScope_NameCollisionDoesNotPoison(ExecutionMode mode)
+    {
+        // `xs` in build() is a clean push/index/length array and must promote even though an
+        // unrelated, escaping `xs` (returned) exists in leak() — candidacy is keyed per function
+        // scope, so a common array name shared across functions/modules no longer poisons the
+        // whole program. Both must produce correct results.
+        var source = """
+            function leak(): number[] {
+                const xs: number[] = [];
+                xs.push(9);
+                return xs;
+            }
+            function build(): number {
+                const xs: number[] = [];
+                for (let i: number = 0; i < 5; i++) { xs.push(i); }
+                let sum: number = 0;
+                for (let i: number = 0; i < xs.length; i++) { sum = sum + xs[i]; }
+                return sum;
+            }
+            console.log(build());
+            console.log(leak()[0]);
+            """;
+
+        // 0+1+2+3+4 = 10 ; leak()[0] = 9
+        Assert.Equal("10\n9\n", TestHarness.Run(source, mode));
+    }
 }
