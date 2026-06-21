@@ -530,13 +530,13 @@ public static class DnsModuleInterpreter
 
     private static SharpTSArray ResolveAddresses(string hostname, AddressFamily? family)
     {
-        var hostEntry = Dns.GetHostEntry(hostname);
-        var addresses = hostEntry.AddressList;
-        if (family != null)
-            addresses = addresses.Where(a => a.AddressFamily == family).ToArray();
-        if (addresses.Length == 0)
-            throw new SocketException((int)SocketError.HostNotFound);
-        return new SharpTSArray(addresses.Select(a => (object?)a.ToString()).ToList());
+        // resolve4/resolve6 go through the DNS wire protocol (honors SHARPTS_DNS_SERVER,
+        // Node/c-ares semantics — no hosts-file lookup). dns.lookup stays on
+        // Dns.GetHostEntry. DnsWireProtocol.ParseResponse throws on NXDOMAIN/ENODATA.
+        var queryType = family == AddressFamily.InterNetworkV6
+            ? DnsWireProtocol.TypeAAAA
+            : DnsWireProtocol.TypeA;
+        return new SharpTSArray((List<object?>)DnsWireProtocol.Query(hostname, queryType));
     }
 
     /// <summary>
@@ -682,11 +682,13 @@ public static class DnsModuleInterpreter
                     interpreter.Unref();
                 }, isInterval: false);
             }
-            catch (SocketException ex)
+            // Wire protocol throws Exception ("Runtime Error: dns.x ECODE host"), not
+            // SocketException; ExtractErrorCode parses both shapes.
+            catch (Exception ex)
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(GetErrorCode(ex), hostname), null]);
+                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }
@@ -716,11 +718,13 @@ public static class DnsModuleInterpreter
                     interpreter.Unref();
                 }, isInterval: false);
             }
-            catch (SocketException ex)
+            // Wire protocol throws Exception ("Runtime Error: dns.x ECODE host"), not
+            // SocketException; ExtractErrorCode parses both shapes.
+            catch (Exception ex)
             {
                 interpreter.ScheduleTimer(0, 0, () =>
                 {
-                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(GetErrorCode(ex), hostname), null]);
+                    interpreter.InvokeGuestCallback(callback, [CreateDnsError(ExtractErrorCode(ex), hostname), null]);
                     interpreter.Unref();
                 }, isInterval: false);
             }

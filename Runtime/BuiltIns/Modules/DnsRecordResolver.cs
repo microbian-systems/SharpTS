@@ -1,6 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
-
 namespace SharpTS.Runtime.BuiltIns.Modules;
 
 /// <summary>
@@ -73,27 +70,15 @@ public static class DnsRecordResolver
     public static List<object?> ResolveNaptr(string hostname) =>
         (List<object?>)DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeNAPTR);
 
-    public static List<object?> ResolveA(string hostname)
-    {
-        var hostEntry = Dns.GetHostEntry(hostname);
-        var addresses = hostEntry.AddressList
-            .Where(a => a.AddressFamily == AddressFamily.InterNetwork)
-            .ToArray();
-        if (addresses.Length == 0)
-            throw new SocketException((int)SocketError.HostNotFound);
-        return addresses.Select(a => (object?)a.ToString()).ToList();
-    }
+    // resolve4/resolve6 (A/AAAA) use the DNS wire protocol — like Node's c-ares
+    // resolver, and unlike dns.lookup — so they honor SHARPTS_DNS_SERVER and do NOT
+    // consult the hosts file. dns.lookup (DnsModuleInterpreter.LookupCore) stays on
+    // the OS resolver for hosts-file resolution.
+    public static List<object?> ResolveA(string hostname) =>
+        (List<object?>)DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeA);
 
-    public static List<object?> ResolveAaaa(string hostname)
-    {
-        var hostEntry = Dns.GetHostEntry(hostname);
-        var addresses = hostEntry.AddressList
-            .Where(a => a.AddressFamily == AddressFamily.InterNetworkV6)
-            .ToArray();
-        if (addresses.Length == 0)
-            throw new SocketException((int)SocketError.HostNotFound);
-        return addresses.Select(a => (object?)a.ToString()).ToList();
-    }
+    public static List<object?> ResolveAaaa(string hostname) =>
+        (List<object?>)DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeAAAA);
 
     #region Overloads with custom DNS server
 
@@ -112,8 +97,8 @@ public static class DnsRecordResolver
             "PTR" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypePTR, server),
             "CAA" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeCAA, server),
             "NAPTR" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeNAPTR, server),
-            "A" => ResolveA(hostname),    // A/AAAA use system DNS (Dns.GetHostEntry)
-            "AAAA" => ResolveAaaa(hostname),
+            "A" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeA, server),
+            "AAAA" => DnsWireProtocol.Query(hostname, DnsWireProtocol.TypeAAAA, server),
             _ => throw new Exception($"Runtime Error: dns.resolve unknown rrtype: {rrtype}")
         };
 

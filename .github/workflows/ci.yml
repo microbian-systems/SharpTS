@@ -22,6 +22,9 @@ jobs:
   build:
     runs-on: ${{ matrix.os }}
     strategy:
+      # Don't let one platform's failure cancel the others — we want to see each
+      # platform's real result independently (a flake on one shouldn't hide the rest).
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
@@ -53,6 +56,10 @@ jobs:
       - name: Build
         run: dotnet build --no-restore --configuration Release
 
+      # Category!=LiveNetwork excludes the opt-in tests that make real outbound
+      # DNS/HTTP calls (tagged [Trait("Category","LiveNetwork")]); those depend on
+      # the runner's network and false-red CI (#495). Run them on demand locally:
+      # dotnet test --filter "Category=LiveNetwork"
       - name: Test
-        run: dotnet test --no-build --configuration Release --verbosity normal
+        run: dotnet test --no-build --configuration Release --verbosity normal --filter "Category!=LiveNetwork"
         timeout-minutes: 10

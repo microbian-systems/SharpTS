@@ -45,6 +45,8 @@ public class DnsFakeServerModuleTests
         var qtype = DnsPackets.QueryType(request);
         var rdata = qtype switch
         {
+            DnsWireProtocol.TypeA => DnsPackets.A("93.184.216.34"),
+            DnsWireProtocol.TypeAAAA => DnsPackets.Aaaa("2606:2800:220:1:248:1893:25c8:1946"),
             DnsWireProtocol.TypeMX => DnsPackets.Mx(10, DnsPackets.LabelsThenPointer("mail")),
             DnsWireProtocol.TypeTXT => DnsPackets.Txt("v=spf1 -all"),
             DnsWireProtocol.TypeNS => DnsPackets.LabelsThenPointer("ns1"),
