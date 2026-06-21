@@ -1276,15 +1276,17 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Ldloc, idxLocal);
         IL.Emit(OpCodes.Callvirt, getChars);
         IL.Emit(OpCodes.Conv_R8);
-        IL.Emit(OpCodes.Box, _ctx.Types.Double);
         IL.Emit(OpCodes.Br, end);
 
         IL.MarkLabel(oob);
         IL.Emit(OpCodes.Ldc_R8, double.NaN);
-        IL.Emit(OpCodes.Box, _ctx.Types.Double);
 
+        // #859: leave a raw float64 (both branches push double) instead of boxing. The result is
+        // typically consumed by a numeric op (`sum + s.charCodeAt(i)`), whose EnsureDouble is then a
+        // no-op; a boxed-object consumer re-boxes via EmitBoxIfNeeded (which checks StackType). This
+        // elides the per-char `box Double` (a heap allocation) plus the consumer's `ConvertToNumber`.
         IL.MarkLabel(end);
-        SetStackUnknown();
+        SetStackType(StackType.Double);
     }
 
     /// <summary>
