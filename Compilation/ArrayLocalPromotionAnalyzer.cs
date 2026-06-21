@@ -39,7 +39,7 @@ public static class ArrayLocalPromotionAnalyzer
     {
         if (typeMap == null) return;
 
-        var visitor = new Visitor(typeMap);
+        var visitor = new Visitor(typeMap, closures);
         foreach (var stmt in program)
             visitor.Visit(stmt);
 
@@ -53,9 +53,10 @@ public static class ArrayLocalPromotionAnalyzer
         }
     }
 
-    private sealed class Visitor(TypeMap typeMap) : AstVisitorBase
+    private sealed class Visitor(TypeMap typeMap, ClosureAnalyzer? closures) : AstVisitorBase
     {
         private readonly TypeMap _typeMap = typeMap;
+        private readonly ClosureAnalyzer? _closures = closures;
 
         // Candidacy/disqualification is keyed by (function scope, lexeme), NOT whole-program lexeme: a
         // common array name like `arr`/`data` in one function must not be poisoned by an unrelated,
@@ -172,7 +173,48 @@ public static class ArrayLocalPromotionAnalyzer
                 }
                 return;
             }
+
+            // `x.reduce(reducer, init)` over a number[] with a typed, non-capturing 2-arg numeric
+            // reducer — permitted receiver (#861 typed-HOF pipeline: the ArrayReduceDouble fast path
+            // drives a Func<double,double,double> over the bare List<double>, no per-element boxing).
+            // The emitter's typed-reduce hook gates on the SAME criteria (List<double> slot + a
+            // non-capturing double(double,double) arrow), so promotion here always pairs with a typed
+            // emit — never a broken List<double>-receiver fallback. Any other reduce shape falls through
+            // to base (→ VisitVariable on the receiver → disqualify), keeping it on the $Array path.
+            if (expr.Callee is Expr.Get { Object: Expr.Variable rv, Optional: false } rget
+                && rget.Name.Lexeme == "reduce"
+                && ArrayElements.Resolve(_typeMap.Get(rv)) is { Kind: ArrayElementsKind.Double }
+                && IsTypedNonCapturingNumericReducer(expr.Arguments))
+            {
+                NotePermittedReceiver(rv);
+                foreach (var arg in expr.Arguments) Visit(arg);
+                return;
+            }
             base.VisitCall(expr);
+        }
+
+        /// <summary>
+        /// True if <paramref name="arguments"/> is <c>(reducer, init)</c> where reducer is an inline,
+        /// non-capturing arrow with exactly two annotated <c>number</c> params and a <c>number</c> body —
+        /// the shape the typed <c>ArrayReduceDouble</c> fast path can bind to a
+        /// <c>Func&lt;double,double,double&gt;</c>. Mirrors the emitter's typed-reduce gate.
+        /// </summary>
+        private bool IsTypedNonCapturingNumericReducer(List<Expr> arguments)
+        {
+            if (arguments.Count != 2) return false;
+            if (arguments[0] is not Expr.ArrowFunction af) return false;
+            if (af.IsAsync || af.IsGenerator || af.HasOwnThis) return false;
+            if (af.Parameters.Count != 2) return false;
+            foreach (var p in af.Parameters)
+            {
+                if (p.IsRest || p.IsOptional || p.DefaultValue != null) return false;
+                if (p.Type != "number") return false;
+            }
+            if (af.ReturnType != null && af.ReturnType != "number") return false;
+            // Non-capturing: consistent with the emitter's DisplayClasses check (both derive from
+            // ClosureAnalyzer), so a permitted reducer is always bindable as a direct static delegate.
+            if (_closures?.GetCaptures(af).Count > 0) return false;
+            return true;
         }
 
         protected override void VisitAssign(Expr.Assign expr)

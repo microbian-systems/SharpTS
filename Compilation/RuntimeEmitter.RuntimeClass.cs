@@ -831,6 +831,7 @@ public partial class RuntimeEmitter
         EmitArrayEveryDirectBool(typeBuilder, runtime);
         EmitArrayReduce(typeBuilder, runtime);
         EmitArrayReduceDirect(typeBuilder, runtime);
+        EmitArrayReduceDouble(typeBuilder, runtime);
         EmitArrayReduceRight(typeBuilder, runtime);
         EmitArrayIncludes(typeBuilder, runtime);
         // indexOf/lastIndexOf use ToIntegerOrInfinity for spec-compliant fromIndex clamping.

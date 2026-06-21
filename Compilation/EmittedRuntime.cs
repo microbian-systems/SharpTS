@@ -212,6 +212,7 @@ public class EmittedRuntime
     public MethodBuilder ArrayEveryDirectBool { get; set; } = null!;
     public MethodBuilder ArrayReduce { get; set; } = null!;
     public MethodBuilder ArrayReduceDirect { get; set; } = null!;
+    public MethodBuilder ArrayReduceDouble { get; set; } = null!;
     public MethodBuilder ArrayReduceRight { get; set; } = null!;
     public MethodBuilder ArrayIncludes { get; set; } = null!;
     public MethodBuilder ArrayIndexOf { get; set; } = null!;

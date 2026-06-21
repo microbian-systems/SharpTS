@@ -273,4 +273,46 @@ public class ArrayLocalPromotionTests
         // 0+1+2+3+4 = 10 ; leak()[0] = 9
         Assert.Equal("10\n9\n", TestHarness.Run(source, mode));
     }
+
+    // ── Typed-HOF pipeline (#861): typed reduce over a promoted number[] ────
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedReduce_PromotedNumberArray(ExecutionMode mode)
+    {
+        // arr used only via push + reduce(non-capturing typed numeric reducer) → promoted to
+        // List<double>; reduce drives the typed ArrayReduceDouble fast path (no per-element boxing).
+        var source = """
+            function sumReduce(): number {
+                const arr: number[] = [];
+                for (let i: number = 0; i < 5; i++) { arr.push(i); }
+                return arr.reduce((a: number, x: number): number => a + x, 0);
+            }
+            console.log(sumReduce());
+            """;
+
+        // 0+1+2+3+4 = 10
+        Assert.Equal("10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedReduce_CapturingReducer_FallsBackCorrectly(ExecutionMode mode)
+    {
+        // The reducer captures `base`, so it cannot bind as a direct typed delegate — the analyzer
+        // does NOT permit the reduce receiver, arr stays on the $Array path, and the result must
+        // still be correct. Guards the analyzer/emitter typeability agreement.
+        var source = """
+            function f(): number {
+                const base: number = 100;
+                const arr: number[] = [];
+                for (let i: number = 0; i < 3; i++) { arr.push(i); }
+                return arr.reduce((a: number, x: number): number => a + x + base, 0);
+            }
+            console.log(f());
+            """;
+
+        // acc: 0 → 0+0+100=100 → 100+1+100=201 → 201+2+100=303
+        Assert.Equal("303\n", TestHarness.Run(source, mode));
+    }
 }
