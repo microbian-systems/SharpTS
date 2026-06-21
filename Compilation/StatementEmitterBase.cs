@@ -365,16 +365,37 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     }
 
     /// <summary>
-    /// Emits <c>call $Runtime.CheckCancellation()</c> at a loop backedge so
+    /// Honors the runner's cooperative cancellation flag at a loop backedge so
     /// compiled IL inside async/generator state machines (which inherit these
-    /// base loop emitters) honors the runner's cooperative cancellation flag.
-    /// See issue #74 — without this, a `while(true){}` inside an async function
-    /// hangs the test thread past the runner's timeout.
+    /// base loop emitters) can be unwound. See issue #74 — without this, a
+    /// `while(true){}` inside an async function hangs the test thread past the
+    /// runner's timeout.
     /// </summary>
+    /// <remarks>
+    /// Perf (#856): instead of an unconditional <c>call $Runtime.CheckCancellation()</c>,
+    /// we inline the field test and only call the (throwing) helper on the cold
+    /// cancel path. RyuJIT will not inline <c>CheckCancellation</c> itself (it
+    /// contains <c>newobj</c>+<c>throw</c>), so the bare call sat in every loop
+    /// body as a per-iteration optimization barrier — measured at ~half the
+    /// runtime of a tight numeric loop. Inlining the test recovers ~1.6×.
+    ///
+    /// The <c>volatile.</c> prefix is mandatory: <c>_cancelRequested</c> is
+    /// loop-invariant, so a plain <c>ldsfld</c> could be hoisted out of the loop
+    /// by RyuJIT's LICM — reading the flag once and never re-checking, silently
+    /// reintroducing the #74 hang. The volatile read forbids that hoist and was
+    /// measured to cost nothing here.
+    /// </remarks>
     protected void EmitCancellationCheck()
     {
-        if (Ctx.Runtime?.CheckCancellationMethod != null)
-            IL.Emit(OpCodes.Call, Ctx.Runtime.CheckCancellationMethod);
+        if (Ctx.Runtime?.CheckCancellationMethod == null || Ctx.Runtime?.CancelRequestedField == null)
+            return;
+
+        var notCancelled = IL.DefineLabel();
+        IL.Emit(OpCodes.Volatile);
+        IL.Emit(OpCodes.Ldsfld, Ctx.Runtime.CancelRequestedField);
+        IL.Emit(OpCodes.Brfalse, notCancelled);
+        IL.Emit(OpCodes.Call, Ctx.Runtime.CheckCancellationMethod);
+        IL.MarkLabel(notCancelled);
     }
 
     /// <summary>
