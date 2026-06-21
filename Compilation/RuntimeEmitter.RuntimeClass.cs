@@ -806,6 +806,8 @@ public partial class RuntimeEmitter
         // Array callback methods must come after InvokeValue and IsTruthy
         EmitArrayMap(typeBuilder, runtime);
         EmitArrayMapDirect(typeBuilder, runtime);
+        EmitArrayMapDouble(typeBuilder, runtime);
+        EmitArrayFilterDouble(typeBuilder, runtime);
         EmitArrayFilter(typeBuilder, runtime);
         EmitArrayFilterDirect(typeBuilder, runtime);
         EmitArrayFilterDirectBool(typeBuilder, runtime);
@@ -831,6 +833,7 @@ public partial class RuntimeEmitter
         EmitArrayEveryDirectBool(typeBuilder, runtime);
         EmitArrayReduce(typeBuilder, runtime);
         EmitArrayReduceDirect(typeBuilder, runtime);
+        EmitArrayReduceDouble(typeBuilder, runtime);
         EmitArrayReduceRight(typeBuilder, runtime);
         EmitArrayIncludes(typeBuilder, runtime);
         // indexOf/lastIndexOf use ToIntegerOrInfinity for spec-compliant fromIndex clamping.

@@ -1862,6 +1862,199 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>
+    /// Typed reduce over a promoted <c>List&lt;double&gt;</c> with a <c>Func&lt;double,double,double&gt;</c>
+    /// reducer (#861 typed-HOF pipeline): no per-element boxing, no hole check (a promoted list is dense).
+    /// <c>double ArrayReduceDouble(List&lt;double&gt; src, Func&lt;double,double,double&gt; f, double init)</c>.
+    /// Pure-BCL (no SharpTS reference) — standalone-DLL safe.
+    /// </summary>
+    private void EmitArrayReduceDouble(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var func3 = typeof(Func<double, double, double>);
+        var method = typeBuilder.DefineMethod(
+            "ArrayReduceDouble",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Double,
+            [_types.ListOfDouble, func3, _types.Double]
+        );
+        runtime.ArrayReduceDouble = method;
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfDouble, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfDouble, "Item").GetGetMethod()!;
+        var funcInvoke = func3.GetMethod("Invoke")!;
+
+        var accLocal = il.DeclareLocal(_types.Double);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Stloc, accLocal);
+
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd2 = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd2);
+
+        // acc = f(acc, src[i])
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, accLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Stloc, accLocal);
+
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd2);
+        il.Emit(OpCodes.Ldloc, accLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Typed map over a promoted <c>List&lt;double&gt;</c> with a <c>Func&lt;double,double&gt;</c> (#861
+    /// typed-HOF pipeline): builds a fresh <c>List&lt;double&gt;</c>, no per-element boxing.
+    /// <c>List&lt;double&gt; ArrayMapDouble(List&lt;double&gt; src, Func&lt;double,double&gt; f)</c>.
+    /// Pure-BCL — standalone-DLL safe.
+    /// </summary>
+    private void EmitArrayMapDouble(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var func2 = typeof(Func<double, double>);
+        var method = typeBuilder.DefineMethod(
+            "ArrayMapDouble",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.ListOfDouble,
+            [_types.ListOfDouble, func2]
+        );
+        runtime.ArrayMapDouble = method;
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfDouble, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfDouble, "Item").GetGetMethod()!;
+        var listAdd = _types.GetMethod(_types.ListOfDouble, "Add", _types.Double);
+        var listCapCtor = _types.GetConstructor(_types.ListOfDouble, _types.Int32);
+        var funcInvoke = func2.GetMethod("Invoke")!;
+
+        // result = new List<double>(src.Count)
+        var resultLocal = il.DeclareLocal(_types.ListOfDouble);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Newobj, listCapCtor);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // result.Add(f(src[i]))
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Callvirt, listAdd);
+
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Typed filter over a promoted <c>List&lt;double&gt;</c> with a <c>Func&lt;double,bool&gt;</c> (#861
+    /// typed-HOF pipeline): builds a fresh <c>List&lt;double&gt;</c> of the kept elements, no boxing.
+    /// <c>List&lt;double&gt; ArrayFilterDouble(List&lt;double&gt; src, Func&lt;double,bool&gt; p)</c>.
+    /// Pure-BCL — standalone-DLL safe.
+    /// </summary>
+    private void EmitArrayFilterDouble(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var func2 = typeof(Func<double, bool>);
+        var method = typeBuilder.DefineMethod(
+            "ArrayFilterDouble",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.ListOfDouble,
+            [_types.ListOfDouble, func2]
+        );
+        runtime.ArrayFilterDouble = method;
+
+        var il = method.GetILGenerator();
+        var listCountGetter = _types.GetProperty(_types.ListOfDouble, "Count").GetGetMethod()!;
+        var listIndexerGetter = _types.GetProperty(_types.ListOfDouble, "Item").GetGetMethod()!;
+        var listAdd = _types.GetMethod(_types.ListOfDouble, "Add", _types.Double);
+        var funcInvoke = func2.GetMethod("Invoke")!;
+
+        // result = new List<double>() (kept count unknown up front)
+        var resultLocal = il.DeclareLocal(_types.ListOfDouble);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfDouble));
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        var eltLocal = il.DeclareLocal(_types.Double);
+        var indexLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, indexLocal);
+
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        var advance = il.DefineLabel();
+
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, listCountGetter);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // elt = src[i]
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Callvirt, listIndexerGetter);
+        il.Emit(OpCodes.Stloc, eltLocal);
+
+        // if (p(elt)) result.Add(elt)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, eltLocal);
+        il.Emit(OpCodes.Callvirt, funcInvoke);
+        il.Emit(OpCodes.Brfalse, advance);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, eltLocal);
+        il.Emit(OpCodes.Callvirt, listAdd);
+
+        il.MarkLabel(advance);
+        il.Emit(OpCodes.Ldloc, indexLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, indexLocal);
+        il.Emit(OpCodes.Br, loopStart);
+
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
     private void EmitArrayReduce(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(

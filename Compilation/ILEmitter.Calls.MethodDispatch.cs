@@ -35,6 +35,31 @@ public partial class ILEmitter
             return;
         }
 
+        // Promoted number[] local reduce (#861 typed-HOF pipeline): `arr.reduce((a,x)=>…, init)` over a
+        // List<double> with a non-capturing double(double,double) reducer → bind the arrow's typed static
+        // method DIRECTLY to Func<double,double,double> (no boxed adapter) and drive ArrayReduceDouble —
+        // zero per-element boxing. The analyzer gates promotion on the SAME criteria, so a promoted
+        // List<double> reduced here is always typeable. Other reduce shapes never promote (stay $Array).
+        if (methodName == "reduce" && !methodGet.Optional && methodGet.Object is Expr.Variable redVar
+            && _ctx.TryGetPromotedArrayLocal(redVar.Name.Lexeme) is { Descriptor.Kind: ArrayElementsKind.Double } redProm
+            && arguments.Count == 2 && arguments[0] is Expr.ArrowFunction redArrow
+            && !_ctx.DisplayClasses.ContainsKey(redArrow)
+            && _ctx.ArrowMethods.TryGetValue(redArrow, out var redMethod)
+            && redMethod.ReturnType == _ctx.Types.Double
+            && redMethod.GetParameters() is { Length: 2 } redPs
+            && redPs[0].ParameterType == _ctx.Types.Double && redPs[1].ParameterType == _ctx.Types.Double)
+        {
+            var func3 = typeof(Func<double, double, double>);
+            IL.Emit(OpCodes.Ldloc, redProm.Local);
+            IL.Emit(OpCodes.Ldnull);
+            IL.Emit(OpCodes.Ldftn, redMethod);
+            IL.Emit(OpCodes.Newobj, func3.GetConstructor([typeof(object), typeof(IntPtr)])!);
+            EmitExpressionAsDouble(arguments[1]);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.ArrayReduceDouble);
+            SetStackType(StackType.Double);
+            return;
+        }
+
         // Try direct dispatch for known class instance methods
         TypeSystem.TypeInfo? objType = _ctx.TypeMap?.Get(methodGet.Object);
         if (TryEmitDirectMethodCall(methodGet.Object, objType, methodName, arguments))

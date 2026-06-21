@@ -273,4 +273,148 @@ public class ArrayLocalPromotionTests
         // 0+1+2+3+4 = 10 ; leak()[0] = 9
         Assert.Equal("10\n9\n", TestHarness.Run(source, mode));
     }
+
+    // ── Typed-HOF pipeline (#861): typed reduce over a promoted number[] ────
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedReduce_PromotedNumberArray(ExecutionMode mode)
+    {
+        // arr used only via push + reduce(non-capturing typed numeric reducer) → promoted to
+        // List<double>; reduce drives the typed ArrayReduceDouble fast path (no per-element boxing).
+        var source = """
+            function sumReduce(): number {
+                const arr: number[] = [];
+                for (let i: number = 0; i < 5; i++) { arr.push(i); }
+                return arr.reduce((a: number, x: number): number => a + x, 0);
+            }
+            console.log(sumReduce());
+            """;
+
+        // 0+1+2+3+4 = 10
+        Assert.Equal("10\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedReduce_CapturingReducer_FallsBackCorrectly(ExecutionMode mode)
+    {
+        // The reducer captures `base`, so it cannot bind as a direct typed delegate — the analyzer
+        // does NOT permit the reduce receiver, arr stays on the $Array path, and the result must
+        // still be correct. Guards the analyzer/emitter typeability agreement.
+        var source = """
+            function f(): number {
+                const base: number = 100;
+                const arr: number[] = [];
+                for (let i: number = 0; i < 3; i++) { arr.push(i); }
+                return arr.reduce((a: number, x: number): number => a + x + base, 0);
+            }
+            console.log(f());
+            """;
+
+        // acc: 0 → 0+0+100=100 → 100+1+100=201 → 201+2+100=303
+        Assert.Equal("303\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedMap_ThenIndexLength(ExecutionMode mode)
+    {
+        // `doubled` = arr.map(typed mapper) is itself promoted to List<double> (its source arr is
+        // promoted and the mapper is non-capturing number→number), then read via index/length.
+        var source = """
+            function f(): number {
+                const arr: number[] = [];
+                for (let i: number = 0; i < 5; i++) { arr.push(i); }
+                const doubled = arr.map((x: number): number => x * 2);
+                let s: number = 0;
+                for (let i: number = 0; i < doubled.length; i++) { s = s + doubled[i]; }
+                return s;
+            }
+            console.log(f());
+            """;
+
+        // [0,2,4,6,8] → 20
+        Assert.Equal("20\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedMap_ThenReduce_Chain(ExecutionMode mode)
+    {
+        // Full typed chain: arr (List<double>) → map → doubled (List<double>) → reduce → double.
+        var source = """
+            function f(): number {
+                const arr: number[] = [];
+                for (let i: number = 0; i < 5; i++) { arr.push(i); }
+                const doubled = arr.map((x: number): number => x * 2);
+                return doubled.reduce((a: number, x: number): number => a + x, 0);
+            }
+            console.log(f());
+            """;
+
+        // [0,2,4,6,8] → 20
+        Assert.Equal("20\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedMap_ResultReturned_FallsBackCorrectly(ExecutionMode mode)
+    {
+        // The map result escapes (returned), so it must NOT be a bare List<double> — falls back to
+        // the $Array path and stays correct.
+        var source = """
+            function build(): number[] {
+                const arr: number[] = [];
+                for (let i: number = 0; i < 3; i++) { arr.push(i); }
+                return arr.map((x: number): number => x + 10);
+            }
+            const r: number[] = build();
+            console.log(r.length);
+            console.log(r[0]);
+            console.log(r[2]);
+            """;
+
+        Assert.Equal("3\n10\n12\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedFilter_ThenLength(ExecutionMode mode)
+    {
+        var source = """
+            function f(): number {
+                const arr: number[] = [];
+                for (let i: number = 0; i < 10; i++) { arr.push(i); }
+                const evens = arr.filter((x: number): boolean => x % 2 === 0);
+                let s: number = 0;
+                for (let i: number = 0; i < evens.length; i++) { s = s + evens[i]; }
+                return s;
+            }
+            console.log(f());
+            """;
+
+        // evens [0,2,4,6,8] → 20
+        Assert.Equal("20\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedPipeline_MapFilterReduce(ExecutionMode mode)
+    {
+        // The full array-methods benchmark shape: build → map → filter → reduce, every stage typed.
+        var source = """
+            function arrayMethodWork(n: number): number {
+                const arr: number[] = [];
+                for (let i: number = 0; i < n; i++) { arr.push(i); }
+                const doubled = arr.map((x: number): number => x * 2);
+                const evens = doubled.filter((x: number): boolean => x % 4 === 0);
+                return evens.reduce((acc: number, x: number): number => acc + x, 0);
+            }
+            console.log(arrayMethodWork(10));
+            """;
+
+        // arr 0..9 → doubled [0,2,..,18] → evens (x%4===0) [0,4,8,12,16] → 40
+        Assert.Equal("40\n", TestHarness.Run(source, mode));
+    }
 }
