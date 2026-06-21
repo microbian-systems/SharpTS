@@ -1,6 +1,20 @@
 # Plan: typed `List<double>` HOF pipeline for monomorphic number arrays (#861 follow-on / #856 child)
 
-## Why
+## STATUS: IMPLEMENTED (2026-06-20)
+
+Done in 4 commits on `wrk/array-methods-typed-pipeline` (stacked on the per-scope analyzer fix):
+1. per-function-scope candidacy in `ArrayLocalPromotionAnalyzer` (prerequisite).
+2. typed `reduce` (`ArrayReduceDouble`) — proves the direct `Func<double,…>` binding + analyzer/emitter agreement.
+3. typed `map` (`ArrayMapDouble`) + result-local typing (decided at emit time from the source slot; typed result only into a non-escaping promoted local).
+4. typed `filter` (`ArrayFilterDouble`) — completes the pipeline.
+
+**Result: array-methods @100k 11.2ms → 1.95ms — now BEATS Node (3.03ms, 0.64×)**, was 2.79× slower. The whole pipeline runs on `List<double>` with a direct `Func<double,…>` per stage and zero boxing/isinst (build→`ArrayPushDouble`, map→`ArrayMapDouble`, filter→`ArrayFilterDouble`, reduce→`ArrayReduceDouble`). IL-verified; green on `dotnet test` (38 `ArrayLocalPromotionTests`) except the pre-existing stale/flaky Test262 baselines.
+
+**Deviations from the design below:** (a) no analyzer fixpoint — result-local slot type is decided at EMIT time from the source's already-declared slot (declarations emit in source order), keeping everything slot-type-keyed; (b) typed map/filter results are emitted INLINE from `EmitVarDeclaration` (only when the result lands in a promoted non-escaping local) rather than via a general dispatch hook, so a `List<double>` result never escapes into `$Array` context; (c) the typed arrow binds DIRECTLY to `Func<double,…>` (no boxed adapter); (d) only non-capturing inline arrows are typed (capturing → boxed fallback). With #856's other workloads already at/above Node, **every benchmark now meets or exceeds Node** — the epic goal.
+
+---
+
+## Why (original plan)
 
 After strings (#857), **array-methods is the last benchmark workload meaningfully off Node** (everything else is at parity or we win):
 
