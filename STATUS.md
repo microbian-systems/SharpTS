@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-04-18 (Embedded TypeScript stdlib — 14 Node modules migrated from C#/IL to `.ts`; `@DotNetType` full parity — interpreter + compiled with delegates and events)
+**Last Updated:** 2026-06-20 (Perf epic [#856](https://github.com/nickna/SharpTS/issues/856) — compiled output now meets or beats Node.js on most of the cross-runtime benchmark suite; loop-backedge cancellation check inlined, [#874](https://github.com/nickna/SharpTS/pull/874))
 
 ## Legend
 - ✅ Implemented
@@ -509,6 +509,28 @@ The dominant bucket is now `Fail` — tests that parse and reach the type checke
 - **Multi-file tests** (`Skipped:multi-file-deferred`) — cross-file resolution into the runner is follow-up work.
 - **Lib-drift skips** (`Skipped:lib-drift`) — tests where `tsc` expects "method missing" diagnostics our checker doesn't reproduce because we have the surface always-available regardless of `@lib`. Conservative filter (only fires when our diagnostic set is empty AND every expected code is one of `TS2339`/`TS2304`/`TS2551`/`TS7053`). See [#83](https://github.com/nickna/SharpTS/issues/83) for the design and [#99](https://github.com/nickna/SharpTS/issues/99) for the deferred Phase-1.5 work that would eliminate the drift entirely (load `tsc`'s `lib.*.d.ts` files into the type checker).
 - **Directive skips** — tests with directives like `@experimentalDecorators`, `@jsx`, `@isolatedModules` we don't intend to honor in Phase 1.
+
+---
+
+## 18. PERFORMANCE (compiled output vs Node.js)
+
+Epic [#856](https://github.com/nickna/SharpTS/issues/856) tracks closing the compiled-IL gap to Node.js on the cross-runtime benchmark suite (`benchmarks/scripts/`, run via `benchmarks/run-benchmarks.ps1`), **without** regressing .NET interop or language conformance (Test262 + `microsoft/TypeScript`). Warm steady-state, compiled vs Node at the largest input size:
+
+| Workload | Status | vs Node |
+|---|---|---|
+| fibonacci | ✅ | **faster than Node** — recursion/call core |
+| array-methods | ✅ | **faster than Node** — typed `List<double>` HOF pipeline ([#872](https://github.com/nickna/SharpTS/issues/872)) |
+| strings | ✅ | ≈ parity — `StringBuilder` accumulator promotion ([#870](https://github.com/nickna/SharpTS/issues/870)) + `charCodeAt` box-elision ([#873](https://github.com/nickna/SharpTS/issues/873)) |
+| closures | ✅ | done — non-escaping local arrows de-virtualized to direct calls ([#858](https://github.com/nickna/SharpTS/issues/858)) |
+| objects | ✅ | done — object literals as shape structs ([#862](https://github.com/nickna/SharpTS/issues/862)) |
+| count-primes | ⚠️ | ~1.3× slower (sieve; array-heavy loop) |
+| factorial | ⚠️ | ~3× slower (tight numeric loop; µs-scale at benchmark sizes) |
+
+The original catastrophic gaps (14–117× slower) are closed. Every win came from **re-exposing static types that the naive lowering erased** — boxing, `object`/`List<object>` representations, reflective dispatch, O(n²) string concat — so RyuJIT can optimize typed code. The emitter's job is to choose the algorithm/representation/dispatch and not erase known types; the JIT optimizes the typed ops it's given.
+
+**Loop-backedge cancellation cost ([#874](https://github.com/nickna/SharpTS/pull/874)):** every compiled loop polls a cooperative-cancellation flag at its backedge so the runner can unwind runaway loops (issue [#74](https://github.com/nickna/SharpTS/issues/74)). This was an unconditional `call $Runtime.CheckCancellation()`; RyuJIT won't inline that helper (it contains `newobj`+`throw`), so it sat in every loop body as a per-iteration optimization barrier — ~half the runtime of a tight numeric loop. It is now an inlined `volatile` field test that calls the throwing helper only on the cold cancel path (`volatile.` defeats LICM hoisting the loop-invariant flag read, which would silently break cancellation). Result: **1.6×** on tight numeric loops, **1.12×** on the sieve, cancellation semantics unchanged. A throttle-every-N-iterations variant was tried and **rejected** — it merely ties the inline-volatile version, because a volatile static-field read is nearly free on x86-64 while a per-loop counter adds equal per-iteration cost.
+
+The remaining sub-parity workloads (count-primes, factorial) are dominated by separate, non-codegen factors: the residual per-iteration cancellation poll, non-inlined user-function calls, and boxed top-level `var`s.
 
 ---
 
