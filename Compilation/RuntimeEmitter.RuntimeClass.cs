@@ -806,6 +806,7 @@ public partial class RuntimeEmitter
         // Array callback methods must come after InvokeValue and IsTruthy
         EmitArrayMap(typeBuilder, runtime);
         EmitArrayMapDirect(typeBuilder, runtime);
+        EmitArrayMapDouble(typeBuilder, runtime);
         EmitArrayFilter(typeBuilder, runtime);
         EmitArrayFilterDirect(typeBuilder, runtime);
         EmitArrayFilterDirectBool(typeBuilder, runtime);

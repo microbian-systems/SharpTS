@@ -100,14 +100,32 @@ public static class ArrayLocalPromotionAnalyzer
             var key = (_scope, name.Lexeme);
             DeclCount[key] = DeclCount.GetValueOrDefault(key) + 1;
 
-            if (initializer is Expr.ArrayLiteral { Elements.Count: 0 } && !Candidates.ContainsKey(key))
+            // A promotable-array local is one initialized with an empty array literal `[]` OR a
+            // typed-double `src.map(cb)` (#861 typed-HOF pipeline). The map-result candidate becomes a
+            // List<double> slot only if its source is itself promoted (checked at emit time); marking it
+            // here is a hint, and a non-escaping result is the precondition for that to be sound.
+            if (!Candidates.ContainsKey(key) && IsPromotableArrayInitializer(initializer))
+            {
                 Candidates[key] = name;
+                // A typed number→number `map` result is statically number[]; record its element kind
+                // directly rather than relying on the type checker resolving the .map() return type.
+                // NotePermittedReceiver's ContainsKey guard then leaves this authoritative for the local's
+                // own uses. (Empty-literal candidates get their element kind from their uses instead.)
+                if (initializer is Expr.Call)
+                    ElementToken[key] = TokenType.TYPE_NUMBER;
+            }
 
-            // Visit the initializer for completeness ([] has no sub-uses, but a
-            // non-candidate initializer may reference other arrays).
+            // Visit the initializer for completeness: `[]` has no sub-uses, but a `src.map(cb)` init
+            // marks `src` as a permitted map-receiver (via VisitCall), and any non-candidate initializer
+            // may reference other arrays.
             if (initializer != null)
                 Visit(initializer);
         }
+
+        private bool IsPromotableArrayInitializer(Expr? init) =>
+            init is Expr.ArrayLiteral { Elements.Count: 0 }
+            || (init is Expr.Call { Callee: Expr.Get { Object: Expr.Variable, Name.Lexeme: "map", Optional: false } } mc
+                && IsTypedNonCapturingNumericMapper(mc.Arguments));
 
         protected override void VisitGetIndex(Expr.GetIndex expr)
         {
@@ -183,14 +201,61 @@ public static class ArrayLocalPromotionAnalyzer
             // to base (→ VisitVariable on the receiver → disqualify), keeping it on the $Array path.
             if (expr.Callee is Expr.Get { Object: Expr.Variable rv, Optional: false } rget
                 && rget.Name.Lexeme == "reduce"
-                && ArrayElements.Resolve(_typeMap.Get(rv)) is { Kind: ArrayElementsKind.Double }
+                && IsNumberArrayReceiver(rv)
                 && IsTypedNonCapturingNumericReducer(expr.Arguments))
             {
                 NotePermittedReceiver(rv);
                 foreach (var arg in expr.Arguments) Visit(arg);
                 return;
             }
+
+            // `x.map(mapper)` over a number[] with a typed, non-capturing number→number mapper —
+            // permitted receiver (#861 typed-HOF pipeline: ArrayMapDouble drives a Func<double,double>
+            // over the bare List<double> into a fresh List<double>, no boxing). The result is only
+            // promoted to a typed slot when the destination local is itself non-escaping and its source
+            // is promoted (decided at emit time); here we just keep the source eligible.
+            if (expr.Callee is Expr.Get { Object: Expr.Variable mv, Optional: false } mget
+                && mget.Name.Lexeme == "map"
+                && IsNumberArrayReceiver(mv)
+                && IsTypedNonCapturingNumericMapper(expr.Arguments))
+            {
+                NotePermittedReceiver(mv);
+                foreach (var arg in expr.Arguments) Visit(arg);
+                return;
+            }
             base.VisitCall(expr);
+        }
+
+        /// <summary>
+        /// True if <paramref name="arguments"/> is a single inline, non-capturing arrow with one
+        /// annotated <c>number</c> param and a <c>number</c> body — the shape the typed
+        /// <c>ArrayMapDouble</c> fast path binds to a <c>Func&lt;double,double&gt;</c>. Mirrors the
+        /// emitter's <c>TryResolveTypedDoubleMapInit</c> gate.
+        /// </summary>
+        /// <summary>
+        /// True if <paramref name="v"/> is a number array receiver eligible for typed map/reduce: either
+        /// the type checker resolves it to <c>number[]</c>, or it is a recorded number map-result candidate
+        /// in this scope (the checker often can't infer a chained <c>.map()</c> result type, but a typed
+        /// number→number map yields number[] by construction — see HandleDeclaration).
+        /// </summary>
+        private bool IsNumberArrayReceiver(Expr.Variable v)
+        {
+            if (ArrayElements.Resolve(_typeMap.Get(v)) is { Kind: ArrayElementsKind.Double }) return true;
+            return ElementToken.TryGetValue((_scope, v.Name.Lexeme), out var t) && t == TokenType.TYPE_NUMBER;
+        }
+
+        private bool IsTypedNonCapturingNumericMapper(List<Expr> arguments)
+        {
+            if (arguments.Count != 1) return false;
+            if (arguments[0] is not Expr.ArrowFunction af) return false;
+            if (af.IsAsync || af.IsGenerator || af.HasOwnThis) return false;
+            if (af.Parameters.Count != 1) return false;
+            var p = af.Parameters[0];
+            if (p.IsRest || p.IsOptional || p.DefaultValue != null) return false;
+            if (p.Type != "number") return false;
+            if (af.ReturnType != null && af.ReturnType != "number") return false;
+            if (_closures?.GetCaptures(af).Count > 0) return false;
+            return true;
         }
 
         /// <summary>

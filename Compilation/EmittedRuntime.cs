@@ -188,6 +188,7 @@ public class EmittedRuntime
     public MethodBuilder ArraySlice { get; set; } = null!;
     public MethodBuilder ArrayMap { get; set; } = null!;
     public MethodBuilder ArrayMapDirect { get; set; } = null!;
+    public MethodBuilder ArrayMapDouble { get; set; } = null!;
     public MethodBuilder ArrayFilter { get; set; } = null!;
     public MethodBuilder ArrayFilterDirect { get; set; } = null!;
     public MethodBuilder ArrayFilterDirectBool { get; set; } = null!;

@@ -239,14 +239,41 @@ public partial class ILEmitter
         // captured name (which has no typed local) can never accidentally hit them.
         if (_ctx.TypeMap != null && _ctx.TypeMap.IsPromotableArrayLocal(v.Name, out var promoElemTok))
         {
-            var promoDesc = promoElemTok == TokenType.TYPE_NUMBER ? ArrayElements.Double : ArrayElements.Bool;
-            var promoListType = promoDesc.GetListType(_ctx.Types);
-            var promoLocal = _ctx.Locals.DeclareLocal(v.Name.Lexeme, promoListType);
-            // The initializer is guaranteed (by the analyzer) to be an empty array literal `[]`,
-            // so build the backing list directly instead of routing through CreateArray/$Array.
-            IL.Emit(OpCodes.Newobj, _ctx.Types.GetDefaultConstructor(promoListType));
-            IL.Emit(OpCodes.Stloc, promoLocal);
-            return;
+            // Initializer kinds the typed slot can hold: an empty array literal `[]` (build a fresh
+            // List), or a typed-double `src.map(cb)` (#861 typed-HOF pipeline) when the source is
+            // itself a promoted List<double> and the mapper is a typed non-capturing arrow — decided
+            // at emit time from the already-declared source slot, so a List<double> result is only
+            // ever produced into a List<double> slot (never escaping into $Array context).
+            bool emptyInit = v.Initializer is Expr.ArrayLiteral { Elements.Count: 0 } or null;
+            System.Reflection.Emit.LocalBuilder mapSrc = null!;
+            System.Reflection.Emit.MethodBuilder mapperMethod = null!;
+            bool typedMapInit = promoElemTok == TokenType.TYPE_NUMBER
+                && TryResolveTypedDoubleMapInit(v.Initializer, out mapSrc, out mapperMethod);
+
+            if (emptyInit || typedMapInit)
+            {
+                var promoDesc = promoElemTok == TokenType.TYPE_NUMBER ? ArrayElements.Double : ArrayElements.Bool;
+                var promoListType = promoDesc.GetListType(_ctx.Types);
+                var promoLocal = _ctx.Locals.DeclareLocal(v.Name.Lexeme, promoListType);
+                if (emptyInit)
+                {
+                    IL.Emit(OpCodes.Newobj, _ctx.Types.GetDefaultConstructor(promoListType));
+                }
+                else
+                {
+                    // result = ArrayMapDouble(src, (double x) => …) — direct typed delegate, no boxing.
+                    IL.Emit(OpCodes.Ldloc, mapSrc);
+                    IL.Emit(OpCodes.Ldnull);
+                    IL.Emit(OpCodes.Ldftn, mapperMethod);
+                    IL.Emit(OpCodes.Newobj, typeof(Func<double, double>).GetConstructor([typeof(object), typeof(IntPtr)])!);
+                    IL.Emit(OpCodes.Call, _ctx.Runtime!.ArrayMapDouble);
+                }
+                IL.Emit(OpCodes.Stloc, promoLocal);
+                return;
+            }
+            // Marked promotable but the initializer won't produce a matching typed list (e.g. the map
+            // source isn't itself promoted) — fall through to the generic object-slot path below so the
+            // slot type stays consistent with the value the initializer actually produces.
         }
 
         // Append-only string-accumulator promotion (#857): a provably non-escaping `string` local with
@@ -324,6 +351,37 @@ public partial class ILEmitter
             }
             IL.Emit(OpCodes.Stloc, local);
         }
+    }
+
+    /// <summary>
+    /// Resolves <paramref name="init"/> as a typed-double <c>src.map(cb)</c> (#861 typed-HOF pipeline):
+    /// true iff <c>src</c> currently binds to a promoted <c>List&lt;double&gt;</c> slot and <c>cb</c> is an
+    /// inline, non-capturing arrow compiled to <c>double(double)</c>. On success yields the source list
+    /// local and the mapper's typed static method, which bind directly to <c>Func&lt;double,double&gt;</c>
+    /// for <c>ArrayMapDouble</c>. Decided at emit time (source declared earlier in source order), so the
+    /// typed result is only produced when the source is genuinely typed.
+    /// </summary>
+    private bool TryResolveTypedDoubleMapInit(
+        Expr? init,
+        out System.Reflection.Emit.LocalBuilder srcList,
+        out System.Reflection.Emit.MethodBuilder mapperMethod)
+    {
+        srcList = null!;
+        mapperMethod = null!;
+        if (init is not Expr.Call { Callee: Expr.Get { Object: Expr.Variable v, Optional: false } get } call)
+            return false;
+        if (get.Name.Lexeme != "map") return false;
+        if (call.Arguments.Count != 1 || call.Arguments[0] is not Expr.ArrowFunction af) return false;
+        if (_ctx.TryGetPromotedArrayLocal(v.Name.Lexeme) is not { Descriptor.Kind: ArrayElementsKind.Double } prom)
+            return false;
+        if (_ctx.DisplayClasses.ContainsKey(af)) return false;               // capturing → not directly bindable
+        if (!_ctx.ArrowMethods.TryGetValue(af, out var m)) return false;
+        if (m.ReturnType != _ctx.Types.Double) return false;
+        var ps = m.GetParameters();
+        if (ps.Length != 1 || ps[0].ParameterType != _ctx.Types.Double) return false;
+        srcList = prom.Local;
+        mapperMethod = m;
+        return true;
     }
 
     /// <summary>

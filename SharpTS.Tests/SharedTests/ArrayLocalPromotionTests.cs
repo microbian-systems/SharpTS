@@ -315,4 +315,66 @@ public class ArrayLocalPromotionTests
         // acc: 0 → 0+0+100=100 → 100+1+100=201 → 201+2+100=303
         Assert.Equal("303\n", TestHarness.Run(source, mode));
     }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedMap_ThenIndexLength(ExecutionMode mode)
+    {
+        // `doubled` = arr.map(typed mapper) is itself promoted to List<double> (its source arr is
+        // promoted and the mapper is non-capturing number→number), then read via index/length.
+        var source = """
+            function f(): number {
+                const arr: number[] = [];
+                for (let i: number = 0; i < 5; i++) { arr.push(i); }
+                const doubled = arr.map((x: number): number => x * 2);
+                let s: number = 0;
+                for (let i: number = 0; i < doubled.length; i++) { s = s + doubled[i]; }
+                return s;
+            }
+            console.log(f());
+            """;
+
+        // [0,2,4,6,8] → 20
+        Assert.Equal("20\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedMap_ThenReduce_Chain(ExecutionMode mode)
+    {
+        // Full typed chain: arr (List<double>) → map → doubled (List<double>) → reduce → double.
+        var source = """
+            function f(): number {
+                const arr: number[] = [];
+                for (let i: number = 0; i < 5; i++) { arr.push(i); }
+                const doubled = arr.map((x: number): number => x * 2);
+                return doubled.reduce((a: number, x: number): number => a + x, 0);
+            }
+            console.log(f());
+            """;
+
+        // [0,2,4,6,8] → 20
+        Assert.Equal("20\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TypedMap_ResultReturned_FallsBackCorrectly(ExecutionMode mode)
+    {
+        // The map result escapes (returned), so it must NOT be a bare List<double> — falls back to
+        // the $Array path and stays correct.
+        var source = """
+            function build(): number[] {
+                const arr: number[] = [];
+                for (let i: number = 0; i < 3; i++) { arr.push(i); }
+                return arr.map((x: number): number => x + 10);
+            }
+            const r: number[] = build();
+            console.log(r.length);
+            console.log(r[0]);
+            console.log(r[2]);
+            """;
+
+        Assert.Equal("3\n10\n12\n", TestHarness.Run(source, mode));
+    }
 }
