@@ -372,12 +372,21 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     /// runner's timeout.
     /// </summary>
     /// <remarks>
-    /// Perf (#856): instead of an unconditional <c>call $Runtime.CheckCancellation()</c>,
-    /// we inline the field test and only call the (throwing) helper on the cold
-    /// cancel path. RyuJIT will not inline <c>CheckCancellation</c> itself (it
-    /// contains <c>newobj</c>+<c>throw</c>), so the bare call sat in every loop
-    /// body as a per-iteration optimization barrier — measured at ~half the
-    /// runtime of a tight numeric loop. Inlining the test recovers ~1.6×.
+    /// Perf (#856): the backedge inlines the field test and, on the cold cancel
+    /// path, emits <c>call BuildCancellationException(); throw</c> — NOT
+    /// <c>call CheckCancellation()</c>. The distinction is decisive on SysV x64:
+    /// <c>CheckCancellation()</c> is, from the JIT's flow-graph view, a
+    /// <em>returning</em> call (its <c>throw</c> is internal and conditional), so
+    /// the register allocator must assume control returns from it. Because every
+    /// XMM register is caller-saved on SysV x64, a returning call inside the loop
+    /// forces the loop-carried doubles (and the loop counter) to be stack-resident
+    /// across every iteration — a load/store per use. Emitting a real <c>throw</c>
+    /// opcode makes the path non-returning, so those values are dead on the cancel
+    /// path and stay in registers on the hot path. Measured ~1.8× on tight numeric
+    /// loops (objects/factorial reach Node parity); the earlier inline-call form
+    /// (#874) only removed the unconditional-call overhead, not this spill.
+    /// <c>BuildCancellationException</c> merely <em>constructs</em> the exception
+    /// (it does not throw), so the <c>throw</c> happens here at the backedge.
     ///
     /// The <c>volatile.</c> prefix is mandatory: <c>_cancelRequested</c> is
     /// loop-invariant, so a plain <c>ldsfld</c> could be hoisted out of the loop
@@ -387,14 +396,15 @@ public abstract class StatementEmitterBase : ExpressionEmitterBase
     /// </remarks>
     protected void EmitCancellationCheck()
     {
-        if (Ctx.Runtime?.CheckCancellationMethod == null || Ctx.Runtime?.CancelRequestedField == null)
+        if (Ctx.Runtime?.BuildCancellationExceptionMethod == null || Ctx.Runtime?.CancelRequestedField == null)
             return;
 
         var notCancelled = IL.DefineLabel();
         IL.Emit(OpCodes.Volatile);
         IL.Emit(OpCodes.Ldsfld, Ctx.Runtime.CancelRequestedField);
         IL.Emit(OpCodes.Brfalse, notCancelled);
-        IL.Emit(OpCodes.Call, Ctx.Runtime.CheckCancellationMethod);
+        IL.Emit(OpCodes.Call, Ctx.Runtime.BuildCancellationExceptionMethod);
+        IL.Emit(OpCodes.Throw);
         IL.MarkLabel(notCancelled);
     }
 

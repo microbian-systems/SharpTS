@@ -80,6 +80,18 @@ public class EmittedRuntime
     public FieldBuilder CancelRequestedField { get; set; } = null!;
     public MethodBuilder CheckCancellationMethod { get; set; } = null!;
 
+    // Loop-backedge cancellation throws via `call BuildCancellationException();
+    // throw` rather than `call CheckCancellation()`. CheckCancellation() is a
+    // *returning* call from the JIT's flow-graph view (its throw is internal and
+    // conditional), so on SysV x64 — where every XMM register is caller-saved —
+    // it forces loop-carried doubles to be stack-resident across every iteration.
+    // A `throw` does not return, so the values are dead on the cancel path and
+    // stay in registers. Measured ~1.8× on tight numeric loops (#856). This
+    // factory only *constructs* the exception (no throw), so the backedge emits a
+    // genuine `throw` opcode. CheckCancellationMethod is retained for the
+    // non-hot-loop call sites (event loop, deep-recursion guard).
+    public MethodBuilder BuildCancellationExceptionMethod { get; set; } = null!;
+
     // The emitted runtime helper class
     public TypeBuilder RuntimeType { get; set; } = null!;
 

@@ -245,6 +245,27 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
         }
 
+        // BuildCancellationException(): constructs and RETURNS (does not throw)
+        // the OperationCanceledException used at loop backedges. Loop emitters
+        // emit `call BuildCancellationException(); throw` so the cancel path is a
+        // non-returning `throw` rather than a returning `call CheckCancellation()`
+        // — keeping the hot loop body free of a call that would otherwise force
+        // loop-carried doubles onto the stack on SysV x64 (~1.8× on tight numeric
+        // loops, #856). See EmittedRuntime.BuildCancellationExceptionMethod.
+        var buildCancelEx = typeBuilder.DefineMethod(
+            "BuildCancellationException",
+            MethodAttributes.Public | MethodAttributes.Static,
+            typeof(Exception),
+            Type.EmptyTypes);
+        runtime.BuildCancellationExceptionMethod = buildCancelEx;
+        {
+            var il = buildCancelEx.GetILGenerator();
+            il.Emit(OpCodes.Ldstr, "Compiled execution cancelled.");
+            il.Emit(OpCodes.Newobj,
+                typeof(OperationCanceledException).GetConstructor([typeof(string)])!);
+            il.Emit(OpCodes.Ret);
+        }
+
         // Static field for Random
         var randomField = typeBuilder.DefineField("_random", _types.Random, FieldAttributes.Private | FieldAttributes.Static);
 
