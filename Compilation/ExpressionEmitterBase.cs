@@ -58,6 +58,15 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     /// </summary>
     protected virtual bool TryEmitArrowAsDelegate(Expr.ArrowFunction af, Type delegateType) => false;
 
+    bool IEmitterContext.TryEmitCapturingArrowDisplayInstance(Expr.ArrowFunction af)
+        => TryEmitCapturingArrowDisplayInstance(af);
+
+    /// <summary>
+    /// Default: only <see cref="ILEmitter"/> can build a capturing arrow's display
+    /// instance (the display machinery lives there). Other contexts decline (#861 L3).
+    /// </summary>
+    protected virtual bool TryEmitCapturingArrowDisplayInstance(Expr.ArrowFunction af) => false;
+
     #endregion
 
     protected readonly StateMachineEmitHelpers _helpers;

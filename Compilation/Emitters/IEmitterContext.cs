@@ -124,4 +124,13 @@ public interface IEmitterContext
     /// path when this returns false.
     /// </summary>
     bool TryEmitArrowAsDelegate(Expr.ArrowFunction af, Type delegateType);
+
+    /// <summary>
+    /// Builds the display-class instance for a capturing arrow (<c>new DisplayClass()</c>
+    /// + populate captured fields), leaving it on the stack. Used by the array-HOF boxed-
+    /// adapter fast path (#861 L3) to bind an instance adapter to <c>(displayInstance, ldftn
+    /// instanceAdapter)</c>. Returns false (without emitting) for unsupported emitters or when
+    /// the arrow has no registered display class.
+    /// </summary>
+    bool TryEmitCapturingArrowDisplayInstance(Expr.ArrowFunction af);
 }

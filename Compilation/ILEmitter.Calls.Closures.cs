@@ -52,6 +52,21 @@ public partial class ILEmitter
         return true;
     }
 
+    /// <summary>
+    /// #861 L3: builds a capturing arrow's display-class instance on the stack so the array-HOF
+    /// boxed-adapter path can bind an instance adapter to it. Returns false if the arrow has no
+    /// registered display class / constructor.
+    /// </summary>
+    protected override bool TryEmitCapturingArrowDisplayInstance(Expr.ArrowFunction af)
+    {
+        if (!_ctx.DisplayClasses.TryGetValue(af, out var displayClass))
+            return false;
+        if (!EmitCapturingArrowDisplayInstance(af, displayClass))
+            return false;
+        SetStackUnknown();
+        return true;
+    }
+
     protected override void EmitArrowFunction(Expr.ArrowFunction af)
     {
         // Check if this is an async arrow function with a state machine

@@ -13,46 +13,62 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
     /// Attempts to emit IL for a method call on an array receiver.
     /// </summary>
     public bool TryEmitMethodCall(IEmitterContext emitter, Expr receiver, string methodName, List<Expr> arguments)
+        => TryEmitMethodCall(emitter, receiver, methodName, arguments, leaveResultAsBareList: false);
+
+    /// <summary>
+    /// Core array-method emitter. <paramref name="leaveResultAsBareList"/> is set by the chained-stage
+    /// fast path (#861 L2): when this call's array result flows DIRECTLY into another array-method call,
+    /// the returnsNewArray <c>$Array</c> wrap is skipped so the bare <c>List&lt;object&gt;</c> feeds
+    /// straight into the next stage — eliminating the wrap-then-unwrap round-trip.
+    /// </summary>
+    private bool TryEmitMethodCall(IEmitterContext emitter, Expr receiver, string methodName, List<Expr> arguments, bool leaveResultAsBareList)
     {
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Emit the array object
-        emitter.EmitExpression(receiver);
-        emitter.EmitBoxIfNeeded(receiver);
-
-        // Handle both List<object> and $Array types
-        // For $Array, extract the Elements property.
-        // The returned local holds the ORIGINAL receiver, used below for
-        // identity-preserving methods (sort/reverse/fill/copyWithin) and to
-        // wrap "new array" method results back into $Array so downstream
-        // code sees a $Array whenever the input was one.
-        var receiverLocal = EmitGetListFromArrayOrList(il, ctx);
-
-        // Methods whose spec says "return this" — the caller expects the same
-        // reference the receiver started with. Since we unwrapped to a List,
-        // the runtime helper returns the inner List, not the $Array wrapper;
-        // to preserve `arr === arr.sort()` we stash the wrapper and push it
-        // back at the end.
+        // Methods whose spec says "return this" — the caller expects the same reference the receiver
+        // started with (sort/reverse/fill/copyWithin). Since we unwrap to a List, the helper returns the
+        // inner List, not the $Array wrapper; to preserve `arr === arr.sort()` we stash the wrapper and
+        // push it back at the end.
         bool returnsReceiver = methodName is "sort" or "reverse" or "fill" or "copyWithin";
-        // Methods whose spec says "return a new Array" — we want callers to
-        // continue seeing a $Array after them (not a bare List<object?>), so
-        // downstream array methods / runtime dispatch still match.
-        bool returnsNewArray = methodName is
-            "slice" or "concat" or "map" or "filter" or "flat" or "flatMap"
-            or "splice" or "toReversed" or "toSorted" or "toSpliced" or "with";
+        // Methods whose spec says "return a new Array" — callers should keep seeing a $Array after them
+        // (not a bare List<object?>), so downstream array methods / runtime dispatch still match.
+        bool returnsNewArray = IsReturnsNewArrayMethod(methodName);
 
         // #850: when an argument can suspend (await/yield), evaluating it while the receiver list sits
-        // on the IL evaluation stack produces invalid IL across a state-machine suspension
-        // (PathStackDepth — the stack differs between the "awaiter completed" and post-resume paths).
-        // Pre-spill the receiver and every argument into await-safe locals (registered so they survive
-        // the MoveNext re-entry; plain locals in the synchronous emitter, so non-async codegen is
-        // unchanged), then restore the list on the stack so each case below emits exactly as before but
-        // sources its arguments from the pre-spilled locals. Only the plain-argument methods are
-        // affected; the callback methods (map/filter/find/...) dispatch their arrow from the AST and
-        // never trigger this — an arrow body's await belongs to its own state machine.
+        // on the IL evaluation stack produces invalid IL across a state-machine suspension. Pre-spill the
+        // receiver + args into await-safe locals (callback methods never trigger this — an arrow body's
+        // await belongs to its own state machine).
+        bool plainArgSuspension = arguments.Count > 0 && MethodTakesPlainArgs(methodName)
+            && emitter.ArgsContainSuspension(arguments);
+
+        // The receiver local holds the ORIGINAL receiver, used by returnsReceiver methods and the
+        // suspension spill below; unused for the other methods.
+        LocalBuilder receiverLocal;
+
+        // #861 L2: if the receiver is itself an array-method call producing a fresh array via THIS
+        // emitter (e.g. the a.map(f) in a.map(f).filter(g)), emit it leaving a bare List<object> (its
+        // $Array wrap suppressed) and skip the unwrap here — killing the round-trip at the boundary. The
+        // intermediate array is anonymous (it can only be this one call's receiver), so dropping its
+        // $Array identity is unobservable. Disabled when the outer method needs the original receiver
+        // wrapper (returnsReceiver) or pre-spills suspending plain args (the chained receiver would sit
+        // on the stack across the suspension).
+        if (!returnsReceiver && !plainArgSuspension
+            && TryEmitChainedArrayReceiverAsBareList(emitter, receiver))
+        {
+            // Bare List<object> already on the stack; receiverLocal is never read in this path.
+            receiverLocal = il.DeclareLocal(ctx.Types.ListOfObject);
+        }
+        else
+        {
+            // General path: emit the array object and unwrap $Array → List<object>.
+            emitter.EmitExpression(receiver);
+            emitter.EmitBoxIfNeeded(receiver);
+            receiverLocal = EmitGetListFromArrayOrList(il, ctx);
+        }
+
         LocalBuilder[]? argLocals = null;
-        if (arguments.Count > 0 && MethodTakesPlainArgs(methodName) && emitter.ArgsContainSuspension(arguments))
+        if (plainArgSuspension)
         {
             var listSafe = emitter.SpillStackToObjectLocal();      // [list] -> await-safe local
             il.Emit(OpCodes.Ldloc, receiverLocal);                 // the original receiver must also
@@ -355,8 +371,38 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 return false;
         }
 
-        EmitPostCallAdjust(il, ctx, receiverLocal, returnsReceiver, returnsNewArray);
+        // #861 L2: when this result flows straight into a chained array call, skip the $Array wrap and
+        // leave the bare List<object> on the stack for the next stage.
+        if (!(leaveResultAsBareList && returnsNewArray))
+            EmitPostCallAdjust(il, ctx, receiverLocal, returnsReceiver, returnsNewArray);
         return true;
+    }
+
+    /// <summary>The methods whose spec result is a freshly-allocated array (kept as a $Array for callers).</summary>
+    private static bool IsReturnsNewArrayMethod(string methodName) => methodName is
+        "slice" or "concat" or "map" or "filter" or "flat" or "flatMap"
+        or "splice" or "toReversed" or "toSorted" or "toSpliced" or "with";
+
+    /// <summary>
+    /// #861 L2 chained-stage detection. If <paramref name="receiver"/> is a call to a fresh-array-
+    /// producing array method on an array receiver (the <c>a.map(f)</c> in <c>a.map(f).filter(g)</c>),
+    /// emit that inner call leaving a bare <c>List&lt;object&gt;</c> on the stack — its <c>$Array</c> wrap
+    /// suppressed — and return true. The intermediate array is anonymous (it can only be this one outer
+    /// call's receiver), so dropping its <c>$Array</c> identity is unobservable. Returns false (emitting
+    /// nothing) otherwise.
+    /// </summary>
+    private bool TryEmitChainedArrayReceiverAsBareList(IEmitterContext emitter, Expr receiver)
+    {
+        if (receiver is not Expr.Call { Optional: false, Callee: Expr.Get { Optional: false } innerGet } innerCall)
+            return false;
+        string innerMethod = innerGet.Name.Lexeme;
+        // Must be a returnsNewArray method handled by THIS emitter (so it leaves a List on the stack).
+        if (!IsReturnsNewArrayMethod(innerMethod)) return false;
+        // The inner call's receiver must statically be an array, so the inner call goes through this
+        // emitter's returnsNewArray path and the recursion leaves a List<object> (not some other value).
+        if (emitter.Context.TypeMap?.Get(innerGet.Object) is not SharpTS.TypeSystem.TypeInfo.Array)
+            return false;
+        return TryEmitMethodCall(emitter, innerGet.Object, innerMethod, innerCall.Arguments, leaveResultAsBareList: true);
     }
 
     /// <summary>
@@ -781,43 +827,129 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         if (af.Parameters.Count > 1) return false;
         foreach (var p in af.Parameters)
         {
-            if (p.Type != null) return false;
+            // Annotated params (p.Type != null) are now supported via a boxed
+            // adapter (#861) — see the typed-param path below. Rest/optional/
+            // defaulted params still bail (they need the reflective arg shape).
             if (p.IsRest || p.IsOptional) return false;
             if (p.DefaultValue != null) return false;
         }
         if (!ctx.ArrowMethods.TryGetValue(af, out var staticMethod)) return false;
 
-        // Static method's parameter types are guaranteed to be `object` by the
-        // AST-no-annotation check (ParameterTypeResolver falls back to object).
-        // Return type is the discriminator: type inference may yield `object`
-        // (any-typed bodies) or `bool` (predicate bodies like `v => v > 10`).
-        // The first uses Func<object, object>; the second uses Func<object, bool>
-        // where the helper variant exists. Phase B: capturing arrows now go
-        // through emitter.TryEmitArrowAsDelegate, which builds the display
-        // instance + binds the delegate to its Invoke method.
-        var ret = staticMethod.ReturnType;
-        System.Reflection.Emit.MethodBuilder chosenHelper;
-        Type funcType;
-        if (ret == ctx.Types.Object)
+        var sParams = staticMethod.GetParameters();
+        bool allParamsObject = true;
+        foreach (var sp in sParams)
+            if (sp.ParameterType != ctx.Types.Object) { allParamsObject = false; break; }
+
+        if (allParamsObject)
         {
-            chosenHelper = helperMethod;
-            funcType = typeof(Func<object, object>);
-        }
-        else if (ret == ctx.Types.Boolean && boolHelper != null)
-        {
-            chosenHelper = boolHelper;
-            funcType = typeof(Func<object, bool>);
-        }
-        else
-        {
-            return false;
+            // Untyped fast path (unchanged). The arrow's static method already has
+            // `object` parameter slots (unannotated params; ParameterTypeResolver
+            // falls back to object), so it binds directly to Func<object, …>. The
+            // return type is the discriminator: `object` (any-typed body) uses
+            // Func<object, object> + helperMethod; `bool` (predicate body like
+            // `v => v > 10`) uses Func<object, bool> + boolHelper where present.
+            // Capturing arrows go through emitter.TryEmitArrowAsDelegate, which
+            // builds the display instance + binds to its Invoke method.
+            var ret = staticMethod.ReturnType;
+            System.Reflection.Emit.MethodBuilder chosenHelper;
+            Type funcType;
+            if (ret == ctx.Types.Object)
+            {
+                chosenHelper = helperMethod;
+                funcType = typeof(Func<object, object>);
+            }
+            else if (ret == ctx.Types.Boolean && boolHelper != null)
+            {
+                chosenHelper = boolHelper;
+                funcType = typeof(Func<object, bool>);
+            }
+            else
+            {
+                return false;
+            }
+
+            if (!emitter.TryEmitArrowAsDelegate(af, funcType))
+                return false;
+            ctx.IL.Emit(OpCodes.Call, chosenHelper);
+            return true;
         }
 
-        if (!emitter.TryEmitArrowAsDelegate(af, funcType))
+        // Typed-param adapter path (#861): an annotated callback compiles to a
+        // typed static method (e.g. double(double)/bool(double)) that cannot bind
+        // to Func<object, object> directly. Bind a per-arrow boxed adapter that
+        // marshals object↔typed around the arrow call, then drive the matching
+        // Array*Direct helper.
+        //
+        // #861 L4: when the predicate arrow returns `bool` and a Func<object, bool>
+        // helper variant exists (filter/find/findIndex/some/every), emit a
+        // bool-returning adapter and call that variant — skipping the per-element
+        // result box + IsTruthy the object helper would otherwise do.
+        bool wantBool = boolHelper != null && staticMethod.ReturnType == ctx.Types.Boolean;
+        if (!TryBindTypedArrowAdapter(emitter, af, staticMethod, funcArity: 1, boolReturn: wantBool))
             return false;
-        ctx.IL.Emit(OpCodes.Call, chosenHelper);
+        ctx.IL.Emit(OpCodes.Call, wantBool ? boolHelper! : helperMethod);
         return true;
     }
+
+    /// <summary>
+    /// Binds a per-arrow boxed adapter (object(object[,object])) for an annotated,
+    /// non-capturing callback arrow to a Func&lt;object,…&gt; of
+    /// <paramref name="funcArity"/> parameters, leaving the delegate on the stack
+    /// for the caller to pass to an Array*Direct helper. Returns false (reflective
+    /// fallback) for capturing arrows or any non-marshallable param/return type.
+    /// </summary>
+    private static bool TryBindTypedArrowAdapter(
+        IEmitterContext emitter,
+        Expr.ArrowFunction af,
+        System.Reflection.Emit.MethodBuilder arrowMethod,
+        int funcArity,
+        bool boolReturn)
+    {
+        var ctx = emitter.Context;
+
+        // Marshallable gate (shared): stay in the reflective path's no-arg-conversion regime
+        // (concrete double/bool/string, or object) so the adapter's unbox/cast matches MethodInvoker
+        // semantics exactly. Union/nullable params already widen to object in ParameterTypeResolver, so
+        // a non-object slot here is a concrete value/reference type.
+        if (!IsAdapterMarshallable(ctx, arrowMethod.ReturnType)) return false;
+        foreach (var p in arrowMethod.GetParameters())
+            if (!IsAdapterMarshallable(ctx, p.ParameterType)) return false;
+
+        // boolReturn (#861 L4) binds Func<object, bool> for a bool-returning predicate so the
+        // *DirectBool helper consumes an unboxed bool. Only the 1-arg predicate helpers pass it.
+        Type funcType = boolReturn
+            ? typeof(Func<object, bool>)
+            : (funcArity == 2 ? typeof(Func<object, object, object>) : typeof(Func<object, object>));
+        var funcCtor = funcType.GetConstructor([typeof(object), typeof(IntPtr)])!;
+
+        if (ctx.DisplayClasses.TryGetValue(af, out var displayClass))
+        {
+            // #861 L3: capturing arrow — arrowMethod is the instance Invoke on the display class.
+            // Emit an INSTANCE adapter, build the display instance (capturing live locals), then bind
+            // (displayInstance, ldftn adapter). The display instance is built fresh at the call site,
+            // exactly as the reflective $TSFunction path does.
+            var adapter = ctx.ArrowBoxedAdapters.GetOrEmit(displayClass, arrowMethod, funcArity, instance: true, boolReturn: boolReturn);
+            if (!emitter.TryEmitCapturingArrowDisplayInstance(af))
+                return false;                                          // Stack: [displayInstance]
+            ctx.IL.Emit(OpCodes.Ldftn, adapter);
+            ctx.IL.Emit(OpCodes.Newobj, funcCtor);
+            return true;
+        }
+
+        // #861 L1: non-capturing arrow — arrowMethod is a static method on its declaring $Program type.
+        // Using DeclaringType (rather than ctx.ProgramType, set only on the top-level context) lets the
+        // adapter fire inside function/method bodies too. Bind (null, ldftn adapter).
+        if (arrowMethod.DeclaringType is not TypeBuilder programType) return false;
+        var staticAdapter = ctx.ArrowBoxedAdapters.GetOrEmit(programType, arrowMethod, funcArity, instance: false, boolReturn: boolReturn);
+        ctx.IL.Emit(OpCodes.Ldnull);
+        ctx.IL.Emit(OpCodes.Ldftn, staticAdapter);
+        ctx.IL.Emit(OpCodes.Newobj, funcCtor);
+        return true;
+    }
+
+    private static bool IsAdapterMarshallable(CompilationContext ctx, Type t)
+        => t == ctx.Types.Object || t == ctx.Types.Double
+        || t == ctx.Types.Boolean || t == ctx.Types.String;
 
     /// <summary>
     /// Reduce-specific fast path: the callback is binary
@@ -839,17 +971,32 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         if (af.Parameters.Count != 2) return false;
         foreach (var p in af.Parameters)
         {
-            if (p.Type != null) return false;
+            // Annotated params now supported via a boxed adapter (#861).
             if (p.IsRest || p.IsOptional) return false;
             if (p.DefaultValue != null) return false;
         }
         if (!ctx.ArrowMethods.TryGetValue(af, out var staticMethod)) return false;
-        if (staticMethod.ReturnType != ctx.Types.Object) return false;
 
-        var func3 = typeof(Func<object, object, object>);
-        // Stack: [list]. Build delegate (capturing or non-capturing).
-        if (!emitter.TryEmitArrowAsDelegate(af, func3))
-            return false;
+        var sParams = staticMethod.GetParameters();
+        bool allObject = staticMethod.ReturnType == ctx.Types.Object;
+        if (allObject)
+            foreach (var sp in sParams)
+                if (sp.ParameterType != ctx.Types.Object) { allObject = false; break; }
+
+        // Stack: [list]. Build the (acc, element) => newAcc delegate.
+        if (allObject)
+        {
+            // Untyped fast path (unchanged): object(object,object) binds directly.
+            if (!emitter.TryEmitArrowAsDelegate(af, typeof(Func<object, object, object>)))
+                return false;
+        }
+        else
+        {
+            // Annotated reducer (e.g. double(double,double)): bridge via a boxed
+            // adapter object(object,object).
+            if (!TryBindTypedArrowAdapter(emitter, af, staticMethod, funcArity: 2, boolReturn: false))
+                return false;
+        }
         // Push initial value (boxed object).
         emitter.EmitExpression(arguments[1]);
         emitter.EmitBoxIfNeeded(arguments[1]);
