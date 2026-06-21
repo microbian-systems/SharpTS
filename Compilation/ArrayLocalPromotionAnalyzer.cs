@@ -22,8 +22,9 @@ namespace SharpTS.Compilation;
 ///         <c>x.push(...)</c> — any other appearance of the bare variable (argument pass, return, store,
 ///         spread, <c>for…of</c>, <c>===</c>, reassignment, <c>delete x[i]</c>, <c>pop</c>/any other
 ///         method or property) disqualifies it;</item>
-///   <item>the name is declared exactly once in the whole program (conservative guard against scope
-///         ambiguity / shadowing without full scope resolution);</item>
+///   <item>the name is declared exactly once within its function scope (conservative guard against
+///         shadowing without full scope resolution; candidacy is keyed per scope, so a same-named
+///         array in a different function/module never interferes);</item>
 ///   <item>the name is not captured by any closure (a captured local is routed to an <c>object</c>
 ///         display-class field, never a typed slot).</item>
 /// </list>
@@ -42,12 +43,12 @@ public static class ArrayLocalPromotionAnalyzer
         foreach (var stmt in program)
             visitor.Visit(stmt);
 
-        foreach (var (name, nameToken) in visitor.Candidates)
+        foreach (var (key, nameToken) in visitor.Candidates)
         {
-            if (visitor.Disqualified.Contains(name)) continue;
-            if (visitor.DeclCount.GetValueOrDefault(name) != 1) continue;
-            if (!visitor.ElementToken.TryGetValue(name, out var token)) continue; // no Double/Bool use seen
-            if (closures?.IsVariableCaptured(name) == true) continue;
+            if (visitor.Disqualified.Contains(key)) continue;
+            if (visitor.DeclCount.GetValueOrDefault(key) != 1) continue;
+            if (!visitor.ElementToken.TryGetValue(key, out var token)) continue; // no Double/Bool use seen
+            if (closures?.IsVariableCaptured(key.Name) == true) continue;
             typeMap.MarkPromotableArrayLocal(nameToken, token);
         }
     }
@@ -56,17 +57,36 @@ public static class ArrayLocalPromotionAnalyzer
     {
         private readonly TypeMap _typeMap = typeMap;
 
-        /// <summary>name → candidate declaration's name token (empty-array-literal local).</summary>
-        public Dictionary<string, Token> Candidates { get; } = new();
+        // Candidacy/disqualification is keyed by (function scope, lexeme), NOT whole-program lexeme: a
+        // common array name like `arr`/`data` in one function must not be poisoned by an unrelated,
+        // escaping same-name array in another (e.g. across bundled modules). Each function/arrow body is
+        // its own scope; cross-scope references are captures, handled by the IsVariableCaptured guard. The
+        // module top level is scope 0. Mirrors StringAccumulatorPromotionAnalyzer.
+        private int _scope;
+        private int _nextScope;
 
-        /// <summary>How many times each name is declared anywhere (any kind of binding).</summary>
-        public Dictionary<string, int> DeclCount { get; } = new();
+        /// <summary>(scope, name) → candidate declaration's name token (empty-array-literal local).</summary>
+        public Dictionary<(int Scope, string Name), Token> Candidates { get; } = new();
 
-        /// <summary>name → element primitive token (TYPE_NUMBER / TYPE_BOOLEAN), from its first typed use.</summary>
-        public Dictionary<string, TokenType> ElementToken { get; } = new();
+        /// <summary>How many times each (scope, name) is declared.</summary>
+        public Dictionary<(int Scope, string Name), int> DeclCount { get; } = new();
 
-        /// <summary>Names with at least one disqualifying occurrence.</summary>
-        public HashSet<string> Disqualified { get; } = new();
+        /// <summary>(scope, name) → element primitive token (TYPE_NUMBER / TYPE_BOOLEAN), from its first typed use.</summary>
+        public Dictionary<(int Scope, string Name), TokenType> ElementToken { get; } = new();
+
+        /// <summary>(scope, name) pairs with at least one disqualifying occurrence.</summary>
+        public HashSet<(int Scope, string Name)> Disqualified { get; } = new();
+
+        protected override void VisitFunction(Stmt.Function stmt) => InScope(() => base.VisitFunction(stmt));
+        protected override void VisitArrowFunction(Expr.ArrowFunction expr) => InScope(() => base.VisitArrowFunction(expr));
+
+        private void InScope(Action body)
+        {
+            var saved = _scope;
+            _scope = ++_nextScope;
+            body();
+            _scope = saved;
+        }
 
         protected override void VisitVar(Stmt.Var stmt) =>
             HandleDeclaration(stmt.Name, stmt.Initializer);
@@ -76,11 +96,11 @@ public static class ArrayLocalPromotionAnalyzer
 
         private void HandleDeclaration(Token name, Expr? initializer)
         {
-            var lexeme = name.Lexeme;
-            DeclCount[lexeme] = DeclCount.GetValueOrDefault(lexeme) + 1;
+            var key = (_scope, name.Lexeme);
+            DeclCount[key] = DeclCount.GetValueOrDefault(key) + 1;
 
-            if (initializer is Expr.ArrayLiteral { Elements.Count: 0 } && !Candidates.ContainsKey(lexeme))
-                Candidates[lexeme] = name;
+            if (initializer is Expr.ArrayLiteral { Elements.Count: 0 } && !Candidates.ContainsKey(key))
+                Candidates[key] = name;
 
             // Visit the initializer for completeness ([] has no sub-uses, but a
             // non-candidate initializer may reference other arrays).
@@ -110,7 +130,7 @@ public static class ArrayLocalPromotionAnalyzer
                 // diverging from the general path that preserves it. Disqualify — the
                 // array analogue of the #367/#372 numeric-slot taint guard.
                 if (ValueAdmitsUndefinedSentinel(expr.Value))
-                    Disqualified.Add(v.Name.Lexeme);
+                    Disqualified.Add((_scope, v.Name.Lexeme));
             }
             else
                 Visit(expr.Object);
@@ -147,7 +167,7 @@ public static class ArrayLocalPromotionAnalyzer
                 foreach (var arg in expr.Arguments)
                 {
                     if (ValueAdmitsUndefinedSentinel(arg))
-                        Disqualified.Add(v.Name.Lexeme);
+                        Disqualified.Add((_scope, v.Name.Lexeme));
                     Visit(arg);
                 }
                 return;
@@ -160,13 +180,13 @@ public static class ArrayLocalPromotionAnalyzer
             // `x = ...` rebinds the slot — disqualify. (Only the empty-literal
             // initializer is supported; any later store could be a $Array or a
             // value the typed slot can't hold.)
-            Disqualified.Add(expr.Name.Lexeme);
+            Disqualified.Add((_scope, expr.Name.Lexeme));
             base.VisitAssign(expr);
         }
 
         protected override void VisitCompoundAssign(Expr.CompoundAssign expr)
         {
-            Disqualified.Add(expr.Name.Lexeme);
+            Disqualified.Add((_scope, expr.Name.Lexeme));
             base.VisitCompoundAssign(expr);
         }
 
@@ -182,7 +202,7 @@ public static class ArrayLocalPromotionAnalyzer
                 break;
             }
             if (target is Expr.Variable v)
-                Disqualified.Add(v.Name.Lexeme);
+                Disqualified.Add((_scope, v.Name.Lexeme));
             base.VisitDelete(expr);
         }
 
@@ -190,7 +210,7 @@ public static class ArrayLocalPromotionAnalyzer
         {
             // Catch-all: any bare variable occurrence not consumed by a permitted-use
             // override above is an escape (returned, passed, spread, compared, etc.).
-            Disqualified.Add(expr.Name.Lexeme);
+            Disqualified.Add((_scope, expr.Name.Lexeme));
         }
 
         private void NotePermittedReceiver(Expr.Variable v)
@@ -198,15 +218,15 @@ public static class ArrayLocalPromotionAnalyzer
             // Resolve the element kind from the receiver's static array type (as
             // ArrayHoistAnalyzer does). Only Double/Bool arrays are promotable; an
             // Object-kind array (string[]/union[]) disqualifies the name.
-            if (ElementToken.ContainsKey(v.Name.Lexeme)) return;
+            if (ElementToken.ContainsKey((_scope, v.Name.Lexeme))) return;
             var desc = ArrayElements.Resolve(_typeMap.Get(v));
             if (desc == null) return; // not statically an array here — leave undecided
             if (desc.Kind == ArrayElementsKind.Object || desc.ElementTokenType is not { } tok)
             {
-                Disqualified.Add(v.Name.Lexeme);
+                Disqualified.Add((_scope, v.Name.Lexeme));
                 return;
             }
-            ElementToken[v.Name.Lexeme] = tok;
+            ElementToken[(_scope, v.Name.Lexeme)] = tok;
         }
 
         /// <summary>
