@@ -425,6 +425,7 @@ public partial class ILCompiler
         Phase1_EmitRuntimeTypes();
         Phase2_AnalyzeClosures(statements);
         ArrayLocalPromotionAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
+        StringAccumulatorPromotionAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
         NonEscapingArrowLocalAnalyzer.Analyze(statements, _closures.DirectCallArrowBindings, _closures.Analyzer);
         ObjectLocalPromotionAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
         Phase3_CreateProgramType();
@@ -955,6 +956,7 @@ public partial class ILCompiler
         Phase1_EmitRuntimeTypes();
         Phase2_AnalyzeClosures(allStatements);
         ArrayLocalPromotionAnalyzer.Analyze(allStatements, _typeMap, _closures.Analyzer);
+        StringAccumulatorPromotionAnalyzer.Analyze(allStatements, _typeMap, _closures.Analyzer);
         NonEscapingArrowLocalAnalyzer.Analyze(allStatements, _closures.DirectCallArrowBindings, _closures.Analyzer);
         ObjectLocalPromotionAnalyzer.Analyze(allStatements, _typeMap, _closures.Analyzer);
         Phase3_CreateProgramType();

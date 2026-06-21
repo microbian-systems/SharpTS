@@ -21,6 +21,7 @@ public class TypeMap
     private readonly HashSet<object> _undefinedReachableNumericLocals = new(ReferenceEqualityComparer.Instance);
     private readonly HashSet<Stmt.Parameter> _undefinedReachableNumericParams = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Token, TokenType> _promotableArrayLocals = new(ReferenceEqualityComparer.Instance);
+    private readonly HashSet<Token> _promotableStringAccumulators = new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<Token, ObjectShapeInfo> _promotableObjectLocals = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
@@ -144,6 +145,24 @@ public class TypeMap
     /// </summary>
     public bool IsPromotableArrayLocal(Token nameToken, out TokenType elementToken) =>
         _promotableArrayLocals.TryGetValue(nameToken, out elementToken);
+
+    /// <summary>
+    /// Flags a <c>const</c>/<c>let</c> string local with a string-literal initializer that is provably
+    /// non-escaping and used only via append (<c>s = s + str</c>/<c>s += str</c> in statement position),
+    /// <c>s.length</c>, and <c>s.charCodeAt(i)</c>. The IL compiler promotes such a local to a concrete
+    /// <c>StringBuilder</c> slot (#857), turning O(n²) repeated <c>String.Concat</c> into O(n) <c>Append</c>.
+    /// Keyed by reference on the declaration's <em>name token</em> (stable across <c>Stmt.Var</c>/
+    /// <c>Stmt.Const</c>). Purely a compiler hint — set by the IL compiler's promotion analyzer.
+    /// </summary>
+    public void MarkPromotableStringAccumulator(Token nameToken) =>
+        _promotableStringAccumulators.Add(nameToken);
+
+    /// <summary>
+    /// True if the declaration with name token <paramref name="nameToken"/> was flagged by
+    /// <see cref="MarkPromotableStringAccumulator"/>.
+    /// </summary>
+    public bool IsPromotableStringAccumulator(Token nameToken) =>
+        _promotableStringAccumulators.Contains(nameToken);
 
     /// <summary>
     /// Flags a <c>const</c>/<c>let</c> object-literal local declaration whose literal has a fixed,

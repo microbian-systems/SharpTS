@@ -25,6 +25,16 @@ public partial class ILEmitter
             return;
         }
 
+        // Promoted string-accumulator charCodeAt (#857): read the StringBuilder's UTF-16 code unit
+        // directly via its [int] indexer (== JS charCodeAt); out-of-range yields NaN (JS semantics).
+        // Must intercept before the string-method path, which would emit the slot as a string receiver.
+        if (methodName == "charCodeAt" && !methodGet.Optional && methodGet.Object is Expr.Variable ccVar
+            && _ctx.TryGetPromotedStringAccumulator(ccVar.Name.Lexeme) is { } ccSb)
+        {
+            EmitPromotedStringCharCodeAt(ccSb, arguments);
+            return;
+        }
+
         // Try direct dispatch for known class instance methods
         TypeSystem.TypeInfo? objType = _ctx.TypeMap?.Get(methodGet.Object);
         if (TryEmitDirectMethodCall(methodGet.Object, objType, methodName, arguments))
