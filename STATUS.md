@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-06-20 (Perf epic [#856](https://github.com/nickna/SharpTS/issues/856) — compiled output now meets or beats Node.js on most of the cross-runtime benchmark suite; loop-backedge cancellation check inlined, [#874](https://github.com/nickna/SharpTS/pull/874))
+**Last Updated:** 2026-06-21 (Perf epic [#856](https://github.com/nickna/SharpTS/issues/856) — compiled output now meets or beats Node.js on 5 of 7 cross-runtime workloads, the other two within ~1.2×; loop-backedge cancellation now emits `throw` instead of a returning `call`, recovering ~1.8× on tight numeric loops — see §18)
 
 ## Legend
 - ✅ Implemented
@@ -518,19 +518,21 @@ Epic [#856](https://github.com/nickna/SharpTS/issues/856) tracks closing the com
 
 | Workload | Status | vs Node |
 |---|---|---|
-| fibonacci | ✅ | **faster than Node** — recursion/call core |
-| array-methods | ✅ | **faster than Node** — typed `List<double>` HOF pipeline ([#872](https://github.com/nickna/SharpTS/issues/872)) |
-| strings | ✅ | ≈ parity — `StringBuilder` accumulator promotion ([#870](https://github.com/nickna/SharpTS/issues/870)) + `charCodeAt` box-elision ([#873](https://github.com/nickna/SharpTS/issues/873)) |
-| closures | ✅ | done — non-escaping local arrows de-virtualized to direct calls ([#858](https://github.com/nickna/SharpTS/issues/858)) |
-| objects | ✅ | done — object literals as shape structs ([#862](https://github.com/nickna/SharpTS/issues/862)) |
-| count-primes | ⚠️ | ~1.3× slower (sieve; array-heavy loop) |
-| factorial | ⚠️ | ~3× slower (tight numeric loop; µs-scale at benchmark sizes) |
+| fibonacci | ✅ | **~2.4× faster** — recursion/call core |
+| array-methods | ✅ | **~2× faster** — typed `List<double>` HOF pipeline ([#872](https://github.com/nickna/SharpTS/issues/872)) |
+| strings | ✅ | **faster** (~0.9×) — `StringBuilder` accumulator promotion ([#870](https://github.com/nickna/SharpTS/issues/870)) + `charCodeAt` box-elision ([#873](https://github.com/nickna/SharpTS/issues/873)) |
+| objects | ✅ | **parity** (1.00×) — object literals as shape structs ([#862](https://github.com/nickna/SharpTS/issues/862)) + cancel-throw codegen (below) |
+| closures | ✅ | **parity** (~1.02×) — non-escaping local arrows de-virtualized to direct calls ([#858](https://github.com/nickna/SharpTS/issues/858)) |
+| count-primes | ✅ | ~1.13× (sieve; `List<bool>` index-write bounds checks are the residual) |
+| factorial | ✅ | ~1.22× (tight numeric loop at the codegen floor; V8 is ~0.2 ns/iter tighter; µs-scale) |
 
-The original catastrophic gaps (14–117× slower) are closed. Every win came from **re-exposing static types that the naive lowering erased** — boxing, `object`/`List<object>` representations, reflective dispatch, O(n²) string concat — so RyuJIT can optimize typed code. The emitter's job is to choose the algorithm/representation/dispatch and not erase known types; the JIT optimizes the typed ops it's given.
+The original catastrophic gaps (14–117× slower) are closed and the suite now meets-or-beats Node on 5 of 7 workloads, with the other two within ~1.2×. Every win came from **re-exposing static types that the naive lowering erased** — boxing, `object`/`List<object>` representations, reflective dispatch, O(n²) string concat — so RyuJIT can optimize typed code. The emitter's job is to choose the algorithm/representation/dispatch and not erase known types; the JIT optimizes the typed ops it's given.
 
-**Loop-backedge cancellation cost ([#874](https://github.com/nickna/SharpTS/pull/874)):** every compiled loop polls a cooperative-cancellation flag at its backedge so the runner can unwind runaway loops (issue [#74](https://github.com/nickna/SharpTS/issues/74)). This was an unconditional `call $Runtime.CheckCancellation()`; RyuJIT won't inline that helper (it contains `newobj`+`throw`), so it sat in every loop body as a per-iteration optimization barrier — ~half the runtime of a tight numeric loop. It is now an inlined `volatile` field test that calls the throwing helper only on the cold cancel path (`volatile.` defeats LICM hoisting the loop-invariant flag read, which would silently break cancellation). Result: **1.6×** on tight numeric loops, **1.12×** on the sieve, cancellation semantics unchanged. A throttle-every-N-iterations variant was tried and **rejected** — it merely ties the inline-volatile version, because a volatile static-field read is nearly free on x86-64 while a per-loop counter adds equal per-iteration cost.
+**Loop-backedge cancellation: throw, don't call (2026-06-21).** Every compiled loop polls a cooperative-cancellation flag at its backedge so the runner can unwind runaway loops (issue [#74](https://github.com/nickna/SharpTS/issues/74)). The flag test is an inlined `volatile.` field read ([#874](https://github.com/nickna/SharpTS/pull/874)); the **cold path** used to be `call $Runtime.CheckCancellation()` (a helper that throws internally). That was the dominant remaining gap on tight loops — **not** the flag read, which is free. From the JIT's flow-graph view `CheckCancellation()` is a *returning* call (its `throw` is conditional and internal), so the register allocator must assume control returns. On SysV x64 **every XMM register is caller-saved**, so a returning call inside a loop forces the loop-carried doubles (and counter) to be stack-resident across *every* iteration — a load/store per use. The backedge now emits `call $Runtime.BuildCancellationException(); throw` — a factory that only *constructs* the exception, then a real `throw` opcode. Because `throw` does not return, the loop vars are dead on the cancel path and stay in registers on the hot path. Measured **~1.8× on tight numeric loops**: objects 2.5×→parity, strings 1.26×→faster, factorial 2.27×→1.22×, count-primes 1.45×→1.13×. Cancellation semantics are unchanged (same `OperationCanceledException`, same message, thrown at the same point). This benefits **all** compiled loops, not just the benchmark suite.
 
-The remaining sub-parity workloads (count-primes, factorial) are dominated by separate, non-codegen factors: the residual per-iteration cancellation poll, non-inlined user-function calls, and boxed top-level `var`s.
+Why earlier attempts plateaued: the inline-volatile form (#874) removed the unconditional *call overhead* but left the returning call in the loop's flow graph, so the XMM spill remained. A throttle-every-N-iterations variant ties it — reducing read frequency doesn't remove the call from the flow graph. The fix is structural: make the cancel path *non-returning* so the loop body carries no call at all.
+
+The two remaining sub-parity workloads (count-primes ~1.13×, factorial ~1.22×) are at the codegen floor: factorial's loop already runs at the no-cancellation-check speed (V8 generates a marginally tighter multiply loop); count-primes' residual is `List<bool>` indexed-write bounds checking vs V8's packed-array elision.
 
 ---
 
