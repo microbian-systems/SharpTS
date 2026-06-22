@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -57,8 +57,8 @@
     <None Remove="SharpTS.Test262.Worker/**" />
     <Compile Remove="SharpTS.TypeScriptConformance/**" />
     <None Remove="SharpTS.TypeScriptConformance/**" />
-    <Compile Remove="SharpTS.Benchmarks/**" />
-    <None Remove="SharpTS.Benchmarks/**" />
+    <Compile Remove="SharpTS.Microbenchmarks/**" />
+    <None Remove="SharpTS.Microbenchmarks/**" />
     <Compile Remove="SharpTS.Example.Interop/**" />
     <None Remove="SharpTS.Example.Interop/**" />
     <Compile Remove="Examples/**" />

@@ -1,4 +1,4 @@
-namespace SharpTS.Benchmarks.Baselines;
+namespace SharpTS.Microbenchmarks.Baselines;
 
 /// <summary>
 /// Idiomatic C# implementations using native types (int, long, bool[], etc.).

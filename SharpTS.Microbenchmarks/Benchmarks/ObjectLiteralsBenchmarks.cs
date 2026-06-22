@@ -1,9 +1,9 @@
 using System.Reflection;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
-using SharpTS.Benchmarks.Infrastructure;
+using SharpTS.Microbenchmarks.Infrastructure;
 
-namespace SharpTS.Benchmarks.Benchmarks;
+namespace SharpTS.Microbenchmarks.Benchmarks;
 
 /// <summary>
 /// Object-literal allocation benchmarks. Each <c>{ ... }</c> in TS source
@@ -29,7 +29,7 @@ public class ObjectLiteralsBenchmarks
     {
         var assembly = typeof(ObjectLiteralsBenchmarks).Assembly;
         using var stream = assembly.GetManifestResourceStream(
-            "SharpTS.Benchmarks.TypeScriptSources.ObjectLiterals.ts")
+            "SharpTS.Microbenchmarks.TypeScriptSources.ObjectLiterals.ts")
             ?? throw new InvalidOperationException("Could not find embedded resource ObjectLiterals.ts");
         using var reader = new StreamReader(stream);
         var tsSource = reader.ReadToEnd();

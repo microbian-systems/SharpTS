@@ -1,10 +1,10 @@
 using System.Reflection;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
-using SharpTS.Benchmarks.Baselines;
-using SharpTS.Benchmarks.Infrastructure;
+using SharpTS.Microbenchmarks.Baselines;
+using SharpTS.Microbenchmarks.Infrastructure;
 
-namespace SharpTS.Benchmarks.Benchmarks;
+namespace SharpTS.Microbenchmarks.Benchmarks;
 
 // Computational algorithm benchmarks: SharpTS-compiled TypeScript vs idiomatic
 // C# (native types — the performance ceiling) vs "equivalent" C# (object?/boxing
@@ -23,7 +23,7 @@ namespace SharpTS.Benchmarks.Benchmarks;
 /// <summary>Shared embedded-resource loading + compiled-delegate resolution.</summary>
 public abstract class ComputationalBenchmarkBase
 {
-    private const string ResourceName = "SharpTS.Benchmarks.algorithms.ts";
+    private const string ResourceName = "SharpTS.Microbenchmarks.algorithms.ts";
 
     protected static Func<double, double> LoadCompiled(string functionName)
     {

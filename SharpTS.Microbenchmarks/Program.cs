@@ -5,7 +5,7 @@ using BenchmarkDotNet.Diagnosers;
 using BenchmarkDotNet.Columns;
 using BenchmarkDotNet.Order;
 
-namespace SharpTS.Benchmarks;
+namespace SharpTS.Microbenchmarks;
 
 /// <summary>
 /// Entry point for SharpTS benchmark suite.

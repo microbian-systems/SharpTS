@@ -1,9 +1,9 @@
 using System.Reflection;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
-using SharpTS.Benchmarks.Infrastructure;
+using SharpTS.Microbenchmarks.Infrastructure;
 
-namespace SharpTS.Benchmarks.Benchmarks;
+namespace SharpTS.Microbenchmarks.Benchmarks;
 
 /// <summary>
 /// Measures regex literal compilation overhead. Each TS regex literal
@@ -35,7 +35,7 @@ public class RegexBenchmarks
     {
         var assembly = typeof(RegexBenchmarks).Assembly;
         using var stream = assembly.GetManifestResourceStream(
-            "SharpTS.Benchmarks.TypeScriptSources.Regex.ts")
+            "SharpTS.Microbenchmarks.TypeScriptSources.Regex.ts")
             ?? throw new InvalidOperationException("Could not find embedded resource Regex.ts");
         using var reader = new StreamReader(stream);
         var tsSource = reader.ReadToEnd();

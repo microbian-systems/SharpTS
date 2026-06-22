@@ -1,4 +1,4 @@
-namespace SharpTS.Benchmarks.Baselines;
+namespace SharpTS.Microbenchmarks.Baselines;
 
 /// <summary>
 /// C# implementations using object/dynamic types to simulate SharpTS runtime overhead.

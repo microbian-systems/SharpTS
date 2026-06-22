@@ -1,8 +1,8 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
-using SharpTS.Benchmarks.Baselines;
+using SharpTS.Microbenchmarks.Baselines;
 
-namespace SharpTS.Benchmarks.Benchmarks;
+namespace SharpTS.Microbenchmarks.Benchmarks;
 
 // Starter-set workloads that broaden coverage beyond the original arithmetic
 // kernels: a builtin-heavy JSON round-trip, a data-parallel typed-array kernel,
