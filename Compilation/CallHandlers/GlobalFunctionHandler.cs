@@ -83,6 +83,15 @@ public class GlobalFunctionHandler : ICallHandler
         il.Emit(System.Reflection.Emit.OpCodes.Callvirt, ctx.Types.GetMethod(
             ctx.Types.MethodInfo, "Invoke", ctx.Types.Object, ctx.Types.ObjectArray));
 
+        // eval runs in the interpreter and may return an interpreter-side boxed
+        // primitive wrapper (a SharpTSObject for `eval("new Number")`), whose CLR
+        // type the compiled runtime's `Isinst $Object` boxed-primitive checks don't
+        // match — so `== 0` wouldn't coerce and `valueOf` wouldn't dispatch. Re-wrap
+        // it into the native $Object representation at the boundary so all downstream
+        // handling works uniformly. (Test262 new/S11.2.2_A1.1, A1.2.)
+        if (ctx.Runtime?.NormalizeForeignBoxedPrimitiveMethod != null)
+            il.Emit(System.Reflection.Emit.OpCodes.Call, ctx.Runtime.NormalizeForeignBoxedPrimitiveMethod);
+
         // Result is an arbitrary JS value (boxed object) of statically unknown type.
         emitter.SetStackUnknown();
         return true;

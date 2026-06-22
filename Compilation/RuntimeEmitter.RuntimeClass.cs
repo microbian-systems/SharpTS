@@ -912,6 +912,7 @@ public partial class RuntimeEmitter
         // Boxed primitive helpers — must come AFTER prototype populates so
         // BooleanPrototypePopulateMethod / Number / String / Object are non-null.
         EmitNewBoxedPrimitive(typeBuilder, runtime);
+        EmitNormalizeForeignBoxedPrimitive(typeBuilder, runtime);
         EmitToObject(typeBuilder, runtime);
         EmitIsBoxedPrimitiveOfType(typeBuilder, runtime);
         EmitUnwrapStringReceiver(typeBuilder, runtime);
