@@ -905,8 +905,7 @@ public partial class RuntimeEmitter
         // Check frozen ONLY (sealed/non-extensible allows reordering, no length change)
         EmitArrayFrozenSealedCheck(il, runtime, frozenLabel, checkSealed: false, checkExtensible: false);
 
-        // Use a simple in-place insertion sort for stability
-        // This is efficient enough for typical use cases and guarantees stability
+        // Stable bottom-up merge sort (Θ(n log n)) — see EmitSortBodyOnLocal (#877).
         EmitSortBody(il, runtime, mutateInPlace: true);
 
         // Frozen return path - return unchanged list
@@ -943,7 +942,7 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits the body of the sort algorithm (stable insertion sort).
+    /// Emits the body of the sort algorithm (stable bottom-up merge sort, Θ(n log n)).
     /// When mutateInPlace is true, sorts arg0 and returns arg0.
     /// </summary>
     private void EmitSortBody(ILGenerator il, EmittedRuntime runtime, bool mutateInPlace)
@@ -970,7 +969,6 @@ public partial class RuntimeEmitter
         var undefinedCountLocal = il.DeclareLocal(_types.Int32);       // Count of undefined elements
         var iLocal = il.DeclareLocal(_types.Int32);
         var jLocal = il.DeclareLocal(_types.Int32);
-        var tempLocal = il.DeclareLocal(_types.Object);
         var compareResultLocal = il.DeclareLocal(_types.Int32);
         var str1Local = il.DeclareLocal(_types.String);
         var str2Local = il.DeclareLocal(_types.String);
@@ -1043,227 +1041,370 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
         il.Emit(OpCodes.Blt, partitionLoopStart);
 
-        // === Phase 2: Sort defined elements (stable insertion sort) ===
-        // for (i = 1; i < defined.Count; i++)
-        //     for (j = i; j > 0 && Compare(defined[j-1], defined[j]) > 0; j--)
-        //         Swap(defined, j-1, j)
+        // === Phase 2: Sort defined elements — stable bottom-up merge sort (Θ(n log n), #877) ===
+        // Replaces the prior in-place insertion sort (Θ(n²)), which made compiled
+        // sort slower than the interpreter on large inputs. Merge sort is stable:
+        // on a tie the LEFT run's element (smaller original index) is taken first.
+        // The per-pair comparison is identical to the old one — a custom compareFn
+        // (double → sign; NaN/non-number ⇒ 0/equal) or, when the comparator is
+        // absent/undefined, the ECMA-262 default ToJsString/CompareOrdinal. Pure IL,
+        // no SharpTS.dll dependency. Ping-pongs between two object[] buffers.
+        var nLocal = il.DeclareLocal(_types.Int32);          // defined.Count
+        var srcLocal = il.DeclareLocal(_types.ObjectArray);  // current source buffer
+        var dstLocal = il.DeclareLocal(_types.ObjectArray);  // merge destination buffer
+        var swapArrLocal = il.DeclareLocal(_types.ObjectArray);
+        var widthLocal = il.DeclareLocal(_types.Int32);
+        var loLocal = il.DeclareLocal(_types.Int32);
+        var midLocal = il.DeclareLocal(_types.Int32);
+        var hiLocal = il.DeclareLocal(_types.Int32);
+        var kLocal = il.DeclareLocal(_types.Int32);
 
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Stloc, iLocal);
-
-        var outerLoopStart = il.DefineLabel();
-        var outerLoopCondition = il.DefineLabel();
-        var innerLoopStart = il.DefineLabel();
-        var innerLoopCondition = il.DefineLabel();
-        var incrementI = il.DefineLabel();
-
-        il.Emit(OpCodes.Br, outerLoopCondition);
-
-        // Outer loop body
-        il.MarkLabel(outerLoopStart);
-
-        // j = i
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Stloc, jLocal);
-
-        il.Emit(OpCodes.Br, innerLoopCondition);
-
-        // Inner loop body - swap if needed
-        il.MarkLabel(innerLoopStart);
-
-        // Swap defined[j-1] and defined[j]
-        // temp = defined[j]
+        // n = defined.Count
         il.Emit(OpCodes.Ldloc, definedLocal);
-        il.Emit(OpCodes.Ldloc, jLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, tempLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, nLocal);
 
-        // defined[j] = defined[j-1]
+        // src = new object[n]; defined.CopyTo(src); dst = new object[n]
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, srcLocal);
         il.Emit(OpCodes.Ldloc, definedLocal);
-        il.Emit(OpCodes.Ldloc, jLocal);
-        il.Emit(OpCodes.Ldloc, definedLocal);
-        il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Ldloc, srcLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "CopyTo", _types.ObjectArray));
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, dstLocal);
+
+        var widthCond = il.DefineLabel();
+        var widthBody = il.DefineLabel();
+        var loCond = il.DefineLabel();
+        var loBody = il.DefineLabel();
+        var loNext = il.DefineLabel();
+        var midAdd = il.DefineLabel();
+        var midDone = il.DefineLabel();
+        var hiAdd = il.DefineLabel();
+        var hiDone = il.DefineLabel();
+        var widthDouble = il.DefineLabel();
+        var mergeCond = il.DefineLabel();
+        var mergeBody = il.DefineLabel();
+        var takeRight = il.DefineLabel();
+        var afterTake = il.DefineLabel();
+        var drainLeftCond = il.DefineLabel();
+        var drainLeftBody = il.DefineLabel();
+        var drainRightCond = il.DefineLabel();
+        var drainRightBody = il.DefineLabel();
+        var wbCond = il.DefineLabel();
+        var wbBody = il.DefineLabel();
+
+        // for (width = 1; width < n; width *= 2)
         il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Sub);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetSetMethod()!);
+        il.Emit(OpCodes.Stloc, widthLocal);
+        il.Emit(OpCodes.Br, widthCond);
 
-        // defined[j-1] = temp
-        il.Emit(OpCodes.Ldloc, definedLocal);
-        il.Emit(OpCodes.Ldloc, jLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Sub);
-        il.Emit(OpCodes.Ldloc, tempLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetSetMethod()!);
+        il.MarkLabel(widthBody);
 
-        // j--
-        il.Emit(OpCodes.Ldloc, jLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Sub);
-        il.Emit(OpCodes.Stloc, jLocal);
-
-        // Inner loop condition: j > 0 && Compare(defined[j-1], defined[j]) > 0
-        il.MarkLabel(innerLoopCondition);
-
-        // Check j > 0
-        il.Emit(OpCodes.Ldloc, jLocal);
+        // for (lo = 0; lo < n; lo += 2*width)
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ble, incrementI);
+        il.Emit(OpCodes.Stloc, loLocal);
+        il.Emit(OpCodes.Br, loCond);
 
-        // Check compareFn (arg1) — must accept null AND $Undefined.Instance as
-        // "no comparator" per ECMA-262. `arr.sort(undefined)` passed
-        // $Undefined.Instance through which is non-null → Brtrue used to
-        // route to InvokeValue(undefined) and silently returned garbage.
+        il.MarkLabel(loBody);
+
+        // mid = min(lo + width, n) — overflow-safe: if width >= n - lo then n else lo + width.
+        // (n - lo >= 0 always; lo + width is only computed when it is < n, so it can't overflow.)
+        il.Emit(OpCodes.Ldloc, widthLocal);
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Ldloc, loLocal);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Blt, midAdd);
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Stloc, midLocal);
+        il.Emit(OpCodes.Br, midDone);
+        il.MarkLabel(midAdd);
+        il.Emit(OpCodes.Ldloc, loLocal);
+        il.Emit(OpCodes.Ldloc, widthLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, midLocal);
+        il.MarkLabel(midDone);
+
+        // hi = min(mid + width, n) = min(lo + 2*width, n) — overflow-safe via n - mid.
+        il.Emit(OpCodes.Ldloc, widthLocal);
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Ldloc, midLocal);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Blt, hiAdd);
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Stloc, hiLocal);
+        il.Emit(OpCodes.Br, hiDone);
+        il.MarkLabel(hiAdd);
+        il.Emit(OpCodes.Ldloc, midLocal);
+        il.Emit(OpCodes.Ldloc, widthLocal);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, hiLocal);
+        il.MarkLabel(hiDone);
+
+        // i = lo; j = mid; k = lo
+        il.Emit(OpCodes.Ldloc, loLocal);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Ldloc, midLocal);
+        il.Emit(OpCodes.Stloc, jLocal);
+        il.Emit(OpCodes.Ldloc, loLocal);
+        il.Emit(OpCodes.Stloc, kLocal);
+
+        il.Emit(OpCodes.Br, mergeCond);
+
+        // --- merge body: compare src[i] vs src[j] -> compareResultLocal ---
+        il.MarkLabel(mergeBody);
+
         var hasCompareFn = il.DefineLabel();
         var noCompareFn = il.DefineLabel();
         var checkCompareResult = il.DefineLabel();
 
+        // compareFn is "absent" when null OR $Undefined.Instance (ECMA-262):
+        // `arr.sort(undefined)` must use the default comparator, not invoke undefined.
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, noCompareFn);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, noCompareFn);
         il.Emit(OpCodes.Br, hasCompareFn);
-        il.MarkLabel(noCompareFn);
 
-        // Default comparison: ToString(a).CompareTo(ToString(b)) per ECMA-262
-        // 23.1.3.30: SortCompare uses ToString which invokes valueOf/toString.
-        // Stringify produces a literal representation for objects (used by
-        // template literals + Array.toString) — that diverges from spec for
-        // objects with custom toString. ToJsString invokes the ToPrimitive
-        // protocol so `{toString: () => "-2"}` sorts as "-2".
-        // str1 = ToJsString(defined[j-1])
-        il.Emit(OpCodes.Ldloc, definedLocal);
-        il.Emit(OpCodes.Ldloc, jLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Sub);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.MarkLabel(noCompareFn);
+        // Default: CompareOrdinal(ToJsString(src[i]), ToJsString(src[j])). ToJsString
+        // runs the ToPrimitive protocol so `{toString:()=>"-2"}` sorts as "-2".
+        il.Emit(OpCodes.Ldloc, srcLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, str1Local);
-
-        // str2 = ToJsString(defined[j])
-        il.Emit(OpCodes.Ldloc, definedLocal);
+        il.Emit(OpCodes.Ldloc, srcLocal);
         il.Emit(OpCodes.Ldloc, jLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Stloc, str2Local);
-
-        // compareResult = String.CompareOrdinal(str1, str2)
         il.Emit(OpCodes.Ldloc, str1Local);
         il.Emit(OpCodes.Ldloc, str2Local);
         il.Emit(OpCodes.Call, typeof(string).GetMethod("CompareOrdinal", [typeof(string), typeof(string)])!);
         il.Emit(OpCodes.Stloc, compareResultLocal);
         il.Emit(OpCodes.Br, checkCompareResult);
 
-        // Custom compareFn: call InvokeValue(compareFn, [a, b])
         il.MarkLabel(hasCompareFn);
-
-        // Build args array [defined[j-1], defined[j]]
+        // result = InvokeValue(compareFn, new object[] { src[i], src[j] })
         il.Emit(OpCodes.Ldc_I4_2);
         il.Emit(OpCodes.Newarr, _types.Object);
-
-        // args[0] = defined[j-1]
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldloc, definedLocal);
-        il.Emit(OpCodes.Ldloc, jLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Sub);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Ldloc, srcLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stelem_Ref);
-
-        // args[1] = defined[j]
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ldloc, definedLocal);
+        il.Emit(OpCodes.Ldloc, srcLocal);
         il.Emit(OpCodes.Ldloc, jLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetGetMethod()!);
+        il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stelem_Ref);
-
         var argsLocal = il.DeclareLocal(_types.ObjectArray);
         il.Emit(OpCodes.Stloc, argsLocal);
-
-        // result = InvokeValue(compareFn, args)
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Call, runtime.InvokeValue);
 
-        // Convert result to int comparison value
-        // If result is double, use sign; if 0 or NaN, don't swap (stability)
+        // Convert compare result to a sign in compareResultLocal:
+        // double -> sign (<0 / 0 / >0); NaN or non-double -> 0 (equal -> take left -> stable).
         var resultIsNotDouble = il.DefineLabel();
+        var notNaN = il.DefineLabel();
+        var isZero = il.DefineLabel();
+        var isPositive = il.DefineLabel();
         var resultLocal = il.DeclareLocal(_types.Object);
+        var doubleResultLocal = il.DeclareLocal(_types.Double);
         il.Emit(OpCodes.Stloc, resultLocal);
-
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Isinst, _types.Double);
         il.Emit(OpCodes.Brfalse, resultIsNotDouble);
-
-        // It's a double - check if > 0
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Unbox_Any, _types.Double);
-        var doubleResultLocal = il.DeclareLocal(_types.Double);
         il.Emit(OpCodes.Stloc, doubleResultLocal);
-
-        // Check for NaN (NaN means no swap for stability)
         il.Emit(OpCodes.Ldloc, doubleResultLocal);
         il.Emit(OpCodes.Call, _types.DoubleIsNaN);
-        var notNaN = il.DefineLabel();
         il.Emit(OpCodes.Brfalse, notNaN);
-        il.Emit(OpCodes.Ldc_I4_0);  // NaN -> 0 (no swap)
+        il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, compareResultLocal);
         il.Emit(OpCodes.Br, checkCompareResult);
-
         il.MarkLabel(notNaN);
-        // Convert double to int sign
         il.Emit(OpCodes.Ldloc, doubleResultLocal);
         il.Emit(OpCodes.Ldc_R8, 0.0);
-        var isZero = il.DefineLabel();
-        var isPositive = il.DefineLabel();
         il.Emit(OpCodes.Beq, isZero);
-
         il.Emit(OpCodes.Ldloc, doubleResultLocal);
         il.Emit(OpCodes.Ldc_R8, 0.0);
         il.Emit(OpCodes.Bgt, isPositive);
-
-        // Negative
         il.Emit(OpCodes.Ldc_I4_M1);
         il.Emit(OpCodes.Stloc, compareResultLocal);
         il.Emit(OpCodes.Br, checkCompareResult);
-
         il.MarkLabel(isPositive);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stloc, compareResultLocal);
         il.Emit(OpCodes.Br, checkCompareResult);
-
         il.MarkLabel(isZero);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, compareResultLocal);
         il.Emit(OpCodes.Br, checkCompareResult);
-
         il.MarkLabel(resultIsNotDouble);
-        // Not a double - treat as 0 (no swap)
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stloc, compareResultLocal);
 
         il.MarkLabel(checkCompareResult);
-        // If compareResult > 0, swap (continue inner loop)
+        // compareResult > 0  => src[i] sorts AFTER src[j] => take right; else take left (stable).
         il.Emit(OpCodes.Ldloc, compareResultLocal);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Bgt, innerLoopStart);
+        il.Emit(OpCodes.Bgt, takeRight);
 
-        il.MarkLabel(incrementI);
-        // i++
+        // dst[k] = src[i]; i++
+        il.Emit(OpCodes.Ldloc, dstLocal);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldloc, srcLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, afterTake);
 
-        // Outer loop condition: i < defined.Count
-        il.MarkLabel(outerLoopCondition);
+        il.MarkLabel(takeRight);
+        // dst[k] = src[j]; j++
+        il.Emit(OpCodes.Ldloc, dstLocal);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldloc, srcLocal);
+        il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, jLocal);
+
+        il.MarkLabel(afterTake);
+        // k++
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, kLocal);
+
+        il.MarkLabel(mergeCond);
+        // while (i < mid && j < hi) keep merging; otherwise drain.
         il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, midLocal);
+        il.Emit(OpCodes.Bge, drainLeftCond);
+        il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Ldloc, hiLocal);
+        il.Emit(OpCodes.Blt, mergeBody);
+        // i<mid && j>=hi: fall through to drain the left run.
+
+        // while (i < mid) dst[k++] = src[i++]
+        il.MarkLabel(drainLeftCond);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, midLocal);
+        il.Emit(OpCodes.Bge, drainRightCond);
+        il.MarkLabel(drainLeftBody);
+        il.Emit(OpCodes.Ldloc, dstLocal);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldloc, srcLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, kLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, midLocal);
+        il.Emit(OpCodes.Blt, drainLeftBody);
+
+        // while (j < hi) dst[k++] = src[j++]
+        il.MarkLabel(drainRightCond);
+        il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Ldloc, hiLocal);
+        il.Emit(OpCodes.Bge, loNext);
+        il.MarkLabel(drainRightBody);
+        il.Emit(OpCodes.Ldloc, dstLocal);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldloc, srcLocal);
+        il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, jLocal);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, kLocal);
+        il.Emit(OpCodes.Ldloc, jLocal);
+        il.Emit(OpCodes.Ldloc, hiLocal);
+        il.Emit(OpCodes.Blt, drainRightBody);
+
+        il.MarkLabel(loNext);
+        // lo += 2*width. hi already equals min(lo + 2*width, n) computed overflow-safe,
+        // so advancing lo to hi is the same step and saturates at n (no overflow).
+        il.Emit(OpCodes.Ldloc, hiLocal);
+        il.Emit(OpCodes.Stloc, loLocal);
+        il.MarkLabel(loCond);
+        il.Emit(OpCodes.Ldloc, loLocal);
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Blt, loBody);
+
+        // swap src <-> dst (this pass's output becomes next pass's input)
+        il.Emit(OpCodes.Ldloc, srcLocal);
+        il.Emit(OpCodes.Stloc, swapArrLocal);
+        il.Emit(OpCodes.Ldloc, dstLocal);
+        il.Emit(OpCodes.Stloc, srcLocal);
+        il.Emit(OpCodes.Ldloc, swapArrLocal);
+        il.Emit(OpCodes.Stloc, dstLocal);
+
+        // width *= 2, saturating: if doubling would overflow int, clamp to int.MaxValue
+        // (which is >= n, so the loop then exits) instead of wrapping to a negative width.
+        il.Emit(OpCodes.Ldloc, widthLocal);
+        il.Emit(OpCodes.Ldc_I4, int.MaxValue / 2);
+        il.Emit(OpCodes.Ble, widthDouble);
+        il.Emit(OpCodes.Ldc_I4, int.MaxValue);
+        il.Emit(OpCodes.Stloc, widthLocal);
+        il.Emit(OpCodes.Br, widthCond);
+        il.MarkLabel(widthDouble);
+        il.Emit(OpCodes.Ldloc, widthLocal);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Mul);
+        il.Emit(OpCodes.Stloc, widthLocal);
+        il.MarkLabel(widthCond);
+        il.Emit(OpCodes.Ldloc, widthLocal);
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Blt, widthBody);
+
+        // Write the sorted result (now in src) back into defined: defined[k] = src[k]
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, kLocal);
+        il.Emit(OpCodes.Br, wbCond);
+        il.MarkLabel(wbBody);
         il.Emit(OpCodes.Ldloc, definedLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Count").GetGetMethod()!);
-        il.Emit(OpCodes.Blt, outerLoopStart);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldloc, srcLocal);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.ListOfObject, "Item").GetSetMethod()!);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, kLocal);
+        il.MarkLabel(wbCond);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Blt, wbBody);
 
         // === Phase 3: Rebuild original list with sorted defined + undefined at end ===
         // list.Clear()
