@@ -59,4 +59,65 @@ public static class IdiomaticCSharp
         }
         return count;
     }
+
+    /// <summary>
+    /// JSON round-trip - typed serialize, parse via JsonDocument, sum a field.
+    /// </summary>
+    public static int JsonRoundTrip(int n)
+    {
+        var items = new List<object>(n);
+        for (int i = 0; i < n; i++)
+        {
+            items.Add(new { id = i, name = "item-" + i, value = i * 3 - 1 });
+        }
+        string json = System.Text.Json.JsonSerializer.Serialize(new { items });
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        int sum = 0;
+        foreach (var el in doc.RootElement.GetProperty("items").EnumerateArray())
+        {
+            sum += el.GetProperty("value").GetInt32();
+        }
+        return sum;
+    }
+
+    /// <summary>
+    /// Typed-array numeric kernel - native double[] fill + 3-point stencil sweep.
+    /// </summary>
+    public static double TypedArrayKernel(int n)
+    {
+        var a = new double[n];
+        for (int i = 0; i < n; i++)
+        {
+            a[i] = i * 1.5 + (i % 7);
+        }
+        double sum = 0;
+        for (int i = 1; i < n - 1; i++)
+        {
+            sum += a[i - 1] - 2 * a[i] + a[i + 1];
+        }
+        return sum;
+    }
+
+    /// <summary>
+    /// binary-trees (CLBG) - build a node tree to `depth`, then checksum it.
+    /// </summary>
+    public static int BinaryTrees(int depth) => ItemCheck(BuildTree(depth));
+
+    private sealed class TreeNode
+    {
+        public TreeNode? Left;
+        public TreeNode? Right;
+    }
+
+    private static TreeNode BuildTree(int depth)
+    {
+        if (depth <= 0) return new TreeNode();
+        return new TreeNode { Left = BuildTree(depth - 1), Right = BuildTree(depth - 1) };
+    }
+
+    private static int ItemCheck(TreeNode? node)
+    {
+        if (node is null) return 1;
+        return 1 + ItemCheck(node.Left) + ItemCheck(node.Right);
+    }
 }
