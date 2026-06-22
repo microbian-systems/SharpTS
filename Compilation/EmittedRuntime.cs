@@ -1586,6 +1586,10 @@ public class EmittedRuntime
     public MethodBuilder TypedArrayGetBuffer { get; set; } = null!;
     public MethodBuilder TypedArrayElementGet { get; set; } = null!;
     public MethodBuilder TypedArrayElementSet { get; set; } = null!;
+    // Unboxed Float64Array element accessors (#878) — direct double get/set on the
+    // concrete $Float64Array, bypassing the boxed Get/Set + GetIndex dispatch.
+    public MethodBuilder Float64ArrayGetUnboxed { get; set; } = null!;
+    public MethodBuilder Float64ArraySetUnboxed { get; set; } = null!;
 
     // Concrete TypedArray types (pure-IL for standalone DLLs)
     public TypeBuilder Int8ArrayType { get; set; } = null!;
