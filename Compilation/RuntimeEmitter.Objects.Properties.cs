@@ -5089,12 +5089,57 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
 
-        // Not frozen/sealed - do the removal
+        // Not frozen/sealed — remove from BOTH the PDS descriptor store
+        // (Object.defineProperty installs) AND the dict (plain data entries),
+        // mirroring the non-strict DeleteProperty. Pre-fix this only did
+        // dict.Remove, so `delete obj.p` left an Object.defineProperty-installed
+        // property in place under "use strict" (Test262 Object/create
+        // 15.2.3.5-4-116 et al. — `delete` of a configurable prop appeared to
+        // fail). A non-configurable PDS descriptor makes delete fail: strict
+        // throws TypeError (ECMA-262 §13.5.1.2), sloppy returns false.
         il.MarkLabel(notSealedLabel);
+        var descLocalDelS = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descLocalDelS);
+        var noPdsForDelSLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descLocalDelS);
+        il.Emit(OpCodes.Brfalse, noPdsForDelSLabel);
+        // Descriptor present — check Configurable.
+        il.Emit(OpCodes.Ldloc, descLocalDelS);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+        var configurableSLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, configurableSLabel);
+        // Non-configurable — strict throws TypeError, sloppy returns false.
+        var nonConfigSloppyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2); // strictMode
+        il.Emit(OpCodes.Brfalse, nonConfigSloppyLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot delete property '");
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "' of object");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(nonConfigSloppyLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(configurableSLabel);
+        // Configurable — remove PDS entry.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSDeleteProperty);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(noPdsForDelSLabel);
+        // Always also remove from the dict (plain data entry; Remove returns
+        // false when absent, which is fine).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "Remove", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
         // Return true (default for null and other types)
