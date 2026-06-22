@@ -536,6 +536,34 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notSealedOrExistsLabel);
 
+        // ECMA-262 §10.1.9 OrdinarySetWithOwnDescriptor: if the object is
+        // non-extensible (preventExtensions) and the property doesn't already
+        // exist as an own property, the assignment fails — strict throws
+        // TypeError, sloppy silently no-ops. Mirrors TSObjectSetProperty; without
+        // it, indexed/named writes routed here under "use strict" added new
+        // properties to a non-extensible $Object (Test262 Object/preventExtensions
+        // 15.2.3.10-3-6 — `new Boolean(true)` then `obj[0] = …`).
+        var notNonExtOrExistsLabel = il.DefineLabel();
+        var nonExtReturnLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsObjectIsNonExtensibleField);
+        il.Emit(OpCodes.Brfalse, notNonExtOrExistsLabel);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsObjectFieldsField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("ContainsKey", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, notNonExtOrExistsLabel);
+
+        // Non-extensible + new property: strict throws, sloppy returns.
+        il.Emit(OpCodes.Ldarg_3); // strictMode
+        il.Emit(OpCodes.Brfalse, nonExtReturnLabel);
+        EmitTSObjectInlineThrow(il, "Cannot add property to a non-extensible object", runtime.TSTypeErrorCtor);
+        il.MarkLabel(nonExtReturnLabel);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(notNonExtOrExistsLabel);
+
         // _fields[name] = value
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsObjectFieldsField);

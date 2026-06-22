@@ -4536,7 +4536,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
-        // Default - just return
+        // $Object / $TSFunction / System.Type / other receivers: route indexed
+        // writes to SetPropertyStrict(obj, ToString(index), value, strictMode),
+        // mirroring how the non-strict SetIndex routes them to SetProperty. Pre-fix
+        // these fell through to a silent no-op under "use strict", so `child[0] = v`
+        // on a class instance / $Object dropped the element — which broke
+        // Array.prototype.{reduce,every,filter,indexOf}.call(nonArrayObj, …) on
+        // a `new Con()`-style receiver (Test262 Array/prototype/*/15.4.4.*-2-*).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldarg_3); // strictMode
+        il.Emit(OpCodes.Call, runtime.SetPropertyStrict);
         il.Emit(OpCodes.Ret);
 
         // $Array - call SetStrict with index and strictMode via the long API.
