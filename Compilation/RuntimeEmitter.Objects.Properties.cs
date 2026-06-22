@@ -4205,6 +4205,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
+        // globalThis/global sentinel: `root.foo = v` stores into the shared
+        // global-properties dictionary, mirroring the non-strict SetProperty and
+        // the syntactic `globalThis.foo = v` path. Without it, a strict-mode
+        // top-level `this.foo = v` (compiled `this` resolves to the globalThis
+        // sentinel) fell through to SetFieldsPropertyStrict and was dropped —
+        // e.g. Test262 Object/create 15.2.3.5-4-177 / defineProperty
+        // 15.2.3.6-3-230 set `this.value` / `this.get` and reuse `this` as a
+        // descriptor.
+        var notGlobalThisSetStrictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+        il.Emit(OpCodes.Bne_Un, notGlobalThisSetStrictLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.GlobalThisSetProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notGlobalThisSetStrictLabel);
+
         // Check if $Object
         var sharpTSObjectLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -4520,6 +4538,80 @@ public partial class RuntimeEmitter
         // null check
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
+
+        // Symbol-keyed write (symbols work on any receiver type) — route to the
+        // non-strict SetIndex, which has the symbol-key handler (registered
+        // accessor setter, else symbol-dict store with extensibility checks).
+        // SetIndexStrict otherwise dispatches only by RECEIVER type ($Array /
+        // List / Dictionary) and would ToString a symbol key into a bogus string
+        // key, dropping the write — so under "use strict" `obj[sym] = v` and
+        // `obj[Symbol.iterator] = fn` were lost (Test262 Object/
+        // getOwnPropertySymbols object-contains-symbol-property-without-description,
+        // Array/from iter-get-iter-val-err).
+        // The store itself (registered setter / symbol-dict write) is delegated
+        // to the non-strict SetIndex, but its symbol handler silently no-ops on a
+        // frozen/sealed/non-extensible receiver. In strict mode those must throw
+        // a TypeError (ECMA-262 PutValue), so enforce that here first:
+        //   frozen           → always throw (props non-writable + non-extensible);
+        //   sealed/non-ext    → throw only when the symbol key is NEW (adding it);
+        //   otherwise         → delegate to SetIndex (store / update / invoke setter).
+        // (Test262 Object/freeze frozen-object-contains-symbol-properties-strict.)
+        var notSymbolKeyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
+        il.Emit(OpCodes.Brfalse, notSymbolKeyLabel);
+
+        var symThrowLabel = il.DefineLabel();
+        var symRouteLabel = il.DefineLabel();
+        var symStateTmp = il.DeclareLocal(_types.Object);
+        var cwtTryGetValue = _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType());
+
+        // frozen → throw.
+        il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symStateTmp);
+        il.Emit(OpCodes.Callvirt, cwtTryGetValue);
+        il.Emit(OpCodes.Brtrue, symThrowLabel);
+
+        // sealed OR non-extensible → throw only if the symbol key is not already present.
+        var symSealedOrNonExtLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, runtime.SealedObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symStateTmp);
+        il.Emit(OpCodes.Callvirt, cwtTryGetValue);
+        il.Emit(OpCodes.Brtrue, symSealedOrNonExtLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.NonExtensibleObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symStateTmp);
+        il.Emit(OpCodes.Callvirt, cwtTryGetValue);
+        il.Emit(OpCodes.Brfalse, symRouteLabel); // extensible → store
+        il.MarkLabel(symSealedOrNonExtLabel);
+        // sealed/non-ext: present symbol → allow update (route); absent → throw.
+        var symDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Stloc, symDictLocal);
+        il.Emit(OpCodes.Ldloc, symDictLocal);
+        il.Emit(OpCodes.Brfalse, symThrowLabel); // no symbol dict → key absent → throw
+        il.Emit(OpCodes.Ldloc, symDictLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "ContainsKey", _types.Object));
+        il.Emit(OpCodes.Brfalse, symThrowLabel); // key absent → throw
+
+        il.MarkLabel(symRouteLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.SetIndex);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(symThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot assign to a read-only or non-extensible property");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(notSymbolKeyLabel);
 
         // Check if $Array (for strict mode support)
         il.Emit(OpCodes.Ldarg_0);
