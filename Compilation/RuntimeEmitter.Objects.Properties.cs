@@ -1073,6 +1073,54 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notErrorLabel);
 
+        // Built-in exotic objects (Date / RegExp / Promise / Error) accept arbitrary
+        // named property assignment per ECMA-262 [[Set]], stored as PDS data
+        // descriptors so GetProperty / for-in / gOPD round-trip. Mirrors the
+        // non-strict SetFieldsProperty PDS-store arm — without it these writes were
+        // silently dropped under "use strict", so e.g. `var d = new Date(0);
+        // d.enumerable = true;` (a defineProperty attributes object — Test262
+        // Object/defineProperty 15.2.3.6-3-39 et al.) lost the field. Frozen /
+        // extensibility throws were already handled at the top of this method.
+        var fieldsPdsStoreLabel = il.DefineLabel();
+        var afterFieldsPdsStoreLabel = il.DefineLabel();
+        if (_features.UsesDate)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSDateType);
+            il.Emit(OpCodes.Brtrue, fieldsPdsStoreLabel);
+        }
+        if (_features.UsesRegExp)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+            il.Emit(OpCodes.Brtrue, fieldsPdsStoreLabel);
+        }
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+        il.Emit(OpCodes.Brtrue, fieldsPdsStoreLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSErrorType);
+        il.Emit(OpCodes.Brtrue, fieldsPdsStoreLabel);
+        il.Emit(OpCodes.Br, afterFieldsPdsStoreLabel);
+
+        il.MarkLabel(fieldsPdsStoreLabel);
+        {
+            var fbDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, fbDescLocal);
+            il.Emit(OpCodes.Ldloc, fbDescLocal);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloc, fbDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ret);
+        }
+
+        il.MarkLabel(afterFieldsPdsStoreLabel);
+
         // Fallback: Try SetMember(string, object) method for types like $HttpResponse
         var setMemberLocal = il.DeclareLocal(_types.MethodInfo);
         il.Emit(OpCodes.Ldarg_0);
@@ -4184,13 +4232,85 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brtrue, cjsModuleSetStrictLabel);
         }
 
-        // Not a dict or $Object or $TSFunction or $CJSModule - fall back to SetFieldsPropertyStrict
+        // $Array / List<object?> — named property write on an array in strict
+        // mode. The non-strict SetProperty has dedicated array branches (length
+        // coercion, numeric, PDS data descriptors); without a strict equivalent
+        // these writes fell to SetFieldsPropertyStrict, which silently dropped
+        // them, so `arr.foo = fn; arr.foo()` saw `foo === undefined` under "use
+        // strict" (Test262 Array slice/splice S15.4.4.*_A*_T*, the common
+        // `arr.getClass = Object.prototype.toString` pattern). Detect arrays here
+        // and route to arraySetStrictLabel, which enforces strict frozen /
+        // non-writable throws then reuses the non-strict store logic.
+        var arraySetStrictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brtrue, arraySetStrictLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brtrue, arraySetStrictLabel);
+
+        // Not a dict or $Object or $TSFunction or $CJSModule or array - fall back to SetFieldsPropertyStrict
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldarg_3); // strictMode
         il.Emit(OpCodes.Call, runtime.SetFieldsPropertyStrict);
         il.Emit(OpCodes.Ret);
+
+        // $Array / List<object?> strict handler: ECMA-262 §10.4.2.1 / OrdinarySet
+        // step 5 — a frozen array or an own non-writable data property makes the
+        // assignment fail; in strict mode PutValue then throws a TypeError. We
+        // honor those two cases here, then delegate the actual store to the
+        // non-strict SetProperty (shared length/numeric/PDS-data-descriptor path).
+        il.MarkLabel(arraySetStrictLabel);
+        {
+            var arrayDoStoreLabel = il.DefineLabel();
+
+            // Frozen array → throw "Cannot assign to read only property 'name'".
+            var arrayNotFrozenLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.PDSIsFrozen);
+            il.Emit(OpCodes.Brfalse, arrayNotFrozenLabel);
+            il.Emit(OpCodes.Ldstr, "Cannot assign to read only property '");
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "' of object '[object Array]'");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(arrayNotFrozenLabel);
+
+            // Own non-writable DATA descriptor → throw. Accessor descriptors
+            // (setter present) and writable/absent descriptors fall through to
+            // the store, where SetProperty invokes the setter or overwrites.
+            var arrayDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, arrayDescLocal);
+            il.Emit(OpCodes.Ldloc, arrayDescLocal);
+            il.Emit(OpCodes.Brfalse, arrayDoStoreLabel); // no descriptor → store
+            il.Emit(OpCodes.Ldloc, arrayDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
+            il.Emit(OpCodes.Brtrue, arrayDoStoreLabel); // accessor → delegate (invokes setter)
+            il.Emit(OpCodes.Ldloc, arrayDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetGetMethod()!);
+            il.Emit(OpCodes.Brtrue, arrayDoStoreLabel); // writable → store
+            il.Emit(OpCodes.Ldstr, "Cannot assign to read only property '");
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "' of object '[object Array]'");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+
+            il.MarkLabel(arrayDoStoreLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Call, runtime.SetProperty);
+            il.Emit(OpCodes.Ret);
+        }
 
         // $CJSModule strict handler — same as non-strict for now. Gated.
         if (_features.UsesCjsRequire)
