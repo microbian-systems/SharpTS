@@ -4438,8 +4438,57 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
-        // Actually set the property
+        // Actually set the property. Mirrors the non-strict SetProperty doSet
+        // arm: honor a PDS accessor setter, and an existing non-writable data
+        // descriptor (or getter-only accessor). Pre-fix the strict path skipped
+        // straight to dict.set_Item, so under "use strict": (1) an accessor
+        // setter was bypassed and overwritten with a data value, and (2) writes
+        // to a writable:false property neither threw nor were suppressed —
+        // `verifyProperty`'s isWritable probe then saw the write succeed (Test262
+        // Object/defineProperty 15.2.3.6-3-181 et al.).
         il.MarkLabel(doSetLabel);
+
+        // PDS accessor setter present → invoke it (ECMA-262 OrdinarySet: a setter
+        // fires regardless of strictness).
+        var strictSetterLocal = il.DeclareLocal(_types.Object);
+        var strictNoSetterLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, strictSetterLocal);
+        il.Emit(OpCodes.Call, runtime.PDSTryGetSetter);
+        il.Emit(OpCodes.Brfalse, strictNoSetterLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, strictSetterLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(strictNoSetterLabel);
+
+        // Non-writable (data writable:false, or getter-only accessor) → strict
+        // throws TypeError (ECMA-262 §6.2.5.6 / PutValue), sloppy silently
+        // returns. PDSIsWritable returns true when no descriptor exists.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSIsWritable);
+        var strictWritableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, strictWritableLabel);
+        il.Emit(OpCodes.Ldarg_3); // strictMode
+        il.Emit(OpCodes.Brfalse, nullLabel); // sloppy → silent return
+        il.Emit(OpCodes.Ldstr, "Cannot assign to read only property '");
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "' of object");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(strictWritableLabel);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
@@ -4539,13 +4588,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(dictLabel);
-        // Dictionary uses string keys - convert index to string and set
+        // Dictionary string-key write: route to SetPropertyStrict(obj, ToString(idx),
+        // value, strictMode) so PDS accessor setters, non-writable data descriptors,
+        // and strict TypeErrors are honored identically to named-property writes.
+        // Pre-fix this did a raw dict.set_Item, bypassing the writable/setter checks —
+        // so under "use strict" `obj[name] = v` on a writable:false property neither
+        // threw nor was suppressed, which propertyHelper.js's isWritable probe (it
+        // writes via `obj[name] = …`) read back as "writable". (Test262 Object/
+        // defineProperty 15.2.3.6-3-181, defineProperties 15.2.3.7-* et al.)
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        il.Emit(OpCodes.Ldarg_3); // strictMode
+        il.Emit(OpCodes.Call, runtime.SetPropertyStrict);
         il.Emit(OpCodes.Ret);
     }
 
