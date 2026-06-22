@@ -737,5 +737,69 @@ public partial class RuntimeEmitter
 
         setIl.Emit(OpCodes.Ret);
         typeBuilder.DefineMethodOverride(setter, runtime.TypedArrayElementSet);
+
+        // Unboxed double accessors for Float64Array (#878). These mirror the byte
+        // logic of the boxed Get/Set above but take/return a native `double` — no
+        // Box, no Convert.ToDouble coercion. The IL emitter binds them directly at
+        // statically-known Float64Array index sites, eliminating the GetIndex/SetIndex
+        // dispatch, the isinst ladder, and the per-element box. Like Get/Set, they do
+        // NOT bounds-check: out-of-range access faults via BitConverter/Array.Copy,
+        // exactly as the boxed path does today (OOB semantics unchanged).
+        if (bytesPerElement == 8 && isFloat)
+        {
+            EmitFloat64UnboxedAccessors(typeBuilder, runtime);
+        }
+    }
+
+    // double GetUnboxed(int index) / void SetUnboxed(int index, double value) on $Float64Array.
+    private void EmitFloat64UnboxedAccessors(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var getU = typeBuilder.DefineMethod(
+            "GetUnboxed",
+            MethodAttributes.Public | MethodAttributes.HideBySig,
+            _types.Double,
+            [_types.Int32]
+        );
+        var gil = getU.GetILGenerator();
+        // return BitConverter.ToDouble(_buffer, _byteOffset + index * 8);
+        gil.Emit(OpCodes.Ldarg_0);
+        gil.Emit(OpCodes.Ldfld, _typedArrayBufferField!);
+        gil.Emit(OpCodes.Ldarg_0);
+        gil.Emit(OpCodes.Ldfld, _typedArrayByteOffsetField!);
+        gil.Emit(OpCodes.Ldarg_1);
+        gil.Emit(OpCodes.Ldc_I4_8);
+        gil.Emit(OpCodes.Mul);
+        gil.Emit(OpCodes.Add);
+        gil.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("ToDouble", [typeof(byte[]), typeof(int)])!);
+        gil.Emit(OpCodes.Ret);
+        runtime.Float64ArrayGetUnboxed = getU;
+
+        var setU = typeBuilder.DefineMethod(
+            "SetUnboxed",
+            MethodAttributes.Public | MethodAttributes.HideBySig,
+            _types.Void,
+            [_types.Int32, _types.Double]
+        );
+        var sil = setU.GetILGenerator();
+        var bytesLocal = sil.DeclareLocal(typeof(byte[]));
+        // var bytes = BitConverter.GetBytes(value);
+        sil.Emit(OpCodes.Ldarg_2);
+        sil.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("GetBytes", [typeof(double)])!);
+        sil.Emit(OpCodes.Stloc, bytesLocal);
+        // Array.Copy(bytes, 0, _buffer, _byteOffset + index * 8, 8);
+        sil.Emit(OpCodes.Ldloc, bytesLocal);
+        sil.Emit(OpCodes.Ldc_I4_0);
+        sil.Emit(OpCodes.Ldarg_0);
+        sil.Emit(OpCodes.Ldfld, _typedArrayBufferField!);
+        sil.Emit(OpCodes.Ldarg_0);
+        sil.Emit(OpCodes.Ldfld, _typedArrayByteOffsetField!);
+        sil.Emit(OpCodes.Ldarg_1);
+        sil.Emit(OpCodes.Ldc_I4_8);
+        sil.Emit(OpCodes.Mul);
+        sil.Emit(OpCodes.Add);
+        sil.Emit(OpCodes.Ldc_I4_8);
+        sil.Emit(OpCodes.Call, typeof(Array).GetMethod("Copy", [typeof(Array), typeof(int), typeof(Array), typeof(int), typeof(int)])!);
+        sil.Emit(OpCodes.Ret);
+        runtime.Float64ArraySetUnboxed = setU;
     }
 }

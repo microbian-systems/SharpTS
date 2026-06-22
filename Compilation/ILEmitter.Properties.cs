@@ -858,6 +858,25 @@ public partial class ILEmitter
             return;
         }
 
+        // Float64Array fast path (#878): when the receiver is a variable statically typed
+        // Float64Array, read the element UNBOXED via $Float64Array.GetUnboxed → native double
+        // on the stack. Eliminates the Runtime.GetIndex dispatch, the GetTypedArrayElement
+        // isinst/castclass, the virtual Get, and the per-element box. Out-of-range access
+        // faults via BitConverter exactly as the boxed path does today (OOB semantics
+        // unchanged). Receiver is a side-effect-free variable, so it is loaded once.
+        if (!gi.Optional && gi.Object is Expr.Variable
+            && _ctx.TypeMap?.Get(gi.Object) is TypeInfo.TypedArray { ElementType: "Float64" })
+        {
+            EmitExpression(gi.Object);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Castclass, _ctx.Runtime!.Float64ArrayType);
+            EmitExpressionAsDouble(gi.Index);
+            IL.Emit(OpCodes.Conv_I4);
+            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.Float64ArrayGetUnboxed);
+            SetStackType(StackType.Double);
+            return;
+        }
+
         // Descriptor-driven fast path: when receiver is statically known to be an array,
         // emit direct List<T> access — skips runtime type dispatch,
         // index boxing, and Convert.ToInt32(object) overhead.
@@ -1038,6 +1057,39 @@ public partial class ILEmitter
             // Assignment expression result: the (unboxed) assigned value.
             IL.Emit(OpCodes.Ldloc, valLocal);
             SetStackType(promSet.Descriptor.StackType);
+            return;
+        }
+
+        // Float64Array fast path (#878): variable statically typed Float64Array with a
+        // statically-numeric RHS — write the element UNBOXED via $Float64Array.SetUnboxed.
+        // Eliminates the Runtime.SetIndex dispatch, the isinst, the value box, and the
+        // Convert.ToDouble coercion. A non-numeric RHS falls through to the boxed path,
+        // which performs JS ToNumber coercion. OOB faults exactly as the boxed path does.
+        // Evaluate index then value (the receiver var is side-effect-free).
+        if (si.Object is Expr.Variable
+            && _ctx.TypeMap?.Get(si.Object) is TypeInfo.TypedArray { ElementType: "Float64" }
+            && _ctx.TypeMap?.Get(si.Value) is TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER })
+        {
+            EmitExpressionAsDouble(si.Index);
+            IL.Emit(OpCodes.Conv_I4);
+            var idxLocal = IL.DeclareLocal(_ctx.Types.Int32);
+            IL.Emit(OpCodes.Stloc, idxLocal);
+
+            EmitExpression(si.Value);
+            EnsureDouble();
+            var valLocal = IL.DeclareLocal(_ctx.Types.Double);
+            IL.Emit(OpCodes.Stloc, valLocal);
+
+            EmitExpression(si.Object);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Castclass, _ctx.Runtime!.Float64ArrayType);
+            IL.Emit(OpCodes.Ldloc, idxLocal);
+            IL.Emit(OpCodes.Ldloc, valLocal);
+            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.Float64ArraySetUnboxed);
+
+            // Assignment expression result: the (unboxed) assigned value.
+            IL.Emit(OpCodes.Ldloc, valLocal);
+            SetStackType(StackType.Double);
             return;
         }
 
