@@ -98,3 +98,63 @@ export function arrayMethodWork(n: number): number {
     const evens = doubled.filter((x: number): boolean => x % 4 === 0);
     return evens.reduce((acc: number, x: number): number => acc + x, 0);
 }
+
+// ── Builtin-heavy / allocation / data-parallel workloads ──────────────────
+// These diverge most across SharpTS-compiled, V8 (Node), and JSC (Bun): JSON
+// and typed-array kernels lean on hand-tuned engine builtins, binary-trees on
+// the GC. Each still funnels to a `number` so the BDN harness can reflect it.
+
+// JSON round-trip: build a record array, stringify, parse it back, sum a field.
+// The single most common server hot path; V8/JSC JSON are hand-tuned C++.
+export function jsonRoundTrip(n: number): number {
+    const items: { id: number; name: string; value: number }[] = [];
+    for (let i: number = 0; i < n; i++) {
+        items.push({ id: i, name: "item-" + i, value: i * 3 - 1 });
+    }
+    const json: string = JSON.stringify({ items: items });
+    const parsed = JSON.parse(json);
+    const back: { id: number; name: string; value: number }[] = parsed.items;
+    let sum: number = 0;
+    for (let i: number = 0; i < back.length; i++) {
+        sum = sum + back[i].value;
+    }
+    return sum;
+}
+
+// Typed-array numeric kernel: fill a Float64Array, then a 3-point stencil sweep.
+// Data-parallel arithmetic over a real typed buffer — where compiled IL should
+// approach native and the dynamic/boxed representation pays the most.
+export function typedArrayKernel(n: number): number {
+    const a: Float64Array = new Float64Array(n);
+    for (let i: number = 0; i < n; i++) {
+        a[i] = i * 1.5 + (i % 7);
+    }
+    let sum: number = 0;
+    for (let i: number = 1; i < n - 1; i++) {
+        sum = sum + (a[i - 1] - 2 * a[i] + a[i + 1]);
+    }
+    return sum;
+}
+
+// binary-trees (Computer Language Benchmarks Game): build a `{ left, right }`
+// object tree to `depth`, then checksum it. Allocates and discards heavily —
+// exercises the GC and recursion rather than arithmetic.
+type TreeNode = { left: TreeNode | null; right: TreeNode | null };
+
+function buildTree(depth: number): TreeNode {
+    if (depth <= 0) {
+        return { left: null, right: null };
+    }
+    return { left: buildTree(depth - 1), right: buildTree(depth - 1) };
+}
+
+function itemCheck(node: TreeNode | null): number {
+    if (node === null) {
+        return 1;
+    }
+    return 1 + itemCheck(node.left) + itemCheck(node.right);
+}
+
+export function binaryTrees(depth: number): number {
+    return itemCheck(buildTree(depth));
+}
