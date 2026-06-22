@@ -422,6 +422,6 @@ gaps (real features to implement), not compiled divergences.
 None of the above threatens the existing regex perf work: both runtimes already delegate matching to
 native `System.Text.RegularExpressions.Regex` and share a process-lifetime compile cache keyed by
 `(pattern, options)`. The one remaining native-Regex opportunity is `RegexOptions.Compiled` on the
-cached engines (one-time JIT cost amortized by the cache; A/B with `SharpTS.Benchmarks/RegexBenchmarks`).
+cached engines (one-time JIT cost amortized by the cache; A/B with `SharpTS.Microbenchmarks/RegexBenchmarks`).
 Only cluster 3 touches a hot path, and its fast-path-preserving design keeps the common
 `r.exec(s)` / `r.test(s)` literal call site on typed fields.

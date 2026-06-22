@@ -4,7 +4,7 @@
 //   * the cross-runtime shell harness (benchmarks/run-benchmarks.ps1) imports
 //     these into its driver scripts and runs them under the SharpTS
 //     interpreter, the SharpTS compiler, Node.js, and Bun;
-//   * the BenchmarkDotNet suite (SharpTS.Benchmarks) embeds this file as a
+//   * the BenchmarkDotNet suite (SharpTS.Microbenchmarks) embeds this file as a
 //     resource, compiles it, and invokes the functions via reflection.
 //
 // Keep every export a plain `number -> number` function (no top-level

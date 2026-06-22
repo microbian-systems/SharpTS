@@ -1,9 +1,9 @@
 using System.Reflection;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
-using SharpTS.Benchmarks.Infrastructure;
+using SharpTS.Microbenchmarks.Infrastructure;
 
-namespace SharpTS.Benchmarks.Benchmarks;
+namespace SharpTS.Microbenchmarks.Benchmarks;
 
 /// <summary>
 /// Property-access benchmarks. Measures cost of <c>obj.foo</c> lookup in
@@ -31,7 +31,7 @@ public class PropertyAccessBenchmarks
     {
         var assembly = typeof(PropertyAccessBenchmarks).Assembly;
         using var stream = assembly.GetManifestResourceStream(
-            "SharpTS.Benchmarks.TypeScriptSources.PropertyAccess.ts")
+            "SharpTS.Microbenchmarks.TypeScriptSources.PropertyAccess.ts")
             ?? throw new InvalidOperationException("Could not find embedded resource PropertyAccess.ts");
         using var reader = new StreamReader(stream);
         var tsSource = reader.ReadToEnd();

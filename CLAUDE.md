@@ -159,6 +159,15 @@ Two standalone test projects pin SharpTS against external corpora. Neither is in
 - **`SharpTS.Test262/`** — TC39 ECMA-262 (interpreter + compiled). Update baseline: `SHARPTS_TEST262_UPDATE_BASELINE=1`.
 - **`SharpTS.TypeScriptConformance/`** — `microsoft/TypeScript` conformance (type-checker only). Update baseline: `SHARPTS_TSCONFORMANCE_UPDATE_BASELINE=1`. Bucket model: Pass/Fail/ParseError/TypeCheckError/Skipped/HarnessError. Match strategy: `(line, tsCode)` tuples — `tsCode` is the canonical `TSnnnn` code carried on every type-checker `Diagnostic` (see `Diagnostics/Diagnostic.cs`). See `SharpTS.TypeScriptConformance/README.md`.
 
+## Benchmarking
+
+Two **complementary** benchmark suites measure different things — they are not redundant and cannot be merged (one drives external runtime executables; the other must run in-process against managed code). Pick by the question you're answering.
+
+- **`benchmarks/`** — *external / competitive.* "Are we as fast as Node/Bun?" PowerShell harness (`run-benchmarks.ps1`) runs `scripts/*.ts` whole-program across the SharpTS interpreter, SharpTS compiled, Node.js, and Bun via a shared `scripts/lib/bench.ts`. Wired into CI (`.github/workflows/benchmarks.yml`, `workflow_dispatch` only). Goal: **meet or exceed Node.** See `benchmarks/README.md`.
+- **`SharpTS.Microbenchmarks/`** — *internal / headroom.* "How close are we to the C# ceiling, and where's the overhead?" BenchmarkDotNet project in `SharpTS.sln`; compiles TS in-process and compares against idiomatic C# (native-type ceiling) and "equivalent" C# (`object?`/boxing tax), with `MemoryDiagnoser` allocation profiling. This is the harness behind compiler perf work. See `SharpTS.Microbenchmarks/README.md`.
+
+`benchmarks/scripts/lib/algorithms.ts` is **shared byte-identical** between the two (embedded into the microbenchmark assembly as `SharpTS.Microbenchmarks.algorithms.ts`) so both measure the same source. Embedded-resource names are referenced by string and `RootNamespace`/`AssemblyName` are pinned in the `.csproj` — a wrong name compiles but throws at `[GlobalSetup]`.
+
 ## See Also
 
 - `STATUS.md` - Feature implementation status and known bugs

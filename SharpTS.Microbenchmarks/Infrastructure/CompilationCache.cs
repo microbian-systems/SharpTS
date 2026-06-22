@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 
-namespace SharpTS.Benchmarks.Infrastructure;
+namespace SharpTS.Microbenchmarks.Infrastructure;
 
 /// <summary>
 /// Manages pre-compilation of TypeScript sources during benchmark initialization.

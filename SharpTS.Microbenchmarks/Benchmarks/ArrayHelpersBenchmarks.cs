@@ -1,9 +1,9 @@
 using System.Reflection;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Order;
-using SharpTS.Benchmarks.Infrastructure;
+using SharpTS.Microbenchmarks.Infrastructure;
 
-namespace SharpTS.Benchmarks.Benchmarks;
+namespace SharpTS.Microbenchmarks.Benchmarks;
 
 /// <summary>
 /// Iterator-helper benchmarks for the issue #90 hot path. Measures the
@@ -43,7 +43,7 @@ public class ArrayHelpersBenchmarks
     {
         var assembly = typeof(ArrayHelpersBenchmarks).Assembly;
         using var stream = assembly.GetManifestResourceStream(
-            "SharpTS.Benchmarks.TypeScriptSources.ArrayHelpers.ts")
+            "SharpTS.Microbenchmarks.TypeScriptSources.ArrayHelpers.ts")
             ?? throw new InvalidOperationException("Could not find embedded resource ArrayHelpers.ts");
         using var reader = new StreamReader(stream);
         var tsSource = reader.ReadToEnd();

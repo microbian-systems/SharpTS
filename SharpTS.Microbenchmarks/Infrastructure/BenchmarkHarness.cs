@@ -3,7 +3,7 @@ using SharpTS.Compilation;
 using SharpTS.Parsing;
 using SharpTS.TypeSystem;
 
-namespace SharpTS.Benchmarks.Infrastructure;
+namespace SharpTS.Microbenchmarks.Infrastructure;
 
 /// <summary>
 /// Harness for compiling TypeScript to .NET assemblies and invoking compiled methods
