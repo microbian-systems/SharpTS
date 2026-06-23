@@ -540,6 +540,17 @@ public partial class TypeChecker
     private int? _currentStatementLine = null;
 
     /// <summary>
+    /// When non-null, a generic type-argument constraint violation (TS2344) encountered while
+    /// resolving an <c>extends</c>/superclass clause is RECORDED at this line and instantiation
+    /// proceeds with the given (constraint-violating) arguments — mirroring tsc, which reports
+    /// TS2344 and keeps checking the rest of the declaration and its siblings. Null (the default)
+    /// preserves the legacy throw, which other call sites (<c>new A&lt;Bad&gt;()</c>,
+    /// <c>let x: Box&lt;Bad&gt;</c>, generic calls) and their tests rely on. Save/restore around
+    /// each set to survive nesting. See <see cref="InstantiateGenericClass"/> (#895).
+    /// </summary>
+    private int? _extendsClauseConstraintLine = null;
+
+    /// <summary>
     /// True while checking via <see cref="CheckWithRecovery"/>. In this mode, a type error in one
     /// statement is recorded and checking continues with the next statement (so all errors surface,
     /// each at its own line) rather than the first error aborting the enclosing scope.
