@@ -194,10 +194,46 @@ order). `Shape.Names` must encode exactly this.
 4. JSON.parse shape-building: buffer a whole record before allocating (clean
    pre-size) vs transition-walk with end-of-object resize. (Lean: buffer.)
 
+## Prototype 1 (interpreter) — results
+
+A first interpreter prototype (`Runtime/Types/ShapedFieldStore.cs`) replaced the
+`Dictionary<string,object?>` backing of `SharpTSObject` with an interned-shape +
+slot-array store (`IReadOnlyDictionary` drop-in; delete → dictionary-mode deopt).
+What it established:
+
+- **Integration is viable.** After one fix it passes the object-semantics suite
+  (1,363 object/destructure/spread/freeze/for-in tests + 84 worker tests).
+- **The one real integration cost found:** `SharpTSObject(Dictionary)`'s *aliasing
+  contract*. `StructuredClone.CloneObject` constructed the object with an empty
+  dict and then **mutated that dict after construction**, relying on the object
+  aliasing it. A shaped store copies at construction, so those writes were lost
+  (clone came back empty → `cloned.nested` undefined → "Cannot set properties of
+  undefined"). Fixed by writing through `SetProperty`. Only **1 of 159**
+  `new SharpTSObject(...)` sites relied on this — the friction is small but real,
+  and Phase 1 must audit for it.
+- **Shapes are perf-NEUTRAL in the interpreter** (paired object-read bench: ~1100ms
+  both). Two reasons: the tree-walk dominates per-access cost, and a shaped read
+  *still* does a name→slot dictionary lookup (`ObjectShape.SlotOf`) + an array
+  index — no cheaper than a direct `Dictionary` probe **without an inline cache**.
+
+**Conclusion: the 2.2× payoff is entirely inline-cache-bound**, and ICs are a
+*compiled* call-site mechanism (cache `(shape, slot)` in per-site static fields,
+skip `SlotOf` on the hot path). The interpreter, which resolves by name every
+access, cannot realize the win from the representation alone. So:
+
+- The interpreter prototype **de-risked integration/correctness** (cheap, no IL).
+- The standalone spike **de-risked the IC payoff** (2.2×, in C#).
+- **Still unproven end-to-end: the *compiled* shaped-`$Object` + emitted IC** —
+  that this hits 2.2× in real emitted IL, integrates with stack-typing, and stays
+  standalone. That is the next de-risk.
+
 ## Recommendation
 
-Phase 1 is the expensive, risky foundation; Phase 2 is where the measured 2.2×
-lands. **Do not start Phase 1 cold** — the spike has de-risked the *payoff*; next
-de-risk the *cost* by prototyping the compiled IC on a single path
-(`binary-trees`-style `node.left`) end to end before the full both-modes
-rollout.
+Phase 1 is the expensive, risky foundation; Phase 2 (ICs) is where the measured
+2.2× lands — and Prototype 1 shows the representation alone does nothing without
+them. **Next: prototype the *compiled* IC on a single path** (e.g. a
+statically-typed escaping object's `.field`, binary-trees-style) end to end —
+emit a shaped `$Object`, cache `(shape, slot)` per site, and confirm the 2.2×
+holds in emitted IL before committing to the full both-modes rollout. The
+interpreter `ShapedFieldStore` is perf-neutral on its own, so it should land
+*together with* the compiled ICs (as one net win), not before.
