@@ -33,13 +33,11 @@ public class StandaloneDllTests
         "Compilation/RuntimeEmitter.Intl.cs",         // Intl.NumberFormat runtime dispatch via RuntimeTypes
         "Compilation/RuntimeEmitter.Date.cs",         // Date.prototype.toLocale* with locale/options via RuntimeTypes.FormatDateToLocale (#539); only reached by toLocale* calls that pass arguments
         "Compilation/RuntimeEmitter.AbortController.cs", // AbortSignal.any() via RuntimeTypes.AbortSignalAnyCompiled
-        "Compilation/RuntimeEmitter.ChildProcessHelpers.cs", // exec/spawn async delegation to interpreter module
         "Compilation/RuntimeEmitter.ProcessHelpers.cs",      // ProcessEventEmitterCall and ProcessEmitExit fallback
         // "Compilation/RuntimeEmitter.Net.cs" — now uses emitted $NetServer/$NetSocket directly (no reflection)
-        "Compilation/RuntimeEmitter.ZlibHelpers.cs",           // Zlib streaming createGzip/etc. via interpreter types
+        // RuntimeEmitter.ChildProcessHelpers.cs / ZlibHelpers.cs / DnsPromises.cs — pruned: now pure IL, no SharpTS late binding
         // RuntimeEmitter.ClusterHelpers.cs — pure IL, no reflection needed
         "Compilation/RuntimeEmitter.VmHelpers.cs",             // vm module delegation to interpreter via reflection
-        "Compilation/RuntimeEmitter.DnsPromises.cs",           // dns/promises delegation to RuntimeTypes via reflection
         "Compilation/RuntimeEmitter.DnsResolver.cs",           // dns.Resolver factory via RuntimeTypes
         "Compilation/ILEmitter.Calls.ExternalInterop.cs",      // @DotNetType delegate shim + event subscription via DotNetDelegateShim/DotNetEventBinder
         "Compilation/CallHandlers/GlobalFunctionHandler.cs",   // eval() indirect dispatch via EvalBridge (graceful throw when SharpTS absent)
@@ -59,13 +57,23 @@ public class StandaloneDllTests
         var compilationDir = Path.Combine(repoRoot, "Compilation");
         var violations = new List<string>();
 
-        // Types that must NOT be referenced via typeof() in emitted IL
+        // Unqualified typeof() references to SharpTS types that must NOT appear in
+        // emitted IL — a typeof() embeds a hard metadata token to the SharpTS assembly.
+        // (The string-based Type.GetType("…, SharpTS") late-binding form is covered
+        // separately by CompilationFiles_ShouldNotIntroduceNewSharpTsLateBindingOutsideAllowlist.)
         var forbiddenPatterns = new[]
         {
             "typeof(RuntimeTypes)",
             "typeof(PropertyDescriptorStore)",
             "typeof(ObjectBuiltIns)",
+            "typeof(SharpTSArray)",
+            "typeof(SharpTSObject)",
         };
+
+        // General case the explicit list above can't enumerate: any fully-qualified
+        // typeof(SharpTS.<...>) (e.g. typeof(SharpTS.Runtime.Types.SharpTSArray))
+        // likewise embeds an assembly token into emitted IL.
+        var qualifiedSharpTsTypeof = new Regex(@"typeof\(\s*SharpTS\.", RegexOptions.Compiled);
 
         foreach (var file in Directory.GetFiles(compilationDir, "*.cs", SearchOption.AllDirectories))
         {
@@ -85,12 +93,9 @@ public class StandaloneDllTests
                 if (trimmed.StartsWith("//") || trimmed.StartsWith("*") || trimmed.StartsWith("/*"))
                     continue;
 
-                foreach (var pattern in forbiddenPatterns)
+                if (forbiddenPatterns.Any(line.Contains) || qualifiedSharpTsTypeof.IsMatch(line))
                 {
-                    if (line.Contains(pattern))
-                    {
-                        violations.Add($"{fileName}:{i + 1}: {trimmed}");
-                    }
+                    violations.Add($"{fileName}:{i + 1}: {trimmed}");
                 }
             }
         }
@@ -158,6 +163,76 @@ public class StandaloneDllTests
         {
             CleanupTempDir(tempDir);
         }
+    }
+
+    /// <summary>
+    /// Broader sibling of <see cref="CompiledDll_ShouldNotReferenceSharpTsAssembly"/>: the trivial
+    /// program there only exercises one code path. This compiles a battery of diverse language
+    /// features and asserts each output's emitted metadata carries no SharpTS assembly reference —
+    /// catching a hard dependency introduced by an indirect mechanism the source-level lints can't
+    /// model. None of these features touch the soft-dependency surface (eval/Proxy/Intl/vm/dns/
+    /// Worker/@DotNetType), so every output must be fully standalone.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(StandaloneFeatureBattery))]
+    public void CompiledDll_FeatureBattery_ShouldNotReferenceSharpTsAssembly(string feature, string source)
+    {
+        var (tempDir, dllPath) = CompileStandalone(source);
+        try
+        {
+            var refs = GetAssemblyReferences(dllPath);
+            Assert.True(
+                refs.All(r => r != "SharpTS"),
+                $"Feature '{feature}' emitted a SharpTS assembly reference: {string.Join(", ", refs)}");
+        }
+        finally
+        {
+            CleanupTempDir(tempDir);
+        }
+    }
+
+    public static IEnumerable<object[]> StandaloneFeatureBattery()
+    {
+        yield return ["classes", """
+            abstract class Animal { #id = 1; constructor(public name: string){} abstract speak(): string; getId(){ return this.#id; } }
+            class Dog extends Animal { speak(){ return this.name + " woof"; } }
+            const d = new Dog("rex"); console.log(d.speak(), d.getId());
+            """];
+        yield return ["async", """
+            async function f(x: number): Promise<number> { return x * 2; }
+            async function main(){ const a = await f(21); const b = await Promise.all([f(1), f(2)]); console.log(a, b[0], b[1]); }
+            main();
+            """];
+        yield return ["generators", """
+            function* gen(n: number){ for (let i=0;i<n;i++) yield i*i; }
+            let s = 0; for (const v of gen(5)) s += v; console.log(s);
+            """];
+        yield return ["regex", """
+            const re = /(\d+)-(\d+)/g; const str = "12-34 56-78";
+            let m; let total = 0;
+            while ((m = re.exec(str)) !== null) { total += parseInt(m[1]) + parseInt(m[2]); }
+            console.log(total, "abc123".replace(/\d/g, "#"));
+            """];
+        yield return ["mapset", """
+            const m = new Map<string, number>(); m.set("a",1).set("b",2);
+            const s = new Set([1,1,2,3]); const wm = new WeakMap(); const k = {};
+            wm.set(k, 99);
+            console.log(m.get("a")! + m.get("b")!, s.size, wm.get(k));
+            """];
+        yield return ["destructure", """
+            const [a, ...rest] = [1,2,3,4]; const {x, y=10} = {x: 5} as any;
+            const tpl = `sum=${a + x + y + rest.length}`; console.log(tpl);
+            """];
+        yield return ["errors", """
+            class MyErr extends Error { constructor(m: string){ super(m); this.name = "MyErr"; } }
+            try { throw new MyErr("boom"); } catch(e){ if (e instanceof MyErr) console.log(e.name, e.message); }
+            finally { console.log("done"); }
+            """];
+        yield return ["enums-ns", """
+            enum Color { Red, Green = 5, Blue }
+            namespace Geo { export function area(r: number){ return 3 * r * r; } }
+            console.log(Color.Blue, Color[5], Geo.area(2));
+            """];
     }
 
     [Fact]
