@@ -84,20 +84,6 @@ public partial class GeneratorMoveNextEmitter
         _il.Emit(OpCodes.Ret);
     }
 
-    /// <summary>
-    /// Branch out to <paramref name="target"/>. Inside a real IL exception block a `br` out is illegal,
-    /// so use `Leave` — which exits the block legally and runs its (no-yield) finally. ExceptionBlockDepth
-    /// counts only real blocks (EmitSimpleTryCatch), not the flag-based path's sync segments, so branches
-    /// internal to a sync segment stay `Br` and do not illegally leave the mini try/catch (#554).
-    /// </summary>
-    protected override void EmitBranchToLabel(Label target)
-    {
-        if (_ctx!.ExceptionBlockDepth > 0)
-            _il.Emit(OpCodes.Leave, target);
-        else
-            _il.Emit(OpCodes.Br, target);
-    }
-
     // EmitTryCatch lives in GeneratorMoveNextEmitter.Statements.TryCatch.cs — it needs
     // suspension-aware (flag-based) handling when a yield crosses the protected region.
 

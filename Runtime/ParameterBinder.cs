@@ -115,7 +115,7 @@ internal static class ParameterBinder
                 // Missing argument with no default — use undefined (JavaScript semantics).
                 value = RuntimeValue.Undefined;
             }
-            environment.Define(param.Name.Lexeme, value);
+            environment.DefineRV(param.Name.Lexeme, value);
         }
     }
 

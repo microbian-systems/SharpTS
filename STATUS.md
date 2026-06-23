@@ -324,14 +324,14 @@ This document tracks TypeScript language features and their implementation statu
 | `SharedArrayBuffer` | ✅ | Shared memory for worker threads |
 | `Atomics` | ✅ | load, store, add, sub, and, or, xor, exchange, compareExchange, wait, notify |
 | `ArrayBuffer` | ✅ | Non-shared binary buffer: constructor, byteLength, slice(), isView() |
-| **Not Implemented** | | |
+| **DataView** | | |
 | `DataView` | ✅ | Full API: constructor, properties (buffer, byteLength, byteOffset), getter/setter methods with endianness support |
 
 ---
 
-## 14. NOT IMPLEMENTED
+## 14. EXTENDED BUILT-IN APIS
 
-This section documents JavaScript/TypeScript features that are **not currently implemented**.
+This section tracks JavaScript/TypeScript APIs that were historically unimplemented in SharpTS. **Most are now supported** (✅) and are kept here for status visibility; the rows below reflect current state. The only fully-unimplemented item is the `Function` constructor (❌); `eval` is partial (⚠️).
 
 ### Objects & Types
 

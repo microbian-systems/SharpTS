@@ -10,7 +10,7 @@ namespace SharpTS.Compilation;
 /// Similar to AsyncMoveNextEmitter but handles captured variable access
 /// through the outer state machine reference.
 /// </summary>
-public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterContext
+public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, IEmitterContext
 {
     private readonly AsyncArrowStateMachineBuilder _builder;
     private readonly AsyncStateAnalyzer.AsyncFunctionAnalysis _analysis;
@@ -303,58 +303,23 @@ public partial class AsyncArrowMoveNextEmitter : StatementEmitterBase, IEmitterC
         }
     }
 
-    protected override void EmitReturn(Stmt.Return r)
+    // EmitReturn, EmitTryCatch, EmitBranchToLabel and the break/continue/finally exit-routing are
+    // inherited from AsyncFunctionMoveNextEmitter (the await-aware try/catch machinery, #774). The arrow
+    // previously had its own structured-EH EmitTryCatch here that crashed (InvalidProgramException) on
+    // an `await` inside a `try`; the shared base fixes it. Only the two completion seams differ:
+
+    protected override FieldBuilder DefineStateMachineField(string name, System.Type type)
+        => _builder.StateMachineType.DefineField(name, type, FieldAttributes.Private);
+
+    /// <summary>
+    /// Completes the async-arrow state machine using the boxed value on the IL stack: the arrow's
+    /// <see cref="EmitSetResult"/> consumes it into <c>_resultLocal</c> and calls builder.SetResult,
+    /// then leave to the single Ret epilogue.
+    /// </summary>
+    protected override void EmitCompleteWithReturnValueOnStack()
     {
-        if (r.Value != null)
-        {
-            EmitExpression(r.Value);
-            EnsureBoxed();
-        }
-        else
-        {
-            // Bare `return;` resolves the promise with `undefined`, not null (#587).
-            // A genuine `return null;` takes the branch above and still resolves with null.
-            _il.Emit(OpCodes.Ldsfld, _ctx!.Runtime!.UndefinedInstance);
-        }
         EmitSetResult();
         _il.Emit(OpCodes.Leave, _exitLabel);
-    }
-
-    protected override void EmitTryCatch(Stmt.TryCatch t)
-    {
-        // Simple try/catch implementation (no await-aware handling yet)
-        _il.BeginExceptionBlock();
-
-        foreach (var stmt in t.TryBlock)
-            EmitStatement(stmt);
-
-        if (t.CatchBlock != null)
-        {
-            _il.BeginCatchBlock(_types.Exception);
-            if (t.CatchParam != null)
-            {
-                var exLocal = _il.DeclareLocal(_types.Object);
-                _locals[t.CatchParam.Lexeme] = exLocal;
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
-                _il.Emit(OpCodes.Stloc, exLocal);
-            }
-            else
-            {
-                _il.Emit(OpCodes.Pop);
-            }
-
-            foreach (var stmt in t.CatchBlock)
-                EmitStatement(stmt);
-        }
-
-        if (t.FinallyBlock != null)
-        {
-            _il.BeginFinallyBlock();
-            foreach (var stmt in t.FinallyBlock)
-                EmitStatement(stmt);
-        }
-
-        _il.EndExceptionBlock();
     }
 
     #endregion

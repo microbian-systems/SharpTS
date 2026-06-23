@@ -166,6 +166,16 @@ public class RuntimeEnvironment : ScopeChain<RuntimeValue, RuntimeEnvironment>
     }
 
     /// <summary>
+    /// Defines a variable with an unboxed <see cref="RuntimeValue"/> — the fast path used by
+    /// V2 parameter binding. Stores the value directly via the base scope chain, avoiding the
+    /// box-then-unbox round-trip through <see cref="RuntimeValue.FromBoxed"/> that the
+    /// <see cref="object"/>-typed <see cref="Define(string, object?)"/> incurs.
+    /// (Named <c>DefineRV</c> rather than overloading <c>Define</c> because that boxing overload,
+    /// declared here, would otherwise shadow the base <c>Define(string, RuntimeValue)</c> by name.)
+    /// </summary>
+    public void DefineRV(string name, RuntimeValue value) => base.Define(name, value);
+
+    /// <summary>
     /// Defines a variable with a boxed value (legacy compatibility).
     /// Wraps the value in RuntimeValue.FromBoxed automatically.
     /// </summary>

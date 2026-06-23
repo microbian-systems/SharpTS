@@ -1,10 +1,9 @@
-using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation;
 
-public partial class AsyncMoveNextEmitter
+public abstract partial class AsyncFunctionMoveNextEmitter
 {
     protected override void EmitTryCatch(Stmt.TryCatch t)
     {
@@ -33,8 +32,8 @@ public partial class AsyncMoveNextEmitter
         // EmitBranchToLabel; it is incremented only here (not in the flag path's mini try/catch
         // segments), so a break targeting a loop nested inside the try stays a legal in-region `Br`
         // while an escaping break/continue leaves via `Leave` (#727).
-        _ctx!.ExceptionBlockDepth++;
-        _il.BeginExceptionBlock();
+        Ctx.ExceptionBlockDepth++;
+        IL.BeginExceptionBlock();
 
         // Emit try block statements
         foreach (var stmt in t.TryBlock)
@@ -43,22 +42,22 @@ public partial class AsyncMoveNextEmitter
         // Emit catch block if present
         if (t.CatchBlock != null)
         {
-            _il.BeginCatchBlock(typeof(Exception));
+            IL.BeginCatchBlock(typeof(Exception));
 
             if (t.CatchParam != null)
             {
                 // Create local for the exception parameter
-                var exLocal = _il.DeclareLocal(typeof(object));
-                _ctx!.Locals.RegisterLocal(t.CatchParam.Lexeme, exLocal);
+                var exLocal = IL.DeclareLocal(typeof(object));
+                Ctx.Locals.RegisterLocal(t.CatchParam.Lexeme, exLocal);
 
                 // Wrap the .NET exception to TypeScript exception object
-                _il.Emit(OpCodes.Call, _ctx.Runtime!.WrapException);
-                _il.Emit(OpCodes.Stloc, exLocal);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.WrapException);
+                IL.Emit(OpCodes.Stloc, exLocal);
             }
             else
             {
                 // No catch parameter - just pop the exception
-                _il.Emit(OpCodes.Pop);
+                IL.Emit(OpCodes.Pop);
             }
 
             // Emit catch block statements
@@ -69,13 +68,13 @@ public partial class AsyncMoveNextEmitter
         // Emit finally block if present
         if (t.FinallyBlock != null)
         {
-            _il.BeginFinallyBlock();
+            IL.BeginFinallyBlock();
             foreach (var stmt in t.FinallyBlock)
                 EmitStatement(stmt);
         }
 
-        _il.EndExceptionBlock();
-        _ctx!.ExceptionBlockDepth--;
+        IL.EndExceptionBlock();
+        Ctx.ExceptionBlockDepth--;
     }
 
     private void EmitTryCatchWithAwaits(Stmt.TryCatch t, bool hasAwaitsInTry, bool hasAwaitsInCatch, bool hasAwaitsInFinally)
@@ -86,13 +85,13 @@ public partial class AsyncMoveNextEmitter
         // 3. Check exception flag after try/await completion
 
         // Create locals for exception tracking
-        var caughtExceptionLocal = _il.DeclareLocal(typeof(object));
-        var skipCatchLabel = _il.DefineLabel();
-        var afterTryCatchLabel = _il.DefineLabel();
+        var caughtExceptionLocal = IL.DeclareLocal(typeof(object));
+        var skipCatchLabel = IL.DefineLabel();
+        var afterTryCatchLabel = IL.DefineLabel();
 
         // Initialize caught exception to null
-        _il.Emit(OpCodes.Ldnull);
-        _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
+        IL.Emit(OpCodes.Ldnull);
+        IL.Emit(OpCodes.Stloc, caughtExceptionLocal);
 
         // A finally must run on every path that leaves the try — including a non-local break / continue
         // / return that crosses it. Push a FinallyScope before emitting the try body so those exits
@@ -103,7 +102,7 @@ public partial class AsyncMoveNextEmitter
         Label cleanupLabel = default;
         if (t.FinallyBlock != null)
         {
-            cleanupLabel = _il.DefineLabel();
+            cleanupLabel = IL.DefineLabel();
             frame = new FinallyScope { CleanupLabel = cleanupLabel };
             _exitScopes.Add(frame);
         }
@@ -119,62 +118,62 @@ public partial class AsyncMoveNextEmitter
             // so we can run the finally with awaits before rethrowing. The try body runs inside a real
             // IL exception block, so a non-local exit crossing it must Leave, not Br — bump
             // ExceptionBlockDepth so EmitBranchToLabel / the routing pick Leave to the cleanup (#774).
-            _ctx!.ExceptionBlockDepth++;
-            _il.BeginExceptionBlock();
+            Ctx.ExceptionBlockDepth++;
+            IL.BeginExceptionBlock();
             foreach (var stmt in t.TryBlock)
                 EmitStatement(stmt);
 
             // Always catch to capture exception for finally handling
-            _il.BeginCatchBlock(typeof(Exception));
-            _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
-            _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
+            IL.BeginCatchBlock(typeof(Exception));
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.WrapException);
+            IL.Emit(OpCodes.Stloc, caughtExceptionLocal);
 
-            _il.EndExceptionBlock();
-            _ctx!.ExceptionBlockDepth--;
+            IL.EndExceptionBlock();
+            Ctx.ExceptionBlockDepth--;
         }
         else
         {
             // No awaits in try or finally - use normal try block. Same real-IL-block reasoning as above:
             // bump ExceptionBlockDepth so a non-local exit crossing this try Leaves to the cleanup (#774).
-            _ctx!.ExceptionBlockDepth++;
-            _il.BeginExceptionBlock();
+            Ctx.ExceptionBlockDepth++;
+            IL.BeginExceptionBlock();
             foreach (var stmt in t.TryBlock)
                 EmitStatement(stmt);
 
             if (t.CatchBlock != null)
             {
-                _il.BeginCatchBlock(typeof(Exception));
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
-                _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
+                IL.BeginCatchBlock(typeof(Exception));
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.WrapException);
+                IL.Emit(OpCodes.Stloc, caughtExceptionLocal);
             }
-            _il.EndExceptionBlock();
-            _ctx!.ExceptionBlockDepth--;
+            IL.EndExceptionBlock();
+            Ctx.ExceptionBlockDepth--;
         }
 
         // Cleanup entry: normal completion falls here, and a routed non-local exit branches here. The
         // catch is gated on caughtExceptionLocal below, which is null on every exit path, so those
         // paths skip the catch and flow straight into the finally (#774).
         if (frame != null)
-            _il.MarkLabel(cleanupLabel);
+            IL.MarkLabel(cleanupLabel);
 
         // Check if we need to run catch block
         if (t.CatchBlock != null)
         {
-            _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-            _il.Emit(OpCodes.Brfalse, skipCatchLabel);
+            IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+            IL.Emit(OpCodes.Brfalse, skipCatchLabel);
 
             // Store exception in catch param if needed
             if (t.CatchParam != null)
             {
-                var exLocal = _il.DeclareLocal(typeof(object));
-                _ctx!.Locals.RegisterLocal(t.CatchParam.Lexeme, exLocal);
-                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-                _il.Emit(OpCodes.Stloc, exLocal);
+                var exLocal = IL.DeclareLocal(typeof(object));
+                Ctx.Locals.RegisterLocal(t.CatchParam.Lexeme, exLocal);
+                IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                IL.Emit(OpCodes.Stloc, exLocal);
             }
 
             // Clear the exception local since catch handled it
-            _il.Emit(OpCodes.Ldnull);
-            _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
+            IL.Emit(OpCodes.Ldnull);
+            IL.Emit(OpCodes.Stloc, caughtExceptionLocal);
 
             // Emit catch block (may contain awaits)
             // If we're inside an outer try context, wrap catch statements in try/catch
@@ -184,13 +183,13 @@ public partial class AsyncMoveNextEmitter
             {
                 // We're nested inside another try-with-awaits
                 // Wrap catch block in try/catch to propagate exceptions outward
-                _il.BeginExceptionBlock();
+                IL.BeginExceptionBlock();
                 foreach (var stmt in t.CatchBlock)
                     EmitStatement(stmt);
-                _il.BeginCatchBlock(typeof(Exception));
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
-                _il.Emit(OpCodes.Stloc, outerExceptionLocal);
-                _il.EndExceptionBlock();
+                IL.BeginCatchBlock(typeof(Exception));
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.WrapException);
+                IL.Emit(OpCodes.Stloc, outerExceptionLocal);
+                IL.EndExceptionBlock();
             }
             else
             {
@@ -199,7 +198,7 @@ public partial class AsyncMoveNextEmitter
             }
 
             // Fall through to finally (don't skip it)
-            _il.MarkLabel(skipCatchLabel);
+            IL.MarkLabel(skipCatchLabel);
         }
 
         // The finally itself is outside its own scope: an exit within the finally body runs the
@@ -233,20 +232,20 @@ public partial class AsyncMoveNextEmitter
             // (but only if there was no catch block that handled it)
             if (t.CatchBlock == null)
             {
-                var noExceptionLabel = _il.DefineLabel();
-                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-                _il.Emit(OpCodes.Brfalse, noExceptionLabel);
+                var noExceptionLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                IL.Emit(OpCodes.Brfalse, noExceptionLabel);
 
                 // Rethrow the exception
-                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-                _il.Emit(OpCodes.Call, _ctx!.Runtime!.CreateException);
-                _il.Emit(OpCodes.Throw);
+                IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateException);
+                IL.Emit(OpCodes.Throw);
 
-                _il.MarkLabel(noExceptionLabel);
+                IL.MarkLabel(noExceptionLabel);
             }
         }
 
-        _il.MarkLabel(afterTryCatchLabel);
+        IL.MarkLabel(afterTryCatchLabel);
     }
 
     private void EmitFinallyBodyWithAwaits(List<Stmt> finallyBody, LocalBuilder caughtExceptionLocal)
@@ -275,7 +274,7 @@ public partial class AsyncMoveNextEmitter
         // Set context for await exception handling
         var previousExceptionLocal = _currentTryCatchExceptionLocal;
         var previousSkipLabel = _currentTryCatchSkipLabel;
-        var afterTryLabel = _il.DefineLabel();
+        var afterTryLabel = IL.DefineLabel();
         _currentTryCatchExceptionLocal = caughtExceptionLocal;
         _currentTryCatchSkipLabel = afterTryLabel;
 
@@ -286,11 +285,11 @@ public partial class AsyncMoveNextEmitter
             if (syncSegment.Count == 0)
                 return;
             // Skip the segment if an earlier one already threw (its exception heads to the catch).
-            var skipSegmentLabel = _il.DefineLabel();
-            _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-            _il.Emit(OpCodes.Brtrue, skipSegmentLabel);
+            var skipSegmentLabel = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+            IL.Emit(OpCodes.Brtrue, skipSegmentLabel);
             EmitSegmentInTry(syncSegment, caughtExceptionLocal);
-            _il.MarkLabel(skipSegmentLabel);
+            IL.MarkLabel(skipSegmentLabel);
             syncSegment.Clear();
         }
 
@@ -308,15 +307,15 @@ public partial class AsyncMoveNextEmitter
                 FlushSegment();
 
                 // If an earlier segment threw, skip this suspension/exit and fall through to the catch.
-                var skipLabel = _il.DefineLabel();
-                _il.Emit(OpCodes.Ldloc, caughtExceptionLocal);
-                _il.Emit(OpCodes.Brtrue, skipLabel);
+                var skipLabel = IL.DefineLabel();
+                IL.Emit(OpCodes.Ldloc, caughtExceptionLocal);
+                IL.Emit(OpCodes.Brtrue, skipLabel);
 
                 // EmitAwait checks _currentTryCatchExceptionLocal and wraps GetResult in try/catch; a
                 // break/continue/return emits its jump here, outside any real IL exception block.
                 EmitStatement(stmt);
 
-                _il.MarkLabel(skipLabel);
+                IL.MarkLabel(skipLabel);
             }
             else
             {
@@ -326,7 +325,7 @@ public partial class AsyncMoveNextEmitter
 
         FlushSegment();
 
-        _il.MarkLabel(afterTryLabel);
+        IL.MarkLabel(afterTryLabel);
 
         // Restore context (the skip label must be restored alongside its
         // exception local — nulling it left outer-try awaits after a nested
@@ -337,18 +336,18 @@ public partial class AsyncMoveNextEmitter
 
     private void EmitSegmentInTry(List<Stmt> statements, LocalBuilder caughtExceptionLocal)
     {
-        _il.BeginExceptionBlock();
+        IL.BeginExceptionBlock();
         foreach (var stmt in statements)
             EmitStatement(stmt);
 
-        _il.BeginCatchBlock(typeof(Exception));
-        _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
-        _il.Emit(OpCodes.Stloc, caughtExceptionLocal);
+        IL.BeginCatchBlock(typeof(Exception));
+        IL.Emit(OpCodes.Call, Ctx.Runtime!.WrapException);
+        IL.Emit(OpCodes.Stloc, caughtExceptionLocal);
 
-        _il.EndExceptionBlock();
+        IL.EndExceptionBlock();
     }
 
-    private bool ContainsAwait(List<Stmt> statements)
+    protected bool ContainsAwait(List<Stmt> statements)
     {
         foreach (var stmt in statements)
         {
@@ -358,7 +357,7 @@ public partial class AsyncMoveNextEmitter
         return false;
     }
 
-    private bool ContainsAwaitInStmt(Stmt stmt)
+    protected bool ContainsAwaitInStmt(Stmt stmt)
     {
         switch (stmt)
         {
@@ -403,7 +402,7 @@ public partial class AsyncMoveNextEmitter
         }
     }
 
-    private bool ContainsAwaitInExpr(Expr expr)
+    protected bool ContainsAwaitInExpr(Expr expr)
     {
         switch (expr)
         {

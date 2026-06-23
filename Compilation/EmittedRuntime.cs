@@ -1412,9 +1412,6 @@ public class EmittedRuntime
     public MethodBuilder RegisterModule { get; set; } = null!;
     public MethodBuilder InitializeModuleRegistry { get; set; } = null!;
 
-    // Iterator protocol support
-    public MethodBuilder GetIterator { get; set; } = null!;
-
     // Iterator wrapper type (implements IEnumerator<object?> for custom iterables)
     public TypeBuilder IteratorWrapperType { get; set; } = null!;
     public ConstructorBuilder IteratorWrapperCtor { get; set; } = null!;

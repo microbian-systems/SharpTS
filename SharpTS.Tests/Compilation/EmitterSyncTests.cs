@@ -28,6 +28,28 @@ public class EmitterSyncTests
     /// </summary>
     private static readonly Dictionary<Type, HashSet<string>> AllowedOverrides = new()
     {
+        // Shared state-machine bases. The exit-routing scaffolding (break/continue, loop-scope nav,
+        // and the Leave-vs-Br branch helper) lives in StateMachineExitRoutingEmitter — common to all
+        // four emitters; the await-aware return/try-catch lives in AsyncFunctionMoveNextEmitter —
+        // common to the two async-function emitters. They are validated here as their own entries, so
+        // the leaf emitters below no longer list those hoisted methods (they inherit them).
+        [typeof(StateMachineExitRoutingEmitter)] = new()
+        {
+            // --- #500/#554/#559/#774: non-local exits route through enclosing flag-based finally(s) ---
+            "EnterLoop",            // Loops share the unified _exitScopes stack with finally scopes
+            "ExitLoop",             // (so break/continue can find the finallys between them and the loop)
+            "get_CurrentLoop",      // Loop lookups read _exitScopes instead of the base loop stack
+            "FindLabeledLoop",      // Labeled loop lookups read _exitScopes
+            "EmitBreak",            // Route a break leaving a try through its enclosing finally(s)
+            "EmitContinue",         // Route a continue leaving a try through its enclosing finally(s)
+            "EmitBranchToLabel",    // #554/#727: Leave instead of Br when inside a real IL exception block
+        },
+        [typeof(AsyncFunctionMoveNextEmitter)] = new()
+        {
+            // --- #774: await-aware exception handling + async-function completion ---
+            "EmitReturn",           // Async return: route through finally(s), then complete the task
+            "EmitTryCatch",         // Await-aware (flag-based) exception handling
+        },
         [typeof(AsyncMoveNextEmitter)] = new()
         {
             // --- Infrastructure (abstract property/field implementations) ---
@@ -41,13 +63,11 @@ public class EmitterSyncTests
             "SharpTS.Compilation.Emitters.IEmitterContext.SetStackUnknown", // IEmitterContext impl
             "SharpTS.Compilation.Emitters.IEmitterContext.SetStackType",   // IEmitterContext impl
             // --- Genuinely different behavior ---
-            "EmitReturn",           // Async return: store result + leave to SetResult label
-            "EmitTryCatch",         // Await-aware exception handling with flag-based tracking
+            // (EmitReturn/EmitTryCatch are inherited from AsyncFunctionMoveNextEmitter; break/continue/
+            //  loop-nav/EmitBranchToLabel from StateMachineExitRoutingEmitter — see those entries above.)
             "EmitForOf",            // for-await-of protocol dispatch
             "EmitForAwaitOf",       // #631: override the shared base to SUSPEND on next()/return() (vs blocking GetResult)
             "EmitLabeledStatement", // Labeled continue for for loops (base doesn't handle correctly)
-            "EmitBranchToLabel",    // #727: Leave instead of Br when a break/continue leaves a real IL exception block
-
             "EmitAwait",            // Core: suspend/resume state machine
             "EmitArrowFunction",    // Display class in state machine context
             "EmitExpressionAsDouble", // Literal optimization
@@ -70,13 +90,6 @@ public class EmitterSyncTests
             "EmitLogicalAssign",    // #766: route a shadowing logical assignment to its own slot
             "EmitPrefixIncrement",  // #766: route a shadowing prefix ++/-- to its own slot
             "EmitPostfixIncrement", // #766: route a shadowing postfix ++/-- to its own slot
-            // --- #774: non-local exits must run an enclosing flag-based finally first (async-fn #500/#559) ---
-            "EmitBreak",            // Route a break leaving a try-with-awaits through its finally(s)
-            "EmitContinue",         // Route a continue leaving a try-with-awaits through its finally(s)
-            "EnterLoop",            // Loops share the unified _exitScopes stack with finally scopes
-            "ExitLoop",             // (so break/continue can find the finallys between them and the loop)
-            "get_CurrentLoop",      // Loop lookups read _exitScopes instead of the base loop stack
-            "FindLabeledLoop",      // Labeled loop lookups read _exitScopes
         },
         [typeof(AsyncArrowMoveNextEmitter)] = new()
         {
@@ -95,8 +108,7 @@ public class EmitterSyncTests
             // unboxed-double fast path and produced unverifiable IL for calls with numeric params.
             // The base EmitLiteral (unboxed value types + tracked StackType) is now used.
             // --- Genuinely different behavior ---
-            "EmitReturn",           // Async arrow return: store result + SetResult
-            "EmitTryCatch",         // Await-aware exception handling
+            // (EmitReturn/EmitTryCatch are inherited from AsyncFunctionMoveNextEmitter — see above.)
             "EmitForOf",            // #430/#645: for-await-of dispatch to the shared async-iterator lowering (sync for-of delegates to base)
             "EmitVarDeclaration",   // Capture indirection for outer variables
             "EmitVariable",         // Capture indirection
@@ -129,6 +141,7 @@ public class EmitterSyncTests
             "GetFunctionDCField",   // #674: exposes <>__functionDC so the base arrow emitter threads it in
             "ResolveCaptureSourceName", // #767: pivot a captured nested-block shadow's source to its renamed storage
             // --- Genuinely different behavior ---
+            // (break/continue/loop-nav/EmitBranchToLabel are inherited from StateMachineExitRoutingEmitter.)
             "EmitReturn",           // Generator return: set state -2, return false
             "EmitTryCatch",         // Generator exception handling
             "EmitForOf",            // Hoisted enumerator for yield across loop boundaries
@@ -153,16 +166,9 @@ public class EmitterSyncTests
             "EmitLogicalAssign",    // #711: route a shadowing logical assignment to its own slot
             "EmitPrefixIncrement",  // #711: route a shadowing prefix ++/-- to its own slot
             "EmitPostfixIncrement", // #711: route a shadowing postfix ++/-- to its own slot
-            // --- #500: non-local exits must run an enclosing flag-based finally first ---
-            "EmitBreak",            // Route a break leaving a try through its finally(s)
-            "EmitContinue",         // Route a continue leaving a try through its finally(s)
+            // --- #632: a throw in a catch/finally body routes through the enclosing finally(s) ---
+            // (the generator-only throw routing; the break/continue/loop scaffolding is now in the base)
             "EmitThrow",            // Route a throw in a catch/finally body through the finally(s)
-            "EnterLoop",            // Loops share the unified _exitScopes stack with finally scopes
-            "ExitLoop",             // (so break/continue can find the finallys between them and the loop)
-            "get_CurrentLoop",      // Loop lookups read _exitScopes instead of the base loop stack
-            "FindLabeledLoop",      // Labeled loop lookups read _exitScopes
-            // --- #554: a non-local exit leaving a real IL try (no yield in it) must Leave, not Br ---
-            "EmitBranchToLabel",    // Leave instead of Br when inside a real IL exception block
         },
         [typeof(AsyncGeneratorMoveNextEmitter)] = new()
         {
@@ -174,11 +180,11 @@ public class EmitterSyncTests
             "GetThisField",
             "GetHoistedVariableField",
             // --- Genuinely different behavior ---
+            // (break/continue/loop-nav/EmitBranchToLabel are inherited from StateMachineExitRoutingEmitter.)
             "EmitReturn",           // Async generator return: store in CurrentField + state -2
             "EmitTryCatch",         // Suspension-aware exception handling (flag-based)
             "EmitForOf",            // for-await-of + hoisted enumerator for yield/await in loops
             "EmitForAwaitOf",       // #430/#645: async-generator consumer keeps its own error-propagating lowering instead of the shared base one
-            "EmitBranchToLabel",    // Leave instead of Br in exception blocks
             "EmitYield",            // Core: yield value + suspend
             "EmitAwait",            // Core: suspend/resume state machine
             "EmitArrowFunction",    // Display class in async generator context
@@ -197,14 +203,8 @@ public class EmitterSyncTests
             "EmitLogicalAssign",    // #766: route a shadowing logical assignment to its own slot
             "EmitPrefixIncrement",  // #766: route a shadowing prefix ++/-- to its own slot
             "EmitPostfixIncrement", // #766: route a shadowing postfix ++/-- to its own slot
-            // --- #559: non-local exits must run an enclosing flag-based finally first (async #500) ---
-            "EmitBreak",            // Route a break leaving a try through its finally(s)
-            "EmitContinue",         // Route a continue leaving a try through its finally(s)
+            // --- #632: a throw in a catch/finally body routes through the enclosing finally(s) ---
             "EmitThrow",            // Route a throw in a catch/finally body through the finally(s)
-            "EnterLoop",            // Loops share the unified _exitScopes stack with finally scopes
-            "ExitLoop",             // (so break/continue can find the finallys between them and the loop)
-            "get_CurrentLoop",      // Loop lookups read _exitScopes instead of the base loop stack
-            "FindLabeledLoop",      // Labeled loop lookups read _exitScopes
         },
     };
 
