@@ -271,6 +271,37 @@ everything else is untouched because the object is still a `Dictionary`. If the
 IC shows the spike's 2.2× on a read-hot loop (build-once/read-many), the approach
 is validated and Phase 1 proper can drop the double storage.
 
+### Prototype 2 — BUILT and MEASURED (the decisive de-risk, in emitted IL)
+
+The `$ShapedDict` approach was built end to end (type + Record-typed all-data-prop
+literal construction + a read fast path) and measured in the real compiler:
+
+- **The shaped read beats the `Dictionary` in emitted IL: objread (1M reads, build-
+  once/read-many) ~70ms → ~43ms ≈ 1.5×.** This is *cache-less* — `Array.IndexOf`
+  over the interned `_shape` (compile-time `ldstr` keys are reference-equal, so the
+  scan is pointer compares with no hashing) then `_slots[slot]`. The spike's full
+  2.2× needs the per-site `(shape,slot)` cache on top (skips the `IndexOf`); that
+  needs per-site static fields (the regex-hoisting pre-pass pattern,
+  `ILCompiler.cs:765`), deferred.
+- **IL verifies** (81 ILVerify tests) and the **representation is consumer-safe**:
+  1,523 object/JSON tests pass with shaped *construction*, because `$ShapedDict`
+  *is* a `Dictionary` (spread, `Object.keys`, for-in, clone, destructure all work).
+- **Known gap — write-sync** (the reason it is a prototype, not shippable): a write
+  through the base dict (`o.a = 5`, and any-typed `SetProperty`/`SetIndex`) updates
+  the dict but **not** `_slots`, so a shaped read of a written shape field returns
+  the stale construction value (`o.a=5; o.a` → 1 compiled vs 5 Node). The
+  double-storage subclass cannot cheaply intercept the base `Dictionary`'s
+  non-virtual `set_Item`.
+
+**Verdict:** the read-IC payoff is **real in emitted IL (~1.5× cache-less, ~2.2×
+projected with the per-site cache)** — the milestone's question is answered.
+**Phase 1 proper must use SINGLE storage** (shaped-only; reads *and* writes go
+through shaped accessors so there is no dict to desync) rather than the
+double-storage subclass — the subclass was the right *measurement* vehicle (zero
+consumer blast radius) but its write path is unfixable cheaply. The prototype code
+(interp `ShapedFieldStore` + compiled `$ShapedDict`) stays uncommitted WIP; it
+validated the payoff and the integration, and informs the single-storage build.
+
 ### Original integration points (still valid for Phase 1 proper)
 
 | Piece | Where | Change |
