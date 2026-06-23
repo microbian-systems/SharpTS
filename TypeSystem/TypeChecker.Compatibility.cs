@@ -815,6 +815,12 @@ public partial class TypeChecker
         if (expected is TypeInfo.Date && actual is TypeInfo.Date) return true;
         if (expected is TypeInfo.RegExp && actual is TypeInfo.RegExp) return true;
 
+        // Typed-array identity (reachable since `Int32Array`/`Float64Array`/… annotations stopped
+        // resolving to `any`). Each typed array is its own nominal type: assignable only from the
+        // same element kind (Int32Array ← Int32Array, not ← Float64Array), matching tsc.
+        if (expected is TypeInfo.TypedArray expTa && actual is TypeInfo.TypedArray actTa)
+            return expTa.ElementType == actTa.ElementType;
+
         // Error-family compatibility (reachable since Error/TypeError/… stopped resolving to `any`,
         // #528). Every built-in error shares the same structural shape (name/message/stack/cause), so
         // any error satisfies a non-aggregate error target — tsc treats the empty `interface TypeError

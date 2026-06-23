@@ -78,6 +78,7 @@ public partial class RuntimeEmitter
     private MethodBuilder EmitJsonParseStaticHelper(TypeBuilder typeBuilder)
     {
         var validateControlChars = EmitJsonValidateControlChars(typeBuilder);
+        var parseValue = EmitParseValueFromReaderHelper(typeBuilder);
 
         var method = typeBuilder.DefineMethod(
             "ParseJsonValue",
@@ -88,55 +89,81 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Simple implementation: just call ToString and return
-        // This won't properly parse, but at least we can test the infrastructure
+        // One-pass parse: transcode the text to UTF-8 and walk it with a
+        // System.Text.Json.Utf8JsonReader straight into our runtime graph
+        // (Dictionary<string,object?> / List<object?> / boxed double|bool|string|null),
+        // instead of building a throwaway JsonDocument DOM and then re-walking it.
+        // Skipping the intermediate DOM removes a full second pass over the data and
+        // its allocations. Utf8JsonReader and Encoding live in the BCL, so the emitted
+        // token references System.Text.Json / System.Private.CoreLib, never SharpTS.dll
+        // — standalone DLLs stay standalone. The token decoders (GetString/GetDouble)
+        // are the SAME engine JsonDocument used, so the produced values are identical.
+        var readerType = typeof(System.Text.Json.Utf8JsonReader);
         var strLocal = il.DeclareLocal(_types.String);
+        var bytesLocal = il.DeclareLocal(typeof(byte[]));
+        var optionsLocal = il.DeclareLocal(typeof(System.Text.Json.JsonReaderOptions));
+        var readerLocal = il.DeclareLocal(readerType);
+        var resultLocal = il.DeclareLocal(_types.Object);
         var notNullLabel = il.DefineLabel();
+        var gotTokenLabel = il.DefineLabel();
+        var okEndLabel = il.DefineLabel();
 
+        // if (arg == null) return null;
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse_S, notNullLabel);
+
+        // str = arg.ToString();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "ToString"));
         il.Emit(OpCodes.Stloc, strLocal);
 
-        // ECMA-262 25.5.1 JSON grammar: control chars (U+0000–U+001F except
-        // \t \n \r as whitespace) are forbidden — both inside string literals
-        // (must be escaped as \u00XX) and in the JSON structural body.
-        // System.Text.Json.JsonDocument is lenient about some of these, so
-        // pre-validate and throw before Parse runs. The throw converts to
-        // SyntaxError via the outer catch in EmitJsonParse.
+        // ECMA-262 25.5.1: control chars (U+0000–U+001F except \t \n \r whitespace) are
+        // forbidden in the JSON grammar. Kept as an explicit pre-pass so behavior is
+        // identical to before; the throw converts to SyntaxError via EmitJsonParse's catch.
         il.Emit(OpCodes.Ldloc, strLocal);
         il.Emit(OpCodes.Call, validateControlChars);
 
-        // Parse using JsonDocument - keep typeof() for System.Text.Json types
-        var parseMethod = typeof(System.Text.Json.JsonDocument).GetMethod("Parse",
-            [typeof(string), typeof(System.Text.Json.JsonDocumentOptions)])!;
-        var optionsLocal = il.DeclareLocal(typeof(System.Text.Json.JsonDocumentOptions));
+        // bytes = Encoding.UTF8.GetBytes(str)
+        il.Emit(OpCodes.Call, typeof(System.Text.Encoding).GetProperty("UTF8")!.GetGetMethod()!);
         il.Emit(OpCodes.Ldloc, strLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.Text.Encoding).GetMethod("GetBytes", [typeof(string)])!);
+        il.Emit(OpCodes.Stloc, bytesLocal);
+
+        // reader = new Utf8JsonReader((ReadOnlySpan<byte>)bytes, default)
         il.Emit(OpCodes.Ldloca, optionsLocal);
-        il.Emit(OpCodes.Initobj, typeof(System.Text.Json.JsonDocumentOptions));
+        il.Emit(OpCodes.Initobj, typeof(System.Text.Json.JsonReaderOptions));
+        il.Emit(OpCodes.Ldloca, readerLocal);
+        il.Emit(OpCodes.Ldloc, bytesLocal);
+        il.Emit(OpCodes.Call, typeof(ReadOnlySpan<byte>).GetMethod("op_Implicit", [typeof(byte[])])!);
         il.Emit(OpCodes.Ldloc, optionsLocal);
-        il.Emit(OpCodes.Call, parseMethod);
+        il.Emit(OpCodes.Call, readerType.GetConstructor(
+            [typeof(ReadOnlySpan<byte>), typeof(System.Text.Json.JsonReaderOptions)])!);
 
-        // Get RootElement
-        var docLocal = il.DeclareLocal(typeof(System.Text.Json.JsonDocument));
-        il.Emit(OpCodes.Stloc, docLocal);
-        il.Emit(OpCodes.Ldloc, docLocal);
-        il.Emit(OpCodes.Callvirt, typeof(System.Text.Json.JsonDocument).GetProperty("RootElement")!.GetGetMethod()!);
+        // if (!reader.Read()) throw  — empty input is not a valid JSON document.
+        il.Emit(OpCodes.Ldloca, readerLocal);
+        il.Emit(OpCodes.Call, readerType.GetMethod("Read", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Brtrue, gotTokenLabel);
+        il.Emit(OpCodes.Ldstr, "Unexpected end of JSON input");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
 
-        // Store element first before calling Clone (Clone is an instance method on struct)
-        var elemLocal = il.DeclareLocal(typeof(System.Text.Json.JsonElement));
-        il.Emit(OpCodes.Stloc, elemLocal);
+        il.MarkLabel(gotTokenLabel);
+        // result = ParseValueFromReader(ref reader)
+        il.Emit(OpCodes.Ldloca, readerLocal);
+        il.Emit(OpCodes.Call, parseValue);
+        il.Emit(OpCodes.Stloc, resultLocal);
 
-        // Clone the element to avoid disposal issues (need address for struct instance method)
-        il.Emit(OpCodes.Ldloca, elemLocal);
-        il.Emit(OpCodes.Call, typeof(System.Text.Json.JsonElement).GetMethod("Clone")!);
+        // A single JSON document must hold exactly one value: any non-whitespace
+        // trailing token is a SyntaxError (matches JsonDocument.Parse).
+        il.Emit(OpCodes.Ldloca, readerLocal);
+        il.Emit(OpCodes.Call, readerType.GetMethod("Read", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Brfalse, okEndLabel);
+        il.Emit(OpCodes.Ldstr, "Unexpected non-whitespace character after JSON");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
 
-        // Store cloned element and convert it
-        var clonedLocal = il.DeclareLocal(typeof(System.Text.Json.JsonElement));
-        il.Emit(OpCodes.Stloc, clonedLocal);
-        il.Emit(OpCodes.Ldloca, clonedLocal);
-        il.Emit(OpCodes.Call, EmitConvertJsonElementHelper(typeBuilder));
+        il.MarkLabel(okEndLabel);
+        il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notNullLabel);
@@ -293,163 +320,171 @@ public partial class RuntimeEmitter
         return method;
     }
 
-    private MethodBuilder EmitConvertJsonElementHelper(TypeBuilder typeBuilder)
+    /// <summary>
+    /// Emits <c>object? ParseValueFromReader(ref Utf8JsonReader reader)</c>: a recursive
+    /// descent that consumes the value at the reader's current position and returns the
+    /// runtime graph node for it — <c>Dictionary&lt;string,object?&gt;</c> for objects,
+    /// <c>List&lt;object?&gt;</c> for arrays, a boxed double / bool, a string, or null.
+    /// On entry the reader is positioned ON the value's first token; on return it is
+    /// positioned on the value's last token (the matching End for containers), so the
+    /// caller's next <c>Read()</c> advances past it. Mirrors the value kinds the old
+    /// JsonDocument walker produced, so the resulting graph (consumed by the reviver and
+    /// everything downstream) is byte-for-byte the same.
+    /// </summary>
+    private MethodBuilder EmitParseValueFromReaderHelper(TypeBuilder typeBuilder)
     {
-        // Convert JsonElement to appropriate runtime type
+        var readerType = typeof(System.Text.Json.Utf8JsonReader);
+        var readMethod = readerType.GetMethod("Read", Type.EmptyTypes)!;
+        var tokenTypeGetter = readerType.GetProperty("TokenType")!.GetGetMethod()!;
+        var getStringMethod = readerType.GetMethod("GetString", Type.EmptyTypes)!;
+        var getDoubleMethod = readerType.GetMethod("GetDouble", Type.EmptyTypes)!;
+
         var method = typeBuilder.DefineMethod(
-            "ConvertJsonElement",
+            "ParseValueFromReader",
             MethodAttributes.Private | MethodAttributes.Static,
             _types.Object,
-            [typeof(System.Text.Json.JsonElement).MakeByRefType()] // byref for struct
+            [readerType.MakeByRefType()]
         );
 
         var il = method.GetILGenerator();
 
-        var resultDictLocal = il.DeclareLocal(_types.DictionaryStringObject);
-        var resultListLocal = il.DeclareLocal(_types.ListOfObject);
-        var propEnumLocal = il.DeclareLocal(typeof(System.Text.Json.JsonElement.ObjectEnumerator));
-        var arrEnumLocal = il.DeclareLocal(typeof(System.Text.Json.JsonElement.ArrayEnumerator));
-        var propLocal = il.DeclareLocal(typeof(System.Text.Json.JsonProperty));
-        var elemLocal = il.DeclareLocal(typeof(System.Text.Json.JsonElement));
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var listLocal = il.DeclareLocal(_types.ListOfObject);
+        var nameLocal = il.DeclareLocal(_types.String);
 
-        var undefinedLabel = il.DefineLabel();
         var objectLabel = il.DefineLabel();
         var arrayLabel = il.DefineLabel();
         var stringLabel = il.DefineLabel();
         var numberLabel = il.DefineLabel();
-        var trueLiteralLabel = il.DefineLabel();
-        var falseLiteralLabel = il.DefineLabel();
+        var trueLabel = il.DefineLabel();
+        var falseLabel = il.DefineLabel();
         var nullLabel = il.DefineLabel();
-        var objLoopStart = il.DefineLabel();
-        var objLoopEnd = il.DefineLabel();
-        var arrLoopStart = il.DefineLabel();
-        var arrLoopEnd = il.DefineLabel();
 
-        // switch on element.ValueKind
+        // switch (reader.TokenType) — same dup/Beq ladder shape as the old DOM walker.
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(System.Text.Json.JsonElement).GetProperty("ValueKind")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, tokenTypeGetter);
 
-        // Check each value kind
         il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonValueKind.Object);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonTokenType.StartObject);
         il.Emit(OpCodes.Beq, objectLabel);
 
         il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonValueKind.Array);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonTokenType.StartArray);
         il.Emit(OpCodes.Beq, arrayLabel);
 
         il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonValueKind.String);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonTokenType.String);
         il.Emit(OpCodes.Beq, stringLabel);
 
         il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonValueKind.Number);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonTokenType.Number);
         il.Emit(OpCodes.Beq, numberLabel);
 
         il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonValueKind.True);
-        il.Emit(OpCodes.Beq, trueLiteralLabel);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonTokenType.True);
+        il.Emit(OpCodes.Beq, trueLabel);
 
         il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonValueKind.False);
-        il.Emit(OpCodes.Beq, falseLiteralLabel);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonTokenType.False);
+        il.Emit(OpCodes.Beq, falseLabel);
 
-        il.Emit(OpCodes.Pop); // pop the valueKind we've been checking
+        il.Emit(OpCodes.Pop); // None / Null / anything else → null
         il.Emit(OpCodes.Br, nullLabel);
 
-        // Object
+        // --- Object: { (PropertyName value)* } ---
         il.MarkLabel(objectLabel);
-        il.Emit(OpCodes.Pop); // pop valueKind
+        il.Emit(OpCodes.Pop); // pop tokenType
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
-        il.Emit(OpCodes.Stloc, resultDictLocal);
+        il.Emit(OpCodes.Stloc, dictLocal);
 
+        var objLoop = il.DefineLabel();
+        var objEnd = il.DefineLabel();
+        il.MarkLabel(objLoop);
+        // Read() → PropertyName or EndObject (throws on malformed/incomplete input).
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(System.Text.Json.JsonElement).GetMethod("EnumerateObject")!);
-        il.Emit(OpCodes.Stloc, propEnumLocal);
-
-        il.MarkLabel(objLoopStart);
-        il.Emit(OpCodes.Ldloca, propEnumLocal);
-        il.Emit(OpCodes.Call, typeof(System.Text.Json.JsonElement.ObjectEnumerator).GetMethod("MoveNext")!);
-        il.Emit(OpCodes.Brfalse, objLoopEnd);
-
-        il.Emit(OpCodes.Ldloca, propEnumLocal);
-        il.Emit(OpCodes.Call, typeof(System.Text.Json.JsonElement.ObjectEnumerator).GetProperty("Current")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, propLocal);
-
-        // dict[name] = ConvertJsonElement(ref value)
-        il.Emit(OpCodes.Ldloc, resultDictLocal);
-        il.Emit(OpCodes.Ldloca, propLocal);
-        il.Emit(OpCodes.Call, typeof(System.Text.Json.JsonProperty).GetProperty("Name")!.GetGetMethod()!);
-        il.Emit(OpCodes.Ldloca, propLocal);
-        il.Emit(OpCodes.Call, typeof(System.Text.Json.JsonProperty).GetProperty("Value")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, elemLocal);
-        il.Emit(OpCodes.Ldloca, elemLocal);
+        il.Emit(OpCodes.Call, readMethod);
+        il.Emit(OpCodes.Brfalse, objEnd);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, tokenTypeGetter);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonTokenType.EndObject);
+        il.Emit(OpCodes.Beq, objEnd);
+        // name = reader.GetString() (current token is the property name)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, getStringMethod);
+        il.Emit(OpCodes.Stloc, nameLocal);
+        // reader.Read() → the value's first token
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, readMethod);
+        il.Emit(OpCodes.Pop);
+        // dict[name] = ParseValueFromReader(ref reader)
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldloc, nameLocal);
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, method); // recursive
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item", [_types.String, _types.Object]));
-        il.Emit(OpCodes.Br, objLoopStart);
+        il.Emit(OpCodes.Br, objLoop);
 
-        il.MarkLabel(objLoopEnd);
-        il.Emit(OpCodes.Ldloc, resultDictLocal);
+        il.MarkLabel(objEnd);
+        il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ret);
 
-        // Array
+        // --- Array: [ value* ] ---
         il.MarkLabel(arrayLabel);
-        il.Emit(OpCodes.Pop); // pop valueKind
+        il.Emit(OpCodes.Pop); // pop tokenType
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObject));
-        il.Emit(OpCodes.Stloc, resultListLocal);
+        il.Emit(OpCodes.Stloc, listLocal);
 
+        var arrLoop = il.DefineLabel();
+        var arrEnd = il.DefineLabel();
+        il.MarkLabel(arrLoop);
+        // Read() → the element's first token or EndArray.
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(System.Text.Json.JsonElement).GetMethod("EnumerateArray")!);
-        il.Emit(OpCodes.Stloc, arrEnumLocal);
-
-        il.MarkLabel(arrLoopStart);
-        il.Emit(OpCodes.Ldloca, arrEnumLocal);
-        il.Emit(OpCodes.Call, typeof(System.Text.Json.JsonElement.ArrayEnumerator).GetMethod("MoveNext")!);
-        il.Emit(OpCodes.Brfalse, arrLoopEnd);
-
-        il.Emit(OpCodes.Ldloc, resultListLocal);
-        il.Emit(OpCodes.Ldloca, arrEnumLocal);
-        il.Emit(OpCodes.Call, typeof(System.Text.Json.JsonElement.ArrayEnumerator).GetProperty("Current")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, elemLocal);
-        il.Emit(OpCodes.Ldloca, elemLocal);
+        il.Emit(OpCodes.Call, readMethod);
+        il.Emit(OpCodes.Brfalse, arrEnd);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, tokenTypeGetter);
+        il.Emit(OpCodes.Ldc_I4, (int)System.Text.Json.JsonTokenType.EndArray);
+        il.Emit(OpCodes.Beq, arrEnd);
+        // list.Add(ParseValueFromReader(ref reader))
+        il.Emit(OpCodes.Ldloc, listLocal);
+        il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, method); // recursive
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", [_types.Object]));
-        il.Emit(OpCodes.Br, arrLoopStart);
+        il.Emit(OpCodes.Br, arrLoop);
 
-        il.MarkLabel(arrLoopEnd);
-        il.Emit(OpCodes.Ldloc, resultListLocal);
+        il.MarkLabel(arrEnd);
+        il.Emit(OpCodes.Ldloc, listLocal);
         il.Emit(OpCodes.Ret);
 
-        // String
+        // --- String ---
         il.MarkLabel(stringLabel);
-        il.Emit(OpCodes.Pop); // pop valueKind
+        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(System.Text.Json.JsonElement).GetMethod("GetString")!);
+        il.Emit(OpCodes.Call, getStringMethod);
         il.Emit(OpCodes.Ret);
 
-        // Number
+        // --- Number → boxed double ---
         il.MarkLabel(numberLabel);
-        il.Emit(OpCodes.Pop); // pop valueKind
+        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, typeof(System.Text.Json.JsonElement).GetMethod("GetDouble")!);
+        il.Emit(OpCodes.Call, getDoubleMethod);
         il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
 
-        // True
-        il.MarkLabel(trueLiteralLabel);
-        il.Emit(OpCodes.Pop); // pop valueKind
+        // --- True / False → boxed bool ---
+        il.MarkLabel(trueLabel);
+        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Ret);
 
-        // False
-        il.MarkLabel(falseLiteralLabel);
-        il.Emit(OpCodes.Pop); // pop valueKind
+        il.MarkLabel(falseLabel);
+        il.Emit(OpCodes.Pop);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Ret);
 
-        // Null/Undefined
+        // --- Null / None / unhandled ---
         il.MarkLabel(nullLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);

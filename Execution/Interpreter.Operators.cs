@@ -92,6 +92,20 @@ public partial class Interpreter
             return newValue;
         }
 
+        // Typed-array element compound assignment (e.g. `a[i] += 1` on an Int32Array). Read the
+        // element (a boxed double, or BigInteger for BigInt arrays), apply the op, narrow back via
+        // the typed-array setter. The compiled side has a dedicated unboxed fast path; this keeps the
+        // interpreter consistent (previously it threw "not supported on this type").
+        if (obj is SharpTSTypedArray typedArray && index is double typedIdx)
+        {
+            int ti = (int)typedIdx;
+            RuntimeValue addValue = EvaluateRV(compound.Value);
+            RuntimeValue newValue = ApplyCompoundOperatorRV(
+                compound.Operator.Type, RuntimeValue.FromBoxed(typedArray[ti]), addValue);
+            typedArray[ti] = newValue.ToObject();
+            return newValue;
+        }
+
         throw new InterpreterException("Compound index assignment not supported on this type.");
     }
 

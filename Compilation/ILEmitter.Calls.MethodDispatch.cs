@@ -35,6 +35,26 @@ public partial class ILEmitter
             return;
         }
 
+        // Statically-typed string receiver charCodeAt (lexer / interpreter hot path, e.g. brainfuck's
+        // `program.charCodeAt(ip)`): the receiver is known to be a CLR string, so call StringCharCodeAt
+        // directly with the index passed UNBOXED via EmitExpressionAsDouble (proper ToNumber, no
+        // box→ToNumber round-trip) and leave the result as a raw double (SetStackType) instead of boxing.
+        // The common numeric consumer (`=== 43`, `sum + …`) then pays no box/unbox; a boxed consumer
+        // re-boxes lazily via EmitBoxIfNeeded. Mirrors the #859 promoted-accumulator path for plain
+        // strings; the any-typed receiver still routes through the boxed EmitStringOnlyMethodCall path.
+        if (methodName == "charCodeAt" && !methodGet.Optional && arguments.Count <= 1
+            && _ctx.TypeMap?.Get(methodGet.Object) is TypeSystem.TypeInfo.String)
+        {
+            EmitExpression(methodGet.Object);
+            EmitBoxIfNeeded(methodGet.Object);
+            IL.Emit(OpCodes.Castclass, _ctx.Types.String);
+            if (arguments.Count > 0) EmitExpressionAsDouble(arguments[0]);
+            else IL.Emit(OpCodes.Ldc_R8, 0.0);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.StringCharCodeAt);
+            SetStackType(StackType.Double);
+            return;
+        }
+
         // Promoted number[] local reduce (#861 typed-HOF pipeline): `arr.reduce((a,x)=>…, init)` over a
         // List<double> with a non-capturing double(double,double) reducer → bind the arrow's typed static
         // method DIRECTLY to Func<double,double,double> (no boxed adapter) and drive ArrayReduceDouble —

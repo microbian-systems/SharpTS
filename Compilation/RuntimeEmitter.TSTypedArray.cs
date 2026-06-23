@@ -241,6 +241,15 @@ public partial class RuntimeEmitter
         // Indexer: public object this[int index] { get; set; }
         EmitTypedArrayIndexer(typeBuilder, runtime, bytesPerElement, signed, clamped, isFloat, isBigInt);
 
+        // Unboxed numeric element accessors (#3): GetUnboxed/SetUnboxed return/accept a native
+        // double, for the compiled fast path (ILEmitter binds them at statically-typed sites).
+        // Skip BigInt (bigint, not number) and Uint8Clamped (keeps the boxed clamp/round path).
+        if (!isBigInt && !clamped)
+        {
+            var elementType = name.EndsWith("Array") ? name[..^5] : name;
+            EmitUnboxedNumericAccessors(typeBuilder, runtime, elementType, bytesPerElement, signed, isFloat);
+        }
+
         // Finalize type
         typeBuilder.CreateType();
     }
@@ -629,47 +638,37 @@ public partial class RuntimeEmitter
         }
         else if (bytesPerElement == 2)
         {
-            var bytesLocal = setIl.DeclareLocal(typeof(byte[]));
+            // Unsafe.WriteUnaligned(ref _buffer[byteIdx], (short|ushort)(int)Convert.ToDouble(value));
+            setIl.Emit(OpCodes.Ldarg_0);
+            setIl.Emit(OpCodes.Ldfld, _typedArrayBufferField!);
+            setIl.Emit(OpCodes.Ldloc, setIndexLocal);
+            setIl.Emit(OpCodes.Ldelema, typeof(byte));
             setIl.Emit(OpCodes.Ldarg_2);
             setIl.Emit(OpCodes.Call, typeof(Convert).GetMethod("ToDouble", [typeof(object)])!);
             setIl.Emit(OpCodes.Conv_I4);
             if (signed)
+            {
                 setIl.Emit(OpCodes.Conv_I2);
+                setIl.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(short)));
+            }
             else
+            {
                 setIl.Emit(OpCodes.Conv_U2);
-            if (signed)
-                setIl.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("GetBytes", [typeof(short)])!);
-            else
-                setIl.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("GetBytes", [typeof(ushort)])!);
-            setIl.Emit(OpCodes.Stloc, bytesLocal);
-
-            // Copy bytes to buffer
-            setIl.Emit(OpCodes.Ldarg_0);
-            setIl.Emit(OpCodes.Ldfld, _typedArrayBufferField!);
-            setIl.Emit(OpCodes.Ldloc, setIndexLocal);
-            setIl.Emit(OpCodes.Ldloc, bytesLocal);
-            setIl.Emit(OpCodes.Ldc_I4_0);
-            setIl.Emit(OpCodes.Ldelem_U1);
-            setIl.Emit(OpCodes.Stelem_I1);
-
-            setIl.Emit(OpCodes.Ldarg_0);
-            setIl.Emit(OpCodes.Ldfld, _typedArrayBufferField!);
-            setIl.Emit(OpCodes.Ldloc, setIndexLocal);
-            setIl.Emit(OpCodes.Ldc_I4_1);
-            setIl.Emit(OpCodes.Add);
-            setIl.Emit(OpCodes.Ldloc, bytesLocal);
-            setIl.Emit(OpCodes.Ldc_I4_1);
-            setIl.Emit(OpCodes.Ldelem_U1);
-            setIl.Emit(OpCodes.Stelem_I1);
+                setIl.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(ushort)));
+            }
         }
         else if (bytesPerElement == 4)
         {
-            var bytesLocal = setIl.DeclareLocal(typeof(byte[]));
+            setIl.Emit(OpCodes.Ldarg_0);
+            setIl.Emit(OpCodes.Ldfld, _typedArrayBufferField!);
+            setIl.Emit(OpCodes.Ldloc, setIndexLocal);
+            setIl.Emit(OpCodes.Ldelema, typeof(byte));
             if (isFloat)
             {
+                // Unsafe.WriteUnaligned(ref _buffer[byteIdx], Convert.ToSingle(value));
                 setIl.Emit(OpCodes.Ldarg_2);
                 setIl.Emit(OpCodes.Call, typeof(Convert).GetMethod("ToSingle", [typeof(object)])!);
-                setIl.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("GetBytes", [typeof(float)])!);
+                setIl.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(float)));
             }
             else
             {
@@ -678,81 +677,66 @@ public partial class RuntimeEmitter
                 if (signed)
                 {
                     setIl.Emit(OpCodes.Conv_I4);
-                    setIl.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("GetBytes", [typeof(int)])!);
+                    setIl.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(int)));
                 }
                 else
                 {
                     setIl.Emit(OpCodes.Conv_U4);
-                    setIl.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("GetBytes", [typeof(uint)])!);
+                    setIl.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(uint)));
                 }
             }
-            setIl.Emit(OpCodes.Stloc, bytesLocal);
-
-            // Use Array.Copy for 4 bytes
-            setIl.Emit(OpCodes.Ldloc, bytesLocal);
-            setIl.Emit(OpCodes.Ldc_I4_0);
-            setIl.Emit(OpCodes.Ldarg_0);
-            setIl.Emit(OpCodes.Ldfld, _typedArrayBufferField!);
-            setIl.Emit(OpCodes.Ldloc, setIndexLocal);
-            setIl.Emit(OpCodes.Ldc_I4_4);
-            setIl.Emit(OpCodes.Call, typeof(Array).GetMethod("Copy", [typeof(Array), typeof(int), typeof(Array), typeof(int), typeof(int)])!);
         }
         else if (bytesPerElement == 8)
         {
-            var bytesLocal = setIl.DeclareLocal(typeof(byte[]));
+            setIl.Emit(OpCodes.Ldarg_0);
+            setIl.Emit(OpCodes.Ldfld, _typedArrayBufferField!);
+            setIl.Emit(OpCodes.Ldloc, setIndexLocal);
+            setIl.Emit(OpCodes.Ldelema, typeof(byte));
             if (isFloat)
             {
+                // Unsafe.WriteUnaligned(ref _buffer[byteIdx], Convert.ToDouble(value));
                 setIl.Emit(OpCodes.Ldarg_2);
                 setIl.Emit(OpCodes.Call, typeof(Convert).GetMethod("ToDouble", [typeof(object)])!);
-                setIl.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("GetBytes", [typeof(double)])!);
+                setIl.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(double)));
             }
             else if (isBigInt)
             {
-                // For BigInt, need to convert from BigInteger to long/ulong
+                // For BigInt, convert from BigInteger to long/ulong (preserves prior ToInt64 form).
                 setIl.Emit(OpCodes.Ldarg_2);
                 setIl.Emit(OpCodes.Call, typeof(Convert).GetMethod("ToInt64", [typeof(object)])!);
                 if (signed)
-                    setIl.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("GetBytes", [typeof(long)])!);
+                    setIl.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(long)));
                 else
-                    setIl.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("GetBytes", [typeof(ulong)])!);
+                    setIl.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(ulong)));
             }
             else
             {
                 setIl.Emit(OpCodes.Ldarg_2);
                 setIl.Emit(OpCodes.Call, typeof(Convert).GetMethod("ToDouble", [typeof(object)])!);
                 setIl.Emit(OpCodes.Conv_I8);
-                setIl.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("GetBytes", [typeof(long)])!);
+                setIl.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(long)));
             }
-            setIl.Emit(OpCodes.Stloc, bytesLocal);
-
-            // Use Array.Copy for 8 bytes
-            setIl.Emit(OpCodes.Ldloc, bytesLocal);
-            setIl.Emit(OpCodes.Ldc_I4_0);
-            setIl.Emit(OpCodes.Ldarg_0);
-            setIl.Emit(OpCodes.Ldfld, _typedArrayBufferField!);
-            setIl.Emit(OpCodes.Ldloc, setIndexLocal);
-            setIl.Emit(OpCodes.Ldc_I4_8);
-            setIl.Emit(OpCodes.Call, typeof(Array).GetMethod("Copy", [typeof(Array), typeof(int), typeof(Array), typeof(int), typeof(int)])!);
         }
 
         setIl.Emit(OpCodes.Ret);
         typeBuilder.DefineMethodOverride(setter, runtime.TypedArrayElementSet);
-
-        // Unboxed double accessors for Float64Array (#878). These mirror the byte
-        // logic of the boxed Get/Set above but take/return a native `double` — no
-        // Box, no Convert.ToDouble coercion. The IL emitter binds them directly at
-        // statically-known Float64Array index sites, eliminating the GetIndex/SetIndex
-        // dispatch, the isinst ladder, and the per-element box. Like Get/Set, they do
-        // NOT bounds-check: out-of-range access faults via BitConverter/Array.Copy,
-        // exactly as the boxed path does today (OOB semantics unchanged).
-        if (bytesPerElement == 8 && isFloat)
-        {
-            EmitFloat64UnboxedAccessors(typeBuilder, runtime);
-        }
     }
 
-    // double GetUnboxed(int index) / void SetUnboxed(int index, double value) on $Float64Array.
-    private void EmitFloat64UnboxedAccessors(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    // double GetUnboxed(int index) / void SetUnboxed(int index, double value) on each concrete
+    // numeric $XArray (#3, generalizing the Float64-only #878 path). They mirror the byte logic
+    // of the boxed Get/Set above but take/return a native `double` — no Box, no Convert.ToDouble
+    // coercion — reinterpreting over the byte[] backing store via Unsafe.Read/WriteUnaligned (no
+    // per-element allocation). The IL emitter binds them at statically-typed typed-array index
+    // sites, eliminating the GetIndex/SetIndex dispatch, the isinst ladder, and the per-element
+    // box on BOTH read and write. AggressiveInlining + a non-virtual `call` let the JIT fold them
+    // into the caller's loop and hoist the _buffer load / bounds check. The single ldelema
+    // bounds-checks the first byte; a correctly-sized buffer (length a multiple of bytesPerElement,
+    // byteOffset aligned) guarantees the rest are in range, so OOB faults exactly as the boxed
+    // path does today (semantics unchanged). The double→element narrowing matches the boxed Set's
+    // conv opcodes so the fast path and the boxed fallback always agree.
+    private void EmitUnboxedNumericAccessors(
+        TypeBuilder typeBuilder, EmittedRuntime runtime, string elementType,
+        int bytesPerElement, bool signed, bool isFloat)
     {
         var getU = typeBuilder.DefineMethod(
             "GetUnboxed",
@@ -760,19 +744,12 @@ public partial class RuntimeEmitter
             _types.Double,
             [_types.Int32]
         );
+        getU.SetImplementationFlags(MethodImplAttributes.AggressiveInlining);
         var gil = getU.GetILGenerator();
-        // return BitConverter.ToDouble(_buffer, _byteOffset + index * 8);
-        gil.Emit(OpCodes.Ldarg_0);
-        gil.Emit(OpCodes.Ldfld, _typedArrayBufferField!);
-        gil.Emit(OpCodes.Ldarg_0);
-        gil.Emit(OpCodes.Ldfld, _typedArrayByteOffsetField!);
-        gil.Emit(OpCodes.Ldarg_1);
-        gil.Emit(OpCodes.Ldc_I4_8);
-        gil.Emit(OpCodes.Mul);
-        gil.Emit(OpCodes.Add);
-        gil.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("ToDouble", [typeof(byte[]), typeof(int)])!);
+        EmitElementRef(gil, bytesPerElement);
+        EmitReadElementAsDouble(gil, bytesPerElement, signed, isFloat);
         gil.Emit(OpCodes.Ret);
-        runtime.Float64ArrayGetUnboxed = getU;
+        runtime.TypedArrayGetUnboxedByElement[elementType] = getU;
 
         var setU = typeBuilder.DefineMethod(
             "SetUnboxed",
@@ -780,26 +757,127 @@ public partial class RuntimeEmitter
             _types.Void,
             [_types.Int32, _types.Double]
         );
+        setU.SetImplementationFlags(MethodImplAttributes.AggressiveInlining);
         var sil = setU.GetILGenerator();
-        var bytesLocal = sil.DeclareLocal(typeof(byte[]));
-        // var bytes = BitConverter.GetBytes(value);
-        sil.Emit(OpCodes.Ldarg_2);
-        sil.Emit(OpCodes.Call, typeof(BitConverter).GetMethod("GetBytes", [typeof(double)])!);
-        sil.Emit(OpCodes.Stloc, bytesLocal);
-        // Array.Copy(bytes, 0, _buffer, _byteOffset + index * 8, 8);
-        sil.Emit(OpCodes.Ldloc, bytesLocal);
-        sil.Emit(OpCodes.Ldc_I4_0);
-        sil.Emit(OpCodes.Ldarg_0);
-        sil.Emit(OpCodes.Ldfld, _typedArrayBufferField!);
-        sil.Emit(OpCodes.Ldarg_0);
-        sil.Emit(OpCodes.Ldfld, _typedArrayByteOffsetField!);
-        sil.Emit(OpCodes.Ldarg_1);
-        sil.Emit(OpCodes.Ldc_I4_8);
-        sil.Emit(OpCodes.Mul);
-        sil.Emit(OpCodes.Add);
-        sil.Emit(OpCodes.Ldc_I4_8);
-        sil.Emit(OpCodes.Call, typeof(Array).GetMethod("Copy", [typeof(Array), typeof(int), typeof(Array), typeof(int), typeof(int)])!);
+        EmitElementRef(sil, bytesPerElement);   // ref byte destination
+        sil.Emit(OpCodes.Ldarg_2);              // double value
+        EmitNarrowDoubleAndWrite(sil, bytesPerElement, signed, isFloat);
         sil.Emit(OpCodes.Ret);
-        runtime.Float64ArraySetUnboxed = setU;
+        runtime.TypedArraySetUnboxedByElement[elementType] = setU;
+
+        // Keep the Float64-specific handles populated for any direct references.
+        if (elementType == "Float64")
+        {
+            runtime.Float64ArrayGetUnboxed = getU;
+            runtime.Float64ArraySetUnboxed = setU;
+        }
+    }
+
+    // Pushes `ref byte` at _buffer[_byteOffset + index * bytesPerElement] (this=arg0, index=arg1).
+    private void EmitElementRef(ILGenerator il, int bytesPerElement)
+    {
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _typedArrayBufferField!);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _typedArrayByteOffsetField!);
+        il.Emit(OpCodes.Ldarg_1);
+        if (bytesPerElement != 1)
+        {
+            il.Emit(OpCodes.Ldc_I4, bytesPerElement);
+            il.Emit(OpCodes.Mul);
+        }
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldelema, typeof(byte));
+    }
+
+    // Stack in: [ref byte]. Stack out: [double]. Reads the element and widens to double.
+    private static void EmitReadElementAsDouble(ILGenerator il, int bytesPerElement, bool signed, bool isFloat)
+    {
+        if (bytesPerElement == 1)
+        {
+            il.Emit(OpCodes.Call, UnsafeReadUnaligned(signed ? typeof(sbyte) : typeof(byte)));
+            il.Emit(OpCodes.Conv_R8);
+        }
+        else if (bytesPerElement == 2)
+        {
+            il.Emit(OpCodes.Call, UnsafeReadUnaligned(signed ? typeof(short) : typeof(ushort)));
+            il.Emit(OpCodes.Conv_R8);
+        }
+        else if (bytesPerElement == 4 && isFloat)
+        {
+            il.Emit(OpCodes.Call, UnsafeReadUnaligned(typeof(float)));
+            il.Emit(OpCodes.Conv_R8);
+        }
+        else if (bytesPerElement == 4 && signed)
+        {
+            il.Emit(OpCodes.Call, UnsafeReadUnaligned(typeof(int)));
+            il.Emit(OpCodes.Conv_R8);
+        }
+        else if (bytesPerElement == 4)
+        {
+            il.Emit(OpCodes.Call, UnsafeReadUnaligned(typeof(uint)));
+            il.Emit(OpCodes.Conv_U8);  // zero-extend uint32 → int64 so the double is 0..4294967295
+            il.Emit(OpCodes.Conv_R8);
+        }
+        else // bytesPerElement == 8 && isFloat (Float64)
+        {
+            il.Emit(OpCodes.Call, UnsafeReadUnaligned(typeof(double)));
+        }
+    }
+
+    // Stack in: [ref byte, double value]. Narrows the double to the element type and stores it.
+    // Conv opcodes mirror the boxed Set so the fast path and boxed fallback agree exactly.
+    private static void EmitNarrowDoubleAndWrite(ILGenerator il, int bytesPerElement, bool signed, bool isFloat)
+    {
+        if (bytesPerElement == 1)
+        {
+            il.Emit(OpCodes.Conv_I4);
+            if (signed) { il.Emit(OpCodes.Conv_I1); il.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(sbyte))); }
+            else { il.Emit(OpCodes.Conv_U1); il.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(byte))); }
+        }
+        else if (bytesPerElement == 2)
+        {
+            il.Emit(OpCodes.Conv_I4);
+            if (signed) { il.Emit(OpCodes.Conv_I2); il.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(short))); }
+            else { il.Emit(OpCodes.Conv_U2); il.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(ushort))); }
+        }
+        else if (bytesPerElement == 4 && isFloat)
+        {
+            il.Emit(OpCodes.Conv_R4);
+            il.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(float)));
+        }
+        else if (bytesPerElement == 4 && signed)
+        {
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(int)));
+        }
+        else if (bytesPerElement == 4)
+        {
+            il.Emit(OpCodes.Conv_U4);
+            il.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(uint)));
+        }
+        else // bytesPerElement == 8 && isFloat (Float64)
+        {
+            il.Emit(OpCodes.Call, UnsafeWriteUnaligned(typeof(double)));
+        }
+    }
+
+    // Reflects the `ref byte` overloads of Unsafe.Read/WriteUnaligned (not the `void*` ones)
+    // and instantiates them for the element type. Unsafe lives in System.Private.CoreLib (BCL),
+    // so the emitted token references the BCL, never SharpTS.dll — standalone DLLs stay standalone.
+    private static MethodInfo UnsafeWriteUnaligned(Type elementType)
+    {
+        var methods = typeof(System.Runtime.CompilerServices.Unsafe).GetMethods();
+        var open = Array.Find(methods, m => m.Name == "WriteUnaligned"
+            && m.GetParameters()[0].ParameterType == typeof(byte).MakeByRefType())!;
+        return open.MakeGenericMethod(elementType);
+    }
+
+    private static MethodInfo UnsafeReadUnaligned(Type elementType)
+    {
+        var methods = typeof(System.Runtime.CompilerServices.Unsafe).GetMethods();
+        var open = Array.Find(methods, m => m.Name == "ReadUnaligned"
+            && m.GetParameters()[0].ParameterType == typeof(byte).MakeByRefType())!;
+        return open.MakeGenericMethod(elementType);
     }
 }
