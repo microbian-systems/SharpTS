@@ -107,6 +107,25 @@ switch (command)
     case ParsedCommand.LspBridge lspBridge:
         RunLspBridge(lspBridge.ProjectFile, lspBridge.References, lspBridge.SdkPath);
         break;
+
+    case ParsedCommand.Lsp:
+        RunLanguageServer();
+        break;
+}
+
+static void RunLanguageServer()
+{
+    try
+    {
+        // Project-reference wiring (--project/-r) is handled in a later phase; Phase 1
+        // resolves @DotNetType targets via the in-process registry, which covers the BCL.
+        SharpTS.LanguageServer.SharpTSLanguageServer.RunAsync().GetAwaiter().GetResult();
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[LSP Fatal] {ex.Message}");
+        Environment.Exit(1);
+    }
 }
 
 static void RunLspBridge(string? projectFile, List<string> references, string? sdkPath)

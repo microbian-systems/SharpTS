@@ -122,6 +122,12 @@ public abstract record ParsedCommand
     /// <param name="SdkPath">SDK path for reference assemblies</param>
     public sealed record LspBridge(string? ProjectFile, List<string> References, string? SdkPath) : ParsedCommand;
 
+    /// <summary>Start the language server (LSP over stdio) for IDE integration.</summary>
+    /// <param name="ProjectFile">Optional .csproj file path for assembly references</param>
+    /// <param name="References">Assembly references</param>
+    /// <param name="SdkPath">SDK path for reference assemblies</param>
+    public sealed record Lsp(string? ProjectFile, List<string> References, string? SdkPath) : ParsedCommand;
+
     /// <summary>Parsing error with message and exit code.</summary>
     /// <param name="Message">Error message to display</param>
     /// <param name="ExitCode">Process exit code</param>
@@ -174,6 +180,13 @@ public class CommandLineParser
         if (remainingArgs[0] == "lsp-bridge")
         {
             return ParseLspBridgeCommand(remainingArgs);
+        }
+
+        // Handle lsp (language server over stdio)
+        if (remainingArgs[0] == "lsp")
+        {
+            var bridge = (ParsedCommand.LspBridge)ParseLspBridgeCommand(remainingArgs);
+            return new ParsedCommand.Lsp(bridge.ProjectFile, bridge.References, bridge.SdkPath);
         }
 
         // Handle script execution
