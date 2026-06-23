@@ -398,8 +398,44 @@ single-file binary so non-VS-Code editors don't need the full SDK.
 ---
 
 ## 13. Open decisions for later (not blocking Phase 1)
-- Phase 4 AST-span approach: instrument base records (preferred) vs. a side table.
 - Server packaging for non-VS-Code editors: `dotnet tool` vs. self-contained binary.
 - Whether to keep a `sharpts.diagnostics: "all"` users' experience tuned (ordering vs
   `tsserver`), and whether to offer a "SharpTS owns this workspace" mode later
   (the "Own SharpTS files" option we deferred).
+
+---
+
+## 14. Phase 4a design — token-based interop navigation (decided 2026-06-22)
+
+**Scope decision:** Phase 4 splits. **4a (now):** interop-focused, *token-based* — no
+parser-wide AST-span surgery. **4b (deferred):** general TS hover/go-to-def (parser-wide
+spans + position→`TypeMap` index + symbol table) — only if it's worth competing with
+`tsserver`, which already does TS navigation. Go-to-definition is dropped from 4a
+(`@DotNetType` members compile to .NET — no source target).
+
+**Key enabling fact:** the lexer sets `Token.Start` (global char offset) on *every* token
+(`Lexer.AddToken` → `new Token(…, _tokenStartLine, _start)`), and `Lexeme` gives length. So
+any token-backed AST node yields a precise `[Start, Start+len)` span. No `SourceSpan` field
+on records (avoids the value-equality landmine), no parser changes.
+
+**4a deliverables:**
+1. **`PositionMap`** (`LanguageServer/PositionMap.cs`) — precompute line-start offsets from
+   the document text; `ToLineCol(globalOffset) → (line0, col0)`; `Span(Token) → SourceLocation`
+   (start + end from `Start`/`Lexeme.Length`).
+2. **Precise diagnostic columns** — `InteropAnalyzer` takes an optional `PositionMap` and
+   emits token-precise ranges (member `Name` token for Tier 2/3b/3c/3a; the `@DotNetType`
+   decorator span — `AtToken`→callee-name token — for Tier 1; the `addEventListener` `Get.Name`
+   token for Tier 3d). Falls back to line-only when no map (keeps existing unit tests green).
+   `DiagnosticsService` builds the map from the buffer text and passes it.
+3. **Member hover — declarations** (token-based, no type check): walk `@DotNetType` classes;
+   if the cursor is on a member's `Name` token, resolve that member on the class's CLR type
+   (reuse `DotNetTypeRegistry.GetMethods`/`GetPropertyOrField`) and render its real signature +
+   overloads + XML doc (`XmlDocLoader.GetMethodSummary`/`GetPropertySummary`).
+4. **Member hover — usages** (uses `TypeMap`): run `CheckWithRecovery` to get the `TypeMap`;
+   if the cursor is on a member-access `Expr.Get.Name` token, look up the receiver
+   (`getNode.Object`) in the `TypeMap` → unwrap to `ExternalDotNetType` (carries `ResolvedType`)
+   → resolve + render the member. Receiver position detection is token-based (the `.Name`
+   token), so no interval-tree index is needed.
+
+`HoverHandler` tries decorator hover (existing), then member hover. New `MemberHoverService`
+holds the resolver + `XmlDocLoader`; reuses the interop analyzer's resolution semantics.
