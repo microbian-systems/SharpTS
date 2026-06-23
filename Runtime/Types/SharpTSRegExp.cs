@@ -19,22 +19,35 @@ public class SharpTSRegExp : ITypeCategorized
     public TypeCategory RuntimeCategory => TypeCategory.RegExp;
 
     /// <summary>
-    /// Compile cache keyed by (pattern, options). A regex literal in TS
-    /// source like <c>/foo/g</c> evaluates to <c>new SharpTSRegExp("foo", "g")</c>
-    /// every time the expression runs — in a tight loop that's per-iter
-    /// <c>new Regex(...)</c> compilation, the dominant cost (~250 MB of
-    /// regex-engine state allocated for N=100K calls in baseline). Sharing
-    /// the compiled .NET <c>Regex</c> across calls collapses that to a
-    /// single compile per (pattern, options) per process.
+    /// Immutable, fully-validated template for a (pattern, flags) pair: the
+    /// compiled .NET <c>Regex</c> plus the derived flag state. Everything here
+    /// is a pure function of (pattern, flags), so it is computed once per
+    /// distinct literal and shared across every construction.
+    /// </summary>
+    private readonly record struct RegExpTemplate(
+        Regex Regex, string Flags, bool Global, bool IgnoreCase, bool Multiline);
+
+    /// <summary>
+    /// Template cache keyed by (pattern, flags). A regex literal in TS source
+    /// like <c>/foo/g</c> evaluates to <c>new SharpTSRegExp("foo", "g")</c>
+    /// every time the expression runs — in a tight loop that's per-iter flag
+    /// validation, normalization (a <c>StringBuilder</c>), two full pattern
+    /// scans (<see cref="ValidateModifiers"/>, <see cref="HasNamedGroups"/>),
+    /// options derivation, and a <c>Regex</c> compile. All of it is a pure
+    /// function of (pattern, flags), so the cache collapses repeat
+    /// constructions to a single dictionary lookup plus field copies
+    /// (~85 ns → a few ns for the hot literal here).
     ///
     /// Why a tuple key works: ECMAScript's regex semantics here are fully
-    /// captured by (source, flags) — no instance-specific state lives on
-    /// the .NET <c>Regex</c> object. Per-instance <c>LastIndex</c> stays
-    /// on <c>SharpTSRegExp</c>, not on <c>_regex</c>, so cache sharing is
-    /// safe. Cache size is bounded by the set of distinct regex literals
-    /// in the program, which is finite.
+    /// captured by (source, flags) — no instance-specific state lives on the
+    /// .NET <c>Regex</c> object. Per-instance <c>LastIndex</c> stays on
+    /// <c>SharpTSRegExp</c> (ECMA-262 makes each literal evaluation a fresh
+    /// object), so sharing the immutable template is safe. An invalid pattern
+    /// or flags throws inside the factory and is not cached, so the
+    /// spec-required SyntaxError still fires on every construction. Cache size
+    /// is bounded by the set of distinct regex literals, which is finite.
     /// </summary>
-    private static readonly ConcurrentDictionary<(string Pattern, RegexOptions Options), Regex> _compileCache = new();
+    private static readonly ConcurrentDictionary<(string Pattern, string Flags), RegExpTemplate> _templateCache = new();
 
     private readonly Regex _regex;
     private readonly string _source;
@@ -175,15 +188,42 @@ public class SharpTSRegExp : ITypeCategorized
     public SharpTSRegExp(string pattern, string flags = "")
     {
         _source = pattern;
+        // All the per-construction work — flag validation/normalization, the
+        // modifier/unicode/named-group pattern scans, options derivation, and
+        // the Regex compile — is a pure function of (pattern, flags), so it is
+        // computed once by BuildTemplate and cached. A repeat construction of
+        // the same literal (the hot loop case) is now a dictionary lookup plus
+        // field copies. LastIndex is per-instance (each literal evaluation is a
+        // fresh object per ECMA-262), so only the immutable template is shared.
+        var template = _templateCache.GetOrAdd((pattern, flags),
+            static key => BuildTemplate(key.Pattern, key.Flags));
+        _regex = template.Regex;
+        _flags = template.Flags;
+        _global = template.Global;
+        _ignoreCase = template.IgnoreCase;
+        _multiline = template.Multiline;
+        LastIndex = 0;
+    }
+
+    /// <summary>
+    /// Validates, normalizes, and compiles a (pattern, flags) pair into an
+    /// immutable <see cref="RegExpTemplate"/>. Runs only on a cache miss (once
+    /// per distinct literal). Validation ordering matches ECMA-262 throw
+    /// ordering exactly — flags first (§22.2.3.3), then modifier groups, then
+    /// the Annex B u/v-mode subset, then the pattern compile — so an invalid
+    /// literal raises the same SyntaxError it did when this lived inline in the
+    /// constructor. A throw here propagates out of <c>GetOrAdd</c> and is not
+    /// cached, so the SyntaxError fires on every construction, as required.
+    /// </summary>
+    private static RegExpTemplate BuildTemplate(string pattern, string flags)
+    {
         // ECMA-262 §22.2.3.3: each flag must be one of d/g/i/m/s/u/v/y, with no
         // duplicates and not both u and v. NormalizeFlags silently drops invalid
         // flags, so validate the raw string first and throw SyntaxError.
         ValidateFlags(flags);
-        _flags = NormalizeFlags(flags);
-        _global = _flags.Contains('g');
-        _ignoreCase = _flags.Contains('i');
-        _multiline = _flags.Contains('m');
-        LastIndex = 0;
+        string norm = NormalizeFlags(flags);
+        bool ignoreCase = norm.Contains('i');
+        bool multiline = norm.Contains('m');
 
         // ES2025 modifier-group early errors (e.g. (?i-i:), (?ii:), (?-:)) — .NET
         // accepts several of these, so validate up front and throw SyntaxError.
@@ -192,46 +232,39 @@ public class SharpTSRegExp : ITypeCategorized
         // ECMA-262 Annex B distinguishes Unicode (`u`/`v`) mode, where several
         // forms .NET tolerates are SyntaxErrors. We validate the clearly-invalid,
         // false-positive-free subset here (others are a deferred follow-up).
-        if (_flags.Contains('u') || _flags.Contains('v'))
+        if (norm.Contains('u') || norm.Contains('v'))
             ValidateUnicodePattern(pattern);
 
         // Named groups ((?<name>...)) are not supported in ECMAScript mode in .NET.
         // Detect them and fall back to non-ECMAScript mode.
         // .NET also rejects combining ECMAScript with Singleline, so drop ECMAScript
         // whenever the 's' (dotAll) flag is set.
-        bool useEcmaScript = !HasNamedGroups(pattern) && !_flags.Contains('s');
+        bool useEcmaScript = !HasNamedGroups(pattern) && !norm.Contains('s');
         var options = useEcmaScript ? RegexOptions.ECMAScript : RegexOptions.None;
-        if (_ignoreCase) options |= RegexOptions.IgnoreCase;
-        if (_multiline) options |= RegexOptions.Multiline;
-        if (_flags.Contains('s')) options |= RegexOptions.Singleline;
+        if (ignoreCase) options |= RegexOptions.IgnoreCase;
+        if (multiline) options |= RegexOptions.Multiline;
+        if (norm.Contains('s')) options |= RegexOptions.Singleline;
         // Compile the engine to IL rather than running it interpreted. The
-        // one-time JIT cost is paid once per distinct (pattern, options) and
-        // amortized by _compileCache (a regex literal in a hot loop reuses the
-        // cached engine), so every subsequent Match/Matches/Replace runs the
-        // compiled matcher. Measured ~1.3x on raw matching; the flag is folded
-        // into the cache key so it can't collide with an interpreted entry.
+        // one-time JIT cost is paid once per distinct literal (this factory runs
+        // on a cache miss only) and every subsequent Match/Matches/Replace runs
+        // the compiled matcher. Measured ~1.3x on raw matching.
         options |= RegexOptions.Compiled;
 
         try
         {
             // Rewrite the JS shorthand escapes (\d \w \s and negations) to
             // explicit ECMAScript-exact sets before compiling — see
-            // RewriteEcmaScriptShorthands. The cache key stays the *original*
-            // pattern, so the rewrite runs only on a cache miss (once per
-            // distinct literal) and never on the hot cache-hit path.
-            _regex = _compileCache.GetOrAdd((pattern, options),
-                static key => new Regex(RewriteEcmaScriptShorthands(key.Pattern), key.Options));
+            // RewriteEcmaScriptShorthands. Runs once per distinct literal.
+            var regex = new Regex(RewriteEcmaScriptShorthands(pattern), options);
+            return new RegExpTemplate(regex, norm, norm.Contains('g'), ignoreCase, multiline);
         }
         catch (ArgumentException ex)
         {
-            // .NET wraps the underlying RegexParseException in
-            // ArgumentException; ConcurrentDictionary.GetOrAdd will surface
-            // it as-is on the first failed compile (and won't cache the
-            // failure — subsequent retries can re-attempt). ECMA-262 §22.2.3.1
-            // mandates a SyntaxError for an invalid pattern, so surface it as a
-            // guest-catchable SharpTSSyntaxError (so `e instanceof SyntaxError`
-            // and `assert.throws(SyntaxError, ...)` hold) rather than a bare
-            // host Exception.
+            // .NET wraps the underlying RegexParseException in ArgumentException.
+            // ECMA-262 §22.2.3.1 mandates a SyntaxError for an invalid pattern, so
+            // surface it as a guest-catchable SharpTSSyntaxError (so
+            // `e instanceof SyntaxError` and `assert.throws(SyntaxError, ...)`
+            // hold) rather than a bare host Exception.
             throw new Exceptions.ThrowException(
                 new SharpTSSyntaxError($"Invalid regular expression: {ex.Message}"));
         }
