@@ -1,10 +1,10 @@
 # Plan: Replace the LspBridge with a real Language Server (Direction B)
 
 **Status:** In progress on branch `wrk/lsp-server`. Landed: Phase 0, Phase 1
-(interop analyzer + project refs), LspBridge teardown, Phase 3 (extension
-rewrite), and Phase 2 core (decorator hover + builtin completion). Remaining:
-Phase 2 continuation (signatureHelp, CLR-type-name completion in the string),
-Phase 4 (AST spans → hover/go-to-def), Phase 5 (polish/multi-editor packaging).
+(interop analyzer + project refs), LspBridge teardown, Phase 2 (decorator hover,
+completion, CLR-type-name completion, signatureHelp), Phase 3 (extension rewrite).
+Remaining: Phase 4 (AST spans → hover/go-to-def + member-level hover + precise
+columns), Phase 5 (polish/multi-editor packaging).
 **Author:** investigation + design pass, 2026-06-22
 **Decision:** Throw away the bespoke `LspBridge` JSON protocol and the hand-rolled
 VS Code providers. Stand up a genuine LSP server over SharpTS's own
@@ -364,11 +364,13 @@ single-file binary so non-VS-Code editors don't need the full SDK.
   9 analyzer tests; verified end-to-end (didOpen/didChange) against the real binary.
 - ✅ **Teardown.** `LspBridge` protocol + handlers + tests deleted; `CsprojParser`/
   `XmlDocLoader` relocated into `LanguageServer/`; `lsp-bridge` CLI removed.
-- 🟡 **Phase 2 — Decorator IntelliSense (core done).** `DecoratorService` + `HoverHandler`
-  + `CompletionHandler`: hover on `@DotNetType("X")` shows the resolved CLR type + XML doc;
-  hover on a builtin decorator shows its description; completion after `@` offers the builtin
-  decorators. 7 tests + e2e. **Remaining:** `signatureHelp`, CLR-type-name completion inside
-  the `@DotNetType("…")` string, and member-level hover.
+- ✅ **Phase 2 — Decorator IntelliSense.** `DecoratorService` + `HoverHandler` /
+  `CompletionHandler` / `SignatureHelpHandler`: hover on `@DotNetType("X")` shows the resolved
+  CLR type + XML doc; hover on a builtin decorator shows its description; completion after `@`
+  offers builtins, and inside `@DotNetType("…")` offers CLR type names from referenced
+  assemblies; signatureHelp for builtin decorator calls. 12 tests + e2e (hover/completion/sig).
+  *Member-level hover (hovering a method inside a `@DotNetType` class) needs Phase 4's position
+  index and is deferred there.*
 - ✅ **Phase 3 — Extension rewrite.** `vscode-languageclient` over `dotnet … lsp`;
   `dotnetPath`/`projectFile`/`additionalReferences` settings; bridge client + providers
   + DeclarationGenerator deleted; compile/run kept. Compiles clean (tsc).
