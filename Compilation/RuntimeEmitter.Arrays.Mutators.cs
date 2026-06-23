@@ -1058,6 +1058,13 @@ public partial class RuntimeEmitter
         var midLocal = il.DeclareLocal(_types.Int32);
         var hiLocal = il.DeclareLocal(_types.Int32);
         var kLocal = il.DeclareLocal(_types.Int32);
+        // Comparator-argument buffer, allocated ONCE below and reused for every comparison.
+        // The merge loop previously did `new object[2]` per compared pair — Θ(n log n)
+        // throwaway arrays, the dominant cost (and GC-variance source) of compiled sort on
+        // large inputs. The guest comparator only ever sees its two parameters, never this
+        // backing array, so reusing it across all comparisons is safe (the interpreter's
+        // CompareFnComparer reuses its arg list for the same reason).
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
 
         // n = defined.Count
         il.Emit(OpCodes.Ldloc, definedLocal);
@@ -1074,6 +1081,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, nLocal);
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Stloc, dstLocal);
+
+        // argsBuf = new object[2] — allocated once here; reused for every comparator call.
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, argsLocal);
 
         var widthCond = il.DefineLabel();
         var widthBody = il.DefineLabel();
@@ -1189,23 +1201,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, checkCompareResult);
 
         il.MarkLabel(hasCompareFn);
-        // result = InvokeValue(compareFn, new object[] { src[i], src[j] })
-        il.Emit(OpCodes.Ldc_I4_2);
-        il.Emit(OpCodes.Newarr, _types.Object);
-        il.Emit(OpCodes.Dup);
+        // result = InvokeValue(compareFn, argsBuf) with argsBuf[0]=src[i], argsBuf[1]=src[j].
+        // argsBuf is the single hoisted object[2] declared above — no per-comparison allocation.
+        il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ldloc, srcLocal);
         il.Emit(OpCodes.Ldloc, iLocal);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stelem_Ref);
-        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ldloc, srcLocal);
         il.Emit(OpCodes.Ldloc, jLocal);
         il.Emit(OpCodes.Ldelem_Ref);
         il.Emit(OpCodes.Stelem_Ref);
-        var argsLocal = il.DeclareLocal(_types.ObjectArray);
-        il.Emit(OpCodes.Stloc, argsLocal);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldloc, argsLocal);
         il.Emit(OpCodes.Call, runtime.InvokeValue);

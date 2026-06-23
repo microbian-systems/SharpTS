@@ -219,6 +219,11 @@ public static class ArrayBuiltIns
         {
             _compareArgs[0] = x.Element;
             _compareArgs[1] = y.Element;
+            // NOTE: deliberately stays on the legacy boxed Call rather than CallV2. For the
+            // common trivial comparator (`(a,b)=>a-b`), eagerly converting both boxed args to
+            // RuntimeValue here (FromBoxed) costs more than this near-free reference copy and
+            // measured ~13% SLOWER on a 100k interpreter sort — the boxed Call lets the
+            // comparator body unbox lazily. Revisit only with a non-boxing comparator path.
             var result = _fn.Call(_interp, _compareArgs);
             if (result is double d && !double.IsNaN(d) && d != 0)
                 return d < 0 ? -1 : 1;
