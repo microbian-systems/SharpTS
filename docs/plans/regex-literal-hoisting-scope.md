@@ -129,3 +129,31 @@ literal-loop 42 ms ≈ hoisted 39 ms). Compiled-only optimization.
   string-method args. ~0.5 day.
 - **Out of scope (later)** — dataflow-based hoisting for non-escaping literals assigned
   to a `const` used only in safe positions; the per-`.test()` dispatch gap.
+
+## Implemented
+
+Both phases landed in one pass. Files:
+- `RegexLiteralHoistAnalyzer.cs` — the syntactic, reference-keyed analyzer (test/exec
+  without g/y + the six stateless string consumers).
+- `EmittedRuntime.RegexHoistFields` — the per-site field map, hung off the shared
+  runtime so it reaches every emission context with no `CompilationContext` threading.
+- `ILCompiler.DefineHoistedRegexFields` — wired into **both** the single-file
+  (`Compile`) and module (`CompileModules`) phase orchestrations, after `$Program` is
+  created. (The module path is separate; missing it the first time meant imported
+  programs silently didn't hoist — caught by a perf no-op.)
+- `ILEmitter.EmitRegexLiteral` — the lazy `ldsfld`/init branch.
+
+Two gotchas worth recording:
+- **Reference identity is load-bearing.** `Expr.RegexLiteral` is a record (value
+  equality); the field map and hoistable set use `ReferenceEqualityComparer` so an
+  escaping `const r = /a/` can't value-match a hoisted `/a/.test()` and get wrongly
+  shared. Verified live: in a file with both, only the `.test` node hoisted.
+- **Two compile entry points.** Hoisting must be wired into `Compile` *and*
+  `CompileModules`; any program with an `import` uses the latter.
+
+Measured (compiled, N=100 000, literal `/^\w+@\w+\.\w+$/.test(...)` per iteration):
+literal-loop **10.19 ms → 4.86 ms (2.1×)**, matching the hand-hoisted floor (4.76 ms).
+Residual vs Node (2.53 ms) is the per-`.test()` dispatch gap, as predicted. Correctness
+verified interpreter-vs-compiled across the test-matrix (g/y exclusion, escaping
+mutation, identity, all six string consumers); `--verify` clean; regex/IL-verify/
+standalone/closure/module suites green.
