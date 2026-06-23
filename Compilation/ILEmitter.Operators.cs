@@ -1635,6 +1635,54 @@ public partial class ILEmitter
         // 2. Apply operation
         // 3. Store back
 
+        // Numeric typed-array compound-assign fast path (#3): `a[i] OP= v` where `a` is a statically-
+        // typed numeric typed array and `v` is statically a number. Reads via GetUnboxed → double,
+        // applies the op in native double/int space (the same helper the boxed path uses), writes via
+        // SetUnboxed — no GetIndex/Add/SetIndex dispatch and no per-element boxing. Other receivers,
+        // operators, RHS types (BigInt/Uint8Clamped have no accessor) fall through to the boxed path.
+        if (csi.Object is Expr.Variable
+            && _ctx.TypeMap?.Get(csi.Object) is TypeInfo.TypedArray cta
+            && _ctx.Runtime!.GetTypedArrayType(cta.ElementType) is { } ctaType
+            && _ctx.Runtime!.TypedArrayGetUnboxedByElement.TryGetValue(cta.ElementType, out var ctaGet)
+            && _ctx.Runtime!.TypedArraySetUnboxedByElement.TryGetValue(cta.ElementType, out var ctaSet)
+            && _ctx.TypeMap?.Get(csi.Value) is TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER } or TypeInfo.NumberLiteral
+            && IsArithmeticOrBitwiseCompound(csi.Operator.Type))
+        {
+            // recv = (TAType)a  — side-effect-free variable, loaded once
+            EmitExpression(csi.Object);
+            EnsureBoxed();
+            IL.Emit(OpCodes.Castclass, ctaType);
+            var recvLocal = IL.DeclareLocal(ctaType);
+            IL.Emit(OpCodes.Stloc, recvLocal);
+
+            // idx = (int)i
+            EmitExpressionAsDouble(csi.Index);
+            IL.Emit(OpCodes.Conv_I4);
+            var idxLocal = IL.DeclareLocal(_ctx.Types.Int32);
+            IL.Emit(OpCodes.Stloc, idxLocal);
+
+            // cur = recv.GetUnboxed(idx)  → double
+            IL.Emit(OpCodes.Ldloc, recvLocal);
+            IL.Emit(OpCodes.Ldloc, idxLocal);
+            IL.Emit(OpCodes.Call, ctaGet);
+
+            // result = cur OP v  (double)
+            EmitCompoundArithmeticDoubleOnStack(csi.Operator.Type, csi.Value);
+            var resLocal = IL.DeclareLocal(_ctx.Types.Double);
+            IL.Emit(OpCodes.Stloc, resLocal);
+
+            // recv.SetUnboxed(idx, result)
+            IL.Emit(OpCodes.Ldloc, recvLocal);
+            IL.Emit(OpCodes.Ldloc, idxLocal);
+            IL.Emit(OpCodes.Ldloc, resLocal);
+            IL.Emit(OpCodes.Call, ctaSet);
+
+            // The compound-assignment expression evaluates to the stored numeric result.
+            IL.Emit(OpCodes.Ldloc, resLocal);
+            SetStackType(StackType.Double);
+            return;
+        }
+
         // Spill receiver and index once so the read-guard and the write reuse them
         // (also avoids re-evaluating side-effecting subexpressions twice).
         EmitExpression(csi.Object);
@@ -1677,9 +1725,6 @@ public partial class ILEmitter
     private void EmitCompoundOperation(TokenType opType, Expr value)
     {
         // Stack has current value (object). Apply the operation.
-        bool isBitwise = opType is TokenType.AMPERSAND_EQUAL or TokenType.PIPE_EQUAL
-            or TokenType.CARET_EQUAL or TokenType.LESS_LESS_EQUAL or TokenType.GREATER_GREATER_EQUAL;
-
         if (opType == TokenType.PLUS_EQUAL && IsStringExpression(value))
         {
             // String concatenation - we know right side is a string at compile time.
@@ -1703,8 +1748,27 @@ public partial class ILEmitter
             return;
         }
 
-        // Convert current value to number
+        // Convert current value to number, apply the op in double/int space, re-box.
         EmitUnboxToDouble();
+        EmitCompoundArithmeticDoubleOnStack(opType, value);
+        IL.Emit(OpCodes.Box, _ctx.Types.Double);
+    }
+
+    // The compound operators handled by the numeric path (arithmetic + bitwise) — i.e. those that
+    // the typed-array compound fast path can compute in native double/int space.
+    private static bool IsArithmeticOrBitwiseCompound(TokenType op) => op is
+        TokenType.PLUS_EQUAL or TokenType.MINUS_EQUAL or TokenType.STAR_EQUAL or
+        TokenType.SLASH_EQUAL or TokenType.PERCENT_EQUAL or TokenType.AMPERSAND_EQUAL or
+        TokenType.PIPE_EQUAL or TokenType.CARET_EQUAL or TokenType.LESS_LESS_EQUAL or
+        TokenType.GREATER_GREATER_EQUAL;
+
+    // Stack in: [cur (double)]. Applies `cur OP value` in native double space (JS bitwise ops route
+    // through int32) and leaves the numeric result as a double. Shared by the boxed compound path
+    // and the typed-array compound fast path so the two always agree on semantics.
+    private void EmitCompoundArithmeticDoubleOnStack(TokenType opType, Expr value)
+    {
+        bool isBitwise = opType is TokenType.AMPERSAND_EQUAL or TokenType.PIPE_EQUAL
+            or TokenType.CARET_EQUAL or TokenType.LESS_LESS_EQUAL or TokenType.GREATER_GREATER_EQUAL;
 
         if (isBitwise)
         {
@@ -1719,44 +1783,22 @@ public partial class ILEmitter
 
         switch (opType)
         {
-            case TokenType.PLUS_EQUAL:
-                IL.Emit(OpCodes.Add);
-                break;
-            case TokenType.MINUS_EQUAL:
-                IL.Emit(OpCodes.Sub);
-                break;
-            case TokenType.STAR_EQUAL:
-                IL.Emit(OpCodes.Mul);
-                break;
-            case TokenType.SLASH_EQUAL:
-                IL.Emit(OpCodes.Div);
-                break;
-            case TokenType.PERCENT_EQUAL:
-                IL.Emit(OpCodes.Rem);
-                break;
-            case TokenType.AMPERSAND_EQUAL:
-                IL.Emit(OpCodes.And);
-                break;
-            case TokenType.PIPE_EQUAL:
-                IL.Emit(OpCodes.Or);
-                break;
-            case TokenType.CARET_EQUAL:
-                IL.Emit(OpCodes.Xor);
-                break;
-            case TokenType.LESS_LESS_EQUAL:
-                IL.Emit(OpCodes.Shl);
-                break;
-            case TokenType.GREATER_GREATER_EQUAL:
-                IL.Emit(OpCodes.Shr);
-                break;
+            case TokenType.PLUS_EQUAL: IL.Emit(OpCodes.Add); break;
+            case TokenType.MINUS_EQUAL: IL.Emit(OpCodes.Sub); break;
+            case TokenType.STAR_EQUAL: IL.Emit(OpCodes.Mul); break;
+            case TokenType.SLASH_EQUAL: IL.Emit(OpCodes.Div); break;
+            case TokenType.PERCENT_EQUAL: IL.Emit(OpCodes.Rem); break;
+            case TokenType.AMPERSAND_EQUAL: IL.Emit(OpCodes.And); break;
+            case TokenType.PIPE_EQUAL: IL.Emit(OpCodes.Or); break;
+            case TokenType.CARET_EQUAL: IL.Emit(OpCodes.Xor); break;
+            case TokenType.LESS_LESS_EQUAL: IL.Emit(OpCodes.Shl); break;
+            case TokenType.GREATER_GREATER_EQUAL: IL.Emit(OpCodes.Shr); break;
         }
 
         if (isBitwise)
         {
             IL.Emit(OpCodes.Conv_R8);
         }
-
-        IL.Emit(OpCodes.Box, _ctx.Types.Double);
     }
 
     private bool IsNumericPlusOperation(Expr.Binary b)

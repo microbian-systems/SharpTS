@@ -637,9 +637,7 @@ public class SharpTSInt16Array : SharpTSTypedArray
         set
         {
             int byteIdx = GetByteIndex(index);
-            var bytes = BitConverter.GetBytes((short)Convert.ToDouble(value));
-            _buffer[byteIdx] = bytes[0];
-            _buffer[byteIdx + 1] = bytes[1];
+            Unsafe.WriteUnaligned(ref _buffer[byteIdx], (short)Convert.ToDouble(value));
         }
     }
 
@@ -710,9 +708,7 @@ public class SharpTSUint16Array : SharpTSTypedArray
         set
         {
             int byteIdx = GetByteIndex(index);
-            var bytes = BitConverter.GetBytes((ushort)Convert.ToDouble(value));
-            _buffer[byteIdx] = bytes[0];
-            _buffer[byteIdx + 1] = bytes[1];
+            Unsafe.WriteUnaligned(ref _buffer[byteIdx], (ushort)Convert.ToDouble(value));
         }
     }
 
@@ -783,8 +779,7 @@ public class SharpTSInt32Array : SharpTSTypedArray
         set
         {
             int byteIdx = GetByteIndex(index);
-            var bytes = BitConverter.GetBytes((int)Convert.ToDouble(value));
-            Array.Copy(bytes, 0, _buffer, byteIdx, 4);
+            Unsafe.WriteUnaligned(ref _buffer[byteIdx], (int)Convert.ToDouble(value));
         }
     }
 
@@ -864,8 +859,7 @@ public class SharpTSUint32Array : SharpTSTypedArray
         set
         {
             int byteIdx = GetByteIndex(index);
-            var bytes = BitConverter.GetBytes((uint)Convert.ToDouble(value));
-            Array.Copy(bytes, 0, _buffer, byteIdx, 4);
+            Unsafe.WriteUnaligned(ref _buffer[byteIdx], (uint)Convert.ToDouble(value));
         }
     }
 
@@ -936,8 +930,7 @@ public class SharpTSFloat32Array : SharpTSTypedArray
         set
         {
             int byteIdx = GetByteIndex(index);
-            var bytes = BitConverter.GetBytes((float)Convert.ToDouble(value));
-            Array.Copy(bytes, 0, _buffer, byteIdx, 4);
+            Unsafe.WriteUnaligned(ref _buffer[byteIdx], (float)Convert.ToDouble(value));
         }
     }
 
@@ -1008,8 +1001,7 @@ public class SharpTSFloat64Array : SharpTSTypedArray
         set
         {
             int byteIdx = GetByteIndex(index);
-            var bytes = BitConverter.GetBytes(Convert.ToDouble(value));
-            Array.Copy(bytes, 0, _buffer, byteIdx, 8);
+            Unsafe.WriteUnaligned(ref _buffer[byteIdx], Convert.ToDouble(value));
         }
     }
 
@@ -1086,8 +1078,7 @@ public class SharpTSBigInt64Array : SharpTSTypedArray
                 double d => (long)d,
                 _ => Convert.ToInt64(value)
             };
-            var bytes = BitConverter.GetBytes(val);
-            Array.Copy(bytes, 0, _buffer, byteIdx, 8);
+            Unsafe.WriteUnaligned(ref _buffer[byteIdx], val);
         }
     }
 
@@ -1179,8 +1170,7 @@ public class SharpTSBigUint64Array : SharpTSTypedArray
                 double d => (ulong)d,
                 _ => Convert.ToUInt64(value)
             };
-            var bytes = BitConverter.GetBytes(val);
-            Array.Copy(bytes, 0, _buffer, byteIdx, 8);
+            Unsafe.WriteUnaligned(ref _buffer[byteIdx], val);
         }
     }
 

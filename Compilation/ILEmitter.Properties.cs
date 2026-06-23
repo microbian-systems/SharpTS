@@ -858,21 +858,25 @@ public partial class ILEmitter
             return;
         }
 
-        // Float64Array fast path (#878): when the receiver is a variable statically typed
-        // Float64Array, read the element UNBOXED via $Float64Array.GetUnboxed → native double
-        // on the stack. Eliminates the Runtime.GetIndex dispatch, the GetTypedArrayElement
-        // isinst/castclass, the virtual Get, and the per-element box. Out-of-range access
-        // faults via BitConverter exactly as the boxed path does today (OOB semantics
-        // unchanged). Receiver is a side-effect-free variable, so it is loaded once.
+        // Numeric typed-array fast path (#3, generalizing #878 past Float64): when the receiver is
+        // a variable statically typed as a numeric typed array, read the element UNBOXED via
+        // $XArray.GetUnboxed → native double on the stack. Eliminates the Runtime.GetIndex dispatch,
+        // the GetTypedArrayElement isinst/castclass, the virtual Get, and the per-element box. BigInt
+        // and Uint8Clamped have no entry → fall through to the boxed path. Out-of-range access faults
+        // exactly as the boxed path does today. Receiver is side-effect-free, so it is loaded once.
         if (!gi.Optional && gi.Object is Expr.Variable
-            && _ctx.TypeMap?.Get(gi.Object) is TypeInfo.TypedArray { ElementType: "Float64" })
+            && _ctx.TypeMap?.Get(gi.Object) is TypeInfo.TypedArray gta
+            && _ctx.Runtime!.GetTypedArrayType(gta.ElementType) is { } gtaType
+            && _ctx.Runtime!.TypedArrayGetUnboxedByElement.TryGetValue(gta.ElementType, out var taGetU))
         {
             EmitExpression(gi.Object);
             EnsureBoxed();
-            IL.Emit(OpCodes.Castclass, _ctx.Runtime!.Float64ArrayType);
+            IL.Emit(OpCodes.Castclass, gtaType);
             EmitExpressionAsDouble(gi.Index);
             IL.Emit(OpCodes.Conv_I4);
-            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.Float64ArrayGetUnboxed);
+            // Non-virtual call to the sealed-type accessor → the JIT inlines it (AggressiveInlining)
+            // so the receiver's _buffer load and the element bounds check can hoist out of loops.
+            IL.Emit(OpCodes.Call, taGetU);
             SetStackType(StackType.Double);
             return;
         }
@@ -1060,15 +1064,18 @@ public partial class ILEmitter
             return;
         }
 
-        // Float64Array fast path (#878): variable statically typed Float64Array with a
-        // statically-numeric RHS — write the element UNBOXED via $Float64Array.SetUnboxed.
-        // Eliminates the Runtime.SetIndex dispatch, the isinst, the value box, and the
-        // Convert.ToDouble coercion. A non-numeric RHS falls through to the boxed path,
-        // which performs JS ToNumber coercion. OOB faults exactly as the boxed path does.
+        // Numeric typed-array fast path (#3, generalizing #878 past Float64): variable statically
+        // typed as a numeric typed array with a statically-numeric RHS — write the element UNBOXED
+        // via $XArray.SetUnboxed. Eliminates the Runtime.SetIndex dispatch, the isinst, the value
+        // box, and the Convert.ToDouble coercion; the double→element narrowing lives in SetUnboxed
+        // and matches the boxed Set. A non-numeric RHS (or BigInt/Uint8Clamped) falls through to the
+        // boxed path, which performs JS ToNumber coercion. OOB faults exactly as the boxed path does.
         // Evaluate index then value (the receiver var is side-effect-free).
         if (si.Object is Expr.Variable
-            && _ctx.TypeMap?.Get(si.Object) is TypeInfo.TypedArray { ElementType: "Float64" }
-            && _ctx.TypeMap?.Get(si.Value) is TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER })
+            && _ctx.TypeMap?.Get(si.Object) is TypeInfo.TypedArray sta
+            && _ctx.Runtime!.GetTypedArrayType(sta.ElementType) is { } staType
+            && _ctx.Runtime!.TypedArraySetUnboxedByElement.TryGetValue(sta.ElementType, out var taSetU)
+            && _ctx.TypeMap?.Get(si.Value) is TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER } or TypeInfo.NumberLiteral)
         {
             EmitExpressionAsDouble(si.Index);
             IL.Emit(OpCodes.Conv_I4);
@@ -1082,12 +1089,13 @@ public partial class ILEmitter
 
             EmitExpression(si.Object);
             EnsureBoxed();
-            IL.Emit(OpCodes.Castclass, _ctx.Runtime!.Float64ArrayType);
+            IL.Emit(OpCodes.Castclass, staType);
             IL.Emit(OpCodes.Ldloc, idxLocal);
             IL.Emit(OpCodes.Ldloc, valLocal);
-            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.Float64ArraySetUnboxed);
+            // Non-virtual call to the sealed-type accessor → the JIT inlines it (AggressiveInlining).
+            IL.Emit(OpCodes.Call, taSetU);
 
-            // Assignment expression result: the (unboxed) assigned value.
+            // Assignment expression result: the (unboxed) assigned value (the RHS, JS semantics).
             IL.Emit(OpCodes.Ldloc, valLocal);
             SetStackType(StackType.Double);
             return;

@@ -355,6 +355,19 @@ public partial class TypeChecker
         if (typeName == "String") return new TypeInfo.String();
         if (typeName == "Number") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
         if (typeName == "Boolean") return new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
+        // Typed-array names in annotation position (`Int32Array`, `Float64Array`, …) resolve to
+        // TypeInfo.TypedArray — the SAME type `new Int32Array(...)` produces — so element access on an
+        // annotated typed array is typed `number` and the compiled unboxed fast paths fire. Without
+        // this they fell through to `any`, leaving every annotated typed array (the common case, and
+        // every benchmark/real program) on the boxed GetIndex/SetIndex path. The element prefix is the
+        // name minus "Array"; BigInt64/BigUint64 carry bigint elements (the compiled side keeps those
+        // on the boxed path).
+        if (typeName is "Int8Array" or "Uint8Array" or "Uint8ClampedArray"
+            or "Int16Array" or "Uint16Array" or "Int32Array" or "Uint32Array"
+            or "Float32Array" or "Float64Array" or "BigInt64Array" or "BigUint64Array")
+        {
+            return new TypeInfo.TypedArray(typeName[..^"Array".Length]);
+        }
         // Built-in Error type references (Error, TypeError, RangeError, …) resolve to their structured
         // TypeInfo.Error — like Date/RegExp above — instead of degrading to `any`. This types member
         // access (`e.message: string`, so `const n: number = e.message` is a TS2322 error) and aligns

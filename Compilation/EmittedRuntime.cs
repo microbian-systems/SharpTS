@@ -1605,6 +1605,29 @@ public class EmittedRuntime
     public MethodBuilder Float64ArrayGetUnboxed { get; set; } = null!;
     public MethodBuilder Float64ArraySetUnboxed { get; set; } = null!;
 
+    // Unboxed numeric typed-array element accessors (#3) — `double GetUnboxed(int)` /
+    // `void SetUnboxed(int, double)` on each concrete numeric $XArray, keyed by element-type
+    // prefix ("Int32", "Float64", …). Bypass the boxed Get/Set + GetIndex dispatch and the
+    // per-element double box on BOTH read and write. BigInt + Uint8Clamped are absent (they
+    // fall back to the boxed path).
+    public Dictionary<string, MethodBuilder> TypedArrayGetUnboxedByElement { get; } = new();
+    public Dictionary<string, MethodBuilder> TypedArraySetUnboxedByElement { get; } = new();
+
+    /// <summary>Concrete emitted $XArray type for a numeric element prefix, or null (BigInt/unknown).</summary>
+    public Type? GetTypedArrayType(string elementType) => elementType switch
+    {
+        "Int8" => Int8ArrayType,
+        "Uint8" => Uint8ArrayType,
+        "Uint8Clamped" => Uint8ClampedArrayType,
+        "Int16" => Int16ArrayType,
+        "Uint16" => Uint16ArrayType,
+        "Int32" => Int32ArrayType,
+        "Uint32" => Uint32ArrayType,
+        "Float32" => Float32ArrayType,
+        "Float64" => Float64ArrayType,
+        _ => null
+    };
+
     // Concrete TypedArray types (pure-IL for standalone DLLs)
     public TypeBuilder Int8ArrayType { get; set; } = null!;
     public ConstructorBuilder Int8ArrayLengthCtor { get; set; } = null!;
