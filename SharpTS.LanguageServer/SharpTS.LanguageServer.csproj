@@ -15,6 +15,12 @@
     <Description>LSP language server for SharpTS (.NET interop diagnostics, hover, completion).</Description>
   </PropertyGroup>
 
+  <!-- Directory.Build.props sets PackageLicenseFile=LICENSE for all packages; include the
+       repo-root LICENSE so `dotnet pack` doesn't fail NU5030 (same as SharpTS.Sdk). -->
+  <ItemGroup>
+    <None Include="..\LICENSE" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\SharpTS.csproj" />
   </ItemGroup>
