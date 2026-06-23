@@ -11,11 +11,13 @@ public sealed class HoverHandler : HoverHandlerBase
 {
     private readonly DocumentStore _store;
     private readonly DecoratorService _decorators;
+    private readonly MemberHoverService _members;
 
-    public HoverHandler(DocumentStore store, DecoratorService decorators)
+    public HoverHandler(DocumentStore store, DecoratorService decorators, MemberHoverService members)
     {
         _store = store;
         _decorators = decorators;
+        _members = members;
     }
 
     public override Task<Hover?> Handle(HoverParams request, CancellationToken ct)
@@ -23,8 +25,10 @@ public sealed class HoverHandler : HoverHandlerBase
         if (!_store.TryGet(request.TextDocument.Uri.ToString(), out var text))
             return Task.FromResult<Hover?>(null);
 
+        int line = request.Position.Line, ch = request.Position.Character;
+        // Decorator hover first (cursor on @DotNetType / a builtin); then .NET member hover.
         return Task.FromResult(
-            _decorators.Hover(text, request.Position.Line, request.Position.Character));
+            _decorators.Hover(text, line, ch) ?? _members.Hover(text, line, ch));
     }
 
     protected override HoverRegistrationOptions CreateRegistrationOptions(

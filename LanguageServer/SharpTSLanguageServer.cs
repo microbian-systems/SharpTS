@@ -24,7 +24,8 @@ public static class SharpTSLanguageServer
             .WithServices(services => services
                 .AddSingleton<DocumentStore>()
                 .AddSingleton(new DiagnosticsService(resolve))
-                .AddSingleton(new DecoratorService(resolve, typeNames)))
+                .AddSingleton(new DecoratorService(resolve, typeNames))
+                .AddSingleton(new MemberHoverService(resolve)))
             .WithHandler<TextDocumentSyncHandler>()
             .WithHandler<HoverHandler>()
             .WithHandler<CompletionHandler>()
