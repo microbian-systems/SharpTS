@@ -144,6 +144,11 @@ public partial class TypeChecker
         // Node-first annotation resolution (type-AST migration), string fallback.
         TypeInfo? declaredType = ResolveAnnotation(stmt.TypeAnnotation, stmt.TypeAnnotationNode);
 
+        // TS2304: a bare annotation name that resolves to nothing (e.g. `var a: A;` where the
+        // only `A` lives in a nested module, invisible here). See ReportUnknownTypeName.
+        if (declaredType is TypeInfo.Any)
+            ReportUnknownTypeName(stmt.TypeAnnotation, stmt.TypeAnnotationNode, stmt.Name.Line);
+
         // VarHoister carries the first nested declaration's initializer onto the synthetic hoisted
         // `var` (which itself has no Initializer) when that declaration had no annotation. Infer the
         // binding's declared type from it so a later `var z: number;` / `var z = 5;` reports TS2403
@@ -253,6 +258,69 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// TS2304 ("Cannot find name 'X'"): a variable/const annotated with a bare type name that
+    /// resolves to nothing — not a primitive/keyword, built-in lib type, in-scope type parameter,
+    /// type alias, or declared class/interface/enum. A class hoisted for a forward reference is
+    /// registered as an <c>any</c> placeholder, so it still counts as declared and is exempt.
+    ///
+    /// Reported only at the declaration check site, which runs after PreRegisterTypeDeclarations +
+    /// class/var hoisting for the enclosing top-level / module / namespace scope — so an unresolved
+    /// name there is genuinely undeclared (e.g. a class nested in an inner module, invisible to the
+    /// outer scope: <c>var a: A; module M { class A {} }</c> ⇒ TS2304). Gated to non-function-body
+    /// scopes: function and plain-block bodies do NOT pre-register their nested type/class
+    /// declarations, so a forward reference inside one resolves to <c>any</c> and must stay lenient
+    /// (tsc accepts it via hoisting). Deliberately narrower than a throw at the general ToTypeInfo
+    /// <c>any</c> fallback, whose leniency is load-bearing during hoisting and infer resolution.
+    /// </summary>
+    private void ReportUnknownTypeName(string? annotation, TypeNode? annotationNode, int line)
+    {
+        // Function/method bodies (and the blocks within them) don't pre-register nested types, so a
+        // forward reference there would falsely look undeclared. Only fire where hoisting is complete.
+        if (_currentFunctionReturnType is not null) return;
+
+        if (BareTypeReferenceName(annotation, annotationNode) is not { } name) return;
+
+        // `any` is the keyword, not an unknown name. Everything below is already known to resolve to
+        // `any` (the caller checked), so a name bound anywhere type-visible is a forward/known type:
+        // a class/interface/enum/value binding or hoisted placeholder (Get), a type parameter, a type
+        // alias, or a mapped-type parameter currently being parsed. None of those are "cannot find".
+        if (name == "any") return;
+        if (_environment.Get(name) is not null) return;
+        if (_environment.GetTypeParameter(name) is not null) return;
+        if (_environment.GetTypeAlias(name) is not null) return;
+        if (_environment.GetGenericTypeAlias(name) is not null) return;
+        if (_openTypeVariablesInScope?.Contains(name) == true) return;
+
+        throw new TypeCheckException($" Cannot find name '{name}'.", line, tsCode: "TS2304");
+    }
+
+    /// <summary>
+    /// The referenced type name when <paramref name="annotationNode"/> / <paramref name="annotation"/>
+    /// is a single bare type reference with no type arguments — a plain identifier such as <c>A</c>,
+    /// NOT <c>A&lt;T&gt;</c>, <c>A[]</c>, <c>A | B</c>, <c>{ … }</c>, or a qualified <c>N.Id</c>;
+    /// otherwise null. A qualified name is excluded deliberately: it resolves through the namespace
+    /// path (permissively to <c>any</c>), so it isn't a "cannot find name" candidate here. Prefers the
+    /// structured node and only falls back to the string when no node is present.
+    /// </summary>
+    private static string? BareTypeReferenceName(string? annotation, TypeNode? annotationNode)
+    {
+        string? candidate = annotationNode is not null
+            ? (annotationNode is NamedTypeNode { TypeArguments: null } named ? named.Name : null)
+            : annotation?.Trim();
+        return candidate is not null && IsSimpleIdentifier(candidate) ? candidate : null;
+    }
+
+    /// <summary>A non-empty string of identifier characters with no dots, brackets, or operators.</summary>
+    private static bool IsSimpleIdentifier(string s)
+    {
+        if (s.Length == 0) return false;
+        if (!(char.IsLetter(s[0]) || s[0] is '_' or '$')) return false;
+        for (int i = 1; i < s.Length; i++)
+            if (!(char.IsLetterOrDigit(s[i]) || s[i] is '_' or '$')) return false;
+        return true;
+    }
+
+    /// <summary>
     /// TS2403: subsequent `var` declarations of the same name in the same scope must keep the
     /// same type (`var r4 = fooA(...)` then `var r4 = fooB(...)` with a different result type).
     /// Identical re-declarations are legal JS/TS and pass silently.
@@ -331,6 +399,8 @@ public partial class TypeChecker
         else if (stmt.TypeAnnotation != null)
         {
             constDeclaredType = ResolveAnnotation(stmt.TypeAnnotation, stmt.TypeAnnotationNode)!;
+            if (constDeclaredType is TypeInfo.Any)
+                ReportUnknownTypeName(stmt.TypeAnnotation, stmt.TypeAnnotationNode, stmt.Name.Line);
             _environment.Define(stmt.Name.Lexeme, constDeclaredType);
             var initType = CheckExprWithContext(stmt.Initializer, constDeclaredType);
             if (!IsCompatible(constDeclaredType, initType))
