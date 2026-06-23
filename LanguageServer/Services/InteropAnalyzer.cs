@@ -26,6 +26,9 @@ namespace SharpTS.LanguageServer.Services;
 /// (Argument-type / overload resolution at call sites is Tier 3e — needs the type
 ///  checker's inferred argument types and is intentionally out of scope here.)
 ///
+/// When a <see cref="PositionMap"/> is supplied to <see cref="Analyze"/>, diagnostics carry
+/// token-precise ranges (Phase 4a); otherwise they fall back to line-only locations.
+///
 /// RESOLUTION SEAM: <see cref="DotNetTypeRegistry.Resolve"/> by default (in-process,
 /// mirrors the interpreter); the production server injects
 /// <c>AssemblyReferenceLoader.TryResolve</c> to validate against the project's referenced
@@ -46,7 +49,12 @@ public sealed class InteropAnalyzer
     private static readonly HashSet<string> EventIntrinsics =
         new(StringComparer.Ordinal) { "addEventListener", "removeEventListener" };
 
-    public List<Diagnostic> Analyze(IEnumerable<Stmt> statements)
+    private static SourceLocation Loc(Token token, PositionMap? pos)
+        => pos is not null ? pos.Span(token) : SourceLocation.FromLine(token.Line);
+    private static SourceLocation Loc(Token start, Token end, PositionMap? pos)
+        => pos is not null ? pos.Span(start, end) : SourceLocation.FromLine(start.Line);
+
+    public List<Diagnostic> Analyze(IEnumerable<Stmt> statements, PositionMap? positions = null)
     {
         var diags = new List<Diagnostic>();
         var bindings = new Dictionary<string, Type>(StringComparer.Ordinal);
@@ -56,19 +64,19 @@ public sealed class InteropAnalyzer
         // Pass 1 — validate each @DotNetType class and record name -> CLR type.
         foreach (var stmt in stmtList)
             if (stmt is Stmt.Class cls)
-                AnalyzeClass(cls, diags, bindings);
+                AnalyzeClass(cls, diags, bindings, positions);
 
         // Pass 2 — Tier 3d: validate event-subscription call sites against the bindings.
-        var visitor = new EventCallVisitor(bindings, diags);
+        var visitor = new EventCallVisitor(bindings, diags, positions);
         foreach (var stmt in stmtList)
             visitor.Visit(stmt);
 
         return diags;
     }
 
-    private void AnalyzeClass(Stmt.Class cls, List<Diagnostic> diags, Dictionary<string, Type> bindings)
+    private void AnalyzeClass(Stmt.Class cls, List<Diagnostic> diags, Dictionary<string, Type> bindings, PositionMap? pos)
     {
-        var (mapping, decoratorLine) = FindDotNetType(cls);
+        var (mapping, at, nameTok) = FindDotNetType(cls);
         if (mapping is null) return;
 
         string clrName = DotNetTypeRegistry.ToClrTypeName(mapping);
@@ -78,7 +86,7 @@ public sealed class InteropAnalyzer
             // Tier 1 — mirrors Interpreter.DotNet.cs:31, surfaced statically at edit time.
             diags.Add(Diagnostic.TypeError(
                 $"@DotNetType: .NET type '{clrName}' not found in any loaded assembly.",
-                SourceLocation.FromLine(decoratorLine)));
+                Loc(at!, nameTok!, pos)));
             return;
         }
 
@@ -88,23 +96,23 @@ public sealed class InteropAnalyzer
         {
             string name = m.Name.Lexeme;
 
-            if (name == "constructor") { CheckConstructor(type, m.Name.Line, diags); continue; }
+            if (name == "constructor") { CheckConstructor(type, m.Name, diags, pos); continue; }
             if (EventIntrinsics.Contains(name)) continue;
 
             if (!MemberExists(type, name, m.IsStatic))
             {
-                AddMissingMember(type, name, m.IsStatic, "method", m.Name.Line, diags);
+                AddMissingMember(type, name, m.IsStatic, "method", m.Name, diags, pos);
                 continue;
             }
 
-            CheckOverloadHint(m, type, diags); // Tier 3a (only when the method resolves)
+            CheckOverloadHint(m, type, diags, pos); // Tier 3a (only when the method resolves)
         }
 
         foreach (var f in cls.Fields)
         {
             string name = f.Name.Lexeme;
             if (!MemberExists(type, name, f.IsStatic))
-                AddMissingMember(type, name, f.IsStatic, "property/field", f.Name.Line, diags);
+                AddMissingMember(type, name, f.IsStatic, "property/field", f.Name, diags, pos);
         }
     }
 
@@ -114,7 +122,7 @@ public sealed class InteropAnalyzer
 
     /// <summary>Tier 2 + Tier 3b: "not found", upgraded to a static-ness mismatch message
     /// when the member exists with the opposite static-ness.</summary>
-    private static void AddMissingMember(Type type, string name, bool isStatic, string kind, int line, List<Diagnostic> diags)
+    private static void AddMissingMember(Type type, string name, bool isStatic, string kind, Token token, List<Diagnostic> diags, PositionMap? pos)
     {
         string pascal = DotNetTypeRegistry.ToPascalCase(name);
         if (MemberExists(type, name, !isStatic))
@@ -123,13 +131,13 @@ public sealed class InteropAnalyzer
             string actual = isStatic ? "instance" : "static";
             diags.Add(Diagnostic.TypeError(
                 $"@DotNetType '{type.FullName}': member '{name}' exists but is {actual}, not {declared} as declared.",
-                SourceLocation.FromLine(line)));
+                Loc(token, pos)));
         }
         else
         {
             diags.Add(Diagnostic.TypeError(
                 $"@DotNetType '{type.FullName}': no {kind} '{name}' (nor PascalCase '{pascal}').",
-                SourceLocation.FromLine(line)));
+                Loc(token, pos)));
         }
     }
 
@@ -153,7 +161,7 @@ public sealed class InteropAnalyzer
     /// production resolver) — cross-context types never compare equal, producing false
     /// positives. Validating names via the injected resolver is context-correct; overload
     /// *matching* belongs to Tier 3e (by type name, not identity).</summary>
-    private void CheckOverloadHint(Stmt.Function m, Type type, List<Diagnostic> diags)
+    private void CheckOverloadHint(Stmt.Function m, Type type, List<Diagnostic> diags, PositionMap? pos)
     {
         string? hint = ExtractDecoratorArg(m.Decorators, "DotNetOverload");
         if (hint is null) return;
@@ -164,29 +172,30 @@ public sealed class InteropAnalyzer
             if (HintAliases.Contains(part) || _resolve(part) != null) continue;
             diags.Add(Diagnostic.TypeError(
                 $"@DotNetOverload(\"{hint}\") on '{m.Name.Lexeme}': unknown type '{part}' in hint.",
-                SourceLocation.FromLine(m.Name.Line)));
+                Loc(m.Name, pos)));
         }
     }
 
     /// <summary>Tier 3c: a declared constructor needs a public instance constructor on the
     /// CLR type. Skips value types (structs are always constructible; GetConstructors omits
     /// the implicit default ctor).</summary>
-    private static void CheckConstructor(Type type, int line, List<Diagnostic> diags)
+    private static void CheckConstructor(Type type, Token token, List<Diagnostic> diags, PositionMap? pos)
     {
         if (type.IsValueType) return;
         if (type.GetConstructors(BindingFlags.Public | BindingFlags.Instance).Length == 0)
             diags.Add(Diagnostic.TypeError(
                 $"@DotNetType '{type.FullName}': no public constructor (the type cannot be instantiated with 'new').",
-                SourceLocation.FromLine(line)));
+                Loc(token, pos)));
     }
 
-    private static (string? mapping, int line) FindDotNetType(Stmt.Class cls)
+    private static (string? mapping, Token? at, Token? name) FindDotNetType(Stmt.Class cls)
     {
-        if (cls.Decorators == null) return (null, 0);
+        if (cls.Decorators == null) return (null, null, null);
         foreach (var d in cls.Decorators)
-            if (d.Expression is Expr.Call { Callee: Expr.Variable { Name.Lexeme: "DotNetType" }, Arguments: [Expr.Literal { Value: string typeName }] })
-                return (typeName, d.AtToken.Line);
-        return (null, 0);
+            if (d.Expression is Expr.Call { Callee: Expr.Variable v, Arguments: [Expr.Literal { Value: string typeName }] }
+                && v.Name.Lexeme == "DotNetType")
+                return (typeName, d.AtToken, v.Name);
+        return (null, null, null);
     }
 
     private static string? ExtractDecoratorArg(List<Decorator>? decorators, string name)
@@ -203,7 +212,7 @@ public sealed class InteropAnalyzer
     /// resolves (purely structurally) to a known @DotNetType, and checks arity + event name.
     /// Bails to no-diagnostic whenever the receiver type can't be resolved — false negatives,
     /// never false positives.</summary>
-    private sealed class EventCallVisitor(IReadOnlyDictionary<string, Type> bindings, List<Diagnostic> diags) : AstVisitorBase
+    private sealed class EventCallVisitor(IReadOnlyDictionary<string, Type> bindings, List<Diagnostic> diags, PositionMap? pos) : AstVisitorBase
     {
         protected override void VisitCall(Expr.Call call)
         {
@@ -215,14 +224,14 @@ public sealed class InteropAnalyzer
                 {
                     diags.Add(Diagnostic.TypeError(
                         $"'{op}' on '@DotNetType {type.FullName}' requires (eventName, handler) — got {call.Arguments.Count} argument(s).",
-                        SourceLocation.FromLine(g.Name.Line)));
+                        Loc(g.Name, pos)));
                 }
                 else if (call.Arguments[0] is Expr.Literal { Value: string evName }
                          && DotNetTypeRegistry.GetEvent(type, evName, isStatic) == null)
                 {
                     diags.Add(Diagnostic.TypeError(
                         $"Event '{evName}' not found on '@DotNetType {type.FullName}'.",
-                        SourceLocation.FromLine(g.Name.Line)));
+                        Loc(g.Name, pos)));
                 }
             }
 

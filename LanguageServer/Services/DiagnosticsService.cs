@@ -25,7 +25,7 @@ public sealed class DiagnosticsService
         if (!parsed.IsSuccess)
             return new List<LspDiagnostic>(); // syntax errors belong to tsserver
 
-        var diags = _interop.Analyze(parsed.Statements);
+        var diags = _interop.Analyze(parsed.Statements, new PositionMap(text));
         return LspConversions.ToLsp(diags, text, mode);
     }
 }

@@ -1,5 +1,6 @@
 using SharpTS.Compilation;
 using SharpTS.Diagnostics;
+using SharpTS.LanguageServer;
 using SharpTS.LanguageServer.Services;
 using SharpTS.Parsing;
 using Xunit;
@@ -106,5 +107,22 @@ public class InteropAnalyzerTests
     {
         using var loader = new AssemblyReferenceLoader(Array.Empty<string>());
         Assert.Empty(Analyze(ValidBindings, loader.TryResolve));
+    }
+
+    [Fact]
+    public void PreciseColumns_PointAtTheMemberToken()
+    {
+        // 'appendx' starts at column 20 on line 2 (after "declare class SB { ").
+        const string src = "@DotNetType(\"System.Text.StringBuilder\")\ndeclare class SB { appendx(v: string): SB; }";
+        var tokens = new Lexer(src).ScanTokens();
+        var parsed = new Parser(tokens, DecoratorMode.Stage3).Parse();
+        var diags = new InteropAnalyzer().Analyze(parsed.Statements, new PositionMap(src));
+
+        Assert.Single(diags);
+        var loc = diags[0].Location;
+        Assert.NotNull(loc);
+        Assert.Equal(2, loc!.Line);
+        Assert.Equal(20, loc.Column);     // start of 'appendx' (1-based)
+        Assert.Equal(27, loc.EndColumn);  // end of the 7-char token
     }
 }
