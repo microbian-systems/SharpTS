@@ -157,4 +157,88 @@ public class InheritanceMemberCompatibilityTests
             """);
         AssertNoCode(diags, "TS2430");
     }
+
+    // ---- TS2416 under generics (#898): the gate was previously skipped for generic classes ----
+    // Mirrors the `subtypesOfTypeParameterWithConstraints` conformance cases over base `C3<T>{foo:T}`.
+
+    [Fact]
+    public void GenericOverride_IncompatibleTypeParameter_ReportsTS2416()
+    {
+        // D3: extends C3<T>, foo: U. The base property resolves to the derived `T`; `U` is not
+        // assignable to `T` (T extends U, not the reverse).
+        var diags = Check("""
+            class C3<T> { foo: T; }
+            class D3<T extends U, U> extends C3<T> {
+                foo: U;
+            }
+            """);
+        AssertHasCode(diags, "TS2416");
+    }
+
+    [Fact]
+    public void GenericOverride_SameTypeParameter_IsAccepted()
+    {
+        // D1: extends C3<T>, foo: T — exact match.
+        var diags = Check("""
+            class C3<T> { foo: T; }
+            class D1<T extends U, U> extends C3<T> {
+                foo: T;
+            }
+            """);
+        AssertNoCode(diags, "TS2416");
+    }
+
+    [Fact]
+    public void GenericOverride_SubstitutedBaseArg_IsAccepted()
+    {
+        // D4: extends C3<U>, foo: U. The base property must be substituted to the derived `U`
+        // (not C3's own `T`); `U` is assignable to `U`. Guards against the substitution false-positive.
+        var diags = Check("""
+            class C3<T> { foo: T; }
+            class D4<T extends U, U> extends C3<U> {
+                foo: U;
+            }
+            """);
+        AssertNoCode(diags, "TS2416");
+    }
+
+    [Fact]
+    public void GenericOverride_TransitiveConstraintToBaseArg_IsAccepted()
+    {
+        // D2: extends C3<U>, foo: T where T extends U — T is assignable to the base's U.
+        var diags = Check("""
+            class C3<T> { foo: T; }
+            class D2<T extends U, U> extends C3<U> {
+                foo: T;
+            }
+            """);
+        AssertNoCode(diags, "TS2416");
+    }
+
+    [Fact]
+    public void GenericOverride_ConcreteIncompatibleWithBaseTypeParameter_ReportsTS2416()
+    {
+        // D27-style: extends C3<T>, foo: Date — a concrete type can't satisfy the open `T`
+        // (T could be instantiated with a different subtype of its constraint).
+        var diags = Check("""
+            class C3<T> { foo: T; }
+            class D27<T extends U, U extends V, V extends Date> extends C3<T> {
+                foo: Date;
+            }
+            """);
+        AssertHasCode(diags, "TS2416");
+    }
+
+    [Fact]
+    public void GenericOverride_NarrowingToConstraint_IsAccepted()
+    {
+        // D14: extends C3<Date>, foo: T where T's apparent type is Date — assignable to Date.
+        var diags = Check("""
+            class C3<T> { foo: T; }
+            class D14<T extends U, U extends V, V extends Date> extends C3<Date> {
+                foo: T;
+            }
+            """);
+        AssertNoCode(diags, "TS2416");
+    }
 }

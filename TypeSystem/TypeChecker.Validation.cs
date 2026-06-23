@@ -316,7 +316,9 @@ public partial class TypeChecker
     /// </list>
     /// Whole-class mismatches that cannot be pinned to a single property (index signatures,
     /// accessibility) are reported separately as TS2415; that path is handled elsewhere.
-    /// Only runs for non-generic classes (generic classes are validated at instantiation).
+    /// Runs for generic classes too: a base member typed as an open type parameter can't be
+    /// satisfied by a concrete override, and the base's parameters are substituted with the
+    /// instantiation's type arguments so derived-vs-base parameter relations compare correctly.
     /// </summary>
     private void ValidateClassExtends(Stmt.Class classStmt, TypeInfo.Class classType)
     {
@@ -328,6 +330,16 @@ public partial class TypeChecker
         // Whole-class accessibility mismatch is reported once, at the class declaration, as TS2415.
         bool accessibilityErrorReported = false;
 
+        // For a generic-instantiated base (`extends C3<T>`), the base's member types are expressed
+        // in the base's own type parameters; substitute the instantiation's type arguments so the
+        // override comparison uses the derived class's parameters (e.g. `C3<T>.foo` resolves to the
+        // derived `T`, not C3's own `T`). Without this, a legitimate override like
+        // `class D<T extends U, U> extends C3<U> { foo: U }` would falsely compare `U` against C3's `T`.
+        Dictionary<string, TypeInfo>? substitutedBaseMembers =
+            superclass is TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig
+                ? CollectGenericClassMembers(gc, ig.TypeArguments, includeNonPublic: true)
+                : null;
+
         foreach (var field in classStmt.Fields)
         {
             // Statics, ES #private fields and computed keys don't participate in structural
@@ -336,7 +348,9 @@ public partial class TypeChecker
                 continue;
 
             string name = field.Name.Lexeme;
-            TypeInfo? baseType = FindMemberInBaseChain(superclass, name);
+            TypeInfo? baseType = substitutedBaseMembers is not null
+                ? (substitutedBaseMembers.TryGetValue(name, out var bt) ? bt : null)
+                : FindMemberInBaseChain(superclass, name);
             if (baseType is null)
                 continue; // not an override — nothing to relate against
 
@@ -408,6 +422,36 @@ public partial class TypeChecker
                     line: classStmt.Name.Line,
                     tsCode: "TS2415"));
                 return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Validates that a class's own declared instance properties are assignable to its own string
+    /// index signature (TS2411 "Property 'X' of type '…' is not assignable to 'string' index type
+    /// '…'"). Mirrors the interface check in <c>CheckInterfaceDeclaration</c>; reported per-property
+    /// at the property's own declaration line. Runs for generic classes too, where the index type is
+    /// an open type parameter (e.g. `class D&lt;T extends U, U&gt; { [x: string]: T; foo: U }` is an
+    /// error because `U` is not assignable to the index type `T`).
+    /// </summary>
+    private void ValidateClassPropertiesAgainstIndex(Stmt.Class classStmt, TypeInfo.Class classType)
+    {
+        if (classType.StringIndexType is not { } stringIndexType)
+            return;
+
+        foreach (var field in classStmt.Fields)
+        {
+            // Index signatures relate to instance, non-#private, named properties only.
+            if (field.IsStatic || field.IsPrivate || field.ComputedKey != null)
+                continue;
+            if (!classType.FieldTypes.TryGetValue(field.Name.Lexeme, out var fieldType))
+                continue;
+            if (!IsCompatible(stringIndexType, fieldType))
+            {
+                RecordTypeError(new TypeCheckException(
+                    $" Property '{field.Name.Lexeme}' of type '{fieldType}' is not assignable to 'string' index type '{stringIndexType}'.",
+                    line: field.Name.Line,
+                    tsCode: "TS2411"));
             }
         }
     }
