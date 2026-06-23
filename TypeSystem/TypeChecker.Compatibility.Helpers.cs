@@ -490,10 +490,15 @@ public partial class TypeChecker
         TypeInfo.Interface i => i.StringIndexType,
         TypeInfo.Class c => c.StringIndexType,
         TypeInfo.Instance inst => StringIndexOf(inst.ResolvedClassType),
+        // SubstitutePreservingSignatures so a construct/call-signature-valued index (`[k: string]:
+        // new () => T`, a Record carrying a ConstructorSignature) survives substitution and can be
+        // related against a derived override — plain Substitute would collapse it to `{}` and the
+        // class-extends index check (TS2415) would vacuously pass under generics (#896). Identical to
+        // Substitute for the common non-Record index value (a bare T, a primitive, …).
         TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig =>
-            gc.Core.StringIndexType is { } sit ? Substitute(sit, GenericClassSubs(gc, ig.TypeArguments)) : null,
+            gc.Core.StringIndexType is { } sit ? SubstitutePreservingSignatures(sit, GenericClassSubs(gc, ig.TypeArguments)) : null,
         TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericInterface gi } ig =>
-            gi.StringIndexType is { } sit ? Substitute(sit, GenericInterfaceSubs(gi, ig.TypeArguments)) : null,
+            gi.StringIndexType is { } sit ? SubstitutePreservingSignatures(sit, GenericInterfaceSubs(gi, ig.TypeArguments)) : null,
         _ => null
     };
 
@@ -504,10 +509,12 @@ public partial class TypeChecker
         TypeInfo.Interface i => i.NumberIndexType,
         TypeInfo.Class c => c.NumberIndexType,
         TypeInfo.Instance inst => NumberIndexOf(inst.ResolvedClassType),
+        // See StringIndexOf: SubstitutePreservingSignatures keeps a construct/call-signature-valued
+        // index alive through substitution so TS2415 fires under generics (#896).
         TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } ig =>
-            gc.Core.NumberIndexType is { } nit ? Substitute(nit, GenericClassSubs(gc, ig.TypeArguments)) : null,
+            gc.Core.NumberIndexType is { } nit ? SubstitutePreservingSignatures(nit, GenericClassSubs(gc, ig.TypeArguments)) : null,
         TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericInterface gi } ig =>
-            gi.NumberIndexType is { } nit ? Substitute(nit, GenericInterfaceSubs(gi, ig.TypeArguments)) : null,
+            gi.NumberIndexType is { } nit ? SubstitutePreservingSignatures(nit, GenericInterfaceSubs(gi, ig.TypeArguments)) : null,
         _ => null
     };
 

@@ -653,14 +653,20 @@ public partial class TypeChecker
         Dictionary<string, TypeInfo> subs = [];
         for (int i = 0; i < gi.TypeParams.Count && i < ig.TypeArguments.Count; i++)
             subs[gi.TypeParams[i].Name] = ig.TypeArguments[i];
-        var members = gi.Members.ToDictionary(kv => kv.Key, kv => Substitute(kv.Value, subs));
+        // SubstitutePreservingSignatures (not plain Substitute) so a member or index value that is a
+        // construct/call signature — `a: new () => T` resolves to a Record carrying a
+        // ConstructorSignature — keeps it through substitution. Plain Substitute rebuilds Records
+        // fields-only, collapsing such a member to `{}`, which any derived member then vacuously
+        // satisfies, so the interface-extends check (TS2430) never fires under generics (#896). For a
+        // non-Record value the helper is identical to Substitute.
+        var members = gi.Members.ToDictionary(kv => kv.Key, kv => SubstitutePreservingSignatures(kv.Value, subs));
         return new TypeInfo.Interface(
             $"{gi.Name}<{string.Join(", ", ig.TypeArguments)}>",
             members.ToFrozenDictionary(),
             gi.OptionalMembers,
-            gi.StringIndexType is null ? null : Substitute(gi.StringIndexType, subs),
-            gi.NumberIndexType is null ? null : Substitute(gi.NumberIndexType, subs),
-            gi.SymbolIndexType is null ? null : Substitute(gi.SymbolIndexType, subs),
+            gi.StringIndexType is null ? null : SubstitutePreservingSignatures(gi.StringIndexType, subs),
+            gi.NumberIndexType is null ? null : SubstitutePreservingSignatures(gi.NumberIndexType, subs),
+            gi.SymbolIndexType is null ? null : SubstitutePreservingSignatures(gi.SymbolIndexType, subs),
             gi.Extends,
             gi.CallSignatures,
             gi.ConstructorSignatures,

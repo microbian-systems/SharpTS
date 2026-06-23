@@ -157,6 +157,23 @@ public partial class TypeChecker
             rec.MethodMembers);
 
     /// <summary>
+    /// Like <see cref="Substitute"/>, but preserves (and substitutes into) a Record's call/construct
+    /// signatures and index types instead of dropping them. Used by the inheritance/extends relating
+    /// paths — interface-extends (TS2430) and class-extends index signatures (TS2415) — where a base
+    /// member or index value that is itself a construct/call signature must survive substitution to
+    /// be related against the derived one. General <see cref="Substitute"/> intentionally rebuilds a
+    /// Record fields-only (see the NOTE there) to keep generic construct-signature *assignment*
+    /// relating unchanged; this variant is scoped to the conformance checks that need the signatures.
+    /// Records recurse so a nested Record field keeps its signatures too; every non-Record type
+    /// delegates to <see cref="Substitute"/> (whose only signature-dropping happens at Record nodes,
+    /// which this intercepts).
+    /// </summary>
+    private TypeInfo SubstitutePreservingSignatures(TypeInfo type, Dictionary<string, TypeInfo> substitutions) =>
+        type is TypeInfo.Record rec
+            ? SubstituteRecordMembers(rec, t => SubstitutePreservingSignatures(t, substitutions))
+            : Substitute(type, substitutions);
+
+    /// <summary>
     /// Substitutes type parameters in a tuple with flattening of spread elements.
     /// When a spread resolves to a concrete tuple, its elements are inlined.
     /// </summary>

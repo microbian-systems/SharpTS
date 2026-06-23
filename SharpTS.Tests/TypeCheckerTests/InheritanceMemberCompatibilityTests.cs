@@ -123,6 +123,31 @@ public class InheritanceMemberCompatibilityTests
         AssertNoCode(diags, "TS2415");
     }
 
+    // ---- TS2415: construct-signature-valued index signature across a generic base (#896) ----
+
+    [Fact]
+    public void GenericIndexConstructSignature_TooManyRequiredParams_ReportsTS2415()
+    {
+        // The base's index value `new () => T` reaches the override check via StringIndexOf, which
+        // substitutes A<T>'s argument. Substitution must keep the construct signature so the derived
+        // `new (a: T) => T` (one more required param) is flagged TS2415 under generics.
+        var diags = Check("""
+            class A<T> { [k: string]: new () => T; }
+            class B<T> extends A<T> { [k: string]: new (a: T) => T; }
+            """);
+        AssertHasCode(diags, "TS2415");
+    }
+
+    [Fact]
+    public void GenericIndexConstructSignature_SameArity_IsAccepted()
+    {
+        var diags = Check("""
+            class A<T> { [k: string]: new () => T; }
+            class B<T> extends A<T> { [k: string]: new () => T; }
+            """);
+        AssertNoCode(diags, "TS2415");
+    }
+
     // ---- TS2430: derived interface makes a base-required member optional ----
 
     [Fact]
