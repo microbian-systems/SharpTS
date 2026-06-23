@@ -4,8 +4,10 @@
 (interop analyzer + project refs), LspBridge teardown, Phase 2 (decorator hover,
 completion, CLR-type-name completion, signatureHelp), Phase 3 (extension rewrite),
 Phase 4a (token-based: precise diagnostic columns + .NET member hover for declarations
-& usages). Remaining: Phase 4b (general TS hover/go-to-def — deferred, competes with
-tsserver), Phase 5 (polish/multi-editor packaging).
+& usages), and the OmniSharp split (the server now lives in a separate `SharpTS.LanguageServer`
+executable / `sharpts-lsp` tool — OmniSharp is fully out of the core `SharpTS.dll`/tool/package).
+Remaining: Phase 4b (general TS hover/go-to-def — deferred, competes with tsserver),
+Phase 5 (polish/multi-editor packaging).
 **Author:** investigation + design pass, 2026-06-22
 **Decision:** Throw away the bespoke `LspBridge` JSON protocol and the hand-rolled
 VS Code providers. Stand up a genuine LSP server over SharpTS's own
