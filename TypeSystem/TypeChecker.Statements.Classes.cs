@@ -38,9 +38,10 @@ public partial class TypeChecker
             return;
         }
 
-        TypeInfo? superclass = ResolveDeclaredSuperclass(classStmt);
-
-        // Handle generic type parameters
+        // Handle generic type parameters first — the extends clause may reference them
+        // (`class D<T> extends B<T>`). Resolving the superclass before they are in scope
+        // collapses those references to `any`, silently dropping the base's parameterization
+        // (its inherited members and index signature then lose the type parameter).
         List<TypeInfo.TypeParameter>? classTypeParams = null;
         TypeEnvironment classTypeEnv = new(_environment);
         if (classStmt.TypeParams != null && classStmt.TypeParams.Count > 0)
@@ -55,6 +56,12 @@ public partial class TypeChecker
                 classTypeEnv.DefineTypeParameter(tp.Name.Lexeme, typeParam);
             }
         }
+
+        // Resolve the superclass with the class's own type parameters in scope so a base
+        // reference like `extends A<T>` keeps T as the open parameter.
+        TypeInfo? superclass;
+        using (new EnvironmentScope(this, classTypeEnv))
+            superclass = ResolveDeclaredSuperclass(classStmt);
 
         // Create mutable class early so self-references in method return types work.
         // This allows methods like "next(): Node" to correctly resolve the return type.
@@ -510,6 +517,11 @@ public partial class TypeChecker
             ValidateOverrideMembers(classStmt, classTypeForBody);
             ValidateClassExtends(classStmt, classTypeForBody);
         }
+
+        // Index-signature override compatibility (TS2415) runs for generic classes too: the
+        // base index can resolve to an open type parameter, which a concrete derived index
+        // can't satisfy. Independent of the per-property checks above, so not gated on type params.
+        ValidateClassIndexSignatureExtends(classStmt, classTypeForBody);
 
         // Second pass: check static property initializers at class scope
         foreach (var field in classStmt.Fields)

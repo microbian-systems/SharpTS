@@ -377,6 +377,42 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Validates that a class's own index signatures are compatible with those it overrides from its
+    /// base class (TS2415 "Class 'D' incorrectly extends base class 'B'", index-signature variant).
+    /// The derived index value type must be assignable to the base's (after substituting the base's
+    /// type arguments). Unlike <see cref="ValidateClassExtends"/> this also runs for <em>generic</em>
+    /// classes: `class B3&lt;T extends Base&gt; extends A&lt;T&gt; { [x: number]: Derived }` is an error
+    /// because the base index resolves to the open `T`, and a concrete `Derived` is not assignable to
+    /// `T` (T could be instantiated with a different subtype of its constraint).
+    /// </summary>
+    private void ValidateClassIndexSignatureExtends(Stmt.Class classStmt, TypeInfo.Class classType)
+    {
+        TypeInfo? superclass = classType.Superclass;
+        if (superclass is not (TypeInfo.Class or TypeInfo.InstantiatedGeneric))
+            return;
+
+        // tsc reports a single TS2415 per class even when both index kinds mismatch.
+        foreach (var (derived, baseSub, kind) in new[]
+        {
+            (classType.StringIndexType, StringIndexOf(superclass), "string"),
+            (classType.NumberIndexType, NumberIndexOf(superclass), "number"),
+        })
+        {
+            // Only an *overriding* index signature is checked — if the base has none, or the
+            // derived doesn't redeclare one, there's nothing to relate.
+            if (derived is null || baseSub is null) continue;
+            if (!IsCompatible(baseSub, derived))
+            {
+                RecordTypeError(new TypeCheckException(
+                    $" Class '{classStmt.Name.Lexeme}' incorrectly extends base class '{BaseTypeDisplayName(superclass)}'. The '{kind}' index signatures are incompatible.",
+                    line: classStmt.Name.Line,
+                    tsCode: "TS2415"));
+                return;
+            }
+        }
+    }
+
+    /// <summary>
     /// Walks the base-class chain looking for the accessibility of a field, getter or method named
     /// <paramref name="name"/>. Returns its <see cref="AccessModifier"/>, or null if absent.
     /// </summary>

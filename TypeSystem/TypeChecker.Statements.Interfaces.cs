@@ -215,6 +215,10 @@ public partial class TypeChecker
 
         // Use interfaceTypeEnv for member type resolution so T resolves correctly
         Dictionary<string, TypeInfo> members = [];
+        // Source line of each member's declaration, so index-signature conformance
+        // diagnostics (TS2411) can be reported at the offending property rather than
+        // aggregated onto the interface declaration line (matches tsc).
+        Dictionary<string, int> memberLines = [];
         Dictionary<string, List<TypeInfo.Function>> pendingOverloads = []; // Track overloaded methods
         HashSet<string> optionalMembers = [];
         HashSet<string> readonlyMembers = [];
@@ -252,6 +256,11 @@ public partial class TypeChecker
             {
                 members[member.Name.Lexeme] = memberType;
             }
+
+            // Remember the first declaration line for each member name (used by the
+            // string-index conformance check below to locate TS2411 diagnostics).
+            if (!memberLines.ContainsKey(member.Name.Lexeme))
+                memberLines[member.Name.Lexeme] = member.Name.Line;
 
             if (member.IsOptional)
             {
@@ -311,14 +320,21 @@ public partial class TypeChecker
                 }
             }
 
-            // Validate explicit properties are compatible with string index signature
+            // Validate explicit properties are compatible with the string index signature.
+            // tsc reports one TS2411 per offending property, located at that property's
+            // own declaration line (not aggregated onto the interface). Record (don't
+            // throw) so every offending property is reported, not just the first.
             if (stringIndexType != null)
             {
                 foreach (var (name, type) in members)
                 {
                     if (!IsCompatible(stringIndexType, type))
                     {
-                        throw new TypeCheckException($" Property '{name}' of type '{type}' is not assignable to string index type '{stringIndexType}' in interface '{interfaceStmt.Name.Lexeme}'.", tsCode: "TS2411");
+                        memberLines.TryGetValue(name, out var line);
+                        RecordTypeError(new TypeCheckException(
+                            $" Property '{name}' of type '{type}' is not assignable to 'string' index type '{stringIndexType}'.",
+                            line: line == 0 ? interfaceStmt.Name.Line : line,
+                            tsCode: "TS2411"));
                     }
                 }
             }
