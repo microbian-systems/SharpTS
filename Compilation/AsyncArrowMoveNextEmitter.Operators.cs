@@ -107,10 +107,15 @@ public partial class AsyncArrowMoveNextEmitter
         // 8. Continue point
         _il.MarkLabel(continueLabel);
 
-        // 9. Get result
-        _il.Emit(OpCodes.Ldarg_0);
-        _il.Emit(OpCodes.Ldflda, awaiterField);
-        _il.Emit(OpCodes.Call, _builder.GetAwaiterGetResultMethod());
+        // 9. Get result — wrapped in the flag-based exception capture when inside a try-with-awaits
+        // (see AsyncFunctionMoveNextEmitter.EmitAwaitGetResult). This cooperation is what lets `await`
+        // inside a `try` work in an async arrow at all.
+        EmitAwaitGetResult(() =>
+        {
+            _il.Emit(OpCodes.Ldarg_0);
+            _il.Emit(OpCodes.Ldflda, awaiterField);
+            _il.Emit(OpCodes.Call, _builder.GetAwaiterGetResultMethod());
+        });
 
         SetStackUnknown();
     }

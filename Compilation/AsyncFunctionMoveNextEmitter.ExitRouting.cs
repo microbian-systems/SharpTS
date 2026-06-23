@@ -1,10 +1,9 @@
-using System.Reflection;
 using System.Reflection.Emit;
 using SharpTS.Parsing;
 
 namespace SharpTS.Compilation;
 
-public partial class AsyncMoveNextEmitter
+public abstract partial class AsyncFunctionMoveNextEmitter
 {
     // ---- Unified exit-scope stack (#774, the async-function analog of #500/#559) ----------------
     //
@@ -62,7 +61,7 @@ public partial class AsyncMoveNextEmitter
     private int _nextExitCode = 2; // break/continue codes are allocated from here (no throw routing here)
 
     // code → emits the terminal action for that code (invoked when a finally is terminal for it).
-    private readonly Dictionary<int, Action> _exitTerminals = [];
+    private readonly Dictionary<int, System.Action> _exitTerminals = [];
 
     // `<>pendingExit` (int): the code of an in-flight non-local exit, or 0 when none. A finally that
     // awaits suspends MoveNext mid-routing, so this must be a field (a local would reset on re-entry).
@@ -70,18 +69,16 @@ public partial class AsyncMoveNextEmitter
     private FieldBuilder? _pendingExitField;
 
     private FieldBuilder GetPendingExitField() =>
-        _pendingExitField ??= _builder.StateMachineType.DefineField(
-            "<>pendingExit", typeof(int), FieldAttributes.Private);
+        _pendingExitField ??= DefineStateMachineField("<>pendingExit", typeof(int));
 
     // `<>pendingReturnValue` (object): the completion value of a `return` being routed through
-    // finally(s). `_returnValueLocal` is an IL local, so a finally that awaits would lose it across the
-    // suspension; the value is stashed here at the `return` and restored to `_returnValueLocal` by the
-    // return terminal, after the finally has run. Held across any suspension in those finallys.
+    // finally(s). The value is stashed here at the `return` and restored by the return terminal, after
+    // the finally has run — held across any suspension in those finallys (an IL local would not survive
+    // the MoveNext re-entry).
     private FieldBuilder? _pendingReturnValueField;
 
     private FieldBuilder GetPendingReturnValueField() =>
-        _pendingReturnValueField ??= _builder.StateMachineType.DefineField(
-            "<>pendingReturnValue", typeof(object), FieldAttributes.Private);
+        _pendingReturnValueField ??= DefineStateMachineField("<>pendingReturnValue", typeof(object));
 
     // ---- Loop-scope methods (override the base stack to use `_exitScopes`) -----------------------
 
@@ -143,8 +140,8 @@ public partial class AsyncMoveNextEmitter
         {
             // Flag-based finally(s) lie between the break and its loop; run them before jumping out.
             int code = loop.BreakCode ??= _nextExitCode++;
-            _exitTerminals.TryAdd(code, () => _il.Emit(OpCodes.Br, loop.BreakLabel));
-            RouteThroughFinallys(chain, code, _ctx!.ExceptionBlockDepth > 0 ? OpCodes.Leave : OpCodes.Br);
+            _exitTerminals.TryAdd(code, () => IL.Emit(OpCodes.Br, loop.BreakLabel));
+            RouteThroughFinallys(chain, code, Ctx.ExceptionBlockDepth > 0 ? OpCodes.Leave : OpCodes.Br);
             return;
         }
 
@@ -164,8 +161,8 @@ public partial class AsyncMoveNextEmitter
         if (chain.Count > 0)
         {
             int code = loop.ContinueCode ??= _nextExitCode++;
-            _exitTerminals.TryAdd(code, () => _il.Emit(OpCodes.Br, loop.ContinueLabel));
-            RouteThroughFinallys(chain, code, _ctx!.ExceptionBlockDepth > 0 ? OpCodes.Leave : OpCodes.Br);
+            _exitTerminals.TryAdd(code, () => IL.Emit(OpCodes.Br, loop.ContinueLabel));
+            RouteThroughFinallys(chain, code, Ctx.ExceptionBlockDepth > 0 ? OpCodes.Leave : OpCodes.Br);
             return;
         }
 
@@ -219,10 +216,10 @@ public partial class AsyncMoveNextEmitter
             chain[i].Dispatch[code] = next; // idempotent: the same code always routes a frame the same way
         }
 
-        _il.Emit(OpCodes.Ldarg_0);
-        _il.Emit(OpCodes.Ldc_I4, code);
-        _il.Emit(OpCodes.Stfld, GetPendingExitField());
-        _il.Emit(branch, chain[0].CleanupLabel);
+        IL.Emit(OpCodes.Ldarg_0);
+        IL.Emit(OpCodes.Ldc_I4, code);
+        IL.Emit(OpCodes.Stfld, GetPendingExitField());
+        IL.Emit(branch, chain[0].CleanupLabel);
     }
 
     /// <summary>
@@ -234,46 +231,41 @@ public partial class AsyncMoveNextEmitter
     {
         foreach (var (code, next) in frame.Dispatch)
         {
-            var skip = _il.DefineLabel();
-            _il.Emit(OpCodes.Ldarg_0);
-            _il.Emit(OpCodes.Ldfld, GetPendingExitField());
-            _il.Emit(OpCodes.Ldc_I4, code);
-            _il.Emit(OpCodes.Bne_Un, skip);
+            var skip = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, GetPendingExitField());
+            IL.Emit(OpCodes.Ldc_I4, code);
+            IL.Emit(OpCodes.Bne_Un, skip);
 
             if (next.HasValue)
             {
                 // Not terminal here — keep the pending code and run the next outer finally.
-                _il.Emit(OpCodes.Br, next.Value);
+                IL.Emit(OpCodes.Br, next.Value);
             }
             else
             {
                 // Terminal: the exit has run every finally it needed to. Clear the flag first so a
                 // break/continue resumes with clean state.
-                _il.Emit(OpCodes.Ldarg_0);
-                _il.Emit(OpCodes.Ldc_I4_0);
-                _il.Emit(OpCodes.Stfld, GetPendingExitField());
+                IL.Emit(OpCodes.Ldarg_0);
+                IL.Emit(OpCodes.Ldc_I4_0);
+                IL.Emit(OpCodes.Stfld, GetPendingExitField());
                 _exitTerminals[code]();
             }
 
-            _il.MarkLabel(skip);
+            IL.MarkLabel(skip);
         }
     }
 
     /// <summary>
     /// The terminal for a routed <c>return</c>: a finally that awaited between the <c>return</c> and
     /// here ran on a separate MoveNext invocation, so the return value (stashed in
-    /// <c>&lt;&gt;pendingReturnValue</c> at the <c>return</c>) is restored into <c>_returnValueLocal</c>
-    /// before leaving to the SetResult epilogue.
+    /// <c>&lt;&gt;pendingReturnValue</c> at the <c>return</c>) is reloaded onto the stack and used to
+    /// complete the state machine via the emitter's completion hook.
     /// </summary>
     private void RegisterReturnTerminal() => _exitTerminals.TryAdd(ExitCodeReturn, () =>
     {
-        if (_returnValueLocal != null)
-        {
-            _il.Emit(OpCodes.Ldarg_0);
-            _il.Emit(OpCodes.Ldfld, GetPendingReturnValueField());
-            _il.Emit(OpCodes.Stloc, _returnValueLocal);
-        }
-
-        _il.Emit(OpCodes.Leave, _setResultLabel);
+        IL.Emit(OpCodes.Ldarg_0);
+        IL.Emit(OpCodes.Ldfld, GetPendingReturnValueField());
+        EmitCompleteWithReturnValueOnStack();
     });
 }

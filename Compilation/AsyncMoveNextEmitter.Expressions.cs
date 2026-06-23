@@ -114,47 +114,14 @@ public partial class AsyncMoveNextEmitter
         // 8. Continue point
         _il.MarkLabel(continueLabel);
 
-        // 9. Get result
-        if (_currentTryCatchExceptionLocal != null)
-        {
-            var getResultDoneLabel = _il.DefineLabel();
-            var exceptionCaughtLabel = _il.DefineLabel();
-            _il.BeginExceptionBlock();
-            _il.Emit(OpCodes.Ldarg_0);
-            _il.Emit(OpCodes.Ldflda, awaiterField);
-            _il.Emit(OpCodes.Call, _builder.GetAwaiterGetResultMethod());
-            var resultTemp = _il.DeclareLocal(typeof(object));
-            _il.Emit(OpCodes.Stloc, resultTemp);
-            _il.Emit(OpCodes.Leave, getResultDoneLabel);
-            _il.BeginCatchBlock(typeof(Exception));
-            _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
-            _il.Emit(OpCodes.Stloc, _currentTryCatchExceptionLocal);
-            _il.Emit(OpCodes.Ldnull);
-            _il.Emit(OpCodes.Stloc, resultTemp);
-            _il.Emit(OpCodes.Leave, exceptionCaughtLabel);
-            _il.EndExceptionBlock();
-
-            // A rejected awaitable must abandon the rest of the try body, not
-            // resume it with a null result (which ran BOTH the success path and
-            // the catch). Jump straight to the try-exit so the statement-level
-            // catch dispatch in EmitTryCatchWithAwaits sees the exception local.
-            _il.MarkLabel(exceptionCaughtLabel);
-            if (_currentTryCatchSkipLabel != null)
-            {
-                _il.Emit(OpCodes.Br, _currentTryCatchSkipLabel.Value);
-            }
-            // No skip target (shouldn't happen — the local and label are set
-            // together): fall through with the null result as before.
-
-            _il.MarkLabel(getResultDoneLabel);
-            _il.Emit(OpCodes.Ldloc, resultTemp);
-        }
-        else
+        // 9. Get result — wrapped in the flag-based exception capture when inside a try-with-awaits
+        // (see AsyncFunctionMoveNextEmitter.EmitAwaitGetResult).
+        EmitAwaitGetResult(() =>
         {
             _il.Emit(OpCodes.Ldarg_0);
             _il.Emit(OpCodes.Ldflda, awaiterField);
             _il.Emit(OpCodes.Call, _builder.GetAwaiterGetResultMethod());
-        }
+        });
 
         SetStackUnknown();
     }

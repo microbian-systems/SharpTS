@@ -11,7 +11,7 @@ namespace SharpTS.Compilation;
 /// This is the heart of async IL generation, handling state dispatch,
 /// await points, and result/exception completion.
 /// </summary>
-public partial class AsyncMoveNextEmitter : StatementEmitterBase, IEmitterContext
+public partial class AsyncMoveNextEmitter : AsyncFunctionMoveNextEmitter, IEmitterContext
 {
     private readonly AsyncStateMachineBuilder _builder;
     private readonly AsyncStateAnalyzer.AsyncFunctionAnalysis _analysis;
@@ -112,9 +112,24 @@ public partial class AsyncMoveNextEmitter : StatementEmitterBase, IEmitterContex
     // DeclareLoopVariable and EmitStoreLoopVariable are handled by StatementEmitterBase
     // using the GetHoistedVariableField hook (overridden in .Statements.Variables.cs).
 
-    // For try/catch with awaits: track where to store caught exceptions
-    private LocalBuilder? _currentTryCatchExceptionLocal = null;
-    private Label? _currentTryCatchSkipLabel = null;
+    // ---- AsyncFunctionMoveNextEmitter hooks (the await-aware try/catch + exit-routing base) ----
+
+    protected override FieldBuilder DefineStateMachineField(string name, System.Type type)
+        => _builder.StateMachineType.DefineField(name, type, FieldAttributes.Private);
+
+    /// <summary>
+    /// Completes the async-function state machine using the boxed value on the IL stack: store it to
+    /// the return-value local (or discard it for a void async function), then leave to the SetResult
+    /// epilogue (which sets state -2 and calls builder.SetResult).
+    /// </summary>
+    protected override void EmitCompleteWithReturnValueOnStack()
+    {
+        if (_returnValueLocal != null)
+            _il.Emit(OpCodes.Stloc, _returnValueLocal);
+        else
+            _il.Emit(OpCodes.Pop);
+        _il.Emit(OpCodes.Leave, _setResultLabel);
+    }
 
     // @lock decorator support for async methods
     private Label _lockResumeLabel;  // Resume point after lock acquisition await
