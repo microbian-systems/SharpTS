@@ -1863,15 +1863,10 @@ public partial class TypeChecker
         TypeEnvironment classTypeEnv = new(_environment);
         if (classExpr.TypeParams != null && classExpr.TypeParams.Count > 0)
         {
-            classTypeParams = [];
-            foreach (var tp in classExpr.TypeParams)
-            {
-                TypeInfo? constraint = tp.Constraint != null ? ToTypeInfo(tp.Constraint) : null;
-                TypeInfo? defaultType = tp.Default != null ? ToTypeInfo(tp.Default) : null;
-                var typeParam = new TypeInfo.TypeParameter(tp.Name.Lexeme, constraint, defaultType, tp.IsConst, tp.Variance);
-                classTypeParams.Add(typeParam);
-                classTypeEnv.DefineTypeParameter(tp.Name.Lexeme, typeParam);
-            }
+            // Multi-pass under classTypeEnv so a constraint referencing a later parameter resolves
+            // (`class<T extends U, U>`). Mirrors the class-declaration path.
+            using (new EnvironmentScope(this, classTypeEnv))
+                classTypeParams = BuildGenericTypeParameters(classExpr.TypeParams, classTypeEnv);
         }
 
         // Create mutable class early so self-references work

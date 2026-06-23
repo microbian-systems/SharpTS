@@ -46,15 +46,12 @@ public partial class TypeChecker
         TypeEnvironment classTypeEnv = new(_environment);
         if (classStmt.TypeParams != null && classStmt.TypeParams.Count > 0)
         {
-            classTypeParams = [];
-            foreach (var tp in classStmt.TypeParams)
-            {
-                TypeInfo? constraint = tp.Constraint != null ? ToTypeInfo(tp.Constraint) : null;
-                TypeInfo? defaultType = tp.Default != null ? ToTypeInfo(tp.Default) : null;
-                var typeParam = new TypeInfo.TypeParameter(tp.Name.Lexeme, constraint, defaultType, tp.IsConst, tp.Variance);
-                classTypeParams.Add(typeParam);
-                classTypeEnv.DefineTypeParameter(tp.Name.Lexeme, typeParam);
-            }
+            // Multi-pass so constraints that reference a later parameter resolve
+            // (`class D<T extends U, U>` — U is declared after T). Mirrors generic functions/arrows.
+            // BuildGenericTypeParameters resolves constraints against the active environment, so
+            // make classTypeEnv current (where the sibling parameters are defined) for the call.
+            using (new EnvironmentScope(this, classTypeEnv))
+                classTypeParams = BuildGenericTypeParameters(classStmt.TypeParams, classTypeEnv);
         }
 
         // Resolve the superclass with the class's own type parameters in scope so a base
@@ -511,17 +508,28 @@ public partial class TypeChecker
             ValidateAbstractMemberImplementation(classTypeForBody, classStmt.Name.Lexeme);
         }
 
-        // Validate override members (skip for generic classes - validated at instantiation)
+        // The 'override' keyword check (TS4113) is skipped for generic classes (validated at
+        // instantiation); it isn't needed for the generic member-compatibility cases below.
         if (classTypeParams == null)
         {
             ValidateOverrideMembers(classStmt, classTypeForBody);
-            ValidateClassExtends(classStmt, classTypeForBody);
         }
+
+        // Member-override compatibility (TS2416) runs for generic classes too: a base member typed
+        // as an open type parameter can't be satisfied by a concrete (or differently-constrained)
+        // override. ValidateClassExtends substitutes the base's type arguments so the comparison is
+        // correct under generics.
+        ValidateClassExtends(classStmt, classTypeForBody);
 
         // Index-signature override compatibility (TS2415) runs for generic classes too: the
         // base index can resolve to an open type parameter, which a concrete derived index
         // can't satisfy. Independent of the per-property checks above, so not gated on type params.
         ValidateClassIndexSignatureExtends(classStmt, classTypeForBody);
+
+        // Property-vs-own-index-signature compatibility (TS2411) runs for generic classes too: a
+        // declared property must be assignable to the class's own string index type (which may be
+        // an open type parameter).
+        ValidateClassPropertiesAgainstIndex(classStmt, classTypeForBody);
 
         // Second pass: check static property initializers at class scope
         foreach (var field in classStmt.Fields)
