@@ -307,6 +307,122 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Validates that a class's own members are compatible with the members it overrides from its
+    /// base class (the <c>extends</c> clause). Mirrors tsc's two-pronged reporting:
+    /// <list type="bullet">
+    /// <item>A named property whose <em>type</em> is not assignable to the base property's type is
+    /// reported per-member as <b>TS2416</b> at the overriding member's declaration
+    /// ("Property 'X' in type 'D' is not assignable to the same property in base type 'B'").</item>
+    /// </list>
+    /// Whole-class mismatches that cannot be pinned to a single property (index signatures,
+    /// accessibility) are reported separately as TS2415; that path is handled elsewhere.
+    /// Only runs for non-generic classes (generic classes are validated at instantiation).
+    /// </summary>
+    private void ValidateClassExtends(Stmt.Class classStmt, TypeInfo.Class classType)
+    {
+        TypeInfo? superclass = classType.Superclass;
+        // Only meaningful when the base is an actual class (or a generic instantiation of one).
+        if (superclass is not (TypeInfo.Class or TypeInfo.InstantiatedGeneric))
+            return;
+
+        // Whole-class accessibility mismatch is reported once, at the class declaration, as TS2415.
+        bool accessibilityErrorReported = false;
+
+        foreach (var field in classStmt.Fields)
+        {
+            // Statics, ES #private fields and computed keys don't participate in structural
+            // override checking against the base class.
+            if (field.IsStatic || field.IsPrivate || field.ComputedKey != null)
+                continue;
+
+            string name = field.Name.Lexeme;
+            TypeInfo? baseType = FindMemberInBaseChain(superclass, name);
+            if (baseType is null)
+                continue; // not an override — nothing to relate against
+
+            // Accessibility must match across the override. A `private`/`public` mismatch makes the
+            // derived class incorrectly extend its base (tsc: "Property 'X' is private in type 'B'
+            // but not in type 'A'"). Reported once per class as TS2415 at the class name.
+            if (!accessibilityErrorReported)
+            {
+                AccessModifier? baseAccess = FindMemberAccessInBaseChain(superclass, name);
+                if (baseAccess is not null && (field.Access == AccessModifier.Private) != (baseAccess == AccessModifier.Private))
+                {
+                    RecordTypeError(new TypeCheckException(
+                        $" Class '{classStmt.Name.Lexeme}' incorrectly extends base class '{BaseTypeDisplayName(superclass)}'. Property '{name}' has mismatched accessibility.",
+                        line: classStmt.Name.Line,
+                        tsCode: "TS2415"));
+                    accessibilityErrorReported = true;
+                }
+            }
+
+            // A base property typed `any`/`undefined`/`null` accepts any override under the default
+            // (non-strict) configuration — e.g. `foo: typeof undefined` widens to `any` in tsc, so
+            // overriding it with a concrete type is not an error. Skip to avoid false positives.
+            if (baseType is TypeInfo.Any or TypeInfo.Undefined or TypeInfo.Null)
+                continue;
+
+            if (!classType.FieldTypes.TryGetValue(name, out var derivedType))
+                continue;
+
+            // Derived member must be assignable TO the base member (covariant property override).
+            if (!IsCompatible(baseType, derivedType))
+            {
+                RecordTypeError(new TypeCheckException(
+                    $" Property '{name}' in type '{classStmt.Name.Lexeme}' is not assignable to the same property in base type '{BaseTypeDisplayName(superclass)}'.",
+                    line: field.Name.Line,
+                    tsCode: "TS2416"));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Walks the base-class chain looking for the accessibility of a field, getter or method named
+    /// <paramref name="name"/>. Returns its <see cref="AccessModifier"/>, or null if absent.
+    /// </summary>
+    private AccessModifier? FindMemberAccessInBaseChain(TypeInfo? baseType, string name)
+    {
+        TypeInfo? current = baseType;
+        while (current != null)
+        {
+            var fieldAccess = GetFieldAccess(current);
+            var methodAccess = GetMethodAccess(current);
+            if (fieldAccess != null && fieldAccess.TryGetValue(name, out var fa)) return fa;
+            if (methodAccess != null && methodAccess.TryGetValue(name, out var ma)) return ma;
+            current = GetSuperclass(current);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Walks the base-class chain (handling both plain and generic-instantiated bases) looking for a
+    /// field, getter or method named <paramref name="name"/>. Returns its type, or null if absent.
+    /// </summary>
+    private TypeInfo? FindMemberInBaseChain(TypeInfo? baseType, string name)
+    {
+        TypeInfo? current = baseType;
+        while (current != null)
+        {
+            var fieldTypes = GetFieldTypes(current);
+            var getters = GetGetters(current);
+            var methods = GetMethods(current);
+            if (fieldTypes != null && fieldTypes.TryGetValue(name, out var ft)) return ft;
+            if (getters != null && getters.TryGetValue(name, out var gt)) return gt;
+            if (methods != null && methods.TryGetValue(name, out var mt)) return mt;
+            current = GetSuperclass(current);
+        }
+        return null;
+    }
+
+    /// <summary>Best-effort display name for a base type in inheritance diagnostics.</summary>
+    private static string BaseTypeDisplayName(TypeInfo baseType) => baseType switch
+    {
+        TypeInfo.Class c => c.Name,
+        TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericClass gc } => gc.Name,
+        _ => baseType.ToString() ?? "base"
+    };
+
+    /// <summary>
     /// Validates that methods/accessors marked with 'override' actually override a member in the superclass chain.
     /// </summary>
     private void ValidateOverrideMembers(Stmt.Class classStmt, TypeInfo.Class classType)

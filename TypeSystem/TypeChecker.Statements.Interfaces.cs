@@ -457,7 +457,7 @@ public partial class TypeChecker
             _environment.Define(interfaceStmt.Name.Lexeme, itfType);
         }
 
-        ValidateInterfaceExtends(interfaceStmt, members, extends);
+        ValidateInterfaceExtends(interfaceStmt, members, optionalMembers, extends);
     }
 
     /// <summary>
@@ -470,14 +470,29 @@ public partial class TypeChecker
     private void ValidateInterfaceExtends(
         Stmt.Interface interfaceStmt,
         Dictionary<string, TypeInfo> members,
+        HashSet<string> optionalMembers,
         FrozenSet<TypeInfo.Interface>? extends)
     {
         if (extends is null) return;
         foreach (var baseItf in extends)
         {
+            var baseOptional = baseItf.GetAllOptionalMembers().ToHashSet();
             foreach (var (memberName, baseMemberType) in baseItf.GetAllMembers())
             {
                 if (!members.TryGetValue(memberName, out var derivedMemberType)) continue;
+
+                // Optionality: a derived interface may not make a base-required member optional
+                // (tsc: "Property 'X' is optional in type 'S' but required in type 'T'").
+                if (optionalMembers.Contains(memberName) && !baseOptional.Contains(memberName))
+                {
+                    var optError = new TypeCheckException(
+                        $" Interface '{interfaceStmt.Name.Lexeme}' incorrectly extends interface '{baseItf.Name}'. Property '{memberName}' is optional in type '{interfaceStmt.Name.Lexeme}' but required in type '{baseItf.Name}'.",
+                        line: interfaceStmt.Name.Line,
+                        tsCode: "TS2430");
+                    if (_recoveryMode) { RecordTypeError(optError); break; }
+                    throw optError;
+                }
+
                 if (!IsCompatible(baseMemberType, derivedMemberType))
                 {
                     var error = new TypeCheckException(
