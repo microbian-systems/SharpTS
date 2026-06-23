@@ -74,4 +74,46 @@ public class InterfaceExtendsCompatibilityTests
             """;
         TestHarness.RunInterpreted(source);
     }
+
+    [Fact]
+    public void GenericConstructSignatureMember_TooManyRequiredParams_IsError()
+    {
+        // #896: a construct-signature member of a GENERIC base reaches the derived check through
+        // FlattenInstantiatedInterface; substitution must keep the construct signature alive, so the
+        // arity mismatch (`new (x: T)` requires a param `new ()` cannot supply) still flags TS2430.
+        var source = """
+            interface BaseG<T> { a: new () => T; }
+            interface I3G<T> extends BaseG<T> {
+                a: new (x: T) => T;
+            }
+            """;
+        Assert.ThrowsAny<TypeCheckException>(() => TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void GenericConstructSignatureMember_OptionalParam_IsAccepted()
+    {
+        // An OPTIONAL extra parameter does not increase required arity, so the construct signatures
+        // still relate — guards the #896 fix against over-reporting (the conformance test that
+        // motivated it is "...WithOptionalParameters").
+        var source = """
+            interface BaseG<T> { a: new () => T; }
+            interface I3G<T> extends BaseG<T> {
+                a: new (x?: T) => T;
+            }
+            """;
+        TestHarness.RunInterpreted(source);
+    }
+
+    [Fact]
+    public void GenericConstructSignatureMember_SameArity_IsAccepted()
+    {
+        var source = """
+            interface BaseG<T> { a: new (x: T) => T; }
+            interface I3G<T> extends BaseG<T> {
+                a: new (x: T) => T;
+            }
+            """;
+        TestHarness.RunInterpreted(source);
+    }
 }

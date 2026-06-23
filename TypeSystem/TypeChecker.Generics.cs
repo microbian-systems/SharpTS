@@ -603,12 +603,32 @@ public partial class TypeChecker
                 var substitutedConstraint = Substitute(tp.Constraint, substitutions);
                 if (!IsCompatible(substitutedConstraint, resolvedTypeArgs[i]))
                 {
-                    throw new TypeCheckException($" Type '{resolvedTypeArgs[i]}' does not satisfy constraint '{substitutedConstraint}' for type parameter '{tp.Name}'.", tsCode: "TS2344");
+                    if (ReportOrThrowConstraintViolation(resolvedTypeArgs[i], substitutedConstraint, tp))
+                        continue;
                 }
             }
         }
 
         return new TypeInfo.InstantiatedGeneric(generic, resolvedTypeArgs);
+    }
+
+    /// <summary>
+    /// A type argument failed its constraint (TS2344). While resolving an <c>extends</c>/superclass
+    /// clause (<see cref="_extendsClauseConstraintLine"/> set) this is RECORDED at the declaration's
+    /// line and the caller keeps instantiating with the offending argument — tsc reports TS2344 and
+    /// continues, so sibling declarations and the declaration's own index-signature checks still run
+    /// (#895). Everywhere else the violation throws, as before. Returns true when recorded (caller
+    /// should <c>continue</c>); never returns when it throws.
+    /// </summary>
+    private bool ReportOrThrowConstraintViolation(TypeInfo typeArg, TypeInfo constraint, TypeInfo.TypeParameter tp)
+    {
+        var msg = $" Type '{typeArg}' does not satisfy constraint '{constraint}' for type parameter '{tp.Name}'.";
+        if (_extendsClauseConstraintLine is int extLine)
+        {
+            RecordTypeError(new TypeCheckException(msg, line: extLine, tsCode: "TS2344"));
+            return true;
+        }
+        throw new TypeCheckException(msg, tsCode: "TS2344");
     }
 
     /// <summary>
@@ -637,7 +657,8 @@ public partial class TypeChecker
                 var substitutedConstraint = Substitute(tp.Constraint, substitutions);
                 if (!IsCompatible(substitutedConstraint, resolvedTypeArgs[i]))
                 {
-                    throw new TypeCheckException($" Type '{resolvedTypeArgs[i]}' does not satisfy constraint '{substitutedConstraint}' for type parameter '{tp.Name}'.", tsCode: "TS2344");
+                    if (ReportOrThrowConstraintViolation(resolvedTypeArgs[i], substitutedConstraint, tp))
+                        continue;
                 }
             }
         }
@@ -670,7 +691,8 @@ public partial class TypeChecker
                 var substitutedConstraint = Substitute(tp.Constraint, substitutions);
                 if (!IsCompatible(substitutedConstraint, resolvedTypeArgs[i]))
                 {
-                    throw new TypeCheckException($" Type '{resolvedTypeArgs[i]}' does not satisfy constraint '{substitutedConstraint}' for type parameter '{tp.Name}'.", tsCode: "TS2344");
+                    if (ReportOrThrowConstraintViolation(resolvedTypeArgs[i], substitutedConstraint, tp))
+                        continue;
                 }
             }
         }
