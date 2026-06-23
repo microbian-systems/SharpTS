@@ -508,6 +508,7 @@ public partial class TypeChecker
         if (classTypeParams == null)
         {
             ValidateOverrideMembers(classStmt, classTypeForBody);
+            ValidateClassExtends(classStmt, classTypeForBody);
         }
 
         // Second pass: check static property initializers at class scope

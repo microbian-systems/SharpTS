@@ -1,6 +1,7 @@
 {
   "folders": [
     "tests/cases/conformance/types/typeRelationships/assignmentCompatibility",
+    "tests/cases/conformance/types/typeRelationships/subtypesAndSuperTypes",
     "tests/cases/conformance/types/conditional"
   ],
   "timeoutSeconds": 5,

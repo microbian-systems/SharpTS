@@ -482,6 +482,13 @@ public partial class TypeChecker
             contextName: $"function '{funcStmt.Name.Lexeme}'"
         );
 
+        // A return/this type may reference a parameter via `typeof param`
+        // (e.g. `declare function f(cb: T): typeof cb`). Make the parameters visible in the
+        // signature-parsing scope so the query resolves. funcEnv is discarded after the signature
+        // is built (restored below), so these bindings don't leak into the body or outer scope.
+        for (int i = 0; i < paramNames.Count; i++)
+            funcEnv.Define(paramNames[i], paramTypes[i]);
+
         bool inferringReturnType = funcStmt.ReturnType == null;
         TypeInfo returnType = funcStmt.ReturnType != null
             ? ToTypeInfo(funcStmt.ReturnType)
