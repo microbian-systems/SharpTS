@@ -21,8 +21,11 @@ public static class SharpTSLanguageServer
             .WithOutput(Console.OpenStandardOutput())
             .WithServices(services => services
                 .AddSingleton<DocumentStore>()
-                .AddSingleton(new DiagnosticsService(resolve)))
-            .WithHandler<TextDocumentSyncHandler>());
+                .AddSingleton(new DiagnosticsService(resolve))
+                .AddSingleton(new DecoratorService(resolve)))
+            .WithHandler<TextDocumentSyncHandler>()
+            .WithHandler<HoverHandler>()
+            .WithHandler<CompletionHandler>());
 
         await server.WaitForExit;
     }
