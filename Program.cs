@@ -119,7 +119,11 @@ static void RunLanguageServer(string? projectFile, List<string> references, stri
             paths.AddRange(SharpTS.LanguageServer.Project.CsprojParser.Parse(projectFile));
 
         using var loader = new SharpTS.Compilation.AssemblyReferenceLoader(paths, sdkPath);
-        SharpTS.LanguageServer.SharpTSLanguageServer.RunAsync(loader.TryResolve).GetAwaiter().GetResult();
+        Func<IEnumerable<string>> typeNames = () => loader.GetAllPublicTypes()
+            .Select(t => t.FullName)
+            .Where(n => !string.IsNullOrEmpty(n))
+            .Cast<string>();
+        SharpTS.LanguageServer.SharpTSLanguageServer.RunAsync(loader.TryResolve, typeNames).GetAwaiter().GetResult();
     }
     catch (Exception ex)
     {

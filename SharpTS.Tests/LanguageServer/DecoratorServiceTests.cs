@@ -57,4 +57,33 @@ public class DecoratorServiceTests
     [Fact]
     public void Completion_NotAfterAt_ReturnsNull()
         => Assert.Null(_svc.Completion("const x = 1", line: 0, character: 7));
+
+    [Fact]
+    public void Completion_InsideDotNetTypeString_OffersMatchingTypeNames()
+    {
+        var svc = new DecoratorService(
+            typeNames: () => new[] { "System.Text.StringBuilder", "System.Guid", "Other.Thing" });
+
+        var line = "@DotNetType(\"Sys";
+        var list = svc.Completion(line, line: 0, character: line.Length);
+
+        Assert.NotNull(list);
+        Assert.Contains(list!.Items, i => i.Label == "System.Text.StringBuilder");
+        Assert.Contains(list.Items, i => i.Label == "System.Guid");
+        Assert.DoesNotContain(list.Items, i => i.Label == "Other.Thing");
+    }
+
+    [Fact]
+    public void SignatureHelp_InsideDecoratorCall_ShowsSignature()
+    {
+        var line = "@DotNetType(";
+        var sig = _svc.SignatureHelp(line, line: 0, character: line.Length);
+
+        Assert.NotNull(sig);
+        Assert.Contains("typeName", sig!.Signatures.First().Label);
+    }
+
+    [Fact]
+    public void SignatureHelp_NotInCall_ReturnsNull()
+        => Assert.Null(_svc.SignatureHelp("const x = 1", line: 0, character: 7));
 }

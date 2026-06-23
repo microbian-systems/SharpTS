@@ -14,7 +14,9 @@ public static class SharpTSLanguageServer
 {
     /// <param name="resolve">CLR type resolver for @DotNetType validation. Null falls back
     /// to the in-process registry (BCL only).</param>
-    public static async Task RunAsync(Func<string, Type?>? resolve = null)
+    /// <param name="typeNames">Enumerates public type names from referenced assemblies for
+    /// CLR-type-name completion inside @DotNetType("…"). Null = no such completion.</param>
+    public static async Task RunAsync(Func<string, Type?>? resolve = null, Func<IEnumerable<string>>? typeNames = null)
     {
         var server = await OmniSharp.Extensions.LanguageServer.Server.LanguageServer.From(options => options
             .WithInput(Console.OpenStandardInput())
@@ -22,10 +24,11 @@ public static class SharpTSLanguageServer
             .WithServices(services => services
                 .AddSingleton<DocumentStore>()
                 .AddSingleton(new DiagnosticsService(resolve))
-                .AddSingleton(new DecoratorService(resolve)))
+                .AddSingleton(new DecoratorService(resolve, typeNames)))
             .WithHandler<TextDocumentSyncHandler>()
             .WithHandler<HoverHandler>()
-            .WithHandler<CompletionHandler>());
+            .WithHandler<CompletionHandler>()
+            .WithHandler<SignatureHelpHandler>());
 
         await server.WaitForExit;
     }
