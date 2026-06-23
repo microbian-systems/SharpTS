@@ -2,9 +2,10 @@
 
 **Status:** In progress on branch `wrk/lsp-server`. Landed: Phase 0, Phase 1
 (interop analyzer + project refs), LspBridge teardown, Phase 2 (decorator hover,
-completion, CLR-type-name completion, signatureHelp), Phase 3 (extension rewrite).
-Remaining: Phase 4 (AST spans → hover/go-to-def + member-level hover + precise
-columns), Phase 5 (polish/multi-editor packaging).
+completion, CLR-type-name completion, signatureHelp), Phase 3 (extension rewrite),
+Phase 4a (token-based: precise diagnostic columns + .NET member hover for declarations
+& usages). Remaining: Phase 4b (general TS hover/go-to-def — deferred, competes with
+tsserver), Phase 5 (polish/multi-editor packaging).
 **Author:** investigation + design pass, 2026-06-22
 **Decision:** Throw away the bespoke `LspBridge` JSON protocol and the hand-rolled
 VS Code providers. Stand up a genuine LSP server over SharpTS's own
@@ -374,9 +375,14 @@ single-file binary so non-VS-Code editors don't need the full SDK.
 - ✅ **Phase 3 — Extension rewrite.** `vscode-languageclient` over `dotnet … lsp`;
   `dotnetPath`/`projectFile`/`additionalReferences` settings; bridge client + providers
   + DeclarationGenerator deleted; compile/run kept. Compiles clean (tsc).
-- ⬜ **Phase 4 — AST spans → hover/go-to-def + precise columns.** Add a reference-keyed
-  `SourceSpan` side table (NOT a base-record field — records use value equality, §10);
-  `PositionIndex`; `hover`/`definition`; tighten diagnostic ranges. Largest phase. **NOT YET DONE.**
+- ✅ **Phase 4a — token-based interop navigation (§14).** `PositionMap` (offset→line/col from
+  `Token.Start`); precise diagnostic columns in `InteropAnalyzer`; `MemberHoverService` —
+  member hover for `@DotNetType` members (declarations token-based; usages via the type
+  checker's `TypeMap`, mapping the receiver's class name back to the binding). No parser
+  surgery, no record-equality risk. ~7 tests + e2e (precise columns, declaration + usage hover).
+- ⬜ **Phase 4b — general TS hover + go-to-definition (deferred).** Only if worth competing
+  with `tsserver`: parser-wide AST spans (reference-keyed side table, NOT base-record fields —
+  value equality) + position→`TypeMap` index + symbol table. **NOT DONE / may not be worth it.**
 - ⬜ **Phase 5 — Polish & reach.** Multi-editor docs; `dotnet tool`/self-contained
   packaging; debounce/cancellation; config→server wiring (`sharpts.diagnostics`);
   loader reload on `.csproj`/`bin` change; STATUS.md/README updates. **NOT YET DONE.**
