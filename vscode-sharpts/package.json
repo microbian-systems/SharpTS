@@ -1,8 +1,8 @@
 {
   "name": "vscode-sharpts",
   "displayName": "SharpTS",
-  "description": ".NET attribute support for TypeScript decorators",
-  "version": "0.1.0",
+  "description": "SharpTS language support for TypeScript (.NET interop diagnostics, compile/run)",
+  "version": "0.2.0",
   "publisher": "sharpts",
   "license": "MIT",
   "repository": {
@@ -24,10 +24,15 @@
     "configuration": {
       "title": "SharpTS",
       "properties": {
+        "sharpts.dotnetPath": {
+          "type": "string",
+          "default": "dotnet",
+          "description": "Path to the dotnet executable used to launch the language server."
+        },
         "sharpts.projectFile": {
           "type": "string",
           "default": "",
-          "description": "Path to .csproj file for assembly references"
+          "description": "Path to a .csproj file; its referenced assemblies are used to resolve @DotNetType targets."
         },
         "sharpts.additionalReferences": {
           "type": "array",
@@ -35,28 +40,14 @@
             "type": "string"
           },
           "default": [],
-          "description": "Additional assembly paths to load"
-        },
-        "sharpts.restartOnCrash": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically restart the bridge if it crashes"
-        },
-        "sharpts.maxRestartAttempts": {
-          "type": "number",
-          "default": 3,
-          "description": "Maximum restart attempts within 1 minute"
+          "description": "Additional assembly paths to load for @DotNetType resolution."
         }
       }
     },
     "commands": [
       {
-        "command": "sharpts.restartBridge",
-        "title": "SharpTS: Restart Bridge"
-      },
-      {
-        "command": "sharpts.showBridgeStatus",
-        "title": "SharpTS: Show Bridge Status"
+        "command": "sharpts.restartServer",
+        "title": "SharpTS: Restart Language Server"
       },
       {
         "command": "sharpts.compile",
@@ -76,11 +67,14 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
-    "bundle-bridge": "dotnet publish ../SharpTS.csproj -c Release -o ./bin/bridge",
-    "prebuild": "npm run bundle-bridge",
+    "bundle-server": "dotnet publish ../SharpTS.csproj -c Release -o ./bin/server",
+    "prebuild": "npm run bundle-server",
     "build": "npm run compile",
     "prepackage": "npm run build",
     "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

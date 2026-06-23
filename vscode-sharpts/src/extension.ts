@@ -1,160 +1,69 @@
 /**
- * SharpTS VS Code Extension
- * Provides .NET attribute support for TypeScript decorators.
+ * SharpTS VS Code extension.
+ *
+ * Thin client over the SharpTS language server (`sharpts lsp`): all language
+ * features (diagnostics, and future hover/completion) come from the server via
+ * vscode-languageclient. The extension only spawns the server and keeps the
+ * compile/run commands, which are build operations rather than LSP concerns.
  */
 
-import * as vscode from 'vscode';
 import * as path from 'path';
-import { BridgeClient } from './bridge/BridgeClient';
-import { BridgeCache } from './bridge/BridgeCache';
-import { SharpTSCompletionProvider } from './features/CompletionProvider';
-import { SharpTSSignatureProvider } from './features/SignatureProvider';
-import { SharpTSHoverProvider } from './features/HoverProvider';
-import { DeclarationGenerator } from './features/DeclarationGenerator';
+import * as vscode from 'vscode';
+import {
+    LanguageClient,
+    LanguageClientOptions,
+    ServerOptions,
+    TransportKind
+} from 'vscode-languageclient/node';
 import { CompileCommands } from './commands/CompileCommands';
 
-let bridgeClient: BridgeClient | undefined;
-let cache: BridgeCache;
+let client: LanguageClient | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration('sharpts');
-    cache = new BridgeCache();
 
-    // Resolve path to bundled bridge DLL
-    const bridgePath = path.join(context.extensionPath, 'bin', 'bridge', 'SharpTS.dll');
+    // Bundled server DLL, run as `dotnet <SharpTS.dll> lsp`.
+    const serverDll = path.join(context.extensionPath, 'bin', 'server', 'SharpTS.dll');
+    const dotnetPath = config.get<string>('dotnetPath') || 'dotnet';
 
-    // Verify bridge exists
-    try {
-        await vscode.workspace.fs.stat(vscode.Uri.file(bridgePath));
-    } catch {
-        vscode.window.showErrorMessage(
-            'SharpTS bridge not found. The extension may need to be reinstalled.'
-        );
-        return;
-    }
-
-    // Build bridge arguments
-    const args: string[] = [];
-
+    const args = [serverDll, 'lsp'];
     const projectFile = config.get<string>('projectFile');
     if (projectFile) {
         args.push('--project', projectFile);
     }
-
-    const additionalRefs = config.get<string[]>('additionalReferences', []);
-    for (const ref of additionalRefs) {
+    for (const ref of config.get<string[]>('additionalReferences', [])) {
         args.push('-r', ref);
     }
 
-    // Create and start bridge
-    bridgeClient = new BridgeClient(bridgePath, args, config);
+    const serverOptions: ServerOptions = {
+        run: { command: dotnetPath, args, transport: TransportKind.stdio },
+        debug: { command: dotnetPath, args, transport: TransportKind.stdio }
+    };
 
-    const started = await bridgeClient.start();
-    if (!started) {
-        vscode.window.showWarningMessage(
-            'Failed to start SharpTS bridge. Some features may be unavailable. Click "Show Output" for details.',
-            'Show Output'
-        ).then(choice => {
-            if (choice === 'Show Output') {
-                bridgeClient?.showOutput();
-            }
-        });
-    }
-
-    // Generate TypeScript declarations for annotations
-    if (started && vscode.workspace.workspaceFolders?.length) {
-        const generator = new DeclarationGenerator(bridgeClient);
-        for (const folder of vscode.workspace.workspaceFolders) {
-            try {
-                await generator.generate(folder);
-            } catch (err) {
-                // Log but don't fail activation
-                console.error('Failed to generate declarations:', err);
-            }
+    const clientOptions: LanguageClientOptions = {
+        documentSelector: [
+            { language: 'typescript', scheme: 'file' },
+            { language: 'typescriptreact', scheme: 'file' }
+        ],
+        synchronize: {
+            configurationSection: 'sharpts'
         }
-    }
+    };
 
-    // Register providers
-    const selector: vscode.DocumentSelector = [
-        { language: 'typescript', scheme: 'file' },
-        { language: 'typescriptreact', scheme: 'file' }
-    ];
+    client = new LanguageClient('sharpts', 'SharpTS Language Server', serverOptions, clientOptions);
+    await client.start();
 
-    context.subscriptions.push(
-        vscode.languages.registerCompletionItemProvider(
-            selector,
-            new SharpTSCompletionProvider(bridgeClient, cache),
-            '@'
-        ),
-        vscode.languages.registerSignatureHelpProvider(
-            selector,
-            new SharpTSSignatureProvider(bridgeClient, cache),
-            '(', ','
-        ),
-        vscode.languages.registerHoverProvider(
-            selector,
-            new SharpTSHoverProvider(bridgeClient, cache)
-        )
-    );
-
-    // Register commands
-    context.subscriptions.push(
-        vscode.commands.registerCommand('sharpts.restartBridge', async () => {
-            cache.invalidate();
-            if (bridgeClient) {
-                bridgeClient.dispose();
-                bridgeClient = new BridgeClient(bridgePath, args, config);
-                await bridgeClient.start();
-            }
-        }),
-        vscode.commands.registerCommand('sharpts.showBridgeStatus', () => {
-            if (bridgeClient?.ready) {
-                vscode.window.showInformationMessage('SharpTS bridge is running and ready.');
-            } else {
-                vscode.window.showWarningMessage(
-                    'SharpTS bridge is not running.',
-                    'Restart'
-                ).then(choice => {
-                    if (choice === 'Restart') {
-                        vscode.commands.executeCommand('sharpts.restartBridge');
-                    }
-                });
-            }
-            bridgeClient?.showOutput();
-        })
-    );
-
-    // Register compile/run commands
-    const compileCommands = new CompileCommands(bridgePath);
+    // Compile / run commands (build operations, not LSP).
+    const compileCommands = new CompileCommands(serverDll);
     context.subscriptions.push(
         vscode.commands.registerCommand('sharpts.compile', () => compileCommands.compile()),
         vscode.commands.registerCommand('sharpts.run', () => compileCommands.run()),
         vscode.commands.registerCommand('sharpts.compileAndRun', () => compileCommands.compileAndRun()),
+        vscode.commands.registerCommand('sharpts.restartServer', () => client?.restart()),
         { dispose: () => compileCommands.dispose() }
     );
-
-    // Watch for configuration changes
-    context.subscriptions.push(
-        vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('sharpts')) {
-                cache.invalidate();
-                vscode.window.showInformationMessage(
-                    'SharpTS configuration changed. Restart the bridge for changes to take effect.',
-                    'Restart Bridge'
-                ).then(choice => {
-                    if (choice === 'Restart Bridge') {
-                        vscode.commands.executeCommand('sharpts.restartBridge');
-                    }
-                });
-            }
-        })
-    );
-
-    context.subscriptions.push({
-        dispose: () => bridgeClient?.dispose()
-    });
 }
 
-export function deactivate() {
-    bridgeClient?.dispose();
+export async function deactivate() {
+    await client?.stop();
 }
