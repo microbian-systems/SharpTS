@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- Distributed as its own dotnet tool (separate from the `sharpts` compiler tool),
+         so OmniSharp lives only here and never in the core SharpTS package/tool. -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>sharpts-lsp</ToolCommandName>
+    <PackageId>SharpTS.LanguageServer</PackageId>
+    <IsPackable>true</IsPackable>
+    <Description>LSP language server for SharpTS (.NET interop diagnostics, hover, completion).</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpTS.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OmniSharp.Extensions.LanguageServer" Version="0.19.9" />
+  </ItemGroup>
+
+</Project>

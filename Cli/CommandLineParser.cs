@@ -116,12 +116,6 @@ public abstract record ParsedCommand
     /// <param name="OutputPath">Optional output file path</param>
     public sealed record GenDecl(string TypeOrAssembly, string? OutputPath) : ParsedCommand;
 
-    /// <summary>Start the language server (LSP over stdio) for IDE integration.</summary>
-    /// <param name="ProjectFile">Optional .csproj file path for assembly references</param>
-    /// <param name="References">Assembly references</param>
-    /// <param name="SdkPath">SDK path for reference assemblies</param>
-    public sealed record Lsp(string? ProjectFile, List<string> References, string? SdkPath) : ParsedCommand;
-
     /// <summary>Parsing error with message and exit code.</summary>
     /// <param name="Message">Error message to display</param>
     /// <param name="ExitCode">Process exit code</param>
@@ -170,11 +164,6 @@ public class CommandLineParser
             return ParseGenDeclCommand(remainingArgs);
         }
 
-        // Handle lsp (language server over stdio)
-        if (remainingArgs[0] == "lsp")
-        {
-            return ParseLspCommand(remainingArgs);
-        }
 
         // Handle script execution
         if (remainingArgs.Length >= 1)
@@ -209,8 +198,7 @@ public class CommandLineParser
         return new ParsedCommand.Error(
             "Usage: sharpts [script] [args...]\n" +
             "       sharpts --compile <script.ts> [-o output.dll]\n" +
-            "       sharpts --gen-decl <TypeName|AssemblyPath> [-o output.d.ts]\n" +
-            "       sharpts lsp [--project <csproj>] [-r <assembly.dll>]",
+            "       sharpts --gen-decl <TypeName|AssemblyPath> [-o output.d.ts]",
             64
         );
     }
@@ -465,29 +453,4 @@ public class CommandLineParser
         return new ParsedCommand.GenDecl(typeOrAssembly, outputPath);
     }
 
-    private ParsedCommand ParseLspCommand(string[] args)
-    {
-        string? projectFile = null;
-        string? sdkPath = null;
-        List<string> references = [];
-
-        // Parse lsp-specific options
-        for (int i = 1; i < args.Length; i++)
-        {
-            if (args[i] == "--project" && i + 1 < args.Length)
-            {
-                projectFile = args[++i];
-            }
-            else if (args[i] == "--sdk-path" && i + 1 < args.Length)
-            {
-                sdkPath = args[++i];
-            }
-            else if ((args[i] is "-r" or "--reference") && i + 1 < args.Length)
-            {
-                references.Add(args[++i]);
-            }
-        }
-
-        return new ParsedCommand.Lsp(projectFile, references, sdkPath);
-    }
 }

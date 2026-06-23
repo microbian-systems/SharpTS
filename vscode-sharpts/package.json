@@ -67,7 +67,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
-    "bundle-server": "dotnet publish ../SharpTS.csproj -c Release -o ./bin/server",
+    "bundle-server": "dotnet publish ../SharpTS.LanguageServer/SharpTS.LanguageServer.csproj -c Release -o ./bin/server",
     "prebuild": "npm run bundle-server",
     "build": "npm run compile",
     "prepackage": "npm run build",

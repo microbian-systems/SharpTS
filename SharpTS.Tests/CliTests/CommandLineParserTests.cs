@@ -334,65 +334,6 @@ public class CommandLineParserTests
 
     #endregion
 
-    #region Lsp Mode Tests
-
-    [Fact]
-    public void Parse_Lsp_NoOptions_ReturnsLspCommand()
-    {
-        var result = _parser.Parse(["lsp"]);
-
-        var lsp = Assert.IsType<ParsedCommand.Lsp>(result);
-        Assert.Null(lsp.ProjectFile);
-        Assert.Empty(lsp.References);
-        Assert.Null(lsp.SdkPath);
-    }
-
-    [Fact]
-    public void Parse_Lsp_WithProject_SetsProjectFile()
-    {
-        var result = _parser.Parse(["lsp", "--project", "myapp.csproj"]);
-
-        var lsp = Assert.IsType<ParsedCommand.Lsp>(result);
-        Assert.Equal("myapp.csproj", lsp.ProjectFile);
-    }
-
-    [Fact]
-    public void Parse_Lsp_WithReferences_CollectsAll()
-    {
-        var result = _parser.Parse(["lsp", "-r", "a.dll", "--reference", "b.dll"]);
-
-        var lsp = Assert.IsType<ParsedCommand.Lsp>(result);
-        Assert.Equal(["a.dll", "b.dll"], lsp.References);
-    }
-
-    [Fact]
-    public void Parse_Lsp_WithSdkPath_SetsSdkPath()
-    {
-        var result = _parser.Parse(["lsp", "--sdk-path", "/path/to/sdk"]);
-
-        var lsp = Assert.IsType<ParsedCommand.Lsp>(result);
-        Assert.Equal("/path/to/sdk", lsp.SdkPath);
-    }
-
-    [Fact]
-    public void Parse_Lsp_AllOptions_ParsesCorrectly()
-    {
-        var result = _parser.Parse([
-            "lsp",
-            "--project", "app.csproj",
-            "-r", "lib.dll",
-            "--sdk-path", "/sdk"
-        ]);
-
-        var lsp = Assert.IsType<ParsedCommand.Lsp>(result);
-        Assert.Equal("app.csproj", lsp.ProjectFile);
-        Assert.Single(lsp.References);
-        Assert.Equal("lib.dll", lsp.References[0]);
-        Assert.Equal("/sdk", lsp.SdkPath);
-    }
-
-    #endregion
-
     #region Error Cases Tests
 
     [Fact]

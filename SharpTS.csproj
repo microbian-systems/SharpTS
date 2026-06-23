@@ -59,6 +59,8 @@
     <None Remove="SharpTS.TypeScriptConformance/**" />
     <Compile Remove="SharpTS.Microbenchmarks/**" />
     <None Remove="SharpTS.Microbenchmarks/**" />
+    <Compile Remove="SharpTS.LanguageServer/**" />
+    <None Remove="SharpTS.LanguageServer/**" />
     <Compile Remove="SharpTS.Example.Interop/**" />
     <None Remove="SharpTS.Example.Interop/**" />
     <Compile Remove="Examples/**" />
@@ -83,7 +85,6 @@
     <PackageReference Include="NuGet.Protocol" Version="7.3.1" />
     <PackageReference Include="PrettyPrompt" Version="4.1.*" />
     <PackageReference Include="ZstdSharp.Port" Version="0.8.1" />
-    <PackageReference Include="OmniSharp.Extensions.LanguageServer" Version="0.19.9" />
   </ItemGroup>
 
 </Project>

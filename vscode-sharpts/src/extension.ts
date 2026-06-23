@@ -22,11 +22,14 @@ let client: LanguageClient | undefined;
 export async function activate(context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration('sharpts');
 
-    // Bundled server DLL, run as `dotnet <SharpTS.dll> lsp`.
-    const serverDll = path.join(context.extensionPath, 'bin', 'server', 'SharpTS.dll');
+    // Bundled binaries (both land in bin/server/: the LSP server publish includes the
+    // core SharpTS.dll it references).
+    const serverDll = path.join(context.extensionPath, 'bin', 'server', 'SharpTS.LanguageServer.dll');
+    const coreDll = path.join(context.extensionPath, 'bin', 'server', 'SharpTS.dll');
     const dotnetPath = config.get<string>('dotnetPath') || 'dotnet';
 
-    const args = [serverDll, 'lsp'];
+    // The language server executable *is* the server — no subcommand.
+    const args = [serverDll];
     const projectFile = config.get<string>('projectFile');
     if (projectFile) {
         args.push('--project', projectFile);
@@ -53,8 +56,8 @@ export async function activate(context: vscode.ExtensionContext) {
     client = new LanguageClient('sharpts', 'SharpTS Language Server', serverOptions, clientOptions);
     await client.start();
 
-    // Compile / run commands (build operations, not LSP).
-    const compileCommands = new CompileCommands(serverDll);
+    // Compile / run commands use the core CLI (`SharpTS.dll`), not the LSP server.
+    const compileCommands = new CompileCommands(coreDll);
     context.subscriptions.push(
         vscode.commands.registerCommand('sharpts.compile', () => compileCommands.compile()),
         vscode.commands.registerCommand('sharpts.run', () => compileCommands.run()),

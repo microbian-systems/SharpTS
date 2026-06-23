@@ -101,35 +101,6 @@ switch (command)
     case ParsedCommand.GenDecl genDecl:
         GenerateDeclarations(genDecl.TypeOrAssembly, genDecl.OutputPath);
         break;
-
-    case ParsedCommand.Lsp lsp:
-        RunLanguageServer(lsp.ProjectFile, lsp.References, lsp.SdkPath);
-        break;
-}
-
-static void RunLanguageServer(string? projectFile, List<string> references, string? sdkPath)
-{
-    try
-    {
-        // Resolve @DotNetType targets against the project's referenced assemblies (via
-        // MetadataLoadContext). With no project/refs the loader still resolves the BCL from
-        // the SDK reference assemblies.
-        var paths = new List<string>(references);
-        if (projectFile != null && File.Exists(projectFile))
-            paths.AddRange(SharpTS.LanguageServer.Project.CsprojParser.Parse(projectFile));
-
-        using var loader = new SharpTS.Compilation.AssemblyReferenceLoader(paths, sdkPath);
-        Func<IEnumerable<string>> typeNames = () => loader.GetAllPublicTypes()
-            .Select(t => t.FullName)
-            .Where(n => !string.IsNullOrEmpty(n))
-            .Cast<string>();
-        SharpTS.LanguageServer.SharpTSLanguageServer.RunAsync(loader.TryResolve, typeNames).GetAwaiter().GetResult();
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"[LSP Fatal] {ex.Message}");
-        Environment.Exit(1);
-    }
 }
 
 static void RunFile(string path, DecoratorMode decoratorMode, bool emitDecoratorMetadata, string[]? scriptArgs = null, bool checkJs = false)
@@ -878,7 +849,6 @@ static void PrintHelp()
     Console.WriteLine("  sharpts [options] script.ts -- [script-args...]");
     Console.WriteLine("  sharpts --compile <script.ts> [compile-options]");
     Console.WriteLine("  sharpts --gen-decl <TypeName|AssemblyPath> [-o output.d.ts]");
-    Console.WriteLine("  sharpts lsp [--project <csproj>] [-r <assembly.dll>]");
     Console.WriteLine();
     Console.WriteLine("Options:");
     Console.WriteLine("  -h, --help                    Show this help message");
