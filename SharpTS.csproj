@@ -59,6 +59,8 @@
     <None Remove="SharpTS.TypeScriptConformance/**" />
     <Compile Remove="SharpTS.Microbenchmarks/**" />
     <None Remove="SharpTS.Microbenchmarks/**" />
+    <Compile Remove="SharpTS.LanguageServer/**" />
+    <None Remove="SharpTS.LanguageServer/**" />
     <Compile Remove="SharpTS.Example.Interop/**" />
     <None Remove="SharpTS.Example.Interop/**" />
     <Compile Remove="Examples/**" />

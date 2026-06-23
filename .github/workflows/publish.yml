@@ -52,7 +52,8 @@ jobs:
           ls -lh ./nupkg/
           test -f "./nupkg/SharpTS.${{ steps.version.outputs.VERSION }}.nupkg" || { echo "❌ SharpTS package not found"; exit 1; }
           test -f "./nupkg/SharpTS.Sdk.${{ steps.version.outputs.VERSION }}.nupkg" || { echo "❌ SharpTS.Sdk package not found"; exit 1; }
-          echo "✓ Both packages created successfully"
+          test -f "./nupkg/SharpTS.LanguageServer.${{ steps.version.outputs.VERSION }}.nupkg" || { echo "❌ SharpTS.LanguageServer package not found"; exit 1; }
+          echo "✓ All packages created successfully"
 
       - name: Push to NuGet
         run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate

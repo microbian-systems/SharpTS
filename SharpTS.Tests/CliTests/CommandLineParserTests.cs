@@ -334,65 +334,6 @@ public class CommandLineParserTests
 
     #endregion
 
-    #region LspBridge Mode Tests
-
-    [Fact]
-    public void Parse_LspBridge_NoOptions_ReturnsLspBridgeCommand()
-    {
-        var result = _parser.Parse(["lsp-bridge"]);
-
-        var lspBridge = Assert.IsType<ParsedCommand.LspBridge>(result);
-        Assert.Null(lspBridge.ProjectFile);
-        Assert.Empty(lspBridge.References);
-        Assert.Null(lspBridge.SdkPath);
-    }
-
-    [Fact]
-    public void Parse_LspBridge_WithProject_SetsProjectFile()
-    {
-        var result = _parser.Parse(["lsp-bridge", "--project", "myapp.csproj"]);
-
-        var lspBridge = Assert.IsType<ParsedCommand.LspBridge>(result);
-        Assert.Equal("myapp.csproj", lspBridge.ProjectFile);
-    }
-
-    [Fact]
-    public void Parse_LspBridge_WithReferences_CollectsAll()
-    {
-        var result = _parser.Parse(["lsp-bridge", "-r", "a.dll", "--reference", "b.dll"]);
-
-        var lspBridge = Assert.IsType<ParsedCommand.LspBridge>(result);
-        Assert.Equal(["a.dll", "b.dll"], lspBridge.References);
-    }
-
-    [Fact]
-    public void Parse_LspBridge_WithSdkPath_SetsSdkPath()
-    {
-        var result = _parser.Parse(["lsp-bridge", "--sdk-path", "/path/to/sdk"]);
-
-        var lspBridge = Assert.IsType<ParsedCommand.LspBridge>(result);
-        Assert.Equal("/path/to/sdk", lspBridge.SdkPath);
-    }
-
-    [Fact]
-    public void Parse_LspBridge_AllOptions_ParsesCorrectly()
-    {
-        var result = _parser.Parse([
-            "lsp-bridge",
-            "--project", "app.csproj",
-            "-r", "lib.dll",
-            "--sdk-path", "/sdk"
-        ]);
-
-        var lspBridge = Assert.IsType<ParsedCommand.LspBridge>(result);
-        Assert.Equal("app.csproj", lspBridge.ProjectFile);
-        Assert.Single(lspBridge.References);
-        Assert.Equal("lib.dll", lspBridge.References[0]);
-        Assert.Equal("/sdk", lspBridge.SdkPath);
-    }
-
-    #endregion
-
     #region Error Cases Tests
 
     [Fact]

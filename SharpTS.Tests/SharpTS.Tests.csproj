@@ -38,6 +38,7 @@
   <ItemGroup>
     <ProjectReference Include="..\SharpTS.csproj" />
     <ProjectReference Include="..\SharpTS.Sdk.Tasks\SharpTS.Sdk.Tasks.csproj" />
+    <ProjectReference Include="..\SharpTS.LanguageServer\SharpTS.LanguageServer.csproj" />
   </ItemGroup>
 
   <ItemGroup>

@@ -42,8 +42,6 @@ using SharpTS.Declaration;
 using SharpTS.Diagnostics;
 using SharpTS.Diagnostics.Exceptions;
 using SharpTS.Execution;
-using SharpTS.LspBridge;
-using SharpTS.LspBridge.Project;
 using SharpTS.Modules;
 using SharpTS.Packaging;
 using SharpTS.Parsing;
@@ -103,31 +101,6 @@ switch (command)
     case ParsedCommand.GenDecl genDecl:
         GenerateDeclarations(genDecl.TypeOrAssembly, genDecl.OutputPath);
         break;
-
-    case ParsedCommand.LspBridge lspBridge:
-        RunLspBridge(lspBridge.ProjectFile, lspBridge.References, lspBridge.SdkPath);
-        break;
-}
-
-static void RunLspBridge(string? projectFile, List<string> references, string? sdkPath)
-{
-    try
-    {
-        // If a project file is specified, parse it for additional references
-        if (projectFile != null && File.Exists(projectFile))
-        {
-            var projectRefs = CsprojParser.Parse(projectFile);
-            references.AddRange(projectRefs);
-        }
-
-        using var bridge = new LspBridge(references, sdkPath);
-        bridge.Run();
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"[LspBridge Fatal] {ex.Message}");
-        Environment.Exit(1);
-    }
 }
 
 static void RunFile(string path, DecoratorMode decoratorMode, bool emitDecoratorMetadata, string[]? scriptArgs = null, bool checkJs = false)
@@ -876,7 +849,6 @@ static void PrintHelp()
     Console.WriteLine("  sharpts [options] script.ts -- [script-args...]");
     Console.WriteLine("  sharpts --compile <script.ts> [compile-options]");
     Console.WriteLine("  sharpts --gen-decl <TypeName|AssemblyPath> [-o output.d.ts]");
-    Console.WriteLine("  sharpts lsp-bridge [--project <csproj>] [-r <assembly.dll>]");
     Console.WriteLine();
     Console.WriteLine("Options:");
     Console.WriteLine("  -h, --help                    Show this help message");
