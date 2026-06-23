@@ -964,8 +964,14 @@ public partial class TypeChecker
             {
                 // Convert type argument strings to TypeInfo
                 var typeArgs = classStmt.SuperclassTypeArgs.Select(ToTypeInfo).ToList();
-                // Instantiate the generic class with the type arguments
-                superclass = InstantiateGenericClass(gc, typeArgs);
+                // Instantiate the generic class with the type arguments. A type-argument constraint
+                // violation here (TS2344) is recorded at the class name's line and instantiation
+                // continues with the offending argument, so the rest of this class (its index-sig
+                // TS2415 check) and the sibling declarations still get checked (#895).
+                int? savedExtendsLine = _extendsClauseConstraintLine;
+                _extendsClauseConstraintLine = classStmt.Name.Line;
+                try { superclass = InstantiateGenericClass(gc, typeArgs); }
+                finally { _extendsClauseConstraintLine = savedExtendsLine; }
             }
             else if (superType is TypeInfo.Any)
             {

@@ -350,6 +350,14 @@ public partial class TypeChecker
         using (new EnvironmentScope(this, interfaceTypeEnv))
         {
             var extendsList = new HashSet<TypeInfo.Interface>();
+            // Resolving `extends A<Base>` instantiates the generic base; a type-argument constraint
+            // violation (TS2344) is recorded at the interface name's line and resolution continues
+            // with the offending argument, so sibling declarations in the enclosing module/block and
+            // this interface's own index-signature TS2430 check still run (#895).
+            int? savedExtendsLine = _extendsClauseConstraintLine;
+            _extendsClauseConstraintLine = interfaceStmt.Name.Line;
+            try
+            {
             foreach (var extendTypeName in interfaceStmt.Extends)
             {
                 var extendType = ToTypeInfo(extendTypeName);
@@ -387,6 +395,8 @@ public partial class TypeChecker
                     throw new TypeCheckException($" Interface '{interfaceStmt.Name.Lexeme}' can only extend other interfaces, but '{extendTypeName}' is not an interface.", tsCode: "TS2312");
                 }
             }
+            }
+            finally { _extendsClauseConstraintLine = savedExtendsLine; }
             extends = extendsList.ToFrozenSet();
         }
 
@@ -474,6 +484,7 @@ public partial class TypeChecker
         }
 
         ValidateInterfaceExtends(interfaceStmt, members, optionalMembers, extends);
+        ValidateInterfaceIndexSignatureExtends(interfaceStmt, stringIndexType, numberIndexType, extends);
     }
 
     /// <summary>
@@ -519,6 +530,49 @@ public partial class TypeChecker
                     // pass — throwing there would abort the namespace's remaining declarations. In
                     // recovery mode record the diagnostic directly and keep going; one error per
                     // offending base matches tsc.
+                    if (_recoveryMode) { RecordTypeError(error); break; }
+                    throw error;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// TS2430 index-signature variant: a derived interface's own index signature must be assignable to
+    /// the corresponding index signature it inherits from each extended interface. Mirrors
+    /// <see cref="ValidateClassIndexSignatureExtends"/> (classes/TS2415) for interfaces, including the
+    /// generic case: <c>interface B3&lt;T extends Base&gt; extends A&lt;T&gt; { [x: number]: Derived }</c>
+    /// is an error because the inherited index resolves to the open <c>T</c> (the base interface is
+    /// flattened with its type arguments substituted in <see cref="FlattenInstantiatedInterface"/>),
+    /// which a concrete <c>Derived</c> cannot satisfy. Like <see cref="ValidateInterfaceExtends"/> it
+    /// records-and-continues in recovery mode so sibling declarations in the same module/block keep
+    /// being checked (#895).
+    /// </summary>
+    private void ValidateInterfaceIndexSignatureExtends(
+        Stmt.Interface interfaceStmt,
+        TypeInfo? stringIndexType,
+        TypeInfo? numberIndexType,
+        FrozenSet<TypeInfo.Interface>? extends)
+    {
+        if (extends is null) return;
+        foreach (var baseItf in extends)
+        {
+            // tsc reports a single TS2430 per offending base even when both index kinds mismatch.
+            foreach (var (derived, baseSub, kind) in new[]
+            {
+                (stringIndexType, baseItf.StringIndexType, "string"),
+                (numberIndexType, baseItf.NumberIndexType, "number"),
+            })
+            {
+                // Only an *overriding* index signature is checked — if the base has none, or the
+                // derived doesn't redeclare one, there's nothing to relate.
+                if (derived is null || baseSub is null) continue;
+                if (!IsCompatible(baseSub, derived))
+                {
+                    var error = new TypeCheckException(
+                        $" Interface '{interfaceStmt.Name.Lexeme}' incorrectly extends interface '{baseItf.Name}'. The '{kind}' index signatures are incompatible.",
+                        line: interfaceStmt.Name.Line,
+                        tsCode: "TS2430");
                     if (_recoveryMode) { RecordTypeError(error); break; }
                     throw error;
                 }
