@@ -1,6 +1,9 @@
 # Plan: Replace the LspBridge with a real Language Server (Direction B)
 
-**Status:** Proposed
+**Status:** In progress — Phase 0, Phase 1 (interop analyzer + project refs),
+LspBridge teardown, and Phase 3 (extension rewrite) have landed on branch
+`wrk/lsp-server`. Remaining: Phase 2 (decorator IntelliSense), Phase 4
+(AST spans → hover/go-to-def), Phase 5 (polish/multi-editor packaging).
 **Author:** investigation + design pass, 2026-06-22
 **Decision:** Throw away the bespoke `LspBridge` JSON protocol and the hand-rolled
 VS Code providers. Stand up a genuine LSP server over SharpTS's own
@@ -352,28 +355,26 @@ single-file binary so non-VS-Code editors don't need the full SDK.
 
 ## 11. Phased delivery
 
-- **Phase 0 — Scaffold & teardown.** New `LanguageServer/` project area; add
-  OmniSharp SDK; `sharpts lsp` CLI; OmniSharp host with `initialize` handshake;
-  delete `LspBridge` protocol + `LspTests`; move `XmlDocLoader`/`CsprojParser`.
-  *Ships:* a server that initializes and does nothing yet.
-- **Phase 1 — Interop diagnostics (re-scoped per §1a).** `DocumentStore` + overlay;
-  the **`@DotNet*` interop analyzer** (5.2a) over the loaded assembly metadata;
-  conversions; `publishDiagnostics`. The `TsCode`-filtered type-checker path (5.2b)
-  ships behind `sharpts.diagnostics: "all"` but is *not* the default value.
-  *Ships:* live `@DotNetType`/interop errors at edit time — the tsserver-impossible
-  differentiator. **This (not diagnostic reuse) is the milestone that justifies the
-  effort.** Decorator IntelliSense (Phase 2) compounds it.
-- **Phase 2 — Decorator IntelliSense.** Port List/Info/Documentation logic into
+- ✅ **Phase 0 — Scaffold.** OmniSharp SDK added; `sharpts lsp` CLI; OmniSharp host;
+  `LanguageServer/` tree. *(commit: language server + interop diagnostics)*
+- ✅ **Phase 1 — Interop diagnostics (re-scoped per §1a).** `DocumentStore`;
+  the **`@DotNet*` interop analyzer** (Tier 1/2/3a–d); conversions; `publishDiagnostics`.
+  Plus **Phase 1b**: project-reference wiring (`--project`/`-r` → `AssemblyReferenceLoader`).
+  9 analyzer tests; verified end-to-end (didOpen/didChange) against the real binary.
+- ✅ **Teardown.** `LspBridge` protocol + handlers + tests deleted; `CsprojParser`/
+  `XmlDocLoader` relocated into `LanguageServer/`; `lsp-bridge` CLI removed.
+- ⬜ **Phase 2 — Decorator IntelliSense.** Port List/Info/Documentation logic into
   `DecoratorService`; completion (`@`), signatureHelp, hover; named-arg properties.
-  *Ships:* feature parity with today's extension, server-side, in any editor.
-- **Phase 3 — Extension rewrite.** `vscode-languageclient`; static builtin `.d.ts`;
-  activation gating; `dotnetPath` setting; delete bridge/provider files; keep
-  compile/run. *Ships:* the new VS Code UX end-to-end.
-- **Phase 4 — AST spans → hover/go-to-def + precise columns.** Add `SourceSpan` to
-  AST and populate in parser; `PositionIndex`; `hover`/`definition`; tighten
-  diagnostic ranges everywhere. *Ships:* full IDE-grade navigation (largest phase).
-- **Phase 5 — Polish & reach.** Multi-editor docs; `dotnet tool`/self-contained
-  packaging; integration tests; STATUS.md/README updates.
+  *Ships:* feature parity with the old extension, server-side, in any editor. **NOT YET DONE.**
+- ✅ **Phase 3 — Extension rewrite.** `vscode-languageclient` over `dotnet … lsp`;
+  `dotnetPath`/`projectFile`/`additionalReferences` settings; bridge client + providers
+  + DeclarationGenerator deleted; compile/run kept. Compiles clean (tsc).
+- ⬜ **Phase 4 — AST spans → hover/go-to-def + precise columns.** Add a reference-keyed
+  `SourceSpan` side table (NOT a base-record field — records use value equality, §10);
+  `PositionIndex`; `hover`/`definition`; tighten diagnostic ranges. Largest phase. **NOT YET DONE.**
+- ⬜ **Phase 5 — Polish & reach.** Multi-editor docs; `dotnet tool`/self-contained
+  packaging; debounce/cancellation; config→server wiring (`sharpts.diagnostics`);
+  loader reload on `.csproj`/`bin` change; STATUS.md/README updates. **NOT YET DONE.**
 
 ---
 
