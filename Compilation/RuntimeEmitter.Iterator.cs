@@ -192,9 +192,6 @@ public partial class RuntimeEmitter
     /// </summary>
     private void EmitIteratorMethodsBasic(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // Keep the original stub for backwards compatibility
-        EmitGetIterator(typeBuilder, runtime);
-
         // Basic iterator protocol helpers - needed by $IteratorWrapper
         EmitGetIteratorDone(typeBuilder, runtime);
         EmitGetIteratorValue(typeBuilder, runtime);
@@ -755,39 +752,4 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
     }
 
-    /// <summary>
-    /// Emits GetIterator: gets an enumerable from an object using the Symbol.iterator protocol.
-    /// Signature: IEnumerable GetIterator(object obj, $TSSymbol iteratorSymbol)
-    ///
-    /// NOTE: This is the original stub kept for backwards compatibility.
-    /// New code should use GetIteratorFunction + $IteratorWrapper.
-    /// </summary>
-    private void EmitGetIterator(TypeBuilder typeBuilder, EmittedRuntime runtime)
-    {
-        var method = typeBuilder.DefineMethod(
-            "GetIterator",
-            MethodAttributes.Public | MethodAttributes.Static,
-            _types.IEnumerable,
-            [_types.Object, runtime.TSSymbolType]
-        );
-        runtime.GetIterator = method;
-
-        var il = method.GetILGenerator();
-
-        // Simple fallback: check if it's already IEnumerable
-        var returnLabel = il.DefineLabel();
-
-        // if (obj is IEnumerable) return (IEnumerable)obj;
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, _types.IEnumerable);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Brtrue, returnLabel);
-        il.Emit(OpCodes.Pop);
-
-        // For non-IEnumerable, return null (caller should handle)
-        il.Emit(OpCodes.Ldnull);
-
-        il.MarkLabel(returnLabel);
-        il.Emit(OpCodes.Ret);
-    }
 }

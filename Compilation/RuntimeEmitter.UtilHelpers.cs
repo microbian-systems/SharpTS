@@ -2166,23 +2166,6 @@ public static class UtilHelpers
     }
 
     /// <summary>
-    /// Creates a new TextEncoder instance.
-    /// TextEncoder always uses UTF-8 encoding.
-    /// </summary>
-    public static object CreateTextEncoder()
-    {
-        throw new NotSupportedException("CreateTextEncoder is not used in standalone emitted runtime.");
-    }
-
-    /// <summary>
-    /// Creates a new TextDecoder instance with the specified options.
-    /// </summary>
-    public static object CreateTextDecoder(string? encoding = null, bool fatal = false, bool ignoreBOM = false)
-    {
-        throw new NotSupportedException("CreateTextDecoder is not used in standalone emitted runtime.");
-    }
-
-    /// <summary>
     /// Implements util.format() with proper format specifier handling.
     /// </summary>
     public static string Format(object?[] args)
