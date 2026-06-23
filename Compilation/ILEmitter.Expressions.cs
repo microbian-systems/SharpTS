@@ -851,6 +851,31 @@ public partial class ILEmitter
 
     protected override void EmitRegexLiteral(Expr.RegexLiteral re)
     {
+        // Hoisted literal (RegexLiteralHoistAnalyzer flagged this exact node as
+        // used in a safe consuming position): load the per-site static $RegExp,
+        // constructing it once on first evaluation. This removes the
+        // per-evaluation allocation + $RegExp ctor for literals in hot loops.
+        // Lazy init (vs. a .cctor) preserves SyntaxError throw-on-evaluation for
+        // an invalid pattern, and a rare concurrent double-construct just yields
+        // an equivalent instance (we only hoist where lastIndex is irrelevant).
+        if (_ctx.Runtime?.RegexHoistFields is { } hoistFields
+            && hoistFields.TryGetValue(re, out var field))
+        {
+            var done = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldsfld, field);          // [field]
+            IL.Emit(OpCodes.Dup);                    // [field, field]
+            IL.Emit(OpCodes.Brtrue, done);           // non-null → done with [field]
+            IL.Emit(OpCodes.Pop);                    // []
+            IL.Emit(OpCodes.Ldstr, re.Pattern);
+            IL.Emit(OpCodes.Ldstr, re.Flags);
+            IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateRegExpWithFlags); // [new]
+            IL.Emit(OpCodes.Dup);                    // [new, new]
+            IL.Emit(OpCodes.Stsfld, field);          // [new]
+            IL.MarkLabel(done);                      // [regex] on both paths
+            SetStackUnknown();
+            return;
+        }
+
         IL.Emit(OpCodes.Ldstr, re.Pattern);
         IL.Emit(OpCodes.Ldstr, re.Flags);
         EmitCallUnknown(_ctx.Runtime!.CreateRegExpWithFlags);

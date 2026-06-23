@@ -430,6 +430,7 @@ public partial class ILCompiler
         ObjectLocalPromotionAnalyzer.Analyze(statements, _typeMap, _closures.Analyzer);
         Phase3_CreateProgramType();
         DefineObjectShapeTypes();
+        DefineHoistedRegexFields(statements);
         PreScanBuiltInModuleImports(statements);
         Phase4_DefineDeclarations(statements);
         Phase5_CollectArrowFunctions(statements);
@@ -751,6 +752,34 @@ public partial class ILCompiler
     }
 
     /// <summary>
+    /// Defines one <c>public static $RegExp</c> field on <c>$Program</c> per
+    /// hoistable regex literal (<see cref="RegexLiteralHoistAnalyzer"/>), and
+    /// records them on <see cref="EmittedRuntime.RegexHoistFields"/> for
+    /// <c>EmitRegexLiteral</c>. Runs after <c>$Program</c> is created and before
+    /// any body is emitted, so the fields exist when a literal is first emitted.
+    /// Fields are <c>object</c>-typed (matching <c>CreateRegExpWithFlags</c>'s
+    /// return) and not <c>initonly</c> — the lazy-init path writes them via
+    /// <c>stsfld</c> on first evaluation. BCL/emitted-runtime only, so output
+    /// stays standalone.
+    /// </summary>
+    private void DefineHoistedRegexFields(List<Stmt> statements)
+    {
+        var hoistable = RegexLiteralHoistAnalyzer.Analyze(statements);
+        if (hoistable.Count == 0) return;
+
+        var fields = new Dictionary<Parsing.Expr.RegexLiteral, FieldBuilder>(ReferenceEqualityComparer.Instance);
+        int index = 0;
+        foreach (var literal in hoistable)
+        {
+            fields[literal] = _programType.DefineField(
+                $"$rx_{index++}",
+                _types.Object,
+                FieldAttributes.Public | FieldAttributes.Static);
+        }
+        _runtime.RegexHoistFields = fields;
+    }
+
+    /// <summary>
     /// Phase 9: Finalize all types by calling CreateType().
     /// </summary>
     private void Phase9_FinalizeTypes()
@@ -961,6 +990,7 @@ public partial class ILCompiler
         ObjectLocalPromotionAnalyzer.Analyze(allStatements, _typeMap, _closures.Analyzer);
         Phase3_CreateProgramType();
         DefineObjectShapeTypes();
+        DefineHoistedRegexFields(allStatements);
         // Scope each module's named-import bindings to that module so local
         // aliases like __platform don't collide between stdlib modules.
         foreach (var m in modules)

@@ -39,6 +39,18 @@ public class EmittedRuntime
     /// </summary>
     public void RequireSharpTSRuntime(string reason) => RequiredSharpTSRuntimeReasons.Add(reason);
 
+    /// <summary>
+    /// Per-site hoisted regex-literal static fields (compiled-mode optimization),
+    /// keyed by <c>Expr.RegexLiteral</c> node <em>identity</em> — see
+    /// <see cref="RegexLiteralHoistAnalyzer"/>. Null when nothing was hoisted.
+    /// <c>EmitRegexLiteral</c> loads the field (constructing the <c>$RegExp</c>
+    /// once, lazily) instead of allocating a fresh instance per evaluation. Lives
+    /// on the shared <see cref="EmittedRuntime"/> so it is reachable from every
+    /// emission context (functions, arrows, state machines) with no extra
+    /// threading.
+    /// </summary>
+    public Dictionary<SharpTS.Parsing.Expr.RegexLiteral, FieldBuilder>? RegexHoistFields { get; set; }
+
     // The emitted $Undefined singleton class
     public Type UndefinedType { get; set; } = null!;
     public FieldInfo UndefinedInstance { get; set; } = null!;
