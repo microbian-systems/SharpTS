@@ -289,16 +289,8 @@ public partial class AsyncGeneratorMoveNextEmitter
     // Note: base EmitSwitch also fixes a bug where labeled breaks inside switch
     // cases were incorrectly treated as switch breaks.
     //
-    // EmitReturn (above), EmitBreak/EmitContinue/EmitThrow, the loop-scope methods, and the
-    // try/catch emission all live in AsyncGeneratorMoveNextEmitter.Statements.TryCatch.cs — they
-    // share the unified exit-scope stack that routes non-local exits through enclosing finallys (#559).
-
-    protected override void EmitBranchToLabel(Label target)
-    {
-        // Use Leave instead of Br when inside exception-protected regions
-        if (_ctx!.ExceptionBlockDepth > 0)
-            _il.Emit(OpCodes.Leave, target);
-        else
-            _il.Emit(OpCodes.Br, target);
-    }
+    // EmitReturn, EmitThrow and the yield/await-aware try/catch emission live in
+    // AsyncGeneratorMoveNextEmitter.Statements.TryCatch.cs. The exit-scope stack, the loop-scope
+    // methods, break/continue and EmitBranchToLabel that route non-local exits through enclosing
+    // finallys (#559) are inherited from StateMachineExitRoutingEmitter.
 }

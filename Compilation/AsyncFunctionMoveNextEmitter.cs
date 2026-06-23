@@ -14,19 +14,20 @@ namespace SharpTS.Compilation;
 /// <c>finally</c> on a non-local exit out of such a try, because this machinery was never ported to it.
 /// </summary>
 /// <remarks>
-/// Generators and async generators have additional suspension machinery (yield,
-/// <c>generator.return()</c>, throw routing) and are intentionally NOT folded in here.
+/// The generic exit-scope / finally-routing scaffolding lives in the shared
+/// <see cref="StateMachineExitRoutingEmitter"/> base; this class adds the await-aware try/catch and the
+/// async-function return completion on top of it. The generator emitters share that same scaffolding
+/// base but keep their own suspension-specific try/catch bodies and throw routing.
 ///
-/// The machinery is emitter-agnostic except for three seams, exposed as hooks:
-///   * <see cref="DefineStateMachineField"/> — defines a private field on the concrete state-machine
-///     type (the routing needs fields that survive a MoveNext re-entry, not IL locals);
+/// The await machinery is emitter-agnostic except for two seams, exposed as hooks:
 ///   * <see cref="EmitCompleteWithReturnValueOnStack"/> — completes the state machine using the boxed
 ///     return value currently on the IL stack (async-fn stores it to its return-value local and leaves
 ///     to its SetResult label; the arrow's EmitSetResult consumes the stack value);
 ///   * <see cref="EmitAwaitGetResult"/> — wraps the awaiter's GetResult in the flag-based capture
 ///     try/catch when emitting inside a try-with-awaits; called by each emitter's await step.
+/// (The third seam, <c>DefineStateMachineField</c>, is declared on the scaffolding base.)
 /// </remarks>
-public abstract partial class AsyncFunctionMoveNextEmitter : StatementEmitterBase
+public abstract partial class AsyncFunctionMoveNextEmitter : StateMachineExitRoutingEmitter
 {
     protected AsyncFunctionMoveNextEmitter(StateMachineEmitHelpers helpers)
         : base(helpers)
@@ -40,9 +41,6 @@ public abstract partial class AsyncFunctionMoveNextEmitter : StatementEmitterBas
     protected Label? _currentTryCatchSkipLabel = null;
 
     // ---- Emitter-specific seams ----------------------------------------------------------------
-
-    /// <summary>Defines a private field on the concrete state-machine type.</summary>
-    protected abstract FieldBuilder DefineStateMachineField(string name, Type type);
 
     /// <summary>
     /// Completes the state machine using the boxed return value currently on top of the IL stack.
@@ -133,19 +131,15 @@ public abstract partial class AsyncFunctionMoveNextEmitter : StatementEmitterBas
     }
 
     /// <summary>
-    /// Branch out to <paramref name="target"/> (a loop's break/continue label). Inside a real IL
-    /// exception block a <c>br</c> out is illegal IL (BranchOutOfTry), so use <c>Leave</c> — which exits
-    /// the block legally and runs its (no-await) finally. <c>ExceptionBlockDepth</c> counts only real
-    /// blocks opened by <see cref="EmitSimpleTryCatch"/>, not the flag-based path's mini try/catch
-    /// segments (EmitSegmentInTry), so an escaping break/continue in a try-with-awaits is pulled out as a
-    /// segment-breaker (emitted at the top level, depth 0 → <c>Br</c>) while a break targeting a loop
-    /// nested inside a segment stays a legal in-segment <c>Br</c>. Mirrors the generator emitters (#727).
+    /// The terminal for a routed <c>return</c>: a finally that awaited between the <c>return</c> and
+    /// here ran on a separate MoveNext invocation, so the return value (stashed in
+    /// <c>&lt;&gt;pendingReturnValue</c> at the <c>return</c>) is reloaded onto the stack and used to
+    /// complete the state machine via <see cref="EmitCompleteWithReturnValueOnStack"/>.
     /// </summary>
-    protected override void EmitBranchToLabel(Label target)
+    private void RegisterReturnTerminal() => _exitTerminals.TryAdd(ExitCodeReturn, () =>
     {
-        if (Ctx.ExceptionBlockDepth > 0)
-            IL.Emit(OpCodes.Leave, target);
-        else
-            IL.Emit(OpCodes.Br, target);
-    }
+        IL.Emit(OpCodes.Ldarg_0);
+        IL.Emit(OpCodes.Ldfld, GetPendingReturnValueField());
+        EmitCompleteWithReturnValueOnStack();
+    });
 }

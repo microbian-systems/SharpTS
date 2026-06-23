@@ -3,33 +3,50 @@ using SharpTS.Parsing;
 
 namespace SharpTS.Compilation;
 
-public abstract partial class AsyncFunctionMoveNextEmitter
+/// <summary>
+/// Shared base for the state-machine MoveNext emitters: the async-function pair (via
+/// <see cref="AsyncFunctionMoveNextEmitter"/>), <see cref="GeneratorMoveNextEmitter"/> and
+/// <see cref="AsyncGeneratorMoveNextEmitter"/>. Holds the exit-scope stack and the non-local-exit
+/// (return / break / continue) finally-routing scaffolding every state machine needs.
+/// </summary>
+/// <remarks>
+/// A non-local exit that crosses a flag-based try/finally must run the enclosing finally(s) before
+/// transferring control; because a finally can itself suspend (await or yield), the routing state has
+/// to survive a MoveNext re-entry, so it lives in state-machine fields rather than IL locals.
+///
+/// Only the machinery common to all four emitters lives here. Each keeps its own suspension-specific
+/// try/catch body, its completion, and (generators only) throw routing. The one routing seam that
+/// differs is the Leave-vs-Br choice for a routed break/continue: the async functions key it off
+/// <see cref="CompilationContext.ExceptionBlockDepth"/> (the default <see cref="ProtectedRegionDepth"/>),
+/// the generators track their own protected-region counter and override it. <c>ExitCodeThrow</c> is
+/// reserved here for all emitters; the async functions never use it (they have no throw routing),
+/// which is harmless.
+/// </remarks>
+public abstract partial class StateMachineExitRoutingEmitter : StatementEmitterBase
 {
-    // ---- Unified exit-scope stack (#774, the async-function analog of #500/#559) ----------------
-    //
-    // A non-local exit (return / break / continue) that crosses a flag-based try/finally must run the
-    // enclosing finally(s) before transferring control. Because a finally can itself await, the routing
-    // state has to survive a MoveNext re-entry, so it lives in state-machine fields rather than IL
-    // locals.
-    //
-    // This mirrors the async generator's routing (AsyncGeneratorMoveNextEmitter.Statements.TryCatch.cs,
-    // itself the async analog of GeneratorMoveNextEmitter), pared down for the plain async function:
-    //   * there are no yields and no external generator.return(), so there is no <>pendingReturnValue
-    //     vs Current juggling and no __returnRequested mechanism;
-    //   * a `throw` in a try body is already captured by the existing flag-based exception path
-    //     (caughtExceptionLocal, which runs the finally before rethrowing), so throw routing is NOT
-    //     ported — only return/break/continue need the finally machinery here.
-    //
-    // The Leave-vs-Br choice keys off CompilationContext.ExceptionBlockDepth (the count of real IL
-    // exception blocks opened by EmitSimpleTryCatch around the current point), exactly as the existing
-    // EmitBranchToLabel does — escaping break/continue/return are pulled out as segment breakers and
-    // emitted at the top level (depth 0 → Br), while one nested inside a no-await simple try leaves it
-    // via Leave, running that real finally on the way to the innermost flag cleanup.
+    protected StateMachineExitRoutingEmitter(StateMachineEmitHelpers helpers)
+        : base(helpers)
+    {
+    }
 
-    private interface IExitScope;
+    /// <summary>
+    /// Defines a private field on the concrete state-machine type. The routing needs fields that
+    /// survive a MoveNext re-entry, not IL locals.
+    /// </summary>
+    protected abstract FieldBuilder DefineStateMachineField(string name, System.Type type);
+
+    /// <summary>
+    /// The count of real IL exception blocks open around the current emission point, used to choose
+    /// <c>Leave</c> vs <c>Br</c> for a routed break/continue. Defaults to
+    /// <see cref="CompilationContext.ExceptionBlockDepth"/>; the generators override it with their own
+    /// protected-region counter (which is independent of ExceptionBlockDepth).
+    /// </summary>
+    protected virtual int ProtectedRegionDepth => Ctx.ExceptionBlockDepth;
+
+    protected interface IExitScope;
 
     /// <summary>A loop (or switch / labeled statement) that <c>break</c>/<c>continue</c> can target.</summary>
-    private sealed class LoopScope : IExitScope
+    protected sealed class LoopScope : IExitScope
     {
         public required Label BreakLabel;
         public required Label ContinueLabel;
@@ -43,7 +60,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
     }
 
     /// <summary>A flag-based <c>try</c> that has a <c>finally</c>; its finally runs on any exit that crosses it.</summary>
-    private sealed class FinallyScope : IExitScope
+    protected sealed class FinallyScope : IExitScope
     {
         public required Label CleanupLabel;
 
@@ -55,20 +72,21 @@ public abstract partial class AsyncFunctionMoveNextEmitter
     // Innermost-last stack of loop and finally scopes currently open at the emission point. Replaces
     // the base class's `_loopLabels` (the loop-scope methods below are overridden to use this) so loops
     // and finallys share one ordering — needed to know which finallys lie between a break and its loop.
-    private readonly List<IExitScope> _exitScopes = [];
+    protected readonly List<IExitScope> _exitScopes = [];
 
-    private const int ExitCodeReturn = 1;
-    private int _nextExitCode = 2; // break/continue codes are allocated from here (no throw routing here)
+    protected const int ExitCodeReturn = 1;
+    protected const int ExitCodeThrow = 2;
+    protected int _nextExitCode = 3; // break/continue (and generator throw-into-enclosing) codes allocated from here
 
     // code → emits the terminal action for that code (invoked when a finally is terminal for it).
-    private readonly Dictionary<int, System.Action> _exitTerminals = [];
+    protected readonly Dictionary<int, System.Action> _exitTerminals = [];
 
     // `<>pendingExit` (int): the code of an in-flight non-local exit, or 0 when none. A finally that
-    // awaits suspends MoveNext mid-routing, so this must be a field (a local would reset on re-entry).
-    // Set once per exit and cleared by the terminal dispatch; defaults to 0 on a fresh state machine.
+    // suspends (awaits/yields) suspends MoveNext mid-routing, so this must be a field (a local would
+    // reset on re-entry). Set once per exit and cleared by the terminal dispatch; defaults to 0.
     private FieldBuilder? _pendingExitField;
 
-    private FieldBuilder GetPendingExitField() =>
+    protected FieldBuilder GetPendingExitField() =>
         _pendingExitField ??= DefineStateMachineField("<>pendingExit", typeof(int));
 
     // `<>pendingReturnValue` (object): the completion value of a `return` being routed through
@@ -77,7 +95,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
     // the MoveNext re-entry).
     private FieldBuilder? _pendingReturnValueField;
 
-    private FieldBuilder GetPendingReturnValueField() =>
+    protected FieldBuilder GetPendingReturnValueField() =>
         _pendingReturnValueField ??= DefineStateMachineField("<>pendingReturnValue", typeof(object));
 
     // ---- Loop-scope methods (override the base stack to use `_exitScopes`) -----------------------
@@ -109,7 +127,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         return loop == null ? null : (loop.BreakLabel, loop.ContinueLabel, loop.LabelNames);
     }
 
-    private LoopScope? CurrentLoopScope()
+    protected LoopScope? CurrentLoopScope()
     {
         for (int i = _exitScopes.Count - 1; i >= 0; i--)
             if (_exitScopes[i] is LoopScope ls)
@@ -117,7 +135,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         return null;
     }
 
-    private LoopScope? FindLabeledLoopScope(string labelName)
+    protected LoopScope? FindLabeledLoopScope(string labelName)
     {
         for (int i = _exitScopes.Count - 1; i >= 0; i--)
             if (_exitScopes[i] is LoopScope ls && ls.LabelNames.Contains(labelName))
@@ -141,7 +159,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
             // Flag-based finally(s) lie between the break and its loop; run them before jumping out.
             int code = loop.BreakCode ??= _nextExitCode++;
             _exitTerminals.TryAdd(code, () => IL.Emit(OpCodes.Br, loop.BreakLabel));
-            RouteThroughFinallys(chain, code, Ctx.ExceptionBlockDepth > 0 ? OpCodes.Leave : OpCodes.Br);
+            RouteThroughFinallys(chain, code, ProtectedRegionDepth > 0 ? OpCodes.Leave : OpCodes.Br);
             return;
         }
 
@@ -162,17 +180,32 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         {
             int code = loop.ContinueCode ??= _nextExitCode++;
             _exitTerminals.TryAdd(code, () => IL.Emit(OpCodes.Br, loop.ContinueLabel));
-            RouteThroughFinallys(chain, code, Ctx.ExceptionBlockDepth > 0 ? OpCodes.Leave : OpCodes.Br);
+            RouteThroughFinallys(chain, code, ProtectedRegionDepth > 0 ? OpCodes.Leave : OpCodes.Br);
             return;
         }
 
         EmitBranchToLabel(loop.ContinueLabel);
     }
 
+    /// <summary>
+    /// Branch out to <paramref name="target"/>. Inside a real IL exception block a <c>br</c> out is
+    /// illegal, so use <c>Leave</c> — which exits the block legally and runs its (no-suspension)
+    /// finally. <see cref="CompilationContext.ExceptionBlockDepth"/> counts only real blocks
+    /// (EmitSimpleTryCatch), not the flag-based path's sync segments, so a branch internal to a segment
+    /// stays a legal <c>Br</c> and does not illegally leave the mini try/catch.
+    /// </summary>
+    protected override void EmitBranchToLabel(Label target)
+    {
+        if (Ctx.ExceptionBlockDepth > 0)
+            IL.Emit(OpCodes.Leave, target);
+        else
+            IL.Emit(OpCodes.Br, target);
+    }
+
     // ---- Routing helpers ------------------------------------------------------------------------
 
     /// <summary>All open finally scopes, innermost first.</summary>
-    private List<FinallyScope> ActiveFinallyFrames()
+    protected List<FinallyScope> ActiveFinallyFrames()
     {
         var result = new List<FinallyScope>();
         for (int i = _exitScopes.Count - 1; i >= 0; i--)
@@ -182,7 +215,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
     }
 
     /// <summary>The finally scopes between the current point and <paramref name="target"/>, innermost first.</summary>
-    private List<FinallyScope> FinallyFramesAbove(LoopScope target)
+    protected List<FinallyScope> FinallyFramesAbove(LoopScope target)
     {
         var result = new List<FinallyScope>();
         for (int i = _exitScopes.Count - 1; i >= 0; i--)
@@ -203,11 +236,11 @@ public abstract partial class AsyncFunctionMoveNextEmitter
     /// <param name="branch">
     /// <c>Br</c> when the exit is at the top level, or <c>Leave</c> when it is emitted inside a real IL
     /// exception block (EmitSimpleTryCatch) nested in the flag-based finally(s): the <c>Leave</c> exits
-    /// that block — running its no-await finally — straight to the innermost flag cleanup label, then
-    /// the flag machinery runs the remaining (outer) finally(s). A real try never encloses a flag try,
-    /// so every real finally is innermore than every flag one and this ordering is correct.
+    /// that block — running its no-suspension finally — straight to the innermost flag cleanup label,
+    /// then the flag machinery runs the remaining (outer) finally(s). A real try never encloses a flag
+    /// try, so every real finally is innermore than every flag one and this ordering is correct.
     /// </param>
-    private void RouteThroughFinallys(List<FinallyScope> chain, int code, OpCode branch)
+    protected void RouteThroughFinallys(List<FinallyScope> chain, int code, OpCode branch)
     {
         for (int i = 0; i < chain.Count; i++)
         {
@@ -227,7 +260,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
     /// chain to the next outer finally or, if terminal here, clear the pending field and run the
     /// terminal action. A pending value of 0 (none) and codes not handled here fall through unchanged.
     /// </summary>
-    private void EmitFinallyDispatch(FinallyScope frame)
+    protected void EmitFinallyDispatch(FinallyScope frame)
     {
         foreach (var (code, next) in frame.Dispatch)
         {
@@ -255,17 +288,4 @@ public abstract partial class AsyncFunctionMoveNextEmitter
             IL.MarkLabel(skip);
         }
     }
-
-    /// <summary>
-    /// The terminal for a routed <c>return</c>: a finally that awaited between the <c>return</c> and
-    /// here ran on a separate MoveNext invocation, so the return value (stashed in
-    /// <c>&lt;&gt;pendingReturnValue</c> at the <c>return</c>) is reloaded onto the stack and used to
-    /// complete the state machine via the emitter's completion hook.
-    /// </summary>
-    private void RegisterReturnTerminal() => _exitTerminals.TryAdd(ExitCodeReturn, () =>
-    {
-        IL.Emit(OpCodes.Ldarg_0);
-        IL.Emit(OpCodes.Ldfld, GetPendingReturnValueField());
-        EmitCompleteWithReturnValueOnStack();
-    });
 }
