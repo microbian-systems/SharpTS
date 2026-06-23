@@ -227,9 +227,51 @@ access, cannot realize the win from the representation alone. So:
   that this hits 2.2× in real emitted IL, integrates with stack-typing, and stays
   standalone. That is the next de-risk.
 
-## Prototype 2 (compiled IC) — concrete implementation plan
+## Prototype 2 (compiled IC) — SCOUTING FINDING that reshapes the milestone
 
-This is the decisive de-risk. Scouted integration points:
+**Plain compiled objects are NOT `$Object` — they are a bare `Dictionary<string,object?>`.**
+`ILEmitter.Properties.Literals.cs:117-148`: an object literal with no spread /
+computed key / accessor emits `new Dictionary(); set_Item…` directly (only
+accessor-bearing literals become `$Object`). The `TypeInfo.Record` read/write
+fast paths (`ILEmitter.Properties.cs:687`, `EmitTypedRecordPropertyGet/Set`) do
+`Castclass Dictionary; TryGetValue / set_Item`. So:
+
+- There is **no `$Object` instance to add `_shape`/`_slots` to** for the common
+  case — the original milestone's premise was wrong.
+- The bare `Dictionary` is shared by **construction and every consumer**
+  (spread/`MergeIntoObject`, `Object.keys`, for-in, `StructuredClone`'s
+  `Dictionary` arm, the Record get/set fast paths). Swapping it for a bespoke
+  shaped struct would touch all of them — a full representation swap, no slice.
+
+**Revised contained approach — `$ShapedDict : Dictionary<string,object?>`.**
+Subclass the Dictionary instead of replacing it:
+
+```
+class $ShapedDict : Dictionary<string,object?> {
+    string[] _shape;     // interned per construction site (static field)
+    object?[] _slots;    // values, slot i == _shape[i]
+}
+```
+
+- **Every existing consumer is oblivious** — `$ShapedDict` *is* a `Dictionary`,
+  so `Castclass Dictionary`, `TryGetValue`, `Keys`, spread, clone, for-in all
+  keep working unchanged. Zero blast radius outside the two touch points below.
+- **Construction** (Record-typed, all-data-prop literals only): emit
+  `new $ShapedDict(internedNames)` and fill *both* the base dictionary entry and
+  `_slots[i]` per property (double-write; double storage — acceptable for a
+  measurement prototype; Phase 1 proper drops the dict for shaped-only).
+- **Read IC** at `EmitTypedRecordPropertyGet`: `isinst $ShapedDict`; if it is one
+  and `sd._shape == site.cachedShape` → `sd._slots[site.cachedSlot]`; else the
+  existing `TryGetValue`. Per-site `static string[] cachedShape; static int slot`.
+  On miss, `slot = Array.IndexOf(sd._shape, name)` (BCL, standalone-safe).
+
+This makes the **in-pipeline IC measurement contained and reversible**: only the
+new type, the Record-literal construction, and the Record get fast path change;
+everything else is untouched because the object is still a `Dictionary`. If the
+IC shows the spike's 2.2× on a read-hot loop (build-once/read-many), the approach
+is validated and Phase 1 proper can drop the double storage.
+
+### Original integration points (still valid for Phase 1 proper)
 
 | Piece | Where | Change |
 |-------|-------|--------|
