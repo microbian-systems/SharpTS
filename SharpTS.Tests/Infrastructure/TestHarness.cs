@@ -289,6 +289,22 @@ public static class TestHarness
 
         // Skip the disk roundtrip — load the assembly straight from the in-memory PE bytes.
         var bytes = compiler.SaveToBytes();
+
+        // Systemic guardrail (#886): with SHARPTS_VERIFY_COMPILED=1, run ILVerify on every
+        // in-process compiled program so the whole compiled-mode suite becomes a provable check
+        // for IL-correctness regressions (stale _stackType, double-box, etc.). Opt-in because the
+        // suite may still contain pre-existing unverifiable-but-runnable programs that need triage
+        // before this can be enabled by default.
+        if (Environment.GetEnvironmentVariable("SHARPTS_VERIFY_COMPILED") == "1")
+        {
+            var verifyErrors = VerifyILBytes(bytes)
+                .Where(e => !e.Contains("Failed to load assembly"))
+                .ToList();
+            if (verifyErrors.Count > 0)
+                throw new InvalidOperationException(
+                    "IL verification failed for compiled program:\n  " + string.Join("\n  ", verifyErrors));
+        }
+
         var assembly = Assembly.Load(bytes);
         var programType = assembly.GetType("$Program")
             ?? throw new InvalidOperationException("Compiled assembly has no $Program type");
@@ -1129,6 +1145,17 @@ public static class TestHarness
     {
         using var verifier = new ILVerifier();
         using var stream = File.OpenRead(dllPath);
+        return verifier.Verify(stream);
+    }
+
+    /// <summary>
+    /// Verifies IL from in-memory PE bytes (no disk roundtrip). Used by the opt-in
+    /// suite-wide verification guardrail in <see cref="RunCompiledInProcess"/>.
+    /// </summary>
+    public static List<string> VerifyILBytes(byte[] bytes)
+    {
+        using var verifier = new ILVerifier();
+        using var stream = new MemoryStream(bytes);
         return verifier.Verify(stream);
     }
 

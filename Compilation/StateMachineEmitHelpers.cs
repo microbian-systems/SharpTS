@@ -324,12 +324,23 @@ public class StateMachineEmitHelpers
         }
     }
 
+    // INVARIANT: after any value-producing emit, _stackType must describe the value actually
+    // on top of the IL stack. The EmitBox* helpers below box AND reset _stackType to Unknown
+    // so callers can't desync the two. Prefer them over a raw `IL.Emit(OpCodes.Box, ...)` for
+    // any box whose result is left on the stack as an expression/statement result: a raw box
+    // leaves _stackType stale (e.g. still Double over a boxed double), and a downstream
+    // _stackType-sensitive consumer — the top-level await-drain wrapper, EmitBoxIfNeeded,
+    // EnsureDouble, arithmetic — then emits a second box / native op and the IL fails
+    // verification (#886; see also #441 in AsyncArrowMoveNextEmitter.Expressions.cs).
+
+    /// <summary>Boxes a native double and resets _stackType to Unknown (maintains the invariant above).</summary>
     public void EmitBoxDouble()
     {
         _il.Emit(OpCodes.Box, _types.Double);
         SetStackUnknown();
     }
 
+    /// <summary>Boxes a native bool and resets _stackType to Unknown (maintains the invariant above).</summary>
     public void EmitBoxBool()
     {
         _il.Emit(OpCodes.Box, _types.Boolean);

@@ -1667,4 +1667,111 @@ public class ILVerificationTests
         Assert.Equal("2\n3\n1\nok\nr\n3\n2\n", output);
         Assert.Equal(output, TestHarness.RunInterpreted(source));
     }
+
+    // #886: assigning to a built-in property whose setter ends by boxing the result and
+    // returning (RegExp.lastIndex, process.exitCode) left _stackType == Double stale over a
+    // boxed value. A downstream consumer (top-level await-drain wrapper, or arithmetic on the
+    // assignment result) then trusted the stale type and emitted a second box / native op,
+    // producing unverifiable IL (StackUnexpected: ref 'float64' vs Double). The setters now
+    // route the trailing box through EmitBoxDouble (box + SetStackUnknown).
+
+    [Fact]
+    public void RegExpLastIndexAssignment_TopLevel_PassesILVerification()
+    {
+        var source = """
+            const r = /a/;
+            r.lastIndex = 5;
+            console.log(r.lastIndex);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("5\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void RegExpLastIndexAssignment_FromVariable_PassesILVerification()
+    {
+        var source = """
+            const r = /a/;
+            let n = 5;
+            r.lastIndex = n;
+            console.log(r.lastIndex);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("5\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void RegExpLastIndexAssignment_FromCoercedString_PassesILVerification()
+    {
+        // The non-Double branch (box + Convert.ToDouble) must still verify: "1.9" coerces to
+        // 1.9, then RegExpSetLastIndex truncates to an int -> lastIndex == 1.
+        var source = """
+            const r = /a/;
+            r.lastIndex = "1.9" as any;
+            console.log(r.lastIndex);
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("1\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void RegExpLastIndexAssignment_UsedAsValue_PassesILVerification()
+    {
+        // The assignment result is consumed by arithmetic inside a function body. Before the fix
+        // this failed with ExpectedNumericType {Found=ref 'float64'} (native add on a boxed double).
+        var source = """
+            function f(): number {
+                const r = /a/;
+                let x = (r.lastIndex = 5) + 1;
+                return x;
+            }
+            console.log(f());
+            """;
+
+        var (errors, output) = TestHarness.CompileVerifyAndRun(source);
+
+        Assert.Empty(errors);
+        Assert.Equal("6\n", output);
+        Assert.Equal(output, TestHarness.RunInterpreted(source));
+    }
+
+    [Fact]
+    public void ProcessExitCodeAssignment_Literal_ProducesVerifiableIL()
+    {
+        // Uses CompileAndVerifyOnly (not ...AndRun) because setting a non-zero exit code would
+        // make the harness treat the process as failed. Before the fix this produced two errors:
+        // an unconditional Convert.ToDouble on a native double, plus the trailing double-box.
+        var source = """
+            process.exitCode = 5;
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
+
+    [Fact]
+    public void ProcessExitCodeAssignment_FromVariable_ProducesVerifiableIL()
+    {
+        var source = """
+            let n = 3;
+            process.exitCode = n;
+            """;
+
+        var errors = TestHarness.CompileAndVerifyOnly(source);
+
+        Assert.Empty(errors);
+    }
 }
