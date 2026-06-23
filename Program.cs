@@ -108,18 +108,24 @@ switch (command)
         RunLspBridge(lspBridge.ProjectFile, lspBridge.References, lspBridge.SdkPath);
         break;
 
-    case ParsedCommand.Lsp:
-        RunLanguageServer();
+    case ParsedCommand.Lsp lsp:
+        RunLanguageServer(lsp.ProjectFile, lsp.References, lsp.SdkPath);
         break;
 }
 
-static void RunLanguageServer()
+static void RunLanguageServer(string? projectFile, List<string> references, string? sdkPath)
 {
     try
     {
-        // Project-reference wiring (--project/-r) is handled in a later phase; Phase 1
-        // resolves @DotNetType targets via the in-process registry, which covers the BCL.
-        SharpTS.LanguageServer.SharpTSLanguageServer.RunAsync().GetAwaiter().GetResult();
+        // Resolve @DotNetType targets against the project's referenced assemblies (via
+        // MetadataLoadContext). With no project/refs the loader still resolves the BCL from
+        // the SDK reference assemblies.
+        var paths = new List<string>(references);
+        if (projectFile != null && File.Exists(projectFile))
+            paths.AddRange(SharpTS.LspBridge.Project.CsprojParser.Parse(projectFile));
+
+        using var loader = new SharpTS.Compilation.AssemblyReferenceLoader(paths, sdkPath);
+        SharpTS.LanguageServer.SharpTSLanguageServer.RunAsync(loader.TryResolve).GetAwaiter().GetResult();
     }
     catch (Exception ex)
     {

@@ -12,14 +12,16 @@ namespace SharpTS.LanguageServer;
 /// </summary>
 public static class SharpTSLanguageServer
 {
-    public static async Task RunAsync()
+    /// <param name="resolve">CLR type resolver for @DotNetType validation. Null falls back
+    /// to the in-process registry (BCL only).</param>
+    public static async Task RunAsync(Func<string, Type?>? resolve = null)
     {
         var server = await OmniSharp.Extensions.LanguageServer.Server.LanguageServer.From(options => options
             .WithInput(Console.OpenStandardInput())
             .WithOutput(Console.OpenStandardOutput())
             .WithServices(services => services
                 .AddSingleton<DocumentStore>()
-                .AddSingleton<DiagnosticsService>())
+                .AddSingleton(new DiagnosticsService(resolve)))
             .WithHandler<TextDocumentSyncHandler>());
 
         await server.WaitForExit;

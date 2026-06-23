@@ -10,7 +10,12 @@ namespace SharpTS.LanguageServer.Services;
 /// </summary>
 public sealed class DiagnosticsService
 {
-    private readonly InteropAnalyzer _interop = new();
+    private readonly InteropAnalyzer _interop;
+
+    /// <param name="resolve">CLR type resolver. Null = in-process registry (BCL only);
+    /// the server injects an AssemblyReferenceLoader when a project/references are configured
+    /// so the user's own @DotNetType targets resolve too.</param>
+    public DiagnosticsService(Func<string, Type?>? resolve = null) => _interop = new InteropAnalyzer(resolve);
 
     public List<LspDiagnostic> Analyze(string text, DiagnosticPublishMode mode = DiagnosticPublishMode.SharpTsOnly)
     {
