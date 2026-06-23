@@ -519,6 +519,8 @@ public class EmittedRuntime
     public MethodBuilder ToObjectMethod { get; set; } = null!;
     /// <summary>$Runtime.IsBoxedPrimitiveOfType(obj, typeTag) — true iff obj is a $Object with matching __primitiveType marker. Used by the instanceof emitter.</summary>
     public MethodBuilder IsBoxedPrimitiveOfTypeMethod { get; set; } = null!;
+    /// <summary>$Runtime.NormalizeForeignBoxedPrimitive(value) — converts a Number/Boolean/String boxed wrapper produced OUTSIDE the emitted runtime (an interpreter SharpTSObject returned across the eval() boundary) into the emitted $Object representation, so the compiled runtime's boxed-primitive handling (==, ToNumber, valueOf, …) recognizes it. Passes through everything else.</summary>
+    public MethodBuilder NormalizeForeignBoxedPrimitiveMethod { get; set; } = null!;
 
     /// <summary>$Runtime.UnwrapIfBoxed(obj) — returns __primitiveValue when obj is a boxed-primitive wrapper, else obj. Used by abstract equality and string concat to ToPrimitive wrapper operands.</summary>
     public MethodBuilder UnwrapIfBoxedMethod { get; set; } = null!;

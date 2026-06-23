@@ -150,6 +150,89 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits <c>$Runtime.NormalizeForeignBoxedPrimitive(object value) -&gt; object</c>.
+    /// Boxed-primitive wrappers (<c>__primitiveType</c>/<c>__primitiveValue</c>) are
+    /// recognized across the rest of the compiled runtime by an <c>Isinst $Object</c>
+    /// type check (see <see cref="EmitNewBoxedPrimitive"/>, ToNumber, ToJsString, the
+    /// <c>==</c> coercion). A wrapper produced OUTSIDE the emitted runtime — most
+    /// notably an interpreter <c>SharpTSObject</c> returned across the <c>eval()</c>
+    /// boundary for <c>eval("new Number")</c> — is a different CLR type, so that check
+    /// misses and the wrapper neither coerces (<c>== 0</c>) nor dispatches
+    /// <c>valueOf</c>. Re-wrap such a foreign Number/Boolean/String wrapper as a native
+    /// <c>$Object</c> via <see cref="EmitNewBoxedPrimitive"/> so all downstream handling
+    /// works uniformly. Everything else — null, primitives, already-native
+    /// <c>$Object</c>/Dictionary objects, and non-wrapper foreign objects — passes
+    /// through unchanged, keeping this off the hot path for compiled-origin values.
+    /// (Test262 language/expressions/new/S11.2.2_A1.1 / A1.2.)
+    /// </summary>
+    private void EmitNormalizeForeignBoxedPrimitive(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "NormalizeForeignBoxedPrimitive",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+        runtime.NormalizeForeignBoxedPrimitiveMethod = method;
+
+        var il = method.GetILGenerator();
+        var passthrough = il.DefineLabel();
+        var convert = il.DefineLabel();
+        var ptLocal = il.DeclareLocal(_types.String);
+        var strEq = _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String);
+
+        // null → passthrough.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Brfalse, passthrough);
+
+        // Already a native $Object (the common compiled-origin case) → passthrough.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, passthrough);
+
+        // Plain Dictionary object literal → passthrough (not a boxed wrapper).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Brtrue, passthrough);
+
+        // pt = GetProperty(value, "__primitiveType") as string  (works on foreign
+        // objects via the general property dispatch; null when absent/non-string).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "__primitiveType");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Stloc, ptLocal);
+        il.Emit(OpCodes.Ldloc, ptLocal);
+        il.Emit(OpCodes.Brfalse, passthrough);
+
+        // Only the three coercible wrapper tags — leave Symbol/other markers alone.
+        il.Emit(OpCodes.Ldloc, ptLocal);
+        il.Emit(OpCodes.Ldstr, "Number");
+        il.Emit(OpCodes.Call, strEq);
+        il.Emit(OpCodes.Brtrue, convert);
+        il.Emit(OpCodes.Ldloc, ptLocal);
+        il.Emit(OpCodes.Ldstr, "Boolean");
+        il.Emit(OpCodes.Call, strEq);
+        il.Emit(OpCodes.Brtrue, convert);
+        il.Emit(OpCodes.Ldloc, ptLocal);
+        il.Emit(OpCodes.Ldstr, "String");
+        il.Emit(OpCodes.Call, strEq);
+        il.Emit(OpCodes.Brfalse, passthrough);
+
+        il.MarkLabel(convert);
+        // return NewBoxedPrimitive(pt, GetProperty(value, "__primitiveValue"))
+        il.Emit(OpCodes.Ldloc, ptLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "__primitiveValue");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Call, runtime.NewBoxedPrimitiveMethod);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(passthrough);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
     /// Emits <c>$Runtime.ToObject(object value) -&gt; object</c>: ECMA-262
     /// 7.1.18 ToObject coercion. <c>null</c>/<c>undefined</c> → empty
     /// <c>$Object</c>; <c>bool</c>/<c>double</c> → boxed wrapper via

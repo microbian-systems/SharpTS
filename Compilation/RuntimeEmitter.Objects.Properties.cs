@@ -1073,6 +1073,54 @@ public partial class RuntimeEmitter
 
         il.MarkLabel(notErrorLabel);
 
+        // Built-in exotic objects (Date / RegExp / Promise / Error) accept arbitrary
+        // named property assignment per ECMA-262 [[Set]], stored as PDS data
+        // descriptors so GetProperty / for-in / gOPD round-trip. Mirrors the
+        // non-strict SetFieldsProperty PDS-store arm — without it these writes were
+        // silently dropped under "use strict", so e.g. `var d = new Date(0);
+        // d.enumerable = true;` (a defineProperty attributes object — Test262
+        // Object/defineProperty 15.2.3.6-3-39 et al.) lost the field. Frozen /
+        // extensibility throws were already handled at the top of this method.
+        var fieldsPdsStoreLabel = il.DefineLabel();
+        var afterFieldsPdsStoreLabel = il.DefineLabel();
+        if (_features.UsesDate)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSDateType);
+            il.Emit(OpCodes.Brtrue, fieldsPdsStoreLabel);
+        }
+        if (_features.UsesRegExp)
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSRegExpType);
+            il.Emit(OpCodes.Brtrue, fieldsPdsStoreLabel);
+        }
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSPromiseType);
+        il.Emit(OpCodes.Brtrue, fieldsPdsStoreLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSErrorType);
+        il.Emit(OpCodes.Brtrue, fieldsPdsStoreLabel);
+        il.Emit(OpCodes.Br, afterFieldsPdsStoreLabel);
+
+        il.MarkLabel(fieldsPdsStoreLabel);
+        {
+            var fbDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Newobj, runtime.CompiledPropertyDescriptorCtor);
+            il.Emit(OpCodes.Stloc, fbDescLocal);
+            il.Emit(OpCodes.Ldloc, fbDescLocal);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorValue.GetSetMethod()!);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldloc, fbDescLocal);
+            il.Emit(OpCodes.Call, runtime.PDSDefineProperty);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ret);
+        }
+
+        il.MarkLabel(afterFieldsPdsStoreLabel);
+
         // Fallback: Try SetMember(string, object) method for types like $HttpResponse
         var setMemberLocal = il.DeclareLocal(_types.MethodInfo);
         il.Emit(OpCodes.Ldarg_0);
@@ -4157,6 +4205,24 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
+        // globalThis/global sentinel: `root.foo = v` stores into the shared
+        // global-properties dictionary, mirroring the non-strict SetProperty and
+        // the syntactic `globalThis.foo = v` path. Without it, a strict-mode
+        // top-level `this.foo = v` (compiled `this` resolves to the globalThis
+        // sentinel) fell through to SetFieldsPropertyStrict and was dropped —
+        // e.g. Test262 Object/create 15.2.3.5-4-177 / defineProperty
+        // 15.2.3.6-3-230 set `this.value` / `this.get` and reuse `this` as a
+        // descriptor.
+        var notGlobalThisSetStrictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldsfld, runtime.GlobalThisSingletonField);
+        il.Emit(OpCodes.Bne_Un, notGlobalThisSetStrictLabel);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.GlobalThisSetProperty);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notGlobalThisSetStrictLabel);
+
         // Check if $Object
         var sharpTSObjectLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
@@ -4184,13 +4250,85 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Brtrue, cjsModuleSetStrictLabel);
         }
 
-        // Not a dict or $Object or $TSFunction or $CJSModule - fall back to SetFieldsPropertyStrict
+        // $Array / List<object?> — named property write on an array in strict
+        // mode. The non-strict SetProperty has dedicated array branches (length
+        // coercion, numeric, PDS data descriptors); without a strict equivalent
+        // these writes fell to SetFieldsPropertyStrict, which silently dropped
+        // them, so `arr.foo = fn; arr.foo()` saw `foo === undefined` under "use
+        // strict" (Test262 Array slice/splice S15.4.4.*_A*_T*, the common
+        // `arr.getClass = Object.prototype.toString` pattern). Detect arrays here
+        // and route to arraySetStrictLabel, which enforces strict frozen /
+        // non-writable throws then reuses the non-strict store logic.
+        var arraySetStrictLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brtrue, arraySetStrictLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brtrue, arraySetStrictLabel);
+
+        // Not a dict or $Object or $TSFunction or $CJSModule or array - fall back to SetFieldsPropertyStrict
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldarg_3); // strictMode
         il.Emit(OpCodes.Call, runtime.SetFieldsPropertyStrict);
         il.Emit(OpCodes.Ret);
+
+        // $Array / List<object?> strict handler: ECMA-262 §10.4.2.1 / OrdinarySet
+        // step 5 — a frozen array or an own non-writable data property makes the
+        // assignment fail; in strict mode PutValue then throws a TypeError. We
+        // honor those two cases here, then delegate the actual store to the
+        // non-strict SetProperty (shared length/numeric/PDS-data-descriptor path).
+        il.MarkLabel(arraySetStrictLabel);
+        {
+            var arrayDoStoreLabel = il.DefineLabel();
+
+            // Frozen array → throw "Cannot assign to read only property 'name'".
+            var arrayNotFrozenLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.PDSIsFrozen);
+            il.Emit(OpCodes.Brfalse, arrayNotFrozenLabel);
+            il.Emit(OpCodes.Ldstr, "Cannot assign to read only property '");
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "' of object '[object Array]'");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+            il.MarkLabel(arrayNotFrozenLabel);
+
+            // Own non-writable DATA descriptor → throw. Accessor descriptors
+            // (setter present) and writable/absent descriptors fall through to
+            // the store, where SetProperty invokes the setter or overwrites.
+            var arrayDescLocal = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+            il.Emit(OpCodes.Stloc, arrayDescLocal);
+            il.Emit(OpCodes.Ldloc, arrayDescLocal);
+            il.Emit(OpCodes.Brfalse, arrayDoStoreLabel); // no descriptor → store
+            il.Emit(OpCodes.Ldloc, arrayDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorSetter.GetGetMethod()!);
+            il.Emit(OpCodes.Brtrue, arrayDoStoreLabel); // accessor → delegate (invokes setter)
+            il.Emit(OpCodes.Ldloc, arrayDescLocal);
+            il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorWritable.GetGetMethod()!);
+            il.Emit(OpCodes.Brtrue, arrayDoStoreLabel); // writable → store
+            il.Emit(OpCodes.Ldstr, "Cannot assign to read only property '");
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "' of object '[object Array]'");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+
+            il.MarkLabel(arrayDoStoreLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Call, runtime.SetProperty);
+            il.Emit(OpCodes.Ret);
+        }
 
         // $CJSModule strict handler — same as non-strict for now. Gated.
         if (_features.UsesCjsRequire)
@@ -4318,8 +4456,57 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
 
-        // Actually set the property
+        // Actually set the property. Mirrors the non-strict SetProperty doSet
+        // arm: honor a PDS accessor setter, and an existing non-writable data
+        // descriptor (or getter-only accessor). Pre-fix the strict path skipped
+        // straight to dict.set_Item, so under "use strict": (1) an accessor
+        // setter was bypassed and overwritten with a data value, and (2) writes
+        // to a writable:false property neither threw nor were suppressed —
+        // `verifyProperty`'s isWritable probe then saw the write succeed (Test262
+        // Object/defineProperty 15.2.3.6-3-181 et al.).
         il.MarkLabel(doSetLabel);
+
+        // PDS accessor setter present → invoke it (ECMA-262 OrdinarySet: a setter
+        // fires regardless of strictness).
+        var strictSetterLocal = il.DeclareLocal(_types.Object);
+        var strictNoSetterLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloca, strictSetterLocal);
+        il.Emit(OpCodes.Call, runtime.PDSTryGetSetter);
+        il.Emit(OpCodes.Brfalse, strictNoSetterLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, strictSetterLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Call, runtime.InvokeMethodValue);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(strictNoSetterLabel);
+
+        // Non-writable (data writable:false, or getter-only accessor) → strict
+        // throws TypeError (ECMA-262 §6.2.5.6 / PutValue), sloppy silently
+        // returns. PDSIsWritable returns true when no descriptor exists.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSIsWritable);
+        var strictWritableLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, strictWritableLabel);
+        il.Emit(OpCodes.Ldarg_3); // strictMode
+        il.Emit(OpCodes.Brfalse, nullLabel); // sloppy → silent return
+        il.Emit(OpCodes.Ldstr, "Cannot assign to read only property '");
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "' of object");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(strictWritableLabel);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
@@ -4352,6 +4539,80 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
 
+        // Symbol-keyed write (symbols work on any receiver type) — route to the
+        // non-strict SetIndex, which has the symbol-key handler (registered
+        // accessor setter, else symbol-dict store with extensibility checks).
+        // SetIndexStrict otherwise dispatches only by RECEIVER type ($Array /
+        // List / Dictionary) and would ToString a symbol key into a bogus string
+        // key, dropping the write — so under "use strict" `obj[sym] = v` and
+        // `obj[Symbol.iterator] = fn` were lost (Test262 Object/
+        // getOwnPropertySymbols object-contains-symbol-property-without-description,
+        // Array/from iter-get-iter-val-err).
+        // The store itself (registered setter / symbol-dict write) is delegated
+        // to the non-strict SetIndex, but its symbol handler silently no-ops on a
+        // frozen/sealed/non-extensible receiver. In strict mode those must throw
+        // a TypeError (ECMA-262 PutValue), so enforce that here first:
+        //   frozen           → always throw (props non-writable + non-extensible);
+        //   sealed/non-ext    → throw only when the symbol key is NEW (adding it);
+        //   otherwise         → delegate to SetIndex (store / update / invoke setter).
+        // (Test262 Object/freeze frozen-object-contains-symbol-properties-strict.)
+        var notSymbolKeyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.IsSymbolMethod);
+        il.Emit(OpCodes.Brfalse, notSymbolKeyLabel);
+
+        var symThrowLabel = il.DefineLabel();
+        var symRouteLabel = il.DefineLabel();
+        var symStateTmp = il.DeclareLocal(_types.Object);
+        var cwtTryGetValue = _types.GetMethod(_types.ConditionalWeakTable, "TryGetValue", _types.Object, _types.Object.MakeByRefType());
+
+        // frozen → throw.
+        il.Emit(OpCodes.Ldsfld, runtime.FrozenObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symStateTmp);
+        il.Emit(OpCodes.Callvirt, cwtTryGetValue);
+        il.Emit(OpCodes.Brtrue, symThrowLabel);
+
+        // sealed OR non-extensible → throw only if the symbol key is not already present.
+        var symSealedOrNonExtLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldsfld, runtime.SealedObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symStateTmp);
+        il.Emit(OpCodes.Callvirt, cwtTryGetValue);
+        il.Emit(OpCodes.Brtrue, symSealedOrNonExtLabel);
+        il.Emit(OpCodes.Ldsfld, runtime.NonExtensibleObjectsField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, symStateTmp);
+        il.Emit(OpCodes.Callvirt, cwtTryGetValue);
+        il.Emit(OpCodes.Brfalse, symRouteLabel); // extensible → store
+        il.MarkLabel(symSealedOrNonExtLabel);
+        // sealed/non-ext: present symbol → allow update (route); absent → throw.
+        var symDictLocal = il.DeclareLocal(_types.DictionaryObjectObject);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);
+        il.Emit(OpCodes.Stloc, symDictLocal);
+        il.Emit(OpCodes.Ldloc, symDictLocal);
+        il.Emit(OpCodes.Brfalse, symThrowLabel); // no symbol dict → key absent → throw
+        il.Emit(OpCodes.Ldloc, symDictLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryObjectObject, "ContainsKey", _types.Object));
+        il.Emit(OpCodes.Brfalse, symThrowLabel); // key absent → throw
+
+        il.MarkLabel(symRouteLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.SetIndex);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(symThrowLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot assign to a read-only or non-extensible property");
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(notSymbolKeyLabel);
+
         // Check if $Array (for strict mode support)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSArrayType);
@@ -4367,7 +4628,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, dictLabel);
 
-        // Default - just return
+        // $Object / $TSFunction / System.Type / other receivers: route indexed
+        // writes to SetPropertyStrict(obj, ToString(index), value, strictMode),
+        // mirroring how the non-strict SetIndex routes them to SetProperty. Pre-fix
+        // these fell through to a silent no-op under "use strict", so `child[0] = v`
+        // on a class instance / $Object dropped the element — which broke
+        // Array.prototype.{reduce,every,filter,indexOf}.call(nonArrayObj, …) on
+        // a `new Con()`-style receiver (Test262 Array/prototype/*/15.4.4.*-2-*).
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldarg_3); // strictMode
+        il.Emit(OpCodes.Call, runtime.SetPropertyStrict);
         il.Emit(OpCodes.Ret);
 
         // $Array - call SetStrict with index and strictMode via the long API.
@@ -4419,13 +4692,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(dictLabel);
-        // Dictionary uses string keys - convert index to string and set
+        // Dictionary string-key write: route to SetPropertyStrict(obj, ToString(idx),
+        // value, strictMode) so PDS accessor setters, non-writable data descriptors,
+        // and strict TypeErrors are honored identically to named-property writes.
+        // Pre-fix this did a raw dict.set_Item, bypassing the writable/setter checks —
+        // so under "use strict" `obj[name] = v` on a writable:false property neither
+        // threw nor was suppressed, which propertyHelper.js's isWritable probe (it
+        // writes via `obj[name] = …`) read back as "writable". (Test262 Object/
+        // defineProperty 15.2.3.6-3-181, defineProperties 15.2.3.7-* et al.)
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
         il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "set_Item"));
+        il.Emit(OpCodes.Ldarg_3); // strictMode
+        il.Emit(OpCodes.Call, runtime.SetPropertyStrict);
         il.Emit(OpCodes.Ret);
     }
 
@@ -4969,12 +5249,57 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Ret);
 
-        // Not frozen/sealed - do the removal
+        // Not frozen/sealed — remove from BOTH the PDS descriptor store
+        // (Object.defineProperty installs) AND the dict (plain data entries),
+        // mirroring the non-strict DeleteProperty. Pre-fix this only did
+        // dict.Remove, so `delete obj.p` left an Object.defineProperty-installed
+        // property in place under "use strict" (Test262 Object/create
+        // 15.2.3.5-4-116 et al. — `delete` of a configurable prop appeared to
+        // fail). A non-configurable PDS descriptor makes delete fail: strict
+        // throws TypeError (ECMA-262 §13.5.1.2), sloppy returns false.
         il.MarkLabel(notSealedLabel);
+        var descLocalDelS = il.DeclareLocal(runtime.CompiledPropertyDescriptorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSGetPropertyDescriptor);
+        il.Emit(OpCodes.Stloc, descLocalDelS);
+        var noPdsForDelSLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, descLocalDelS);
+        il.Emit(OpCodes.Brfalse, noPdsForDelSLabel);
+        // Descriptor present — check Configurable.
+        il.Emit(OpCodes.Ldloc, descLocalDelS);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorConfigurable.GetGetMethod()!);
+        var configurableSLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brtrue, configurableSLabel);
+        // Non-configurable — strict throws TypeError, sloppy returns false.
+        var nonConfigSloppyLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2); // strictMode
+        il.Emit(OpCodes.Brfalse, nonConfigSloppyLabel);
+        il.Emit(OpCodes.Ldstr, "Cannot delete property '");
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "' of object");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "Concat", _types.String, _types.String, _types.String));
+        il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(nonConfigSloppyLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(configurableSLabel);
+        // Configurable — remove PDS entry.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, runtime.PDSDeleteProperty);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(noPdsForDelSLabel);
+        // Always also remove from the dict (plain data entry; Remove returns
+        // false when absent, which is fine).
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "Remove", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Ret);
 
         // Return true (default for null and other types)

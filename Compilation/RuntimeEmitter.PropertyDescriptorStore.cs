@@ -643,6 +643,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
         il.Emit(OpCodes.Brfalse, returnFalseLabel);
 
+        // A getter slot holding JS-undefined marks an accessor descriptor whose
+        // `get` is explicitly `undefined` (e.g. `Object.defineProperty(o, "p",
+        // { set() {} })`): the slot is non-null only so the descriptor stays
+        // classified as an accessor. It is NOT an invokable getter — reading the
+        // property must yield undefined, never Invoke() the sentinel. Treat it as
+        // "no getter" so callers fall through to the descriptor's undefined value
+        // instead of throwing "undefined is not a function".
+        // (Test262 Object.{defineProperty,defineProperties,create} 15.2.3.6-3-215..217 et al.)
+        il.Emit(OpCodes.Ldloc, descriptorLocal);
+        il.Emit(OpCodes.Callvirt, runtime.CompiledPropertyDescriptorGetter.GetGetMethod()!);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, returnFalseLabel);
+
         // getter = descriptor.Getter; return true
         il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Ldloc, descriptorLocal);

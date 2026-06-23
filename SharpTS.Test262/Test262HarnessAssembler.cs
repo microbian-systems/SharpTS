@@ -38,6 +38,18 @@ public sealed class Test262HarnessAssembler
         }
 
         var sb = new StringBuilder();
+        // Test262: an `onlyStrict` test must execute as strict-mode code. SharpTS
+        // runs each test once (not the tsc-style sloppy+strict variant pair), so we
+        // establish strict mode for the whole assembled program with a leading
+        // "use strict" directive prologue. Both execution paths honor a program-level
+        // directive — Interpreter.CheckForUseStrict and ILCompiler.CheckForUseStrict —
+        // so the test body, sta.js, and assert.js all run strict. `noStrict` and
+        // unflagged tests keep the prior sloppy default. The prefix is counted into
+        // HarnessLength below (it precedes the body), so pre-body error attribution
+        // is unaffected. (Without this, `onlyStrict` tests ran sloppy — e.g. Array
+        // find* predicate-call-this-strict expected `this === undefined`.)
+        if (metadata.OnlyStrict)
+            sb.Append("\"use strict\";\n");
         AppendHarnessFile(sb, "sta.js");
         AppendHarnessFile(sb, "assert.js");
         // SharpTS patch: sta.js's `Test262Error` doesn't set `this.name`. The

@@ -497,10 +497,20 @@ public class LocalVariableResolver : IVariableResolver
             return;
         }
 
-        // 2. __this parameter (object method shorthand)
+        // 2. __this parameter (object method shorthand, function-expression receiver)
         if (_ctx.TryGetParameter("__this", out var thisArgIndex))
         {
             _il.Emit(OpCodes.Ldarg, thisArgIndex);
+            // A nullish __this denotes a sloppy-mode bare call with no receiver
+            // (e.g. an IIFE `(function(){ this.x = … })()`, or a callback passed
+            // to Array.prototype.filter without a thisArg — ArrayEmitter stages the
+            // missing thisArg as the JS `undefined` sentinel). Per ECMA-262
+            // OrdinaryCallBindThis, a non-strict callee's `this` then resolves to
+            // the global object; strict callees keep `this === undefined`. Mirror
+            // cases 5/6 (and InvokeWithThis's "null in our model" convention) so
+            // `this.x` routes through GlobalThis instead of throwing on null.
+            // (Test262 Array filter/some 15.4.4.{20,17}-5-1, call 11.2.3-3_8.)
+            EmitCoerceSloppyThisToGlobal();
             return;
         }
 
@@ -531,12 +541,7 @@ public class LocalVariableResolver : IVariableResolver
         if (_ctx.Runtime?.CurrentFunctionThisField != null)
         {
             _il.Emit(OpCodes.Ldsfld, _ctx.Runtime.CurrentFunctionThisField);
-            var thisNotNull = _il.DefineLabel();
-            _il.Emit(OpCodes.Dup);
-            _il.Emit(OpCodes.Brtrue, thisNotNull);
-            _il.Emit(OpCodes.Pop);
-            _il.Emit(OpCodes.Ldsfld, _ctx.Runtime.GlobalThisSingletonField);
-            _il.MarkLabel(thisNotNull);
+            EmitCoerceSloppyThisToGlobal();
             return;
         }
 
@@ -551,6 +556,46 @@ public class LocalVariableResolver : IVariableResolver
         }
 
         _il.Emit(OpCodes.Ldnull);
+    }
+
+    /// <summary>
+    /// Coerces a nullish <c>this</c> on the evaluation stack to the globalThis
+    /// sentinel per ECMA-262 §10.2.1.2 OrdinaryCallBindThis. A CLR <c>null</c>
+    /// (the compiler's sloppy "no receiver" model value) ALWAYS resolves to
+    /// globalThis — preserving the long-standing cases 5/6 behavior. The JS
+    /// <c>undefined</c> sentinel additionally resolves to globalThis ONLY when the
+    /// enclosing function is non-strict; strict functions keep
+    /// <c>this === undefined</c> (matching the interpreter's
+    /// <c>functionStrict ? SharpTSUndefined.Instance : SharpTSGlobalThis.Instance</c>
+    /// binding). No-op in reference-assembly mode (no emitted runtime).
+    /// Stack: [this] → [this-or-globalThis].
+    /// </summary>
+    private void EmitCoerceSloppyThisToGlobal()
+    {
+        if (_ctx.Runtime?.GlobalThisSingletonField == null) return;
+
+        var keep = _il.DefineLabel();
+        var useGlobal = _il.DefineLabel();
+
+        // null → globalThis (always).
+        _il.Emit(OpCodes.Dup);
+        _il.Emit(OpCodes.Brfalse, useGlobal);
+
+        // undefined → globalThis (non-strict callees only).
+        if (!_ctx.IsStrictMode && _ctx.Runtime.UndefinedType != null)
+        {
+            _il.Emit(OpCodes.Dup);
+            _il.Emit(OpCodes.Isinst, _ctx.Runtime.UndefinedType);
+            _il.Emit(OpCodes.Brtrue, useGlobal);
+        }
+
+        _il.Emit(OpCodes.Br, keep);
+
+        _il.MarkLabel(useGlobal);
+        _il.Emit(OpCodes.Pop);
+        _il.Emit(OpCodes.Ldsfld, _ctx.Runtime.GlobalThisSingletonField);
+
+        _il.MarkLabel(keep);
     }
 
     private StackType MapTypeToStackType(Type? type)

@@ -1245,6 +1245,32 @@ public partial class ILCompiler
         _modules.CurrentPath = savedPath;
     }
 
+    /// <summary>
+    /// Detects a function-body "use strict" directive prologue in either parsed
+    /// form: a <see cref="Stmt.Directive"/> (declarations parse a prologue) or a
+    /// leading string-literal <see cref="Stmt.Expression"/> (function expressions /
+    /// arrows parse their body with <c>Block()</c> and no prologue, so "use strict"
+    /// lands as an ordinary expression statement). Mirrors a directive prologue:
+    /// scan consecutive string-literal statements, stop at the first non-string.
+    /// </summary>
+    private static bool BodyDeclaresUseStrict(List<Stmt>? body)
+    {
+        if (body is null) return false;
+        foreach (var stmt in body)
+        {
+            string? directiveValue = stmt switch
+            {
+                Stmt.Directive d => d.Value,
+                Stmt.Expression { Expr: Expr.Literal { Value: string s } } => s,
+                _ => null,
+            };
+            if (directiveValue is null) return false; // prologue ended
+            if (directiveValue == "use strict") return true;
+            // otherwise another directive (e.g. "use asm") — keep scanning
+        }
+        return false;
+    }
+
     private void EmitArrowBody(Expr.ArrowFunction arrow, MethodBuilder method, TypeBuilder? displayClass)
     {
         var il = method.GetILGenerator();
@@ -1290,7 +1316,18 @@ public partial class ILCompiler
             BuiltInModuleMethodBindings = GetCurrentBuiltInMethodBindings(),
             ImportedNames = _importedNames,
             ClassExprBuilders = _classExprs.Builders,
-            IsStrictMode = _isStrictMode,
+            // A function expression / arrow with its own "use strict" prologue is
+            // strict even when the enclosing code is sloppy. Detect it here (not
+            // just inherit the parent) so `this` resolution honors it — otherwise a
+            // strict `function(){ "use strict"; … }` callback is misclassified
+            // sloppy and LoadThis's undefined→globalThis coercion wrongly fires
+            // (Test262 String/prototype/replace/S15.5.4.11_A12: a strict replace
+            // callback must see `this === undefined`). Function-expression/arrow
+            // bodies are parsed with Block() and no directive prologue, so their
+            // "use strict" is an ordinary string expression statement rather than a
+            // Stmt.Directive — BodyDeclaresUseStrict handles both forms (plain
+            // CheckForUseStrict only matches Directive).
+            IsStrictMode = _isStrictMode || BodyDeclaresUseStrict(arrow.BlockBody),
             // Registry services
             ClassRegistry = GetClassRegistry(),
             // Propagate the enclosing class name so private-member dispatch (#field / #method
