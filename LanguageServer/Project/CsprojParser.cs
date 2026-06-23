@@ -1,6 +1,6 @@
 using System.Xml.Linq;
 
-namespace SharpTS.LspBridge.Project;
+namespace SharpTS.LanguageServer.Project;
 
 /// <summary>
 /// Parses .csproj files to extract assembly references.

@@ -1,8 +1,8 @@
-using SharpTS.LspBridge.Project;
-using SharpTS.Tests.LspTests.Fixtures;
+using SharpTS.LanguageServer.Project;
+using SharpTS.Tests.LanguageServer;
 using Xunit;
 
-namespace SharpTS.Tests.LspTests.Project;
+namespace SharpTS.Tests.LanguageServer.Project;
 
 /// <summary>
 /// Unit tests for CsprojParser.

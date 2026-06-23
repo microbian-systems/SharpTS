@@ -1,7 +1,7 @@
 using System.Reflection;
 using System.Xml.Linq;
 
-namespace SharpTS.LspBridge.Documentation;
+namespace SharpTS.LanguageServer.Documentation;
 
 /// <summary>
 /// Loads and caches XML documentation from .xml files alongside assemblies.

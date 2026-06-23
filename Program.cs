@@ -42,8 +42,6 @@ using SharpTS.Declaration;
 using SharpTS.Diagnostics;
 using SharpTS.Diagnostics.Exceptions;
 using SharpTS.Execution;
-using SharpTS.LspBridge;
-using SharpTS.LspBridge.Project;
 using SharpTS.Modules;
 using SharpTS.Packaging;
 using SharpTS.Parsing;
@@ -104,10 +102,6 @@ switch (command)
         GenerateDeclarations(genDecl.TypeOrAssembly, genDecl.OutputPath);
         break;
 
-    case ParsedCommand.LspBridge lspBridge:
-        RunLspBridge(lspBridge.ProjectFile, lspBridge.References, lspBridge.SdkPath);
-        break;
-
     case ParsedCommand.Lsp lsp:
         RunLanguageServer(lsp.ProjectFile, lsp.References, lsp.SdkPath);
         break;
@@ -122,7 +116,7 @@ static void RunLanguageServer(string? projectFile, List<string> references, stri
         // the SDK reference assemblies.
         var paths = new List<string>(references);
         if (projectFile != null && File.Exists(projectFile))
-            paths.AddRange(SharpTS.LspBridge.Project.CsprojParser.Parse(projectFile));
+            paths.AddRange(SharpTS.LanguageServer.Project.CsprojParser.Parse(projectFile));
 
         using var loader = new SharpTS.Compilation.AssemblyReferenceLoader(paths, sdkPath);
         SharpTS.LanguageServer.SharpTSLanguageServer.RunAsync(loader.TryResolve).GetAwaiter().GetResult();
@@ -130,27 +124,6 @@ static void RunLanguageServer(string? projectFile, List<string> references, stri
     catch (Exception ex)
     {
         Console.Error.WriteLine($"[LSP Fatal] {ex.Message}");
-        Environment.Exit(1);
-    }
-}
-
-static void RunLspBridge(string? projectFile, List<string> references, string? sdkPath)
-{
-    try
-    {
-        // If a project file is specified, parse it for additional references
-        if (projectFile != null && File.Exists(projectFile))
-        {
-            var projectRefs = CsprojParser.Parse(projectFile);
-            references.AddRange(projectRefs);
-        }
-
-        using var bridge = new LspBridge(references, sdkPath);
-        bridge.Run();
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine($"[LspBridge Fatal] {ex.Message}");
         Environment.Exit(1);
     }
 }
@@ -901,7 +874,7 @@ static void PrintHelp()
     Console.WriteLine("  sharpts [options] script.ts -- [script-args...]");
     Console.WriteLine("  sharpts --compile <script.ts> [compile-options]");
     Console.WriteLine("  sharpts --gen-decl <TypeName|AssemblyPath> [-o output.d.ts]");
-    Console.WriteLine("  sharpts lsp-bridge [--project <csproj>] [-r <assembly.dll>]");
+    Console.WriteLine("  sharpts lsp [--project <csproj>] [-r <assembly.dll>]");
     Console.WriteLine();
     Console.WriteLine("Options:");
     Console.WriteLine("  -h, --help                    Show this help message");

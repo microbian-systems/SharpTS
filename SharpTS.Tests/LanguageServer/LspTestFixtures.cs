@@ -1,7 +1,7 @@
-namespace SharpTS.Tests.LspTests.Fixtures;
+namespace SharpTS.Tests.LanguageServer;
 
 /// <summary>
-/// Test fixtures and sample data for LspBridge tests.
+/// Test fixtures and sample data for language-server tests.
 /// </summary>
 public static class LspTestFixtures
 {

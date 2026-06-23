@@ -116,12 +116,6 @@ public abstract record ParsedCommand
     /// <param name="OutputPath">Optional output file path</param>
     public sealed record GenDecl(string TypeOrAssembly, string? OutputPath) : ParsedCommand;
 
-    /// <summary>Start LSP bridge mode for IDE integration.</summary>
-    /// <param name="ProjectFile">Optional .csproj file path</param>
-    /// <param name="References">Assembly references</param>
-    /// <param name="SdkPath">SDK path for reference assemblies</param>
-    public sealed record LspBridge(string? ProjectFile, List<string> References, string? SdkPath) : ParsedCommand;
-
     /// <summary>Start the language server (LSP over stdio) for IDE integration.</summary>
     /// <param name="ProjectFile">Optional .csproj file path for assembly references</param>
     /// <param name="References">Assembly references</param>
@@ -176,17 +170,10 @@ public class CommandLineParser
             return ParseGenDeclCommand(remainingArgs);
         }
 
-        // Handle lsp-bridge
-        if (remainingArgs[0] == "lsp-bridge")
-        {
-            return ParseLspBridgeCommand(remainingArgs);
-        }
-
         // Handle lsp (language server over stdio)
         if (remainingArgs[0] == "lsp")
         {
-            var bridge = (ParsedCommand.LspBridge)ParseLspBridgeCommand(remainingArgs);
-            return new ParsedCommand.Lsp(bridge.ProjectFile, bridge.References, bridge.SdkPath);
+            return ParseLspCommand(remainingArgs);
         }
 
         // Handle script execution
@@ -223,7 +210,7 @@ public class CommandLineParser
             "Usage: sharpts [script] [args...]\n" +
             "       sharpts --compile <script.ts> [-o output.dll]\n" +
             "       sharpts --gen-decl <TypeName|AssemblyPath> [-o output.d.ts]\n" +
-            "       sharpts lsp-bridge [--project <csproj>] [-r <assembly.dll>]",
+            "       sharpts lsp [--project <csproj>] [-r <assembly.dll>]",
             64
         );
     }
@@ -478,13 +465,13 @@ public class CommandLineParser
         return new ParsedCommand.GenDecl(typeOrAssembly, outputPath);
     }
 
-    private ParsedCommand ParseLspBridgeCommand(string[] args)
+    private ParsedCommand ParseLspCommand(string[] args)
     {
         string? projectFile = null;
         string? sdkPath = null;
         List<string> references = [];
 
-        // Parse lsp-bridge specific options
+        // Parse lsp-specific options
         for (int i = 1; i < args.Length; i++)
         {
             if (args[i] == "--project" && i + 1 < args.Length)
@@ -501,6 +488,6 @@ public class CommandLineParser
             }
         }
 
-        return new ParsedCommand.LspBridge(projectFile, references, sdkPath);
+        return new ParsedCommand.Lsp(projectFile, references, sdkPath);
     }
 }
