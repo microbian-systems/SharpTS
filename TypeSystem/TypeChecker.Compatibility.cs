@@ -374,6 +374,36 @@ public partial class TypeChecker
     };
 
     /// <summary>
+    /// tsc "Literal" union reduction, narrowed to the slice that changes an assignability verdict:
+    /// a bare enum constituent is absorbed by a primitive constituent it is a subtype of — numeric
+    /// enum by <c>number</c>, string enum by <c>string</c>, heterogeneous enum when both are present.
+    /// Drop the enum, keep the primitive. Needed because enum→enum is NOMINAL, so <c>(e | number)</c>
+    /// must relate to a target the way <c>number</c> does (e.g. assignable to a <em>different</em>
+    /// numeric enum E2 via numberAssignableToEnum), not member-wise — the <c>e</c> arm would otherwise
+    /// reject the whole union (#894). Literal-by-primitive absorption (<c>1</c> by <c>number</c>) is
+    /// intentionally omitted: real-literal subtyping is transitive, so it never changes an
+    /// assignability verdict, only the type's rendering. Returns the input list unchanged when nothing
+    /// is absorbed, so callers keep their cached <see cref="TypeInfo.Union.FlattenedTypes"/> instance.
+    /// </summary>
+    private static List<TypeInfo> ReduceEnumMembersAbsorbedByPrimitive(List<TypeInfo> members)
+    {
+        bool hasNumber = members.Any(m => m is TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER });
+        bool hasString = members.Any(m => m is TypeInfo.String);
+        if (!hasNumber && !hasString) return members;
+
+        bool Absorbed(TypeInfo.Enum e) => e.Kind switch
+        {
+            EnumKind.Numeric => hasNumber,
+            EnumKind.String => hasString,
+            EnumKind.Heterogeneous => hasNumber && hasString,
+            _ => false
+        };
+
+        var reduced = members.Where(m => m is not TypeInfo.Enum en || !Absorbed(en)).ToList();
+        return reduced.Count == members.Count ? members : reduced; // never reduce to empty
+    }
+
+    /// <summary>
     /// Core type compatibility logic without caching.
     /// </summary>
     private bool IsCompatibleCore(TypeInfo expected, TypeInfo actual)
@@ -616,7 +646,8 @@ public partial class TypeChecker
         if (expected is TypeInfo.Union expectedUnion && actual is TypeInfo.Union actualUnion)
         {
             var expectedTypes = expectedUnion.FlattenedTypes;
-            var actualTypes = actualUnion.FlattenedTypes;
+            // Same enum-absorbed-by-primitive reduction as the union-as-actual branch below (#894).
+            var actualTypes = ReduceEnumMembersAbsorbedByPrimitive(actualUnion.FlattenedTypes);
             // Per source constituent: some-target-constituent first, then the discriminated
             // path (a constituent may relate only through its discriminant combinations).
             return actualTypes.All(actualType =>
@@ -633,10 +664,12 @@ public partial class TypeChecker
                 RelatedToDiscriminatedUnion(expUnion, actual);
         }
 
-        // Union as actual: all members must be compatible with expected
+        // Union as actual: all members must be compatible with expected. Drop enum members
+        // absorbed by a sibling primitive first (e | number → number): enum→enum is nominal, so
+        // the un-reduced `e` arm would wrongly reject `(e | number) → E2` (#894).
         if (actual is TypeInfo.Union actUnion)
         {
-            var actTypes = actUnion.FlattenedTypes;
+            var actTypes = ReduceEnumMembersAbsorbedByPrimitive(actUnion.FlattenedTypes);
             return actTypes.All(t => IsCompatible(expected, t));
         }
 
