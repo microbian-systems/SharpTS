@@ -557,12 +557,20 @@ public partial class ILEmitter
         if (s.Object is Expr.Variable processVar && processVar.Name.Lexeme == "process" && s.Name.Lexeme == "exitCode")
         {
             EmitExpression(s.Value);
-            EmitUnboxToDouble();
+            // #886: coerce to a native double only when the value isn't already one.
+            // An unconditional EmitUnboxToDouble() (Convert.ToDouble(object)) fails IL
+            // verification for native-double inputs (e.g. a numeric literal), which arrive
+            // unboxed with _stackType == Double.
+            EnsureDouble();
             IL.Emit(OpCodes.Conv_I4);
             IL.Emit(OpCodes.Dup); // Keep value for expression result
             IL.Emit(OpCodes.Call, _ctx.Types.GetPropertySetter(_ctx.Types.Environment, "ExitCode"));
             IL.Emit(OpCodes.Conv_R8); // Convert back to double for JS number
-            IL.Emit(OpCodes.Box, _ctx.Types.Double);
+            // #886: EmitBoxDouble boxes AND resets _stackType to Unknown. A raw
+            // IL.Emit(Box) leaves _stackType == Double stale over a boxed value, so a
+            // downstream consumer (e.g. the top-level await-drain wrapper) emits a second
+            // box and the IL fails verification.
+            EmitBoxDouble();
             return;
         }
 
@@ -655,9 +663,12 @@ public partial class ILEmitter
             var valueTemp = IL.DeclareLocal(_ctx.Types.Double);
             IL.Emit(OpCodes.Stloc, valueTemp);
             IL.Emit(OpCodes.Call, _ctx.Runtime!.RegExpSetLastIndex);
-            // Put value back on stack as boxed result
+            // Put value back on stack as boxed result. EmitBoxDouble boxes AND resets
+            // _stackType to Unknown (#886): a raw IL.Emit(Box) left _stackType == Double
+            // stale over a boxed value, so a downstream consumer re-boxed it and the
+            // emitted IL failed verification (StackUnexpected: ref 'float64' vs Double).
             IL.Emit(OpCodes.Ldloc, valueTemp);
-            IL.Emit(OpCodes.Box, _ctx.Types.Double);
+            EmitBoxDouble();
             return;
         }
 
