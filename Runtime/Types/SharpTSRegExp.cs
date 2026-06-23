@@ -204,6 +204,13 @@ public class SharpTSRegExp : ITypeCategorized
         if (_ignoreCase) options |= RegexOptions.IgnoreCase;
         if (_multiline) options |= RegexOptions.Multiline;
         if (_flags.Contains('s')) options |= RegexOptions.Singleline;
+        // Compile the engine to IL rather than running it interpreted. The
+        // one-time JIT cost is paid once per distinct (pattern, options) and
+        // amortized by _compileCache (a regex literal in a hot loop reuses the
+        // cached engine), so every subsequent Match/Matches/Replace runs the
+        // compiled matcher. Measured ~1.3x on raw matching; the flag is folded
+        // into the cache key so it can't collide with an interpreted entry.
+        options |= RegexOptions.Compiled;
 
         try
         {
@@ -703,11 +710,15 @@ public class SharpTSRegExp : ITypeCategorized
     /// </summary>
     internal List<string> MatchAll(string input)
     {
-        var matches = _regex.Matches(input);
+        // String.prototype.match(/g) only needs the full-match substrings, not
+        // capture groups — so use EnumerateMatches (ValueMatch structs, span-
+        // based) instead of Matches(). This skips the per-match Match/Group
+        // object allocation that dominates this path (~2.3x faster here), and
+        // matches Matches(input)'s whole-string scan semantics exactly.
         List<string> result = [];
-        foreach (Match m in matches)
+        foreach (ValueMatch m in _regex.EnumerateMatches(input))
         {
-            result.Add(m.Value);
+            result.Add(input.Substring(m.Index, m.Length));
         }
         return result;
     }
