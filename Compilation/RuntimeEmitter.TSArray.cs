@@ -66,6 +66,11 @@ public partial class RuntimeEmitter
     private MethodInfo? _tsArrayListGetItem;
     private MethodInfo? _tsArrayListSetItem;
 
+    // The deopt method (numeric -> boxed). Defined early in EmitTSArrayClass so
+    // the base-list methods emitted below can call it via EmitTSArrayDeoptGuard;
+    // its body is emitted later in EmitTSArrayNumericAccessors.
+    private MethodBuilder _tsArrayEnsureBoxedMethod = null!;
+
     private void InitTSArrayMethodCache()
     {
         _tsArraySparseTryGetValue = _tsArraySparseType.GetMethod("TryGetValue", [_types.UInt32, _types.Object.MakeByRefType()])!;
@@ -129,6 +134,14 @@ public partial class RuntimeEmitter
         _tsArrayNumStoreField = typeBuilder.DefineField("_numStore", _types.DoubleArray, FieldAttributes.Private);
         _tsArrayNumCountField = typeBuilder.DefineField("_numCount", _types.Int32, FieldAttributes.Private);
         _tsArrayIsNumericField = typeBuilder.DefineField("_isNumeric", _types.Boolean, FieldAttributes.Private);
+
+        // Define the deopt method up front (body emitted in
+        // EmitTSArrayNumericAccessors) so the base-list methods below can guard
+        // themselves with EmitTSArrayDeoptGuard — any boxed-representation access
+        // on a numeric-mode array first materializes the unboxed store.
+        _tsArrayEnsureBoxedMethod = typeBuilder.DefineMethod("EnsureBoxed",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, System.Type.EmptyTypes);
+        runtime.TSArrayEnsureBoxed = _tsArrayEnsureBoxedMethod;
 
         EmitTSArrayConstructor(typeBuilder, runtime);
 
@@ -201,6 +214,27 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Prepends a deopt guard to a base-list method body: <c>if (_isNumeric)
+    /// this.EnsureBoxed();</c>. Any method that reads/writes the inherited
+    /// <c>List&lt;object?&gt;</c>, <c>_sparse</c>, or reconciles <c>_length</c>
+    /// against base <c>Count</c> must call this first — in numeric mode the base
+    /// list is empty and those operations would corrupt. Costs one field load +
+    /// branch in the common boxed case (mode off); only numeric arrays pay the
+    /// materialization. Idempotent (EnsureBoxed self-guards), so redundant
+    /// guards across delegating methods are harmless.
+    /// </summary>
+    private void EmitTSArrayDeoptGuard(ILGenerator il)
+    {
+        var skip = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+        il.Emit(OpCodes.Brfalse, skip);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _tsArrayEnsureBoxedMethod);
+        il.MarkLabel(skip);
+    }
+
+    /// <summary>
     /// Emits the unboxed packed-double accessors on <c>$Array</c>:
     /// <c>GetDouble</c>/<c>SetDouble</c>/<c>PushDouble</c> (the fast paths the
     /// compiler will emit at statically-<c>number[]</c> sites) and
@@ -215,10 +249,9 @@ public partial class RuntimeEmitter
     {
         var arrayResize = typeof(System.Array).GetMethod("Resize")!.MakeGenericMethod(_types.Double);
 
-        // Define all four first so the bodies can reference one another.
-        var ensureBoxed = typeBuilder.DefineMethod("EnsureBoxed",
-            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, System.Type.EmptyTypes);
-        runtime.TSArrayEnsureBoxed = ensureBoxed;
+        // EnsureBoxed's builder was defined early (so base-list methods can guard
+        // on it); we only emit its body here. The other three are defined now.
+        var ensureBoxed = _tsArrayEnsureBoxedMethod;
         var getDouble = typeBuilder.DefineMethod("GetDouble",
             MethodAttributes.Public | MethodAttributes.HideBySig, _types.Double, [_types.Int32]);
         runtime.TSArrayGetDouble = getDouble;
@@ -626,6 +659,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayFreeze = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _tsArrayIsFrozenField);
@@ -643,6 +677,7 @@ public partial class RuntimeEmitter
         runtime.TSArraySeal = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _tsArrayIsSealedField);
@@ -655,6 +690,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayGet = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var throwLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_1);
@@ -683,6 +719,7 @@ public partial class RuntimeEmitter
         runtime.TSArraySet = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var frozenLabel = il.DefineLabel();
         var throwLabel = il.DefineLabel();
 
@@ -721,6 +758,7 @@ public partial class RuntimeEmitter
         runtime.TSArraySetStrict = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var notFrozenLabel = il.DefineLabel();
         var frozenReturnLabel = il.DefineLabel();
         var throwBoundsLabel = il.DefineLabel();
@@ -776,6 +814,7 @@ public partial class RuntimeEmitter
     {
         var method = typeBuilder.DefineMethod("SyncLength", MethodAttributes.Private, _types.Void, Type.EmptyTypes);
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var doneLabel = il.DefineLabel();
 
         // if (_sparse != null) return;
@@ -805,6 +844,7 @@ public partial class RuntimeEmitter
         var method = typeBuilder.DefineMethod("MaterializeDense", MethodAttributes.Private, _types.Void, Type.EmptyTypes);
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var sparseBranch = il.DefineLabel();
         var throwRangeLabel = il.DefineLabel();
         var loopHead = il.DefineLabel();
@@ -886,6 +926,7 @@ public partial class RuntimeEmitter
         var method = typeBuilder.DefineMethod("TryCollapseSparse", MethodAttributes.Private, _types.Void, Type.EmptyTypes);
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var collapseLabel = il.DefineLabel();
         var doneLabel = il.DefineLabel();
 
@@ -929,6 +970,7 @@ public partial class RuntimeEmitter
         var method = typeBuilder.DefineMethod("GetCore", MethodAttributes.Private, _types.Object, [_types.Int64]);
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var sparsePathLabel = il.DefineLabel();
         var returnHoleLabel = il.DefineLabel();
         var lookupLabel = il.DefineLabel();
@@ -985,6 +1027,7 @@ public partial class RuntimeEmitter
             [_types.Int64, _types.Object]);
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var sparseLabel = il.DefineLabel();
         var denseLabel = il.DefineLabel();
 
@@ -1030,6 +1073,7 @@ public partial class RuntimeEmitter
             [_types.Int64, _types.Object]);
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var denseEntryLabel = il.DefineLabel();
         var sparseWriteReturn = il.DefineLabel();
         var skipLenUpdate = il.DefineLabel();
@@ -1175,6 +1219,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayHasIndex = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var returnFalseLabel = il.DefineLabel();
         var sparseBranchLabel = il.DefineLabel();
         var checkDenseHoleLabel = il.DefineLabel();
@@ -1245,6 +1290,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayGetRaw = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var oobLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_0);
@@ -1282,6 +1328,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayGetLong = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var oobLabel = il.DefineLabel();
         var notHoleLabel = il.DefineLabel();
 
@@ -1334,6 +1381,7 @@ public partial class RuntimeEmitter
         runtime.TSArraySetLong = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var frozenReturnLabel = il.DefineLabel();
         var negThrowLabel = il.DefineLabel();
         var maxThrowLabel = il.DefineLabel();
@@ -1386,6 +1434,7 @@ public partial class RuntimeEmitter
         runtime.TSArraySetStrictLong = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var notFrozenLabel = il.DefineLabel();
         var frozenReturnLabel = il.DefineLabel();
         var negThrowLabel = il.DefineLabel();
@@ -1441,6 +1490,7 @@ public partial class RuntimeEmitter
         runtime.TSArraySetLength = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var negThrowLabel = il.DefineLabel();
         var tooBigThrowLabel = il.DefineLabel();
         var notFrozenLabel = il.DefineLabel();
@@ -1710,6 +1760,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayDeleteAt = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var retLabel = il.DefineLabel();
         var denseDeleteLabel = il.DefineLabel();
         var sparseDeleteCheckLabel = il.DefineLabel();
@@ -1780,6 +1831,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayToString = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
 
         // ToString renders _dense elements joined by comma — matches pre-refactor
         // behavior exactly. Hole-aware join lives in the array built-ins (M5).
