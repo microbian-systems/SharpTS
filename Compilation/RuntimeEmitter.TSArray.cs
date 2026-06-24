@@ -817,8 +817,21 @@ public partial class RuntimeEmitter
     {
         var method = typeBuilder.DefineMethod("SyncLength", MethodAttributes.Private, _types.Void, Type.EmptyTypes);
         var il = method.GetILGenerator();
-        EmitTSArrayDeoptGuard(il);
         var doneLabel = il.DefineLabel();
+
+        // Numeric-aware (number[] unboxing): in numeric mode _length is the
+        // authoritative length (maintained by SetDouble/PushDouble) and the
+        // inherited base list is empty, so there is nothing to reconcile.
+        // Critically we must NOT deopt here — doing so would materialize the
+        // unboxed store on every `arr.length` read, defeating the win. Callers
+        // that genuinely touch the base list (GetLong/SetLong/HasIndex/GetRaw/
+        // SetLength/DeleteAt) carry their own EmitTSArrayDeoptGuard, which fires
+        // before they call SyncLength; by then mode is boxed and the reconcile
+        // below runs normally. The only callers reaching here still-numeric are
+        // the Length / LongLength getters, which read the authoritative _length.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+        il.Emit(OpCodes.Brtrue, doneLabel);
 
         // if (_sparse != null) return;
         il.Emit(OpCodes.Ldarg_0);
