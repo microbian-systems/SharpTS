@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Net;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -365,11 +366,12 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Stfld, _httpResponseBodyBufferField);
         ctorIL.Emit(OpCodes.Ret);
 
-        // Methods
-        EmitHttpResponseWriteHead(typeBuilder, runtime, httpListenerResponseType);
+        // Methods. SetHeader is emitted before WriteHead so WriteHead can call it to apply
+        // the optional headers object.
+        var setHeaderMethod = EmitHttpResponseSetHeader(typeBuilder, runtime, httpListenerResponseType);
+        EmitHttpResponseWriteHead(typeBuilder, runtime, httpListenerResponseType, setHeaderMethod);
         EmitHttpResponseWrite(typeBuilder, runtime);
         EmitHttpResponseEnd(typeBuilder, runtime, httpListenerResponseType);
-        EmitHttpResponseSetHeader(typeBuilder, runtime, httpListenerResponseType);
         EmitHttpResponseHasHeader(typeBuilder, runtime, httpListenerResponseType);
         EmitHttpResponseGetHeader(typeBuilder, runtime, httpListenerResponseType);
         EmitHttpResponseGetHeaderNames(typeBuilder, runtime, httpListenerResponseType);
@@ -485,7 +487,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitHttpResponseWriteHead(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerResponseType)
+    private void EmitHttpResponseWriteHead(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerResponseType, MethodBuilder setHeaderMethod)
     {
         // public object WriteHead(double statusCode, object? headers)
         var method = typeBuilder.DefineMethod(
@@ -504,7 +506,65 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("StatusCode")!.GetSetMethod()!);
 
-        // TODO: Handle headers from arg2 if Dictionary
+        // Apply the optional headers object. A compiled object literal (e.g. { 'Content-Type': ... })
+        // is a bare Dictionary<string, object?>; for each entry call this.SetHeader(key,
+        // value?.ToString() ?? "") which handles the Content-Type restricted-header special case.
+        // (Previously a no-op TODO, so compiled writeHead silently dropped all headers.)
+        var dictType = typeof(Dictionary<string, object?>);
+        var enumType = typeof(Dictionary<string, object?>.Enumerator);
+        var kvpType = typeof(KeyValuePair<string, object?>);
+        var headersDict = il.DeclareLocal(dictType);
+        var dictEnum = il.DeclareLocal(enumType);
+        var kvLocal = il.DeclareLocal(kvpType);
+        var skipHeaders = il.DefineLabel();
+
+        // if ((headersDict = arg2 as Dictionary<string, object?>) == null) goto skipHeaders;
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, dictType);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stloc, headersDict);
+        il.Emit(OpCodes.Brfalse, skipHeaders);
+
+        // var e = headersDict.GetEnumerator();
+        il.Emit(OpCodes.Ldloc, headersDict);
+        il.Emit(OpCodes.Callvirt, dictType.GetMethod("GetEnumerator", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, dictEnum);
+
+        var loopCond = il.DefineLabel();
+        var loopBody = il.DefineLabel();
+        il.Emit(OpCodes.Br, loopCond);
+
+        il.MarkLabel(loopBody);
+        // var kv = e.Current;
+        il.Emit(OpCodes.Ldloca, dictEnum);
+        il.Emit(OpCodes.Call, enumType.GetProperty("Current")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, kvLocal);
+
+        // this.SetHeader(kv.Key, kv.Value?.ToString() ?? "")
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloca, kvLocal);
+        il.Emit(OpCodes.Call, kvpType.GetProperty("Key")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldloca, kvLocal);
+        il.Emit(OpCodes.Call, kvpType.GetProperty("Value")!.GetGetMethod()!);
+        var valNotNull = il.DefineLabel();
+        var valDone = il.DefineLabel();
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, valNotNull);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldstr, "");
+        il.Emit(OpCodes.Br, valDone);
+        il.MarkLabel(valNotNull);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        il.MarkLabel(valDone);
+        il.Emit(OpCodes.Callvirt, setHeaderMethod);
+        il.Emit(OpCodes.Pop); // SetHeader returns this
+
+        il.MarkLabel(loopCond);
+        il.Emit(OpCodes.Ldloca, dictEnum);
+        il.Emit(OpCodes.Call, enumType.GetMethod("MoveNext", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Brtrue, loopBody);
+
+        il.MarkLabel(skipHeaders);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
@@ -650,7 +710,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    private void EmitHttpResponseSetHeader(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerResponseType)
+    private MethodBuilder EmitHttpResponseSetHeader(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerResponseType)
     {
         // public object SetHeader(string name, string value)
         var method = typeBuilder.DefineMethod(
@@ -690,6 +750,8 @@ public partial class RuntimeEmitter
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
+
+        return method;
     }
 
     private void EmitHttpResponseHasHeader(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerResponseType)

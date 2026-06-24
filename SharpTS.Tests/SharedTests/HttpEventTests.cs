@@ -66,7 +66,9 @@ public class HttpEventTests
             ["./main.ts"] = $$"""
                 import * as http from 'http';
                 const server = http.createServer((req, res) => {
-                    res.writeHead(200, { 'Content-Type': 'text/plain' });
+                    res.writeHead(200, { 'Content-Type': 'text/plain', 'X-Custom': 'abc' });
+                    console.log('ctype=' + res.getHeader('Content-Type'));
+                    console.log('xcustom=' + res.getHeader('X-Custom'));
                     res.end('OK');
                     server.close();
                 });
@@ -78,6 +80,11 @@ public class HttpEventTests
         };
         var output = TestHarness.RunModules(files, "./main.ts", mode);
         Assert.Contains("server started", output);
+        // writeHead's headers object must actually be applied. Compiled mode previously dropped
+        // it entirely (the emitted WriteHead had a no-op TODO), so assert both the restricted
+        // Content-Type and a custom header round-trip via getHeader.
+        Assert.Contains("ctype=text/plain", output);
+        Assert.Contains("xcustom=abc", output);
     }
 
     [Theory]
