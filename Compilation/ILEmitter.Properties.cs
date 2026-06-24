@@ -1225,8 +1225,33 @@ public partial class ILEmitter
                 SetStackUnknown();
                 IL.Emit(OpCodes.Br, endLabelNH);
 
-                // Not typed list: box value and fall through to List<object?> path
                 IL.MarkLabel(notTypedLabel);
+
+                // $Array numeric fast path (number[] unboxing): SetDouble takes the
+                // UNBOXED double, so a numeric-mode $Array stores it straight into
+                // its double[] with no allocation (the write side of the 73x gap).
+                // SetDouble is mode-checked — a boxed $Array delegates to Set, so
+                // this is behaviour-identical until numeric creation is wired.
+                if (desc.Kind == ArrayElementsKind.Double)
+                {
+                    IL.Emit(OpCodes.Ldloc, objLocal);
+                    IL.Emit(OpCodes.Isinst, _ctx.Runtime!.TSArrayType);
+                    var notTSArraySet = IL.DefineLabel();
+                    IL.Emit(OpCodes.Brfalse, notTSArraySet);
+                    IL.Emit(OpCodes.Ldloc, objLocal);
+                    IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSArrayType);
+                    EmitExpressionAsDouble(si.Index);
+                    IL.Emit(OpCodes.Conv_I4);
+                    IL.Emit(OpCodes.Ldloc, typedValueLocalNH);
+                    IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArraySetDouble);
+                    IL.Emit(OpCodes.Ldloc, typedValueLocalNH);
+                    desc.EmitBoxElement(IL, _ctx.Types);
+                    SetStackUnknown();
+                    IL.Emit(OpCodes.Br, endLabelNH);
+                    IL.MarkLabel(notTSArraySet);
+                }
+
+                // Not typed list: box value and fall through to List<object?> path
                 IL.Emit(OpCodes.Ldloc, objLocal);
                 IL.Emit(OpCodes.Ldloc, typedValueLocalNH);
                 IL.Emit(OpCodes.Box, desc.GetElementType(_ctx.Types));
