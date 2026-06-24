@@ -261,6 +261,9 @@ public partial class RuntimeEmitter
         var pushDouble = typeBuilder.DefineMethod("PushDouble",
             MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, [_types.Double]);
         runtime.TSArrayPushDouble = pushDouble;
+        var markNumeric = typeBuilder.DefineMethod("MarkNumeric",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, System.Type.EmptyTypes);
+        runtime.TSArrayMarkNumeric = markNumeric;
 
         // ── void EnsureBoxed() ── numeric -> boxed: box each _numStore[i] into
         // the (empty) base list, then clear the numeric mode.
@@ -440,6 +443,32 @@ public partial class RuntimeEmitter
             il.MarkLabel(haveIndex);
             il.Emit(OpCodes.Ldarg_1);                       // value
             il.Emit(OpCodes.Call, setDouble);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // ── void MarkNumeric() ── flip an EMPTY dense array into numeric mode.
+        // The compiler emits this at statically-number[] creation sites (e.g.
+        // `const a: number[] = []`) so escaping number[] arrays start unboxed.
+        // Guarded so it is a safe no-op on anything that isn't an empty dense
+        // array (already numeric, sparse, or holding elements) — those stay
+        // boxed and correct (non-empty element-move is a later phase). The
+        // invariant "numeric ⟹ base list empty" therefore holds by construction.
+        {
+            var il = markNumeric.GetILGenerator();
+            var done = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);                       // if (_isNumeric) return;
+            il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+            il.Emit(OpCodes.Brtrue, done);
+            il.Emit(OpCodes.Ldarg_0);                       // if (_sparse != null) return;
+            il.Emit(OpCodes.Ldfld, _tsArraySparseField);
+            il.Emit(OpCodes.Brtrue, done);
+            il.Emit(OpCodes.Ldarg_0);                       // if (this.Count != 0) return;
+            il.Emit(OpCodes.Callvirt, _tsArrayListCountGetter!);
+            il.Emit(OpCodes.Brtrue, done);
+            il.Emit(OpCodes.Ldarg_0);                       // _isNumeric = true;
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Stfld, _tsArrayIsNumericField);
+            il.MarkLabel(done);
             il.Emit(OpCodes.Ret);
         }
     }

@@ -1377,6 +1377,10 @@ public class EmittedRuntime
     public MethodBuilder TSArraySetDouble { get; set; } = null!;
     public MethodBuilder TSArrayPushDouble { get; set; } = null!;
     public MethodBuilder TSArrayEnsureBoxed { get; set; } = null!;
+    // Flips an empty $Array into numeric (unboxed double[]) mode — emitted at
+    // statically-number[] array-creation sites so escaping number[] arrays start
+    // unboxed. No-op on a non-empty / sparse array (stays boxed).
+    public MethodBuilder TSArrayMarkNumeric { get; set; } = null!;
 
     // $IHasFields interface - for unified property access on user classes and $Object
     // Note: These use MethodInfo instead of MethodBuilder because we need the actual

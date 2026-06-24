@@ -87,8 +87,11 @@ public partial class ILEmitter
             {
                 if (v.Initializer != null)
                 {
-                    EmitExpression(v.Initializer);
-                    EmitBoxIfNeeded(v.Initializer);
+                    if (!TryEmitNumericEmptyArrayInit(v))
+                    {
+                        EmitExpression(v.Initializer);
+                        EmitBoxIfNeeded(v.Initializer);
+                    }
                     IL.Emit(OpCodes.Stsfld, staticField);
                 }
                 else if (v.TypeAnnotation == "number")
@@ -462,6 +465,47 @@ public partial class ILEmitter
     private static bool IsNumericType(TypeSystem.TypeInfo? type) =>
         type is TypeSystem.TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER }
             or TypeSystem.TypeInfo.NumberLiteral;
+
+    /// <summary>
+    /// Numeric-mode array creation (number[] unboxing project): a statically-typed
+    /// <c>number[]</c> declaration initialized with an empty array literal (<c>[]</c>)
+    /// is created as a NUMERIC <c>$Array</c> (unboxed <c>double[]</c> elements-kind)
+    /// instead of a boxed one. Escaping <c>number[]</c> arrays (params/fields/
+    /// module-level) live on the <c>$Array</c> path — the win is that their index
+    /// writes go straight into an unboxed <c>double[]</c> via the <c>SetDouble</c>
+    /// fast path, with no per-element boxing. Non-escaping <c>number[]</c> locals are
+    /// promoted to <c>List&lt;double&gt;</c> upstream (the IsPromotableArrayLocal
+    /// branch) and return before reaching the storage sites that consult this.
+    ///
+    /// <para>Returns true and leaves a numeric (empty) <c>$Array</c> on the stack
+    /// (as <c>object</c>) when applicable; the caller stores it. Returns false
+    /// otherwise — the caller emits the initializer normally. Any operation the
+    /// numeric fast paths don't cover deopts the array back to boxed on first
+    /// touch, so this is purely a representation choice, never a semantic one.</para>
+    /// </summary>
+    private bool TryEmitNumericEmptyArrayInit(Stmt.Var v)
+    {
+        if (v.TypeAnnotation != "number[]") return false;
+        if (v.Initializer is not Expr.ArrayLiteral { Elements.Count: 0 }) return false;
+        EmitNumericEmptyArray();
+        return true;
+    }
+
+    /// <summary>
+    /// Emits an empty numeric <c>$Array</c> onto the stack: <c>$Runtime.CreateArray(new
+    /// object[0])</c> (a fresh empty <c>$Array</c>) followed by <c>MarkNumeric()</c>,
+    /// which flips it into unboxed <c>double[]</c> mode. Leaves the <c>$Array</c>
+    /// reference on the stack.
+    /// </summary>
+    private void EmitNumericEmptyArray()
+    {
+        IL.Emit(OpCodes.Ldc_I4_0);
+        IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
+        IL.Emit(OpCodes.Call, _ctx.Runtime!.CreateArray);            // [$Array] (empty)
+        IL.Emit(OpCodes.Dup);                                        // [$Array, $Array]
+        IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayMarkNumeric); // [$Array]
+        SetStackUnknown();
+    }
 
     /// <summary>
     /// Emits a for loop with unboxed counter and array hoist optimizations.
