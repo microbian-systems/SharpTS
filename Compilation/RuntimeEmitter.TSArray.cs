@@ -235,6 +235,34 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits, into ANY runtime helper (not just <c>$Array</c>'s own methods), a
+    /// deopt of a numeric-mode <c>$Array</c> that the helper is about to read AS a
+    /// base <c>List&lt;object?&gt;</c> directly — the generic-consumption sites that
+    /// bypass <c>$Array</c>'s guarded methods because <c>$Array : List&lt;object?&gt;</c>
+    /// (string coercion / JSON / <c>Object.*</c> / call-spread / …). <paramref name="loadValue"/>
+    /// pushes the candidate value; this emits <c>if (v is $Array a) a.EnsureBoxed();</c>
+    /// (value re-loaded for the cast, so it leaves the stack exactly as found).
+    /// <c>EnsureBoxed</c> self-guards (no-op unless actually numeric) and materializes
+    /// <c>_numStore</c> back into the base list, so the subsequent <c>is List&lt;object&gt;</c>
+    /// read sees the elements. Costs one isinst on the cold generic-consumption path.
+    /// </summary>
+    private void EmitDeoptIfNumericArray(ILGenerator il, EmittedRuntime runtime, Action loadValue)
+    {
+        var skip = il.DefineLabel();
+        loadValue();
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brfalse, skip);
+        loadValue();
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayEnsureBoxed);
+        il.MarkLabel(skip);
+    }
+
+    /// <summary>Convenience: <see cref="EmitDeoptIfNumericArray"/> for a method argument by index.</summary>
+    private void EmitDeoptArgIfNumericArray(ILGenerator il, EmittedRuntime runtime, int argIndex)
+        => EmitDeoptIfNumericArray(il, runtime, () => il.Emit(OpCodes.Ldarg, checked((short)argIndex)));
+
+    /// <summary>
     /// Emits the unboxed packed-double accessors on <c>$Array</c>:
     /// <c>GetDouble</c>/<c>SetDouble</c>/<c>PushDouble</c> (the fast paths the
     /// compiler will emit at statically-<c>number[]</c> sites) and

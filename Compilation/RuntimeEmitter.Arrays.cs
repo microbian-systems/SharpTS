@@ -267,6 +267,8 @@ public partial class RuntimeEmitter
         runtime.GetKeys = method;
 
         var il = method.GetILGenerator();
+        // number[] unboxing: materialize a numeric-mode $Array before enumerating it as an object.
+        EmitDeoptArgIfNumericArray(il, runtime, 0);
         var dictType = _types.DictionaryStringObject;
         var listType = _types.ListOfObject;
 
@@ -1110,6 +1112,9 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var listLabel = il.DefineLabel();
+
+        // number[] unboxing: f(...arr) spread copies the base list, so materialize a numeric $Array first.
+        EmitDeoptArgIfNumericArray(il, runtime, 0);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);

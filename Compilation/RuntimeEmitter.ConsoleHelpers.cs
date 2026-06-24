@@ -688,6 +688,9 @@ public partial class RuntimeEmitter
         var notEmptyLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
+        // number[] unboxing: materialize a numeric-mode $Array before reading its base list as a table.
+        EmitDeoptArgIfNumericArray(il, runtime, 0);
+
         // var list = (List<object>)data
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Castclass, _types.ListOfObject);
