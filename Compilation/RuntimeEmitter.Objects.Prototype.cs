@@ -254,6 +254,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TSObjectPreventExtensions);
         il.MarkLabel(notTSObjectLabel);
 
+        // number[] unboxing: mark a $Array non-extensible so the unboxed PushDouble fast path refuses to
+        // append (preventExtensions otherwise only records the array in external collections PushDouble
+        // can't reach).
+        var notTSArrayPxLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brfalse, notTSArrayPxLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayMarkNonExtensible);
+        il.MarkLabel(notTSArrayPxLabel);
+
         // Call $PropertyDescriptorStore.PreventExtensions(obj) - fully standalone, no reflection
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.PDSPreventExtensions);

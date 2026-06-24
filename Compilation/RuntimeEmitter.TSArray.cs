@@ -27,6 +27,11 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsArrayLengthField = null!;
     private FieldBuilder _tsArrayIsFrozenField = null!;
     private FieldBuilder _tsArrayIsSealedField = null!;
+    // Set true by Object.seal / Object.preventExtensions on a $Array (those runtime helpers don't touch
+    // the instance _isFrozen/_isSealed, only the external _sealedObjects/_nonExtensibleObjects collections
+    // that the boxed ArrayPush consults). The unboxed PushDouble fast path can't reach those collections,
+    // so it checks this cheap instance flag to refuse appending to a non-extensible array.
+    private FieldBuilder _tsArrayNonExtensibleField = null!;
 
     // ── Unboxed "packed-double" elements-kind (project: number[] unboxing) ────
     // When _isNumeric is true the dense prefix [0, _numCount) lives unboxed in
@@ -124,6 +129,7 @@ public partial class RuntimeEmitter
         _tsArrayLengthField = typeBuilder.DefineField("_length", _types.Int64, FieldAttributes.Private);
         _tsArrayIsFrozenField = typeBuilder.DefineField("_isFrozen", _types.Boolean, FieldAttributes.Private);
         _tsArrayIsSealedField = typeBuilder.DefineField("_isSealed", _types.Boolean, FieldAttributes.Private);
+        _tsArrayNonExtensibleField = typeBuilder.DefineField("_isNonExtensible", _types.Boolean, FieldAttributes.Private);
         // _tsArrayDenseField retired; every previous read-of-_dense is replaced
         // by a no-op (receiver is already the List via inheritance).
 
@@ -292,6 +298,9 @@ public partial class RuntimeEmitter
         var markNumeric = typeBuilder.DefineMethod("MarkNumeric",
             MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, System.Type.EmptyTypes);
         runtime.TSArrayMarkNumeric = markNumeric;
+        var markNonExtensible = typeBuilder.DefineMethod("MarkNonExtensible",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, System.Type.EmptyTypes);
+        runtime.TSArrayMarkNonExtensible = markNonExtensible;
 
         // ── void EnsureBoxed() ── numeric -> boxed: box each _numStore[i] into
         // the (empty) base list, then clear the numeric mode.
@@ -458,6 +467,19 @@ public partial class RuntimeEmitter
             var il = pushDouble.GetILGenerator();
             var useNum = il.DefineLabel();
             var haveIndex = il.DefineLabel();
+            var blockedReturn = il.DefineLabel();
+
+            // Non-extensible (frozen / sealed / preventExtensions) → push is a no-op, matching the boxed
+            // ArrayPush (which consults the external _frozenObjects/_sealedObjects/_nonExtensibleObjects
+            // collections this unboxed path can't reach). _isFrozen is set by $Array.Freeze();
+            // _isNonExtensible by Object.seal / Object.preventExtensions via MarkNonExtensible.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayIsFrozenField);
+            il.Emit(OpCodes.Brtrue, blockedReturn);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNonExtensibleField);
+            il.Emit(OpCodes.Brtrue, blockedReturn);
+
             il.Emit(OpCodes.Ldarg_0);                       // SetDouble receiver
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
@@ -471,6 +493,9 @@ public partial class RuntimeEmitter
             il.MarkLabel(haveIndex);
             il.Emit(OpCodes.Ldarg_1);                       // value
             il.Emit(OpCodes.Call, setDouble);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(blockedReturn);                    // non-extensible: leave length unchanged
             il.Emit(OpCodes.Ret);
         }
 
@@ -497,6 +522,17 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldc_I4_1);
             il.Emit(OpCodes.Stfld, _tsArrayIsNumericField);
             il.MarkLabel(done);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // ── void MarkNonExtensible() ── set _isNonExtensible so the unboxed PushDouble fast path refuses
+        // to append; called by Object.seal / Object.preventExtensions on a $Array (Object.freeze already
+        // sets _isFrozen via $Array.Freeze()). No deopt — the array may stay numeric and simply stop growing.
+        {
+            var il = markNonExtensible.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Stfld, _tsArrayNonExtensibleField);
             il.Emit(OpCodes.Ret);
         }
     }

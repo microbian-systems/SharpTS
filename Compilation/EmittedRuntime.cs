@@ -1381,6 +1381,9 @@ public class EmittedRuntime
     // statically-number[] array-creation sites so escaping number[] arrays start
     // unboxed. No-op on a non-empty / sparse array (stays boxed).
     public MethodBuilder TSArrayMarkNumeric { get; set; } = null!;
+    // Sets $Array._isNonExtensible so the unboxed PushDouble fast path refuses to append; called by
+    // Object.seal / Object.preventExtensions (which otherwise only register the array externally).
+    public MethodBuilder TSArrayMarkNonExtensible { get; set; } = null!;
 
     // $IHasFields interface - for unified property access on user classes and $Object
     // Note: These use MethodInfo instead of MethodBuilder because we need the actual

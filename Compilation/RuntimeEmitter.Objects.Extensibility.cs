@@ -148,6 +148,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, runtime.TSObjectSeal);
         il.MarkLabel(notTSObjectSealLabel);
 
+        // number[] unboxing: mark a $Array non-extensible so the unboxed PushDouble fast path refuses to
+        // append (Object.seal otherwise only registers the array in the external collections the boxed
+        // ArrayPush consults, which PushDouble can't reach).
+        var notTSArraySealLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brfalse, notTSArraySealLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayMarkNonExtensible);
+        il.MarkLabel(notTSArraySealLabel);
+
         // Call $PropertyDescriptorStore.Seal(obj) - fully standalone, no reflection
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.PDSSeal);
