@@ -176,6 +176,24 @@ public sealed class BuiltInStaticBuilder
     }
 
     /// <summary>
+    /// Registers a V2 variadic static method with an explicit ECMA-262 spec length
+    /// (the value visible as <c>fn.length</c>). Use when minArity differs from the spec
+    /// length — e.g. <c>Math.max</c> registered with <c>(0, int.MaxValue, 2, …)</c>:
+    /// minArity 0 (Math.max() is legal), spec length 2.
+    /// </summary>
+    public BuiltInStaticBuilder MethodV2(
+        string name,
+        int minArity,
+        int maxArity,
+        int specLength,
+        Func<Interpreter, RuntimeValue, ReadOnlySpan<RuntimeValue>, RuntimeValue> implementation)
+    {
+        _methods[name] = BuiltInMethod.CreateV2(name, minArity, maxArity, implementation)
+            .WithSpecLength(specLength);
+        return this;
+    }
+
+    /// <summary>
     /// Builds the static member lookup.
     /// </summary>
     public BuiltInStaticMemberLookup Build()

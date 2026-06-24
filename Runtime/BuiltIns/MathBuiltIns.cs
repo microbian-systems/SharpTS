@@ -37,6 +37,12 @@ public static class MathBuiltIns
                 RuntimeValue.FromNumber(Math.Log(args[0].AsNumber())))
             .MethodV2("exp", 1, (_, _, args) =>
                 RuntimeValue.FromNumber(Math.Exp(args[0].AsNumber())))
+            .MethodV2("cbrt", 1, (_, _, args) =>
+                RuntimeValue.FromNumber(Math.Cbrt(args[0].AsNumber())))
+            .MethodV2("log2", 1, (_, _, args) =>
+                RuntimeValue.FromNumber(Math.Log2(args[0].AsNumber())))
+            .MethodV2("log10", 1, (_, _, args) =>
+                RuntimeValue.FromNumber(Math.Log10(args[0].AsNumber())))
             .MethodV2("sign", 1, (_, _, args) =>
                 RuntimeValue.FromNumber(Math.Sign(args[0].AsNumber())))
             .MethodV2("trunc", 1, (_, _, args) =>
@@ -45,8 +51,11 @@ public static class MathBuiltIns
             .MethodV2("pow", 2, (_, _, args) =>
                 RuntimeValue.FromNumber(Math.Pow(args[0].AsNumber(), args[1].AsNumber())))
             // Variable arity methods
-            .MethodV2("min", 2, int.MaxValue, Min)
-            .MethodV2("max", 2, int.MaxValue, Max)
+            // min-arity 0 (Math.min()/max()/hypot() are legal -> Infinity / -Infinity / 0),
+            // spec length 2 (the .length property each exposes per ECMA-262).
+            .MethodV2("min", 0, int.MaxValue, 2, Min)
+            .MethodV2("max", 0, int.MaxValue, 2, Max)
+            .MethodV2("hypot", 0, int.MaxValue, 2, Hypot)
             // No argument methods
             .MethodV2("random", 0, (_, _, _) =>
                 RuntimeValue.FromNumber(_random.NextDouble()))
@@ -79,5 +88,17 @@ public static class MathBuiltIns
             if (val > max) max = val;
         }
         return RuntimeValue.FromNumber(max);
+    }
+
+    private static RuntimeValue Hypot(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        // sqrt(sum of squares); IEEE handles the Infinity/NaN special cases.
+        double sum = 0;
+        for (int i = 0; i < args.Length; i++)
+        {
+            double v = args[i].AsNumber();
+            sum += v * v;
+        }
+        return RuntimeValue.FromNumber(Math.Sqrt(sum));
     }
 }
