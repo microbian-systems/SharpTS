@@ -1437,9 +1437,31 @@ public partial class RuntimeEmitter
         runtime.TSArrayGetLong = method;
 
         var il = method.GetILGenerator();
-        EmitTSArrayDeoptGuard(il);
         var oobLabel = il.DefineLabel();
         var notHoleLabel = il.DefineLabel();
+        var notNumeric = il.DefineLabel();
+
+        // Numeric-aware read (number[] unboxing): in numeric mode the elements live unboxed in _numStore;
+        // read directly + box the double, OOB → undefined, and crucially do NOT deopt — so a numeric array
+        // stays numeric across index reads, keeping interleaved read/write on the fast path. _numCount is
+        // authoritative; the unsigned compare also rejects negative indices. (Numeric mode is dense, so no
+        // hole check is needed here — gap writes deopt before they can punch a hole.)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+        il.Emit(OpCodes.Brfalse, notNumeric);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Bge_Un, oobLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldelem_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNumeric);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, syncLength);
