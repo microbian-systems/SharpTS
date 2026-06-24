@@ -36,6 +36,8 @@ public static class ArrayBuiltIns
             .MethodV2("indexOf", 1, 2, IndexOfV2)
             .MethodV2("lastIndexOf", 1, 2, LastIndexOfV2)
             .MethodV2("join", 0, 1, specLength: 1, JoinV2)
+            // Array.prototype.toString = join() with ","; distinct from the debug ToString().
+            .MethodV2("toString", 0, static (interp, arr, _) => RuntimeValue.FromString(ToJsString(interp, arr)))
             // Array.prototype.concat accepts any number of args (variadic).
             .MethodV2("concat", 0, int.MaxValue, specLength: 1, ConcatV2)
             .MethodV2("reverse", 0, ReverseV2)
@@ -503,6 +505,15 @@ public static class ArrayBuiltIns
         }
         return RuntimeValue.FromString(sb.ToString());
     }
+
+    /// <summary>
+    /// ECMA-262 23.1.3.36 Array.prototype.toString = join() with the default ","
+    /// separator — the string an array coerces to in string contexts (<c>+</c>,
+    /// template literals, <c>String()</c>), distinct from the console/debug
+    /// <see cref="SharpTSArray.ToString"/> format ("[1, 2, 3]").
+    /// </summary>
+    internal static string ToJsString(Interpreter interp, SharpTSArray arr)
+        => JoinV2(interp, arr, ReadOnlySpan<RuntimeValue>.Empty).AsString();
 
     /// <summary>
     /// Copies [0, length) of <paramref name="src"/> into <paramref name="dst"/>,

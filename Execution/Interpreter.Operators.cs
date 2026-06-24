@@ -484,6 +484,12 @@ public partial class Interpreter
     /// </summary>
     private object? ToPrimitive(object? value, PrimitiveHint hint)
     {
+        // Arrays have no own valueOf/toString and inherit Array.prototype.toString
+        // (= join(',')); OrdinaryToPrimitive resolves to it for every hint (valueOf
+        // returns the array, not a primitive, so it is skipped). e.g. `'' + [1,2,3]`
+        // -> "1,2,3" and `[1,2,3] == "1,2,3"` -> true. The console/debug ToString
+        // ("[1, 2, 3]") is intentionally NOT used here.
+        if (value is SharpTSArray arr) return ArrayBuiltIns.ToJsString(this, arr);
         if (value is not SharpTSObject obj) return value;
         bool isWrapper = TryGetBoxedPrimitiveValue(obj, out var primitiveValue);
         bool hasOwnValueOf = obj.HasProperty("valueOf");

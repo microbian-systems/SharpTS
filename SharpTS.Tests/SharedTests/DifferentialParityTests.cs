@@ -49,21 +49,19 @@ public class DifferentialParityTests
         catch (Exception ex) { return $"<<threw:{ex.GetType().Name}>>"; }
     }
 
-    public static IEnumerable<object[]> KnownDivergenceNames =>
-        ParityCorpus.KnownDivergences.Keys.OrderBy(k => k, StringComparer.Ordinal).Select(k => new object[] { k });
-
-    [Theory]
-    [MemberData(nameof(KnownDivergenceNames))]
-    public void KnownDivergence_StillDiverges(string name)
+    [Fact]
+    public void KnownDivergences_StillDiverge()
     {
-        // Real interp<->compiled bugs the harness surfaced, pinned so the green gate stays
-        // clean. When the underlying bug is fixed this test fails, prompting promotion of
-        // the snippet into the green corpus.
-        var (source, note) = ParityCorpus.KnownDivergences[name];
-        var interp = Capture(() => TestHarness.RunInterpreted(source));
-        var compiled = Capture(() => TestHarness.RunCompiled(source));
-        Assert.True(interp != compiled,
-            $"'{name}' no longer diverges — fix confirmed; move it into the green corpus. Note: {note}");
+        // Pins documented interp<->compiled bugs (currently none): when one is fixed this
+        // fails, prompting promotion of the snippet into the green corpus. Iterates rather
+        // than a [Theory] so an empty set is simply green.
+        foreach (var entry in ParityCorpus.KnownDivergences)
+        {
+            var interp = Capture(() => TestHarness.RunInterpreted(entry.Value.Source));
+            var compiled = Capture(() => TestHarness.RunCompiled(entry.Value.Source));
+            Assert.True(interp != compiled,
+                $"'{entry.Key}' no longer diverges — fix confirmed; move it into the green corpus. Note: {entry.Value.Note}");
+        }
     }
 }
 
@@ -99,6 +97,8 @@ internal static class ParityCorpus
         ["coerce-add"] = "console.log(1 + '2', '3' + 4, true + 1, null + 1, undefined + 1, 1 + null, 2 + true);",
         ["coerce-loose-eq"] = "console.log(0 == false, '' == false, '0' == 0, null == undefined, 1 == '1', 'true' == true);",
         ["coerce-truthy"] = "console.log(!!0, !!'', !!null, !!undefined, !!NaN, !!'x', !![], !!{}, !!0.0);",
+        // Array -> string coercion uses Array.prototype.toString (join), not the debug format.
+        ["coerce-array-string"] = "console.log('' + [1, 2, 3], String([4, 5]), `${[6, 7]}`, [8, 9].toString(), String([]), ['a', 'b'].join('-'));",
 
         // ---- strings ----
         ["str-methods"] = "console.log('Hello'.toUpperCase(), 'WORLD'.toLowerCase(), '  t  '.trim(), 'a,b,c'.split(',').length, 'abc'.charAt(1), 'abc'.indexOf('b'));",
@@ -117,6 +117,8 @@ internal static class ParityCorpus
         ["arr-mutate"] = "const a = [3, 1, 2]; a.sort(); a.push(4); console.log(a.join(','), a.reverse().join(','), a.length);",
         ["arr-query"] = "console.log([1, 2, 3].includes(2), [1, 2, 3].indexOf(3), [1, 2, 3].find(x => x > 1), [1, 2, 3].some(x => x > 2), [1, 2, 3].every(x => x > 0));",
         ["arr-spread"] = "console.log([...[1, 2], ...[3, 4]].join('-'), [1, 2, 3].slice(1).join(','));",
+        // Array.from over iterables AND array-likes ({length} / indexed).
+        ["arr-from"] = "console.log(Array.from({ length: 3 }, (_, i) => i).join(','), Array.from({ length: 2, 0: 'a', 1: 'b' }).join(','), Array.from('hi').join(','), Array.from(new Set([1, 1, 2])).join(','));",
 
         // ---- objects ----
         ["obj-keys"] = "const o = { a: 1, b: 2, c: 3 }; console.log(Object.keys(o).join(','), Object.values(o).join(','), Object.entries(o).length);",
@@ -151,11 +153,8 @@ internal static class ParityCorpus
     /// </summary>
     internal static readonly Dictionary<string, (string Source, string Note)> KnownDivergences = new()
     {
-        ["coerce-array-tostring"] = (
-            "console.log('' + [1, 2, 3]);",
-            "Array->string coercion: interp prints the console-inspect '[1, 2, 3]'; ECMA-262 says '1,2,3' via Array.prototype.toString (compiled is correct)."),
-        ["array-from-arraylike"] = (
-            "console.log(Array.from({ length: 3 }, (_, i) => i).join(','));",
-            "Array.from(arrayLike, mapFn): interp throws 'not iterable'; should use the array-like's .length -> '0,1,2' (compiled is correct)."),
+        // (empty) The harness's first two findings — array->string coercion and Array.from
+        // on an array-like — were fixed and promoted into Snippets above (coerce-array-string,
+        // arr-from). Future divergences that can't be fixed immediately go here.
     };
 }

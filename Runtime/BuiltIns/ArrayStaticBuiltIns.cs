@@ -37,7 +37,12 @@ public static class ArrayStaticBuiltIns
                     mapFn = mapFnCallable;
                 }
 
-                var elements = interpreter.GetIterableElements(iterable).ToList();
+                // ECMA-262 23.1.2.1: prefer the iterator protocol; a source without a usable
+                // iterator (e.g. an array-like { length: n }) is read via its length +
+                // indexed elements rather than throwing "not iterable".
+                var elements = interpreter.IsIterableSource(iterable)
+                    ? interpreter.GetIterableElements(iterable).ToList()
+                    : interpreter.ReadArrayLikeElements(iterable);
 
                 if (mapFn != null)
                 {
