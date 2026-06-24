@@ -1054,6 +1054,44 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// True when <paramref name="value"/> is iterable via <see cref="GetIterableElements"/>
+    /// (a known iterable type or carrying a Symbol.iterator). Lets Array.from choose the
+    /// iterator protocol vs the array-like (length + indices) path without catching a throw.
+    /// </summary>
+    internal bool IsIterableSource(object? value) =>
+        value is SharpTSArray or SharpTSMap or SharpTSSet or SharpTSIterator or SharpTSGenerator
+            or string or List<object?> or IEnumerable<object?>
+        || TryGetSymbolIterator(value) != null;
+
+    /// <summary>
+    /// ECMA-262 array-like read (Array.from on a non-iterable): ToLength(Get(src,"length")),
+    /// then Get(src, 0..len-1). Missing indices yield undefined — so Array.from({length:3})
+    /// produces [undefined, undefined, undefined].
+    /// </summary>
+    internal List<object?> ReadArrayLikeElements(object? value)
+    {
+        long len = ToLength(GetArrayLikeProperty(value, "length"));
+        var result = new List<object?>(len > int.MaxValue ? int.MaxValue : (int)len);
+        for (long i = 0; i < len; i++)
+            result.Add(GetArrayLikeProperty(value, i.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+        return result;
+    }
+
+    private static object? GetArrayLikeProperty(object? value, string key) => value switch
+    {
+        SharpTSObject obj => obj.GetProperty(key),
+        SharpTSInstance inst => inst.GetProperty(key),
+        _ => SharpTSUndefined.Instance,
+    };
+
+    private static long ToLength(object? value)
+    {
+        double n = Compilation.RuntimeTypes.ToNumber(value);
+        if (double.IsNaN(n) || n <= 0) return 0;
+        return (long)Math.Min(Math.Floor(n), 9007199254740991.0); // 2^53 - 1
+    }
+
+    /// <summary>
     /// Normalizes an array binding-pattern source through the iterator protocol (#685). Array
     /// destructuring (<c>const [a, b] = src</c>) desugars to positional index access, which is only
     /// correct for index-addressable sources. Plain arrays pass through unchanged (fast path). Typed
