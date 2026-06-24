@@ -322,6 +322,10 @@ public static class ConstantFolder
         {
             bool => "boolean",
             double => "number",
+            // A bigint literal (e.g. `typeof 10n`) lexes to a BigInteger-valued
+            // Expr.Literal, so the runtime TypeOf emitter never runs — this fold
+            // must mirror its `BigInteger => "bigint"` case (RuntimeTypes.TypeOf).
+            System.Numerics.BigInteger => "bigint",
             string => "string",
             _ => "object"
         };

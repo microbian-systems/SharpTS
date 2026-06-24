@@ -865,6 +865,10 @@ public class EmittedRuntime
     public MethodBuilder BigIntLeftShift { get; set; } = null!;
     public MethodBuilder BigIntRightShift { get; set; } = null!;
     public MethodBuilder BigIntEquals { get; set; } = null!;
+    /// <summary>$Runtime.BigIntLooseEquals(object, object) -> bool — ECMA-262 7.2.15 loose equality for a bigint vs a non-bigint (number/string/boolean); used by the compiled `10n == 10` / `10n == "10"` paths so a Double/String operand is coerced instead of cast-crashing.</summary>
+    public MethodBuilder BigIntLooseEquals { get; set; } = null!;
+    /// <summary>$Runtime.BigIntToStringRadix(object value, object radix) -> string — BigInt.prototype.toString([radix]); radix 2–36 with lowercase digits (radix 10 = bare decimal). Backs compiled `(255n).toString(16)`.</summary>
+    public MethodBuilder BigIntToStringRadix { get; set; } = null!;
     public MethodBuilder BigIntLessThan { get; set; } = null!;
     public MethodBuilder BigIntLessThanOrEqual { get; set; } = null!;
     public MethodBuilder BigIntGreaterThan { get; set; } = null!;

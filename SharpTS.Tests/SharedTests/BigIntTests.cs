@@ -459,6 +459,145 @@ public class BigIntTests
 
     #endregion
 
+    #region Coercion and Methods (#912)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BigInt_ToString_NoRadix(ExecutionMode mode)
+    {
+        var source = """
+            console.log((123n).toString());
+            console.log((0n).toString());
+            console.log((-42n).toString());
+            """;
+        Assert.Equal("123\n0\n-42\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BigInt_ToString_Radix(ExecutionMode mode)
+    {
+        var source = """
+            console.log((255n).toString(16));
+            console.log((255n).toString(2));
+            console.log((255n).toString(8));
+            console.log((255n).toString(36));
+            console.log((-255n).toString(16));
+            console.log((0n).toString(16));
+            """;
+        Assert.Equal("ff\n11111111\n377\n73\n-ff\n0\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BigInt_ToString_Radix_ArbitraryPrecision(ExecutionMode mode)
+    {
+        var source = """
+            console.log((123456789012345678901234567890n).toString(16));
+            """;
+        Assert.Equal("18ee90ff6c373e0ee4e3f0ad2\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BigInt_StringCoercion_IsBareNumericForm(ExecutionMode mode)
+    {
+        // ECMA-262 ToString(bigint) has no "n" suffix (that form is console.log-only).
+        var source = """
+            console.log(String(42n));
+            console.log("" + 42n);
+            console.log(`${42n}`);
+            console.log(`${-7n}`);
+            """;
+        Assert.Equal("42\n42\n42\n-7\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BigInt_ConsoleLog_KeepsDebugForm(ExecutionMode mode)
+    {
+        // console.log / inspection keeps the "42n" debug form even though String() drops it.
+        var source = """
+            console.log(42n);
+            console.log(0n + 5n);
+            """;
+        Assert.Equal("42n\n5n\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BigInt_NumberCoercion(ExecutionMode mode)
+    {
+        var source = """
+            console.log(Number(42n));
+            console.log(Number(-7n));
+            console.log(Number(0n));
+            """;
+        Assert.Equal("42\n-7\n0\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BigInt_BooleanCoercion(ExecutionMode mode)
+    {
+        // ToBoolean(bigint): 0n is falsy, every other bigint is truthy.
+        var source = """
+            console.log(Boolean(0n));
+            console.log(Boolean(5n));
+            console.log(Boolean(-1n));
+            console.log(!0n);
+            console.log(0n ? "t" : "f");
+            console.log(7n ? "t" : "f");
+            """;
+        Assert.Equal("false\ntrue\ntrue\ntrue\nf\nt\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BigInt_LooseEquality_WithNumber(ExecutionMode mode)
+    {
+        // ECMA-262 7.2.15: bigint == number compares mathematical values.
+        var source = """
+            console.log(10n == 10);
+            console.log(10n == 11);
+            console.log(10n == 10.5);
+            console.log(10n != 10);
+            console.log(10n != 11);
+            """;
+        Assert.Equal("true\nfalse\nfalse\nfalse\ntrue\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BigInt_LooseEquality_WithStringAndBoolean(ExecutionMode mode)
+    {
+        var source = """
+            console.log(10n == "10");
+            console.log(10n == "abc");
+            console.log(0n == "");
+            console.log(1n == true);
+            console.log(0n == false);
+            console.log(2n == true);
+            """;
+        Assert.Equal("true\nfalse\ntrue\ntrue\ntrue\nfalse\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BigInt_StrictEquality_AcrossTypes_IsFalse(ExecutionMode mode)
+    {
+        // A bigint is never the same Type as a number, so === is always false.
+        var source = """
+            console.log(10n === 10n);
+            console.log(10n !== 5n);
+            console.log(10n === 10);
+            console.log(10n !== 10);
+            """;
+        Assert.Equal("true\ntrue\nfalse\ntrue\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
+
     #region Instanceof Tests
 
     [Theory]

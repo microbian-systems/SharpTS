@@ -325,6 +325,9 @@ public sealed class BuiltInRegistry
 
         registry.RegisterCategoryType(TypeCategory.Symbol, (instance, name) =>
             SymbolBuiltIns.GetInstanceMember((SharpTSSymbol)instance, name));
+
+        registry.RegisterCategoryType(TypeCategory.BigInt, (instance, name) =>
+            BigIntBuiltIns.GetInstanceMember(instance, name));
     }
 
     private static void RegisterMathNamespace(BuiltInRegistry registry)

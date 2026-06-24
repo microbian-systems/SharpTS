@@ -1717,6 +1717,27 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    // Emits an early-return guard for the language-level ToString coercion paths
+    // (String(), template-literal interpolation, `+` concat): a bigint coerces to
+    // its bare decimal form ("42"), NOT the "42n" debug form that console.log /
+    // util.inspect (Stringify) uses. Mirrors the interpreter's Interpreter.Stringify
+    // / SharpTSStringNamespace bigint handling so the two modes agree.
+    private void EmitBigIntToStringReturn(ILGenerator il)
+    {
+        var notBigInt = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.BigInteger);
+        il.Emit(OpCodes.Brfalse, notBigInt);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, _types.BigInteger);
+        var loc = il.DeclareLocal(_types.BigInteger);
+        il.Emit(OpCodes.Stloc, loc);
+        il.Emit(OpCodes.Ldloca, loc);
+        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.BigInteger, "ToString"));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notBigInt);
+    }
+
     // StringFromValue — ECMA-262 §22.1.1.1 String(value) constructor called as a
     // function. Identical to ToJsString except that Symbol arguments return
     // SymbolDescriptiveString instead of throwing: the String() call form is the
@@ -1768,6 +1789,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
         il.MarkLabel(notSymbolLabel);
+
+        // A bigint coerces to its bare decimal form ("42"), not Stringify's "42n".
+        EmitBigIntToStringReturn(il);
 
         // An object-like value ($Object / Dictionary / List) coerces via
         // ToJsString — the spec ToString → OrdinaryToPrimitive(string) protocol,
@@ -1828,6 +1852,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.CreateException);
         il.Emit(OpCodes.Throw);
         il.MarkLabel(notSymbolLabel);
+
+        // A bigint coerces to its bare decimal form ("42"), not Stringify's "42n".
+        EmitBigIntToStringReturn(il);
 
         // Already a string → return as-is (avoid CLR ToString round-trip).
         var alreadyStringLabel = il.DefineLabel();
@@ -3174,6 +3201,7 @@ public partial class RuntimeEmitter
         var checkBool = il.DefineLabel();
         var checkDouble = il.DefineLabel();
         var checkString = il.DefineLabel();
+        var checkBigInt = il.DefineLabel();
         var trueLabel = il.DefineLabel();
 
         // null => false
@@ -3199,6 +3227,11 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.String);
         il.Emit(OpCodes.Brtrue, checkString);
+
+        // bigint => 0n is falsy (ToBoolean(bigint): false iff zero)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, _types.BigInteger);
+        il.Emit(OpCodes.Brtrue, checkBigInt);
 
         // everything else => true
         il.Emit(OpCodes.Ldc_I4_1);
@@ -3237,6 +3270,14 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "get_Length"));
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Cgt);
+        il.Emit(OpCodes.Ret);
+
+        // Check bigint: truthy iff non-zero (value != BigInteger.Zero).
+        il.MarkLabel(checkBigInt);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, _types.BigInteger);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.BigInteger, "get_Zero"));
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.BigInteger, "op_Inequality", _types.BigInteger, _types.BigInteger));
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(falseLabel);

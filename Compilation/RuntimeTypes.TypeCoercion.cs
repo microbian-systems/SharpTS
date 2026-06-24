@@ -157,6 +157,8 @@ public static partial class RuntimeTypes
             double d => d != 0.0 && !double.IsNaN(d),
             string s => s.Length > 0,
             System.Numerics.BigInteger bi => bi != 0,
+            // The interpreter wraps bigints in SharpTSBigInt; ToBoolean(0n) is false.
+            Runtime.Types.SharpTSBigInt sbi => sbi.Value != 0,
             _ => true
         };
     }

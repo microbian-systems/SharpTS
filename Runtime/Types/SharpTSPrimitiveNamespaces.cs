@@ -23,6 +23,9 @@ public class SharpTSStringNamespace : ISharpTSCallable
         if (arg == null) return "null";
         if (arg is bool b) return b ? "true" : "false";
         if (arg is double d) return Compilation.RuntimeTypes.FormatNumber(d);
+        // ECMA-262 7.1.17 ToString(bigint) = BigInt::toString = bare numeric form
+        // ("42"), NOT the "42n" debug form used by console.log / util.inspect.
+        if (arg is SharpTSBigInt bi) return bi.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (arg is SharpTSArray arr) return ArrayBuiltIns.ToJsString(interpreter, arr);
         // A boxed wrapper / plain object goes through ToString = ToPrimitive
         // (string hint) then stringify, honoring an own toString override and
@@ -173,6 +176,11 @@ public class SharpTSNumberNamespace : ISharpTSCallable
         if (arg is SharpTSUndefined) return double.NaN;
         if (arg == null) return 0.0;
         if (arg is bool b) return b ? 1.0 : 0.0;
+        // Number(bigint) is an explicit, allowed conversion (ECMA-262 21.1.1.1
+        // step 3): it returns the numeric value, even though *implicit* ToNumber
+        // on a bigint throws a TypeError. The radix-free decimal magnitude maps
+        // to the nearest double.
+        if (arg is SharpTSBigInt bi) return (double)bi.Value;
         if (arg is string s)
         {
             s = s.Trim();

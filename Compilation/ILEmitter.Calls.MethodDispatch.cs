@@ -174,6 +174,16 @@ public partial class ILEmitter
             return;
         }
 
+        // BigInt instance methods. bigint is a primitive (no boxed wrapper object),
+        // so route toString/valueOf/toLocaleString to dedicated runtime helpers —
+        // critically so `toString(radix)` honors the radix instead of falling through
+        // to BigInteger.ToString() (which ignores the argument).
+        if (objType is TypeSystem.TypeInfo.BigInt && methodName is "toString" or "toLocaleString" or "valueOf")
+        {
+            EmitBigIntMethodCall(methodGet.Object, methodName, arguments);
+            return;
+        }
+
         // Number instance methods - runtime dispatch for any/unknown types
         if (methodName is "toFixed" or "toPrecision" or "toExponential" or "valueOf" or "toString")
         {

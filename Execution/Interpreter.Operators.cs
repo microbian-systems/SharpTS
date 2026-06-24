@@ -1010,6 +1010,14 @@ public partial class Interpreter
             return "[object " + instance.GetClass().Name + "]";
         }
 
+        // ECMA-262 7.1.17 ToString(bigint) = bare numeric form ("42"). The "42n"
+        // debug form belongs to console.log / util.inspect (ConsoleBuiltIns), not
+        // language-level string coercion (`+` concat, template literals).
+        if (obj is SharpTSBigInt bigint)
+        {
+            return bigint.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         return obj.ToString()!;
     }
 }

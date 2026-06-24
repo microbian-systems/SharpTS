@@ -591,54 +591,95 @@ public partial class Interpreter
         _ => throw new InterpreterException($"Unknown bitwise operator: {op}")
     };
 
-    private System.Numerics.BigInteger? GetBigIntValue(object? value) => value switch
-    {
-        SharpTSBigInt bi => bi.Value,
-        System.Numerics.BigInteger biVal => biVal,
-        _ => null
-    };
-
     private RuntimeValue EvaluateBigIntBinaryRV(TokenType op, RuntimeValue leftRV, RuntimeValue rightRV,
         System.Numerics.BigInteger? leftBi, System.Numerics.BigInteger? rightBi)
     {
-        // Equality operators allow mixed types (bigint with anything)
-        if (BigIntOperatorHelper.IsEqualityOperator(op))
+        // `+` with a string operand is string concatenation, not numeric add
+        // (ECMA-262 13.15.3: ToPrimitive both, and if either is a String, concat).
+        // bigint is already primitive; ToString(bigint) is the bare numeric form.
+        if (op == TokenType.PLUS && (leftRV.IsString || rightRV.IsString))
         {
-            if (!leftBi.HasValue || !rightBi.HasValue)
-            {
-                // Mixed types: equality is false, inequality is true
-                return RuntimeValue.FromBoolean(op is TokenType.BANG_EQUAL or TokenType.BANG_EQUAL_EQUAL);
-            }
-            return BigIntOperatorHelper.EvaluateBinaryRV(op, leftBi.Value, rightBi.Value);
+            object? l = leftRV.ToObject();
+            object? r = rightRV.ToObject();
+            return RuntimeValue.FromString(string.Concat(
+                l as string ?? Stringify(l),
+                r as string ?? Stringify(r)));
         }
 
-        // All other operators require both to be bigint
+        // Equality operators allow mixed types (bigint with anything).
+        if (BigIntOperatorHelper.IsEqualityOperator(op))
+        {
+            if (leftBi.HasValue && rightBi.HasValue)
+                return BigIntOperatorHelper.EvaluateBinaryRV(op, leftBi.Value, rightBi.Value);
+
+            bool isNegated = op is TokenType.BANG_EQUAL or TokenType.BANG_EQUAL_EQUAL;
+            bool equal;
+            if (op is TokenType.EQUAL_EQUAL_EQUAL or TokenType.BANG_EQUAL_EQUAL)
+            {
+                // Strict ===/!==: a bigint is never the same type as a non-bigint.
+                equal = false;
+            }
+            else
+            {
+                // Loose ==/!=: ECMA-262 7.2.15 bigint-vs-(number|string|boolean|object).
+                var bi = leftBi ?? rightBi!.Value;
+                var other = leftBi.HasValue ? rightRV.ToObject() : leftRV.ToObject();
+                equal = LooseEqualsBigInt(bi, other);
+            }
+            return RuntimeValue.FromBoolean(isNegated ? !equal : equal);
+        }
+
+        // All other operators require both to be bigint.
         if (!leftBi.HasValue || !rightBi.HasValue)
             throw new InterpreterException("Cannot mix bigint and other types in operations.");
 
         return BigIntOperatorHelper.EvaluateBinaryRV(op, leftBi.Value, rightBi.Value);
     }
 
-    private object EvaluateBigIntBinary(TokenType op, object? left, object? right,
-        System.Numerics.BigInteger? leftBi, System.Numerics.BigInteger? rightBi)
+    /// <summary>
+    /// ECMA-262 7.2.15 IsLooselyEqual for a bigint vs a non-bigint operand:
+    /// bigint==Number compares mathematical values (false for NaN/±Infinity and any
+    /// non-integral double); bigint==String parses the string as an integer literal
+    /// (false when it is not a valid one); bigint==Boolean coerces the boolean to
+    /// 0n/1n; an Object operand is reduced via ToPrimitive and retried; null/undefined
+    /// (and any other type) are never loosely equal to a bigint.
+    /// </summary>
+    private bool LooseEqualsBigInt(System.Numerics.BigInteger bi, object? other)
     {
-        // Equality operators allow mixed types (bigint with anything)
-        if (BigIntOperatorHelper.IsEqualityOperator(op))
+        switch (other)
         {
-            if (!leftBi.HasValue || !rightBi.HasValue)
-            {
-                // Mixed types: equality is false, inequality is true
-                return op is TokenType.BANG_EQUAL or TokenType.BANG_EQUAL_EQUAL;
-            }
-            return BigIntOperatorHelper.EvaluateBinary(op, leftBi.Value, rightBi.Value);
+            case SharpTSBigInt sbi:
+                return bi == sbi.Value;
+            case System.Numerics.BigInteger obi:
+                return bi == obi;
+            case double d:
+                if (double.IsNaN(d) || double.IsInfinity(d) || d != Math.Floor(d))
+                    return false;
+                return new System.Numerics.BigInteger(d) == bi;
+            case bool b:
+                return bi == (b ? System.Numerics.BigInteger.One : System.Numerics.BigInteger.Zero);
+            case string s:
+                return TryStringToBigInt(s, out var parsed) && bi == parsed;
+            case SharpTSObject:
+                return LooseEqualsBigInt(bi, ToPrimitive(other, PrimitiveHint.Default));
+            default:
+                return false;
         }
+    }
 
-        // All other operators require both to be bigint
-        if (!leftBi.HasValue || !rightBi.HasValue)
-            throw new InterpreterException("Cannot mix bigint and other types in operations.");
-
-        // Use centralized helper for all BigInt operations
-        return BigIntOperatorHelper.EvaluateBinary(op, leftBi.Value, rightBi.Value);
+    /// <summary>
+    /// ECMA-262 7.1.14 StringToBigInt (decimal subset): a trimmed integer literal,
+    /// optionally signed; an empty/whitespace string is 0n. Returns false (the spec's
+    /// "undefined") when the string is not a valid literal. Uses the same BCL
+    /// <c>BigInteger.TryParse</c> the compiled <c>$Runtime.BigIntLooseEquals</c> emits,
+    /// so both modes coerce identically (radix-prefixed string literals like "0xa" are
+    /// a shared, documented gap — they compare unequal in both modes).
+    /// </summary>
+    private static bool TryStringToBigInt(string s, out System.Numerics.BigInteger value)
+    {
+        string t = s.Trim();
+        if (t.Length == 0) { value = System.Numerics.BigInteger.Zero; return true; }
+        return System.Numerics.BigInteger.TryParse(t, out value);
     }
 
     /// <summary>
