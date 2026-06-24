@@ -362,10 +362,10 @@ public static class JSONBuiltIns
 
     private static string FormatJsonNumber(double d)
     {
+        // ECMA-262 JSON.stringify(number): NaN/Infinity serialize as null; every other
+        // value uses the same Number::toString as the rest of the runtime.
         if (double.IsNaN(d) || double.IsInfinity(d)) return "null";
-        if (d == Math.Floor(d) && Math.Abs(d) < 1e15)
-            return ((long)d).ToString();
-        return d.ToString("G15");
+        return Compilation.RuntimeTypes.FormatNumber(d);
     }
 
     private static void StringifyArray(Interpreter interp, SharpTSArray arr,

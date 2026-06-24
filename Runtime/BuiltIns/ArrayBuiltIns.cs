@@ -918,12 +918,7 @@ public static class ArrayBuiltIns
         if (obj == null) return "null";
         if (obj is double d)
         {
-            string text = d.ToString();
-            if (text.EndsWith(".0"))
-            {
-                text = text[..^2];
-            }
-            return text;
+            return Compilation.RuntimeTypes.FormatNumber(d);
         }
         if (obj is bool b) return b ? "true" : "false";
         return obj.ToString() ?? "null";

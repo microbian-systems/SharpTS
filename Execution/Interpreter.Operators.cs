@@ -962,12 +962,7 @@ public partial class Interpreter
         if (obj is bool b) return b ? "true" : "false";
         if (obj is double d)
         {
-            string text = d.ToString();
-            if (text.EndsWith(".0"))
-            {
-                text = text.Substring(0, text.Length - 2);
-            }
-            return text;
+            return Compilation.RuntimeTypes.FormatNumber(d);
         }
 
         if (obj is SharpTSArray array)

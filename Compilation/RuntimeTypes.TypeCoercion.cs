@@ -25,34 +25,68 @@ public static partial class RuntimeTypes
         };
     }
 
+    /// <summary>
+    /// ECMA-262 7.1.12.1 Number::toString(10) — the JS-correct, culture-invariant
+    /// number-to-string. Single source of truth shared by the interpreter (this) and
+    /// the compiled standalone runtime ($Runtime.FormatNumber emitted IL, which must
+    /// stay byte-identical — see RuntimeEmitter.NumberFormat.cs).
+    /// </summary>
     internal static string FormatNumber(double d)
     {
         if (double.IsNaN(d)) return "NaN";
         if (double.IsPositiveInfinity(d)) return "Infinity";
         if (double.IsNegativeInfinity(d)) return "-Infinity";
-        // ECMA-262 6.1.6.1.13: integers up to 10^21 - 1 format as plain digits.
-        // For Math.Abs(d) >= 2^63 (Int64 overflow boundary), use F0 format.
-        if (d == Math.Floor(d) && Math.Abs(d) < 1e21)
+
+        // Fast path: integers exactly representable as Int64 (|d| < 2^53) render as
+        // plain digits (also handles 0 and -0 -> "0"). At/above 2^53 doubles lose
+        // integer precision and the spec uses the shortest round-trip (e.g.
+        // 12345678901234567000, not the exact long), so those fall through below.
+        if (d == Math.Floor(d) && Math.Abs(d) < 9007199254740992.0)
+            return ((long)d).ToString(CultureInfo.InvariantCulture);
+
+        // Take the shortest round-trippable decimal (.NET "R" matches V8's shortest)
+        // and reposition the decimal point per the spec's plain-vs-exponential
+        // thresholds (decimal exponent in [-6, 21) renders plain, else exponential).
+        string sign = d < 0 ? "-" : "";
+        string r = Math.Abs(d).ToString("R", CultureInfo.InvariantCulture);
+
+        // Decompose into the significant digit string and n = the number of digits to
+        // the left of the decimal point (ECMA's n; value = digits x 10^(n - k)).
+        string digits;
+        int n;
+        int eIdx = r.IndexOf('E');
+        if (eIdx >= 0)
         {
-            if (Math.Abs(d) < 9.2233720368547758e18)
-                return ((long)d).ToString(CultureInfo.InvariantCulture);
-            return d.ToString("F0", CultureInfo.InvariantCulture);
+            string mant = r.Substring(0, eIdx);
+            int exp = int.Parse(r.Substring(eIdx + 1), CultureInfo.InvariantCulture);
+            int dot = mant.IndexOf('.');
+            if (dot < 0) { digits = mant; n = mant.Length + exp; }
+            else { digits = mant.Remove(dot, 1); n = dot + exp; }
         }
-        // ECMA-262 6.1.6.1.13: non-integer doubles use plain decimal when the
-        // leading-digit exponent ∈ [-6, 20], exponential otherwise. .NET's G
-        // format switches at < 1e-4 — wrong on the "0.000001" boundary; and
-        // |x| ≥ 1e21 (the integer-branch upper bound) must use exponential
-        // even for values like 1e21 itself which lands here when not strictly
-        // less than 1e21.
-        if (Math.Abs(d) >= 1e-6 && Math.Abs(d) < 1e21)
+        else
         {
-            // Plain-decimal: variable-precision fixed-point without exponential
-            // ever firing. Suppresses trailing zeros via `#` placeholder.
-            return d.ToString("0.################", CultureInfo.InvariantCulture);
+            int dot = r.IndexOf('.');
+            if (dot < 0) { digits = r; n = r.Length; }
+            else { digits = r.Remove(dot, 1); n = dot; }
         }
-        // |d| < 1e-6 OR |d| ≥ 1e21: exponential, JS-style.
-        var s = d.ToString("G15", CultureInfo.InvariantCulture).Replace("E", "e");
-        return System.Text.RegularExpressions.Regex.Replace(s, @"e([+-])0+(?=\d)", "e$1");
+
+        // Drop leading zeros (each shifts the point left) and trailing zeros.
+        int lead = 0;
+        while (lead < digits.Length - 1 && digits[lead] == '0') { lead++; n--; }
+        digits = digits.Substring(lead).TrimEnd('0');
+        if (digits.Length == 0) digits = "0";
+        int k = digits.Length;
+
+        if (k <= n && n <= 21)
+            return sign + digits + new string('0', n - k);
+        if (0 < n && n <= 21)
+            return sign + digits.Substring(0, n) + "." + digits.Substring(n);
+        if (-6 < n && n <= 0)
+            return sign + "0." + new string('0', -n) + digits;
+        // Exponential: d.dddde±X (lowercase e, sign, no leading zeros in the exponent).
+        string mantOut = k == 1 ? digits : digits.Substring(0, 1) + "." + digits.Substring(1);
+        int e = n - 1;
+        return sign + mantOut + "e" + (e >= 0 ? "+" : "-") + Math.Abs(e).ToString(CultureInfo.InvariantCulture);
     }
 
     private static string StringifyObject(Dictionary<string, object?> dict)

@@ -73,22 +73,7 @@ public static class PropertyKeyConverter
     /// compiled property keys produce identical strings (e.g. <c>-0</c> → <c>"0"</c>,
     /// <c>1e21</c> → <c>"1e+21"</c>).
     /// </summary>
-    private static string FormatNumber(double d)
-    {
-        if (double.IsNaN(d)) return "NaN";
-        if (double.IsPositiveInfinity(d)) return "Infinity";
-        if (double.IsNegativeInfinity(d)) return "-Infinity";
-        if (d == Math.Floor(d) && Math.Abs(d) < 1e21)
-        {
-            // Integer in safe range — no decimal point. Math.Abs(-0.0) is 0,
-            // (long)(-0.0) is 0, so -0 round-trips to "0" without a sign.
-            if (Math.Abs(d) < 9.2233720368547758e18)
-                return ((long)d).ToString(CultureInfo.InvariantCulture);
-            return d.ToString("F0", CultureInfo.InvariantCulture);
-        }
-        if (Math.Abs(d) >= 1e-6 && Math.Abs(d) < 1e21)
-            return d.ToString("0.################", CultureInfo.InvariantCulture);
-        var s = d.ToString("G15", CultureInfo.InvariantCulture).Replace("E", "e");
-        return System.Text.RegularExpressions.Regex.Replace(s, @"e([+-])0+(?=\d)", "e$1");
-    }
+    // Delegates to the single source of truth so interpreted and compiled property
+    // keys stay identical (e.g. -0 -> "0", 1e21 -> "1e+21", 0.1+0.2 -> full digits).
+    private static string FormatNumber(double d) => Compilation.RuntimeTypes.FormatNumber(d);
 }
