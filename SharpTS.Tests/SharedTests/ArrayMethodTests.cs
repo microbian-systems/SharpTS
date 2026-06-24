@@ -178,6 +178,31 @@ public class ArrayMethodTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_With_OutOfBounds_ThrowsRangeError(ExecutionMode mode)
+    {
+        // Array.prototype.with must throw a real RangeError for out-of-bounds indices. Compiled
+        // mode previously threw a generic Error (a CLR Exception whose message merely began
+        // "RangeError:"), so Test262's assert.throws(RangeError, ...) — which checks
+        // `thrown.constructor === RangeError` — failed. Assert instanceof + constructor === plus
+        // valid in-range writes (positive and negative index).
+        var source = """
+            const a: number[] = [1, 2, 3];
+            function check(fn: () => any): string {
+                try { fn(); return "no-throw"; }
+                catch (e) { return (e instanceof RangeError) + "/" + ((e as any).constructor === RangeError); }
+            }
+            console.log(check(() => a.with(5, 9)));
+            console.log(check(() => a.with(-5, 9)));
+            console.log(a.with(1, 9).join(","));
+            console.log(a.with(-1, 9).join(","));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true/true\ntrue/true\n1,9,3\n1,2,9\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Array_ReduceRight_WithoutInitialValue_UsesLastElement(ExecutionMode mode)
     {
         var source = """
