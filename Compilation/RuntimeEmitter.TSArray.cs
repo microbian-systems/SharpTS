@@ -28,6 +28,31 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsArrayIsFrozenField = null!;
     private FieldBuilder _tsArrayIsSealedField = null!;
 
+    // ── Unboxed "packed-double" elements-kind (project: number[] unboxing) ────
+    // When _isNumeric is true the dense prefix [0, _numCount) lives unboxed in
+    // _numStore (a double[] grown geometrically), NOT in the inherited
+    // List<object?> base (which is empty in numeric mode). Holes are the
+    // reserved HoleNanBits pattern; genuine NaN is canonicalized on write so it
+    // never collides. A non-double write (or any base-List consumer) triggers
+    // EnsureBoxed, which materializes _numStore back into the base list and
+    // clears _isNumeric (deopt). All three default to the boxed mode
+    // (_isNumeric=false, _numStore=null, _numCount=0) so an unmodified program
+    // behaves exactly as before until creation/fast-path emission is wired.
+    private FieldBuilder _tsArrayNumStoreField = null!;
+    private FieldBuilder _tsArrayNumCountField = null!;
+    private FieldBuilder _tsArrayIsNumericField = null!;
+
+    /// <summary>
+    /// Reserved IEEE-754 bit pattern marking a HOLE in <c>_numStore</c>. A
+    /// quiet NaN distinct from the canonical JS NaN (<c>0x7FF8000000000000</c>),
+    /// so a genuine <c>NaN</c> element (canonicalized to the standard bits on
+    /// write) is never mistaken for a hole. Matches V8's hole-NaN choice.
+    /// </summary>
+    private const long HoleNanBits = unchecked((long)0xFFF7FFFFFFFFFFFFUL);
+
+    /// <summary>Canonical JS NaN bits — what a genuine NaN element is stored as.</summary>
+    private const long CanonicalNanBits = unchecked((long)0x7FF8000000000000UL);
+
     // Cached generic type for the sparse dictionary backing.
     private Type _tsArraySparseType = null!;
 
@@ -96,6 +121,14 @@ public partial class RuntimeEmitter
         _tsArrayIsSealedField = typeBuilder.DefineField("_isSealed", _types.Boolean, FieldAttributes.Private);
         // _tsArrayDenseField retired; every previous read-of-_dense is replaced
         // by a no-op (receiver is already the List via inheritance).
+
+        // Unboxed packed-double elements-kind (number[] unboxing project). All
+        // default to boxed mode; nothing reads them until creation/fast-path
+        // emission is wired in a later phase, so this is a zero-behavior-change
+        // addition (CLR zero-inits: _isNumeric=false, _numStore=null, _numCount=0).
+        _tsArrayNumStoreField = typeBuilder.DefineField("_numStore", _types.DoubleArray, FieldAttributes.Private);
+        _tsArrayNumCountField = typeBuilder.DefineField("_numCount", _types.Int32, FieldAttributes.Private);
+        _tsArrayIsNumericField = typeBuilder.DefineField("_isNumeric", _types.Boolean, FieldAttributes.Private);
 
         EmitTSArrayConstructor(typeBuilder, runtime);
 
