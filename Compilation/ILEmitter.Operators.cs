@@ -194,6 +194,27 @@ public partial class ILEmitter
     /// </summary>
     private void EmitEqualityBinary(Expr.Binary b, bool isStrict, bool isNegated)
     {
+        // Fast path: both operands statically numeric. JS number equality has no
+        // coercion (=== and == agree when both sides are number), and IEEE `ceq`
+        // matches the spec exactly — NaN is never equal (ceq → false, correct for
+        // `NaN === NaN`) and +0/-0 compare equal (ceq → true, correct for `===`).
+        // Mirrors the numeric relational fast path above; avoids boxing both
+        // operands and the boolean result plus an Object.Equals dispatch per
+        // comparison (the dominant per-iteration cost in comparison-heavy loops).
+        if (IsNumericComparison(b))
+        {
+            EmitExpressionAsDouble(b.Left);
+            EmitExpressionAsDouble(b.Right);
+            IL.Emit(OpCodes.Ceq);
+            if (isNegated)
+            {
+                IL.Emit(OpCodes.Ldc_I4_0);
+                IL.Emit(OpCodes.Ceq);
+            }
+            SetStackType(StackType.Boolean);
+            return;
+        }
+
         EmitExpression(b.Left);
         EmitBoxIfNeeded(b.Left);
         EmitExpression(b.Right);
