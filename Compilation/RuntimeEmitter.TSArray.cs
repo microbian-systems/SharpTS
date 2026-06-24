@@ -191,7 +191,224 @@ public partial class RuntimeEmitter
         // IList<object?> impl is inherited from List<object?> — no explicit
         // bridges needed (was the old composition-based approach).
 
+        // Unboxed packed-double accessors (number[] unboxing project). Emitted
+        // after SetLong (SetDouble delegates the boxed/gap paths to it). Mode is
+        // never entered until creation/fast-path emission is wired, so these are
+        // dead-but-valid IL today.
+        EmitTSArrayNumericAccessors(typeBuilder, runtime);
+
         typeBuilder.CreateType();
+    }
+
+    /// <summary>
+    /// Emits the unboxed packed-double accessors on <c>$Array</c>:
+    /// <c>GetDouble</c>/<c>SetDouble</c>/<c>PushDouble</c> (the fast paths the
+    /// compiler will emit at statically-<c>number[]</c> sites) and
+    /// <c>EnsureBoxed</c> (the deopt that materializes the <c>double[]</c> store
+    /// back into the boxed base list). Numeric mode is dense-only for now: a
+    /// gap-creating write (<c>index &gt; _numCount</c>) deopts via EnsureBoxed
+    /// rather than punching a NaN-sentinel hole (that holey-fast upgrade is a
+    /// later phase). Until creation/fast-path emission is wired these are
+    /// emitted-but-uncalled — valid IL, zero behavior change.
+    /// </summary>
+    private void EmitTSArrayNumericAccessors(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var arrayResize = typeof(System.Array).GetMethod("Resize")!.MakeGenericMethod(_types.Double);
+
+        // Define all four first so the bodies can reference one another.
+        var ensureBoxed = typeBuilder.DefineMethod("EnsureBoxed",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, System.Type.EmptyTypes);
+        runtime.TSArrayEnsureBoxed = ensureBoxed;
+        var getDouble = typeBuilder.DefineMethod("GetDouble",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Double, [_types.Int32]);
+        runtime.TSArrayGetDouble = getDouble;
+        var setDouble = typeBuilder.DefineMethod("SetDouble",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, [_types.Int32, _types.Double]);
+        runtime.TSArraySetDouble = setDouble;
+        var pushDouble = typeBuilder.DefineMethod("PushDouble",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, [_types.Double]);
+        runtime.TSArrayPushDouble = pushDouble;
+
+        // ── void EnsureBoxed() ── numeric -> boxed: box each _numStore[i] into
+        // the (empty) base list, then clear the numeric mode.
+        {
+            var il = ensureBoxed.GetILGenerator();
+            var done = il.DefineLabel();
+            var loop = il.DefineLabel();
+            var loopCheck = il.DefineLabel();
+            var i = il.DeclareLocal(_types.Int32);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+            il.Emit(OpCodes.Brfalse, done);
+
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, i);
+            il.Emit(OpCodes.Br, loopCheck);
+            il.MarkLabel(loop);
+            il.Emit(OpCodes.Ldarg_0);                       // Add receiver (this : List)
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldloc, i);
+            il.Emit(OpCodes.Ldelem_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Callvirt, _tsArrayListAdd!);
+            il.Emit(OpCodes.Ldloc, i);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, i);
+            il.MarkLabel(loopCheck);
+            il.Emit(OpCodes.Ldloc, i);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Blt, loop);
+
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stfld, _tsArrayIsNumericField);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Stfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stfld, _tsArrayNumCountField);
+
+            il.MarkLabel(done);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // ── double GetDouble(int index) ──
+        {
+            var il = getDouble.GetILGenerator();
+            var boxed = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+            il.Emit(OpCodes.Brfalse, boxed);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldelem_R8);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(boxed);                            // (double) base[index]
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, _tsArrayListGetItem!);
+            il.Emit(OpCodes.Unbox_Any, _types.Double);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // ── void SetDouble(int index, double value) ──
+        {
+            var il = setDouble.GetILGenerator();
+            var notNumeric = il.DefineLabel();
+            var notOverwrite = il.DefineLabel();
+            var gap = il.DefineLabel();
+            var hasStore = il.DefineLabel();
+            var doStore = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+            il.Emit(OpCodes.Brfalse, notNumeric);
+
+            // overwrite in range: if (index < _numCount) { _numStore[index] = value; return; }
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Bge, notOverwrite);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stelem_R8);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(notOverwrite);
+            // gap write (index > _numCount): deopt then boxed set
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Bgt, gap);
+
+            // append at _numCount: ensure capacity
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Brtrue, hasStore);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_4);
+            il.Emit(OpCodes.Newarr, _types.Double);
+            il.Emit(OpCodes.Stfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Br, doStore);
+            il.MarkLabel(hasStore);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Bne_Un, doStore);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldflda, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Mul);
+            il.Emit(OpCodes.Call, arrayResize);
+
+            il.MarkLabel(doStore);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stelem_R8);
+            il.Emit(OpCodes.Ldarg_0);                       // _numCount++
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldarg_0);                       // _length = (long)_numCount
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Conv_I8);
+            il.Emit(OpCodes.Stfld, _tsArrayLengthField);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(gap);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, ensureBoxed);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Conv_I8);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, runtime.TSArraySetLong);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(notNumeric);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Conv_I8);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, runtime.TSArraySetLong);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // ── void PushDouble(double value) ── append at the current length.
+        {
+            var il = pushDouble.GetILGenerator();
+            var useNum = il.DefineLabel();
+            var haveIndex = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);                       // SetDouble receiver
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+            il.Emit(OpCodes.Brtrue, useNum);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, _tsArrayListCountGetter!);
+            il.Emit(OpCodes.Br, haveIndex);
+            il.MarkLabel(useNum);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.MarkLabel(haveIndex);
+            il.Emit(OpCodes.Ldarg_1);                       // value
+            il.Emit(OpCodes.Call, setDouble);
+            il.Emit(OpCodes.Ret);
+        }
     }
 
     private void EmitTSArrayConstructor(TypeBuilder typeBuilder, EmittedRuntime runtime)
