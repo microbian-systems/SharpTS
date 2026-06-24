@@ -144,6 +144,22 @@ internal static class ParityCorpus
         ["map-set"] = "const m = new Map<string, number>([['a', 1], ['b', 2]]); const s = new Set([1, 2, 2, 3]); console.log(m.get('a'), m.size, s.size, [...s].join(','));",
         ["generator"] = "function* g() { yield 1; yield 2; yield 3; } console.log([...g()].join(','), [...g()].reduce((a, b) => a + b, 0));",
 
+        // ---- bigint (#912) ----
+        // console.log keeps the "10n" debug form; typeof is "bigint"; arithmetic/
+        // comparison/radix-aware toString all agree across modes.
+        ["bigint-basics"] = "console.log(typeof 10n, 10n + 20n, 2n ** 10n, 10n > 5n, 100n / 7n, (123n).toString());",
+        // === both-bigint; == mixed-numeric (coerces); String()/Number() unwrap the
+        // bare numeric form (no "n").
+        ["bigint-mixed"] = "console.log(10n === 10n, 10n == 10, String(42n), Number(42n), 5n * 5n);",
+        // Language ToString coercion (String(), template, `+`) is the bare numeric form;
+        // Boolean()/`!` use ToBoolean(bigint) (0n is falsy).
+        ["bigint-coerce"] = "console.log(String(42n), `${42n}`, '' + 42n, Boolean(0n), Boolean(5n), !0n, 0n ? 'y' : 'n');",
+        // toString(radix) 2..36, negatives, zero, and arbitrary precision.
+        ["bigint-tostring-radix"] = "console.log((255n).toString(16), (255n).toString(2), (255n).toString(8), (-255n).toString(16), (0n).toString(16), (255n).toString(36));",
+        // ECMA-262 loose equality: bigint vs number/string/boolean (mathematical compare;
+        // string parsed as integer; empty string is 0n; booleans coerce to 0n/1n).
+        ["bigint-loose-eq"] = "console.log(10n == '10', 10n == 'abc', 0n == '', 1n == true, 0n == false, 10n == 10.5, 10n != 10);",
+
         // ---- Phase B: broadened coverage ----
         // Math
         ["math-functions"] = "console.log(Math.max(1, 2, 3), Math.min(-1, -2), Math.pow(2, 8), Math.sqrt(144), Math.sign(-5), Math.cbrt(27));",
@@ -173,7 +189,6 @@ internal static class ParityCorpus
         // Map / Set
         ["map-iter"] = "const m = new Map<string, number>(); m.set('a', 1).set('b', 2); console.log([...m.keys()].join(','), [...m.values()].join(','), m.has('a'), m.delete('a'), m.size);",
         ["set-ops"] = "const s = new Set<number>([1, 2, 3]); s.add(4); s.delete(2); console.log([...s].join(','), s.has(3), s.size);",
-        // BigInt is under-developed and divergent in BOTH modes — see KnownDivergences.
         // instanceof
         ["instanceof"] = "class A {} class B extends A {} const b = new B(); console.log(b instanceof A, b instanceof B, [] instanceof Array, b instanceof Object);",
         // Accessors
@@ -205,15 +220,8 @@ internal static class ParityCorpus
     /// </summary>
     internal static readonly Dictionary<string, (string Source, string Note)> KnownDivergences = new()
     {
-        // BigInt is under-developed and buggy in BOTH modes (a dedicated effort, not a quick fix).
-        //   interp:   String(42n)="42n" (want "42"), Number(42n)=NaN (want 42), 10n==10 false (want true),
-        //             (123n).toString() throws.
-        //   compiled: typeof 10n="object" (want "bigint"), mixed 10n==10 crashes (Double->BigInteger cast).
-        ["bigint-basics"] = (
-            "console.log(typeof 10n, 10n + 20n, 2n ** 10n, 10n > 5n, 100n / 7n, (123n).toString());",
-            "BigInt (tracked #912): interp throws on (123n).toString(); compiled typeof 10n='object' (want 'bigint')."),
-        ["bigint-mixed"] = (
-            "console.log(10n === 10n, 10n == 10, String(42n), Number(42n), 5n * 5n);",
-            "BigInt (tracked #912): interp String(42n)='42n'/Number(42n)=NaN/10n==10 false; compiled crashes on 10n==10 (Double->BigInteger cast)."),
+        // (empty) BigInt was fixed across both modes (#912) and promoted into Snippets above
+        // (bigint-basics/-mixed/-coerce/-tostring-radix/-loose-eq). Future divergences that
+        // can't be fixed immediately go here.
     };
 }

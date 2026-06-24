@@ -9,6 +9,41 @@ namespace SharpTS.Compilation;
 public partial class ILEmitter
 {
     /// <summary>
+    /// Emits a BigInt instance-method call (receiver statically bigint). toString takes
+    /// an optional radix (ECMA-262 21.2.3.3); toLocaleString is the decimal form;
+    /// valueOf returns the bigint itself.
+    /// </summary>
+    private void EmitBigIntMethodCall(Expr obj, string methodName, List<Expr> arguments)
+    {
+        EmitExpression(obj);
+        EmitBoxIfNeeded(obj); // boxed BigInteger receiver
+
+        switch (methodName)
+        {
+            case "valueOf":
+                // Returns the bigint itself (already boxed on the stack).
+                SetStackUnknown();
+                break;
+
+            case "toLocaleString":
+                // No Intl options — plain decimal (radix 10).
+                IL.Emit(OpCodes.Ldc_R8, 10.0);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.BigIntToStringRadix);
+                SetStackType(StackType.String);
+                break;
+
+            case "toString":
+                if (arguments.Count > 0)
+                    EmitExpressionAsDouble(arguments[0]);
+                else
+                    IL.Emit(OpCodes.Ldc_R8, 10.0);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.BigIntToStringRadix);
+                SetStackType(StackType.String);
+                break;
+        }
+    }
+
+    /// <summary>
     /// Emits a number method call when we know the receiver is a number at compile time.
     /// </summary>
     private void EmitNumberMethodCallDirect(Expr obj, string methodName, List<Expr> arguments)

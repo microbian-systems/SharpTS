@@ -21,8 +21,17 @@ public partial class ILEmitter
         // so a bigint LHS gets boxed and flows through the normal InstanceOf/HasIn runtime call.
         if (IsBigIntOperation(b) && b.Operator.Type is not (TokenType.IN or TokenType.INSTANCEOF))
         {
-            EmitBigIntBinary(b);
-            return;
+            if (IsBothBigInt(b))
+            {
+                EmitBigIntBinary(b);
+                return;
+            }
+            // Mixed bigint/non-bigint: only equality (==/===/!=/!==) and string-concat
+            // `+` are well-typed here (the type checker rejects all other mixed bigint
+            // operators). Equality is handled below; mixed `+` falls through to the
+            // general string-concat path.
+            if (TryEmitMixedBigIntEquality(b))
+                return;
         }
 
         var desc = SemanticOperatorResolver.Resolve(b.Operator.Type);
@@ -1984,6 +1993,52 @@ public partial class ILEmitter
         if (_ctx.TypeMap == null) return false;
         var type = _ctx.TypeMap.Get(expr);
         return type is TypeInfo.BigInt;
+    }
+
+    private bool IsBothBigInt(Expr.Binary b)
+    {
+        if (_ctx.TypeMap == null) return false;
+        return _ctx.TypeMap.Get(b.Left) is TypeInfo.BigInt
+            && _ctx.TypeMap.Get(b.Right) is TypeInfo.BigInt;
+    }
+
+    /// <summary>
+    /// Emits a mixed bigint/non-bigint equality op per ECMA-262 7.2.15. Strict
+    /// <c>===</c>/<c>!==</c> with differing types is constant-false/true, computed by
+    /// the general strict path (Object.Equals(BigInteger, Double) is false). Loose
+    /// <c>==</c>/<c>!=</c> coerces via <c>$Runtime.BigIntLooseEquals</c>. Returns false
+    /// for non-equality operators (e.g. mixed <c>+</c>), which fall through to the
+    /// general operator path. Assumes the operands are not both bigint.
+    /// </summary>
+    private bool TryEmitMixedBigIntEquality(Expr.Binary b)
+    {
+        var op = b.Operator.Type;
+        switch (op)
+        {
+            case TokenType.EQUAL_EQUAL_EQUAL:
+            case TokenType.BANG_EQUAL_EQUAL:
+                EmitEqualityBinary(b, isStrict: true, isNegated: op == TokenType.BANG_EQUAL_EQUAL);
+                return true;
+
+            case TokenType.EQUAL_EQUAL:
+            case TokenType.BANG_EQUAL:
+                EmitExpression(b.Left);
+                EmitBoxIfNeeded(b.Left);
+                EmitExpression(b.Right);
+                EmitBoxIfNeeded(b.Right);
+                IL.Emit(OpCodes.Call, _ctx.Runtime!.BigIntLooseEquals);
+                if (op == TokenType.BANG_EQUAL)
+                {
+                    IL.Emit(OpCodes.Ldc_I4_0);
+                    IL.Emit(OpCodes.Ceq);
+                }
+                IL.Emit(OpCodes.Box, _ctx.Types.Boolean);
+                SetStackUnknown();
+                return true;
+
+            default:
+                return false;
+        }
     }
 
     private void EmitBigIntBinary(Expr.Binary b)
