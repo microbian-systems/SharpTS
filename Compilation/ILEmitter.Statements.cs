@@ -87,11 +87,16 @@ public partial class ILEmitter
             {
                 if (v.Initializer != null)
                 {
-                    if (!TryEmitNumericEmptyArrayInit(v))
-                    {
-                        EmitExpression(v.Initializer);
-                        EmitBoxIfNeeded(v.Initializer);
-                    }
+                    // NOTE (number[] unboxing): live numeric-$Array creation is intentionally NOT wired
+                    // here yet. A numeric $Array keeps its elements in an unboxed double[] with an EMPTY
+                    // base List<object>, but generic-consumption runtime helpers — string coercion
+                    // (ToJsString), JSON (Stringify/StringifyFull) and console (ConsoleLog) — read that base
+                    // list directly via `is List<object>` and would observe an empty array. Until every such
+                    // boundary deopts (the "harden deopt completeness" sweep), escaping number[] stays boxed
+                    // = sound. The $Array machinery (MarkNumeric, SetDouble/PushDouble, the $BoundArrayMethod
+                    // deopt) is in place and correct; flipping creation on is gated on that sweep.
+                    EmitExpression(v.Initializer);
+                    EmitBoxIfNeeded(v.Initializer);
                     IL.Emit(OpCodes.Stsfld, staticField);
                 }
                 else if (v.TypeAnnotation == "number")
