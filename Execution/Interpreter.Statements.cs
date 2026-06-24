@@ -467,7 +467,7 @@ public partial class Interpreter
                 if (result.Type == ExecutionResult.ResultType.Throw)
                 {
                     pendingResult = result;
-                    (exceptionHandled, pendingResult) = await HandleCatchBlockCore(ctx, tryCatch, result.Value.ToObject());
+                    (exceptionHandled, pendingResult) = await HandleCatchBlockCore(ctx, tryCatch, result.Value.ToObject(), fromHostException: false);
                     break;
                 }
                 else if (result.IsAbrupt)
@@ -482,7 +482,7 @@ public partial class Interpreter
             // Treat host exceptions as guest throws
             object? errorValue = TranslateException(ex);
             pendingResult = ExecutionResult.Throw(errorValue);
-            (exceptionHandled, pendingResult) = await HandleCatchBlockCore(ctx, tryCatch, errorValue);
+            (exceptionHandled, pendingResult) = await HandleCatchBlockCore(ctx, tryCatch, errorValue, fromHostException: true);
         }
 
         // Always execute finally
@@ -510,14 +510,19 @@ public partial class Interpreter
     private async ValueTask<(bool Handled, ExecutionResult Result)> HandleCatchBlockCore(
         IEvaluationContext ctx,
         Stmt.TryCatch tryCatch,
-        object? errorValue)
+        object? errorValue,
+        bool fromHostException)
     {
         if (tryCatch.CatchBlock != null)
         {
             RuntimeEnvironment catchEnv = new(_environment);
             if (tryCatch.CatchParam != null)
             {
-                catchEnv.Define(tryCatch.CatchParam.Lexeme, CoerceCaughtValueForBinding(errorValue));
+                // Only host-exception messages carry a stringified JS error type to recover
+                // (#694); a genuine guest `throw value` is already the final caught value and
+                // must never be re-typed — see CoerceCaughtValueForBinding.
+                catchEnv.Define(tryCatch.CatchParam.Lexeme,
+                    fromHostException ? CoerceCaughtValueForBinding(errorValue) : errorValue);
             }
 
             using (PushScope(catchEnv))
@@ -581,7 +586,7 @@ public partial class Interpreter
                 if (result.Type == ExecutionResult.ResultType.Throw)
                 {
                     pendingResult = result;
-                    (exceptionHandled, pendingResult) = HandleCatchBlock(tryCatch, result.Value.ToObject());
+                    (exceptionHandled, pendingResult) = HandleCatchBlock(tryCatch, result.Value.ToObject(), fromHostException: false);
                     break;
                 }
                 else if (result.IsAbrupt)
@@ -603,7 +608,7 @@ public partial class Interpreter
             // Treat host exceptions as guest throws
             object? errorValue = TranslateException(ex);
             pendingResult = ExecutionResult.Throw(errorValue);
-            (exceptionHandled, pendingResult) = HandleCatchBlock(tryCatch, errorValue);
+            (exceptionHandled, pendingResult) = HandleCatchBlock(tryCatch, errorValue, fromHostException: true);
         }
 
         // Always execute finally
@@ -630,14 +635,19 @@ public partial class Interpreter
     /// </summary>
     private (bool Handled, ExecutionResult Result) HandleCatchBlock(
         Stmt.TryCatch tryCatch,
-        object? errorValue)
+        object? errorValue,
+        bool fromHostException)
     {
         if (tryCatch.CatchBlock != null)
         {
             RuntimeEnvironment catchEnv = new(_environment);
             if (tryCatch.CatchParam != null)
             {
-                catchEnv.Define(tryCatch.CatchParam.Lexeme, CoerceCaughtValueForBinding(errorValue));
+                // Only host-exception messages carry a stringified JS error type to recover
+                // (#694); a genuine guest `throw value` is already the final caught value and
+                // must never be re-typed — see CoerceCaughtValueForBinding.
+                catchEnv.Define(tryCatch.CatchParam.Lexeme,
+                    fromHostException ? CoerceCaughtValueForBinding(errorValue) : errorValue);
             }
 
             using (PushScope(catchEnv))
@@ -1245,24 +1255,27 @@ public partial class Interpreter
     };
 
     /// <summary>
-    /// Coerces a value about to be bound to a guest <c>catch</c> parameter (#694).
-    /// Built-ins signal JS errors as host exceptions whose message carries a
-    /// "&lt;Name&gt;Error: " prefix; <see cref="TranslateException"/> surfaces these as the
-    /// raw message string. When guest code catches one, present it as the matching typed
-    /// Error so <c>instanceof</c>, <c>.name</c>, and <c>.message</c> hold — parity with
-    /// compiled mode, which throws a real <c>$RangeError</c>/<c>$TypeError</c>/etc.
-    /// Non-prefixed strings and non-string values pass through unchanged, so
-    /// <c>throw "msg"</c> and <c>throw new Error()</c> keep their exact caught value.
+    /// Coerces a HOST-exception message about to be bound to a guest <c>catch</c> parameter
+    /// (#694). Built-ins signal JS errors as host exceptions whose message carries a
+    /// "&lt;Name&gt;Error: " prefix (optionally inside a "Runtime Error: " wrapper);
+    /// <see cref="TranslateException"/> surfaces these as the raw message string. When guest
+    /// code catches one, present it as the matching typed Error so <c>instanceof</c>,
+    /// <c>.name</c>, and <c>.message</c> hold — parity with compiled mode, which throws a
+    /// real <c>$RangeError</c>/<c>$TypeError</c>/etc. Non-prefixed strings and non-string
+    /// values pass through unchanged.
     /// </summary>
     /// <remarks>
-    /// Applied only at the catch binding, never on the propagation path: an UNcaught
-    /// host error must stay a string so <see cref="ThrowException.FromResult"/> lets it
-    /// surface to the host as a plain <see cref="Exception"/> (e.g. an uncaught strict-mode
-    /// violation), rather than a top-level-swallowed guest throw.
-    /// Known limitation: a guest <c>throw "RangeError: ..."</c> — a bare string that
-    /// happens to match a runtime error-message shape — is also coerced to a typed Error.
-    /// This is indistinguishable from a host error once stringified and is not exercised by
-    /// any real code (nobody throws an error-prefixed string instead of <c>new RangeError</c>).
+    /// Invoked by <see cref="HandleCatchBlock"/>/<c>Core</c> ONLY when the caught value came
+    /// from a translated host <see cref="Exception"/> (<c>fromHostException</c>); a genuine
+    /// guest <c>throw value</c> is bound verbatim and never re-typed, so a guest
+    /// <c>throw "TypeError: x"</c> stays the exact string (matching JS). Coercion is confined
+    /// to the catch binding, never the propagation path: an UNcaught host error must stay a
+    /// string so <see cref="ThrowException.FromResult"/> surfaces it to the host as a plain
+    /// <see cref="Exception"/> (e.g. an uncaught strict-mode violation).
+    /// Residual: a guest string thrown ACROSS a host frame (callback/interop) is flattened to
+    /// a plain host <see cref="Exception"/> by <see cref="ThrowException.FromResult"/>, so an
+    /// error-prefixed guest string crossing such a boundary is still coerced — indistinguishable
+    /// once stringified, and not exercised by real code.
     /// </remarks>
     internal object? CoerceCaughtValueForBinding(object? value)
         => value is string s && TryCreateGuestErrorFromMessage(s) is { } typedError
@@ -1277,15 +1290,29 @@ public partial class Interpreter
     private static SharpTSError? TryCreateGuestErrorFromMessage(string? message)
     {
         if (message is null) return null;
+
+        // Internal runtime errors carry a "Runtime Error: " wrapper (undefined-variable
+        // access, BigInt range violations, ...) — sometimes around a real JS error name
+        // (e.g. "Runtime Error: TypeError: ..."). Strip the wrapper so the inner name is
+        // recognised; a wrapper with no inner JS name still becomes a generic Error so guest
+        // `catch` observes an `instanceof Error` with `.message`, matching JS (where the
+        // runtime never throws a bare string). Non-wrapped, non-prefixed strings pass through.
+        const string runtimePrefix = "Runtime Error: ";
+        bool hadRuntimePrefix = message.StartsWith(runtimePrefix, StringComparison.Ordinal);
+        var body = hadRuntimePrefix ? message.Substring(runtimePrefix.Length) : message;
+
         foreach (var (prefix, name) in JsErrorMessagePrefixes)
         {
-            if (message.StartsWith(prefix, StringComparison.Ordinal))
+            if (body.StartsWith(prefix, StringComparison.Ordinal))
             {
-                var detail = message.Substring(prefix.Length);
+                var detail = body.Substring(prefix.Length);
                 return ErrorBuiltIns.CreateError(name, new List<object?> { detail });
             }
         }
-        return null;
+
+        return hadRuntimePrefix
+            ? ErrorBuiltIns.CreateError("Error", new List<object?> { body })
+            : null;
     }
 
     /// <summary>
