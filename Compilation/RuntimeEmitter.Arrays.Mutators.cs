@@ -1942,10 +1942,26 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Bge, throwRangeError);
         il.Emit(OpCodes.Br, validIndex);
 
-        // Throw RangeError
+        // Throw a real $RangeError (not a generic Exception) so guest `instanceof RangeError`
+        // and Test262's assert.throws(RangeError, ...) hold. The previous code threw a bare CLR
+        // Exception whose message merely began "RangeError:", so WrapException produced a generic
+        // $Error on catch. Wrap the $RangeError in a CLR Exception whose Data["__tsValue"] carries
+        // it (the inline-throw pattern from EmitArrayConstructor / ArrayFrom).
         il.MarkLabel(throwRangeError);
-        il.Emit(OpCodes.Ldstr, "RangeError: Invalid index for with()");
-        il.Emit(OpCodes.Newobj, _types.ExceptionCtorString);
+        var withErr = il.DeclareLocal(_types.Object);
+        var withEx = il.DeclareLocal(_types.Exception);
+        il.Emit(OpCodes.Ldstr, "Invalid index for with()");
+        il.Emit(OpCodes.Newobj, runtime.TSRangeErrorCtor);
+        il.Emit(OpCodes.Stloc, withErr);
+        il.Emit(OpCodes.Ldstr, "Invalid index for with()");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Stloc, withEx);
+        il.Emit(OpCodes.Ldloc, withEx);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Data").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "__tsValue");
+        il.Emit(OpCodes.Ldloc, withErr);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IDictionary, "set_Item"));
+        il.Emit(OpCodes.Ldloc, withEx);
         il.Emit(OpCodes.Throw);
 
         il.MarkLabel(validIndex);
