@@ -325,17 +325,22 @@ public partial class ILEmitter
             _ctx.SelfCaptureVarName = v.Name.Lexeme;
             _ctx.SelfCaptureWriteBacks = [];
 
-            EmitExpression(v.Initializer);
+            // number[] unboxing: a non-promoted (escaping) `number[]` local with an empty-array
+            // initializer is created as a NUMERIC $Array; otherwise emit the initializer normally.
+            if (!TryEmitNumericEmptyArrayInit(v))
+            {
+                EmitExpression(v.Initializer);
 
-            if (_ctx.Types.IsDouble(localType))
-            {
-                // Ensure we have an unboxed double on stack
-                EnsureDouble();
-            }
-            else
-            {
-                // Ensure we have a boxed object on stack
-                EmitBoxIfNeeded(v.Initializer);
+                if (_ctx.Types.IsDouble(localType))
+                {
+                    // Ensure we have an unboxed double on stack
+                    EnsureDouble();
+                }
+                else
+                {
+                    // Ensure we have a boxed object on stack
+                    EmitBoxIfNeeded(v.Initializer);
+                }
             }
             IL.Emit(OpCodes.Stloc, local);
 
