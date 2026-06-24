@@ -194,6 +194,15 @@ public partial class ILEmitter
     /// </summary>
     private void EmitEqualityBinary(Expr.Binary b, bool isStrict, bool isNegated)
     {
+        // Fast path: comparison against the `null` or `undefined` literal. In compiled
+        // output JS null is CLR null and JS undefined is the $Undefined singleton, so
+        // the test is a direct reference check (ceq) rather than boxing the operand and
+        // dispatching Object.Equals/runtime.Equals — null guards are everywhere.
+        if (TryEmitNullishEqualityFastPath(b, isStrict, isNegated))
+        {
+            return;
+        }
+
         // Fast path: both operands statically numeric. JS number equality has no
         // coercion (=== and == agree when both sides are number), and IEEE `ceq`
         // matches the spec exactly — NaN is never equal (ceq → false, correct for
@@ -1886,6 +1895,78 @@ public partial class ILEmitter
         TypeSystem.TypeInfo.Union u => u.FlattenedTypes.All(IsNumericTypeInfo),
         _ => false
     };
+
+    /// <summary>
+    /// Fast path for <c>x === null</c> / <c>x === undefined</c> (and the loose and
+    /// negated forms) when exactly one operand is the statically-typed <c>null</c> or
+    /// <c>undefined</c> literal. In compiled output JS <c>null</c> is CLR null and JS
+    /// <c>undefined</c> is the <c>$Undefined</c> singleton, so the comparison is a
+    /// direct reference check (<c>ceq</c>) instead of boxing the value operand and
+    /// dispatching <c>Object.Equals</c>/<c>runtime.Equals</c>.
+    ///
+    /// <para>Strict <c>===</c> distinguishes null from undefined (reference identity);
+    /// loose <c>==</c> against either is the nullish test (null OR undefined). NaN is
+    /// never null/undefined, so a NaN value operand correctly compares unequal with no
+    /// special handling. When both sides are nullish-typed (e.g. <c>null === undefined</c>)
+    /// this returns false and the caller falls through to the existing boxed path.</para>
+    /// </summary>
+    private bool TryEmitNullishEqualityFastPath(Expr.Binary b, bool isStrict, bool isNegated)
+    {
+        if (_ctx.TypeMap == null) return false;
+
+        var leftType = _ctx.TypeMap.Get(b.Left);
+        var rightType = _ctx.TypeMap.Get(b.Right);
+        bool leftNullish = leftType is TypeSystem.TypeInfo.Null or TypeSystem.TypeInfo.Undefined;
+        bool rightNullish = rightType is TypeSystem.TypeInfo.Null or TypeSystem.TypeInfo.Undefined;
+
+        // Need exactly one side to be the literal; the other is the value being tested.
+        if (leftNullish == rightNullish) return false;
+
+        Expr valueExpr = leftNullish ? b.Right : b.Left;
+        var literalType = leftNullish ? leftType : rightType;
+
+        // Emit the value operand boxed (matches the boxed path's operand handling).
+        EmitExpression(valueExpr);
+        EmitBoxIfNeeded(valueExpr);
+
+        if (isStrict)
+        {
+            // x === null      -> reference-equal to CLR null
+            // x === undefined -> reference-equal to the $Undefined singleton
+            if (literalType is TypeSystem.TypeInfo.Null)
+            {
+                IL.Emit(OpCodes.Ldnull);
+            }
+            else
+            {
+                EmitUndefinedConstant();
+            }
+            IL.Emit(OpCodes.Ceq);
+        }
+        else
+        {
+            // Loose == / != against null or undefined is the nullish test: the value is
+            // CLR null OR the $Undefined singleton.
+            var valueLocal = IL.DeclareLocal(_ctx.Types.Object);
+            IL.Emit(OpCodes.Stloc, valueLocal);
+            IL.Emit(OpCodes.Ldloc, valueLocal);
+            IL.Emit(OpCodes.Ldnull);
+            IL.Emit(OpCodes.Ceq);
+            IL.Emit(OpCodes.Ldloc, valueLocal);
+            EmitUndefinedConstant();
+            IL.Emit(OpCodes.Ceq);
+            IL.Emit(OpCodes.Or);
+        }
+
+        if (isNegated)
+        {
+            IL.Emit(OpCodes.Ldc_I4_0);
+            IL.Emit(OpCodes.Ceq);
+        }
+
+        SetStackType(StackType.Boolean);
+        return true;
+    }
 
     private bool IsBigIntOperation(Expr.Binary b)
     {
