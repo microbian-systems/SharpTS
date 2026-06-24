@@ -2,7 +2,7 @@
 
 This document tracks TypeScript language features and their implementation status in SharpTS.
 
-**Last Updated:** 2026-06-21 (Perf epic [#856](https://github.com/nickna/SharpTS/issues/856) — compiled output now meets or beats Node.js on 5 of 7 cross-runtime workloads, the other two within ~1.2×; loop-backedge cancellation now emits `throw` instead of a returning `call`, recovering ~1.8× on tight numeric loops — see §18)
+**Last Updated:** 2026-06-23 (Tier-1 tech-debt cleanup — NaN-guard parity in RuntimeTypes equality, async-function suspension-walker reconciliation, dead-code removal, and the "Known regression" entry below corrected per PR [#906](https://github.com/nickna/SharpTS/issues/906). Prior: Perf epic [#856](https://github.com/nickna/SharpTS/issues/856) — compiled output now meets or beats Node.js on 5 of 7 cross-runtime workloads, the other two within ~1.2×; loop-backedge cancellation now emits `throw` instead of a returning `call`, recovering ~1.8× on tight numeric loops — see §18)
 
 ## Legend
 - ✅ Implemented
@@ -558,9 +558,9 @@ The following stdlib TS files carry workarounds for compiler gaps that surfaced 
 - `stdlib/node/async_hooks.ts` (`run`, `exit`) — drops the optional `...args` parameter; the underlying `SharpTSAsyncLocalStorage` still supports it. No current tests exercise this path.
 - Default parameters through `$TSFunction.Invoke` only apply for reference-type params. Value-type defaults (`x: number = 5` on a module export) silently receive `0` / `false` / `0n`; stdlib authors use `param?: T` + `??` — see `stdlib/CONTRIBUTING.md`.
 
-### Known regression (2026-04-18)
+### Known regression (2026-04-18, partially resolved 2026-06-23)
 
-- `TimersPromises_SetInterval_AbortSignal_PreAborted` (interpreter mode only, skipped) — the `timers/primitive` sync throw on a pre-aborted `AbortSignal` loses `Error` identity at the `SharpTSFunction` boundary; `e` arrives as a string so `e.message` is undefined. Compiled-mode path is unaffected. Fix belongs in the interpreter's function-boundary exception handling.
+- Guest `throw` of a *string* value can lose its `Error` identity when it crosses a host function frame: `ThrowException.FromResult` flattens a guest string throw to a plain CLR `Exception`, so a downstream `catch (e)` may bind a bare string instead of the original error object. The *same-scope* catch-binding half was fixed in PR #906 — `TimersPromises_SetInterval_AbortSignal_PreAborted` now runs and passes in **both** interpreter and compiled modes (it is no longer skipped). The remaining residual is the *cross-boundary* `FromResult` flatten (`Runtime/Exceptions/ThrowException.cs`); the proper fix unifies guest-error identity across the function-call boundary.
 
 ---
 

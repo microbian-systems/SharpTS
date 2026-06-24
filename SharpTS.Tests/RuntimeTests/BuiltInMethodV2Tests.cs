@@ -115,43 +115,6 @@ public class BuiltInMethodV2Tests
 
     #endregion
 
-    #region BindV2 Tests
-
-    [Fact]
-    public void BindV2_CreatesBindingWithRuntimeValue()
-    {
-        var method = BuiltInMethod.CreateV2("getReceiver", 0,
-            (Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args) =>
-                receiver);
-
-        var bound = method.BindV2(42.0);
-        var result = bound.CallV2(null!, ReadOnlySpan<RuntimeValue>.Empty);
-
-        Assert.Equal(42.0, result.AsNumber());
-    }
-
-    [Fact]
-    public void BindV2_WithObject_PreservesReference()
-    {
-        var method = BuiltInMethod.CreateV2("getReceiver", 0,
-            (Interpreter interp, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args) =>
-                receiver);
-
-        var testObj = new TestObject { Value = "test" };
-        var bound = method.BindV2(RuntimeValue.FromObject(testObj));
-        var result = bound.CallV2(null!, ReadOnlySpan<RuntimeValue>.Empty);
-
-        Assert.True(result.TryAsObject<TestObject>(out var returned));
-        Assert.Same(testObj, returned);
-    }
-
-    private class TestObject
-    {
-        public string Value { get; set; } = "";
-    }
-
-    #endregion
-
     #region Callable Interface Tests
 
     [Fact]

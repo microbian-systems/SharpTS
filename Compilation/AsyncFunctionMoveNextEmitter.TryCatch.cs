@@ -397,6 +397,23 @@ public abstract partial class AsyncFunctionMoveNextEmitter
                 return ContainsAwait(t.TryBlock) ||
                        (t.CatchBlock != null && ContainsAwait(t.CatchBlock)) ||
                        (t.FinallyBlock != null && ContainsAwait(t.FinallyBlock));
+            // Parity with ContainsYieldInStmt/ContainsSuspensionInStmt: these arms
+            // were missing here, so an `await` inside a switch/throw/labeled/print
+            // within a `try` under-reported suspension and took the real-IL try
+            // path (illegal BranchIntoTry resume target). See #631/#850.
+            case Stmt.LabeledStatement ls:
+                return ContainsAwaitInStmt(ls.Statement);
+            case Stmt.Switch s:
+                foreach (var c in s.Cases)
+                {
+                    if (ContainsAwaitInExpr(c.Value) || ContainsAwait(c.Body))
+                        return true;
+                }
+                return s.DefaultBody != null && ContainsAwait(s.DefaultBody);
+            case Stmt.Throw th:
+                return ContainsAwaitInExpr(th.Value);
+            case Stmt.Print p:
+                return ContainsAwaitInExpr(p.Expr);
             default:
                 return false;
         }
@@ -435,6 +452,14 @@ public abstract partial class AsyncFunctionMoveNextEmitter
                 return ContainsAwaitInExpr(g.Object);
             case Expr.Set s:
                 return ContainsAwaitInExpr(s.Object) || ContainsAwaitInExpr(s.Value);
+            // Parity with ContainsYieldInExpr: `a[i] += await f()`, `a[await i()]`,
+            // and `a[i] = await f()` inside a try must report suspension (#850).
+            case Expr.CompoundAssign ca:
+                return ContainsAwaitInExpr(ca.Value);
+            case Expr.GetIndex gi:
+                return ContainsAwaitInExpr(gi.Object) || ContainsAwaitInExpr(gi.Index);
+            case Expr.SetIndex si:
+                return ContainsAwaitInExpr(si.Object) || ContainsAwaitInExpr(si.Index) || ContainsAwaitInExpr(si.Value);
             default:
                 return false;
         }

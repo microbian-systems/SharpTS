@@ -906,8 +906,6 @@ public static class ArrayBuiltIns
         return obj is SharpTSUndefined;
     }
 
-    private static bool IsTruthy(object? obj) => RuntimeTypes.IsTruthy(obj);
-
     private static bool IsEqual(object? a, object? b)
     {
         if (a == null && b == null) return true;

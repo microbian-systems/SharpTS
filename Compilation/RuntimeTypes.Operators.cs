@@ -35,6 +35,9 @@ public static partial class RuntimeTypes
         // Same type comparison
         if (left!.GetType() == right!.GetType())
         {
+            // NaN is never loosely equal to itself (same-type == reduces to ===).
+            if (left is double dl && right is double dr && (double.IsNaN(dl) || double.IsNaN(dr)))
+                return false;
             return left.Equals(right);
         }
 
@@ -59,6 +62,12 @@ public static partial class RuntimeTypes
 
         // Same type comparison
         if (left.GetType() != right.GetType()) return false;
+        // ECMA-262 7.2.16 IsStrictlyEqual: NaN is never equal to anything, including
+        // itself. Object.Equals defers to Double.Equals which treats NaN as equal to
+        // itself, so guard explicitly — matches the interpreter's IsStrictEqual and the
+        // emitted $Runtime.StrictEquals (see RuntimeEmitter.CoreUtilities.cs).
+        if (left is double dl && right is double dr && (double.IsNaN(dl) || double.IsNaN(dr)))
+            return false;
         return left.Equals(right);
     }
 

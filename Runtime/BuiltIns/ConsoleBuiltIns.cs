@@ -75,7 +75,12 @@ public static class ConsoleBuiltIns
             if (double.IsNaN(d)) return "NaN";
             if (double.IsPositiveInfinity(d)) return "Infinity";
             if (double.IsNegativeInfinity(d)) return "-Infinity";
-            string text = d.ToString();
+            // Invariant culture so decimal separators don't follow the host locale
+            // (e.g. "1,5" on de-DE). Shortest-round-trip is preserved here — do NOT
+            // route through RuntimeTypes.FormatNumber, which is lossy past 16 frac
+            // digits (0.1+0.2 -> "0.3"). Full JS-threshold parity (1e21 -> "1e+21")
+            // needs a correct ECMA-262 Number::toString shared by both modes (Tier-2).
+            string text = d.ToString(System.Globalization.CultureInfo.InvariantCulture);
             // Remove trailing .0 for integers
             if (text.EndsWith(".0"))
                 text = text[..^2];
