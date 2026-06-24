@@ -527,7 +527,7 @@ public partial class RuntimeEmitter
 
         // double
         il.MarkLabel(doubleLabel);
-        EmitFormatNumber(il, valueLocal);
+        EmitFormatNumber(il, valueLocal, runtime);
 
         // string - escape for JSON
         il.MarkLabel(stringLabel);

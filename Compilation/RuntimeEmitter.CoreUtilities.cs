@@ -91,129 +91,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "true");
         il.Emit(OpCodes.Br, endLabel);
 
-        // double case - handle NaN, Infinity, integer formatting
+        // double case - delegate to $Runtime.FormatNumber (ECMA-262 7.1.12.1
+        // Number::toString: shortest round-trip + JS thresholds). Mirrors the
+        // interpreter's RuntimeTypes.FormatNumber so the two modes agree.
         il.MarkLabel(doubleLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Unbox_Any, _types.Double);
-        var doubleLocal = il.DeclareLocal(_types.Double);
-        il.Emit(OpCodes.Stloc, doubleLocal);
-
-        // Check NaN
-        var notNanLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, doubleLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsNaN", [_types.Double]));
-        il.Emit(OpCodes.Brfalse, notNanLabel);
-        il.Emit(OpCodes.Ldstr, "NaN");
-        il.Emit(OpCodes.Br, endLabel);
-        il.MarkLabel(notNanLabel);
-
-        // Check PositiveInfinity
-        var notPosInfLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, doubleLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsPositiveInfinity", [_types.Double]));
-        il.Emit(OpCodes.Brfalse, notPosInfLabel);
-        il.Emit(OpCodes.Ldstr, "Infinity");
-        il.Emit(OpCodes.Br, endLabel);
-        il.MarkLabel(notPosInfLabel);
-
-        // Check NegativeInfinity
-        var notNegInfLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, doubleLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsNegativeInfinity", [_types.Double]));
-        il.Emit(OpCodes.Brfalse, notNegInfLabel);
-        il.Emit(OpCodes.Ldstr, "-Infinity");
-        il.Emit(OpCodes.Br, endLabel);
-        il.MarkLabel(notNegInfLabel);
-
-        // Check if integer (d == floor(d) && abs(d) < 1e21).
-        // ECMA-262 6.1.6.1.13: integers up to 10^21 - 1 are formatted in plain
-        // decimal notation. Larger values switch to exponential. The pre-fix
-        // threshold of 1e15 caused (1e20).toString() to format as "1e+20"
-        // instead of "100000000000000000000".
-        var notIntLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, doubleLocal);
-        il.Emit(OpCodes.Ldloc, doubleLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Floor", [_types.Double]));
-        il.Emit(OpCodes.Bne_Un, notIntLabel);
-        il.Emit(OpCodes.Ldloc, doubleLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Abs", [_types.Double]));
-        il.Emit(OpCodes.Ldc_R8, 1e21);
-        il.Emit(OpCodes.Bge, notIntLabel);
-
-        // Integer: format as long for |d| < 2^63, else use F0 for plain decimal.
-        // 1e21 > 2^63 (~9.22e18) so values 9.22e18 ≤ d < 1e21 must use F0; smaller
-        // values use Int64 for performance.
-        var useF0Label = il.DefineLabel();
-        var longFormatLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, doubleLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Abs", [_types.Double]));
-        il.Emit(OpCodes.Ldc_R8, 9.2233720368547758e18); // ~2^63 - 1024 (safe Int64 range)
-        il.Emit(OpCodes.Bge, useF0Label);
-
-        // |d| < 2^63: format as Int64
-        il.Emit(OpCodes.Ldloc, doubleLocal);
-        il.Emit(OpCodes.Conv_I8);
-        var longLocal = il.DeclareLocal(_types.Int64);
-        il.Emit(OpCodes.Stloc, longLocal);
-        il.Emit(OpCodes.Ldloca, longLocal);
-        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int64, "ToString"));
-        il.Emit(OpCodes.Br, endLabel);
-
-        // |d| >= 2^63 but < 1e21: use double.ToString("F0") for plain digits.
-        il.MarkLabel(useF0Label);
-        il.Emit(OpCodes.Ldloca, doubleLocal);
-        il.Emit(OpCodes.Ldstr, "F0");
-        il.Emit(OpCodes.Call, typeof(System.Globalization.CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
-        il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(System.IFormatProvider)])!);
-        il.Emit(OpCodes.Br, endLabel);
-
-        // Non-integer: use ECMA-262 6.1.6.1.13 formatting. Plain decimal when
-        // |x| ∈ [1e-6, 1e21), exponential otherwise. .NET's "G15" alone uses
-        // exponential for any value < 1e-4 — wrong by spec for 0.0001..1e-6;
-        // and |x| ≥ 1e21 must also use exponential (matches the integer
-        // branch's < 1e21 upper bound for boundary values like 1e21 itself).
-        il.MarkLabel(notIntLabel);
-        // Compute Math.Abs(value) → for log10 + branch.
-        var absLocal = il.DeclareLocal(_types.Double);
-        il.Emit(OpCodes.Ldloc, doubleLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Abs", [_types.Double]));
-        il.Emit(OpCodes.Stloc, absLocal);
-
-        // Branch to exponential when abs < 1e-6.
-        var exponentialNonIntLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, absLocal);
-        il.Emit(OpCodes.Ldc_R8, 1e-6);
-        il.Emit(OpCodes.Blt, exponentialNonIntLabel);
-        // Branch to exponential when abs >= 1e21.
-        il.Emit(OpCodes.Ldloc, absLocal);
-        il.Emit(OpCodes.Ldc_R8, 1e21);
-        il.Emit(OpCodes.Bge, exponentialNonIntLabel);
-
-        // Plain-decimal path: use "0.################" pattern which emits
-        // variable-precision fixed-point (up to 16 fractional digits) WITHOUT
-        // ever switching to exponential. Matches ECMA-262 6.1.6.1.13's "plain
-        // decimal" rule when k-n ∈ [-6, 0]. Examples:
-        //   0.000001 → "0.000001"   0.1 → "0.1"   1.5 → "1.5"   123.456 → "123.456"
-        // .NET's `0` placeholder pads the integer part; `#` after decimal
-        // emits each digit only if non-zero, suppressing trailing zeros.
-        il.Emit(OpCodes.Ldloca, doubleLocal);
-        il.Emit(OpCodes.Ldstr, "0.################");
-        il.Emit(OpCodes.Call, typeof(System.Globalization.CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
-        il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(System.IFormatProvider)])!);
-        il.Emit(OpCodes.Br, endLabel);
-
-        // Exponential path (abs < 1e-6 OR int-overflow above): G15 + JS fixup.
-        il.MarkLabel(exponentialNonIntLabel);
-        il.Emit(OpCodes.Ldloca, doubleLocal);
-        il.Emit(OpCodes.Ldstr, "G15");
-        il.Emit(OpCodes.Call, typeof(System.Globalization.CultureInfo).GetProperty("InvariantCulture")!.GetGetMethod()!);
-        il.Emit(OpCodes.Call, _types.Double.GetMethod("ToString", [_types.String, typeof(System.IFormatProvider)])!);
-        il.Emit(OpCodes.Ldstr, "E");
-        il.Emit(OpCodes.Ldstr, "e");
-        il.Emit(OpCodes.Call, _types.String.GetMethod("Replace", [_types.String, _types.String])!);
-        il.Emit(OpCodes.Ldstr, @"e([+-])0+(?=\d)");
-        il.Emit(OpCodes.Ldstr, "e$1");
-        il.Emit(OpCodes.Call, typeof(System.Text.RegularExpressions.Regex).GetMethod("Replace", [_types.String, _types.String, _types.String])!);
+        il.Emit(OpCodes.Call, runtime.FormatNumber);
         il.Emit(OpCodes.Br, endLabel);
 
         // BigInteger case - format as value.ToString() + "n"

@@ -141,6 +141,10 @@ public class EmittedRuntime
     public MethodInfo IUnionTypeValueGetter { get; set; } = null!;
 
     // Type coercion methods
+    /// <summary>$Runtime.FormatNumber(double) -> string — ECMA-262 7.1.12.1 Number::toString(10).
+    /// Byte-for-byte equivalent of SharpTS.Compilation.RuntimeTypes.FormatNumber so interpreted
+    /// and compiled output match. Emitted in RuntimeEmitter.NumberFormat.cs.</summary>
+    public MethodBuilder FormatNumber { get; set; } = null!;
     public MethodBuilder Stringify { get; set; } = null!;
     public MethodBuilder ToJsString { get; set; } = null!;
     /// <summary>$Runtime.StringFromValue(object) -> string — ECMA-262 §22.1.1.1 String(value) call form: Symbol → SymbolDescriptiveString (via $TSSymbol.ToString()); everything else → ToJsString. Only the String() constructor-call form is exempt from ToString's Symbol TypeError; implicit coercions (template literals, concat) must keep throwing.</summary>

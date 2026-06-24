@@ -548,6 +548,7 @@ public partial class RuntimeEmitter
         // conversion dispatch calls GetProperty/InvokeMethodValue/HasOwnPropertyHelper.
         DeclareUnwrapIfBoxed(typeBuilder, runtime);
 
+        EmitFormatNumberMethod(typeBuilder, runtime);
         EmitStringify(typeBuilder, runtime);
         // EmitStringRaw is moved later in this method (after ToJsString/
         // ToNumber/GetProperty are emitted) so the spec-form String.raw can
