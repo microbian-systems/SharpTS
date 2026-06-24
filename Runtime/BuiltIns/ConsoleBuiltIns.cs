@@ -72,14 +72,9 @@ public static class ConsoleBuiltIns
         if (value is SharpTSUndefined) return "undefined";
         if (value is double d)
         {
-            if (double.IsNaN(d)) return "NaN";
-            if (double.IsPositiveInfinity(d)) return "Infinity";
-            if (double.IsNegativeInfinity(d)) return "-Infinity";
-            string text = d.ToString();
-            // Remove trailing .0 for integers
-            if (text.EndsWith(".0"))
-                text = text[..^2];
-            return text;
+            // Single source of truth: the correct ECMA-262 Number::toString, shared
+            // with compiled output (RuntimeTypes.FormatNumber).
+            return Compilation.RuntimeTypes.FormatNumber(d);
         }
         if (value is bool b) return b ? "true" : "false";
         if (value is SharpTSArray arr)

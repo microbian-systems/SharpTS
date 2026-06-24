@@ -24,8 +24,6 @@ public class BuiltInMethod : ISharpTSCallable
     private readonly Func<Interpreter, object?, List<object?>, object?> _implementation;
     private readonly Func<Interpreter, RuntimeValue, ReadOnlySpan<RuntimeValue>, RuntimeValue>? _implementationV2;
     private object? _receiver;
-    private RuntimeValue _receiverV2;
-    private readonly bool _hasV2Receiver;
     // Spec-defined Function.prototype.length value visible to user code as
     // `f.length`. Distinct from MinArity / MaxArity (used internally for arg
     // padding/trimming): per ECMA-262, variadic methods like Array.prototype.push
@@ -58,7 +56,7 @@ public class BuiltInMethod : ISharpTSCallable
     /// Returns true if this method has a receiver bound via Bind().
     /// Used by fast-path dispatch to avoid redundant double-binding.
     /// </summary>
-    public bool IsBound => _receiver != null || _hasV2Receiver;
+    public bool IsBound => _receiver != null;
 
     /// <summary>
     /// True when this method wraps a constant value (e.g. Number.MAX_VALUE, Math.PI)
@@ -174,22 +172,6 @@ public class BuiltInMethod : ISharpTSCallable
         // Bound instances don't have their own cache
     }
 
-    // Private constructor for RuntimeValue-bound instances
-    private BuiltInMethod(string name, int minArity, int maxArity,
-        Func<Interpreter, object?, List<object?>, object?> implementation,
-        Func<Interpreter, RuntimeValue, ReadOnlySpan<RuntimeValue>, RuntimeValue>? implementationV2,
-        RuntimeValue receiverV2)
-    {
-        _name = name;
-        _minArity = minArity;
-        _maxArity = maxArity;
-        _implementation = implementation;
-        _implementationV2 = implementationV2;
-        _receiverV2 = receiverV2;
-        _hasV2Receiver = true;
-        _receiver = receiverV2.ToObject();
-    }
-
     public int Arity() => _minArity;
 
     /// <summary>
@@ -209,16 +191,6 @@ public class BuiltInMethod : ISharpTSCallable
     {
         _specLength = specLength;
         return this;
-    }
-
-    /// <summary>
-    /// Binds the method to a receiver using RuntimeValue.
-    /// </summary>
-    public BuiltInMethod BindV2(RuntimeValue receiver)
-    {
-        var bound = new BuiltInMethod(_name, _minArity, _maxArity, _implementation, _implementationV2, receiver);
-        bound._specLength = _specLength;
-        return bound;
     }
 
     public BuiltInMethod Bind(object? receiver)
@@ -278,9 +250,7 @@ public class BuiltInMethod : ISharpTSCallable
         // Fast path: if we have a V2 implementation, use it directly
         if (_implementationV2 != null)
         {
-            return _hasV2Receiver
-                ? _implementationV2(interpreter, _receiverV2, arguments)
-                : _implementationV2(interpreter, RuntimeValue.FromBoxed(_receiver), arguments);
+            return _implementationV2(interpreter, RuntimeValue.FromBoxed(_receiver), arguments);
         }
 
         // Slow path: convert to legacy call

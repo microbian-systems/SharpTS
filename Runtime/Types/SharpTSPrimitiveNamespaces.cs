@@ -22,6 +22,7 @@ public class SharpTSStringNamespace : ISharpTSCallable
         if (arg is SharpTSUndefined) return "undefined";
         if (arg == null) return "null";
         if (arg is bool b) return b ? "true" : "false";
+        if (arg is double d) return Compilation.RuntimeTypes.FormatNumber(d);
         if (arg is SharpTSArray arr) return arr.ToString();
         // A boxed wrapper / plain object goes through ToString = ToPrimitive
         // (string hint) then stringify, honoring an own toString override and

@@ -148,7 +148,7 @@ public static class NumberBuiltIns
     private static RuntimeValue ToStringMethodV2(Interpreter _, double value, ReadOnlySpan<RuntimeValue> args)
     {
         if (args.Length == 0)
-            return RuntimeValue.FromString(value.ToString(CultureInfo.InvariantCulture));
+            return RuntimeValue.FromString(Compilation.RuntimeTypes.FormatNumber(value));
         var radix = (int)args[0].AsNumber();
         if (radix < 2 || radix > 36)
             throw new Exception("Runtime Error: toString() radix must be between 2 and 36");
@@ -301,7 +301,7 @@ public static class NumberBuiltIns
         if (double.IsPositiveInfinity(value)) return "Infinity";
         if (double.IsNegativeInfinity(value)) return "-Infinity";
 
-        if (radix == 10) return value.ToString(CultureInfo.InvariantCulture);
+        if (radix == 10) return Compilation.RuntimeTypes.FormatNumber(value);
 
         // For non-base-10, handle integer conversion
         if (value == 0) return "0";

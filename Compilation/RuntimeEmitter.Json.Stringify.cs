@@ -486,7 +486,7 @@ public partial class RuntimeEmitter
 
         // double
         il.MarkLabel(doubleLabel);
-        EmitFormatNumber(il, valueLocal);
+        EmitFormatNumber(il, valueLocal, runtime);
 
         // string - escape for JSON
         il.MarkLabel(stringLabel);
@@ -734,61 +734,30 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, classInstanceLabel);
     }
 
-    private void EmitFormatNumber(ILGenerator il, LocalBuilder valueLocal)
+    private void EmitFormatNumber(ILGenerator il, LocalBuilder valueLocal, EmittedRuntime runtime)
     {
         var local = il.DeclareLocal(_types.Double);
-        var isIntLabel = il.DefineLabel();
-        var isNanLabel = il.DefineLabel();
+        var nullLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Unbox_Any, _types.Double);
         il.Emit(OpCodes.Stloc, local);
 
-        // Check NaN/Infinity
+        // ECMA-262 JSON.stringify: NaN and Infinity serialize as null; everything
+        // else uses the shared Number::toString ($Runtime.FormatNumber).
         il.Emit(OpCodes.Ldloc, local);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsNaN", [_types.Double]));
-        il.Emit(OpCodes.Brtrue, isNanLabel);
-
+        il.Emit(OpCodes.Brtrue, nullLabel);
         il.Emit(OpCodes.Ldloc, local);
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsInfinity", [_types.Double]));
-        il.Emit(OpCodes.Brtrue, isNanLabel);
+        il.Emit(OpCodes.Brtrue, nullLabel);
 
-        // Check if integer AND fits in Int64. Math.Floor(v) == v can be true for
-        // values like Number.MAX_VALUE (~1.8e308) since those doubles have no
-        // fractional bits, but Conv_I8 would overflow to Int64.MaxValue. Limit
-        // the Int64 path to |v| < ~9.22e18 (Int64.MaxValue as double).
         il.Emit(OpCodes.Ldloc, local);
-        il.Emit(OpCodes.Ldloc, local);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Floor", [_types.Double]));
-        il.Emit(OpCodes.Ceq);
-        var floatFormatLabel = il.DefineLabel();
-        il.Emit(OpCodes.Brfalse, floatFormatLabel);
-        il.Emit(OpCodes.Ldloc, local);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Math, "Abs", [_types.Double]));
-        il.Emit(OpCodes.Ldc_R8, 9.2233720368547758E18);
-        il.Emit(OpCodes.Bge_Un, floatFormatLabel);
-        il.Emit(OpCodes.Br, isIntLabel);
-
-        // Float format
-        il.MarkLabel(floatFormatLabel);
-        il.Emit(OpCodes.Ldloca, local);
-        il.Emit(OpCodes.Ldstr, "G15");
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "ToString", [_types.String]));
+        il.Emit(OpCodes.Call, runtime.FormatNumber);
         il.Emit(OpCodes.Ret);
 
-        // NaN/Infinity -> "null"
-        il.MarkLabel(isNanLabel);
+        il.MarkLabel(nullLabel);
         il.Emit(OpCodes.Ldstr, "null");
-        il.Emit(OpCodes.Ret);
-
-        // Integer format
-        il.MarkLabel(isIntLabel);
-        il.Emit(OpCodes.Ldloc, local);
-        il.Emit(OpCodes.Conv_I8);
-        var longLocal = il.DeclareLocal(_types.Int64);
-        il.Emit(OpCodes.Stloc, longLocal);
-        il.Emit(OpCodes.Ldloca, longLocal);
-        il.Emit(OpCodes.Call, _types.GetMethodNoParams(_types.Int64, "ToString"));
         il.Emit(OpCodes.Ret);
     }
 
