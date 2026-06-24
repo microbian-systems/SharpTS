@@ -143,6 +143,52 @@ internal static class ParityCorpus
         // ---- collections ----
         ["map-set"] = "const m = new Map<string, number>([['a', 1], ['b', 2]]); const s = new Set([1, 2, 2, 3]); console.log(m.get('a'), m.size, s.size, [...s].join(','));",
         ["generator"] = "function* g() { yield 1; yield 2; yield 3; } console.log([...g()].join(','), [...g()].reduce((a, b) => a + b, 0));",
+
+        // ---- Phase B: broadened coverage ----
+        // Math
+        ["math-functions"] = "console.log(Math.max(1, 2, 3), Math.min(-1, -2), Math.pow(2, 8), Math.sqrt(144), Math.sign(-5), Math.cbrt(27));",
+        ["math-rounding"] = "console.log(Math.floor(-1.5), Math.ceil(-1.5), Math.round(-0.5), Math.round(2.5), Math.trunc(-4.7), Math.round(0.5));",
+        ["math-log-edge"] = "console.log(Math.log2(8), Math.log10(1000), Math.hypot(3, 4), Math.max(), Math.min(), Math.sqrt(-1));",
+        // Number methods / predicates
+        ["num-methods2"] = "console.log((3.14159).toFixed(2), (123.456).toPrecision(4), (1234.5).toExponential(2), (0.1).toFixed(5));",
+        ["num-predicates"] = "console.log(Number.isInteger(5), Number.isInteger(5.5), Number.isSafeInteger(9007199254740992), Number.isNaN(NaN), Number.isFinite(Infinity));",
+        // String
+        ["str-split2"] = "console.log('a,b,c,d'.split(',', 2).join('|'), 'abc'.split('').join('-'), 'a-b-c'.split('-').length, 'x'.repeat(3));",
+        ["str-charcodes"] = "console.log('hello'.charCodeAt(0), 'A'.codePointAt(0), String.fromCharCode(72, 73), 'hello'.lastIndexOf('l'));",
+        ["str-at-pad"] = "console.log('hello'.at(-1), 'hello'.at(0), '5'.padStart(3, '0'), '5'.padEnd(3, '-'), 'a'.localeCompare('b'));",
+        // Date (fixed epoch — deterministic, UTC)
+        ["date-fixed"] = "const d = new Date(0); console.log(d.toISOString(), d.getUTCFullYear(), new Date(Date.UTC(2020, 5, 15, 12, 0, 0)).toISOString());",
+        // Errors (caught)
+        ["error-typeerror"] = "try { (null as any).x; } catch (e) { console.log(e instanceof TypeError, (e as any).name); }",
+        ["error-custom"] = "class MyErr extends Error { constructor(m: string) { super(m); this.name = 'MyErr'; } } try { throw new MyErr('boom'); } catch (e) { console.log((e as any).name, (e as any).message, e instanceof Error); }",
+        ["error-range"] = "function f() { throw new RangeError('out'); } try { f(); } catch (e) { console.log((e as any).name, (e as any).message); }",
+        // Destructuring
+        ["destructure-nested"] = "const { a: { b }, c = 5 } = { a: { b: 1 } }; const [x, , z] = [10, 20, 30]; console.log(b, c, x, z);",
+        ["destructure-rest"] = "let p = 1, q = 2; [p, q] = [q, p]; const [first, ...rest] = [1, 2, 3, 4]; console.log(p, q, first, rest.join(','));",
+        // Optional chaining / logical assignment
+        ["optional-chain"] = "const o: any = { a: { b: 42 }, fn: () => 'F' }; console.log(o?.a?.b, o?.x?.y, o?.a?.['b'], o?.fn?.(), o?.nofn?.());",
+        ["nullish-assign"] = "let v: any = null; v ??= 'set'; let w: any = 0; w ||= 'or'; let u: any = 1; u &&= 'and'; console.log(v, w, u);",
+        // Symbol
+        ["symbol-basics"] = "const s = Symbol('desc'); console.log(typeof s, s.description, s === s, Symbol.for('x') === Symbol.for('x'), Symbol('a') === Symbol('a'));",
+        // Map / Set
+        ["map-iter"] = "const m = new Map<string, number>(); m.set('a', 1).set('b', 2); console.log([...m.keys()].join(','), [...m.values()].join(','), m.has('a'), m.delete('a'), m.size);",
+        ["set-ops"] = "const s = new Set<number>([1, 2, 3]); s.add(4); s.delete(2); console.log([...s].join(','), s.has(3), s.size);",
+        // BigInt is under-developed and divergent in BOTH modes — see KnownDivergences.
+        // instanceof
+        ["instanceof"] = "class A {} class B extends A {} const b = new B(); console.log(b instanceof A, b instanceof B, [] instanceof Array, b instanceof Object);",
+        // Accessors
+        ["accessors"] = "const o = { _x: 1, get x() { return this._x * 2; }, set x(v: number) { this._x = v; } }; o.x = 5; console.log(o.x, o._x);",
+        ["class-accessors"] = "class C { private _v = 0; get v() { return this._v; } set v(n: number) { this._v = n + 1; } } const c = new C(); c.v = 10; console.log(c.v);",
+        // Generators / iterators
+        ["gen-yield-star"] = "function* inner() { yield 1; yield 2; } function* outer() { yield* inner(); yield 3; } console.log([...outer()].join(','));",
+        ["gen-return"] = "function* g() { yield 1; return 99; yield 2; } const it = g(); console.log(it.next().value, it.next().value, it.next().done);",
+        ["custom-iterator"] = "const obj = { *[Symbol.iterator]() { yield 'a'; yield 'b'; } }; console.log([...obj].join(','), Array.from(obj).join('-'));",
+        // Arrays (more)
+        ["arr-flat2"] = "console.log([1, [2, [3, [4]]]].flat(2).join(','), [1, 2, 3].flatMap(x => [x, x * 10]).join(','), [1, 2, 3, 4].at(-1), Array(3).fill(0).join(','));",
+        ["arr-sort2"] = "console.log([10, 2, 1, 20].sort((a, b) => a - b).join(','), [10, 2, 1, 20].sort().join(','), ['b', 'a', 'c'].sort().join(''));",
+        ["arr-entries2"] = "console.log([...['x', 'y'].entries()].map(([i, v]) => i + v).join(','), [...['a', 'b'].keys()].join(','), [1, 2, 3].findLast(x => x < 3));",
+        // JSON (replacer array / undefined+null elision)
+        ["json-replacer"] = "console.log(JSON.stringify({ a: 1, b: 2, c: 3 }, ['a', 'c']), JSON.stringify({ x: undefined, y: null }));",
     };
 
     /// <summary>
@@ -153,8 +199,15 @@ internal static class ParityCorpus
     /// </summary>
     internal static readonly Dictionary<string, (string Source, string Note)> KnownDivergences = new()
     {
-        // (empty) The harness's first two findings — array->string coercion and Array.from
-        // on an array-like — were fixed and promoted into Snippets above (coerce-array-string,
-        // arr-from). Future divergences that can't be fixed immediately go here.
+        // BigInt is under-developed and buggy in BOTH modes (a dedicated effort, not a quick fix).
+        //   interp:   String(42n)="42n" (want "42"), Number(42n)=NaN (want 42), 10n==10 false (want true),
+        //             (123n).toString() throws.
+        //   compiled: typeof 10n="object" (want "bigint"), mixed 10n==10 crashes (Double->BigInteger cast).
+        ["bigint-basics"] = (
+            "console.log(typeof 10n, 10n + 20n, 2n ** 10n, 10n > 5n, 100n / 7n, (123n).toString());",
+            "BigInt: interp throws on (123n).toString(); compiled typeof 10n='object' (want 'bigint')."),
+        ["bigint-mixed"] = (
+            "console.log(10n === 10n, 10n == 10, String(42n), Number(42n), 5n * 5n);",
+            "BigInt: interp String(42n)='42n'/Number(42n)=NaN/10n==10 false; compiled crashes on 10n==10 (Double->BigInteger cast)."),
     };
 }

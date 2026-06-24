@@ -142,6 +142,8 @@ public static class NumberBuiltIns
         var result = fractionDigits == -1
             ? value.ToString("e", CultureInfo.InvariantCulture)
             : value.ToString($"e{fractionDigits}", CultureInfo.InvariantCulture);
+        // .NET pads the exponent to 3 digits ("1.23e+003"); JS uses no leading zeros.
+        result = System.Text.RegularExpressions.Regex.Replace(result, @"e([+-])0+(?=\d)", "e$1");
         return RuntimeValue.FromString(result);
     }
 
