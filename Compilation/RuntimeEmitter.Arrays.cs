@@ -267,6 +267,8 @@ public partial class RuntimeEmitter
         runtime.GetKeys = method;
 
         var il = method.GetILGenerator();
+        // number[] unboxing: materialize a numeric-mode $Array before enumerating it as an object.
+        EmitDeoptArgIfNumericArray(il, runtime, 0);
         var dictType = _types.DictionaryStringObject;
         var listType = _types.ListOfObject;
 
@@ -1111,6 +1113,9 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var listLabel = il.DefineLabel();
 
+        // number[] unboxing: f(...arr) spread copies the base list, so materialize a numeric $Array first.
+        EmitDeoptArgIfNumericArray(il, runtime, 0);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
         il.Emit(OpCodes.Brtrue, listLabel);
@@ -1338,6 +1343,28 @@ public partial class RuntimeEmitter
         var invokeBuilder = runtime.BoundArrayMethodInvoke;
 
         var il = invokeBuilder.GetILGenerator();
+
+        // Numeric-array deopt (number[] unboxing): _list may be a numeric-mode
+        // $Array whose elements live unboxed in its double[] store, with an EMPTY
+        // base List<object?>. Every array method below operates on that base list
+        // directly, so a numeric receiver would read/mutate the wrong (empty)
+        // storage and silently corrupt — this is the one dynamic-dispatch boundary
+        // the static-call deopt sites don't cover (`(arr as any).push(x)` etc.).
+        // EnsureBoxed materializes the unboxed store back into the base list and
+        // self-guards (no-op unless actually numeric), so boxed arrays and plain
+        // List<object?> receivers pay only a single isinst on this cold path.
+        {
+            var notNumeric = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, listField);
+            il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+            il.Emit(OpCodes.Brfalse, notNumeric);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, listField);
+            il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+            il.Emit(OpCodes.Callvirt, runtime.TSArrayEnsureBoxed);
+            il.MarkLabel(notNumeric);
+        }
 
         // Switch on _methodName to dispatch to appropriate runtime method. Each case
         // must leave exactly one `object` value on the stack before branching to

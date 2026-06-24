@@ -27,6 +27,36 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsArrayLengthField = null!;
     private FieldBuilder _tsArrayIsFrozenField = null!;
     private FieldBuilder _tsArrayIsSealedField = null!;
+    // Set true by Object.seal / Object.preventExtensions on a $Array (those runtime helpers don't touch
+    // the instance _isFrozen/_isSealed, only the external _sealedObjects/_nonExtensibleObjects collections
+    // that the boxed ArrayPush consults). The unboxed PushDouble fast path can't reach those collections,
+    // so it checks this cheap instance flag to refuse appending to a non-extensible array.
+    private FieldBuilder _tsArrayNonExtensibleField = null!;
+
+    // ── Unboxed "packed-double" elements-kind (project: number[] unboxing) ────
+    // When _isNumeric is true the dense prefix [0, _numCount) lives unboxed in
+    // _numStore (a double[] grown geometrically), NOT in the inherited
+    // List<object?> base (which is empty in numeric mode). Holes are the
+    // reserved HoleNanBits pattern; genuine NaN is canonicalized on write so it
+    // never collides. A non-double write (or any base-List consumer) triggers
+    // EnsureBoxed, which materializes _numStore back into the base list and
+    // clears _isNumeric (deopt). All three default to the boxed mode
+    // (_isNumeric=false, _numStore=null, _numCount=0) so an unmodified program
+    // behaves exactly as before until creation/fast-path emission is wired.
+    private FieldBuilder _tsArrayNumStoreField = null!;
+    private FieldBuilder _tsArrayNumCountField = null!;
+    private FieldBuilder _tsArrayIsNumericField = null!;
+
+    /// <summary>
+    /// Reserved IEEE-754 bit pattern marking a HOLE in <c>_numStore</c>. A
+    /// quiet NaN distinct from the canonical JS NaN (<c>0x7FF8000000000000</c>),
+    /// so a genuine <c>NaN</c> element (canonicalized to the standard bits on
+    /// write) is never mistaken for a hole. Matches V8's hole-NaN choice.
+    /// </summary>
+    private const long HoleNanBits = unchecked((long)0xFFF7FFFFFFFFFFFFUL);
+
+    /// <summary>Canonical JS NaN bits — what a genuine NaN element is stored as.</summary>
+    private const long CanonicalNanBits = unchecked((long)0x7FF8000000000000UL);
 
     // Cached generic type for the sparse dictionary backing.
     private Type _tsArraySparseType = null!;
@@ -40,6 +70,11 @@ public partial class RuntimeEmitter
     private MethodInfo? _tsArrayListRemoveAt;
     private MethodInfo? _tsArrayListGetItem;
     private MethodInfo? _tsArrayListSetItem;
+
+    // The deopt method (numeric -> boxed). Defined early in EmitTSArrayClass so
+    // the base-list methods emitted below can call it via EmitTSArrayDeoptGuard;
+    // its body is emitted later in EmitTSArrayNumericAccessors.
+    private MethodBuilder _tsArrayEnsureBoxedMethod = null!;
 
     private void InitTSArrayMethodCache()
     {
@@ -94,8 +129,25 @@ public partial class RuntimeEmitter
         _tsArrayLengthField = typeBuilder.DefineField("_length", _types.Int64, FieldAttributes.Private);
         _tsArrayIsFrozenField = typeBuilder.DefineField("_isFrozen", _types.Boolean, FieldAttributes.Private);
         _tsArrayIsSealedField = typeBuilder.DefineField("_isSealed", _types.Boolean, FieldAttributes.Private);
+        _tsArrayNonExtensibleField = typeBuilder.DefineField("_isNonExtensible", _types.Boolean, FieldAttributes.Private);
         // _tsArrayDenseField retired; every previous read-of-_dense is replaced
         // by a no-op (receiver is already the List via inheritance).
+
+        // Unboxed packed-double elements-kind (number[] unboxing project). All
+        // default to boxed mode; nothing reads them until creation/fast-path
+        // emission is wired in a later phase, so this is a zero-behavior-change
+        // addition (CLR zero-inits: _isNumeric=false, _numStore=null, _numCount=0).
+        _tsArrayNumStoreField = typeBuilder.DefineField("_numStore", _types.DoubleArray, FieldAttributes.Private);
+        _tsArrayNumCountField = typeBuilder.DefineField("_numCount", _types.Int32, FieldAttributes.Private);
+        _tsArrayIsNumericField = typeBuilder.DefineField("_isNumeric", _types.Boolean, FieldAttributes.Private);
+
+        // Define the deopt method up front (body emitted in
+        // EmitTSArrayNumericAccessors) so the base-list methods below can guard
+        // themselves with EmitTSArrayDeoptGuard — any boxed-representation access
+        // on a numeric-mode array first materializes the unboxed store.
+        _tsArrayEnsureBoxedMethod = typeBuilder.DefineMethod("EnsureBoxed",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, System.Type.EmptyTypes);
+        runtime.TSArrayEnsureBoxed = _tsArrayEnsureBoxedMethod;
 
         EmitTSArrayConstructor(typeBuilder, runtime);
 
@@ -158,7 +210,331 @@ public partial class RuntimeEmitter
         // IList<object?> impl is inherited from List<object?> — no explicit
         // bridges needed (was the old composition-based approach).
 
+        // Unboxed packed-double accessors (number[] unboxing project). Emitted
+        // after SetLong (SetDouble delegates the boxed/gap paths to it). Mode is
+        // never entered until creation/fast-path emission is wired, so these are
+        // dead-but-valid IL today.
+        EmitTSArrayNumericAccessors(typeBuilder, runtime);
+
         typeBuilder.CreateType();
+    }
+
+    /// <summary>
+    /// Prepends a deopt guard to a base-list method body: <c>if (_isNumeric)
+    /// this.EnsureBoxed();</c>. Any method that reads/writes the inherited
+    /// <c>List&lt;object?&gt;</c>, <c>_sparse</c>, or reconciles <c>_length</c>
+    /// against base <c>Count</c> must call this first — in numeric mode the base
+    /// list is empty and those operations would corrupt. Costs one field load +
+    /// branch in the common boxed case (mode off); only numeric arrays pay the
+    /// materialization. Idempotent (EnsureBoxed self-guards), so redundant
+    /// guards across delegating methods are harmless.
+    /// </summary>
+    private void EmitTSArrayDeoptGuard(ILGenerator il)
+    {
+        var skip = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+        il.Emit(OpCodes.Brfalse, skip);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _tsArrayEnsureBoxedMethod);
+        il.MarkLabel(skip);
+    }
+
+    /// <summary>
+    /// Emits, into ANY runtime helper (not just <c>$Array</c>'s own methods), a
+    /// deopt of a numeric-mode <c>$Array</c> that the helper is about to read AS a
+    /// base <c>List&lt;object?&gt;</c> directly — the generic-consumption sites that
+    /// bypass <c>$Array</c>'s guarded methods because <c>$Array : List&lt;object?&gt;</c>
+    /// (string coercion / JSON / <c>Object.*</c> / call-spread / …). <paramref name="loadValue"/>
+    /// pushes the candidate value; this emits <c>if (v is $Array a) a.EnsureBoxed();</c>
+    /// (value re-loaded for the cast, so it leaves the stack exactly as found).
+    /// <c>EnsureBoxed</c> self-guards (no-op unless actually numeric) and materializes
+    /// <c>_numStore</c> back into the base list, so the subsequent <c>is List&lt;object&gt;</c>
+    /// read sees the elements. Costs one isinst on the cold generic-consumption path.
+    /// </summary>
+    private void EmitDeoptIfNumericArray(ILGenerator il, EmittedRuntime runtime, Action loadValue)
+    {
+        var skip = il.DefineLabel();
+        loadValue();
+        il.Emit(OpCodes.Isinst, runtime.TSArrayType);
+        il.Emit(OpCodes.Brfalse, skip);
+        loadValue();
+        il.Emit(OpCodes.Castclass, runtime.TSArrayType);
+        il.Emit(OpCodes.Callvirt, runtime.TSArrayEnsureBoxed);
+        il.MarkLabel(skip);
+    }
+
+    /// <summary>Convenience: <see cref="EmitDeoptIfNumericArray"/> for a method argument by index.</summary>
+    private void EmitDeoptArgIfNumericArray(ILGenerator il, EmittedRuntime runtime, int argIndex)
+        => EmitDeoptIfNumericArray(il, runtime, () => il.Emit(OpCodes.Ldarg, checked((short)argIndex)));
+
+    /// <summary>
+    /// Emits the unboxed packed-double accessors on <c>$Array</c>:
+    /// <c>GetDouble</c>/<c>SetDouble</c>/<c>PushDouble</c> (the fast paths the
+    /// compiler will emit at statically-<c>number[]</c> sites) and
+    /// <c>EnsureBoxed</c> (the deopt that materializes the <c>double[]</c> store
+    /// back into the boxed base list). Numeric mode is dense-only for now: a
+    /// gap-creating write (<c>index &gt; _numCount</c>) deopts via EnsureBoxed
+    /// rather than punching a NaN-sentinel hole (that holey-fast upgrade is a
+    /// later phase). Until creation/fast-path emission is wired these are
+    /// emitted-but-uncalled — valid IL, zero behavior change.
+    /// </summary>
+    private void EmitTSArrayNumericAccessors(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var arrayResize = typeof(System.Array).GetMethod("Resize")!.MakeGenericMethod(_types.Double);
+
+        // EnsureBoxed's builder was defined early (so base-list methods can guard
+        // on it); we only emit its body here. The other three are defined now.
+        var ensureBoxed = _tsArrayEnsureBoxedMethod;
+        var getDouble = typeBuilder.DefineMethod("GetDouble",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Double, [_types.Int32]);
+        runtime.TSArrayGetDouble = getDouble;
+        var setDouble = typeBuilder.DefineMethod("SetDouble",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, [_types.Int32, _types.Double]);
+        runtime.TSArraySetDouble = setDouble;
+        var pushDouble = typeBuilder.DefineMethod("PushDouble",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, [_types.Double]);
+        runtime.TSArrayPushDouble = pushDouble;
+        var markNumeric = typeBuilder.DefineMethod("MarkNumeric",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, System.Type.EmptyTypes);
+        runtime.TSArrayMarkNumeric = markNumeric;
+        var markNonExtensible = typeBuilder.DefineMethod("MarkNonExtensible",
+            MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, System.Type.EmptyTypes);
+        runtime.TSArrayMarkNonExtensible = markNonExtensible;
+
+        // ── void EnsureBoxed() ── numeric -> boxed: box each _numStore[i] into
+        // the (empty) base list, then clear the numeric mode.
+        {
+            var il = ensureBoxed.GetILGenerator();
+            var done = il.DefineLabel();
+            var loop = il.DefineLabel();
+            var loopCheck = il.DefineLabel();
+            var i = il.DeclareLocal(_types.Int32);
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+            il.Emit(OpCodes.Brfalse, done);
+
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, i);
+            il.Emit(OpCodes.Br, loopCheck);
+            il.MarkLabel(loop);
+            il.Emit(OpCodes.Ldarg_0);                       // Add receiver (this : List)
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldloc, i);
+            il.Emit(OpCodes.Ldelem_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Callvirt, _tsArrayListAdd!);
+            il.Emit(OpCodes.Ldloc, i);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stloc, i);
+            il.MarkLabel(loopCheck);
+            il.Emit(OpCodes.Ldloc, i);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Blt, loop);
+
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stfld, _tsArrayIsNumericField);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Stfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stfld, _tsArrayNumCountField);
+
+            il.MarkLabel(done);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // ── double GetDouble(int index) ──
+        {
+            var il = getDouble.GetILGenerator();
+            var boxed = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+            il.Emit(OpCodes.Brfalse, boxed);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldelem_R8);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(boxed);                            // (double) base[index]
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, _tsArrayListGetItem!);
+            il.Emit(OpCodes.Unbox_Any, _types.Double);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // ── void SetDouble(int index, double value) ──
+        {
+            var il = setDouble.GetILGenerator();
+            var notNumeric = il.DefineLabel();
+            var notOverwrite = il.DefineLabel();
+            var gap = il.DefineLabel();
+            var hasStore = il.DefineLabel();
+            var doStore = il.DefineLabel();
+
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+            il.Emit(OpCodes.Brfalse, notNumeric);
+
+            // overwrite in range: if (index < _numCount) { _numStore[index] = value; return; }
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Bge, notOverwrite);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stelem_R8);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(notOverwrite);
+            // gap write (index > _numCount): deopt then boxed set
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Bgt, gap);
+
+            // append at _numCount: ensure capacity
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Brtrue, hasStore);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_4);
+            il.Emit(OpCodes.Newarr, _types.Double);
+            il.Emit(OpCodes.Stfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Br, doStore);
+            il.MarkLabel(hasStore);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Bne_Un, doStore);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldflda, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Mul);
+            il.Emit(OpCodes.Call, arrayResize);
+
+            il.MarkLabel(doStore);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Stelem_R8);
+            il.Emit(OpCodes.Ldarg_0);                       // _numCount++
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldarg_0);                       // _length = (long)_numCount
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Conv_I8);
+            il.Emit(OpCodes.Stfld, _tsArrayLengthField);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(gap);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, ensureBoxed);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Conv_I8);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, runtime.TSArraySetLong);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(notNumeric);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Conv_I8);
+            il.Emit(OpCodes.Ldarg_2);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Call, runtime.TSArraySetLong);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // ── void PushDouble(double value) ── append at the current length.
+        {
+            var il = pushDouble.GetILGenerator();
+            var useNum = il.DefineLabel();
+            var haveIndex = il.DefineLabel();
+            var blockedReturn = il.DefineLabel();
+
+            // Non-extensible (frozen / sealed / preventExtensions) → push is a no-op, matching the boxed
+            // ArrayPush (which consults the external _frozenObjects/_sealedObjects/_nonExtensibleObjects
+            // collections this unboxed path can't reach). _isFrozen is set by $Array.Freeze();
+            // _isNonExtensible by Object.seal / Object.preventExtensions via MarkNonExtensible.
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayIsFrozenField);
+            il.Emit(OpCodes.Brtrue, blockedReturn);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNonExtensibleField);
+            il.Emit(OpCodes.Brtrue, blockedReturn);
+
+            il.Emit(OpCodes.Ldarg_0);                       // SetDouble receiver
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+            il.Emit(OpCodes.Brtrue, useNum);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, _tsArrayListCountGetter!);
+            il.Emit(OpCodes.Br, haveIndex);
+            il.MarkLabel(useNum);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.MarkLabel(haveIndex);
+            il.Emit(OpCodes.Ldarg_1);                       // value
+            il.Emit(OpCodes.Call, setDouble);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(blockedReturn);                    // non-extensible: leave length unchanged
+            il.Emit(OpCodes.Ret);
+        }
+
+        // ── void MarkNumeric() ── flip an EMPTY dense array into numeric mode.
+        // The compiler emits this at statically-number[] creation sites (e.g.
+        // `const a: number[] = []`) so escaping number[] arrays start unboxed.
+        // Guarded so it is a safe no-op on anything that isn't an empty dense
+        // array (already numeric, sparse, or holding elements) — those stay
+        // boxed and correct (non-empty element-move is a later phase). The
+        // invariant "numeric ⟹ base list empty" therefore holds by construction.
+        {
+            var il = markNumeric.GetILGenerator();
+            var done = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);                       // if (_isNumeric) return;
+            il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+            il.Emit(OpCodes.Brtrue, done);
+            il.Emit(OpCodes.Ldarg_0);                       // if (_sparse != null) return;
+            il.Emit(OpCodes.Ldfld, _tsArraySparseField);
+            il.Emit(OpCodes.Brtrue, done);
+            il.Emit(OpCodes.Ldarg_0);                       // if (this.Count != 0) return;
+            il.Emit(OpCodes.Callvirt, _tsArrayListCountGetter!);
+            il.Emit(OpCodes.Brtrue, done);
+            il.Emit(OpCodes.Ldarg_0);                       // _isNumeric = true;
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Stfld, _tsArrayIsNumericField);
+            il.MarkLabel(done);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // ── void MarkNonExtensible() ── set _isNonExtensible so the unboxed PushDouble fast path refuses
+        // to append; called by Object.seal / Object.preventExtensions on a $Array (Object.freeze already
+        // sets _isFrozen via $Array.Freeze()). No deopt — the array may stay numeric and simply stop growing.
+        {
+            var il = markNonExtensible.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Stfld, _tsArrayNonExtensibleField);
+            il.Emit(OpCodes.Ret);
+        }
     }
 
     private void EmitTSArrayConstructor(TypeBuilder typeBuilder, EmittedRuntime runtime)
@@ -280,6 +656,9 @@ public partial class RuntimeEmitter
         runtime.TSArrayElementsGetter = getter;
 
         var il = getter.GetILGenerator();
+        // Elements hands out the inherited List<object?> directly; a numeric-mode
+        // array's base list is empty, so materialize first.
+        EmitTSArrayDeoptGuard(il);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
 
@@ -376,6 +755,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayFreeze = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _tsArrayIsFrozenField);
@@ -393,6 +773,7 @@ public partial class RuntimeEmitter
         runtime.TSArraySeal = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Stfld, _tsArrayIsSealedField);
@@ -405,6 +786,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayGet = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var throwLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_1);
@@ -433,6 +815,7 @@ public partial class RuntimeEmitter
         runtime.TSArraySet = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var frozenLabel = il.DefineLabel();
         var throwLabel = il.DefineLabel();
 
@@ -471,6 +854,7 @@ public partial class RuntimeEmitter
         runtime.TSArraySetStrict = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var notFrozenLabel = il.DefineLabel();
         var frozenReturnLabel = il.DefineLabel();
         var throwBoundsLabel = il.DefineLabel();
@@ -528,6 +912,20 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var doneLabel = il.DefineLabel();
 
+        // Numeric-aware (number[] unboxing): in numeric mode _length is the
+        // authoritative length (maintained by SetDouble/PushDouble) and the
+        // inherited base list is empty, so there is nothing to reconcile.
+        // Critically we must NOT deopt here — doing so would materialize the
+        // unboxed store on every `arr.length` read, defeating the win. Callers
+        // that genuinely touch the base list (GetLong/SetLong/HasIndex/GetRaw/
+        // SetLength/DeleteAt) carry their own EmitTSArrayDeoptGuard, which fires
+        // before they call SyncLength; by then mode is boxed and the reconcile
+        // below runs normally. The only callers reaching here still-numeric are
+        // the Length / LongLength getters, which read the authoritative _length.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+        il.Emit(OpCodes.Brtrue, doneLabel);
+
         // if (_sparse != null) return;
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsArraySparseField);
@@ -555,6 +953,7 @@ public partial class RuntimeEmitter
         var method = typeBuilder.DefineMethod("MaterializeDense", MethodAttributes.Private, _types.Void, Type.EmptyTypes);
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var sparseBranch = il.DefineLabel();
         var throwRangeLabel = il.DefineLabel();
         var loopHead = il.DefineLabel();
@@ -636,6 +1035,7 @@ public partial class RuntimeEmitter
         var method = typeBuilder.DefineMethod("TryCollapseSparse", MethodAttributes.Private, _types.Void, Type.EmptyTypes);
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var collapseLabel = il.DefineLabel();
         var doneLabel = il.DefineLabel();
 
@@ -679,6 +1079,7 @@ public partial class RuntimeEmitter
         var method = typeBuilder.DefineMethod("GetCore", MethodAttributes.Private, _types.Object, [_types.Int64]);
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var sparsePathLabel = il.DefineLabel();
         var returnHoleLabel = il.DefineLabel();
         var lookupLabel = il.DefineLabel();
@@ -735,6 +1136,7 @@ public partial class RuntimeEmitter
             [_types.Int64, _types.Object]);
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var sparseLabel = il.DefineLabel();
         var denseLabel = il.DefineLabel();
 
@@ -780,6 +1182,7 @@ public partial class RuntimeEmitter
             [_types.Int64, _types.Object]);
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var denseEntryLabel = il.DefineLabel();
         var sparseWriteReturn = il.DefineLabel();
         var skipLenUpdate = il.DefineLabel();
@@ -925,6 +1328,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayHasIndex = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var returnFalseLabel = il.DefineLabel();
         var sparseBranchLabel = il.DefineLabel();
         var checkDenseHoleLabel = il.DefineLabel();
@@ -995,6 +1399,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayGetRaw = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var oobLabel = il.DefineLabel();
 
         il.Emit(OpCodes.Ldarg_0);
@@ -1034,6 +1439,29 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var oobLabel = il.DefineLabel();
         var notHoleLabel = il.DefineLabel();
+        var notNumeric = il.DefineLabel();
+
+        // Numeric-aware read (number[] unboxing): in numeric mode the elements live unboxed in _numStore;
+        // read directly + box the double, OOB → undefined, and crucially do NOT deopt — so a numeric array
+        // stays numeric across index reads, keeping interleaved read/write on the fast path. _numCount is
+        // authoritative; the unsigned compare also rejects negative indices. (Numeric mode is dense, so no
+        // hole check is needed here — gap writes deopt before they can punch a hole.)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
+        il.Emit(OpCodes.Brfalse, notNumeric);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Bge_Un, oobLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Ldelem_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notNumeric);
 
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, syncLength);
@@ -1084,6 +1512,7 @@ public partial class RuntimeEmitter
         runtime.TSArraySetLong = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var frozenReturnLabel = il.DefineLabel();
         var negThrowLabel = il.DefineLabel();
         var maxThrowLabel = il.DefineLabel();
@@ -1136,6 +1565,7 @@ public partial class RuntimeEmitter
         runtime.TSArraySetStrictLong = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var notFrozenLabel = il.DefineLabel();
         var frozenReturnLabel = il.DefineLabel();
         var negThrowLabel = il.DefineLabel();
@@ -1191,6 +1621,7 @@ public partial class RuntimeEmitter
         runtime.TSArraySetLength = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var negThrowLabel = il.DefineLabel();
         var tooBigThrowLabel = il.DefineLabel();
         var notFrozenLabel = il.DefineLabel();
@@ -1460,6 +1891,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayDeleteAt = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
         var retLabel = il.DefineLabel();
         var denseDeleteLabel = il.DefineLabel();
         var sparseDeleteCheckLabel = il.DefineLabel();
@@ -1530,6 +1962,7 @@ public partial class RuntimeEmitter
         runtime.TSArrayToString = method;
 
         var il = method.GetILGenerator();
+        EmitTSArrayDeoptGuard(il);
 
         // ToString renders _dense elements joined by comma — matches pre-refactor
         // behavior exactly. Hole-aware join lives in the array built-ins (M5).

@@ -1378,6 +1378,21 @@ public class EmittedRuntime
     public MethodBuilder TSArraySetLength { get; set; } = null!;
     public MethodBuilder TSArrayDeleteAt { get; set; } = null!;
 
+    // Unboxed packed-double elements-kind accessors (number[] unboxing project).
+    // GetDouble/SetDouble/PushDouble are the fast paths the compiler emits at
+    // statically-number[] sites; EnsureBoxed is the deopt (numeric -> boxed).
+    public MethodBuilder TSArrayGetDouble { get; set; } = null!;
+    public MethodBuilder TSArraySetDouble { get; set; } = null!;
+    public MethodBuilder TSArrayPushDouble { get; set; } = null!;
+    public MethodBuilder TSArrayEnsureBoxed { get; set; } = null!;
+    // Flips an empty $Array into numeric (unboxed double[]) mode — emitted at
+    // statically-number[] array-creation sites so escaping number[] arrays start
+    // unboxed. No-op on a non-empty / sparse array (stays boxed).
+    public MethodBuilder TSArrayMarkNumeric { get; set; } = null!;
+    // Sets $Array._isNonExtensible so the unboxed PushDouble fast path refuses to append; called by
+    // Object.seal / Object.preventExtensions (which otherwise only register the array externally).
+    public MethodBuilder TSArrayMarkNonExtensible { get; set; } = null!;
+
     // $IHasFields interface - for unified property access on user classes and $Object
     // Note: These use MethodInfo instead of MethodBuilder because we need the actual
     // methods from the created interface type (after CreateType() is called)

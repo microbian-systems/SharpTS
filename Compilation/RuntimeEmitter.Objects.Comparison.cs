@@ -382,6 +382,8 @@ public partial class RuntimeEmitter
         // entirely, missing both the assign and the spec-mandated TypeError
         // when target is a String exotic (test262 assignment-to-readonly...).
         var notListSrcLabel = il.DefineLabel();
+        // number[] unboxing: materialize a numeric-mode $Array source before reading its base list.
+        EmitDeoptIfNumericArray(il, runtime, () => il.Emit(OpCodes.Ldloc, sourceLocal));
         il.Emit(OpCodes.Ldloc, sourceLocal);
         il.Emit(OpCodes.Isinst, listType);
         il.Emit(OpCodes.Brfalse, notListSrcLabel);

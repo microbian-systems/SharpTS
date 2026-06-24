@@ -770,6 +770,8 @@ public partial class RuntimeEmitter
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();
 
+        // number[] unboxing: materialize a numeric-mode $Array before reading its base list.
+        EmitDeoptIfNumericArray(il, runtime, () => il.Emit(OpCodes.Ldloc, valueLocal));
         il.Emit(OpCodes.Ldloc, valueLocal);
         il.Emit(OpCodes.Castclass, _types.ListOfObject);
         il.Emit(OpCodes.Stloc, arrLocal);

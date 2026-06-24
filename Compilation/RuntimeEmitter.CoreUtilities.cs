@@ -22,6 +22,9 @@ public partial class RuntimeEmitter
         var listLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
+        // number[] unboxing: materialize a numeric-mode $Array before the `is List<object>` branch reads it.
+        EmitDeoptArgIfNumericArray(il, runtime, 0);
+
         // if (value == null) return "null"
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, nullLabel);
@@ -590,6 +593,9 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var noFormatLabel = il.DefineLabel();
+
+        // number[] unboxing: materialize a numeric-mode $Array before any array-formatting reads its base list.
+        EmitDeoptArgIfNumericArray(il, runtime, 0);
 
         // Check if arg is a string with format specifiers
         il.Emit(OpCodes.Ldarg_0);
@@ -1834,6 +1840,10 @@ public partial class RuntimeEmitter
         var method = (MethodBuilder)runtime.ToJsString;
         var il = method.GetILGenerator();
         var fallbackLabel = il.DefineLabel();
+
+        // number[] unboxing: the `is List<object>` array branch below joins the base
+        // list directly, so a numeric-mode $Array (empty base list) must materialize first.
+        EmitDeoptArgIfNumericArray(il, runtime, 0);
 
         // null / undefined → handled by Stringify ("null" / "undefined")
         il.Emit(OpCodes.Ldarg_0);

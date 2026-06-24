@@ -1225,8 +1225,33 @@ public partial class ILEmitter
                 SetStackUnknown();
                 IL.Emit(OpCodes.Br, endLabelNH);
 
-                // Not typed list: box value and fall through to List<object?> path
                 IL.MarkLabel(notTypedLabel);
+
+                // $Array numeric fast path (number[] unboxing): SetDouble takes the
+                // UNBOXED double, so a numeric-mode $Array stores it straight into
+                // its double[] with no allocation (the write side of the 73x gap).
+                // SetDouble is mode-checked — a boxed $Array delegates to Set, so
+                // this is behaviour-identical until numeric creation is wired.
+                if (desc.Kind == ArrayElementsKind.Double)
+                {
+                    IL.Emit(OpCodes.Ldloc, objLocal);
+                    IL.Emit(OpCodes.Isinst, _ctx.Runtime!.TSArrayType);
+                    var notTSArraySet = IL.DefineLabel();
+                    IL.Emit(OpCodes.Brfalse, notTSArraySet);
+                    IL.Emit(OpCodes.Ldloc, objLocal);
+                    IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSArrayType);
+                    EmitExpressionAsDouble(si.Index);
+                    IL.Emit(OpCodes.Conv_I4);
+                    IL.Emit(OpCodes.Ldloc, typedValueLocalNH);
+                    IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArraySetDouble);
+                    IL.Emit(OpCodes.Ldloc, typedValueLocalNH);
+                    desc.EmitBoxElement(IL, _ctx.Types);
+                    SetStackUnknown();
+                    IL.Emit(OpCodes.Br, endLabelNH);
+                    IL.MarkLabel(notTSArraySet);
+                }
+
+                // Not typed list: box value and fall through to List<object?> path
                 IL.Emit(OpCodes.Ldloc, objLocal);
                 IL.Emit(OpCodes.Ldloc, typedValueLocalNH);
                 IL.Emit(OpCodes.Box, desc.GetElementType(_ctx.Types));
@@ -1314,6 +1339,38 @@ public partial class ILEmitter
             if (i < arguments.Count - 1)
                 IL.Emit(OpCodes.Pop); // discard intermediate length; keep only the final one
         }
+        SetStackType(StackType.Double);
+    }
+
+    /// <summary>
+    /// Emits <c>x.push(args)</c> for an ESCAPING <c>number[]</c> whose runtime value is a <c>$Array</c>
+    /// (number[] unboxing project): append each (unboxed) <c>double</c> argument via the mode-checked
+    /// <c>$Array.PushDouble</c>, then leave the new length (a JS number) as the result. A numeric-mode
+    /// receiver appends straight into its <c>double[]</c> store with no boxing and stays numeric (unlike
+    /// the generic dispatcher, which unwraps the array and deopts it); a boxed receiver has PushDouble
+    /// delegate to the boxed append, so this is behaviour-identical for both. Caller gates on a statically
+    /// <c>number[]</c> receiver with statically <c>number</c> arguments (see EmitMethodCall).
+    /// </summary>
+    private void EmitEscapingNumberArrayPush(Expr receiver, List<Expr> arguments)
+    {
+        EmitExpression(receiver);
+        EmitBoxIfNeeded(receiver);
+        IL.Emit(OpCodes.Castclass, _ctx.Runtime!.TSArrayType);
+        var arrLocal = IL.DeclareLocal(_ctx.Runtime!.TSArrayType);
+        IL.Emit(OpCodes.Stloc, arrLocal);
+
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            IL.Emit(OpCodes.Ldloc, arrLocal);
+            EmitExpressionAsDouble(arguments[i]);
+            IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayPushDouble);
+        }
+
+        // push() returns the new length. _length is authoritative in both modes
+        // (PushDouble maintains it numeric; SyncLength reconciles it boxed).
+        IL.Emit(OpCodes.Ldloc, arrLocal);
+        IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayLongLengthGetter);
+        IL.Emit(OpCodes.Conv_R8);
         SetStackType(StackType.Double);
     }
 

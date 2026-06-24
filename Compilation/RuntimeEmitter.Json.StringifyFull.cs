@@ -270,6 +270,9 @@ public partial class RuntimeEmitter
         var keyLocal = il.DeclareLocal(_types.String);
         var tagLocal = il.DeclareLocal(_types.String);
 
+        // number[] unboxing: materialize a numeric-mode $Array replacer before reading its base list.
+        EmitDeoptArgIfNumericArray(il, runtime, 1);
+
         // Cast replacer to List<object?>
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Castclass, _types.ListOfObject);
@@ -579,6 +582,9 @@ public partial class RuntimeEmitter
         var closeLocal = il.DeclareLocal(_types.String);
         var elemLocal = il.DeclareLocal(_types.Object);
         var strResultLocal = il.DeclareLocal(_types.String);
+
+        // number[] unboxing: materialize a numeric-mode $Array before reading its base list.
+        EmitDeoptIfNumericArray(il, runtime, () => il.Emit(OpCodes.Ldloc, valueLocal));
 
         var loopStart = il.DefineLabel();
         var loopEnd = il.DefineLabel();

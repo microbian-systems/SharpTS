@@ -296,8 +296,13 @@ public partial class ILCompiler
                     il.Emit(OpCodes.Ldarg_0);
                     il.Emit(OpCodes.Ldfld, fieldsField);
                     il.Emit(OpCodes.Ldstr, fieldName);
-                    initEmitter.EmitExpression(field.Initializer!);
-                    initEmitter.EmitBoxIfNeeded(field.Initializer!);
+                    // number[] unboxing: an `arr: number[] = []` field is created as a numeric $Array
+                    // (escaping by nature — a field is aliasable), so `this.arr[i]=v` writes unboxed.
+                    if (!initEmitter.TryEmitNumericEmptyArrayInit(field.TypeAnnotation, field.Initializer))
+                    {
+                        initEmitter.EmitExpression(field.Initializer!);
+                        initEmitter.EmitBoxIfNeeded(field.Initializer!);
+                    }
                     il.Emit(OpCodes.Callvirt, _types.DictionaryStringObjectSetItem);
                 }
             }

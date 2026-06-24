@@ -1503,6 +1503,8 @@ public partial class RuntimeEmitter
 
         // List<object> deep clone.
         coreIl.MarkLabel(checkList);
+        // number[] unboxing: materialize a numeric-mode $Array before deep-cloning its base list.
+        EmitDeoptArgIfNumericArray(coreIl, runtime, 0);
         coreIl.Emit(OpCodes.Ldarg_0);
         coreIl.Emit(OpCodes.Isinst, _types.ListOfObject);
         coreIl.Emit(OpCodes.Stloc, sourceListLocal);

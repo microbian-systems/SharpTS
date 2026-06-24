@@ -240,6 +240,8 @@ public partial class RuntimeEmitter
         runtime.GetValues = method;
 
         var il = method.GetILGenerator();
+        // number[] unboxing: materialize a numeric-mode $Array before enumerating it as an object.
+        EmitDeoptArgIfNumericArray(il, runtime, 0);
         var dictType = _types.DictionaryStringObject;
         var listType = _types.ListOfObject;
         var kvpType = _types.KeyValuePairStringObject;
@@ -732,6 +734,8 @@ public partial class RuntimeEmitter
         runtime.GetEntries = method;
 
         var il = method.GetILGenerator();
+        // number[] unboxing: materialize a numeric-mode $Array before enumerating it as an object.
+        EmitDeoptArgIfNumericArray(il, runtime, 0);
         var dictType = _types.DictionaryStringObject;
         var listType = _types.ListOfObject;
         var kvpType = _types.KeyValuePairStringObject;

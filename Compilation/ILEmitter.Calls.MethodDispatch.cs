@@ -25,6 +25,26 @@ public partial class ILEmitter
             return;
         }
 
+        // Escaping number[] push (number[] unboxing): the receiver is a statically `number[]`
+        // expression that is NOT a promoted local — so its runtime value is a $Array (numeric or boxed,
+        // never List<double>: the promoted-local branch above + the escape analyzer guarantee that).
+        // Append each UNBOXED double via $Array.PushDouble (mode-checked: a numeric array appends into its
+        // double[] store with no boxing and STAYS numeric; a boxed array delegates to the boxed Set). The
+        // generic ArrayEmitter path would instead unwrap the array (EmitGetListFromArrayOrList), deopting a
+        // numeric receiver before the append. Gated so numeric == boxed: every arg must be statically
+        // `number` (EmitExpressionAsDouble coerces; an any/undefined-admitting arg would store a coerced
+        // double where the boxed path preserves the value/undefined sentinel). Sync-only path (ILEmitter):
+        // a push arg cannot contain await/yield here, so the $Array ref on the stack during arg evaluation
+        // never strands across a suspension (cf. the promoted-local push, which likewise has no guard).
+        // push() with no args falls through to the generic path.
+        if (methodName == "push" && !methodGet.Optional && arguments.Count > 0
+            && ArrayElements.Resolve(_ctx.TypeMap?.Get(methodGet.Object)) is { Kind: ArrayElementsKind.Double }
+            && arguments.All(a => IsNumericType(_ctx.TypeMap?.Get(a))))
+        {
+            EmitEscapingNumberArrayPush(methodGet.Object, arguments);
+            return;
+        }
+
         // Promoted string-accumulator charCodeAt (#857): read the StringBuilder's UTF-16 code unit
         // directly via its [int] indexer (== JS charCodeAt); out-of-range yields NaN (JS semantics).
         // Must intercept before the string-method path, which would emit the slot as a string receiver.

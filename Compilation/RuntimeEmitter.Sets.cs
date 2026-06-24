@@ -81,6 +81,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, ctorWithComparer);
         il.Emit(OpCodes.Stloc, setLocal);
 
+        // number[] unboxing: materialize a numeric-mode $Array before reading its base list.
+        EmitDeoptArgIfNumericArray(il, runtime, 0);
+
         // if (values is not List<object?> list) return set;
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
