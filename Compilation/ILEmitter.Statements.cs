@@ -489,9 +489,16 @@ public partial class ILEmitter
     /// touch, so this is purely a representation choice, never a semantic one.</para>
     /// </summary>
     private bool TryEmitNumericEmptyArrayInit(Stmt.Var v)
+        => TryEmitNumericEmptyArrayInit(v.TypeAnnotation, v.Initializer);
+
+    /// <summary>
+    /// Component overload of <see cref="TryEmitNumericEmptyArrayInit(Stmt.Var)"/> so class
+    /// field initializers (<c>arr: number[] = []</c>) can reuse the same numeric-creation hook.
+    /// </summary>
+    internal bool TryEmitNumericEmptyArrayInit(string? typeAnnotation, Expr? initializer)
     {
-        if (v.TypeAnnotation != "number[]") return false;
-        if (v.Initializer is not Expr.ArrayLiteral { Elements.Count: 0 }) return false;
+        if (typeAnnotation != "number[]") return false;
+        if (initializer is not Expr.ArrayLiteral { Elements.Count: 0 }) return false;
         EmitNumericEmptyArray();
         return true;
     }
