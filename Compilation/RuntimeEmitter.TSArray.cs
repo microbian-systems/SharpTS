@@ -563,6 +563,9 @@ public partial class RuntimeEmitter
         runtime.TSArrayElementsGetter = getter;
 
         var il = getter.GetILGenerator();
+        // Elements hands out the inherited List<object?> directly; a numeric-mode
+        // array's base list is empty, so materialize first.
+        EmitTSArrayDeoptGuard(il);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
 

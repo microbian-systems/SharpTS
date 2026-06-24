@@ -586,6 +586,22 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         var objLocal = il.DeclareLocal(ctx.Types.Object);
         il.Emit(OpCodes.Stloc, objLocal);
 
+        // Deopt: if this is a numeric-mode $Array, materialize its unboxed
+        // double store into the base List<object?> first. The `isinst
+        // List<object?>` check below matches $Array (it inherits List<object?>)
+        // and would otherwise read the empty base list. EnsureBoxed is a no-op
+        // for boxed-mode arrays.
+        var deoptDone = il.DefineLabel();
+        var arrLocal = il.DeclareLocal(ctx.Runtime!.TSArrayType);
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Isinst, ctx.Runtime.TSArrayType);
+        il.Emit(OpCodes.Stloc, arrLocal);
+        il.Emit(OpCodes.Ldloc, arrLocal);
+        il.Emit(OpCodes.Brfalse, deoptDone);
+        il.Emit(OpCodes.Ldloc, arrLocal);
+        il.Emit(OpCodes.Callvirt, ctx.Runtime.TSArrayEnsureBoxed);
+        il.MarkLabel(deoptDone);
+
         var isListLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
