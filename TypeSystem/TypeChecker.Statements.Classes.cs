@@ -498,7 +498,7 @@ public partial class TypeChecker
                     throw new TypeCheckException($" '{interfaceToken.Lexeme}' is not an interface.", tsCode: "TS2304");
                 }
 
-                ValidateInterfaceImplementation(classTypeForBody, interfaceType, classStmt.Name.Lexeme);
+                ValidateInterfaceImplementation(classTypeForBody, interfaceType, classStmt.Name.Lexeme, classStmt.Name.Line);
             }
         }
 
@@ -530,6 +530,40 @@ public partial class TypeChecker
         // declared property must be assignable to the class's own string index type (which may be
         // an open type parameter).
         ValidateClassPropertiesAgainstIndex(classStmt, classTypeForBody);
+
+        // Index-signature compatibility against implemented interfaces (TS2420). Like the TS2415
+        // extends check above (and unlike the named-member `implements` validation gated on
+        // classTypeParams == null), this runs for generic classes too — the interface index can
+        // resolve to an open type parameter that a concrete class index can't satisfy (#897).
+        if (classStmt.Interfaces != null &&
+            (classTypeForBody.StringIndexType != null || classTypeForBody.NumberIndexType != null))
+        {
+            // Resolve interface references with the class's own type parameters in scope so
+            // `implements A<T>` keeps T as the open parameter (mirrors superclass resolution).
+            using (new EnvironmentScope(this, classTypeEnv))
+            {
+                for (int i = 0; i < classStmt.Interfaces.Count; i++)
+                {
+                    var interfaceToken = classStmt.Interfaces[i];
+                    TypeInfo? itfTypeInfo = _environment.Get(interfaceToken.Lexeme);
+                    List<string>? typeArgs = classStmt.InterfaceTypeArgs != null && i < classStmt.InterfaceTypeArgs.Count
+                        ? classStmt.InterfaceTypeArgs[i]
+                        : null;
+
+                    // Construct the instantiation directly (rather than InstantiateGenericInterface)
+                    // to avoid its constraint-validation throw aborting this check.
+                    TypeInfo? resolvedInterface = itfTypeInfo switch
+                    {
+                        TypeInfo.GenericInterface gi when typeArgs is { Count: > 0 } =>
+                            new TypeInfo.InstantiatedGeneric(gi, typeArgs.Select(ta => ToTypeInfo(ta)).ToList()),
+                        TypeInfo.Interface plain => plain,
+                        _ => null,
+                    };
+                    if (resolvedInterface != null)
+                        ValidateInterfaceIndexSignatureImplementation(classStmt, classTypeForBody, resolvedInterface);
+                }
+            }
+        }
 
         // Second pass: check static property initializers at class scope
         foreach (var field in classStmt.Fields)

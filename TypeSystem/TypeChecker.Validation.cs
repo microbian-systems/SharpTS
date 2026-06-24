@@ -15,8 +15,35 @@ namespace SharpTS.TypeSystem;
 /// </remarks>
 public partial class TypeChecker
 {
-    private void ValidateInterfaceImplementation(TypeInfo.Class classType, TypeInfo.Interface interfaceType, string className)
+    /// <summary>
+    /// Emits a type-check diagnostic, honoring recovery mode: in recovery mode it records (so sibling
+    /// declarations are still checked and the diagnostic lands at <paramref name="line"/>) and the
+    /// caller continues; otherwise it throws — fatal, aborting the non-recovery <see cref="Check"/>
+    /// path before interpretation. Mirrors the established idiom in
+    /// <c>TypeChecker.Statements.Interfaces.cs</c>.
+    /// </summary>
+    private void EmitOrThrow(string message, int? line, string tsCode)
     {
+        var ex = new TypeCheckException(message, line: line, tsCode: tsCode);
+        if (_recoveryMode)
+            RecordTypeError(ex);
+        else
+            throw ex;
+    }
+
+    private void ValidateInterfaceImplementation(TypeInfo.Class classType, TypeInfo.Interface interfaceType, string className, int? classNameLine)
+    {
+        // Weak-type check (TS2559): an interface whose members are ALL optional is not satisfied by a
+        // class that shares NONE of them, even though it would otherwise be vacuously satisfied. tsc
+        // reports this in place of the per-member checks below, so short-circuit (#897).
+        if (FailsWeakTypeCheck(interfaceType, classType))
+        {
+            RecordTypeError(new TypeCheckException(
+                $" Type '{className}' has no properties in common with type '{interfaceType.Name}'.",
+                line: classNameLine, tsCode: "TS2559"));
+            return;
+        }
+
         foreach (var member in interfaceType.Members)
         {
             string memberName = member.Key;
@@ -28,7 +55,14 @@ public partial class TypeChecker
 
             if (actualType == null && !isOptional)
             {
-                throw new TypeCheckException($" Class '{className}' does not implement '{memberName}' from interface '{interfaceType.Name}'.", tsCode: "TS2420");
+                // tsc reports a single TS2420 per incorrectly-implemented interface (aggregating the
+                // reasons). In recovery mode record at the class-name line and stop so sibling
+                // declarations are still checked — throwing aborted the whole enclosing scope and
+                // mis-attributed the diagnostic (#897). In non-recovery mode this stays fatal.
+                EmitOrThrow(
+                    $" Class '{className}' does not implement '{memberName}' from interface '{interfaceType.Name}'.",
+                    classNameLine, "TS2420");
+                return;
             }
 
             if (actualType != null)
@@ -36,7 +70,8 @@ public partial class TypeChecker
                 // Special handling for method signature validation
                 if (expectedType is TypeInfo.Function expectedFunc && actualType is TypeInfo.Function actualFunc)
                 {
-                    ValidateMethodSignature(expectedFunc, actualFunc, memberName, className, interfaceType.Name);
+                    if (!ValidateMethodSignature(expectedFunc, actualFunc, memberName, className, interfaceType.Name, classNameLine))
+                        return;
                 }
                 else if (expectedType is TypeInfo.OverloadedFunction expectedOverload && actualType is TypeInfo.Function actualFuncForOverload)
                 {
@@ -53,12 +88,16 @@ public partial class TypeChecker
                     if (!matchesAny)
                     {
                         // Use first signature for error message
-                        ValidateMethodSignature(expectedOverload.Signatures[0], actualFuncForOverload, memberName, className, interfaceType.Name);
+                        ValidateMethodSignature(expectedOverload.Signatures[0], actualFuncForOverload, memberName, className, interfaceType.Name, classNameLine);
+                        return;
                     }
                 }
                 else if (!IsCompatible(expectedType, actualType))
                 {
-                    throw new TypeCheckException($" '{className}.{memberName}' has incompatible type. Expected '{expectedType}', got '{actualType}'.", tsCode: "TS2416");
+                    EmitOrThrow(
+                        $" '{className}.{memberName}' has incompatible type. Expected '{expectedType}', got '{actualType}'.",
+                        classNameLine, "TS2416");
+                    return;
                 }
             }
         }
@@ -120,15 +159,20 @@ public partial class TypeChecker
     /// 1. Accept at least as many required parameters as the interface method requires
     /// 2. Have compatible parameter types at each position
     /// 3. Have a compatible return type
+    /// Records a TS2420 at the class-name line and returns <c>false</c> on the first incompatibility;
+    /// returns <c>true</c> when compatible. Records rather than throws so sibling declarations are
+    /// still checked (#897).
     /// </summary>
-    private void ValidateMethodSignature(TypeInfo.Function expected, TypeInfo.Function actual, string methodName, string className, string interfaceName)
+    private bool ValidateMethodSignature(TypeInfo.Function expected, TypeInfo.Function actual, string methodName, string className, string interfaceName, int? classNameLine)
     {
         // Check parameter count: actual must declare at least the required params from expected
         // The interface's MinArity tells us how many parameters callers will pass
         if (actual.ParamTypes.Count < expected.MinArity)
         {
-            throw new TypeCheckException(
-                $" Method '{className}.{methodName}' has {actual.ParamTypes.Count} parameter(s) but interface '{interfaceName}' requires at least {expected.MinArity}.", tsCode: "TS2420");
+            EmitOrThrow(
+                $" Method '{className}.{methodName}' has {actual.ParamTypes.Count} parameter(s) but interface '{interfaceName}' requires at least {expected.MinArity}.",
+                classNameLine, "TS2420");
+            return false;
         }
 
         // Check parameter types at each position (up to what the actual method declares)
@@ -143,17 +187,22 @@ public partial class TypeChecker
             // Check bidirectional compatibility for parameters (TypeScript uses bivariant checking for method params)
             if (!IsCompatible(expectedParamType, actualParamType) && !IsCompatible(actualParamType, expectedParamType))
             {
-                throw new TypeCheckException(
-                    $" Parameter {i + 1} of '{className}.{methodName}' has incompatible type. Interface '{interfaceName}' expects '{expectedParamType}', but got '{actualParamType}'.", tsCode: "TS2420");
+                EmitOrThrow(
+                    $" Parameter {i + 1} of '{className}.{methodName}' has incompatible type. Interface '{interfaceName}' expects '{expectedParamType}', but got '{actualParamType}'.",
+                    classNameLine, "TS2420");
+                return false;
             }
         }
 
         // Check return type compatibility (covariant: actual's return can be subtype of expected's)
         if (!IsCompatible(expected.ReturnType, actual.ReturnType))
         {
-            throw new TypeCheckException(
-                $" Return type of '{className}.{methodName}' is incompatible. Interface '{interfaceName}' expects '{expected.ReturnType}', but got '{actual.ReturnType}'.", tsCode: "TS2420");
+            EmitOrThrow(
+                $" Return type of '{className}.{methodName}' is incompatible. Interface '{interfaceName}' expects '{expected.ReturnType}', but got '{actual.ReturnType}'.",
+                classNameLine, "TS2420");
+            return false;
         }
+        return true;
     }
 
     /// <summary>
@@ -427,6 +476,55 @@ public partial class TypeChecker
     }
 
     /// <summary>
+    /// Validates that a class's index signatures conform to those of an interface it <c>implements</c>
+    /// (TS2420 "Class 'B' incorrectly implements interface 'A'", index-signature variant) — the
+    /// implements-path counterpart of <see cref="ValidateClassIndexSignatureExtends"/>. The class's
+    /// index value type must be assignable to the interface's (after the interface's type arguments are
+    /// substituted). Because a numeric key stringifies, a class <c>[x: string]</c> index also supplies
+    /// the value type for the interface's numeric index. Unlike the named-member check this runs for
+    /// <em>generic</em> classes too: `class B&lt;T extends Derived&gt; implements A&lt;T&gt; { [x: string]: Base }`
+    /// is an error because the interface index resolves to the open `T`, and a concrete `Base` is not
+    /// assignable to `T` (#897).
+    /// </summary>
+    private void ValidateInterfaceIndexSignatureImplementation(Stmt.Class classStmt, TypeInfo.Class classType, TypeInfo interfaceResolved)
+    {
+        // The string-index check uses the class's own string index. For the numeric-index check the
+        // class's effective value type is its numeric index, falling back to its string index (which
+        // covers numeric keys).
+        TypeInfo? classString = StringIndexOf(classType);
+        TypeInfo? classNumber = NumberIndexOf(classType) ?? classString;
+
+        foreach (var (ifaceIndex, classEffective, kind) in new[]
+        {
+            (StringIndexOf(interfaceResolved), classString, "string"),
+            (NumberIndexOf(interfaceResolved), classNumber, "number"),
+        })
+        {
+            // Only check when the interface declares this index kind and the class supplies an
+            // effective value for it; a class missing an index the interface requires is left alone
+            // (conservative — avoids over-reporting beyond the tsc baselines this targets).
+            if (ifaceIndex is null || classEffective is null) continue;
+            // The class's index value must be assignable TO the interface's index value.
+            if (!IsCompatible(ifaceIndex, classEffective))
+            {
+                RecordTypeError(new TypeCheckException(
+                    $" Class '{classStmt.Name.Lexeme}' incorrectly implements interface '{InterfaceDisplayName(interfaceResolved)}'. The '{kind}' index signatures are incompatible.",
+                    line: classStmt.Name.Line,
+                    tsCode: "TS2420"));
+                return;
+            }
+        }
+    }
+
+    /// <summary>Best-effort display name for an interface (plain or generic-instantiated) in diagnostics.</summary>
+    private static string InterfaceDisplayName(TypeInfo interfaceType) => interfaceType switch
+    {
+        TypeInfo.Interface i => i.Name,
+        TypeInfo.InstantiatedGeneric { GenericDefinition: TypeInfo.GenericInterface gi } => gi.Name,
+        _ => interfaceType.ToString() ?? "interface"
+    };
+
+    /// <summary>
     /// Validates that a class's own declared instance properties are assignable to its own string
     /// index signature (TS2411 "Property 'X' of type '…' is not assignable to 'string' index type
     /// '…'"). Mirrors the interface check in <c>CheckInterfaceDeclaration</c>; reported per-property
@@ -455,7 +553,6 @@ public partial class TypeChecker
             }
         }
     }
-
     /// <summary>
     /// Walks the base-class chain looking for the accessibility of a field, getter or method named
     /// <paramref name="name"/>. Returns its <see cref="AccessModifier"/>, or null if absent.

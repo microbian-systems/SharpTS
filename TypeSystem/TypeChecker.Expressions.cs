@@ -2072,7 +2072,7 @@ public partial class TypeChecker
                 TypeInfo? itfTypeInfo = _environment.Get(interfaceToken.Lexeme);
                 if (itfTypeInfo is TypeInfo.Interface interfaceType)
                 {
-                    ValidateInterfaceImplementation(classTypeForBody, interfaceType, className);
+                    ValidateInterfaceImplementation(classTypeForBody, interfaceType, className, classExpr.Name?.Line);
                 }
                 else if (itfTypeInfo == null && TryResolveIterableProtocolInterface(
                              interfaceToken.Lexeme,
