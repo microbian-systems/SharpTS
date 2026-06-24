@@ -189,6 +189,12 @@ internal static class ParityCorpus
         ["arr-entries2"] = "console.log([...['x', 'y'].entries()].map(([i, v]) => i + v).join(','), [...['a', 'b'].keys()].join(','), [1, 2, 3].findLast(x => x < 3));",
         // JSON (replacer array / undefined+null elision)
         ["json-replacer"] = "console.log(JSON.stringify({ a: 1, b: 2, c: 3 }, ['a', 'c']), JSON.stringify({ x: undefined, y: null }));",
+        // Regex (verbatim C# strings so the TS keeps its backslashes)
+        ["regex-basic"] = @"console.log(/\d+/.test('abc123'), 'a1b2c3'.match(/\d/g)?.join(','), 'hello world'.replace(/o/g, '0'), 'a-b-c'.split(/-/).join('|'));",
+        ["regex-groups"] = @"console.log('2020-01-15'.replace(/(\d+)-(\d+)-(\d+)/, '$3/$2/$1'), [...'a1b2'.matchAll(/(\w)(\d)/g)].map(m => m[1] + m[2]).join(','));",
+        // JSON parse/round-trip + specials (NaN/Infinity -> null, undefined elided)
+        ["json-parse"] = "console.log(JSON.parse('{\"a\":1,\"b\":[true,null,1.5]}').b.length, JSON.stringify(JSON.parse('[1,2,3]')));",
+        ["json-special"] = "console.log(JSON.stringify({ a: undefined, b: null, c: NaN, d: Infinity }), JSON.stringify([undefined, null, NaN]));",
     };
 
     /// <summary>
@@ -205,9 +211,9 @@ internal static class ParityCorpus
         //   compiled: typeof 10n="object" (want "bigint"), mixed 10n==10 crashes (Double->BigInteger cast).
         ["bigint-basics"] = (
             "console.log(typeof 10n, 10n + 20n, 2n ** 10n, 10n > 5n, 100n / 7n, (123n).toString());",
-            "BigInt: interp throws on (123n).toString(); compiled typeof 10n='object' (want 'bigint')."),
+            "BigInt (tracked #912): interp throws on (123n).toString(); compiled typeof 10n='object' (want 'bigint')."),
         ["bigint-mixed"] = (
             "console.log(10n === 10n, 10n == 10, String(42n), Number(42n), 5n * 5n);",
-            "BigInt: interp String(42n)='42n'/Number(42n)=NaN/10n==10 false; compiled crashes on 10n==10 (Double->BigInteger cast)."),
+            "BigInt (tracked #912): interp String(42n)='42n'/Number(42n)=NaN/10n==10 false; compiled crashes on 10n==10 (Double->BigInteger cast)."),
     };
 }
