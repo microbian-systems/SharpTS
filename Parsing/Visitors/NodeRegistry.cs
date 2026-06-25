@@ -265,6 +265,46 @@ public sealed class NodeRegistry<TContext, TExprResult, TStmtResult>
     }
 
     /// <summary>
+    /// Validates that all AST expression types have explicit async handlers registered.
+    /// Provides exhaustiveness guarantees for the async dispatch path, ensuring that
+    /// adding a new Expr type forces an explicit async handler decision rather than
+    /// silently falling back to the sync handler.
+    /// </summary>
+    /// <returns>This registry for fluent chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown if async support is not enabled or async handlers are missing.</exception>
+    public NodeRegistry<TContext, TExprResult, TStmtResult> FreezeAsync()
+    {
+        if (_asyncExprHandlers == null)
+        {
+            throw new InvalidOperationException(
+                "FreezeAsync requires supportAsync=true in constructor.");
+        }
+
+        var missingAsyncTypes = new List<string>();
+
+        var allExprTypes = typeof(Expr).GetNestedTypes(BindingFlags.Public)
+            .Where(t => typeof(Expr).IsAssignableFrom(t) && !t.IsAbstract && t != typeof(Expr))
+            .ToList();
+
+        foreach (var exprType in allExprTypes)
+        {
+            if (!_asyncExprHandlers.ContainsKey(exprType))
+            {
+                missingAsyncTypes.Add($"Expr.{exprType.Name}");
+            }
+        }
+
+        if (missingAsyncTypes.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Missing async handlers for the following expression types:\n" +
+                string.Join("\n", missingAsyncTypes.OrderBy(t => t)));
+        }
+
+        return this;
+    }
+
+    /// <summary>
     /// Gets whether the registry has been frozen.
     /// </summary>
     public bool IsFrozen => _frozen;

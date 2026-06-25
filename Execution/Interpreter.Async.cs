@@ -685,18 +685,18 @@ public partial class Interpreter
         return EvaluateBinaryOperationRV(binary.Operator, leftRV, rightRV);
     }
 
-    private Task<RuntimeValue> EvaluateLogicalAsync(Expr.Logical logical) =>
+    private ValueTask<RuntimeValue> EvaluateLogicalAsync(Expr.Logical logical) =>
         EvaluateLogicalCoreAsync(
             logical.Operator.Type,
             EvaluateAsync(logical.Left),
             () => EvaluateAsync(logical.Right));
 
-    private Task<RuntimeValue> EvaluateNullishCoalescingAsync(Expr.NullishCoalescing nc) =>
+    private ValueTask<RuntimeValue> EvaluateNullishCoalescingAsync(Expr.NullishCoalescing nc) =>
         EvaluateNullishCoalescingCoreAsync(
             EvaluateAsync(nc.Left),
             () => EvaluateAsync(nc.Right));
 
-    private Task<RuntimeValue> EvaluateTernaryAsync(Expr.Ternary ternary) =>
+    private ValueTask<RuntimeValue> EvaluateTernaryAsync(Expr.Ternary ternary) =>
         EvaluateTernaryCoreAsync(
             EvaluateAsync(ternary.Condition),
             () => EvaluateAsync(ternary.ThenBranch),

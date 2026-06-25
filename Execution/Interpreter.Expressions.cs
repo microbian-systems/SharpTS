@@ -101,81 +101,85 @@ public partial class Interpreter
     internal RuntimeValue VisitClassExpr(Expr.ClassExpr classExpr) => EvaluateClassExpression(classExpr);
 
     /// <summary>
-    /// Asynchronously dispatches an expression to the appropriate evaluator.
+    /// Asynchronously dispatches an expression to the appropriate evaluator via the registry.
+    /// Routes through NodeRegistry.DispatchExprAsync for exhaustiveness-checked dispatch,
+    /// mirroring the synchronous EvaluateRV path (#930).
     /// </summary>
     /// <param name="expr">The expression AST node to evaluate.</param>
-    /// <returns>A task that resolves to the runtime value produced by evaluating the expression.</returns>
+    /// <returns>A ValueTask that resolves to the runtime value produced by evaluating the expression.</returns>
     /// <remarks>
-    /// Async version of Evaluate that properly handles await expressions without blocking.
+    /// Async version of EvaluateRV that properly handles await expressions without blocking.
     /// Used by async functions and arrow functions.
     /// </remarks>
-    /// <summary>
-    /// Asynchronously dispatches an expression to the appropriate evaluator.
-    /// </summary>
-    /// <param name="expr">The expression AST node to evaluate.</param>
-    /// <returns>A task that resolves to the runtime value produced by evaluating the expression.</returns>
-    /// <remarks>
-    /// Async version of Evaluate that properly handles await expressions without blocking.
-    /// Used by async functions and arrow functions.
-    /// </remarks>
-    internal async Task<RuntimeValue> EvaluateAsync(Expr expr)
+    internal ValueTask<RuntimeValue> EvaluateAsync(Expr expr)
     {
-        switch (expr)
-        {
-            case Expr.Comma comma: await EvaluateAsync(comma.Left); return await EvaluateAsync(comma.Right);
-            case Expr.DestructuringAssign d:
-                // Lowered statements may contain `await` in the rhs; run them on the async path, then
-                // yield the temp holding the original rhs (#754).
-                foreach (var stmt in d.Assignments)
-                    await ExecuteStatementAsync(stmt);
-                return await EvaluateAsync(d.ResultValue);
-            case Expr.Binary binary: return await EvaluateBinaryAsync(binary);
-            case Expr.Logical logical: return await EvaluateLogicalAsync(logical);
-            case Expr.NullishCoalescing nc: return await EvaluateNullishCoalescingAsync(nc);
-            case Expr.Ternary ternary: return await EvaluateTernaryAsync(ternary);
-            case Expr.Grouping grouping: return await EvaluateAsync(grouping.Expression);
-            case Expr.Literal literal: return EvaluateLiteral(literal);
-            case Expr.Unary unary: return await EvaluateUnaryAsync(unary);
-            case Expr.Delete delete: return RuntimeValue.FromBoxed(await EvaluateDeleteAsync(delete));
-            case Expr.Variable variable: return LookupVariableRV(variable.Name, variable);
-            case Expr.Assign assign: return await EvaluateAssignAsync(assign);
-            case Expr.Call call: return await EvaluateCallAsync(call);
-            case Expr.Get get: return await EvaluateGetAsync(get);
-            case Expr.Set set: return await EvaluateSetAsync(set);
-            case Expr.GetPrivate gp: return await EvaluateGetPrivateAsync(gp);
-            case Expr.SetPrivate sp: return await EvaluateSetPrivateAsync(sp);
-            case Expr.CallPrivate cp: return await EvaluateCallPrivateAsync(cp);
-            case Expr.This thisExpr: return EvaluateThis(thisExpr);
-            case Expr.New newExpr: return await EvaluateNewAsync(newExpr);
-            case Expr.ArrayLiteral array: return await EvaluateArrayAsync(array);
-            case Expr.ObjectLiteral obj: return await EvaluateObjectAsync(obj);
-            case Expr.GetIndex getIndex: return await EvaluateGetIndexAsync(getIndex);
-            case Expr.SetIndex setIndex: return await EvaluateSetIndexAsync(setIndex);
-            case Expr.Super super: return EvaluateSuper(super);
-            case Expr.CompoundAssign compound: return await EvaluateCompoundAssignAsync(compound);
-            case Expr.CompoundSet compoundSet: return await EvaluateCompoundSetAsync(compoundSet);
-            case Expr.CompoundSetIndex compoundSetIndex: return await EvaluateCompoundSetIndexAsync(compoundSetIndex);
-            case Expr.LogicalAssign logical: return await EvaluateLogicalAssignAsync(logical);
-            case Expr.LogicalSet logicalSet: return await EvaluateLogicalSetAsync(logicalSet);
-            case Expr.LogicalSetIndex logicalSetIndex: return await EvaluateLogicalSetIndexAsync(logicalSetIndex);
-            case Expr.PrefixIncrement prefix: return await EvaluatePrefixIncrementAsync(prefix);
-            case Expr.PostfixIncrement postfix: return await EvaluatePostfixIncrementAsync(postfix);
-            case Expr.ArrowFunction arrow: return EvaluateArrowFunction(arrow);
-            case Expr.TemplateLiteral template: return await EvaluateTemplateLiteralAsync(template);
-            case Expr.TaggedTemplateLiteral tagged: return await EvaluateTaggedTemplateLiteralAsync(tagged);
-            case Expr.Spread spread: return await EvaluateAsync(spread.Expression);
-            case Expr.TypeAssertion ta: return await EvaluateAsync(ta.Expression);
-            case Expr.Satisfies sat: return await EvaluateAsync(sat.Expression);
-            case Expr.NonNullAssertion nna: return await EvaluateAsync(nna.Expression);
-            case Expr.Await awaitExpr: return await EvaluateAwaitAsync(awaitExpr);
-            case Expr.DynamicImport di: return EvaluateDynamicImport(di);
-            case Expr.ImportMeta im: return EvaluateImportMeta(im);
-            case Expr.Yield yieldExpr: return await EvaluateYieldAsync(yieldExpr);
-            case Expr.RegexLiteral regex: return RuntimeValue.FromObject(new SharpTSRegExp(regex.Pattern, regex.Flags));
-            case Expr.ClassExpr classExpr: return EvaluateClassExpression(classExpr);
-            default: throw new InvalidOperationException($"Runtime Error: Unhandled expression type in async Interpreter: {expr.GetType().Name}");
-        }
+        return _registry.DispatchExprAsync(expr, this);
     }
+
+    // Async expression handlers — registered in NodeRegistry via RegisterExprAsync
+    // (see InterpreterRegistry.Create). Each handler returns ValueTask<RuntimeValue>.
+    // Sync-safe nodes wrap the existing VisitXxx / EvaluateXxx directly;
+    // async nodes delegate to the existing EvaluateXxxAsync helpers.
+
+    internal async ValueTask<RuntimeValue> VisitCommaAsync(Expr.Comma comma)
+    {
+        await EvaluateAsync(comma.Left);
+        return await EvaluateAsync(comma.Right);
+    }
+
+    internal async ValueTask<RuntimeValue> VisitDestructuringAssignAsync(Expr.DestructuringAssign d)
+    {
+        // Lowered statements may contain `await` in the rhs; run them on the async path, then
+        // yield the temp holding the original rhs (#754).
+        foreach (var stmt in d.Assignments)
+            await ExecuteStatementAsync(stmt);
+        return await EvaluateAsync(d.ResultValue);
+    }
+
+    internal ValueTask<RuntimeValue> VisitBinaryAsync(Expr.Binary binary) => new(EvaluateBinaryAsync(binary));
+    internal ValueTask<RuntimeValue> VisitLogicalAsync(Expr.Logical logical) => EvaluateLogicalAsync(logical);
+    internal ValueTask<RuntimeValue> VisitNullishCoalescingAsync(Expr.NullishCoalescing nc) => EvaluateNullishCoalescingAsync(nc);
+    internal ValueTask<RuntimeValue> VisitTernaryAsync(Expr.Ternary ternary) => EvaluateTernaryAsync(ternary);
+    internal ValueTask<RuntimeValue> VisitGroupingAsync(Expr.Grouping grouping) => EvaluateAsync(grouping.Expression);
+    internal ValueTask<RuntimeValue> VisitLiteralAsync(Expr.Literal literal) => new(EvaluateLiteral(literal));
+    internal ValueTask<RuntimeValue> VisitUnaryAsync(Expr.Unary unary) => new(EvaluateUnaryAsync(unary));
+    internal async ValueTask<RuntimeValue> VisitDeleteAsync(Expr.Delete delete) => RuntimeValue.FromBoxed(await EvaluateDeleteAsync(delete));
+    internal ValueTask<RuntimeValue> VisitVariableAsync(Expr.Variable variable) => new(LookupVariableRV(variable.Name, variable));
+    internal ValueTask<RuntimeValue> VisitAssignAsync(Expr.Assign assign) => EvaluateAssignAsync(assign);
+    internal ValueTask<RuntimeValue> VisitCallAsync(Expr.Call call) => new(EvaluateCallAsync(call));
+    internal ValueTask<RuntimeValue> VisitGetAsync(Expr.Get get) => new(EvaluateGetAsync(get));
+    internal ValueTask<RuntimeValue> VisitSetAsync(Expr.Set set) => new(EvaluateSetAsync(set));
+    internal ValueTask<RuntimeValue> VisitGetPrivateAsync(Expr.GetPrivate gp) => new(EvaluateGetPrivateAsync(gp));
+    internal ValueTask<RuntimeValue> VisitSetPrivateAsync(Expr.SetPrivate sp) => new(EvaluateSetPrivateAsync(sp));
+    internal ValueTask<RuntimeValue> VisitCallPrivateAsync(Expr.CallPrivate cp) => new(EvaluateCallPrivateAsync(cp));
+    internal ValueTask<RuntimeValue> VisitThisAsync(Expr.This thisExpr) => new(EvaluateThis(thisExpr));
+    internal ValueTask<RuntimeValue> VisitNewAsync(Expr.New newExpr) => new(EvaluateNewAsync(newExpr));
+    internal ValueTask<RuntimeValue> VisitArrayLiteralAsync(Expr.ArrayLiteral array) => new(EvaluateArrayAsync(array));
+    internal ValueTask<RuntimeValue> VisitObjectLiteralAsync(Expr.ObjectLiteral obj) => new(EvaluateObjectAsync(obj));
+    internal ValueTask<RuntimeValue> VisitGetIndexAsync(Expr.GetIndex getIndex) => new(EvaluateGetIndexAsync(getIndex));
+    internal ValueTask<RuntimeValue> VisitSetIndexAsync(Expr.SetIndex setIndex) => new(EvaluateSetIndexAsync(setIndex));
+    internal ValueTask<RuntimeValue> VisitSuperAsync(Expr.Super super) => new(EvaluateSuper(super));
+    internal ValueTask<RuntimeValue> VisitCompoundAssignAsync(Expr.CompoundAssign compound) => new(EvaluateCompoundAssignAsync(compound));
+    internal ValueTask<RuntimeValue> VisitCompoundSetAsync(Expr.CompoundSet compoundSet) => new(EvaluateCompoundSetAsync(compoundSet));
+    internal ValueTask<RuntimeValue> VisitCompoundSetIndexAsync(Expr.CompoundSetIndex compoundSetIndex) => new(EvaluateCompoundSetIndexAsync(compoundSetIndex));
+    internal ValueTask<RuntimeValue> VisitLogicalAssignAsync(Expr.LogicalAssign logical) => new(EvaluateLogicalAssignAsync(logical));
+    internal ValueTask<RuntimeValue> VisitLogicalSetAsync(Expr.LogicalSet logicalSet) => new(EvaluateLogicalSetAsync(logicalSet));
+    internal ValueTask<RuntimeValue> VisitLogicalSetIndexAsync(Expr.LogicalSetIndex logicalSetIndex) => new(EvaluateLogicalSetIndexAsync(logicalSetIndex));
+    internal ValueTask<RuntimeValue> VisitPrefixIncrementAsync(Expr.PrefixIncrement prefix) => new(EvaluatePrefixIncrementAsync(prefix));
+    internal ValueTask<RuntimeValue> VisitPostfixIncrementAsync(Expr.PostfixIncrement postfix) => new(EvaluatePostfixIncrementAsync(postfix));
+    internal ValueTask<RuntimeValue> VisitArrowFunctionAsync(Expr.ArrowFunction arrow) => new(EvaluateArrowFunction(arrow));
+    internal ValueTask<RuntimeValue> VisitTemplateLiteralAsync(Expr.TemplateLiteral template) => new(EvaluateTemplateLiteralAsync(template));
+    internal ValueTask<RuntimeValue> VisitTaggedTemplateLiteralAsync(Expr.TaggedTemplateLiteral tagged) => new(EvaluateTaggedTemplateLiteralAsync(tagged));
+    internal ValueTask<RuntimeValue> VisitSpreadAsync(Expr.Spread spread) => EvaluateAsync(spread.Expression);
+    internal ValueTask<RuntimeValue> VisitTypeAssertionAsync(Expr.TypeAssertion ta) => EvaluateAsync(ta.Expression);
+    internal ValueTask<RuntimeValue> VisitSatisfiesAsync(Expr.Satisfies sat) => EvaluateAsync(sat.Expression);
+    internal ValueTask<RuntimeValue> VisitNonNullAssertionAsync(Expr.NonNullAssertion nna) => EvaluateAsync(nna.Expression);
+    internal ValueTask<RuntimeValue> VisitAwaitAsync(Expr.Await awaitExpr) => new(EvaluateAwaitAsync(awaitExpr));
+    internal ValueTask<RuntimeValue> VisitDynamicImportAsync(Expr.DynamicImport di) => new(EvaluateDynamicImport(di));
+    internal ValueTask<RuntimeValue> VisitImportMetaAsync(Expr.ImportMeta im) => new(EvaluateImportMeta(im));
+    internal ValueTask<RuntimeValue> VisitYieldAsync(Expr.Yield yieldExpr) => new(EvaluateYieldAsync(yieldExpr));
+    internal ValueTask<RuntimeValue> VisitRegexLiteralAsync(Expr.RegexLiteral regex) => new(RuntimeValue.FromObject(new SharpTSRegExp(regex.Pattern, regex.Flags)));
+    internal ValueTask<RuntimeValue> VisitClassExprAsync(Expr.ClassExpr classExpr) => new(EvaluateClassExpression(classExpr));
 
     /// <summary>
     /// Evaluates a yield expression, throwing YieldException for control flow.
