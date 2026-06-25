@@ -268,9 +268,12 @@ public partial class Interpreter
         }
         catch (Exception ex)
         {
-            // Capture host exceptions as pending errors
+            // Capture host exceptions as pending errors. A re-caught ThrowException is a guest
+            // throw crossing back through this frame — preserve its guest origin so a downstream
+            // catch still binds it verbatim rather than re-typing it (cross-boundary #694).
+            bool isGuestThrow = ex is ThrowException;
             pendingError = TranslateException(ex);
-            blockResult = ExecutionResult.Throw(pendingError);
+            blockResult = ExecutionResult.Throw(pendingError, fromGuestThrow: isGuestThrow);
         }
         finally
         {
@@ -479,10 +482,14 @@ public partial class Interpreter
         }
         catch (Exception ex)
         {
-            // Treat host exceptions as guest throws
+            // A re-caught ThrowException is a genuine guest throw crossing back through a host
+            // frame (callback / interop / Promise executor) — bind it verbatim and keep its guest
+            // origin. Only a true host C# exception is host-translated and re-typed at the catch
+            // binding (#694), so derive fromHostException from the exception kind.
+            bool isGuestThrow = ex is ThrowException;
             object? errorValue = TranslateException(ex);
-            pendingResult = ExecutionResult.Throw(errorValue);
-            (exceptionHandled, pendingResult) = await HandleCatchBlockCore(ctx, tryCatch, errorValue, fromHostException: true);
+            pendingResult = ExecutionResult.Throw(errorValue, fromGuestThrow: isGuestThrow);
+            (exceptionHandled, pendingResult) = await HandleCatchBlockCore(ctx, tryCatch, errorValue, fromHostException: !isGuestThrow);
         }
 
         // Always execute finally
@@ -542,11 +549,11 @@ public partial class Interpreter
                 catch (Exception ex)
                 {
                     object? catchError = ex is ThrowException tex ? tex.Value : ex.Message;
-                    return (true, ExecutionResult.Throw(catchError));
+                    return (true, ExecutionResult.Throw(catchError, fromGuestThrow: ex is ThrowException));
                 }
             }
         }
-        return (false, ExecutionResult.Throw(errorValue));
+        return (false, ExecutionResult.Throw(errorValue, fromGuestThrow: !fromHostException));
     }
 
     /// <summary>
@@ -605,10 +612,14 @@ public partial class Interpreter
         }
         catch (Exception ex)
         {
-            // Treat host exceptions as guest throws
+            // A re-caught ThrowException is a genuine guest throw crossing back through a host
+            // frame (callback / interop / Promise executor) — bind it verbatim and keep its guest
+            // origin. Only a true host C# exception is host-translated and re-typed at the catch
+            // binding (#694), so derive fromHostException from the exception kind.
+            bool isGuestThrow = ex is ThrowException;
             object? errorValue = TranslateException(ex);
-            pendingResult = ExecutionResult.Throw(errorValue);
-            (exceptionHandled, pendingResult) = HandleCatchBlock(tryCatch, errorValue, fromHostException: true);
+            pendingResult = ExecutionResult.Throw(errorValue, fromGuestThrow: isGuestThrow);
+            (exceptionHandled, pendingResult) = HandleCatchBlock(tryCatch, errorValue, fromHostException: !isGuestThrow);
         }
 
         // Always execute finally
@@ -674,11 +685,11 @@ public partial class Interpreter
                 catch (Exception ex)
                 {
                     object? catchError = ex is ThrowException tex ? tex.Value : ex.Message;
-                    return (true, ExecutionResult.Throw(catchError));
+                    return (true, ExecutionResult.Throw(catchError, fromGuestThrow: ex is ThrowException));
                 }
             }
         }
-        return (false, ExecutionResult.Throw(errorValue));
+        return (false, ExecutionResult.Throw(errorValue, fromGuestThrow: !fromHostException));
     }
 
     /// <summary>
@@ -1310,10 +1321,13 @@ public partial class Interpreter
     /// to the catch binding, never the propagation path: an UNcaught host error must stay a
     /// string so <see cref="ThrowException.FromResult"/> surfaces it to the host as a plain
     /// <see cref="Exception"/> (e.g. an uncaught strict-mode violation).
-    /// Residual: a guest string thrown ACROSS a host frame (callback/interop) is flattened to
-    /// a plain host <see cref="Exception"/> by <see cref="ThrowException.FromResult"/>, so an
-    /// error-prefixed guest string crossing such a boundary is still coerced — indistinguishable
-    /// once stringified, and not exercised by real code.
+    /// Cross-boundary identity is preserved too: a guest string thrown ACROSS a host frame
+    /// (callback/interop/Promise executor) is carried by <see cref="ThrowException.FromResult"/>
+    /// as a <see cref="ThrowException"/> (not a flattened plain <see cref="Exception"/>) whenever
+    /// the originating <see cref="Execution.ExecutionResult"/> was a guest throw
+    /// (<see cref="Execution.ExecutionResult.FromGuestThrow"/>), so the re-catch derives
+    /// <c>fromHostException:false</c> from the exception kind and binds it verbatim — never
+    /// re-coerced.
     /// </remarks>
     internal object? CoerceCaughtValueForBinding(object? value)
         => value is string s && TryCreateGuestErrorFromMessage(s) is { } typedError

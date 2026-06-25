@@ -29,14 +29,24 @@ public class ThrowException : Exception
     /// Throw value at a function boundary. Object values (<see cref="SharpTSError"/>,
     /// <see cref="SharpTSObject"/>, <see cref="SharpTSInstance"/>, ...) become a
     /// <see cref="ThrowException"/> so guest <c>try/catch</c> and constructor-identity
-    /// checks see the original object. String values — which originate from
-    /// <c>TranslateException</c> of a plain host <see cref="Exception"/>
-    /// (strict-mode violations, most internal runtime errors) — stay as a plain
-    /// <see cref="Exception"/> so pre-existing C# callers that rely on
-    /// <c>catch(Exception)</c> with a stringified message (unit tests, CLI
-    /// output) keep observing the old shape.
+    /// checks see the original object.
+    /// <para>
+    /// String values are origin-sensitive. A HOST-translated string (a plain host
+    /// <see cref="Exception"/> surfaced via <c>TranslateException</c> — strict-mode
+    /// violations, most internal runtime errors) stays a plain <see cref="Exception"/>
+    /// so pre-existing C# callers relying on <c>catch(Exception)</c> with a stringified
+    /// message (unit tests, CLI output) keep observing the old shape, and an uncaught one
+    /// keeps propagating to the host as a plain <see cref="Exception"/>. A GUEST string
+    /// throw (<c>throw "TypeError: x"</c>) instead becomes a <see cref="ThrowException"/>
+    /// carrying the exact string as <see cref="Value"/>, so when it crosses a host frame
+    /// (callback / interop / Promise executor) a downstream guest <c>catch</c> binds it
+    /// verbatim rather than re-typing it (the cross-boundary residual of #694).
+    /// </para>
     /// </summary>
-    public static Exception FromResult(object? value) => value is string s
+    public static Exception FromResult(object? value) => FromResult(value, fromGuestThrow: false);
+
+    /// <inheritdoc cref="FromResult(object?)"/>
+    public static Exception FromResult(object? value, bool fromGuestThrow) => value is string s && !fromGuestThrow
         ? new Exception(s)
         : new ThrowException(value);
 

@@ -231,7 +231,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             // string, which breaks `e.message`/`e.name` at any .NET-interop boundary
             // (delegate callbacks, reflected calls) where the error can't round-trip
             // through ExecutionResult.
-            throw ThrowException.FromResult(result.Value.ToObject());
+            throw ThrowException.FromResult(result.Value.ToObject(), result.FromGuestThrow);
         }
 
         // A function that completes without an explicit `return <expr>` evaluates
@@ -347,7 +347,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
             // stack see the actual thrown object rather than a stringified
             // message. Without this, `catch (e) { e.constructor === TypeError }`
             // breaks for any throw that crosses a function-call boundary.
-            throw ThrowException.FromResult(result.Value.ToObject());
+            throw ThrowException.FromResult(result.Value.ToObject(), result.FromGuestThrow);
         }
 
         return RuntimeValue.Undefined;
@@ -578,7 +578,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             if (result.Type == ExecutionResult.ResultType.Throw)
             {
                 // See SharpTSFunction.Call — preserve original thrown value.
-                throw ThrowException.FromResult(result.Value.ToObject());
+                throw ThrowException.FromResult(result.Value.ToObject(), result.FromGuestThrow);
             }
         }
 
@@ -652,7 +652,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             // stack see the actual thrown object rather than a stringified
             // message. Without this, `catch (e) { e.constructor === TypeError }`
             // breaks for any throw that crosses a function-call boundary.
-            throw ThrowException.FromResult(result.Value.ToObject());
+            throw ThrowException.FromResult(result.Value.ToObject(), result.FromGuestThrow);
             }
         }
 

@@ -558,9 +558,19 @@ The following stdlib TS files carry workarounds for compiler gaps that surfaced 
 - `stdlib/node/async_hooks.ts` (`run`, `exit`) — drops the optional `...args` parameter; the underlying `SharpTSAsyncLocalStorage` still supports it. No current tests exercise this path.
 - Default parameters through `$TSFunction.Invoke` only apply for reference-type params. Value-type defaults (`x: number = 5` on a module export) silently receive `0` / `false` / `0n`; stdlib authors use `param?: T` + `??` — see `stdlib/CONTRIBUTING.md`.
 
-### Known regression (2026-04-18, partially resolved 2026-06-23)
+### Resolved: guest-error identity (2026-04-18 regression → fully resolved 2026-06-24)
 
-- Guest `throw` of a *string* value can lose its `Error` identity when it crosses a host function frame: `ThrowException.FromResult` flattens a guest string throw to a plain CLR `Exception`, so a downstream `catch (e)` may bind a bare string instead of the original error object. The *same-scope* catch-binding half was fixed in PR #906 — `TimersPromises_SetInterval_AbortSignal_PreAborted` now runs and passes in **both** interpreter and compiled modes (it is no longer skipped). The remaining residual is the *cross-boundary* `FromResult` flatten (`Runtime/Exceptions/ThrowException.cs`); the proper fix unifies guest-error identity across the function-call boundary.
+- Guest `throw` of a *string* value previously lost its `Error` identity when it crossed a host
+  function frame: `ThrowException.FromResult` flattened a guest string throw to a plain CLR
+  `Exception`, so a downstream `catch (e)` re-typed it (an error-prefixed string was bound as a
+  typed `Error` instead of the verbatim string). The *same-scope* half was fixed in PR #906
+  (`TimersPromises_SetInterval_AbortSignal_PreAborted` no longer skipped). The *cross-boundary*
+  residual is now fixed: `ExecutionResult` carries a `FromGuestThrow` origin bit, threaded so
+  `ThrowException.FromResult` keeps a guest string throw as an identity-carrying `ThrowException`
+  (only genuinely host-translated strings stay a plain `Exception`), and the re-catch derives
+  `fromHostException` from the exception kind. Guest string throws now survive plain function-call,
+  host-callback, and Promise-executor boundaries verbatim in the interpreter — matching compiled
+  mode and Node. See `SharpTS.Tests/SharedTests/CaughtErrorIdentityTests.cs`.
 
 ---
 

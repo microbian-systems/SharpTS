@@ -98,7 +98,7 @@ public class SharpTSAsyncFunction : ISharpTSAsyncCallable, ITypeCategorized
         {
             // Propagate the original throw value through ThrowException — see
             // SharpTSFunction.Call for the full rationale.
-            throw ThrowException.FromResult(result.Value.ToObject());
+            throw ThrowException.FromResult(result.Value.ToObject(), result.FromGuestThrow);
         }
 
         // Falling off the end of the body completes the async function with `undefined`, not
@@ -251,7 +251,7 @@ public class SharpTSAsyncArrowFunction : ISharpTSAsyncCallable, ITypeCategorized
             {
                 // Propagate the original throw value through ThrowException — see
             // SharpTSFunction.Call for the full rationale.
-            throw ThrowException.FromResult(result.Value.ToObject());
+            throw ThrowException.FromResult(result.Value.ToObject(), result.FromGuestThrow);
             }
         }
 
