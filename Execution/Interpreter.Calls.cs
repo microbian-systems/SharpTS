@@ -987,10 +987,10 @@ public partial class Interpreter
     /// Async version of logical operation core logic.
     /// Uses lazy evaluation via Func delegate to preserve short-circuit semantics.
     /// </summary>
-    private async Task<RuntimeValue> EvaluateLogicalCoreAsync(
+    private async ValueTask<RuntimeValue> EvaluateLogicalCoreAsync(
         TokenType op,
-        Task<RuntimeValue> leftTask,
-        Func<Task<RuntimeValue>> evaluateRightAsync)
+        ValueTask<RuntimeValue> leftTask,
+        Func<ValueTask<RuntimeValue>> evaluateRightAsync)
     {
         var left = await leftTask;
         if (op == TokenType.OR_OR)
@@ -1002,9 +1002,9 @@ public partial class Interpreter
     /// Async version of nullish coalescing core logic.
     /// Uses lazy evaluation via Func delegate to preserve short-circuit semantics.
     /// </summary>
-    private async Task<RuntimeValue> EvaluateNullishCoalescingCoreAsync(
-        Task<RuntimeValue> leftTask,
-        Func<Task<RuntimeValue>> evaluateRightAsync)
+    private async ValueTask<RuntimeValue> EvaluateNullishCoalescingCoreAsync(
+        ValueTask<RuntimeValue> leftTask,
+        Func<ValueTask<RuntimeValue>> evaluateRightAsync)
     {
         var left = await leftTask;
         return left.IsNullish
@@ -1016,10 +1016,10 @@ public partial class Interpreter
     /// Async version of ternary operation core logic.
     /// Uses lazy evaluation via Func delegates to ensure only one branch is evaluated.
     /// </summary>
-    private async Task<RuntimeValue> EvaluateTernaryCoreAsync(
-        Task<RuntimeValue> conditionTask,
-        Func<Task<RuntimeValue>> evalThenAsync,
-        Func<Task<RuntimeValue>> evalElseAsync)
+    private async ValueTask<RuntimeValue> EvaluateTernaryCoreAsync(
+        ValueTask<RuntimeValue> conditionTask,
+        Func<ValueTask<RuntimeValue>> evalThenAsync,
+        Func<ValueTask<RuntimeValue>> evalElseAsync)
     {
         var condition = await conditionTask;
         return IsTruthy(condition)
