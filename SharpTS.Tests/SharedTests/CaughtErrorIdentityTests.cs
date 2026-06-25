@@ -70,4 +70,63 @@ public class CaughtErrorIdentityTests
 
         Assert.Equal("Error\nBigInt exponent must be non-negative.\n", TestHarness.Run(source, mode));
     }
+
+    // ---- Cross-boundary residual (#694 follow-up) ----------------------------------------------
+    // A guest `throw "TypeError: x"` that crosses a host C# frame (a plain function-call return,
+    // a host built-in callback, a Promise executor) must still be caught verbatim as a string —
+    // not flattened to a host Exception and re-typed at the downstream catch. These crossed the
+    // boundary correctly in compiled mode already; the fix brings the interpreter to parity.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GuestStringThrow_AcrossFunctionCall_IsCaughtVerbatim(ExecutionMode mode)
+    {
+        var source = """
+            function f(): void { throw "TypeError: via-fn"; }
+            try { f(); }
+            catch (e: any) {
+              console.log(typeof e);
+              console.log(e instanceof Error);
+              console.log(e);
+            }
+            """;
+
+        Assert.Equal("string\nfalse\nTypeError: via-fn\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GuestStringThrow_AcrossHostCallback_IsCaughtVerbatim(ExecutionMode mode)
+    {
+        // Array.forEach invokes the guest callback through a host frame — the throw must cross it
+        // without losing its string identity.
+        var source = """
+            try { [1].forEach(() => { throw "TypeError: in-forEach"; }); }
+            catch (e: any) {
+              console.log(typeof e);
+              console.log(e instanceof Error);
+              console.log(e);
+            }
+            """;
+
+        Assert.Equal("string\nfalse\nTypeError: in-forEach\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void GuestErrorObject_AcrossHostCallback_KeepsIdentity(ExecutionMode mode)
+    {
+        // Anchor: a genuine Error object thrown across the same host frame must remain an Error
+        // (the object path was never broken — this guards against the fix over-correcting).
+        var source = """
+            try { [1].forEach(() => { throw new RangeError("boom"); }); }
+            catch (e: any) {
+              console.log(typeof e);
+              console.log(e instanceof Error);
+              console.log(e instanceof RangeError);
+            }
+            """;
+
+        Assert.Equal("object\ntrue\ntrue\n", TestHarness.Run(source, mode));
+    }
 }
