@@ -18,6 +18,80 @@ namespace SharpTS.Compilation;
 public static class ForLoopAnalyzer
 {
     /// <summary>
+    /// Integer loop-counter prototype gate (#928). When enabled, a provably-integer monotonic
+    /// loop counter is backed by a native <c>Int64</c> slot instead of a <c>double</c> — its
+    /// increment stays native int and recognized index sites (<c>a[i]</c>, <c>a[i±k]</c>) consume
+    /// it directly, closing the typed-array kernel gap to Node. Off by default (zero behavior
+    /// change); opt in with <c>SHARPTS_INT_LOOP_COUNTER=1</c> while the prototype is validated.
+    /// </summary>
+    public static readonly bool IntegerCounterEnabled =
+        Environment.GetEnvironmentVariable("SHARPTS_INT_LOOP_COUNTER") == "1";
+
+    /// <summary>
+    /// Identifies a for-loop counter eligible for the native <c>Int64</c> representation, or null.
+    /// Stricter than <see cref="Analyze"/>: requires an INTEGER-literal initializer, a pure
+    /// <c>++</c>/<c>--</c> step, a numeric condition, no closure capture, and no reassignment or
+    /// re-declaration of the counter anywhere in the body (so it only ever changes by ±1). Unlike
+    /// <see cref="Analyze"/> it does NOT bail on an explicit <c>: number</c> annotation — the common
+    /// real-world / benchmark form <c>for (let i: number = 0; i &lt; n; i++)</c> must qualify.
+    ///
+    /// Soundness: TS <c>number</c> is a double, but an integer counter stepping by ±1 stays exactly
+    /// representable as both <c>long</c> and <c>double</c> for any loop that terminates in finite
+    /// time (≤ 2^53), so reads materialized as <c>conv.r8</c> are bit-identical to today's double
+    /// counter. Values only ever observed as doubles; no native-int arithmetic is exposed.
+    /// </summary>
+    public static string? AnalyzeIntegerCounter(Stmt.For forLoop, ClosureAnalyzer? closureAnalyzer)
+    {
+        if (forLoop.Initializer is not Stmt.Var varDecl)
+            return null;
+
+        string varName = varDecl.Name.Lexeme;
+
+        // Initializer must be an INTEGER literal (0, 1, -1, …).
+        if (!TryGetNumericLiteral(varDecl.Initializer, out double initialValue))
+            return null;
+        if (double.IsNaN(initialValue) || double.IsInfinity(initialValue)
+            || initialValue != Math.Truncate(initialValue))
+            return null;
+
+        // Step must be exactly ++ or -- on the counter (prototype scope: no += / i = i + k yet).
+        if (forLoop.Increment is not (Expr.PostfixIncrement or Expr.PrefixIncrement)
+            || !IsSimpleIncDecOf(forLoop.Increment, varName))
+            return null;
+
+        // Must not be captured by a closure (a captured counter needs the boxed/cell representation).
+        if (closureAnalyzer != null && closureAnalyzer.IsVariableCaptured(varName))
+            return null;
+        if (ContainsPotentialCapture(forLoop.Body, varName))
+            return null;
+
+        // Condition must use the counter in numeric comparisons.
+        if (forLoop.Condition != null && !IsNumericComparison(forLoop.Condition, varName))
+            return null;
+
+        // The counter must change ONLY via the increment clause: bail if the body reassigns,
+        // compound-assigns, ++/-- s, or re-declares it (e.g. a shadowing nested loop counter).
+        if (CounterMutatedInBody(forLoop.Body, varName))
+            return null;
+
+        return varName;
+    }
+
+    private static bool IsSimpleIncDecOf(Expr increment, string varName) => increment switch
+    {
+        Expr.PostfixIncrement pi => IsVariableReference(pi.Operand, varName),
+        Expr.PrefixIncrement pri => IsVariableReference(pri.Operand, varName),
+        _ => false
+    };
+
+    private static bool CounterMutatedInBody(Stmt body, string varName)
+    {
+        var v = new CounterMutationVisitor(varName);
+        v.Visit(body);
+        return v.Mutated;
+    }
+
+    /// <summary>
     /// Result of analyzing a for loop for unboxed counter optimization.
     /// </summary>
     public readonly struct AnalysisResult
@@ -275,6 +349,51 @@ public static class ForLoopAnalyzer
                 HasPotentialCapture = true;
             }
             base.VisitAssign(expr);
+        }
+    }
+
+    /// <summary>
+    /// Flags any mutation of the named counter inside a loop body: assignment, compound-assignment,
+    /// ++/--, or re-declaration (a shadowing nested-loop counter of the same name). Used by
+    /// <see cref="AnalyzeIntegerCounter"/> to guarantee the counter only ever changes by the
+    /// loop's ±1 increment clause, so the native Int64 representation can never observe a
+    /// non-integer or out-of-step value.
+    /// </summary>
+    private class CounterMutationVisitor : Parsing.Visitors.AstVisitorBase
+    {
+        private readonly string _varName;
+        public bool Mutated { get; private set; }
+
+        public CounterMutationVisitor(string varName) => _varName = varName;
+
+        protected override void VisitAssign(Expr.Assign expr)
+        {
+            if (expr.Name.Lexeme == _varName) Mutated = true;
+            base.VisitAssign(expr);
+        }
+
+        protected override void VisitCompoundAssign(Expr.CompoundAssign expr)
+        {
+            if (expr.Name.Lexeme == _varName) Mutated = true;
+            base.VisitCompoundAssign(expr);
+        }
+
+        protected override void VisitPrefixIncrement(Expr.PrefixIncrement expr)
+        {
+            if (IsVariableReference(expr.Operand, _varName)) Mutated = true;
+            base.VisitPrefixIncrement(expr);
+        }
+
+        protected override void VisitPostfixIncrement(Expr.PostfixIncrement expr)
+        {
+            if (IsVariableReference(expr.Operand, _varName)) Mutated = true;
+            base.VisitPostfixIncrement(expr);
+        }
+
+        protected override void VisitVar(Stmt.Var stmt)
+        {
+            if (stmt.Name.Lexeme == _varName) Mutated = true;
+            base.VisitVar(stmt);
         }
     }
 }

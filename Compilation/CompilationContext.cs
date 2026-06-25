@@ -64,6 +64,12 @@ public partial class CompilationContext
     /// </summary>
     public TypeProvider Types { get; }
 
+    // Integer loop-counter prototype (#928, gated by SHARPTS_INT_LOOP_COUNTER): names of locals
+    // currently backed by a native Int64 slot because they are provably-integer monotonic loop
+    // counters. Reads convert to double on load; the increment and recognized index sites consume
+    // the int directly. Populated/cleared per loop scope by EmitFor/EmitVarStatement.
+    public HashSet<string> IntegerCounterLocals { get; } = new();
+
     // Emitted runtime types and methods (for standalone DLLs)
     public EmittedRuntime? Runtime { get; set; }
 

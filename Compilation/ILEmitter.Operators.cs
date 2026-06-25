@@ -866,10 +866,112 @@ public partial class ILEmitter
         SetStackUnknown();
     }
 
+    // ===== Integer loop-counter prototype (#928) — gated by SHARPTS_INT_LOOP_COUNTER =====
+
+    /// <summary>True iff <paramref name="name"/> is a loop counter currently backed by a native Int64 slot.</summary>
+    private bool IsIntegerCounterLocal(string name)
+        => _ctx.IntegerCounterLocals.Contains(name)
+           && _ctx.Locals.GetLocalType(name) == _ctx.Types.Int64;
+
+    /// <summary>
+    /// Pushes a typed-array/array index as a native int32. When the index is an integer-counter
+    /// expression (the counter, or counter ± integer literal), emits it in native int — skipping the
+    /// <c>EmitExpressionAsDouble + Conv_I4</c> round trip and the double induction-variable tax that
+    /// dominates typed-array kernels (#928). Produces the identical int32 for the in-range values a
+    /// ±1 loop counter takes, so this is a pure representation choice. Falls back otherwise.
+    /// </summary>
+    private void EmitIndexAsInt32(Expr index)
+    {
+        if (TryEmitIntegerCounterIndexI4(index)) return;
+        EmitExpressionAsDouble(index);
+        IL.Emit(OpCodes.Conv_I4);
+    }
+
+    private bool TryEmitIntegerCounterIndexI4(Expr index)
+    {
+        switch (index)
+        {
+            // a[i]
+            case Expr.Variable v when IsIntegerCounterLocal(v.Name.Lexeme):
+                IL.Emit(OpCodes.Ldloc, _ctx.Locals.GetLocal(v.Name.Lexeme)!);
+                IL.Emit(OpCodes.Conv_I4);
+                return true;
+
+            // a[i + k] / a[i - k]  (counter left, integer literal right)
+            case Expr.Binary { Operator.Type: TokenType.PLUS or TokenType.MINUS } b
+                when b.Left is Expr.Variable lv && IsIntegerCounterLocal(lv.Name.Lexeme)
+                     && TryGetIntLiteralValue(b.Right, out long k):
+                IL.Emit(OpCodes.Ldloc, _ctx.Locals.GetLocal(lv.Name.Lexeme)!);
+                IL.Emit(OpCodes.Ldc_I8, k);
+                IL.Emit(b.Operator.Type == TokenType.PLUS ? OpCodes.Add : OpCodes.Sub);
+                IL.Emit(OpCodes.Conv_I4);
+                return true;
+
+            // a[k + i]  (commutative addition, counter right)
+            case Expr.Binary { Operator.Type: TokenType.PLUS } b2
+                when b2.Right is Expr.Variable rv && IsIntegerCounterLocal(rv.Name.Lexeme)
+                     && TryGetIntLiteralValue(b2.Left, out long k2):
+                IL.Emit(OpCodes.Ldloc, _ctx.Locals.GetLocal(rv.Name.Lexeme)!);
+                IL.Emit(OpCodes.Ldc_I8, k2);
+                IL.Emit(OpCodes.Add);
+                IL.Emit(OpCodes.Conv_I4);
+                return true;
+        }
+        return false;
+    }
+
+    private static bool TryGetIntLiteralValue(Expr e, out long value)
+    {
+        value = 0;
+        double d;
+        if (e is Expr.Literal { Value: double lit }) d = lit;
+        else if (e is Expr.Unary { Operator.Type: TokenType.MINUS, Right: Expr.Literal { Value: double neg } }) d = -neg;
+        else return false;
+        if (double.IsNaN(d) || double.IsInfinity(d) || d != Math.Truncate(d)) return false;
+        value = (long)d;
+        return true;
+    }
+
+    /// <summary>
+    /// Native int64 increment for an integer-counter local: <c>i++</c>/<c>i--</c> (postfix) or
+    /// <c>++i</c>/<c>--i</c> (prefix). Mutates the slot in place and leaves the postfix-old /
+    /// prefix-new value as a double (the numeric expression result). The counter is provably
+    /// non-captured (analyzer), so the cell / display-class write-backs of the general path are
+    /// unnecessary here.
+    /// </summary>
+    private void EmitIntegerCounterIncrement(string name, bool isPlus, bool postfix)
+    {
+        var local = _ctx.Locals.GetLocal(name)!;
+        IL.Emit(OpCodes.Ldloc, local);
+        if (postfix)
+        {
+            IL.Emit(OpCodes.Dup);                            // old, old
+            IL.Emit(OpCodes.Ldc_I8, 1L);
+            IL.Emit(isPlus ? OpCodes.Add : OpCodes.Sub);     // old, new
+            IL.Emit(OpCodes.Stloc, local);                   // old
+        }
+        else
+        {
+            IL.Emit(OpCodes.Ldc_I8, 1L);
+            IL.Emit(isPlus ? OpCodes.Add : OpCodes.Sub);     // new
+            IL.Emit(OpCodes.Dup);                            // new, new
+            IL.Emit(OpCodes.Stloc, local);                   // new
+        }
+        IL.Emit(OpCodes.Conv_R8);
+        SetStackType(StackType.Double);
+    }
+
     protected override void EmitPrefixIncrement(Expr.PrefixIncrement pi)
     {
         if (pi.Operand is Expr.Variable v)
         {
+            // Integer loop-counter prototype (#928): native int64 increment, no double/box round trip.
+            if (IsIntegerCounterLocal(v.Name.Lexeme))
+            {
+                EmitIntegerCounterIncrement(v.Name.Lexeme, isPlus: pi.Operator.Type == TokenType.PLUS_PLUS, postfix: false);
+                return;
+            }
+
             // Check if this is a typed double local
             var localType = _ctx.Locals.GetLocalType(v.Name.Lexeme);
             bool isTypedDouble = localType != null && _ctx.Types.IsDouble(localType);
@@ -1185,6 +1287,13 @@ public partial class ILEmitter
     {
         if (pi.Operand is Expr.Variable v)
         {
+            // Integer loop-counter prototype (#928): native int64 increment, no double/box round trip.
+            if (IsIntegerCounterLocal(v.Name.Lexeme))
+            {
+                EmitIntegerCounterIncrement(v.Name.Lexeme, isPlus: pi.Operator.Type == TokenType.PLUS_PLUS, postfix: true);
+                return;
+            }
+
             // Check if this is a typed double local
             var localType = _ctx.Locals.GetLocalType(v.Name.Lexeme);
             bool isTypedDouble = localType != null && _ctx.Types.IsDouble(localType);
@@ -1694,9 +1803,8 @@ public partial class ILEmitter
             var recvLocal = IL.DeclareLocal(ctaType);
             IL.Emit(OpCodes.Stloc, recvLocal);
 
-            // idx = (int)i
-            EmitExpressionAsDouble(csi.Index);
-            IL.Emit(OpCodes.Conv_I4);
+            // idx = (int)i  (native-int fast path when the index is an integer loop counter, #928)
+            EmitIndexAsInt32(csi.Index);
             var idxLocal = IL.DeclareLocal(_ctx.Types.Int32);
             IL.Emit(OpCodes.Stloc, idxLocal);
 

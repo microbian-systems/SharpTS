@@ -883,8 +883,8 @@ public partial class ILEmitter
             EmitExpression(gi.Object);
             EnsureBoxed();
             IL.Emit(OpCodes.Castclass, gtaType);
-            EmitExpressionAsDouble(gi.Index);
-            IL.Emit(OpCodes.Conv_I4);
+            // Native-int fast path when the index is an integer loop counter (#928).
+            EmitIndexAsInt32(gi.Index);
             // Non-virtual call to the sealed-type accessor → the JIT inlines it (AggressiveInlining)
             // so the receiver's _buffer load and the element bounds check can hoist out of loops.
             IL.Emit(OpCodes.Call, taGetU);
@@ -1088,8 +1088,8 @@ public partial class ILEmitter
             && _ctx.Runtime!.TypedArraySetUnboxedByElement.TryGetValue(sta.ElementType, out var taSetU)
             && _ctx.TypeMap?.Get(si.Value) is TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER } or TypeInfo.NumberLiteral)
         {
-            EmitExpressionAsDouble(si.Index);
-            IL.Emit(OpCodes.Conv_I4);
+            // Native-int fast path when the index is an integer loop counter (#928).
+            EmitIndexAsInt32(si.Index);
             var idxLocal = IL.DeclareLocal(_ctx.Types.Int32);
             IL.Emit(OpCodes.Stloc, idxLocal);
 
