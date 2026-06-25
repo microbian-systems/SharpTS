@@ -887,6 +887,24 @@ public partial class ILEmitter
         IL.Emit(OpCodes.Conv_I4);
     }
 
+    /// <summary>
+    /// Emits a typed-array receiver onto the stack as its concrete <c>$XArray</c> type: the hoisted
+    /// loop-invariant local when one is available (#928 — cast once per loop), otherwise the
+    /// per-access <c>ldloc; EnsureBoxed; castclass</c>. Eliminating the per-access cast is what,
+    /// together with the native-int counter, closes the typed-array read-stencil gap.
+    /// </summary>
+    private void EmitTypedArrayReceiver(Expr receiver, Type xArrayType)
+    {
+        if (receiver is Expr.Variable rv && _ctx.TryGetHoistedTypedArray(rv.Name.Lexeme) is { } h)
+        {
+            IL.Emit(OpCodes.Ldloc, h.TypedLocal);
+            return;
+        }
+        EmitExpression(receiver);
+        EnsureBoxed();
+        IL.Emit(OpCodes.Castclass, xArrayType);
+    }
+
     private bool TryEmitIntegerCounterIndexI4(Expr index)
     {
         switch (index)
@@ -1796,12 +1814,21 @@ public partial class ILEmitter
             && _ctx.TypeMap?.Get(csi.Value) is TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER } or TypeInfo.NumberLiteral
             && IsArithmeticOrBitwiseCompound(csi.Operator.Type))
         {
-            // recv = (TAType)a  — side-effect-free variable, loaded once
-            EmitExpression(csi.Object);
-            EnsureBoxed();
-            IL.Emit(OpCodes.Castclass, ctaType);
-            var recvLocal = IL.DeclareLocal(ctaType);
-            IL.Emit(OpCodes.Stloc, recvLocal);
+            // recv = (TAType)a  — side-effect-free variable, loaded once. Reuse the loop-hoisted
+            // typed local directly when available (#928), else cast once into a fresh recvLocal.
+            LocalBuilder recvLocal;
+            if (csi.Object is Expr.Variable cv && _ctx.TryGetHoistedTypedArray(cv.Name.Lexeme) is { } choist)
+            {
+                recvLocal = choist.TypedLocal;
+            }
+            else
+            {
+                EmitExpression(csi.Object);
+                EnsureBoxed();
+                IL.Emit(OpCodes.Castclass, ctaType);
+                recvLocal = IL.DeclareLocal(ctaType);
+                IL.Emit(OpCodes.Stloc, recvLocal);
+            }
 
             // idx = (int)i  (native-int fast path when the index is an integer loop counter, #928)
             EmitIndexAsInt32(csi.Index);

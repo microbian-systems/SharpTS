@@ -880,9 +880,8 @@ public partial class ILEmitter
             && _ctx.Runtime!.GetTypedArrayType(gta.ElementType) is { } gtaType
             && _ctx.Runtime!.TypedArrayGetUnboxedByElement.TryGetValue(gta.ElementType, out var taGetU))
         {
-            EmitExpression(gi.Object);
-            EnsureBoxed();
-            IL.Emit(OpCodes.Castclass, gtaType);
+            // Receiver: hoisted loop-invariant cast when available, else per-access cast (#928).
+            EmitTypedArrayReceiver(gi.Object, gtaType);
             // Native-int fast path when the index is an integer loop counter (#928).
             EmitIndexAsInt32(gi.Index);
             // Non-virtual call to the sealed-type accessor → the JIT inlines it (AggressiveInlining)
@@ -1098,9 +1097,8 @@ public partial class ILEmitter
             var valLocal = IL.DeclareLocal(_ctx.Types.Double);
             IL.Emit(OpCodes.Stloc, valLocal);
 
-            EmitExpression(si.Object);
-            EnsureBoxed();
-            IL.Emit(OpCodes.Castclass, staType);
+            // Receiver: hoisted loop-invariant cast when available, else per-access cast (#928).
+            EmitTypedArrayReceiver(si.Object, staType);
             IL.Emit(OpCodes.Ldloc, idxLocal);
             IL.Emit(OpCodes.Ldloc, valLocal);
             // Non-virtual call to the sealed-type accessor → the JIT inlines it (AggressiveInlining).

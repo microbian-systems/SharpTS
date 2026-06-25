@@ -608,6 +608,8 @@ public partial class ILEmitter
 
             // Array hoist preamble: emit isinst checks for loop-invariant arrays
             var hoisted = EmitArrayHoistPreamble(f.Body, f.Condition, f.Increment);
+            // Typed-array receiver hoist (#928): cast loop-invariant numeric TypedArray receivers once.
+            var taHoisted = EmitTypedArrayHoistPreamble(f.Body, f.Condition, f.Increment);
 
             var builder = _ctx.ILBuilder;
             var startLabel = builder.DefineLabel("for_start");
@@ -648,6 +650,7 @@ public partial class ILEmitter
 
             // Pop hoisted cache
             if (hoisted) _ctx.HoistedArrayCaches.Pop();
+            if (taHoisted) _ctx.HoistedTypedArrayCaches.Pop();
 
             if (activeCells != null)
                 foreach (var (name, prior) in activeCells)
@@ -718,6 +721,8 @@ public partial class ILEmitter
     {
         // Array hoist preamble before loop
         var hoisted = EmitArrayHoistPreamble(w.Body, w.Condition, increment: null);
+        // Typed-array receiver hoist (#928): cast loop-invariant numeric TypedArray receivers once.
+        var taHoisted = EmitTypedArrayHoistPreamble(w.Body, w.Condition, increment: null);
 
         var builder = _ctx.ILBuilder;
         var startLabel = builder.DefineLabel("while_start");
@@ -737,6 +742,7 @@ public partial class ILEmitter
         _ctx.ExitLoop();
 
         if (hoisted) _ctx.HoistedArrayCaches.Pop();
+        if (taHoisted) _ctx.HoistedTypedArrayCaches.Pop();
     }
 
     /// <summary>
@@ -779,6 +785,51 @@ public partial class ILEmitter
         }
 
         _ctx.HoistedArrayCaches.Push(cache);
+        return true;
+    }
+
+    /// <summary>
+    /// Typed-array receiver hoist (#928): for each loop-invariant variable statically typed as a
+    /// numeric TypedArray and used as an index receiver, cast it to its concrete <c>$XArray</c> type
+    /// ONCE before the loop into a typed local. The element index fast paths then load that local
+    /// instead of re-emitting <c>ldloc; castclass $XArray</c> on every access — which, combined with
+    /// the native-int counter, is what closes the typed-array kernel gap. Returns true if anything
+    /// was hoisted (caller must pop the cache). Gated on the same flag as the int-counter prototype
+    /// so the two ship together.
+    /// </summary>
+    private bool EmitTypedArrayHoistPreamble(Stmt body, Expr? condition, Expr? increment)
+    {
+        if (!ForLoopAnalyzer.IntegerCounterEnabled || _ctx.Runtime == null) return false;
+
+        var candidates = TypedArrayHoistAnalyzer.AnalyzeFor(body, condition, increment, _ctx.TypeMap);
+        if (candidates.Count == 0) return false;
+
+        Dictionary<string, HoistedTypedArrayEntry>? cache = null;
+        foreach (var (varName, elementType) in candidates)
+        {
+            // Skip variables already hoisted by an outer loop.
+            if (_ctx.TryGetHoistedTypedArray(varName) != null) continue;
+            // Only numeric typed arrays with unboxed accessors take the fast path (BigInt /
+            // Uint8Clamped fall through to boxed GetIndex, so a hoisted local would be dead).
+            if (_ctx.Runtime.GetTypedArrayType(elementType) is not { } xArrayType) continue;
+            if (!_ctx.Runtime.TypedArrayGetUnboxedByElement.ContainsKey(elementType)) continue;
+
+            var arrLocal = _ctx.Locals.GetLocal(varName);
+            if (arrLocal == null) continue; // captured / not a plain local — leave to the per-access path
+
+            // castclass (not isinst) mirrors the per-access fast path exactly: the static type is
+            // TypedArray, so a correctly-typed value never throws; null casts to null as before.
+            var typedLocal = IL.DeclareLocal(xArrayType);
+            IL.Emit(OpCodes.Ldloc, arrLocal);
+            IL.Emit(OpCodes.Castclass, xArrayType);
+            IL.Emit(OpCodes.Stloc, typedLocal);
+
+            cache ??= new Dictionary<string, HoistedTypedArrayEntry>();
+            cache[varName] = new HoistedTypedArrayEntry(typedLocal, xArrayType, elementType);
+        }
+
+        if (cache == null) return false;
+        _ctx.HoistedTypedArrayCaches.Push(cache);
         return true;
     }
 

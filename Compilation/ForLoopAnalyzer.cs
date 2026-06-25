@@ -59,19 +59,30 @@ public static class ForLoopAnalyzer
             || !IsSimpleIncDecOf(forLoop.Increment, varName))
             return null;
 
-        // Must not be captured by a closure (a captured counter needs the boxed/cell representation).
-        if (closureAnalyzer != null && closureAnalyzer.IsVariableCaptured(varName))
+        // Must not be captured by a closure (a captured counter needs the boxed/cell representation,
+        // not a native Int64 slot). A `let`/`const` counter is block-scoped to the loop, so any
+        // capturing closure is lexically inside the body / condition / increment — detect that
+        // PRECISELY. The global, name-keyed ClosureAnalyzer.IsVariableCaptured bails whenever ANY
+        // closure anywhere in the whole bundled program captures a same-named variable, which
+        // silently disabled this optimization across multi-module programs (the #928 coverage gap).
+        // A `var` counter is function-scoped and may be captured AFTER the loop, where the precise
+        // scan can't see it, so keep the conservative global check for that (uncommon) case.
+        if (varDecl.IsVar && closureAnalyzer != null && closureAnalyzer.IsVariableCaptured(varName))
             return null;
-        if (ContainsPotentialCapture(forLoop.Body, varName))
+        if (ContainsPotentialCapture(forLoop.Body, varName)
+            || (forLoop.Condition != null && ContainsPotentialCaptureExpr(forLoop.Condition, varName))
+            || (forLoop.Increment != null && ContainsPotentialCaptureExpr(forLoop.Increment, varName)))
             return null;
 
         // Condition must use the counter in numeric comparisons.
         if (forLoop.Condition != null && !IsNumericComparison(forLoop.Condition, varName))
             return null;
 
-        // The counter must change ONLY via the increment clause: bail if the body reassigns,
-        // compound-assigns, ++/-- s, or re-declares it (e.g. a shadowing nested loop counter).
-        if (CounterMutatedInBody(forLoop.Body, varName))
+        // The counter must change ONLY via the ++/-- increment clause: bail if the body or
+        // condition reassigns, compound-assigns, ++/-- s, or re-declares it (a shadowing nested
+        // counter). The increment clause itself is the validated ++/-- step, so it is not scanned.
+        if (CounterMutatedInBody(forLoop.Body, varName)
+            || (forLoop.Condition != null && CounterMutatedInExpr(forLoop.Condition, varName)))
             return null;
 
         return varName;
@@ -89,6 +100,20 @@ public static class ForLoopAnalyzer
         var v = new CounterMutationVisitor(varName);
         v.Visit(body);
         return v.Mutated;
+    }
+
+    private static bool CounterMutatedInExpr(Expr expr, string varName)
+    {
+        var v = new CounterMutationVisitor(varName);
+        v.VisitExpr(expr);
+        return v.Mutated;
+    }
+
+    private static bool ContainsPotentialCaptureExpr(Expr expr, string varName)
+    {
+        var v = new CaptureCheckVisitor(varName);
+        v.VisitExpr(expr);
+        return v.HasPotentialCapture;
     }
 
     /// <summary>
@@ -316,6 +341,8 @@ public static class ForLoopAnalyzer
             _varName = varName;
         }
 
+        public void VisitExpr(Expr expr) => Visit(expr);
+
         protected override void VisitArrowFunction(Expr.ArrowFunction expr)
         {
             // Enter a function scope and check for references
@@ -365,6 +392,8 @@ public static class ForLoopAnalyzer
         public bool Mutated { get; private set; }
 
         public CounterMutationVisitor(string varName) => _varName = varName;
+
+        public void VisitExpr(Expr expr) => Visit(expr);
 
         protected override void VisitAssign(Expr.Assign expr)
         {
