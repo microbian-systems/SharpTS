@@ -77,20 +77,44 @@ public class ErrorTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Error_StringCoercion_InvokesToString(ExecutionMode mode)
     {
-        // #922: String(e), "" + e and `${e}` must dispatch to Error.toString()
-        // (like e.toString() and Node), not fall back to a placeholder. Was
-        // interpreter-only broken ("RangeError instance" / "[object RangeError]");
-        // compiled was already correct — this pins both.
+        // String(e), `${e}` and "" + e must all go through Error.prototype.toString
+        // ("Name: message"), matching Node — not "TypeError instance" / "[object TypeError]".
         var source = @"
-            const e = new RangeError('real range error');
+            let e = new TypeError('boom');
             console.log(String(e));
-            console.log('' + e);
             console.log(`${e}`);
-            console.log(e.toString());
+            console.log('' + e);
         ";
         var output = TestHarness.Run(source, mode);
-        const string expected = "RangeError: real range error\n";
-        Assert.Equal(expected + expected + expected + expected, output);
+        Assert.Equal("TypeError: boom\nTypeError: boom\nTypeError: boom\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_StringCoercion_NoMessage(ExecutionMode mode)
+    {
+        var source = @"
+            let e = new RangeError();
+            console.log(String(e));
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("RangeError\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_StringCoercion_FromCatch(ExecutionMode mode)
+    {
+        var source = @"
+            try {
+                throw new TypeError('caught');
+            } catch (err: any) {
+                console.log(String(err));
+                console.log(`${err}`);
+            }
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("TypeError: caught\nTypeError: caught\n", output);
     }
 
     [Theory]
@@ -99,7 +123,7 @@ public class ErrorTests
     {
         // #922 generalization: a user class with its own toString() is dispatched
         // in every string-coercion form, matching Node. (Interpreter-only: compiled
-        // mode has a separate pre-existing quirk that yields the class name here.)
+        // mode has a separate pre-existing quirk that yields the class name — #933.)
         var source = @"
             class Pt { x = 1; y = 2; toString() { return `(${this.x},${this.y})`; } }
             const p = new Pt();

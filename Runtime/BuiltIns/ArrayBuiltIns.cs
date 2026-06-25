@@ -202,7 +202,18 @@ public static class ArrayBuiltIns
                           .ThenBy(x => x.Index);
         }
 
-        return sorted.Select(x => x.Element).ToList();
+        try
+        {
+            return sorted.Select(x => x.Element).ToList();
+        }
+        catch (InvalidOperationException ex) when (ex.InnerException is Exceptions.ThrowException te)
+        {
+            // LINQ's sort wraps a comparator's guest throw in InvalidOperationException
+            // ("Failed to compare two elements in the array."). Re-surface the original guest
+            // throw so it reaches the guest catch (#921). Compiled mode's IL merge sort already
+            // propagates it natively.
+            throw te;
+        }
     }
 
     /// <summary>

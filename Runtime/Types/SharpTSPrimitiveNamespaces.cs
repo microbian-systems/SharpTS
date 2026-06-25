@@ -32,10 +32,13 @@ public class SharpTSStringNamespace : ISharpTSCallable
         // unwrapping a bare wrapper to its primitive (#574). A raw Symbol is
         // exempt from the ToString TypeError per §22.1.1.1 — fall through to its
         // descriptive string.
-        // A class instance (incl. Error subtypes) dispatches to its own/prototype
-        // toString via ToStringForStringCall -> Stringify, matching compiled mode and
-        // Node (#922); without this an Error coerces to "ClassName instance".
-        if (arg is SharpTSObject or SharpTSInstance) return interpreter.ToStringForStringCall(arg);
+        if (arg is SharpTSObject) return interpreter.ToStringForStringCall(arg);
+        // A class instance (incl. Error subclasses) resolves toString through its
+        // class chain; route it through ToString so String(new TypeError("x"))
+        // yields "TypeError: x" rather than the C# "TypeError instance" form
+        // (#921/#922 follow-up). ToStringForStringCall stringifies via the
+        // instance's own toString.
+        if (arg is SharpTSInstance) return interpreter.ToStringForStringCall(arg);
         return arg.ToString() ?? "";
     }
 

@@ -531,6 +531,25 @@ public partial class Interpreter
     }
 
     /// <summary>
+    /// String-coerces a class instance by resolving and invoking its
+    /// <c>toString</c> through the class chain (e.g. Error.prototype.toString or
+    /// a user override). Succeeds only when a callable <c>toString</c> resolves
+    /// and returns a primitive — otherwise the caller falls back to the
+    /// <c>[object &lt;Class&gt;]</c> brand form. Used by <see cref="Stringify"/> so
+    /// templates / <c>+</c> / <c>String()</c> on an instance match Node.
+    /// </summary>
+    private bool TryStringifyInstanceViaToString(SharpTSInstance instance, out string result)
+    {
+        result = "";
+        var resolved = instance.Get(new Token(TokenType.IDENTIFIER, "toString", null, 0));
+        if (resolved is not ISharpTSCallable toString) return false;
+        var coerced = toString.CallBoxed(this, _toPrimitiveNoArgs);
+        if (IsObjectLike(coerced)) return false;
+        result = coerced as string ?? Stringify(coerced);
+        return true;
+    }
+
+    /// <summary>
     /// ECMA-262 §25.5.2.2 SerializeJSONProperty step 4: coerce a boxed
     /// Number/String/Boolean wrapper to the primitive JSON serializes. Number→
     /// ToNumber, String→ToString (both via <see cref="ToPrimitive"/>, so a user
@@ -1007,10 +1026,16 @@ public partial class Interpreter
 
         if (obj is SharpTSInstance instance)
         {
-            if (TryStringifyInstanceToString(instance, out var instanceString))
-            {
-                return instanceString;
-            }
+            // ECMA-262 §7.1.17 ToString of an object goes through ToPrimitive,
+            // which (for hint "string") invokes the object's toString. A class
+            // instance resolves toString through its class chain — e.g.
+            // Error.prototype.toString -> "TypeError: msg", or a user-defined
+            // override. Invoke it so string coercion (templates, `+`, String())
+            // matches Node/compiled mode instead of yielding "<Class> instance"
+            // or "[object <Class>]" (#921/#922). Fall back to the brand form
+            // only when no callable toString resolves (e.g. a plain class).
+            if (TryStringifyInstanceViaToString(instance, out var instanceStr))
+                return instanceStr;
             return "[object " + instance.GetClass().Name + "]";
         }
 
@@ -1023,27 +1048,5 @@ public partial class Interpreter
         }
 
         return obj.ToString()!;
-    }
-
-    /// <summary>
-    /// String-coerces a class instance per ECMA-262 OrdinaryToPrimitive(hint "string"):
-    /// dispatch to its <c>toString</c> (an own-field shadow first, else
-    /// <c>Error.prototype.toString</c> or a user override resolved up the class chain) when
-    /// present. Returns false when no <c>toString</c> exists so callers keep the
-    /// "[object ClassName]" default for plain instances. Mirrors compiled mode's generic
-    /// property lookup + invoke (#922).
-    /// </summary>
-    private bool TryStringifyInstanceToString(SharpTSInstance instance, out string result)
-    {
-        result = "";
-        ISharpTSCallable? fn = instance.GetRawField("toString") as ISharpTSCallable;
-        if (fn is null && instance.GetClass().FindMethod("toString") is { } method)
-        {
-            fn = SharpTSClass.BindMethod(method, instance);
-        }
-        if (fn is null) return false;
-        var coerced = FunctionBuiltIns.CallWithThis(this, fn, instance, []);
-        result = coerced as string ?? Stringify(coerced);
-        return true;
     }
 }
