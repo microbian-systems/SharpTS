@@ -49,6 +49,9 @@ public class EmitterSyncTests
             // --- #774: await-aware exception handling + async-function completion ---
             "EmitReturn",           // Async return: route through finally(s), then complete the task
             "EmitTryCatch",         // Await-aware (flag-based) exception handling
+            // --- #914: a suspending `throw await f()` in a try body is emitted at the flag-based top
+            //     level (outside any mini try/catch), so route it into the active try's catch ---
+            "EmitThrow",            // Route a top-level throw in a flag-based try body to its catch
         },
         [typeof(AsyncMoveNextEmitter)] = new()
         {

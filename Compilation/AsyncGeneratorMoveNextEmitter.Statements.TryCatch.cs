@@ -687,50 +687,13 @@ public partial class AsyncGeneratorMoveNextEmitter
         }
     }
 
-    private static bool ContainsSuspensionInExpr(Expr expr)
-    {
-        switch (expr)
-        {
-            case Expr.Yield:
-            case Expr.Await:
-                return true;
-            case Expr.Comma c:
-                return ContainsSuspensionInExpr(c.Left) || ContainsSuspensionInExpr(c.Right);
-            case Expr.Binary b:
-                return ContainsSuspensionInExpr(b.Left) || ContainsSuspensionInExpr(b.Right);
-            case Expr.Logical l:
-                return ContainsSuspensionInExpr(l.Left) || ContainsSuspensionInExpr(l.Right);
-            case Expr.Unary u:
-                return ContainsSuspensionInExpr(u.Right);
-            case Expr.Delete d:
-                return ContainsSuspensionInExpr(d.Operand);
-            case Expr.Grouping g:
-                return ContainsSuspensionInExpr(g.Expression);
-            case Expr.Call c:
-                if (ContainsSuspensionInExpr(c.Callee)) return true;
-                foreach (var arg in c.Arguments)
-                    if (ContainsSuspensionInExpr(arg)) return true;
-                return false;
-            case Expr.Assign a:
-                return ContainsSuspensionInExpr(a.Value);
-            case Expr.CompoundAssign ca:
-                return ContainsSuspensionInExpr(ca.Value);
-            case Expr.Ternary t:
-                return ContainsSuspensionInExpr(t.Condition) ||
-                       ContainsSuspensionInExpr(t.ThenBranch) ||
-                       ContainsSuspensionInExpr(t.ElseBranch);
-            case Expr.Get g:
-                return ContainsSuspensionInExpr(g.Object);
-            case Expr.Set s:
-                return ContainsSuspensionInExpr(s.Object) || ContainsSuspensionInExpr(s.Value);
-            case Expr.GetIndex gi:
-                return ContainsSuspensionInExpr(gi.Object) || ContainsSuspensionInExpr(gi.Index);
-            case Expr.SetIndex si:
-                return ContainsSuspensionInExpr(si.Object) || ContainsSuspensionInExpr(si.Index) || ContainsSuspensionInExpr(si.Value);
-            default:
-                return false;
-        }
-    }
+    // Delegates to the canonical, exhaustive suspension walker shared by every state-machine emitter
+    // (ExpressionEmitterBase.ExprContainsSuspension). The previous hand-maintained switch had drifted
+    // and was missing CompoundSetIndex/CompoundSet/LogicalAssign/LogicalSet/LogicalSetIndex plus
+    // await/yield nested in array/object/template literals and new(...) — the same under-reporting that
+    // produced an illegal BranchIntoTry resume label for those forms inside a try (#914). An async
+    // generator suspends on both `await` and `yield`, which the helper covers exactly.
+    private static bool ContainsSuspensionInExpr(Expr expr) => ExprContainsSuspension(expr);
 
     // ContainsEscapingExit / ContainsEscapingExit2 are shared across the suspension-aware emitters and
     // live in StatementEmitterBase (the generator, async-generator, and async-function emitters all

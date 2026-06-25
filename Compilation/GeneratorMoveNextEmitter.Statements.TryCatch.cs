@@ -824,49 +824,13 @@ public partial class GeneratorMoveNextEmitter
         }
     }
 
-    private static bool ContainsYieldInExpr(Expr expr)
-    {
-        switch (expr)
-        {
-            case Expr.Yield:
-                return true;
-            case Expr.Comma c:
-                return ContainsYieldInExpr(c.Left) || ContainsYieldInExpr(c.Right);
-            case Expr.Binary b:
-                return ContainsYieldInExpr(b.Left) || ContainsYieldInExpr(b.Right);
-            case Expr.Logical l:
-                return ContainsYieldInExpr(l.Left) || ContainsYieldInExpr(l.Right);
-            case Expr.Unary u:
-                return ContainsYieldInExpr(u.Right);
-            case Expr.Delete d:
-                return ContainsYieldInExpr(d.Operand);
-            case Expr.Grouping g:
-                return ContainsYieldInExpr(g.Expression);
-            case Expr.Call c:
-                if (ContainsYieldInExpr(c.Callee)) return true;
-                foreach (var arg in c.Arguments)
-                    if (ContainsYieldInExpr(arg)) return true;
-                return false;
-            case Expr.Assign a:
-                return ContainsYieldInExpr(a.Value);
-            case Expr.CompoundAssign ca:
-                return ContainsYieldInExpr(ca.Value);
-            case Expr.Ternary t:
-                return ContainsYieldInExpr(t.Condition)
-                    || ContainsYieldInExpr(t.ThenBranch)
-                    || ContainsYieldInExpr(t.ElseBranch);
-            case Expr.Get g:
-                return ContainsYieldInExpr(g.Object);
-            case Expr.Set s:
-                return ContainsYieldInExpr(s.Object) || ContainsYieldInExpr(s.Value);
-            case Expr.GetIndex gi:
-                return ContainsYieldInExpr(gi.Object) || ContainsYieldInExpr(gi.Index);
-            case Expr.SetIndex si:
-                return ContainsYieldInExpr(si.Object) || ContainsYieldInExpr(si.Index) || ContainsYieldInExpr(si.Value);
-            default:
-                return false;
-        }
-    }
+    // Delegates to the canonical, exhaustive suspension walker shared by every state-machine emitter
+    // (ExpressionEmitterBase.ExprContainsSuspension). The previous hand-maintained switch had drifted
+    // and was missing CompoundSetIndex/CompoundSet/LogicalAssign/LogicalSet/LogicalSetIndex plus yield
+    // nested in array/object/template literals and new(...) — the same under-reporting that produced an
+    // illegal BranchIntoTry resume label for those forms inside a try (#914). A plain generator never
+    // contains `await`, so the helper's Await arm is vacuously inapplicable here.
+    private static bool ContainsYieldInExpr(Expr expr) => ExprContainsSuspension(expr);
 
     // ContainsEscapingExit / ContainsEscapingExit2 are shared across the suspension-aware emitters and
     // live in StatementEmitterBase (the generator, async-generator, and async-function emitters all
