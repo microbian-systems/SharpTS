@@ -30,6 +30,14 @@ public enum StackType
 public record struct HoistedArrayEntry(LocalBuilder TypedLocal, ArrayElementsDescriptor Descriptor);
 
 /// <summary>
+/// Entry in the hoisted typed-array cache (#928): a loop-invariant variable statically typed as a
+/// numeric TypedArray, cast to its concrete <c>$XArray</c> type ONCE before the loop. The element
+/// index fast paths load <see cref="TypedLocal"/> directly instead of re-emitting
+/// <c>ldloc; castclass $XArray</c> on every access.
+/// </summary>
+public record struct HoistedTypedArrayEntry(LocalBuilder TypedLocal, Type XArrayType, string ElementType);
+
+/// <summary>
 /// Holds compilation state passed between ILCompiler and ILEmitter.
 /// </summary>
 /// <remarks>
@@ -63,6 +71,12 @@ public partial class CompilationContext
     /// Use this instead of typeof() for type resolution to support --ref-asm compilation.
     /// </summary>
     public TypeProvider Types { get; }
+
+    // Integer loop-counter prototype (#928, gated by SHARPTS_INT_LOOP_COUNTER): names of locals
+    // currently backed by a native Int64 slot because they are provably-integer monotonic loop
+    // counters. Reads convert to double on load; the increment and recognized index sites consume
+    // the int directly. Populated/cleared per loop scope by EmitFor/EmitVarStatement.
+    public HashSet<string> IntegerCounterLocals { get; } = new();
 
     // Emitted runtime types and methods (for standalone DLLs)
     public EmittedRuntime? Runtime { get; set; }
@@ -246,6 +260,26 @@ public partial class CompilationContext
     public HoistedArrayEntry? TryGetHoistedArray(string variableName)
     {
         foreach (var cache in HoistedArrayCaches)
+        {
+            if (cache.TryGetValue(variableName, out var entry))
+                return entry;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Hoisted typed-array receiver caches (#928), innermost loop scope on top. Parallel to
+    /// <see cref="HoistedArrayCaches"/> but for numeric TypedArray receivers cast to their concrete
+    /// <c>$XArray</c> type once per loop.
+    /// </summary>
+    public Stack<Dictionary<string, HoistedTypedArrayEntry>> HoistedTypedArrayCaches { get; } = new();
+
+    /// <summary>
+    /// Looks up a hoisted typed-array receiver for the given variable name, innermost loop scope first.
+    /// </summary>
+    public HoistedTypedArrayEntry? TryGetHoistedTypedArray(string variableName)
+    {
+        foreach (var cache in HoistedTypedArrayCaches)
         {
             if (cache.TryGetValue(variableName, out var entry))
                 return entry;

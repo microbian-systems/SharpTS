@@ -880,11 +880,10 @@ public partial class ILEmitter
             && _ctx.Runtime!.GetTypedArrayType(gta.ElementType) is { } gtaType
             && _ctx.Runtime!.TypedArrayGetUnboxedByElement.TryGetValue(gta.ElementType, out var taGetU))
         {
-            EmitExpression(gi.Object);
-            EnsureBoxed();
-            IL.Emit(OpCodes.Castclass, gtaType);
-            EmitExpressionAsDouble(gi.Index);
-            IL.Emit(OpCodes.Conv_I4);
+            // Receiver: hoisted loop-invariant cast when available, else per-access cast (#928).
+            EmitTypedArrayReceiver(gi.Object, gtaType);
+            // Native-int fast path when the index is an integer loop counter (#928).
+            EmitIndexAsInt32(gi.Index);
             // Non-virtual call to the sealed-type accessor → the JIT inlines it (AggressiveInlining)
             // so the receiver's _buffer load and the element bounds check can hoist out of loops.
             IL.Emit(OpCodes.Call, taGetU);
@@ -1088,8 +1087,8 @@ public partial class ILEmitter
             && _ctx.Runtime!.TypedArraySetUnboxedByElement.TryGetValue(sta.ElementType, out var taSetU)
             && _ctx.TypeMap?.Get(si.Value) is TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER } or TypeInfo.NumberLiteral)
         {
-            EmitExpressionAsDouble(si.Index);
-            IL.Emit(OpCodes.Conv_I4);
+            // Native-int fast path when the index is an integer loop counter (#928).
+            EmitIndexAsInt32(si.Index);
             var idxLocal = IL.DeclareLocal(_ctx.Types.Int32);
             IL.Emit(OpCodes.Stloc, idxLocal);
 
@@ -1098,9 +1097,8 @@ public partial class ILEmitter
             var valLocal = IL.DeclareLocal(_ctx.Types.Double);
             IL.Emit(OpCodes.Stloc, valLocal);
 
-            EmitExpression(si.Object);
-            EnsureBoxed();
-            IL.Emit(OpCodes.Castclass, staType);
+            // Receiver: hoisted loop-invariant cast when available, else per-access cast (#928).
+            EmitTypedArrayReceiver(si.Object, staType);
             IL.Emit(OpCodes.Ldloc, idxLocal);
             IL.Emit(OpCodes.Ldloc, valLocal);
             // Non-virtual call to the sealed-type accessor → the JIT inlines it (AggressiveInlining).

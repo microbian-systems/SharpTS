@@ -173,6 +173,15 @@ public class LocalVariableResolver : IVariableResolver
         {
             var localType = _ctx.Locals.GetLocalType(name);
             _il.Emit(OpCodes.Ldloc, local);
+            // Integer loop-counter prototype (#928): a counter backed by a native Int64 slot reads
+            // back as a double everywhere it is observed as a value (condition compares, arithmetic,
+            // boxing, calls) — exact for any terminating loop (≤ 2^53). The increment and recognized
+            // index sites bypass this generic load with their own native-int IL.
+            if (localType == _types.Int64 && _ctx.IntegerCounterLocals.Contains(name))
+            {
+                _il.Emit(OpCodes.Conv_R8);
+                return StackType.Double;
+            }
             return MapTypeToStackType(localType);
         }
 

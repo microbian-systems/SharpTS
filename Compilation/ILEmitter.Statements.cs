@@ -306,6 +306,21 @@ public partial class ILEmitter
             return;
         }
 
+        // Integer loop-counter prototype (#928): the analyzer-identified counter gets a native
+        // Int64 slot initialized from its integer literal. Reads materialize a double (resolver),
+        // the increment stays native int, and recognized index sites (a[i], a[i±k]) consume the
+        // int directly. The analyzer guarantees the counter is non-captured, non-reassigned, and
+        // integer-initialized, so this early return safely bypasses the capture/array paths below.
+        if (_integerLoopCounterName == v.Name.Lexeme
+            && TryGetIntegerCounterInit(v.Initializer, out long counterInit))
+        {
+            var intLocal = _ctx.Locals.DeclareLocal(v.Name.Lexeme, _ctx.Types.Int64);
+            _ctx.IntegerCounterLocals.Add(v.Name.Lexeme);
+            IL.Emit(OpCodes.Ldc_I8, counterInit);
+            IL.Emit(OpCodes.Stloc, intLocal);
+            return;
+        }
+
         // Determine if this local can use unboxed double type
         Type localType = CanUseUnboxedLocal(v) ? _ctx.Types.Double : _ctx.Types.Object;
         var local = _ctx.Locals.DeclareLocal(v.Name.Lexeme, localType);
@@ -415,6 +430,13 @@ public partial class ILEmitter
     private string? _optimizedLoopCounterName;
 
     /// <summary>
+    /// Integer loop-counter prototype (#928): name of the for-loop counter to back with a native
+    /// Int64 slot for the current loop, or null. Consulted by EmitVarStatement at the counter's
+    /// declaration. Gated by <see cref="ForLoopAnalyzer.IntegerCounterEnabled"/>.
+    /// </summary>
+    private string? _integerLoopCounterName;
+
+    /// <summary>
     /// Check whether a local variable can use an unboxed double (float64) IL type
     /// instead of the default object. Eligible when:
     ///   1. It is an optimized for-loop counter, OR
@@ -470,6 +492,28 @@ public partial class ILEmitter
     private static bool IsNumericType(TypeSystem.TypeInfo? type) =>
         type is TypeSystem.TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER }
             or TypeSystem.TypeInfo.NumberLiteral;
+
+    /// <summary>
+    /// Integer loop-counter prototype (#928): extracts an integer-literal initializer (incl. unary
+    /// minus, e.g. <c>let i = -1</c>) as a <c>long</c>. Mirrors <c>ForLoopAnalyzer</c>'s eligibility
+    /// check; returns false for non-integer or non-literal initializers (defensive — the analyzer
+    /// already required an integer literal before the counter name reaches here).
+    /// </summary>
+    private static bool TryGetIntegerCounterInit(Expr? initializer, out long value)
+    {
+        value = 0;
+        double d;
+        if (initializer is Expr.Literal { Value: double lit })
+            d = lit;
+        else if (initializer is Expr.Unary { Operator.Type: TokenType.MINUS, Right: Expr.Literal { Value: double neg } })
+            d = -neg;
+        else
+            return false;
+        if (double.IsNaN(d) || double.IsInfinity(d) || d != Math.Truncate(d))
+            return false;
+        value = (long)d;
+        return true;
+    }
 
     /// <summary>
     /// Numeric-mode array creation (number[] unboxing project): a statically-typed
@@ -530,6 +574,15 @@ public partial class ILEmitter
         if (analysis.CanUseUnboxedCounter && analysis.VariableName != null)
             _optimizedLoopCounterName = analysis.VariableName;
 
+        // Integer loop-counter prototype (#928): when gated on, back a provably-integer monotonic
+        // counter with a native Int64 slot. Save/restore the field so nested loops don't clobber it.
+        var savedIntCounterName = _integerLoopCounterName;
+        string? activeIntCounter = ForLoopAnalyzer.IntegerCounterEnabled
+            ? ForLoopAnalyzer.AnalyzeIntegerCounter(f, _ctx.ClosureAnalyzer)
+            : null;
+        if (activeIntCounter != null)
+            _integerLoopCounterName = activeIntCounter;
+
         try
         {
             // Inline base.EmitFor to insert array hoist preamble between
@@ -555,6 +608,8 @@ public partial class ILEmitter
 
             // Array hoist preamble: emit isinst checks for loop-invariant arrays
             var hoisted = EmitArrayHoistPreamble(f.Body, f.Condition, f.Increment);
+            // Typed-array receiver hoist (#928): cast loop-invariant numeric TypedArray receivers once.
+            var taHoisted = EmitTypedArrayHoistPreamble(f.Body, f.Condition, f.Increment);
 
             var builder = _ctx.ILBuilder;
             var startLabel = builder.DefineLabel("for_start");
@@ -595,6 +650,7 @@ public partial class ILEmitter
 
             // Pop hoisted cache
             if (hoisted) _ctx.HoistedArrayCaches.Pop();
+            if (taHoisted) _ctx.HoistedTypedArrayCaches.Pop();
 
             if (activeCells != null)
                 foreach (var (name, prior) in activeCells)
@@ -608,6 +664,11 @@ public partial class ILEmitter
         finally
         {
             _optimizedLoopCounterName = null;
+            // The counter's Int64 slot/membership is loop-scoped: drop it so any later same-named
+            // local in an enclosing scope is not mistaken for an integer counter.
+            if (activeIntCounter != null)
+                _ctx.IntegerCounterLocals.Remove(activeIntCounter);
+            _integerLoopCounterName = savedIntCounterName;
         }
     }
 
@@ -660,6 +721,8 @@ public partial class ILEmitter
     {
         // Array hoist preamble before loop
         var hoisted = EmitArrayHoistPreamble(w.Body, w.Condition, increment: null);
+        // Typed-array receiver hoist (#928): cast loop-invariant numeric TypedArray receivers once.
+        var taHoisted = EmitTypedArrayHoistPreamble(w.Body, w.Condition, increment: null);
 
         var builder = _ctx.ILBuilder;
         var startLabel = builder.DefineLabel("while_start");
@@ -679,6 +742,7 @@ public partial class ILEmitter
         _ctx.ExitLoop();
 
         if (hoisted) _ctx.HoistedArrayCaches.Pop();
+        if (taHoisted) _ctx.HoistedTypedArrayCaches.Pop();
     }
 
     /// <summary>
@@ -721,6 +785,51 @@ public partial class ILEmitter
         }
 
         _ctx.HoistedArrayCaches.Push(cache);
+        return true;
+    }
+
+    /// <summary>
+    /// Typed-array receiver hoist (#928): for each loop-invariant variable statically typed as a
+    /// numeric TypedArray and used as an index receiver, cast it to its concrete <c>$XArray</c> type
+    /// ONCE before the loop into a typed local. The element index fast paths then load that local
+    /// instead of re-emitting <c>ldloc; castclass $XArray</c> on every access — which, combined with
+    /// the native-int counter, is what closes the typed-array kernel gap. Returns true if anything
+    /// was hoisted (caller must pop the cache). Gated on the same flag as the int-counter prototype
+    /// so the two ship together.
+    /// </summary>
+    private bool EmitTypedArrayHoistPreamble(Stmt body, Expr? condition, Expr? increment)
+    {
+        if (!ForLoopAnalyzer.IntegerCounterEnabled || _ctx.Runtime == null) return false;
+
+        var candidates = TypedArrayHoistAnalyzer.AnalyzeFor(body, condition, increment, _ctx.TypeMap);
+        if (candidates.Count == 0) return false;
+
+        Dictionary<string, HoistedTypedArrayEntry>? cache = null;
+        foreach (var (varName, elementType) in candidates)
+        {
+            // Skip variables already hoisted by an outer loop.
+            if (_ctx.TryGetHoistedTypedArray(varName) != null) continue;
+            // Only numeric typed arrays with unboxed accessors take the fast path (BigInt /
+            // Uint8Clamped fall through to boxed GetIndex, so a hoisted local would be dead).
+            if (_ctx.Runtime.GetTypedArrayType(elementType) is not { } xArrayType) continue;
+            if (!_ctx.Runtime.TypedArrayGetUnboxedByElement.ContainsKey(elementType)) continue;
+
+            var arrLocal = _ctx.Locals.GetLocal(varName);
+            if (arrLocal == null) continue; // captured / not a plain local — leave to the per-access path
+
+            // castclass (not isinst) mirrors the per-access fast path exactly: the static type is
+            // TypedArray, so a correctly-typed value never throws; null casts to null as before.
+            var typedLocal = IL.DeclareLocal(xArrayType);
+            IL.Emit(OpCodes.Ldloc, arrLocal);
+            IL.Emit(OpCodes.Castclass, xArrayType);
+            IL.Emit(OpCodes.Stloc, typedLocal);
+
+            cache ??= new Dictionary<string, HoistedTypedArrayEntry>();
+            cache[varName] = new HoistedTypedArrayEntry(typedLocal, xArrayType, elementType);
+        }
+
+        if (cache == null) return false;
+        _ctx.HoistedTypedArrayCaches.Push(cache);
         return true;
     }
 
