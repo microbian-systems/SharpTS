@@ -75,6 +75,50 @@ public class ErrorTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_StringCoercion_InvokesToString(ExecutionMode mode)
+    {
+        // String(e), `${e}` and "" + e must all go through Error.prototype.toString
+        // ("Name: message"), matching Node — not "TypeError instance" / "[object TypeError]".
+        var source = @"
+            let e = new TypeError('boom');
+            console.log(String(e));
+            console.log(`${e}`);
+            console.log('' + e);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("TypeError: boom\nTypeError: boom\nTypeError: boom\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_StringCoercion_NoMessage(ExecutionMode mode)
+    {
+        var source = @"
+            let e = new RangeError();
+            console.log(String(e));
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("RangeError\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_StringCoercion_FromCatch(ExecutionMode mode)
+    {
+        var source = @"
+            try {
+                throw new TypeError('caught');
+            } catch (err: any) {
+                console.log(String(err));
+                console.log(`${err}`);
+            }
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("TypeError: caught\nTypeError: caught\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Error_HasStackProperty(ExecutionMode mode)
     {
         var source = @"
