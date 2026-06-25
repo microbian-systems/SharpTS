@@ -1758,4 +1758,98 @@ public class AsyncGeneratorTests
     }
 
     #endregion
+
+    #region #924: generator expression capturing an enclosing async function's local
+
+    // #924 (the async analog of #534): an async-generator function EXPRESSION that closes over an
+    // enclosing ASYNC function's local was an unbound forward reference in BOTH modes. The
+    // GeneratorArrowLifter rewrites it to `const g = __genArrow_0;` and APPENDS the lifted
+    // `async function* __genArrow_0(){…}` at the body END (so the source-order type checker sees `let y`
+    // first, #522); the reference to `g` then precedes the lifted declaration. The interpreter now
+    // hoists function declarations in async bodies (Interpreter.Async.ExecuteBlockAsync), and the
+    // compiler now hoists the function-scope forwarding binding for a PLAIN/ASYNC (non-generator)
+    // encloser — where the forwarding arrow reads its captures live at call time.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorExpression_CapturesAsyncFunctionLocal_IsCallable(ExecutionMode mode)
+    {
+        var source = """
+            async function outer(): Promise<number[]> {
+                let y = 5;
+                const g = async function* () { yield y; yield y + 1; };
+                const out: number[] = [];
+                for await (const v of g()) out.push(v);
+                return out;
+            }
+            outer().then((r: number[]) => console.log(r.join(",")));
+            """;
+        Assert.Equal("5,6\n", TestHarness.Run(source, mode));
+    }
+
+    // The same forward-reference gap applied to a SYNC generator expression nested in an async function.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SyncGeneratorExpression_CapturesAsyncFunctionLocal_IsCallable(ExecutionMode mode)
+    {
+        var source = """
+            async function outer(): Promise<number[]> {
+                let y = 5;
+                const g = function* () { yield y; yield y + 1; };
+                return [...g()];
+            }
+            outer().then((r: number[]) => console.log(r.join(",")));
+            """;
+        Assert.Equal("5,6\n", TestHarness.Run(source, mode));
+    }
+
+    // Out of #924's scope: a generator EXPRESSION whose enclosing function is itself a GENERATOR (here an
+    // async generator). A forwarding arrow there would snapshot the generator's captures at creation, so
+    // the compiler keeps it nested. The interpreter handles the nested declaration natively.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorExpression_CapturesAsyncGeneratorLocal_RunsInInterpreter(ExecutionMode mode)
+    {
+        var source = """
+            async function* outer() {
+                let y = 3;
+                const g = async function* () { yield y; yield y + 1; };
+                for await (const v of g()) yield v;
+            }
+            async function main() {
+                const out: number[] = [];
+                for await (const v of outer()) out.push(v);
+                console.log(out.join(","));
+            }
+            main();
+            """;
+        Assert.Equal("3,4\n", TestHarness.Run(source, mode));
+    }
+
+    // The compiled generator-encloser case must FAIL CLEANLY — never miscompile to a wrong value. (The
+    // forward-reference form in a generator encloser stays unsupported; this pins that it does not
+    // silently produce a different result.)
+    [Fact]
+    public void AsyncGeneratorExpression_CapturesAsyncGeneratorLocal_CompiledFailsCleanly()
+    {
+        var source = """
+            async function* outer() {
+                let y = 3;
+                const g = async function* () { yield y; yield y + 1; };
+                for await (const v of g()) yield v;
+            }
+            async function main() {
+                const out: number[] = [];
+                for await (const v of outer()) out.push(v);
+                console.log(out.join(","));
+            }
+            main();
+            """;
+        string compiled;
+        try { compiled = TestHarness.RunCompiled(source); }
+        catch { compiled = "<compile-or-runtime-error>"; }
+        // A clean failure is acceptable; the correct "3,4\n" is acceptable; a wrong value is not.
+        Assert.True(compiled == "<compile-or-runtime-error>" || compiled == "3,4\n", $"unexpected: {compiled}");
+    }
+
+    #endregion
 }
