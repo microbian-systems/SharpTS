@@ -175,6 +175,20 @@ public abstract class SharpTSTypedArray : ITypeCategorized
             if (offset + typedSource.Length > _length)
                 throw new Exception("RangeError: Source too large for target");
 
+            // Same element type → bit-exact bulk copy on the byte[] backing, no per-element
+            // boxing or double round-trip. (A different element type still needs the
+            // value-converting element-wise path below; a negative offset falls through so the
+            // element setter raises the same RangeError as before.)
+            if (typedSource.GetType() == GetType() && offset >= 0)
+            {
+                int bpe = BytesPerElement;
+                System.Buffer.BlockCopy(
+                    typedSource._buffer, typedSource._byteOffset,
+                    _buffer, _byteOffset + offset * bpe,
+                    typedSource._length * bpe);
+                return;
+            }
+
             for (int i = 0; i < typedSource.Length; i++)
             {
                 this[offset + i] = typedSource[i];
@@ -204,10 +218,22 @@ public abstract class SharpTSTypedArray : ITypeCategorized
         int actualEnd = end ?? _length;
         start = Math.Max(0, Math.Min(start, _length));
         actualEnd = Math.Max(start, Math.Min(actualEnd, _length));
+        if (actualEnd <= start)
+            return this;
 
-        for (int i = start; i < actualEnd; i++)
+        // Convert the value to the element representation exactly once (via the typed
+        // setter, which applies the per-type coercion/clamping), then replicate its raw
+        // bytes across the range with an exponential-doubling copy — no boxing or
+        // re-conversion per element. Interop-safe: same byte[] backing.
+        this[start] = value;
+        int bpe = BytesPerElement;
+        var region = _buffer.AsSpan(_byteOffset + start * bpe, (actualEnd - start) * bpe);
+        int filled = bpe;
+        while (filled < region.Length)
         {
-            this[i] = value;
+            int chunk = Math.Min(filled, region.Length - filled);
+            region.Slice(0, chunk).CopyTo(region.Slice(filled, chunk));
+            filled += chunk;
         }
 
         return this;
@@ -224,18 +250,15 @@ public abstract class SharpTSTypedArray : ITypeCategorized
         actualEnd = Math.Max(start, Math.Min(actualEnd, _length));
 
         int count = Math.Min(actualEnd - start, _length - target);
+        if (count <= 0)
+            return this;
 
-        // Create temporary copy to handle overlapping regions
-        var temp = new object?[count];
-        for (int i = 0; i < count; i++)
-        {
-            temp[i] = this[start + i];
-        }
-
-        for (int i = 0; i < count; i++)
-        {
-            this[target + i] = temp[i];
-        }
+        // Byte-level memmove on the backing buffer. Span.CopyTo handles overlapping
+        // source/destination regions correctly, so no boxed temporary is needed.
+        int bpe = BytesPerElement;
+        var buf = _buffer.AsSpan();
+        buf.Slice(_byteOffset + start * bpe, count * bpe)
+           .CopyTo(buf.Slice(_byteOffset + target * bpe, count * bpe));
 
         return this;
     }
@@ -245,19 +268,42 @@ public abstract class SharpTSTypedArray : ITypeCategorized
     /// </summary>
     public SharpTSTypedArray Reverse()
     {
+        int bpe = BytesPerElement;
+        var buf = _buffer.AsSpan();
+        Span<byte> temp = stackalloc byte[8]; // max BytesPerElement (Float64/BigInt64) is 8
         int left = 0;
         int right = _length - 1;
 
         while (left < right)
         {
-            var temp = this[left];
-            this[left] = this[right];
-            this[right] = temp;
+            // Swap the two elements' raw bytes — no boxing or double round-trip.
+            var ls = buf.Slice(_byteOffset + left * bpe, bpe);
+            var rs = buf.Slice(_byteOffset + right * bpe, bpe);
+            ls.CopyTo(temp);
+            rs.CopyTo(ls);
+            temp.Slice(0, bpe).CopyTo(rs);
             left++;
             right--;
         }
 
         return this;
+    }
+
+    /// <summary>
+    /// Bit-exact byte copy of <paramref name="count"/> elements starting at element
+    /// <paramref name="begin"/> in this array into <paramref name="dest"/> at element 0.
+    /// <paramref name="dest"/> must share this array's concrete element type (the bytes are
+    /// copied verbatim). Used by the per-subclass <see cref="Slice"/> to avoid a boxed
+    /// element-by-element copy.
+    /// </summary>
+    protected void BlockCopyElementsInto(SharpTSTypedArray dest, int begin, int count)
+    {
+        if (count <= 0)
+            return;
+        int bpe = BytesPerElement;
+        System.Buffer.BlockCopy(
+            _buffer, _byteOffset + begin * bpe,
+            dest._buffer, dest._byteOffset, count * bpe);
     }
 
     /// <summary>
@@ -475,7 +521,7 @@ public class SharpTSInt8Array : SharpTSTypedArray
             : _length;
         int count = Math.Max(0, actualEnd - begin);
         var result = new SharpTSInt8Array(count);
-        for (int i = 0; i < count; i++) result[i] = this[begin + i];
+        BlockCopyElementsInto(result, begin, count);
         return result;
     }
 
@@ -530,7 +576,7 @@ public class SharpTSUint8Array : SharpTSTypedArray
             : _length;
         int count = Math.Max(0, actualEnd - begin);
         var result = new SharpTSUint8Array(count);
-        for (int i = 0; i < count; i++) result[i] = this[begin + i];
+        BlockCopyElementsInto(result, begin, count);
         return result;
     }
 
@@ -592,7 +638,7 @@ public class SharpTSUint8ClampedArray : SharpTSTypedArray
             : _length;
         int count = Math.Max(0, actualEnd - begin);
         var result = new SharpTSUint8ClampedArray(count);
-        for (int i = 0; i < count; i++) result[i] = this[begin + i];
+        BlockCopyElementsInto(result, begin, count);
         return result;
     }
 
@@ -663,7 +709,7 @@ public class SharpTSInt16Array : SharpTSTypedArray
             : _length;
         int count = Math.Max(0, actualEnd - begin);
         var result = new SharpTSInt16Array(count);
-        for (int i = 0; i < count; i++) result[i] = this[begin + i];
+        BlockCopyElementsInto(result, begin, count);
         return result;
     }
 
@@ -734,7 +780,7 @@ public class SharpTSUint16Array : SharpTSTypedArray
             : _length;
         int count = Math.Max(0, actualEnd - begin);
         var result = new SharpTSUint16Array(count);
-        for (int i = 0; i < count; i++) result[i] = this[begin + i];
+        BlockCopyElementsInto(result, begin, count);
         return result;
     }
 
@@ -814,7 +860,7 @@ public class SharpTSInt32Array : SharpTSTypedArray
             : _length;
         int count = Math.Max(0, actualEnd - begin);
         var result = new SharpTSInt32Array(count);
-        for (int i = 0; i < count; i++) result[i] = this[begin + i];
+        BlockCopyElementsInto(result, begin, count);
         return result;
     }
 
@@ -885,7 +931,7 @@ public class SharpTSUint32Array : SharpTSTypedArray
             : _length;
         int count = Math.Max(0, actualEnd - begin);
         var result = new SharpTSUint32Array(count);
-        for (int i = 0; i < count; i++) result[i] = this[begin + i];
+        BlockCopyElementsInto(result, begin, count);
         return result;
     }
 
@@ -956,7 +1002,7 @@ public class SharpTSFloat32Array : SharpTSTypedArray
             : _length;
         int count = Math.Max(0, actualEnd - begin);
         var result = new SharpTSFloat32Array(count);
-        for (int i = 0; i < count; i++) result[i] = this[begin + i];
+        BlockCopyElementsInto(result, begin, count);
         return result;
     }
 
@@ -1027,7 +1073,7 @@ public class SharpTSFloat64Array : SharpTSTypedArray
             : _length;
         int count = Math.Max(0, actualEnd - begin);
         var result = new SharpTSFloat64Array(count);
-        for (int i = 0; i < count; i++) result[i] = this[begin + i];
+        BlockCopyElementsInto(result, begin, count);
         return result;
     }
 
@@ -1119,7 +1165,7 @@ public class SharpTSBigInt64Array : SharpTSTypedArray
             : _length;
         int count = Math.Max(0, actualEnd - begin);
         var result = new SharpTSBigInt64Array(count);
-        for (int i = 0; i < count; i++) result[i] = this[begin + i];
+        BlockCopyElementsInto(result, begin, count);
         return result;
     }
 
@@ -1202,7 +1248,7 @@ public class SharpTSBigUint64Array : SharpTSTypedArray
             : _length;
         int count = Math.Max(0, actualEnd - begin);
         var result = new SharpTSBigUint64Array(count);
-        for (int i = 0; i < count; i++) result[i] = this[begin + i];
+        BlockCopyElementsInto(result, begin, count);
         return result;
     }
 
