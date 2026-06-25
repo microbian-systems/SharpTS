@@ -243,6 +243,10 @@ public partial class RuntimeEmitter
             EmitSharedArrayBufferType(moduleBuilder, runtime);
             EmitDataViewType(moduleBuilder, runtime);
             EmitTypedArrayTypes(moduleBuilder, runtime);
+            // $BoundTypedArrayMethod Phase 1 (#940): callable wrapper for typed-array bulk methods.
+            // Needs $TypedArray defined (above); must precede EmitRuntimeClass, whose invocation
+            // helpers and GetTypedArrayMember reference its type/ctor/Invoke.
+            EmitBoundTypedArrayMethodTypeDefinition(moduleBuilder, runtime);
         }
 
         // Emit stream classes for standalone stream support
@@ -442,6 +446,11 @@ public partial class RuntimeEmitter
         // Finalize $BoundArrayMethod with Invoke method (Phase 2)
         // Must come after EmitRuntimeClass (needs array methods defined)
         EmitBoundArrayMethodFinalize(runtime);
+
+        // Finalize $BoundTypedArrayMethod (#940) Phase 2 — Invoke dispatches to the base
+        // typed-array bulk methods and uses GetElement/TSArrayLengthGetter (defined in EmitRuntimeClass).
+        if (features.HasAnyTypedArray)
+            EmitBoundTypedArrayMethodFinalize(runtime);
 
         // Finalize $BoundMapMethod / $BoundSetMethod with Invoke method (Phase 2)
         // Must come after EmitRuntimeClass (needs Map*/Set* runtime methods defined).

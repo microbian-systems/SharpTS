@@ -12,6 +12,10 @@ public partial class RuntimeEmitter
     private FieldBuilder? _typedArrayLengthField;
     private FieldBuilder? _typedArrayArrayBufferField;
     private MethodBuilder? _typedArrayBytesPerElementGetter;
+    // Abstract per-concrete factories used by the base Slice/Subarray (#940): create a fresh
+    // same-kind array (slice copies) / a view sharing the backing buffer (subarray aliases).
+    private MethodBuilder? _typedArrayCreateOfLength;
+    private MethodBuilder? _typedArrayCreateView;
 
     /// <summary>
     /// Emits all TypedArray types for standalone DLLs.
@@ -115,6 +119,27 @@ public partial class RuntimeEmitter
         getBufferIl.Emit(OpCodes.Ldarg_0);
         getBufferIl.Emit(OpCodes.Ldfld, _typedArrayBufferField);
         getBufferIl.Emit(OpCodes.Ret);
+
+        // Abstract factories overridden by each concrete type — let the base-class Slice
+        // (fresh same-kind copy) and Subarray (buffer-sharing view) build the right concrete
+        // type without the base needing to know the concrete constructors (#940).
+        _typedArrayCreateOfLength = _typedArrayBaseType.DefineMethod(
+            "CreateOfLength",
+            MethodAttributes.Family | MethodAttributes.Abstract | MethodAttributes.Virtual | MethodAttributes.HideBySig,
+            _typedArrayBaseType,
+            [_types.Int32]
+        );
+        _typedArrayCreateView = _typedArrayBaseType.DefineMethod(
+            "CreateView",
+            MethodAttributes.Family | MethodAttributes.Abstract | MethodAttributes.Virtual | MethodAttributes.HideBySig,
+            _typedArrayBaseType,
+            [_types.Int32, _types.Int32]
+        );
+
+        // Bulk instance methods (fill/copyWithin/reverse/set/slice/subarray/indexOf/…) mirroring
+        // the interpreter's GetMember surface. Emitted here, before CreateType, so they live on
+        // the base type. BCL-only — standalone-safe.
+        EmitTypedArrayBulkMethods(_typedArrayBaseType, runtime);
     }
 
     private MethodBuilder EmitTypedArrayAbstractProperty(TypeBuilder typeBuilder, string name, Type returnType)
@@ -249,6 +274,10 @@ public partial class RuntimeEmitter
             var elementType = name.EndsWith("Array") ? name[..^5] : name;
             EmitUnboxedNumericAccessors(typeBuilder, runtime, elementType, bytesPerElement, signed, isFloat);
         }
+
+        // Buffer-sharing ctor + CreateOfLength/CreateView overrides backing the base
+        // Slice/Subarray (#940).
+        EmitTypedArrayFactoryMembers(typeBuilder, runtime, lengthCtor);
 
         // Finalize type
         typeBuilder.CreateType();

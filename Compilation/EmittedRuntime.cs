@@ -1633,6 +1633,29 @@ public class EmittedRuntime
     public Dictionary<string, MethodBuilder> TypedArrayGetUnboxedByElement { get; } = new();
     public Dictionary<string, MethodBuilder> TypedArraySetUnboxedByElement { get; } = new();
 
+    // Bulk instance methods on the $TypedArray base type (#940), mirroring the interpreter's
+    // GetMember surface. Stored so $BoundTypedArrayMethod.Invoke can callvirt them. All BCL-only
+    // (no SharpTS.dll reference) so standalone DLLs stay standalone.
+    public MethodBuilder TypedArrayFill { get; set; } = null!;
+    public MethodBuilder TypedArrayCopyWithin { get; set; } = null!;
+    public MethodBuilder TypedArrayReverse { get; set; } = null!;
+    public MethodBuilder TypedArraySetFrom { get; set; } = null!;
+    public MethodBuilder TypedArraySlice { get; set; } = null!;
+    public MethodBuilder TypedArraySubarray { get; set; } = null!;
+    public MethodBuilder TypedArrayIndexOf { get; set; } = null!;
+    public MethodBuilder TypedArrayLastIndexOf { get; set; } = null!;
+    public MethodBuilder TypedArrayIncludes { get; set; } = null!;
+    public MethodBuilder TypedArrayJoin { get; set; } = null!;
+    public MethodBuilder TypedArrayToStringJoin { get; set; } = null!;
+
+    // $BoundTypedArrayMethod (#940): pure-IL wrapper returned by GetTypedArrayMember for a
+    // bulk-method name, dispatched through InvokeMethodValue/InvokeValue (mirrors $BoundArrayMethod).
+    public TypeBuilder BoundTypedArrayMethodType { get; set; } = null!;
+    public FieldBuilder BoundTypedArrayMethodArrayField { get; set; } = null!;
+    public FieldBuilder BoundTypedArrayMethodNameField { get; set; } = null!;
+    public ConstructorBuilder BoundTypedArrayMethodCtor { get; set; } = null!;
+    public MethodBuilder BoundTypedArrayMethodInvoke { get; set; } = null!;
+
     /// <summary>Concrete emitted $XArray type for a numeric element prefix, or null (BigInt/unknown).</summary>
     public Type? GetTypedArrayType(string elementType) => elementType switch
     {

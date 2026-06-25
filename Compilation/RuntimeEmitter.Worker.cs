@@ -807,6 +807,8 @@ public partial class RuntimeEmitter
         var checkByteOffsetLabel = il.DefineLabel();
         var checkBufferLabel = il.DefineLabel();
         var checkBytesPerElementLabel = il.DefineLabel();
+        var checkMethodsLabel = il.DefineLabel();
+        var buildWrapperLabel = il.DefineLabel();
         var returnNullLabel = il.DefineLabel();
 
         // Check if object is an emitted $TypedArray
@@ -877,7 +879,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ldstr, "BYTES_PER_ELEMENT");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
-        il.Emit(OpCodes.Brfalse, returnNullLabel);
+        il.Emit(OpCodes.Brfalse, checkMethodsLabel);
 
         // Return BYTES_PER_ELEMENT (call abstract BytesPerElement property)
         il.Emit(OpCodes.Ldarg_0);
@@ -885,6 +887,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, typedArrayBytesPerElementGetter);
         il.Emit(OpCodes.Conv_R8);
         il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Bulk-method names (#940): return a $BoundTypedArrayMethod bound to (this, name); it is
+        // dispatched through InvokeMethodValue/InvokeValue. Mirrors the interpreter's GetMember.
+        il.MarkLabel(checkMethodsLabel);
+        foreach (var methodName in new[]
+                 {
+                     "fill", "set", "copyWithin", "reverse", "slice", "subarray",
+                     "indexOf", "lastIndexOf", "includes", "join", "toString"
+                 })
+        {
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, methodName);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brtrue, buildWrapperLabel);
+        }
+        il.Emit(OpCodes.Br, returnNullLabel);
+
+        il.MarkLabel(buildWrapperLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, runtime.TypedArrayBaseType);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Newobj, runtime.BoundTypedArrayMethodCtor);
         il.Emit(OpCodes.Br, endLabel);
 
         il.MarkLabel(returnNullLabel);
