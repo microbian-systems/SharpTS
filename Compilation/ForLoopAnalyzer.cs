@@ -18,14 +18,16 @@ namespace SharpTS.Compilation;
 public static class ForLoopAnalyzer
 {
     /// <summary>
-    /// Integer loop-counter prototype gate (#928). When enabled, a provably-integer monotonic
+    /// Integer loop-counter optimization gate (#928). When enabled, a provably-integer monotonic
     /// loop counter is backed by a native <c>Int64</c> slot instead of a <c>double</c> — its
     /// increment stays native int and recognized index sites (<c>a[i]</c>, <c>a[i±k]</c>) consume
-    /// it directly, closing the typed-array kernel gap to Node. Off by default (zero behavior
-    /// change); opt in with <c>SHARPTS_INT_LOOP_COUNTER=1</c> while the prototype is validated.
+    /// it directly, closing the typed-array kernel gap to Node. On by default; it is sound (every
+    /// value-read materializes back to <c>double</c> via <c>conv.r8</c>, bit-identical to the
+    /// double counter, and the byte[] backing is untouched, so .NET interop is preserved). Set
+    /// <c>SHARPTS_INT_LOOP_COUNTER=0</c> to disable it as a kill-switch.
     /// </summary>
     public static readonly bool IntegerCounterEnabled =
-        Environment.GetEnvironmentVariable("SHARPTS_INT_LOOP_COUNTER") == "1";
+        Environment.GetEnvironmentVariable("SHARPTS_INT_LOOP_COUNTER") != "0";
 
     /// <summary>
     /// Identifies a for-loop counter eligible for the native <c>Int64</c> representation, or null.
