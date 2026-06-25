@@ -135,7 +135,7 @@ public static class StringBuiltIns
             {
                 var matches = regex.MatchAll(str);
                 if (matches.Count == 0) return RuntimeValue.Null;
-                return RuntimeValue.FromObject(new SharpTSArray(matches.Select(m => (object?)m).ToList()));
+                return RuntimeValue.FromObject(new SharpTSArray(matches));
             }
             else
             {

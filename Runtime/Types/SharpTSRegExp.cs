@@ -741,14 +741,20 @@ public class SharpTSRegExp : ITypeCategorized
     /// <summary>
     /// Match all occurrences in the string (used by String.match with global flag).
     /// </summary>
-    internal List<string> MatchAll(string input)
+    internal List<object?> MatchAll(string input)
     {
         // String.prototype.match(/g) only needs the full-match substrings, not
         // capture groups — so use EnumerateMatches (ValueMatch structs, span-
         // based) instead of Matches(). This skips the per-match Match/Group
         // object allocation that dominates this path (~2.3x faster here), and
         // matches Matches(input)'s whole-string scan semantics exactly.
-        List<string> result = [];
+        //
+        // Returns List<object?> (not List<string>) so callers hand it straight
+        // to the SharpTSArray ctor with no element-by-element re-box into an
+        // object list. The substrings are reference types, so storing them as
+        // object? is free (no boxing). Mirrored by the emitted MatchAll
+        // (RuntimeEmitter.TSRegExp.cs) — keep both in lockstep.
+        List<object?> result = [];
         foreach (ValueMatch m in _regex.EnumerateMatches(input))
         {
             result.Add(input.Substring(m.Index, m.Length));

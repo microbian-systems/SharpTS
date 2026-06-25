@@ -756,11 +756,7 @@ public partial class RuntimeEmitter
         var searchLocal = il.DeclareLocal(_types.String);
         var idxLocal = il.DeclareLocal(_types.Int32);
         var notFoundLabel = il.DefineLabel();
-        var matchesLocal = il.DeclareLocal(typeof(List<string>));
-        var elementsLocal = il.DeclareLocal(_types.ListOfObject);
-        var iLocal = il.DeclareLocal(_types.Int32);
-        var loopStartLabel = il.DefineLabel();
-        var loopEndLabel = il.DefineLabel();
+        var matchesLocal = il.DeclareLocal(_types.ListOfObject);
 
         // ECMA-262 22.1.3.13 String.prototype.match: when pattern is undefined,
         // RegExpCreate coerces to /(?:)/ and the exec path returns the
@@ -804,7 +800,7 @@ public partial class RuntimeEmitter
         // Global match: get all matches and return as array
         il.MarkLabel(globalMatchLabel);
 
-        // var matches = regexp.MatchAll(str)
+        // var matches = regexp.MatchAll(str)  // List<object?> of full-match substrings
         il.Emit(OpCodes.Ldloc, regexpLocal);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, _tsRegExpMatchAllMethod);
@@ -813,44 +809,16 @@ public partial class RuntimeEmitter
         // if (matches.Count == 0) return null
         var hasMatchesLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, matchesLocal);
-        il.Emit(OpCodes.Callvirt, typeof(List<string>).GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetProperty("Count")!.GetGetMethod()!);
         il.Emit(OpCodes.Brtrue, hasMatchesLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(hasMatchesLabel);
 
-        // Convert List<string> to $Array
-        // var elements = new List<object?>()
-        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
-        il.Emit(OpCodes.Stloc, elementsLocal);
-
-        // for (int i = 0; i < matches.Count; i++) elements.Add(matches[i])
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, iLocal);
-
-        il.MarkLabel(loopStartLabel);
-        il.Emit(OpCodes.Ldloc, iLocal);
+        // MatchAll already returns List<object?>, so hand it straight to the
+        // $Array ctor with no intermediate copy. return new $Array(matches)
         il.Emit(OpCodes.Ldloc, matchesLocal);
-        il.Emit(OpCodes.Callvirt, typeof(List<string>).GetProperty("Count")!.GetGetMethod()!);
-        il.Emit(OpCodes.Bge, loopEndLabel);
-
-        il.Emit(OpCodes.Ldloc, elementsLocal);
-        il.Emit(OpCodes.Ldloc, matchesLocal);
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Callvirt, typeof(List<string>).GetMethod("get_Item", [_types.Int32])!);
-        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
-
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, iLocal);
-        il.Emit(OpCodes.Br, loopStartLabel);
-
-        il.MarkLabel(loopEndLabel);
-
-        // return new $Array(elements)
-        il.Emit(OpCodes.Ldloc, elementsLocal);
         il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
         il.Emit(OpCodes.Ret);
 
