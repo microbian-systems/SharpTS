@@ -118,12 +118,12 @@ public class ErrorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Instance_StringCoercion_InvokesUserToString(ExecutionMode mode)
     {
         // #922 generalization: a user class with its own toString() is dispatched
-        // in every string-coercion form, matching Node. (Interpreter-only: compiled
-        // mode has a separate pre-existing quirk that yields the class name — #933.)
+        // in every string-coercion form, matching Node. Compiled mode now dispatches
+        // it too (#931/#933) — pins both.
         var source = @"
             class Pt { x = 1; y = 2; toString() { return `(${this.x},${this.y})`; } }
             const p = new Pt();
@@ -136,18 +136,18 @@ public class ErrorTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Instance_StringCoercion_NoToString_KeepsDefault(ExecutionMode mode)
     {
-        // #922 fallback guard: a plain instance with no toString() keeps the
-        // interpreter's "[object ClassName]" default rather than throwing or
-        // dispatching a phantom method.
+        // A plain instance with no toString() brands as Node's ordinary-object
+        // "[object Object]" (Object.prototype.toString), not the class name — in
+        // both modes (#931). Was "[object Plain]" before compiled/interp parity.
         var source = @"
             class Plain { x = 1; }
             console.log('' + new Plain());
         ";
         var output = TestHarness.Run(source, mode);
-        Assert.Equal("[object Plain]\n", output);
+        Assert.Equal("[object Object]\n", output);
     }
 
     [Theory]

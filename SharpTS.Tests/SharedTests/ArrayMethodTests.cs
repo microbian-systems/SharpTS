@@ -408,12 +408,12 @@ public class ArrayMethodTests
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Array_Join_UserToString_DispatchesToString(ExecutionMode mode)
     {
         // A user class with its own toString() is dispatched per element (#922
-        // follow-up). Interpreter-only: compiled mode has a separate, pre-existing
-        // gap where ToJsString returns the class name for non-Error instances.
+        // follow-up). Compiled mode now dispatches it too — the prior gap where
+        // ToJsString returned the class name for non-Error instances is fixed (#931/#933).
         var source = """
             class Pt { x = 1; y = 2; toString() { return `(${this.x},${this.y})`; } }
             console.log([new Pt(), new Pt()].join("|"));
