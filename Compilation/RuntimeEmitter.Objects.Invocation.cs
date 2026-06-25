@@ -234,6 +234,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.BoundArrayMethodType);
         il.Emit(OpCodes.Brtrue, boundArrayMethodLabel);
 
+        // $BoundTypedArrayMethod (#940) — value-position call (`const f = a.fill; f(x)`).
+        Label boundTypedArrayMethodLabel = default;
+        if (_features.HasAnyTypedArray)
+        {
+            boundTypedArrayMethodLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.BoundTypedArrayMethodType);
+            il.Emit(OpCodes.Brtrue, boundTypedArrayMethodLabel);
+        }
+
         var boundMapMethodLabel = il.DefineLabel();
         if (_features.UsesMap)
         {
@@ -502,6 +512,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, runtime.BoundArrayMethodInvoke);
         il.Emit(OpCodes.Ret);
+
+        if (_features.HasAnyTypedArray)
+        {
+            il.MarkLabel(boundTypedArrayMethodLabel);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, runtime.BoundTypedArrayMethodType);
+            il.Emit(OpCodes.Ldarg_1);  // args
+            il.Emit(OpCodes.Callvirt, runtime.BoundTypedArrayMethodInvoke);
+            il.Emit(OpCodes.Ret);
+        }
 
         if (_features.UsesMap)
         {
@@ -813,6 +833,22 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(notBoundAnyFunctionLabel);
+
+        // $BoundTypedArrayMethod (#940) — wraps a typed-array bulk method bound to its receiver.
+        // The receiver is already captured in the wrapper, so arg0 is ignored (like $MethodCallable).
+        if (_features.HasAnyTypedArray)
+        {
+            var notBoundTypedArrayMethodLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Isinst, runtime.BoundTypedArrayMethodType);
+            il.Emit(OpCodes.Brfalse, notBoundTypedArrayMethodLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Castclass, runtime.BoundTypedArrayMethodType);
+            il.Emit(OpCodes.Ldarg_2);  // args
+            il.Emit(OpCodes.Callvirt, runtime.BoundTypedArrayMethodInvoke);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notBoundTypedArrayMethodLabel);
+        }
 
         // Handle $MethodCallable (wraps BuiltInMethod from GetMember)
         var notMethodCallableLabel = il.DefineLabel();
