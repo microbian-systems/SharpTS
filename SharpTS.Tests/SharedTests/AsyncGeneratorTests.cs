@@ -45,13 +45,14 @@ public class AsyncGeneratorTests
         Assert.Equal("1 false\n2 false\n3 false\nundefined true\n", output);
     }
 
-    [Fact]
-    public void AsyncGenerator_ObjectMethod_ReadsThis_Interpreted()
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGenerator_ObjectMethod_ReadsThis(ExecutionMode mode)
     {
-        // #775: an object async-generator method reads instance state via `this`. Interpreter only:
-        // the compiled async-generator object-METHOD value-call (`o.gen()`) inside an async function does
-        // not yet thread the receiver into the state machine (a pre-existing async-codegen gap, tracked
-        // separately). The `.call`/`.apply` async path works in both modes — see the test below.
+        // #775/#923: an object async-generator method reads instance state via `this`. The value-call
+        // `o.gen()` inside an async function must thread the receiver into the state machine in both
+        // modes — #923 fixed the compiled gap (the call site dropped the receiver, so `<>4__this`
+        // captured the sloppy global instead of `o`).
         var source = """
             const o = { v: 7, async *gen() { yield this.v; yield this.v + 1; } };
             async function main() {
@@ -64,7 +65,49 @@ public class AsyncGeneratorTests
             main();
             """;
 
-        Assert.Equal("7\n8\n", TestHarness.Run(source, ExecutionMode.Interpreted));
+        Assert.Equal("7\n8\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ForAwaitOf_AsyncGeneratorObjectMethod_ReadsThis(ExecutionMode mode)
+    {
+        // #923: inline `for await (... of o.gen())` over an async-generator object method must thread
+        // `this` into the state machine. The for-await iterable is evaluated via the same call-site
+        // path as the bare value-call, so this exercises the second reported case (compiled mode
+        // previously hit null/NRE on `this.v`).
+        var source = """
+            const o = { v: 42, async *gen() { yield this.v; yield this.v + 1; } };
+            async function run() {
+                for await (const x of o.gen()) {
+                    console.log(x);
+                }
+            }
+            run();
+            """;
+
+        Assert.Equal("42\n43\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorFunctionExpression_AsObjectProperty_ReadsThis(ExecutionMode mode)
+    {
+        // #923: the other `HasOwnThis` lift shape — an `async function*` EXPRESSION assigned to an
+        // object property — must also bind `this` to the receiver when called as `o.gen()`.
+        var source = """
+            const o = { v: 5, gen: async function* () { yield this.v; yield this.v * 2; } };
+            async function main() {
+                const it = o.gen();
+                let r = await it.next();
+                console.log(r.value);
+                r = await it.next();
+                console.log(r.value);
+            }
+            main();
+            """;
+
+        Assert.Equal("5\n10\n", TestHarness.Run(source, mode));
     }
 
     [Theory]
