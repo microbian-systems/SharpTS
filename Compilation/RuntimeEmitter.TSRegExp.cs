@@ -2370,11 +2370,16 @@ public partial class RuntimeEmitter
 
     private void EmitTSRegExpMatchAll(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
-        // internal List<string> MatchAll(string input)
+        // internal List<object?> MatchAll(string input)
+        // Returns List<object?> (not List<string>) so the String.match and
+        // [Symbol.matchAll] consumers hand it straight to the $Array ctor with
+        // no element-by-element copy into an object list. Substrings are
+        // reference types, so storing them as object is free (no box). Mirrors
+        // the runtime SharpTSRegExp.MatchAll — keep both in lockstep.
         var method = typeBuilder.DefineMethod(
             "MatchAll",
             MethodAttributes.Assembly,
-            typeof(List<string>),
+            _types.ListOfObject,
             [_types.String]
         );
         _tsRegExpMatchAllMethod = method;
@@ -2400,14 +2405,14 @@ public partial class RuntimeEmitter
         var substring = _types.String.GetMethod("Substring", [_types.Int32, _types.Int32])!;
 
         var il = method.GetILGenerator();
-        var resultLocal = il.DeclareLocal(typeof(List<string>));
+        var resultLocal = il.DeclareLocal(_types.ListOfObject);
         var enumLocal = il.DeclareLocal(enumType);
         var vmLocal = il.DeclareLocal(valueMatchType);
         var loopStartLabel = il.DefineLabel();
         var loopEndLabel = il.DefineLabel();
 
-        // var result = new List<string>()
-        il.Emit(OpCodes.Newobj, typeof(List<string>).GetConstructor(Type.EmptyTypes)!);
+        // var result = new List<object?>()
+        il.Emit(OpCodes.Newobj, _types.ListOfObject.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, resultLocal);
 
         // var e = _regex.EnumerateMatches((ReadOnlySpan<char>)input)
@@ -2435,7 +2440,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloca, vmLocal);
         il.Emit(OpCodes.Call, getLength);
         il.Emit(OpCodes.Callvirt, substring);
-        il.Emit(OpCodes.Callvirt, typeof(List<string>).GetMethod("Add", [_types.String])!);
+        // The substring is a string on the stack; List<object?>.Add(object) takes
+        // it directly (reference conversion, no box).
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Add", [_types.Object])!);
         il.Emit(OpCodes.Br, loopStartLabel);
 
         il.MarkLabel(loopEndLabel);
@@ -3385,12 +3392,7 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var rxLocal = il.DeclareLocal(typeBuilder);
         var sLocal = il.DeclareLocal(_types.String);
-        var listLocal = il.DeclareLocal(typeof(List<string>));
-        var resultLocal = il.DeclareLocal(_types.ListOfObject);
-        var enumLocal = il.DeclareLocal(typeof(List<string>.Enumerator));
-
-        var loopStartLabel = il.DefineLabel();
-        var loopBodyLabel = il.DefineLabel();
+        var listLocal = il.DeclareLocal(_types.ListOfObject);
 
         // ECMA-262 §22.2.5.8 step 2: throw TypeError if `this` is not an Object.
         EmitRequireObjectArg(il, runtime, method, argIndex: 0, "RegExp.prototype[Symbol.matchAll]");
@@ -3419,35 +3421,15 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Throw);
         il.MarkLabel(rxOkLabel);
 
-        // var list = rx.MatchAll(s);
+        // var list = rx.MatchAll(s);  // List<object?> of full-match substrings
         il.Emit(OpCodes.Ldloc, rxLocal);
         il.Emit(OpCodes.Ldloc, sLocal);
         il.Emit(OpCodes.Call, _tsRegExpMatchAllMethod);
         il.Emit(OpCodes.Stloc, listLocal);
 
-        // var result = new List<object?>(list.Count);
+        // MatchAll already returns List<object?>, so wrap it directly — no copy.
+        // return new $Array(list)
         il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Callvirt, typeof(List<string>).GetProperty("Count")!.GetGetMethod()!);
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.Int32));
-        il.Emit(OpCodes.Stloc, resultLocal);
-
-        il.Emit(OpCodes.Ldloc, listLocal);
-        il.Emit(OpCodes.Callvirt, typeof(List<string>).GetMethod("GetEnumerator")!);
-        il.Emit(OpCodes.Stloc, enumLocal);
-
-        il.Emit(OpCodes.Br, loopStartLabel);
-        il.MarkLabel(loopBodyLabel);
-        il.Emit(OpCodes.Ldloc, resultLocal);
-        il.Emit(OpCodes.Ldloca, enumLocal);
-        il.Emit(OpCodes.Call, typeof(List<string>.Enumerator).GetProperty("Current")!.GetGetMethod()!);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
-
-        il.MarkLabel(loopStartLabel);
-        il.Emit(OpCodes.Ldloca, enumLocal);
-        il.Emit(OpCodes.Call, typeof(List<string>.Enumerator).GetMethod("MoveNext")!);
-        il.Emit(OpCodes.Brtrue, loopBodyLabel);
-
-        il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Newobj, runtime.TSArrayCtor);
         il.Emit(OpCodes.Ret);
     }
