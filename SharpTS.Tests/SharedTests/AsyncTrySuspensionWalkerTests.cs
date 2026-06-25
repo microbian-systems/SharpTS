@@ -47,13 +47,12 @@ public class AsyncTrySuspensionWalkerTests
         Assert.Equal("case: 1\ndone\n", TestHarness.Run(source, mode));
     }
 
-    // Interpreter-only: in COMPILED mode `throw await f()` inside a try does not route
-    // to the guest catch (the awaited value escapes as a host exception). That is a
-    // deeper bug in AsyncFunctionMoveNextEmitter's flag-based throw emission, not the
-    // suspension walker (which now correctly classifies this as suspending). Tracked as
-    // follow-up; pinned here in the mode that is correct.
+    // `throw await f()` inside a try is a segment-breaker emitted at the top level (outside the
+    // sync-segment mini try/catch), so before #914 the compiled raw throw escaped the guest try and
+    // faulted the Task. Fixed by AsyncFunctionMoveNextEmitter.EmitThrow routing a top-level throw into
+    // the active flag-based try's exception local (running any intervening finally first).
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncTry_AwaitInsideThrow(ExecutionMode mode)
     {
         var source = """
@@ -89,12 +88,13 @@ public class AsyncTrySuspensionWalkerTests
         Assert.Equal("hi\n", TestHarness.Run(source, mode));
     }
 
-    // Interpreter-only: in COMPILED mode `arr[i] += await f()` inside a try strands the
-    // indexed receiver across the suspension (#850-class). The suspension walker now
-    // classifies it correctly; the remaining gap is in the flag-based async state-machine
-    // emission. Tracked as follow-up; pinned here in the mode that is correct.
+    // `arr[i] += await f()` parses to Expr.CompoundSetIndex, which the async-function
+    // suspension walker did not descend into — so the try under-reported suspension and
+    // took the real-IL lowering (illegal BranchIntoTry resume → InvalidProgramException).
+    // Fixed in #914 by delegating the walker to the canonical ExprContainsSuspension
+    // (the CompoundSetIndex emission already spilled the receiver/index correctly).
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void AsyncTry_AwaitInCompoundIndexedAssign(ExecutionMode mode)
     {
         // arr[0] += await ... exercises CompoundAssign + GetIndex + SetIndex.
@@ -156,5 +156,135 @@ public class AsyncTrySuspensionWalkerTests
             main();
             """;
         Assert.Equal("labeled: 7\n", TestHarness.Run(source, mode));
+    }
+
+    // The walker arms below were all absent before #914 (only CompoundAssign/GetIndex/SetIndex
+    // had been added). Each puts an await inside a composite the walker must descend into, within
+    // a try; under-reporting any of them would re-expose the BranchIntoTry resume failure.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncTry_AwaitInCompoundMemberAssign(ExecutionMode mode)
+    {
+        // obj.x += await ... is Expr.CompoundSet.
+        var source = """
+            async function inc(): Promise<number> { return 5; }
+            async function main(): Promise<void> {
+                const obj = { x: 10 };
+                try {
+                    obj.x += await inc();
+                    console.log("x: " + obj.x);
+                } catch (e) {
+                    console.log("caught");
+                }
+            }
+            main();
+            """;
+        Assert.Equal("x: 15\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncTry_AwaitInLogicalIndexedAssign(ExecutionMode mode)
+    {
+        // arr[0] ||= await ... is Expr.LogicalSetIndex; arr[0] is falsy so the RHS await runs.
+        var source = """
+            async function inc(): Promise<number> { return 5; }
+            async function main(): Promise<void> {
+                const arr = [0];
+                try {
+                    arr[0] ||= await inc();
+                    console.log("arr0: " + arr[0]);
+                } catch (e) {
+                    console.log("caught");
+                }
+            }
+            main();
+            """;
+        Assert.Equal("arr0: 5\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncTry_AwaitInArrayLiteral(ExecutionMode mode)
+    {
+        // [await ...] is Expr.ArrayLiteral with a suspending element.
+        var source = """
+            async function val(): Promise<number> { return 3; }
+            async function main(): Promise<void> {
+                try {
+                    const a = [await val(), 9];
+                    console.log("a: " + a[0] + "," + a[1]);
+                } catch (e) {
+                    console.log("caught");
+                }
+            }
+            main();
+            """;
+        Assert.Equal("a: 3,9\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncTry_AwaitInTemplateLiteral(ExecutionMode mode)
+    {
+        // `v=${await ...}` is Expr.TemplateLiteral with a suspending interpolation.
+        var source = """
+            async function val(): Promise<number> { return 4; }
+            async function main(): Promise<void> {
+                try {
+                    const s = `v=${await val()}`;
+                    console.log(s);
+                } catch (e) {
+                    console.log("caught");
+                }
+            }
+            main();
+            """;
+        Assert.Equal("v=4\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncTry_ThrowAwait_RunsOwnFinallyThenCatch(ExecutionMode mode)
+    {
+        // The routed throw lands in this try's catch and its own finally still runs after (#914).
+        var source = """
+            async function makeErr(): Promise<string> { return "boom"; }
+            async function main(): Promise<void> {
+                try {
+                    throw await makeErr();
+                } catch (e) {
+                    console.log("caught: " + e);
+                } finally {
+                    console.log("finally");
+                }
+            }
+            main();
+            """;
+        Assert.Equal("caught: boom\nfinally\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncTry_ThrowAwait_NestedInIf_RoutesToCatch(ExecutionMode mode)
+    {
+        // The `if` is the segment-breaker (its branch contains the await); the throw is emitted while
+        // descending into it, still at the try-body top level — routing must fire there too.
+        var source = """
+            async function makeErr(): Promise<string> { return "deep"; }
+            async function main(): Promise<void> {
+                try {
+                    if (1 < 2) {
+                        throw await makeErr();
+                    }
+                    console.log("unreached");
+                } catch (e) {
+                    console.log("caught: " + e);
+                }
+            }
+            main();
+            """;
+        Assert.Equal("caught: deep\n", TestHarness.Run(source, mode));
     }
 }

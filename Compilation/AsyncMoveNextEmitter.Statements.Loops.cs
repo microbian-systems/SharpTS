@@ -287,7 +287,11 @@ public partial class AsyncMoveNextEmitter
         }
         var exLocal = _currentTryCatchExceptionLocal;
         _il.BeginExceptionBlock();
+        // This real-IL try already captures a throw from the span into the enclosing flag-based catch, so
+        // the #914 throw routing must defer to it (a routed `br` out of this region would be illegal IL).
+        _throwRoutingGuardDepth++;
         emit();
+        _throwRoutingGuardDepth--;
         _il.BeginCatchBlock(typeof(Exception));
         _il.Emit(OpCodes.Call, _ctx!.Runtime!.WrapException);
         _il.Emit(OpCodes.Stloc, exLocal);

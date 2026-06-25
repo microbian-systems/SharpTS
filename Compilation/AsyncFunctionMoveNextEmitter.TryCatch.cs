@@ -5,6 +5,102 @@ namespace SharpTS.Compilation;
 
 public abstract partial class AsyncFunctionMoveNextEmitter
 {
+    // ---- Suspending-throw routing in a flag-based try body (#914) -------------------------------
+    // `throw <expr-with-await>` in a try body is a segment-breaker: it is emitted at the top level,
+    // outside the sync-segment mini try/catch that captures ordinary throws (EmitSegmentInTry). A raw
+    // CLR throw there escapes the guest try and faults the Task instead of reaching `catch`. We route it
+    // into the active flag-based try exactly as a captured await-rejection is (EmitAwaitGetResult /
+    // EmitGuardedSyncSegment): store the value into the try's exception local and branch to its catch
+    // dispatch, running any finally(s) strictly inside the try first. A non-suspending throw is captured
+    // by its mini try/catch and never reaches here; a handler-body throw is handled by the existing
+    // nested-catch wrap — both run with _throwRoutingGuardDepth > 0.
+
+    // Count of real-IL guest exception blocks open around the current emission point (the sync-segment
+    // mini try/catch, the nested-catch wrap, the no-await / simple try blocks, and the for-await guarded
+    // sync segment). While > 0 a real-IL handler already owns any throw, so routing must defer. This is
+    // deliberately independent of CompilationContext.ExceptionBlockDepth — which the async functions key
+    // the break/continue Leave-vs-Br choice off (#727) and which the segment/wrap sites do not bump — and
+    // of the base ProtectedRegionDepth. Protected so the for-await loop emitter (a subclass partial) can
+    // bump it around its own guarded sync segment.
+    protected int _throwRoutingGuardDepth;
+
+    // _exitScopes.Count captured at the start of the flag-based try body whose exception local is
+    // _currentTryCatchExceptionLocal; selects the finally(s) strictly inside that try for a routed throw.
+    private int _currentTryCatchScopeDepth;
+
+    // <>pendingException (object): holds a routed throw value across an intervening finally that itself
+    // suspends, until the routing terminal moves it into the try's exception local.
+    private FieldBuilder? _pendingExceptionField;
+    private FieldBuilder GetPendingExceptionField() =>
+        _pendingExceptionField ??= DefineStateMachineField("<>pendingException", typeof(object));
+
+    protected override void EmitThrow(Stmt.Throw t)
+    {
+        // Only a top-level throw inside a flag-based try body reaches here un-guarded; route it to that
+        // try's catch. Everything else (guarded throws, handler-body throws, throws with no enclosing
+        // flag-based try) falls through to the base raw throw, which the relevant real-IL handler or the
+        // outer MoveNext catch (→ Task fault) already handles.
+        if (_currentTryCatchExceptionLocal != null && _currentTryCatchSkipLabel != null
+            && _throwRoutingGuardDepth == 0)
+        {
+            RouteThrowIntoCurrentTry(() => { EmitExpression(t.Value); EnsureBoxed(); });
+            return;
+        }
+
+        base.EmitThrow(t);
+    }
+
+    /// <summary>
+    /// Routes a guest throw escaping the top level of a flag-based try body into that try: stores the
+    /// value into its exception local and branches to its catch dispatch (<see
+    /// cref="_currentTryCatchSkipLabel"/>, which is null-gated on the local so no separate present flag is
+    /// needed). Any finally(s) strictly inside the try run first; because such a finally can await, the
+    /// value is held in <c>&lt;&gt;pendingException</c> across them and moved into the exception local by
+    /// the routing terminal (#914, the async-function analog of the generators' throw routing).
+    /// </summary>
+    private void RouteThrowIntoCurrentTry(Action loadValue)
+    {
+        var exLocal = _currentTryCatchExceptionLocal!;
+        var skip = _currentTryCatchSkipLabel!.Value;
+        var chain = FinallyFramesInside(_currentTryCatchScopeDepth);
+        if (chain.Count == 0)
+        {
+            loadValue();
+            IL.Emit(OpCodes.Stloc, exLocal);
+            IL.Emit(OpCodes.Br, skip);
+            return;
+        }
+
+        // Intervening finally(s) may await, so hold the value in a field across them; the routing terminal
+        // moves it into the try's exception local and branches to its catch dispatch.
+        IL.Emit(OpCodes.Ldarg_0);
+        loadValue();
+        IL.Emit(OpCodes.Stfld, GetPendingExceptionField());
+        int code = _nextExitCode++;
+        _exitTerminals[code] = () =>
+        {
+            IL.Emit(OpCodes.Ldarg_0);
+            IL.Emit(OpCodes.Ldfld, GetPendingExceptionField());
+            IL.Emit(OpCodes.Stloc, exLocal);
+            IL.Emit(OpCodes.Br, skip);
+        };
+        RouteThroughFinallys(chain, code, OpCodes.Br);
+    }
+
+    /// <summary>
+    /// The finally scopes strictly inside the flag-based try whose body began at <paramref
+    /// name="scopeDepth"/> (= <c>_exitScopes.Count</c> there), innermost first. Excludes the try's own
+    /// finally (just below scopeDepth, run by the normal catch→finally flow) and everything outside it.
+    /// </summary>
+    private List<FinallyScope> FinallyFramesInside(int scopeDepth)
+    {
+        var result = new List<FinallyScope>();
+        for (int i = _exitScopes.Count - 1; i >= scopeDepth; i--)
+            if (_exitScopes[i] is FinallyScope fs)
+                result.Add(fs);
+        return result;
+    }
+
     protected override void EmitTryCatch(Stmt.TryCatch t)
     {
         // Check if this try block contains any await points
@@ -33,6 +129,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         // segments), so a break targeting a loop nested inside the try stays a legal in-region `Br`
         // while an escaping break/continue leaves via `Leave` (#727).
         Ctx.ExceptionBlockDepth++;
+        _throwRoutingGuardDepth++;
         IL.BeginExceptionBlock();
 
         // Emit try block statements
@@ -75,6 +172,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
 
         IL.EndExceptionBlock();
         Ctx.ExceptionBlockDepth--;
+        _throwRoutingGuardDepth--;
     }
 
     private void EmitTryCatchWithAwaits(Stmt.TryCatch t, bool hasAwaitsInTry, bool hasAwaitsInCatch, bool hasAwaitsInFinally)
@@ -119,6 +217,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
             // IL exception block, so a non-local exit crossing it must Leave, not Br — bump
             // ExceptionBlockDepth so EmitBranchToLabel / the routing pick Leave to the cleanup (#774).
             Ctx.ExceptionBlockDepth++;
+            _throwRoutingGuardDepth++;
             IL.BeginExceptionBlock();
             foreach (var stmt in t.TryBlock)
                 EmitStatement(stmt);
@@ -130,12 +229,14 @@ public abstract partial class AsyncFunctionMoveNextEmitter
 
             IL.EndExceptionBlock();
             Ctx.ExceptionBlockDepth--;
+            _throwRoutingGuardDepth--;
         }
         else
         {
             // No awaits in try or finally - use normal try block. Same real-IL-block reasoning as above:
             // bump ExceptionBlockDepth so a non-local exit crossing this try Leaves to the cleanup (#774).
             Ctx.ExceptionBlockDepth++;
+            _throwRoutingGuardDepth++;
             IL.BeginExceptionBlock();
             foreach (var stmt in t.TryBlock)
                 EmitStatement(stmt);
@@ -148,6 +249,7 @@ public abstract partial class AsyncFunctionMoveNextEmitter
             }
             IL.EndExceptionBlock();
             Ctx.ExceptionBlockDepth--;
+            _throwRoutingGuardDepth--;
         }
 
         // Cleanup entry: normal completion falls here, and a routed non-local exit branches here. The
@@ -184,8 +286,10 @@ public abstract partial class AsyncFunctionMoveNextEmitter
                 // We're nested inside another try-with-awaits
                 // Wrap catch block in try/catch to propagate exceptions outward
                 IL.BeginExceptionBlock();
+                _throwRoutingGuardDepth++;
                 foreach (var stmt in t.CatchBlock)
                     EmitStatement(stmt);
+                _throwRoutingGuardDepth--;
                 IL.BeginCatchBlock(typeof(Exception));
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.WrapException);
                 IL.Emit(OpCodes.Stloc, outerExceptionLocal);
@@ -274,9 +378,13 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         // Set context for await exception handling
         var previousExceptionLocal = _currentTryCatchExceptionLocal;
         var previousSkipLabel = _currentTryCatchSkipLabel;
+        var previousScopeDepth = _currentTryCatchScopeDepth;
         var afterTryLabel = IL.DefineLabel();
         _currentTryCatchExceptionLocal = caughtExceptionLocal;
         _currentTryCatchSkipLabel = afterTryLabel;
+        // Finally(s) pushed after this point are strictly inside this try; a routed throw runs them
+        // before reaching its catch (the try's own finally, pushed just before the body, is excluded).
+        _currentTryCatchScopeDepth = _exitScopes.Count;
 
         List<Stmt> syncSegment = [];
 
@@ -332,13 +440,16 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         // try with no exit target).
         _currentTryCatchExceptionLocal = previousExceptionLocal;
         _currentTryCatchSkipLabel = previousSkipLabel;
+        _currentTryCatchScopeDepth = previousScopeDepth;
     }
 
     private void EmitSegmentInTry(List<Stmt> statements, LocalBuilder caughtExceptionLocal)
     {
         IL.BeginExceptionBlock();
+        _throwRoutingGuardDepth++;
         foreach (var stmt in statements)
             EmitStatement(stmt);
+        _throwRoutingGuardDepth--;
 
         IL.BeginCatchBlock(typeof(Exception));
         IL.Emit(OpCodes.Call, Ctx.Runtime!.WrapException);
@@ -419,49 +530,12 @@ public abstract partial class AsyncFunctionMoveNextEmitter
         }
     }
 
-    protected bool ContainsAwaitInExpr(Expr expr)
-    {
-        switch (expr)
-        {
-            case Expr.Await:
-                return true;
-            case Expr.Comma c:
-                return ContainsAwaitInExpr(c.Left) || ContainsAwaitInExpr(c.Right);
-            case Expr.Binary b:
-                return ContainsAwaitInExpr(b.Left) || ContainsAwaitInExpr(b.Right);
-            case Expr.Logical l:
-                return ContainsAwaitInExpr(l.Left) || ContainsAwaitInExpr(l.Right);
-            case Expr.Unary u:
-                return ContainsAwaitInExpr(u.Right);
-            case Expr.Delete d:
-                return ContainsAwaitInExpr(d.Operand);
-            case Expr.Grouping g:
-                return ContainsAwaitInExpr(g.Expression);
-            case Expr.Call c:
-                if (ContainsAwaitInExpr(c.Callee)) return true;
-                foreach (var arg in c.Arguments)
-                    if (ContainsAwaitInExpr(arg)) return true;
-                return false;
-            case Expr.Assign a:
-                return ContainsAwaitInExpr(a.Value);
-            case Expr.Ternary t:
-                return ContainsAwaitInExpr(t.Condition) ||
-                       ContainsAwaitInExpr(t.ThenBranch) ||
-                       ContainsAwaitInExpr(t.ElseBranch);
-            case Expr.Get g:
-                return ContainsAwaitInExpr(g.Object);
-            case Expr.Set s:
-                return ContainsAwaitInExpr(s.Object) || ContainsAwaitInExpr(s.Value);
-            // Parity with ContainsYieldInExpr: `a[i] += await f()`, `a[await i()]`,
-            // and `a[i] = await f()` inside a try must report suspension (#850).
-            case Expr.CompoundAssign ca:
-                return ContainsAwaitInExpr(ca.Value);
-            case Expr.GetIndex gi:
-                return ContainsAwaitInExpr(gi.Object) || ContainsAwaitInExpr(gi.Index);
-            case Expr.SetIndex si:
-                return ContainsAwaitInExpr(si.Object) || ContainsAwaitInExpr(si.Index) || ContainsAwaitInExpr(si.Value);
-            default:
-                return false;
-        }
-    }
+    // Delegates to the canonical, exhaustive suspension walker shared by every state-machine emitter
+    // (ExpressionEmitterBase.ExprContainsSuspension). The previous hand-maintained switch had drifted
+    // and was missing CompoundSetIndex/CompoundSet/LogicalAssign/LogicalSet/LogicalSetIndex plus await
+    // nested in array/object/template literals and new(...) — so e.g. `a[i] += await f()` inside a try
+    // under-reported suspension and took the real-IL try path (an illegal BranchIntoTry resume label →
+    // InvalidProgramException) (#914). An async function never contains `yield`, so the helper's Yield
+    // arm is vacuously inapplicable here.
+    protected bool ContainsAwaitInExpr(Expr expr) => ExprContainsSuspension(expr);
 }
