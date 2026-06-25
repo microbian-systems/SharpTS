@@ -499,7 +499,7 @@ internal sealed class NestedFunctionLifter
         bool changed = false;
         foreach (var stmt in module)
         {
-            var rewritten = ProcessStmt(stmt, enclosingIsStateMachine: false);
+            var rewritten = ProcessStmt(stmt, enclosingIsStateMachine: false, enclosingIsAsyncFunction: false);
             if (!ReferenceEquals(rewritten, stmt)) changed = true;
             result.Add(rewritten);
         }
@@ -511,7 +511,7 @@ internal sealed class NestedFunctionLifter
     /// the module top level under a fresh name and replaced, at the top of this list, by a
     /// <c>var &lt;name&gt; = &lt;freshName&gt;;</c> alias so references in this scope still resolve.
     /// </summary>
-    private List<Stmt> ProcessBody(List<Stmt> body, bool enclosingIsStateMachine)
+    private List<Stmt> ProcessBody(List<Stmt> body, bool enclosingIsStateMachine, bool enclosingIsAsyncFunction)
     {
         List<Stmt>? result = null;
         List<Stmt>? aliases = null;
@@ -535,20 +535,24 @@ internal sealed class NestedFunctionLifter
                     // Capturing relocation: replace the declaration with a forwarding arrow.
                     //
                     // Function-scope captures (#534/#583 §1) whose enclosing function is a PLAIN
-                    // function are HOISTED to the top of this body (alongside non-capturing aliases):
-                    // there the forwarding arrow reads its captures live (by reference) at call time, so
-                    // an earlier creation position is harmless — and hoisting matches function-declaration
-                    // hoisting, so the forward reference the GeneratorArrowLifter creates (it appends the
-                    // lifted `function* __genArrow_N` at body END) resolves.
+                    // function OR a plain ASYNC function are HOISTED to the top of this body (alongside
+                    // non-capturing aliases): there the forwarding arrow reads its captures live (by
+                    // reference) at call time — an async function routes a nested arrow's captures through
+                    // a shared function display class (ILCompiler.WireAsyncMethodFunctionDC), exactly like
+                    // a plain function, so an earlier creation position is harmless — and hoisting matches
+                    // function-declaration hoisting, so the forward reference the GeneratorArrowLifter
+                    // creates (it appends the lifted `function* __genArrow_N` at body END) resolves. The
+                    // async-function case (#924) is the async analog of the plain-function #534 fix.
                     //
-                    // When the enclosing function is itself a state machine (generator/async), a
-                    // forwarding arrow snapshots its captures at CREATION, not at call, so hoisting it
-                    // above the captured local's assignment would read a stale value. Keep those in
-                    // place (the existing #583 §1 decl-before-use behavior). Module-block/loop captures
-                    // (#622) likewise stay in place so each loop iteration rebuilds a fresh arrow over
-                    // that iteration's binding.
+                    // When the enclosing function is a GENERATOR (sync `function*` or `async function*`),
+                    // keep the binding in place: an instance generator method has no function display class
+                    // wired, so its forwarding arrow snapshots captures by value at creation, and hoisting
+                    // above the captured local's assignment would read a stale value. Leave those (the
+                    // existing #583 §1 decl-before-use behavior — currently a clean failure for the
+                    // generator-encloser analog of #924). Module-block/loop captures (#622) likewise stay
+                    // in place so each loop iteration rebuilds a fresh arrow over that iteration's binding.
                     result ??= new List<Stmt>(body.GetRange(0, i));
-                    bool hoist = _hoistedForwards.Contains(f) && !enclosingIsStateMachine;
+                    bool hoist = _hoistedForwards.Contains(f) && (!enclosingIsStateMachine || enclosingIsAsyncFunction);
                     var binding = LambdaLiftCandidate(f, forwarded, hoisted: hoist);
                     if (hoist)
                         (aliases ??= new List<Stmt>()).Add(binding);
@@ -558,7 +562,7 @@ internal sealed class NestedFunctionLifter
                 }
             }
 
-            var rewritten = ProcessStmt(stmt, enclosingIsStateMachine);
+            var rewritten = ProcessStmt(stmt, enclosingIsStateMachine, enclosingIsAsyncFunction);
             if (result != null)
                 result.Add(rewritten);
             else if (!ReferenceEquals(rewritten, stmt))
@@ -580,7 +584,7 @@ internal sealed class NestedFunctionLifter
         var freshName = $"__nestedFn_{f.Name.Lexeme}_{_counter++}";
         var freshToken = new Token(TokenType.IDENTIFIER, freshName, null, f.Name.Line);
 
-        var liftedBody = ProcessBody(f.Body!, f.IsGenerator || f.IsAsync);
+        var liftedBody = ProcessBody(f.Body!, f.IsGenerator || f.IsAsync, f.IsAsync && !f.IsGenerator);
 
         // Recursion: the relocated body still calls itself by the original name. Bind that name to
         // the fresh declaration with a self-alias at the top of the body.
@@ -620,7 +624,7 @@ internal sealed class NestedFunctionLifter
         var freshToken = new Token(TokenType.IDENTIFIER, freshName, null, f.Name.Line);
 
         // Recurse first so nested candidates inside the relocated body are also handled.
-        var liftedBody = ProcessBody(f.Body!, f.IsGenerator || f.IsAsync);
+        var liftedBody = ProcessBody(f.Body!, f.IsGenerator || f.IsAsync, f.IsAsync && !f.IsGenerator);
 
         // Relocated declaration: captured bindings become leading (untyped) parameters, followed by
         // the original parameters. Body references to the captured names now resolve to these
@@ -665,72 +669,72 @@ internal sealed class NestedFunctionLifter
         return new Stmt.Var(f.Name, TypeAnnotation: null, Initializer: arrow, IsVar: hoisted);
     }
 
-    private Stmt ProcessStmt(Stmt stmt, bool enclosingIsStateMachine)
+    private Stmt ProcessStmt(Stmt stmt, bool enclosingIsStateMachine, bool enclosingIsAsyncFunction)
     {
         switch (stmt)
         {
             case Stmt.Function f when f.Body != null:
             {
                 // Not lifted (not a safe candidate), but its body may contain nested candidates.
-                var nb = ProcessBody(f.Body, f.IsGenerator || f.IsAsync);
+                var nb = ProcessBody(f.Body, f.IsGenerator || f.IsAsync, f.IsAsync && !f.IsGenerator);
                 return ReferenceEquals(nb, f.Body) ? f : f with { Body = nb };
             }
             case Stmt.Block b:
             {
-                var nb = ProcessBody(b.Statements, enclosingIsStateMachine);
+                var nb = ProcessBody(b.Statements, enclosingIsStateMachine, enclosingIsAsyncFunction);
                 return ReferenceEquals(nb, b.Statements) ? b : new Stmt.Block(nb);
             }
             case Stmt.Sequence s:
             {
-                var nb = ProcessBody(s.Statements, enclosingIsStateMachine);
+                var nb = ProcessBody(s.Statements, enclosingIsStateMachine, enclosingIsAsyncFunction);
                 return ReferenceEquals(nb, s.Statements) ? s : new Stmt.Sequence(nb);
             }
             case Stmt.If i:
             {
-                var nt = ProcessStmt(i.ThenBranch, enclosingIsStateMachine);
-                var ne = i.ElseBranch != null ? ProcessStmt(i.ElseBranch, enclosingIsStateMachine) : null;
+                var nt = ProcessStmt(i.ThenBranch, enclosingIsStateMachine, enclosingIsAsyncFunction);
+                var ne = i.ElseBranch != null ? ProcessStmt(i.ElseBranch, enclosingIsStateMachine, enclosingIsAsyncFunction) : null;
                 if (ReferenceEquals(nt, i.ThenBranch) && (i.ElseBranch == null || ReferenceEquals(ne, i.ElseBranch)))
                     return i;
                 return new Stmt.If(i.Condition, nt, ne);
             }
             case Stmt.While w:
             {
-                var nb = ProcessStmt(w.Body, enclosingIsStateMachine);
+                var nb = ProcessStmt(w.Body, enclosingIsStateMachine, enclosingIsAsyncFunction);
                 return ReferenceEquals(nb, w.Body) ? w : new Stmt.While(w.Condition, nb);
             }
             case Stmt.DoWhile d:
             {
-                var nb = ProcessStmt(d.Body, enclosingIsStateMachine);
+                var nb = ProcessStmt(d.Body, enclosingIsStateMachine, enclosingIsAsyncFunction);
                 return ReferenceEquals(nb, d.Body) ? d : new Stmt.DoWhile(nb, d.Condition);
             }
             case Stmt.For fo:
             {
-                var ni = fo.Initializer != null ? ProcessStmt(fo.Initializer, enclosingIsStateMachine) : null;
-                var nb = ProcessStmt(fo.Body, enclosingIsStateMachine);
+                var ni = fo.Initializer != null ? ProcessStmt(fo.Initializer, enclosingIsStateMachine, enclosingIsAsyncFunction) : null;
+                var nb = ProcessStmt(fo.Body, enclosingIsStateMachine, enclosingIsAsyncFunction);
                 if ((fo.Initializer == null || ReferenceEquals(ni, fo.Initializer)) && ReferenceEquals(nb, fo.Body))
                     return fo;
                 return new Stmt.For(ni, fo.Condition, fo.Increment, nb);
             }
             case Stmt.ForOf fof:
             {
-                var nb = ProcessStmt(fof.Body, enclosingIsStateMachine);
+                var nb = ProcessStmt(fof.Body, enclosingIsStateMachine, enclosingIsAsyncFunction);
                 return ReferenceEquals(nb, fof.Body) ? fof : fof with { Body = nb };
             }
             case Stmt.ForIn fin:
             {
-                var nb = ProcessStmt(fin.Body, enclosingIsStateMachine);
+                var nb = ProcessStmt(fin.Body, enclosingIsStateMachine, enclosingIsAsyncFunction);
                 return ReferenceEquals(nb, fin.Body) ? fin : fin with { Body = nb };
             }
             case Stmt.LabeledStatement l:
             {
-                var ni = ProcessStmt(l.Statement, enclosingIsStateMachine);
+                var ni = ProcessStmt(l.Statement, enclosingIsStateMachine, enclosingIsAsyncFunction);
                 return ReferenceEquals(ni, l.Statement) ? l : new Stmt.LabeledStatement(l.Label, ni);
             }
             case Stmt.TryCatch t:
             {
-                var nt = ProcessBody(t.TryBlock, enclosingIsStateMachine);
-                var nc = t.CatchBlock != null ? ProcessBody(t.CatchBlock, enclosingIsStateMachine) : null;
-                var nfb = t.FinallyBlock != null ? ProcessBody(t.FinallyBlock, enclosingIsStateMachine) : null;
+                var nt = ProcessBody(t.TryBlock, enclosingIsStateMachine, enclosingIsAsyncFunction);
+                var nc = t.CatchBlock != null ? ProcessBody(t.CatchBlock, enclosingIsStateMachine, enclosingIsAsyncFunction) : null;
+                var nfb = t.FinallyBlock != null ? ProcessBody(t.FinallyBlock, enclosingIsStateMachine, enclosingIsAsyncFunction) : null;
                 if (ReferenceEquals(nt, t.TryBlock)
                     && (t.CatchBlock == null || ReferenceEquals(nc, t.CatchBlock))
                     && (t.FinallyBlock == null || ReferenceEquals(nfb, t.FinallyBlock)))
@@ -743,14 +747,14 @@ internal sealed class NestedFunctionLifter
                 for (int i = 0; i < sw.Cases.Count; i++)
                 {
                     var c = sw.Cases[i];
-                    var nb = ProcessBody(c.Body, enclosingIsStateMachine);
+                    var nb = ProcessBody(c.Body, enclosingIsStateMachine, enclosingIsAsyncFunction);
                     if (!ReferenceEquals(nb, c.Body))
                     {
                         newCases ??= new List<Stmt.SwitchCase>(sw.Cases);
                         newCases[i] = new Stmt.SwitchCase(c.Value, nb);
                     }
                 }
-                var newDefault = sw.DefaultBody != null ? ProcessBody(sw.DefaultBody, enclosingIsStateMachine) : null;
+                var newDefault = sw.DefaultBody != null ? ProcessBody(sw.DefaultBody, enclosingIsStateMachine, enclosingIsAsyncFunction) : null;
                 bool defaultChanged = sw.DefaultBody != null && !ReferenceEquals(newDefault, sw.DefaultBody);
                 if (newCases == null && !defaultChanged) return sw;
                 return new Stmt.Switch(sw.Subject, newCases ?? sw.Cases, defaultChanged ? newDefault : sw.DefaultBody);
@@ -759,7 +763,7 @@ internal sealed class NestedFunctionLifter
                 return ProcessClass(cls);
             case Stmt.Export ex when ex.Declaration != null:
             {
-                var nd = ProcessStmt(ex.Declaration, enclosingIsStateMachine);
+                var nd = ProcessStmt(ex.Declaration, enclosingIsStateMachine, enclosingIsAsyncFunction);
                 return ReferenceEquals(nd, ex.Declaration) ? ex : ex with { Declaration = nd };
             }
             // Stmt.Namespace is intentionally NOT traversed (#583 §3 lift barrier).
@@ -775,7 +779,7 @@ internal sealed class NestedFunctionLifter
         {
             var m = cls.Methods[i];
             if (m.Body == null) continue;
-            var nb = ProcessBody(m.Body, m.IsGenerator || m.IsAsync);
+            var nb = ProcessBody(m.Body, m.IsGenerator || m.IsAsync, m.IsAsync && !m.IsGenerator);
             if (!ReferenceEquals(nb, m.Body))
             {
                 newMethods ??= new List<Stmt.Function>(cls.Methods);

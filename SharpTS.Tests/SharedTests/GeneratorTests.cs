@@ -2108,6 +2108,125 @@ public class GeneratorTests
 
     #endregion
 
+    #region ASYNC generator function EXPRESSION closing over an enclosing async function's local — issue #924
+
+    // The async analog of #534: an `async function*() {}` expression that closes over an enclosing
+    // ASYNC FUNCTION local. The GeneratorArrowLifter relocates it to the end of that function's body
+    // and replaces the use with a forward reference. The interpreter now hoists function declarations
+    // in async bodies (ExecuteBlockAsync), matching the sync path, so the appended declaration is in
+    // scope. On the compile path the NestedFunctionLifter lambda-lifts it; because an async function
+    // routes a nested arrow's captures through a shared function display class (read live at call
+    // time, like a plain function), the forwarding binding is HOISTED to the body top so the earlier
+    // reference resolves — the async analog of the plain-function #534 hoist. These run in BOTH modes.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorExpression_ClosesOverAsyncFunctionLocal(ExecutionMode mode)
+    {
+        // The exact repro from issue #924.
+        var source = """
+            async function outer() {
+              let y = 5;
+              const g = async function* () { yield y; };
+              const out: number[] = [];
+              for await (const v of g()) out.push(v);
+              return out;
+            }
+            async function main() { console.log(await outer()); }
+            main();
+            """;
+
+        Assert.Equal("[5]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorExpression_ClosesOverAsyncFunctionParameter(ExecutionMode mode)
+    {
+        var source = """
+            async function make(seed: number) {
+              const g = async function* () { yield seed; yield seed * 2; };
+              const out: number[] = [];
+              for await (const v of g()) out.push(v);
+              return out;
+            }
+            async function main() { console.log(await make(3)); }
+            main();
+            """;
+
+        Assert.Equal("[3, 6]\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorExpression_ClosesOverLocalCapturesByReference(ExecutionMode mode)
+    {
+        // Closures bind the variable, so a mutation before iteration is observed (not a snapshot). In
+        // compiled mode the lambda-lift forwarding arrow reads the captured local live at call time
+        // through the async function's shared display class, so hoisting it to the body top still
+        // observes the mutation — pinning by-reference semantics (a regression to a by-value snapshot
+        // would yield 1).
+        var source = """
+            async function outer() {
+              let c = 1;
+              const g = async function* () { yield c; };
+              c = 99;
+              const out: number[] = [];
+              for await (const v of g()) out.push(v);
+              return out;
+            }
+            async function main() { console.log(await outer()); }
+            main();
+            """;
+
+        Assert.Equal("[99]\n", TestHarness.Run(source, mode));
+    }
+
+    [Fact]
+    public void AsyncGeneratorExpression_ClosesOverAsyncFunctionLocal_CompiledHoistsForwardReference()
+    {
+        // Directly pins the #924 compile-path fix: the lifted `async function* __genArrow_N` is
+        // appended at the enclosing async body's END, so its lambda-lift forwarding binding must be
+        // hoisted above the earlier `const g = …` reference. Before the fix this miscompiled to an
+        // unbound `__genArrow_0` (the gate declined to hoist for any state-machine encloser).
+        var source = """
+            async function outer() {
+              let y = 5;
+              const g = async function* () { yield y; };
+              const out: number[] = [];
+              for await (const v of g()) out.push(v);
+              return out;
+            }
+            async function main() { console.log(await outer()); }
+            main();
+            """;
+
+        Assert.Equal("[5]\n", TestHarness.RunCompiled(source));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SyncGeneratorExpression_InAsyncFunction_ClosesOverLocal(ExecutionMode mode)
+    {
+        // A SYNC generator expression closing over a local of an enclosing ASYNC function — the same
+        // async-function encloser as #924, fixed by the same interpreter hoist and compiled gate relax.
+        var source = """
+            async function outer() {
+              let y = 7;
+              const g = function* () { yield y; yield y + 1; };
+              const out: number[] = [];
+              for (const v of g()) out.push(v);
+              return out;
+            }
+            async function main() { console.log(await outer()); }
+            main();
+            """;
+
+        Assert.Equal("[7, 8]\n", TestHarness.Run(source, mode));
+    }
+
+    #endregion
+
     #region Named generator function EXPRESSION self-reference — issue #679
 
     // A NAMED generator function expression can call itself by its own name for recursion. The
