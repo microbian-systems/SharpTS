@@ -1153,11 +1153,44 @@ public abstract partial class ExpressionEmitterBase
     /// </summary>
     private void EmitFunctionValueCall(Expr.Call c)
     {
-        // Store callee in temp (await-safe)
-        EmitExpression(c.Callee);
-        EnsureBoxed();
-        var calleeLocal = IL.DeclareLocal(Types.Object);
-        IL.Emit(OpCodes.Stloc, calleeLocal);
+        LocalBuilder calleeLocal;
+
+        // #923: a direct method-style value-call `o.m(...)` must bind `this` to the receiver. The
+        // generic value-call below passes a null receiver (correct for a detached call like `f()`),
+        // which drops `this` — wrong for object-literal methods and the lifted generator /
+        // async-generator stubs that read `this` via the `_currentFunctionThis` thread-local
+        // InvokeWithThis sets (#775). The synchronous ILEmitter handles Expr.Get callees in its own
+        // EmitMethodCall, which threads the receiver; this base path is taken by the four
+        // state-machine emitters (async fn / async arrow / async gen / sync gen), so they need the
+        // same. Restrict to a non-optional Expr.Get whose receiver carries no TypeEmitter strategy —
+        // exactly the case EmitGet itself resolves through the plain dynamic GetProperty fallback
+        // (ExpressionEmitterBase.EmitGet) — so the resolved callee value is identical to today while
+        // the receiver is now preserved. Strategy-resolved callees, detached `f()` (Expr.Variable),
+        // and `arr[i]()` (Expr.Index) keep the null-receiver path below.
+        LocalBuilder? receiverLocal = null;
+        if (c.Callee is Expr.Get methodGet && !HasOptionalLink(methodGet) && !ReceiverHasGetStrategy(methodGet.Object))
+        {
+            // Evaluate the receiver once, spill it (a MoveNext re-entry from a suspending argument
+            // wipes plain IL locals, #400), enforce RequireObjectCoercible before the arguments'
+            // side effects fire (ECMA-262 §13.3.6.1, mirroring EmitMethodCall/EmitGet), then resolve
+            // the method off the same receiver and pass it through to InvokeMethodValue below.
+            EmitExpression(methodGet.Object);
+            EnsureBoxed();
+            receiverLocal = _helpers.SpillStoreObject();
+            EmitThrowIfReceiverUndefined(receiverLocal, methodGet.Name.Lexeme);
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+            IL.Emit(OpCodes.Ldstr, methodGet.Name.Lexeme);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.GetProperty);
+            calleeLocal = _helpers.SpillStoreObject();
+        }
+        else
+        {
+            // Store callee in temp (await-safe)
+            EmitExpression(c.Callee);
+            EnsureBoxed();
+            calleeLocal = IL.DeclareLocal(Types.Object);
+            IL.Emit(OpCodes.Stloc, calleeLocal);
+        }
 
         // Optional link in the callee chain (a?.[0](), (x?.f)()): a nullish
         // callee means the chain short-circuited — yield undefined instead of
@@ -1244,10 +1277,14 @@ public abstract partial class ExpressionEmitterBase
             EmitExpandCallArgs();
         }
 
-        // Call InvokeMethodValue(receiver=null, function, args)
+        // Call InvokeMethodValue(receiver, function, args). The receiver is the spilled `o` for a
+        // threaded `o.m()` (#923, above), else null for a detached call.
         var argsLocal = IL.DeclareLocal(Types.ObjectArray);
         IL.Emit(OpCodes.Stloc, argsLocal);
-        IL.Emit(OpCodes.Ldnull);
+        if (receiverLocal != null)
+            IL.Emit(OpCodes.Ldloc, receiverLocal);
+        else
+            IL.Emit(OpCodes.Ldnull);
         IL.Emit(OpCodes.Ldloc, calleeLocal);
         IL.Emit(OpCodes.Ldloc, argsLocal);
         IL.Emit(OpCodes.Call, Ctx.Runtime!.InvokeMethodValue);
@@ -1261,6 +1298,25 @@ public abstract partial class ExpressionEmitterBase
         }
 
         SetStackUnknown();
+    }
+
+    /// <summary>
+    /// True when reading <c>obj.&lt;member&gt;</c> would resolve through a <see cref="TypeEmitterRegistry"/>
+    /// strategy (a static-type property getter, e.g. <c>Math.PI</c>, or a type-first instance getter,
+    /// e.g. <c>AbortController.signal</c>) rather than the plain dynamic <c>GetProperty</c> fallback.
+    /// Mirrors the two strategy checks <see cref="EmitGet"/> performs before that fallback. The #923
+    /// receiver-threading in <see cref="EmitFunctionValueCall"/> only fires when this is false, so the
+    /// resolved callee value stays identical to today for strategy-backed receivers (which keep the
+    /// pre-existing null-receiver behavior) and only changes for genuinely dynamic receivers.
+    /// </summary>
+    private bool ReceiverHasGetStrategy(Expr obj)
+    {
+        if (Ctx.TypeEmitterRegistry == null)
+            return false;
+        if (obj is Expr.Variable v && Ctx.TypeEmitterRegistry.GetStaticStrategy(v.Name.Lexeme) != null)
+            return true;
+        var objType = Ctx.TypeMap?.Get(obj);
+        return objType != null && Ctx.TypeEmitterRegistry.GetStrategy(objType) != null;
     }
 
     /// <summary>
