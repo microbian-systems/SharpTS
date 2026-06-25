@@ -1799,12 +1799,15 @@ public partial class RuntimeEmitter
         // A bigint coerces to its bare decimal form ("42"), not Stringify's "42n".
         EmitBigIntToStringReturn(il);
 
-        // An object-like value ($Object / Dictionary / List) coerces via
-        // ToJsString — the spec ToString → OrdinaryToPrimitive(string) protocol,
-        // which honors an own toString override and unwraps a boxed wrapper to
-        // its primitive (#574). Plain Stringify returns "[object Object]" for a
-        // wrapper, which is wrong for template literals / string concat. Primitive
-        // values stay on the cheap Stringify path.
+        // An object-like value ($Object / Dictionary / List / user class instance)
+        // coerces via ToJsString — the spec ToString → OrdinaryToPrimitive(string)
+        // protocol, which honors an own toString override and unwraps a boxed
+        // wrapper to its primitive (#574). Plain Stringify returns "[object Object]"
+        // for a wrapper and the bare "<Class> instance" CLR form for a user class
+        // instance, both wrong for template literals / string concat. A user class
+        // instance is identified by the $IHasFields marker — $Error/Map/Set/
+        // $TSFunction don't implement it, so they keep Stringify's path (#931).
+        // Primitive values stay on the cheap Stringify path.
         var objectLikeLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
@@ -1814,6 +1817,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, objectLikeLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Brtrue, objectLikeLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
         il.Emit(OpCodes.Brtrue, objectLikeLabel);
 
         // return Stringify(value);  (primitives)
@@ -1949,13 +1955,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notListLabel);
 
-        // Only attempt JS-toString invocation for Dictionary or $Object receivers.
+        // Only attempt JS-toString invocation for Dictionary, $Object, or user
+        // class instances ($IHasFields marker — #931). $Error/Map/Set/$TSFunction
+        // don't implement $IHasFields, so they fall through to Stringify (Error
+        // keeps its overridden CLR ToString → "TypeError: x"). A user class
+        // instance resolves toString/valueOf through its generated GetProperty,
+        // yielding the user override or "[object Object]" when neither exists.
         var isObjectLikeLabel = il.DefineLabel();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
         il.Emit(OpCodes.Brtrue, isObjectLikeLabel);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, runtime.TSObjectType);
+        il.Emit(OpCodes.Brtrue, isObjectLikeLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.IHasFieldsInterface);
         il.Emit(OpCodes.Brtrue, isObjectLikeLabel);
         il.Emit(OpCodes.Br, fallbackLabel);
 

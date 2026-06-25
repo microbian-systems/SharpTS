@@ -1032,11 +1032,12 @@ public partial class Interpreter
             // Error.prototype.toString -> "TypeError: msg", or a user-defined
             // override. Invoke it so string coercion (templates, `+`, String())
             // matches Node/compiled mode instead of yielding "<Class> instance"
-            // or "[object <Class>]" (#921/#922). Fall back to the brand form
-            // only when no callable toString resolves (e.g. a plain class).
+            // (#921/#922). Fall back to "[object Object]" only when no callable
+            // toString resolves (e.g. a plain class) — Node's Object.prototype.toString
+            // brand for an ordinary object, matching compiled mode (#931).
             if (TryStringifyInstanceViaToString(instance, out var instanceStr))
                 return instanceStr;
-            return "[object " + instance.GetClass().Name + "]";
+            return "[object Object]";
         }
 
         // ECMA-262 7.1.17 ToString(bigint) = bare numeric form ("42"). The "42n"
