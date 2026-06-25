@@ -363,6 +363,67 @@ public class ArrayMethodTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_Join_NestedArrays_JoinRecursively(ExecutionMode mode)
+    {
+        // ECMA-262 23.1.3.16: each element is ToString-coerced, so a nested array
+        // renders via its own join (default ","), not the debug "[1, 2]" form
+        // (#922 follow-up). Also covers `"" + arr` / `${arr}` which share the path.
+        var source = """
+            console.log([[1, 2], [3]].join("-"));
+            console.log("" + [[1, 2], [3]]);
+            console.log(`${[[1, 2], [3]]}`);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1,2-3\n1,2,3\n1,2,3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_Join_PlainObject_UsesObjectObject(ExecutionMode mode)
+    {
+        // A plain object element ToString-coerces to "[object Object]" (its inherited
+        // Object.prototype.toString), not the console/debug "{ a: 1 }" form (#922 follow-up).
+        var source = """
+            console.log([{ a: 1 }, { b: 2 }].join(", "));
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("[object Object], [object Object]\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_Join_ErrorElement_DispatchesToString(ExecutionMode mode)
+    {
+        // An Error element in a joined/coerced array dispatches Error.prototype.toString
+        // ("RangeError: boom"), not "RangeError instance" / "[object RangeError]" (#922
+        // follow-up). Was interpreter-only broken; compiled already correct — pins both.
+        var source = """
+            const e = new RangeError("boom");
+            console.log([e, "y"].join(", "));
+            console.log([e].toString());
+            console.log("" + [e]);
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("RangeError: boom, y\nRangeError: boom\nRangeError: boom\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Array_Join_UserToString_DispatchesToString(ExecutionMode mode)
+    {
+        // A user class with its own toString() is dispatched per element (#922
+        // follow-up). Interpreter-only: compiled mode has a separate, pre-existing
+        // gap where ToJsString returns the class name for non-Error instances.
+        var source = """
+            class Pt { x = 1; y = 2; toString() { return `(${this.x},${this.y})`; } }
+            console.log([new Pt(), new Pt()].join("|"));
+            """;
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("(1,2)|(1,2)\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Array_Concat_ReturnsNewArray(ExecutionMode mode)
     {
         var source = """

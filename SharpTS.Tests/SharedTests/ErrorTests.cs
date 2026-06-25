@@ -118,6 +118,39 @@ public class ErrorTests
     }
 
     [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Instance_StringCoercion_InvokesUserToString(ExecutionMode mode)
+    {
+        // #922 generalization: a user class with its own toString() is dispatched
+        // in every string-coercion form, matching Node. (Interpreter-only: compiled
+        // mode has a separate pre-existing quirk that yields the class name — #933.)
+        var source = @"
+            class Pt { x = 1; y = 2; toString() { return `(${this.x},${this.y})`; } }
+            const p = new Pt();
+            console.log(String(p));
+            console.log('' + p);
+            console.log(`${p}`);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("(1,2)\n(1,2)\n(1,2)\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Instance_StringCoercion_NoToString_KeepsDefault(ExecutionMode mode)
+    {
+        // #922 fallback guard: a plain instance with no toString() keeps the
+        // interpreter's "[object ClassName]" default rather than throwing or
+        // dispatching a phantom method.
+        var source = @"
+            class Plain { x = 1; }
+            console.log('' + new Plain());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("[object Plain]\n", output);
+    }
+
+    [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Error_HasStackProperty(ExecutionMode mode)
     {

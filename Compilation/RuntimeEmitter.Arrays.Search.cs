@@ -1283,7 +1283,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, setSepLabel);
         il.MarkLabel(hasSep);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.MarkLabel(setSepLabel);
         il.Emit(OpCodes.Stloc, sepLocal);
 
@@ -1338,10 +1338,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Isinst, runtime.UndefinedType);
         il.Emit(OpCodes.Brtrue, skipAppend);
 
-        // sb.Append(Stringify(elem))
+        // sb.Append(ToJsString(elem)) — ECMA-262 23.1.3.16 step 7 ToString per element:
+        // a nested array joins recursively and an object / class instance (incl. Error)
+        // dispatches its toString, rather than the console/debug Stringify form
+        // ("[1, 2]" / "{ a: 1 }" / "ClassName") (#922 follow-up).
         il.Emit(OpCodes.Ldloc, sbLocal);
         il.Emit(OpCodes.Ldloc, elemLocal);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
         il.Emit(OpCodes.Pop);
 

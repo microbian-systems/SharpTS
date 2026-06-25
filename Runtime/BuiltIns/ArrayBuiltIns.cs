@@ -198,7 +198,7 @@ public static class ArrayBuiltIns
         else
         {
             // Default lexicographic sort (JavaScript behavior: numbers sorted as strings)
-            sorted = items.OrderBy(x => Stringify(x.Element), StringComparer.Ordinal)
+            sorted = items.OrderBy(x => CoerceToJsString(interp, x.Element), StringComparer.Ordinal)
                           .ThenBy(x => x.Index);
         }
 
@@ -491,7 +491,7 @@ public static class ArrayBuiltIns
         return Math.Truncate(d);
     }
 
-    private static RuntimeValue JoinV2(Interpreter _, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
+    private static RuntimeValue JoinV2(Interpreter interp, SharpTSArray arr, ReadOnlySpan<RuntimeValue> args)
     {
         // ECMA-262 23.1.3.16: holes (and null/undefined values) render as empty
         // string. Separator defaults to "," when absent OR explicitly
@@ -501,7 +501,7 @@ public static class ArrayBuiltIns
         if (args.Length == 0 || args[0].ToObject() is SharpTSUndefined)
             separator = ",";
         else
-            separator = Stringify(args[0].ToObject());
+            separator = CoerceToJsString(interp, args[0].ToObject());
         int len = arr.Length;
         if (len == 0) return RuntimeValue.EmptyString;
         var sb = new System.Text.StringBuilder();
@@ -512,7 +512,7 @@ public static class ArrayBuiltIns
             if (!arr.HasIndex(i)) continue;
             var v = arr[i];
             if (v is null or SharpTSUndefined) continue;
-            sb.Append(Stringify(v));
+            sb.Append(CoerceToJsString(interp, v));
         }
         return RuntimeValue.FromString(sb.ToString());
     }
@@ -935,16 +935,17 @@ public static class ArrayBuiltIns
         return a.Equals(b);
     }
 
-    private static string Stringify(object? obj)
-    {
-        if (obj == null) return "null";
-        if (obj is double d)
-        {
-            return Compilation.RuntimeTypes.FormatNumber(d);
-        }
-        if (obj is bool b) return b ? "true" : "false";
-        return obj.ToString() ?? "null";
-    }
+    /// <summary>
+    /// ECMA-262 ToString of an array element / separator / default-sort key (used by
+    /// join, Array.prototype.toString and the default sort comparator). A nested array
+    /// renders via its own join (recursive, default ","); every other value — class
+    /// instances (incl. Errors, dispatching their <c>toString</c>), plain objects
+    /// ("[object Object]"), boxed wrappers (unwrapped) and primitives — goes through the
+    /// interpreter's ToString. Replaces a bare <c>obj.ToString()</c> that skipped
+    /// <c>toString</c> and leaked the console/debug array/object format (#922 follow-up).
+    /// </summary>
+    private static string CoerceToJsString(Interpreter interp, object? v)
+        => v is SharpTSArray a ? ToJsString(interp, a) : interp.ToStringForStringCall(v);
 
     #region Iterator Methods
 

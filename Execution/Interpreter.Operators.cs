@@ -1032,7 +1032,7 @@ public partial class Interpreter
             // Error.prototype.toString -> "TypeError: msg", or a user-defined
             // override. Invoke it so string coercion (templates, `+`, String())
             // matches Node/compiled mode instead of yielding "<Class> instance"
-            // or "[object <Class>]" (#921 follow-up). Fall back to the brand form
+            // or "[object <Class>]" (#921/#922). Fall back to the brand form
             // only when no callable toString resolves (e.g. a plain class).
             if (TryStringifyInstanceViaToString(instance, out var instanceStr))
                 return instanceStr;

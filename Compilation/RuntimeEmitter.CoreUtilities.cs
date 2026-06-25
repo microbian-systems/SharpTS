@@ -1934,7 +1934,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Brtrue, skipAppend);
         il.Emit(OpCodes.Ldloc, sbJoinLocal);
         il.Emit(OpCodes.Ldloc, valLocalJ);
-        il.Emit(OpCodes.Call, runtime.Stringify);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
         il.Emit(OpCodes.Pop);
         il.MarkLabel(skipAppend);
