@@ -369,8 +369,9 @@ public class NestedFunctionLiftingTests
     // FORWARD-reference form (#534): the reference precedes the declaration, so the forwarding binding
     // must be hoisted to the body top. The enclosing function here is PLAIN — a forwarding arrow in a
     // plain body reads its captures live at call time, so hoisting it above the local's assignment is
-    // safe. (When the enclosing function is itself a state machine the arrow snapshots at creation, so
-    // that forward-reference case stays a documented limitation.)
+    // safe. An ASYNC function encloser behaves the same way and is also lifted (#924, pinned below).
+    // Only a GENERATOR encloser snapshots its captures at creation, so its forward-reference form stays
+    // unsupported and fails cleanly rather than miscompiling.
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
@@ -387,6 +388,43 @@ public class NestedFunctionLiftingTests
             console.log(outer().join(","));
             """;
         Assert.Equal("10,11\n", TestHarness.Run(source, mode));
+    }
+
+    // #924: function declarations hoist inside an ASYNC function body just as in a sync body, so a
+    // forward reference to a function declared later resolves. Previously the interpreter raised
+    // "Undefined variable" (ExecuteBlockAsync never ran the hoisting pass).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void PlainFunctionDeclaration_ForwardReference_InAsyncFunction_IsHoisted(ExecutionMode mode)
+    {
+        var source = """
+            async function outer(): Promise<number> {
+                const r = foo();
+                function foo(): number { return 7; }
+                return r;
+            }
+            outer().then((r: number) => console.log(r));
+            """;
+        Assert.Equal("7\n", TestHarness.Run(source, mode));
+    }
+
+    // #924: a capturing generator declaration whose forward reference precedes it, inside an ASYNC
+    // (non-generator) function. The interpreter hoists it; the compiler hoists its forwarding binding
+    // (the async encloser reads captures live at call time, unlike a generator encloser).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CapturingGeneratorDeclaration_ForwardReference_InAsyncFunction_IsLifted(ExecutionMode mode)
+    {
+        var source = """
+            async function outer(): Promise<number[]> {
+                let y = 9;
+                const arr = [...gen()];
+                function* gen(): Generator<number> { yield y; yield y + 1; }
+                return arr;
+            }
+            outer().then((r: number[]) => console.log(r.join(",")));
+            """;
+        Assert.Equal("9,10\n", TestHarness.Run(source, mode));
     }
 
     // A block declaration that uses `this`/`arguments`, or has rest/default parameters, is declined

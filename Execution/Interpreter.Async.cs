@@ -61,6 +61,13 @@ public partial class Interpreter
     {
         using (PushScope(environment))
         {
+            // JS hoists function declarations to the top of their enclosing function/block scope. The
+            // sync ExecuteBlock does this; the async analog must too, or a forward reference to a
+            // function declared later in an async body is unbound (#924). This also lets the
+            // GeneratorArrowLifter's appended `async function* __genArrow_N` resolve before the
+            // `const g = __genArrow_N` reference that precedes it.
+            HoistFunctionDeclarations(statements);
+
             foreach (Stmt statement in statements)
             {
                 var result = await ExecuteStatementAsync(statement);
