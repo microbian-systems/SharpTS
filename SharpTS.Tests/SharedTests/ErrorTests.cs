@@ -75,6 +75,59 @@ public class ErrorTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Error_StringCoercion_InvokesToString(ExecutionMode mode)
+    {
+        // #922: String(e), "" + e and `${e}` must dispatch to Error.toString()
+        // (like e.toString() and Node), not fall back to a placeholder. Was
+        // interpreter-only broken ("RangeError instance" / "[object RangeError]");
+        // compiled was already correct — this pins both.
+        var source = @"
+            const e = new RangeError('real range error');
+            console.log(String(e));
+            console.log('' + e);
+            console.log(`${e}`);
+            console.log(e.toString());
+        ";
+        var output = TestHarness.Run(source, mode);
+        const string expected = "RangeError: real range error\n";
+        Assert.Equal(expected + expected + expected + expected, output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Instance_StringCoercion_InvokesUserToString(ExecutionMode mode)
+    {
+        // #922 generalization: a user class with its own toString() is dispatched
+        // in every string-coercion form, matching Node. (Interpreter-only: compiled
+        // mode has a separate pre-existing quirk that yields the class name here.)
+        var source = @"
+            class Pt { x = 1; y = 2; toString() { return `(${this.x},${this.y})`; } }
+            const p = new Pt();
+            console.log(String(p));
+            console.log('' + p);
+            console.log(`${p}`);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("(1,2)\n(1,2)\n(1,2)\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Instance_StringCoercion_NoToString_KeepsDefault(ExecutionMode mode)
+    {
+        // #922 fallback guard: a plain instance with no toString() keeps the
+        // interpreter's "[object ClassName]" default rather than throwing or
+        // dispatching a phantom method.
+        var source = @"
+            class Plain { x = 1; }
+            console.log('' + new Plain());
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("[object Plain]\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Error_HasStackProperty(ExecutionMode mode)
     {
         var source = @"

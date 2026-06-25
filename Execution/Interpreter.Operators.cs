@@ -1007,6 +1007,10 @@ public partial class Interpreter
 
         if (obj is SharpTSInstance instance)
         {
+            if (TryStringifyInstanceToString(instance, out var instanceString))
+            {
+                return instanceString;
+            }
             return "[object " + instance.GetClass().Name + "]";
         }
 
@@ -1019,5 +1023,27 @@ public partial class Interpreter
         }
 
         return obj.ToString()!;
+    }
+
+    /// <summary>
+    /// String-coerces a class instance per ECMA-262 OrdinaryToPrimitive(hint "string"):
+    /// dispatch to its <c>toString</c> (an own-field shadow first, else
+    /// <c>Error.prototype.toString</c> or a user override resolved up the class chain) when
+    /// present. Returns false when no <c>toString</c> exists so callers keep the
+    /// "[object ClassName]" default for plain instances. Mirrors compiled mode's generic
+    /// property lookup + invoke (#922).
+    /// </summary>
+    private bool TryStringifyInstanceToString(SharpTSInstance instance, out string result)
+    {
+        result = "";
+        ISharpTSCallable? fn = instance.GetRawField("toString") as ISharpTSCallable;
+        if (fn is null && instance.GetClass().FindMethod("toString") is { } method)
+        {
+            fn = SharpTSClass.BindMethod(method, instance);
+        }
+        if (fn is null) return false;
+        var coerced = FunctionBuiltIns.CallWithThis(this, fn, instance, []);
+        result = coerced as string ?? Stringify(coerced);
+        return true;
     }
 }
