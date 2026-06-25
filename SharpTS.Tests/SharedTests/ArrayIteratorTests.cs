@@ -778,17 +778,7 @@ public class ArrayIteratorTests
             """;
 
         var output = TestHarness.Run(source, mode);
-        // Each spread Map entry is a tuple array; join ToString-coerces it via the
-        // nested array's own join (default ","), matching Node — "x,10", not the debug
-        // "[x, 10]" form (#922 follow-up; previously this asserted the pre-fix debug
-        // output in BOTH modes). The interpreter now matches Node. Compiled mode still
-        // shows the debug form here because Map-spread tuples are raw object[] (not a
-        // List-backed $Array), so $Runtime.ToJsString falls back to the debug join —
-        // a separate, pre-existing compiled gap tracked apart from this fix.
-        var expected = mode == ExecutionMode.Interpreted
-            ? "2\nx,10; y,20\n"
-            : "2\n[x, 10]; [y, 20]\n";
-        Assert.Equal(expected, output);
+        Assert.Equal("2\nx,10; y,20\n", output);
     }
 
     [Theory]

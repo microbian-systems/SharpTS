@@ -1955,6 +1955,65 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(notListLabel);
 
+        // KeyValuePair<object, object> → treat as a 2-element [key, value] tuple for
+        // string coercion (ECMA-262 Array.prototype.toString ≡ join(",")). Map-spread
+        // tuples land here in compiled mode because IterateToList falls through to the
+        // IEnumerable path, yielding boxed KVP structs instead of List<object> pairs.
+        var notKvpLabel = il.DefineLabel();
+        var kvpType = _types.MakeGenericType(_types.KeyValuePairOpen, _types.Object, _types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, kvpType);
+        il.Emit(OpCodes.Brfalse, notKvpLabel);
+        var kvpLocal = il.DeclareLocal(kvpType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Unbox_Any, kvpType);
+        il.Emit(OpCodes.Stloc, kvpLocal);
+        var sbKvpLocal = il.DeclareLocal(_types.StringBuilder);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.StringBuilder, _types.EmptyTypes));
+        il.Emit(OpCodes.Stloc, sbKvpLocal);
+        // Key (index 0): skip if null/undefined, else recursive ToJsString
+        var keyLocal = il.DeclareLocal(_types.Object);
+        var skipKeyAppend = il.DefineLabel();
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, _types.GetProperty(kvpType, "Key").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, keyLocal);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Brfalse, skipKeyAppend);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, skipKeyAppend);
+        il.Emit(OpCodes.Ldloc, sbKvpLocal);
+        il.Emit(OpCodes.Ldloc, keyLocal);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(skipKeyAppend);
+        il.Emit(OpCodes.Ldloc, sbKvpLocal);
+        il.Emit(OpCodes.Ldstr, ",");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        // Value (index 1): skip if null/undefined, else recursive ToJsString
+        var valueLocal = il.DeclareLocal(_types.Object);
+        var skipValueAppend = il.DefineLabel();
+        il.Emit(OpCodes.Ldloca, kvpLocal);
+        il.Emit(OpCodes.Call, _types.GetProperty(kvpType, "Value").GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, valueLocal);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Brfalse, skipValueAppend);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, skipValueAppend);
+        il.Emit(OpCodes.Ldloc, sbKvpLocal);
+        il.Emit(OpCodes.Ldloc, valueLocal);
+        il.Emit(OpCodes.Call, runtime.ToJsString);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.StringBuilder, "Append", _types.String));
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(skipValueAppend);
+        il.Emit(OpCodes.Ldloc, sbKvpLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notKvpLabel);
+
         // Only attempt JS-toString invocation for Dictionary, $Object, or user
         // class instances ($IHasFields marker — #931). $Error/Map/Set/$TSFunction
         // don't implement $IHasFields, so they fall through to Stringify (Error
