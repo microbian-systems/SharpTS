@@ -331,4 +331,72 @@ public class ArraySortTests
     }
 
     #endregion
+
+    #region Comparator Throws (#921)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_Sort_ComparatorThrow_ReachesGuestCatchAsError(ExecutionMode mode)
+    {
+        // A guest throw from the comparator must surface verbatim to the guest catch, not be
+        // replaced by the .NET BCL "Failed to compare two elements" message (#921).
+        var source = """
+            try {
+                [2, 1, 3].sort((): number => {
+                    throw new TypeError("from comparator");
+                });
+            } catch (e: any) {
+                console.log(typeof e);
+                console.log(e instanceof Error);
+                console.log(e.message);
+                console.log(e.name);
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("object\ntrue\nfrom comparator\nTypeError\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_ToSorted_ComparatorThrow_ReachesGuestCatchAsError(ExecutionMode mode)
+    {
+        var source = """
+            try {
+                [2, 1, 3].toSorted((): number => {
+                    throw new TypeError("from comparator");
+                });
+            } catch (e: any) {
+                console.log(typeof e);
+                console.log(e instanceof Error);
+                console.log(e.message);
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("object\ntrue\nfrom comparator\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Array_Sort_ComparatorThrowRawString_PreservesGuestIdentity(ExecutionMode mode)
+    {
+        // A raw string throw keeps its guest identity (string, not Error) — consistent with #694.
+        var source = """
+            try {
+                [2, 1, 3].sort((): number => {
+                    throw "raw string";
+                });
+            } catch (e: any) {
+                console.log(typeof e);
+                console.log(e instanceof Error);
+                console.log(String(e));
+            }
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("string\nfalse\nraw string\n", output);
+    }
+
+    #endregion
 }
