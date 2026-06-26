@@ -454,36 +454,54 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
             if (hoisted.HasValue)
             {
                 var h = hoisted.Value;
-                var listType = h.Descriptor.GetListType(ctx.Types);
                 var fallbackLabel = il.DefineLabel();
                 var endLabel = il.DefineLabel();
 
                 il.Emit(OpCodes.Ldloc, h.TypedLocal);
                 il.Emit(OpCodes.Brfalse, fallbackLabel);
 
-                // $Arguments check: use _length, not Count, per ECMA-262 sloppy
-                // arguments. Only emits the runtime check when ArgumentsType is
-                // wired (production: always; tests may skip).
-                if (ctx.Runtime?.ArgumentsType != null && ctx.Runtime?.ArgumentsLengthField != null)
+                if (h.Descriptor.Kind == ArrayElementsKind.Double)
                 {
-                    var notArgsLengthLabel = il.DefineLabel();
+                    // Hoisted numeric $Array (#927 step 1): the typed local is a $Array (the preamble
+                    // hoists `isinst $Array`, not `isinst List<double>`), so read its authoritative length
+                    // via the $Array length getter — numeric-aware, maintained by SetDouble/PushDouble.
+                    // Calling List<float64>::Count here would read the EMPTY base list of a numeric $Array
+                    // and report 0, so a loop-condition `i < arr.length` never runs. A $Array is never the
+                    // arguments object, so no $Arguments check is needed on this arm.
                     il.Emit(OpCodes.Ldloc, h.TypedLocal);
-                    il.Emit(OpCodes.Isinst, ctx.Runtime!.ArgumentsType);
-                    il.Emit(OpCodes.Brfalse, notArgsLengthLabel);
-                    il.Emit(OpCodes.Ldloc, h.TypedLocal);
-                    il.Emit(OpCodes.Castclass, ctx.Runtime!.ArgumentsType);
-                    il.Emit(OpCodes.Ldfld, ctx.Runtime!.ArgumentsLengthField);
+                    il.Emit(OpCodes.Callvirt, ctx.Runtime!.TSArrayLongLengthGetter);
                     il.Emit(OpCodes.Conv_R8);
                     il.Emit(OpCodes.Box, ctx.Types.Double);
                     il.Emit(OpCodes.Br, endLabel);
-                    il.MarkLabel(notArgsLengthLabel);
                 }
+                else
+                {
+                    var listType = h.Descriptor.GetListType(ctx.Types);
 
-                il.Emit(OpCodes.Ldloc, h.TypedLocal);
-                il.Emit(OpCodes.Callvirt, ctx.Types.GetProperty(listType, "Count").GetGetMethod()!);
-                il.Emit(OpCodes.Conv_R8);
-                il.Emit(OpCodes.Box, ctx.Types.Double);
-                il.Emit(OpCodes.Br, endLabel);
+                    // $Arguments check: use _length, not Count, per ECMA-262 sloppy
+                    // arguments. Only emits the runtime check when ArgumentsType is
+                    // wired (production: always; tests may skip).
+                    if (ctx.Runtime?.ArgumentsType != null && ctx.Runtime?.ArgumentsLengthField != null)
+                    {
+                        var notArgsLengthLabel = il.DefineLabel();
+                        il.Emit(OpCodes.Ldloc, h.TypedLocal);
+                        il.Emit(OpCodes.Isinst, ctx.Runtime!.ArgumentsType);
+                        il.Emit(OpCodes.Brfalse, notArgsLengthLabel);
+                        il.Emit(OpCodes.Ldloc, h.TypedLocal);
+                        il.Emit(OpCodes.Castclass, ctx.Runtime!.ArgumentsType);
+                        il.Emit(OpCodes.Ldfld, ctx.Runtime!.ArgumentsLengthField);
+                        il.Emit(OpCodes.Conv_R8);
+                        il.Emit(OpCodes.Box, ctx.Types.Double);
+                        il.Emit(OpCodes.Br, endLabel);
+                        il.MarkLabel(notArgsLengthLabel);
+                    }
+
+                    il.Emit(OpCodes.Ldloc, h.TypedLocal);
+                    il.Emit(OpCodes.Callvirt, ctx.Types.GetProperty(listType, "Count").GetGetMethod()!);
+                    il.Emit(OpCodes.Conv_R8);
+                    il.Emit(OpCodes.Box, ctx.Types.Double);
+                    il.Emit(OpCodes.Br, endLabel);
+                }
 
                 il.MarkLabel(fallbackLabel);
                 emitter.EmitExpression(receiver);

@@ -905,27 +905,49 @@ public partial class ILEmitter
                 if (hoisted.HasValue)
                 {
                     var h = hoisted.Value;
-                    var listType = h.Descriptor.GetListType(_ctx.Types);
                     var fallbackLabel = IL.DefineLabel();
                     var endLabel = IL.DefineLabel();
 
-                    IL.Emit(OpCodes.Ldloc, h.TypedLocal);
-                    IL.Emit(OpCodes.Brfalse, fallbackLabel);
+                    if (h.Descriptor.Kind == ArrayElementsKind.Double)
+                    {
+                        // Hoisted numeric $Array (escaping number[], #927 step 1): the loop-invariant
+                        // `isinst $Array` lives in the preamble, so per-access we only null-check the typed
+                        // local and call the numeric-aware Get(long) — it reads the unboxed double[] store
+                        // and returns a boxed double, with NO deopt (so the array stays numeric across
+                        // reads, keeping interleaved read/write on the fast path). The read-site unbox
+                        // (GetDouble) is deliberately NOT used here: it needs the type checker to resolve
+                        // arr[i] to number, else the raw double mis-feeds the generic Add path (#918).
+                        IL.Emit(OpCodes.Ldloc, h.TypedLocal);
+                        IL.Emit(OpCodes.Brfalse, fallbackLabel);
 
-                    // Fast path: typed local is valid
-                    IL.Emit(OpCodes.Ldloc, h.TypedLocal);
-                    EmitExpressionAsDouble(gi.Index);
-                    IL.Emit(OpCodes.Conv_I4);
-                    IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(listType, "get_Item", _ctx.Types.Int32));
-                    // Box the unboxed element so this branch converges on `object` with the
-                    // $Array / List<object?> / fallback paths at endLabel. The typed List<T>
-                    // fast path otherwise leaves a native double/bool where the merge point — and
-                    // every consumer, which reads the clobbered StackType=Unknown — expects an
-                    // object ref. That ran only because the typed branch is dead for $Array-backed
-                    // values, but is unverifiable IL (#751).
-                    h.Descriptor.EmitBoxElement(IL, _ctx.Types);
-                    SetStackUnknown();
-                    IL.Emit(OpCodes.Br, endLabel);
+                        IL.Emit(OpCodes.Ldloc, h.TypedLocal);
+                        EmitExpressionAsDouble(gi.Index);
+                        IL.Emit(OpCodes.Conv_I8);
+                        IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArrayGetLong);
+                        SetStackUnknown();
+                        IL.Emit(OpCodes.Br, endLabel);
+                    }
+                    else
+                    {
+                        var listType = h.Descriptor.GetListType(_ctx.Types);
+                        IL.Emit(OpCodes.Ldloc, h.TypedLocal);
+                        IL.Emit(OpCodes.Brfalse, fallbackLabel);
+
+                        // Fast path: typed local is valid
+                        IL.Emit(OpCodes.Ldloc, h.TypedLocal);
+                        EmitExpressionAsDouble(gi.Index);
+                        IL.Emit(OpCodes.Conv_I4);
+                        IL.Emit(OpCodes.Callvirt, _ctx.Types.GetMethod(listType, "get_Item", _ctx.Types.Int32));
+                        // Box the unboxed element so this branch converges on `object` with the
+                        // $Array / List<object?> / fallback paths at endLabel. The typed List<T>
+                        // fast path otherwise leaves a native double/bool where the merge point — and
+                        // every consumer, which reads the clobbered StackType=Unknown — expects an
+                        // object ref. That ran only because the typed branch is dead for $Array-backed
+                        // values, but is unverifiable IL (#751).
+                        h.Descriptor.EmitBoxElement(IL, _ctx.Types);
+                        SetStackUnknown();
+                        IL.Emit(OpCodes.Br, endLabel);
+                    }
 
                     // Fallback: type didn't match at loop entry
                     IL.MarkLabel(fallbackLabel);
@@ -1140,7 +1162,13 @@ public partial class ILEmitter
                 EmitExpressionAsDouble(si.Index);
                 IL.Emit(OpCodes.Conv_I4);
                 IL.Emit(OpCodes.Ldloc, typedValueLocal);
-                IL.Emit(OpCodes.Call, h.Descriptor.GetSetArrayElementMethod(_ctx.Runtime!));
+                if (h.Descriptor.Kind == ArrayElementsKind.Double)
+                    // Hoisted numeric $Array (#927 step 1): SetDouble stores the unboxed double straight
+                    // into the double[] store (mode-checked — a boxed $Array delegates to the boxed setter,
+                    // so this is behaviour-identical for both modes). h.TypedLocal is the hoisted $Array.
+                    IL.Emit(OpCodes.Callvirt, _ctx.Runtime!.TSArraySetDouble);
+                else
+                    IL.Emit(OpCodes.Call, h.Descriptor.GetSetArrayElementMethod(_ctx.Runtime!));
                 IL.Emit(OpCodes.Ldloc, typedValueLocal);
                 // Box the assigned value so this branch leaves `object` like the fallback path at
                 // endLabel (the assignment result is consumed via StackType=Unknown), #751.
