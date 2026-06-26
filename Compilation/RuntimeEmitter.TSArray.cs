@@ -295,6 +295,13 @@ public partial class RuntimeEmitter
         var pushDouble = typeBuilder.DefineMethod("PushDouble",
             MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, [_types.Double]);
         runtime.TSArrayPushDouble = pushDouble;
+        // #927 step 2: these are the per-element hot paths the compiler emits at statically-number[]
+        // sites. They are non-virtual (HideBySig), so a `callvirt` on a $Array-typed receiver
+        // devirtualizes; AggressiveInlining lets the JIT fold the field loads + bounds check into the
+        // caller's loop (the $Array-wrapper equivalent of List<double>.Add's inlined fast path).
+        getDouble.SetImplementationFlags(MethodImplAttributes.AggressiveInlining);
+        setDouble.SetImplementationFlags(MethodImplAttributes.AggressiveInlining);
+        pushDouble.SetImplementationFlags(MethodImplAttributes.AggressiveInlining);
         var markNumeric = typeBuilder.DefineMethod("MarkNumeric",
             MethodAttributes.Public | MethodAttributes.HideBySig, _types.Void, System.Type.EmptyTypes);
         runtime.TSArrayMarkNumeric = markNumeric;
@@ -462,11 +469,16 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
         }
 
-        // ── void PushDouble(double value) ── append at the current length.
+        // ── void PushDouble(double value) ── append at the current length. (#927 step 2: dedicated
+        // numeric-append fast path. Previously delegated to SetDouble, which re-checked _isNumeric and
+        // ran two dead index branches (index<_numCount, index>_numCount) on every push. The numeric
+        // branch is now straight-line ensure-capacity + store + _numCount++/_length=, mirroring
+        // List<double>.Add, so AggressiveInlining can fold it into the caller's push loop.)
         {
             var il = pushDouble.GetILGenerator();
-            var useNum = il.DefineLabel();
-            var haveIndex = il.DefineLabel();
+            var boxedPath = il.DefineLabel();
+            var hasStore = il.DefineLabel();
+            var doStore = il.DefineLabel();
             var blockedReturn = il.DefineLabel();
 
             // Non-extensible (frozen / sealed / preventExtensions) → push is a no-op, matching the boxed
@@ -480,18 +492,62 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ldfld, _tsArrayNonExtensibleField);
             il.Emit(OpCodes.Brtrue, blockedReturn);
 
-            il.Emit(OpCodes.Ldarg_0);                       // SetDouble receiver
+            // Boxed mode → delegate to SetDouble at the base-list count (rare; non-numeric $Array).
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, _tsArrayIsNumericField);
-            il.Emit(OpCodes.Brtrue, useNum);
+            il.Emit(OpCodes.Brfalse, boxedPath);
+
+            // Numeric append: ensure capacity (null → new double[4]; full → Array.Resize ×2).
             il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Callvirt, _tsArrayListCountGetter!);
-            il.Emit(OpCodes.Br, haveIndex);
-            il.MarkLabel(useNum);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Brtrue, hasStore);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldc_I4_4);
+            il.Emit(OpCodes.Newarr, _types.Double);
+            il.Emit(OpCodes.Stfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Br, doStore);
+            il.MarkLabel(hasStore);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
-            il.MarkLabel(haveIndex);
-            il.Emit(OpCodes.Ldarg_1);                       // value
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Bne_Un, doStore);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldflda, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.Mul);
+            il.Emit(OpCodes.Call, arrayResize);
+
+            il.MarkLabel(doStore);
+            il.Emit(OpCodes.Ldarg_0);                       // _numStore[_numCount] = value
+            il.Emit(OpCodes.Ldfld, _tsArrayNumStoreField);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Stelem_R8);
+            il.Emit(OpCodes.Ldarg_0);                       // _numCount++
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Add);
+            il.Emit(OpCodes.Stfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Ldarg_0);                       // _length = (long)_numCount
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsArrayNumCountField);
+            il.Emit(OpCodes.Conv_I8);
+            il.Emit(OpCodes.Stfld, _tsArrayLengthField);
+            il.Emit(OpCodes.Ret);
+
+            // Boxed append: index = base-list Count, then SetDouble (boxed delegate path).
+            il.MarkLabel(boxedPath);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Callvirt, _tsArrayListCountGetter!);
+            il.Emit(OpCodes.Ldarg_1);
             il.Emit(OpCodes.Call, setDouble);
             il.Emit(OpCodes.Ret);
 
