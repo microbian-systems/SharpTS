@@ -2149,14 +2149,9 @@ public abstract partial class ExpressionEmitterBase
             case "concat":
                 // ECMA-262: concat(...items) is variadic. Pass args as object[]
                 // so each argument spreads (Array/List) or appends individually.
-                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
-                IL.Emit(OpCodes.Newarr, Ctx.Types.Object);
-                for (int i = 0; i < arguments.Count; i++)
-                {
-                    IL.Emit(OpCodes.Dup); IL.Emit(OpCodes.Ldc_I4, i);
-                    EmitExpression(arguments[i]); EnsureBoxed();
-                    IL.Emit(OpCodes.Stelem_Ref);
-                }
+                // A `...spread` arg is flattened first (#952) so concat sees the
+                // expanded elements, not the source array as one nested item.
+                EmitArgsArrayWithSpread(arguments);
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.ArrayConcat);
                 break;
         }

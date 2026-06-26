@@ -309,17 +309,9 @@ public partial class ILEmitter
                 break;
 
             case "concat":
-                // ECMA-262: concat(...items) is variadic. Pass args as object[].
-                IL.Emit(OpCodes.Ldc_I4, arguments.Count);
-                IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
-                for (int i = 0; i < arguments.Count; i++)
-                {
-                    IL.Emit(OpCodes.Dup);
-                    IL.Emit(OpCodes.Ldc_I4, i);
-                    EmitExpression(arguments[i]);
-                    EmitBoxIfNeeded(arguments[i]);
-                    IL.Emit(OpCodes.Stelem_Ref);
-                }
+                // ECMA-262: concat(...items) is variadic. Pass args as object[], with any
+                // `...spread` flattened first (#952) so concat appends/spreads each element.
+                EmitArgsArrayWithSpread(arguments);
                 IL.Emit(OpCodes.Call, _ctx.Runtime!.ArrayConcat);
                 break;
 
