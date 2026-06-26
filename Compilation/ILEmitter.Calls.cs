@@ -597,17 +597,11 @@ public partial class ILEmitter
                 }
                 break;
             case "argsArray":
-                // Push the method args as an object[].
-                IL.Emit(OpCodes.Ldc_I4, methodArgs.Count);
-                IL.Emit(OpCodes.Newarr, _ctx.Types.Object);
-                for (int i = 0; i < methodArgs.Count; i++)
-                {
-                    IL.Emit(OpCodes.Dup);
-                    IL.Emit(OpCodes.Ldc_I4, i);
-                    EmitExpression(methodArgs[i]);
-                    EmitBoxIfNeeded(methodArgs[i]);
-                    IL.Emit(OpCodes.Stelem_Ref);
-                }
+                // Push the method args as an object[], flattening any `...spread` arg in
+                // place (#952) — identical to the old inline loop when no spread is present,
+                // so concat/reduce/slice/toSpliced/with via Array.prototype.X.call all expand
+                // spreads the way the generic call path does.
+                EmitArgsArrayWithSpread(methodArgs);
                 break;
             case "noArg":
                 // Helper takes only the materialized list — no extra args

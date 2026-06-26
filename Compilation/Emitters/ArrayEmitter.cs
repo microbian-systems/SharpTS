@@ -35,12 +35,19 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
         // (not a bare List<object?>), so downstream array methods / runtime dispatch still match.
         bool returnsNewArray = IsReturnsNewArrayMethod(methodName);
 
+        // #952: `concat(...spread)` must expand the spread BEFORE concat (which only flattens one level
+        // per *argument*). The spread path below routes through EmitArgsArrayWithSpread, which is itself
+        // await-safe (it evaluates each arg into a temp with a clear stack), so it must NOT also go through
+        // the #850 pre-spill — that would double-evaluate the args.
+        bool concatSpread = methodName == "concat" && arguments.Any(a => a is Expr.Spread);
+
         // #850: when an argument can suspend (await/yield), evaluating it while the receiver list sits
         // on the IL evaluation stack produces invalid IL across a state-machine suspension. Pre-spill the
         // receiver + args into await-safe locals (callback methods never trigger this — an arrow body's
         // await belongs to its own state machine).
         bool plainArgSuspension = arguments.Count > 0 && MethodTakesPlainArgs(methodName)
-            && emitter.ArgsContainSuspension(arguments);
+            && emitter.ArgsContainSuspension(arguments)
+            && !concatSpread;
 
         // The receiver local holds the ORIGINAL receiver, used by returnsReceiver methods and the
         // suspension spill below; unused for the other methods.
@@ -230,7 +237,25 @@ public sealed class ArrayEmitter : ITypeEmitterStrategy
                 break;
 
             case "concat":
-                EmitArgsArray(emitter, arguments, argLocals);
+                if (concatSpread)
+                {
+                    // #952: the receiver [list] is on the stack. Spread args must be flattened
+                    // BEFORE concat (concat itself only flattens one level per argument). Stash the
+                    // list, build the spread-expanded args array await-safely (EmitArgsArrayWithSpread
+                    // evaluates into temps with a clear stack — the spread expr may contain await),
+                    // then reload [list] under [items] so ArrayConcat sees (list, items).
+                    var concatListTmp = il.DeclareLocal(ctx.Types.ListOfObject);
+                    il.Emit(OpCodes.Stloc, concatListTmp);
+                    emitter.EmitArgsArrayWithSpread(arguments);
+                    var concatItemsTmp = il.DeclareLocal(ctx.Types.ObjectArray);
+                    il.Emit(OpCodes.Stloc, concatItemsTmp);
+                    il.Emit(OpCodes.Ldloc, concatListTmp);
+                    il.Emit(OpCodes.Ldloc, concatItemsTmp);
+                }
+                else
+                {
+                    EmitArgsArray(emitter, arguments, argLocals);
+                }
                 il.Emit(OpCodes.Call, ctx.Runtime!.ArrayConcat);
                 break;
 
