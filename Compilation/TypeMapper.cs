@@ -306,7 +306,20 @@ public class TypeMapper
     private Type MapCollectionElementStrict(TypeInfo element)
     {
         Type mapped = MapTypeInfoStrict(element);
-        return _types.IsVoid(mapped) ? _types.Object : mapped;
+        if (_types.IsVoid(mapped))
+            return _types.Object;
+        // A generated Union_* struct as a List/Dictionary/HashSet element makes the closed
+        // generic a TypeBuilderInstantiation. Most reflection members on such a type throw
+        // NotSupportedException "Specified method is not supported." — e.g. ResolveReturnType's
+        // IsSubclassOf(Delegate) probe (ParameterTypeResolver.cs) fires before its
+        // IsDynamicRuntimeType→object fallback can collapse it. At runtime such a collection is a
+        // dynamic $Array/$Map/$Set of boxed objects — never an instance of the union struct — so
+        // object is the sound backing element type, matching the IsDynamicRuntimeType→object slot
+        // precedent. Covers both collection-member (number[]|number) and scalar-member
+        // (number|string) unions used as collection elements. (#954)
+        if (UnionTypeHelper.IsUnionType(mapped))
+            return _types.Object;
+        return mapped;
     }
 
     /// <summary>
@@ -347,6 +360,11 @@ public class TypeMapper
         Type innerType = MapTypeInfoStrict(promise.ValueType);
         if (_types.IsVoid(innerType))
             return _types.Task;
+        // Promise<number|string> would otherwise produce Task<Union_*> — a TypeBuilderInstantiation
+        // that throws on the same reflection probes as List<Union_*> (see MapCollectionElementStrict).
+        // Collapse the union inner to object so the closed generic stays a RuntimeType. (#954)
+        if (UnionTypeHelper.IsUnionType(innerType))
+            innerType = _types.Object;
         return _types.MakeGenericType(_types.TaskOpen, innerType);
     }
 
