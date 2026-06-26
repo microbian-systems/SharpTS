@@ -768,17 +768,26 @@ public partial class ILEmitter
 
         foreach (var (varName, desc) in candidates)
         {
-            var listType = desc.GetListType(_ctx.Types);
-            var typedLocal = IL.DeclareLocal(listType);
+            // Double-kind candidates that reach the hoist are escaping number[] whose runtime value is a
+            // $Array (numeric or boxed) — never a bare List<double> (promoted List<double> locals were
+            // filtered out above). Hoist the $Array cast so the loop-body index get/set route through the
+            // mode-checked Get(long)/SetDouble fast paths (straight into the unboxed double[] store)
+            // instead of isinst-ing List<double> → null → boxed SetIndex per write, which deopts the array
+            // to boxed and reintroduces the per-element boxing this project removed (#927 step 1). Bool/
+            // Object kinds keep their List<T> hoist ($Array : List<object?> covers Object directly).
+            var hoistType = desc.Kind == ArrayElementsKind.Double
+                ? _ctx.Runtime!.TSArrayType
+                : desc.GetListType(_ctx.Types);
+            var typedLocal = IL.DeclareLocal(hoistType);
 
-            // Load array variable, isinst to typed list, store in local
+            // Load array variable, isinst to the hoist type, store in local
             // If the variable holds a different type, typedLocal will be null
             // Use the local directly to avoid stack type tracking complications
             var arrLocal = _ctx.Locals.GetLocal(varName);
             if (arrLocal == null) continue; // Variable not found in locals — skip
             IL.Emit(OpCodes.Ldloc, arrLocal);
             // Array locals are always typed as object — no boxing needed
-            IL.Emit(OpCodes.Isinst, listType);
+            IL.Emit(OpCodes.Isinst, hoistType);
             IL.Emit(OpCodes.Stloc, typedLocal);
 
             cache[varName] = new HoistedArrayEntry(typedLocal, desc);
