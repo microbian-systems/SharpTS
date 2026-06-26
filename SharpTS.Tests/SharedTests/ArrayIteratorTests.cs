@@ -804,6 +804,37 @@ public class ArrayIteratorTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spread_Map_JsonStringify_ProducesArrayOfPairs(ExecutionMode mode)
+    {
+        // #953: in compiled mode spread Map entries were boxed KeyValuePair structs, not real
+        // arrays, so Array.isArray returned false and JSON.stringify emitted null per entry.
+        var source = """
+            console.log(JSON.stringify([...new Map([[0, 0.5], [1, 1.5]])]));
+            console.log(JSON.stringify([...new Map([["a", 1], ["b", 2]])]));
+            console.log(Array.isArray([...new Map([[0, 0.5]])][0]));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("[[0,0.5],[1,1.5]]\n[[\"a\",1],[\"b\",2]]\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Map_Iteration_MaterializesRealArrays(ExecutionMode mode)
+    {
+        // #953 root-cause fix is shared across for-of / Array.from / Object.fromEntries.
+        var source = """
+            for (const [k, v] of new Map([[1, 2]])) console.log(k, v);
+            console.log(JSON.stringify(Array.from(new Map([[1, 2], [3, 4]]))));
+            console.log(JSON.stringify(Object.fromEntries(new Map([["x", 1]]))));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1 2\n[[1,2],[3,4]]\n{\"x\":1}\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Spread_MapEntries_NestedElementAccess(ExecutionMode mode)
     {
         // Tests explicit .entries() call with nested access
