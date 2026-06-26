@@ -7,6 +7,7 @@ using SharpTS.Runtime.Types;
 using SharpTS.TypeSystem;
 using System.Buffers;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace SharpTS.Execution;
 
@@ -24,6 +25,54 @@ public partial class Interpreter
         ISharpTSCallable method,
         IReadOnlyList<Expr> arguments)
     {
+        // Spread args have a runtime-unknown count; expand them into a flat list
+        // before dispatch so they don't leak through as a single Object-kind arg
+        // (matches the sync CallBuiltInSync path, #951). A span can't cross an
+        // await, so all arguments are evaluated into the list first.
+        if (HasSpreadArgs(arguments))
+        {
+            if (method is BuiltInMethod bmSpread && bmSpread.HasV2Implementation)
+            {
+                var expanded = new List<RuntimeValue>(arguments.Count);
+                foreach (var arg in arguments)
+                {
+                    if (arg is Expr.Spread spread)
+                    {
+                        var spreadValue = (await ctx.EvaluateExprAsync(spread.Expression)).ToObject();
+                        foreach (var el in GetIterableElements(spreadValue))
+                            expanded.Add(RuntimeValue.FromBoxed(el));
+                    }
+                    else
+                    {
+                        expanded.Add(await ctx.EvaluateExprAsync(arg));
+                    }
+                }
+                return bmSpread.CallV2(this, CollectionsMarshal.AsSpan(expanded)).ToObject();
+            }
+
+            var spreadList = ArgumentListPool.Rent();
+            try
+            {
+                foreach (var arg in arguments)
+                {
+                    if (arg is Expr.Spread spread)
+                    {
+                        var spreadValue = (await ctx.EvaluateExprAsync(spread.Expression)).ToObject();
+                        spreadList.AddRange(GetIterableElements(spreadValue));
+                    }
+                    else
+                    {
+                        spreadList.Add((await ctx.EvaluateExprAsync(arg)).ToObject());
+                    }
+                }
+                return method.Call(this, spreadList);
+            }
+            finally
+            {
+                ArgumentListPool.Return(spreadList);
+            }
+        }
+
         // V2 fast path: use RuntimeValue span instead of List<object?>
         if (method is BuiltInMethod bm && bm.HasV2Implementation)
         {
@@ -226,6 +275,49 @@ public partial class Interpreter
     /// </summary>
     private RuntimeValue CallBuiltInSync(ISharpTSCallable method, IReadOnlyList<Expr> arguments)
     {
+        // Spread args (\`Math.max(...arr)\`) have a runtime-unknown count, so the
+        // ArrayPool-by-arity fast path can't hold them. Expand into a flat list
+        // (the same GetIterableElements expansion the user-function boxed path
+        // uses) before dispatching — otherwise the spread array leaks through as
+        // a single Object-kind arg and Math.max's AsNumber() throws (#951).
+        if (HasSpreadArgs(arguments))
+        {
+            if (method is BuiltInMethod bmSpread && bmSpread.HasV2Implementation)
+            {
+                var expanded = new List<RuntimeValue>(arguments.Count);
+                foreach (var arg in arguments)
+                {
+                    if (arg is Expr.Spread spread)
+                    {
+                        foreach (var el in GetIterableElements(Evaluate(spread.Expression)))
+                            expanded.Add(RuntimeValue.FromBoxed(el));
+                    }
+                    else
+                    {
+                        expanded.Add(EvaluateRV(arg));
+                    }
+                }
+                return bmSpread.CallV2(this, CollectionsMarshal.AsSpan(expanded));
+            }
+
+            var spreadList = ArgumentListPool.Rent();
+            try
+            {
+                foreach (var arg in arguments)
+                {
+                    if (arg is Expr.Spread spread)
+                        spreadList.AddRange(GetIterableElements(Evaluate(spread.Expression)));
+                    else
+                        spreadList.Add(Evaluate(arg));
+                }
+                return RuntimeValue.FromBoxed(method.Call(this, spreadList));
+            }
+            finally
+            {
+                ArgumentListPool.Return(spreadList);
+            }
+        }
+
         // V2 fast path — no boxing at all
         if (method is BuiltInMethod bm && bm.HasV2Implementation)
         {

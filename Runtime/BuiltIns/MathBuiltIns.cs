@@ -72,6 +72,10 @@ public static class MathBuiltIns
         for (int i = 0; i < args.Length; i++)
         {
             double val = args[i].AsNumber();
+            // ECMA-262 21.3.2.25: any NaN argument makes the result NaN (a plain
+            // `val < min` comparison would silently skip NaN and return a finite
+            // value instead).
+            if (double.IsNaN(val)) return RuntimeValue.FromNumber(double.NaN);
             if (val < min) min = val;
         }
         return RuntimeValue.FromNumber(min);
@@ -85,6 +89,8 @@ public static class MathBuiltIns
         for (int i = 0; i < args.Length; i++)
         {
             double val = args[i].AsNumber();
+            // ECMA-262 21.3.2.24: any NaN argument makes the result NaN.
+            if (double.IsNaN(val)) return RuntimeValue.FromNumber(double.NaN);
             if (val > max) max = val;
         }
         return RuntimeValue.FromNumber(max);
@@ -92,7 +98,16 @@ public static class MathBuiltIns
 
     private static RuntimeValue Hypot(Interpreter _, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        // sqrt(sum of squares); IEEE handles the Infinity/NaN special cases.
+        // ECMA-262 21.3.2.16: the Infinity check fires BEFORE NaN, so
+        // Math.hypot(NaN, Infinity) === Infinity (not NaN). The naive
+        // sqrt(Σx²) below would propagate the NaN instead.
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (double.IsInfinity(args[i].AsNumber()))
+                return RuntimeValue.FromNumber(double.PositiveInfinity);
+        }
+
+        // sqrt(sum of squares); any remaining NaN propagates through Sqrt.
         double sum = 0;
         for (int i = 0; i < args.Length; i++)
         {

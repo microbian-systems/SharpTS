@@ -188,6 +188,38 @@ public partial class RuntimeEmitter
         var iLocal = il.DeclareLocal(_types.Int32);
         var argLocal = il.DeclareLocal(_types.Double);
 
+        // ECMA-262 21.3.2.16: the Infinity check fires BEFORE NaN, so
+        // Math.hypot(NaN, Infinity) === Infinity (not NaN). First pass: if any
+        // ToNumber(arg) is ±Infinity, return +Infinity. Mirrors the inline
+        // MathStaticEmitter hypot path so value-form / spread hypot agree (#951).
+        var infLoopStart = il.DefineLabel();
+        var infLoopEnd = il.DefineLabel();
+        var notInfArg = il.DefineLabel();
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.MarkLabel(infLoopStart);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, infLoopEnd);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_Ref);
+        il.Emit(OpCodes.Call, runtime.ToNumber);
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Double, "IsInfinity", _types.Double));
+        il.Emit(OpCodes.Brfalse, notInfArg);
+        il.Emit(OpCodes.Ldc_R8, double.PositiveInfinity);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notInfArg);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, infLoopStart);
+        il.MarkLabel(infLoopEnd);
+
         // sum = 0; i = 0
         il.Emit(OpCodes.Ldc_R8, 0.0);
         il.Emit(OpCodes.Stloc, sumLocal);

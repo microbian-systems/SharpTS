@@ -28,6 +28,20 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
         // Handle variadic min/max (JavaScript allows any number of arguments)
         if (methodName is "min" or "max")
         {
+            // Spread args (\`Math.max(...arr)\`) have a runtime-unknown count, so the
+            // inline per-arg loop below can't expand them. Route to the variadic
+            // \`object[]\`-taking adapter, feeding a spread-expanded args array — the
+            // adapter applies ToNumber per element with the same empty→∓∞ / NaN
+            // short-circuit semantics as the inline path (#951).
+            if (arguments.Any(a => a is Expr.Spread))
+            {
+                emitter.EmitArgsArrayWithSpread(arguments);
+                il.Emit(OpCodes.Call, methodName == "min"
+                    ? ctx.Runtime!.MathMinAdapter
+                    : ctx.Runtime!.MathMaxAdapter);
+                return true;
+            }
+
             var minMaxMethod = methodName == "min"
                 ? ctx.Types.GetMethod(ctx.Types.Math, "Min", ctx.Types.Double, ctx.Types.Double)
                 : ctx.Types.GetMethod(ctx.Types.Math, "Max", ctx.Types.Double, ctx.Types.Double);
@@ -65,6 +79,19 @@ public sealed class MathStaticEmitter : IStaticTypeEmitterStrategy
             emitter.EmitExpression(arguments[0]);
             emitter.EnsureBoxed();
             il.Emit(OpCodes.Call, ctx.Runtime!.MathSumPrecise);
+            return true;
+        }
+
+        // Variadic hypot with spread args (\`Math.hypot(...arr)\`) has a runtime-
+        // unknown count, so the inline local-stash path below can't expand it.
+        // Route to the \`object[]\`-taking adapter with a spread-expanded args
+        // array (it applies ToNumber + the Infinity-first / NaN-propagating
+        // sqrt(Σx²)). Must run BEFORE the general ToNumber loop, which would
+        // otherwise emit ToNumber(array) → NaN for the spread element (#951).
+        if (methodName == "hypot" && arguments.Any(a => a is Expr.Spread))
+        {
+            emitter.EmitArgsArrayWithSpread(arguments);
+            il.Emit(OpCodes.Call, ctx.Runtime!.MathHypotAdapter);
             return true;
         }
 
