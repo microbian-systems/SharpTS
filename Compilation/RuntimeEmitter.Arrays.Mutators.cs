@@ -682,6 +682,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "get_Item", _types.Int32));
         il.Emit(OpCodes.Stloc, itemLocal);
 
+        // number[] unboxing deopt: a numeric-mode $Array element masquerades as an EMPTY base
+        // List<object?> (it inherits List<object?> but its elements live unboxed in _numStore), so
+        // the `isinst List<object>` recursion below would flatten nothing. Materialize it first so its
+        // elements are visible. Self-guarded — a no-op for boxed/scalar items. (#918 deopt-completeness
+        // gap; exposed broadly once #927 keeps loop-built number[] numeric instead of deopting it.)
+        EmitDeoptIfNumericArray(il, runtime, () => il.Emit(OpCodes.Ldloc, itemLocal));
+
         // ECMA-262 23.1.3.12 FlattenIntoArray: skip holes (only kPresent
         // slots are flattened). Without this the hole sentinel would be
         // Add()'d directly into the result list.
@@ -817,6 +824,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, argsLocal); // args - second arg
         il.Emit(OpCodes.Call, runtime.InvokeValue);
         il.Emit(OpCodes.Stloc, callResultLocal);
+
+        // number[] unboxing deopt: a numeric-mode $Array callback result is an EMPTY base list
+        // (its elements live unboxed in _numStore), so the single-level flatten below would add
+        // nothing. Materialize it so its elements are visible. Self-guarded — a no-op for boxed/scalar
+        // results. (#918 deopt-completeness gap, same shape as ArrayFlatHelper above.)
+        EmitDeoptIfNumericArray(il, runtime, () => il.Emit(OpCodes.Ldloc, callResultLocal));
 
         // if (callResult is List<object> nestedList)
         var addDirectly = il.DefineLabel();
