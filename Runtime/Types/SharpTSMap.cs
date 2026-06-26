@@ -25,6 +25,13 @@ public class SharpTSMap : ITypeCategorized, IEnumerable<object?>
 
     private static object NormalizeKey(object? key) => key ?? NullSentinel;
 
+    /// <summary>
+    /// Reverses <see cref="NormalizeKey"/>: turns the internal null-sentinel back into a real
+    /// null so the sentinel never escapes the Map (keys(), entries(), forEach, for...of,
+    /// spread, console.log). undefined is stored as its own value, so it passes through.
+    /// </summary>
+    private static object? DenormalizeKey(object key) => ReferenceEquals(key, NullSentinel) ? null : key;
+
     private readonly Dictionary<object, object?> _map;
 
     public SharpTSMap()
@@ -133,12 +140,13 @@ public class SharpTSMap : ITypeCategorized, IEnumerable<object?>
     /// <summary>
     /// Exposes the internal dictionary for forEach implementation.
     /// </summary>
-    internal IEnumerable<KeyValuePair<object, object?>> InternalEntries => _map;
+    internal IEnumerable<(object? Key, object? Value)> InternalEntries =>
+        _map.Select(kvp => (DenormalizeKey(kvp.Key), kvp.Value));
 
     private IEnumerable<object?> EnumerateKeys()
     {
         foreach (var key in _map.Keys)
-            yield return key;
+            yield return DenormalizeKey(key);
     }
 
     private IEnumerable<object?> EnumerateValues()
@@ -150,7 +158,7 @@ public class SharpTSMap : ITypeCategorized, IEnumerable<object?>
     private IEnumerable<object?> EnumerateEntries()
     {
         foreach (var kvp in _map)
-            yield return new SharpTSArray([kvp.Key, kvp.Value]);
+            yield return new SharpTSArray([DenormalizeKey(kvp.Key), kvp.Value]);
     }
 
     /// <summary>
@@ -164,7 +172,7 @@ public class SharpTSMap : ITypeCategorized, IEnumerable<object?>
     public override string ToString()
     {
         var entries = _map.Select(kvp =>
-            $"{FormatValue(kvp.Key)} => {FormatValue(kvp.Value)}");
+            $"{FormatValue(DenormalizeKey(kvp.Key))} => {FormatValue(kvp.Value)}");
         return $"Map({_map.Count}) {{ {string.Join(", ", entries)} }}";
     }
 

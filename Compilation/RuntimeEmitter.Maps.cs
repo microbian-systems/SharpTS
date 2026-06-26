@@ -24,7 +24,10 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits NormalizeMapKey(key): converts null and $Undefined.Instance to _mapNullSentinel.
+    /// Emits NormalizeMapKey(key): converts a CLR null key to _mapNullSentinel so it can be
+    /// stored in a Dictionary (which forbids null keys). undefined ($Undefined.Instance) is
+    /// left untouched — it is a distinct singleton and a valid Dictionary key, so null and
+    /// undefined remain separate Map keys (matches JS and SharpTSMap; see issue #960).
     /// </summary>
     private void EmitNormalizeMapKey(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -38,16 +41,10 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var returnSentinelLabel = il.DefineLabel();
-        var returnKeyLabel = il.DefineLabel();
 
         // if (key == null) return _mapNullSentinel;
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnSentinelLabel);
-
-        // if (key is $Undefined) return _mapNullSentinel;
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
-        il.Emit(OpCodes.Brtrue, returnSentinelLabel);
 
         // return key;
         il.Emit(OpCodes.Ldarg_0);

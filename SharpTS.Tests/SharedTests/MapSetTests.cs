@@ -117,6 +117,67 @@ public class MapSetTests
 
     #endregion
 
+    #region Map Null/Undefined Key Identity (issue #960)
+
+    // null and undefined are DISTINCT Map keys in JS (and the interpreter). Compiled mode
+    // previously collapsed both onto a single null-sentinel, so set(undefined) overwrote
+    // set(null) and size was undercounted. These run in both modes to pin parity.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Map_NullAndUndefinedKeys_AreDistinct(ExecutionMode mode)
+    {
+        // Exact repro from issue #960.
+        var source = @"
+            const m = new Map();
+            m.set(null, 9);
+            m.set(undefined, 8);
+            console.log(m.size);
+            console.log(m.get(null));
+            console.log(m.get(undefined));
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("2\n9\n8\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Map_NullAndUndefinedKeys_HasAndDeleteIndependently(ExecutionMode mode)
+    {
+        var source = @"
+            const m = new Map();
+            m.set(null, 1);
+            m.set(undefined, 2);
+            console.log(m.has(null));
+            console.log(m.has(undefined));
+            console.log(m.delete(null));
+            console.log(m.has(null));
+            console.log(m.has(undefined));
+            console.log(m.size);
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\ntrue\ntrue\nfalse\ntrue\n1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Map_NullAndUndefinedKeys_ConstructorAndIteration(ExecutionMode mode)
+    {
+        // Guards the entries-constructor (CreateMapFromEntries) and the
+        // denormalize-on-iteration path (#953 spread routes through the same code).
+        var source = @"
+            const m = new Map<any, string>([[null, 'a'], [undefined, 'b']]);
+            console.log(m.size);
+            m.forEach((v, k) => { console.log(k + '=' + v); });
+        ";
+        var output = TestHarness.Run(source, mode);
+        Assert.Contains("2\n", output);
+        Assert.Contains("null=a", output);
+        Assert.Contains("undefined=b", output);
+    }
+
+    #endregion
+
     #region Map Iteration
 
     [Theory]

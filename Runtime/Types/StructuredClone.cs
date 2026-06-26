@@ -401,10 +401,9 @@ public static class StructuredClone
         {
             var clonedKey = CloneInternal(kvp.Key, cloned, transferred);
             var clonedValue = CloneInternal(kvp.Value, cloned, transferred);
-            if (clonedKey != null)
-            {
-                result.Set(clonedKey, clonedValue);
-            }
+            // A null key is valid in a JS Map (and SharpTSMap.Set normalizes it), so set
+            // unconditionally — guarding on non-null would silently drop a null key.
+            result.Set(clonedKey, clonedValue);
         }
 
         return result;
