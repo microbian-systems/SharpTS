@@ -106,10 +106,12 @@ public partial class ILCompiler
     }
 
     /// <summary>
-    /// Returns the generator's own locals/parameters that are both captured by an inner arrow and
-    /// written by one (the set that needs shared reference storage). Per-iteration <c>for (let…)</c>
-    /// bindings are excluded — each iteration owns its binding (#649), so closures must snapshot them
-    /// per iteration rather than share one function-DC cell.
+    /// Returns the generator's own locals/parameters that need shared reference storage in the function
+    /// display class: those both captured AND written by an inner arrow (#674), plus (#945) those a
+    /// HOISTED lambda-lifted nested generator forwards read-only — those must be read LIVE through the DC
+    /// rather than a stale by-value snapshot taken above the captured local's assignment. Per-iteration
+    /// <c>for (let…)</c> bindings are excluded — each iteration owns its binding (#649), so closures must
+    /// snapshot them per iteration rather than share one function-DC cell.
     /// </summary>
     private HashSet<string> ComputeMutatedCapturedGeneratorVars(Stmt.Function funcStmt)
     {
@@ -119,6 +121,17 @@ public partial class ILCompiler
 
         var result = new HashSet<string>(capturedLocals);
         result.IntersectWith(CollectGeneratorArrowCapturedWrites(funcStmt));
+
+        // #945: a read-only capture forwarded by a HOISTED lambda-lifted nested generator (the sync
+        // forwarding arrow NestedFunctionLifter marks IsLiftedForwarder) must also live in the DC, so the
+        // hoisted forwarder reads it live at call time. Marked forwarders only appear in free/module/
+        // nested-in-function generator bodies (class-method enclosers decline → unmarked), so generator
+        // METHODS are unaffected. Unioned BEFORE the empty-set short-circuit and the per-iteration
+        // exclusion below, which still strips any per-iteration loop binding a forwarder happens to read.
+        var forwardedReads = CollectLiftedForwarderCapturedReads(funcStmt);
+        forwardedReads.IntersectWith(capturedLocals);
+        result.UnionWith(forwardedReads);
+
         if (result.Count == 0)
             return [];
 
@@ -191,6 +204,28 @@ public partial class ILCompiler
             writes.UnionWith(arrowWrites);
         }
         return writes;
+    }
+
+    /// <summary>
+    /// Unions the captures of every lifted forwarding arrow (#945) lexically inside the generator body.
+    /// A forwarder is the sync, non-generator arrow <see cref="NestedFunctionLifter"/> substitutes for a
+    /// capturing nested generator when it hoists the binding into a generator encloser's body; it only
+    /// READS its forwarded captures, so it is invisible to the write-based
+    /// <see cref="CollectGeneratorArrowCapturedWrites"/>. The caller intersects the result with the
+    /// generator's own captured locals, so a forwarder nested in a deeper function contributes nothing.
+    /// </summary>
+    private HashSet<string> CollectLiftedForwarderCapturedReads(Stmt.Function funcStmt)
+    {
+        var collector = new ArrowCollector();
+        if (funcStmt.Body != null)
+            foreach (var stmt in funcStmt.Body)
+                collector.Visit(stmt);
+
+        var reads = new HashSet<string>();
+        foreach (var arrow in collector.Arrows)
+            if (arrow.IsLiftedForwarder)
+                reads.UnionWith(_closures.Analyzer.GetCaptures(arrow));
+        return reads;
     }
 
     /// <summary>Collects every arrow function in a subtree, descending into nested arrows.</summary>
