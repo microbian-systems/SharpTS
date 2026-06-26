@@ -78,9 +78,11 @@ public class DefaultParameterTests
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void DefaultParam_NumericValue_DirectCall(ExecutionMode mode)
     {
-        // Numeric (value-type) defaults still work for direct same-module calls via
-        // OverloadGenerator. Module-imported callers with value-type defaults are a
-        // known limitation — the inline null-check pattern skips value types.
+        // Numeric (value-type) defaults work for direct same-module calls via OverloadGenerator,
+        // and — since #646/#705 — also through the $TSFunction.Invoke boundary: a value-type-
+        // defaulted param is widened to an `object` slot so the entry prologue can observe the
+        // `$Undefined` sentinel and fire the default. See the cross-module / value-call coverage
+        // in DefaultParam_NumericValue_*Boundary below (#925).
         var source = """
             function pad(width: number = 4): number {
                 return width * 2;
@@ -91,6 +93,85 @@ public class DefaultParameterTests
 
         var output = TestHarness.Run(source, mode);
         Assert.Equal("8\n14\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DefaultParam_NumericValue_AppliedAcrossModuleImport(ExecutionMode mode)
+    {
+        // #925: a VALUE-TYPE default (`number`) on a module-exported function must fire through the
+        // cross-module $TSFunction.Invoke boundary when the arg is omitted — the param is widened to
+        // an `object` slot so the omitted arg pads `$Undefined` and the prologue applies the default.
+        // Previously documented (incorrectly, post-#705) as a known limitation that returned 0.
+        var files = new Dictionary<string, string>
+        {
+            ["lib.ts"] = """
+                export function pad(width: number = 4): number { return width * 2; }
+                """,
+            ["main.ts"] = """
+                import { pad } from './lib';
+                console.log(pad());
+                console.log(pad(7));
+                """
+        };
+        Assert.Equal("8\n14\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DefaultParam_BooleanAndBigIntValue_AppliedAcrossModuleImport(ExecutionMode mode)
+    {
+        // #925: the value-type-default fix covers `boolean` and `bigint` defaults too, not just `number`.
+        var files = new Dictionary<string, string>
+        {
+            ["lib.ts"] = """
+                export function flag(on: boolean = true): boolean { return on; }
+                export function big(n: bigint = 7n): bigint { return n; }
+                """,
+            ["main.ts"] = """
+                import { flag, big } from './lib';
+                console.log(flag());
+                console.log(big());
+                """
+        };
+        Assert.Equal("true\n7n\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DefaultParam_NumericValue_ValueCallBoundary(ExecutionMode mode)
+    {
+        // #925: same fix via the value-call path — a function stored in a value and called with the
+        // arg omitted routes through $TSFunction.Invoke and must still fire the value-type default.
+        var source = """
+            function pad(width: number = 4): number { return width * 2; }
+            const f: any = pad;
+            console.log(f());
+            console.log(f(7));
+            """;
+        Assert.Equal("8\n14\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void DefaultParam_NumericValue_AsyncFunction_AcrossModuleImport(ExecutionMode mode)
+    {
+        // #925: an exported ASYNC function with a value-type default fires it through the boundary.
+        var files = new Dictionary<string, string>
+        {
+            ["lib.ts"] = """
+                export async function pad(width: number = 4): Promise<number> { return width * 2; }
+                """,
+            ["main.ts"] = """
+                import { pad } from './lib';
+                async function main() {
+                    console.log(await pad());
+                    console.log(await pad(7));
+                }
+                main();
+                """
+        };
+        Assert.Equal("8\n14\n", TestHarness.RunModules(files, "main.ts", mode));
     }
 
     [Theory]

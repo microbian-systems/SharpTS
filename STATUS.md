@@ -556,7 +556,8 @@ The following stdlib TS files carry workarounds for compiler gaps that surfaced 
 
 - `stdlib/node/process.ts` (`nextTick`) and `stdlib/node/timers.ts` (`setTimeout`/`setInterval`/`setImmediate`) — arity-dispatch across 8 positional args because the built-in emitter doesn't expand `Expr.Spread` when forwarding to primitive methods. Payloads with >8 args are silently truncated.
 - `stdlib/node/async_hooks.ts` (`run`, `exit`) — drops the optional `...args` parameter; the underlying `SharpTSAsyncLocalStorage` still supports it. No current tests exercise this path.
-- Default parameters through `$TSFunction.Invoke` only apply for reference-type params. Value-type defaults (`x: number = 5` on a module export) silently receive `0` / `false` / `0n`; stdlib authors use `param?: T` + `??` — see `stdlib/CONTRIBUTING.md`.
+
+(Resolved #925: parameter defaults — reference **and** value type — and unset optional reference params now round-trip faithfully through `$TSFunction.Invoke`. The old `param?: T` + `??` and `!= null` authoring workarounds have been retired from `stdlib/CONTRIBUTING.md`.)
 
 ### Resolved: guest-error identity (2026-04-18 regression → fully resolved 2026-06-24)
 

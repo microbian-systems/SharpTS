@@ -169,4 +169,82 @@ public class ValueCallUndefinedPaddingTests
             """;
         Assert.Equal("undefined\n", TestHarness.Run(source, mode));
     }
+
+    // #925: free-function declarations that compile to a state-machine stub — `async function`,
+    // `function*`, and `async function*` — were never marked $PadUndefined (only their class-method
+    // and async-arrow counterparts were), so an omitted optional reference arg padded CLR null
+    // instead of the sentinel on the value-call / cross-module boundary. `typeof`/`=== undefined`
+    // then answered "object"/false. Marking the stub fixes all three kinds.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CrossModuleImport_AsyncFunction_OmittedOptionalArg_IsUndefined(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["helper.ts"] = """
+                export async function h(x?: any): Promise<string> { return typeof x; }
+                export async function h2(x?: any): Promise<boolean> { return x === undefined; }
+                """,
+            ["main.ts"] = """
+                import { h, h2 } from './helper';
+                async function main() {
+                    console.log(await h());
+                    console.log(await h2());
+                }
+                main();
+                """,
+        };
+        Assert.Equal("undefined\ntrue\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CrossModuleImport_Generator_OmittedOptionalArg_IsUndefined(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["helper.ts"] = """
+                export function* gen(x?: any): Generator<string> { yield typeof x; }
+                """,
+            ["main.ts"] = """
+                import { gen } from './helper';
+                console.log(gen().next().value);
+                """,
+        };
+        Assert.Equal("undefined\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void CrossModuleImport_AsyncGenerator_OmittedOptionalArg_IsUndefined(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["helper.ts"] = """
+                export async function* agen(x?: any): AsyncGenerator<string> { yield typeof x; }
+                """,
+            ["main.ts"] = """
+                import { agen } from './helper';
+                async function consume(): Promise<void> {
+                    for await (const v of agen()) console.log(v);
+                }
+                consume();
+                """,
+        };
+        Assert.Equal("undefined\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncFunctionAsValue_OmittedOptionalArg_IsUndefined(ExecutionMode mode)
+    {
+        // Value-call (non-module) path for the async free-function stub.
+        var source = """
+            async function h(x?: any): Promise<string> { return typeof x; }
+            const r: any = h;
+            r().then((v: string) => console.log(v));
+            """;
+        Assert.Equal("undefined\n", TestHarness.Run(source, mode));
+    }
 }

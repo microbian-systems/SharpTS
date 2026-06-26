@@ -58,6 +58,11 @@ public partial class ILCompiler
 
         _functions.Builders[qualifiedName] = methodBuilder;
 
+        // #925: an async generator used as a value (imported cross-module, stored, passed as a
+        // callback → $TSFunction.Invoke) must pad omitted trailing optional args with the `undefined`
+        // sentinel, not CLR null — matching the other function kinds (see DefineGeneratorFunction).
+        MarkPadsUndefined(methodBuilder);
+
         // Track rest parameter info (keyed by the qualified name so ResolveFunctionName-based
         // call-site lookups in ExpressionEmitterBase find it).
         var restParam = funcStmt.Parameters.FirstOrDefault(p => p.IsRest);

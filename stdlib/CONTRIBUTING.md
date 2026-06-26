@@ -66,58 +66,36 @@ Target Node.js 24.15.0. Match observable behavior including error codes
 (`ENOENT`, `EACCES`, etc.). Any deliberate divergence needs an explicit
 comment explaining why — no silent differences.
 
-### 6. Optional reference-type params: use `!= null`, not `!== undefined`
+### 6. Optional params and parameter defaults: write idiomatic TS
 
-When checking whether an optional parameter was passed, prefer loose
-null-equality (`!= null`) over the strict `undefined` check:
-
-```ts
-// Good — catches both undefined and null
-export function basename(p: string, ext?: string): string {
-    if (ext != null && ext.length > 0) { /* use ext */ }
-}
-
-// Bad — fails open in compiled mode when arg wasn't passed
-export function basename(p: string, ext?: string): string {
-    if (ext !== undefined && ext.length > 0) { /* NRE if ext is C# null */ }
-}
-```
-
-**Why:** compiled mode passes unset optional reference-type arguments
-through TSFunction.Invoke as C# `null`, not as SharpTS's `undefined`
-sentinel. The JS expression `null !== undefined` evaluates to `true`,
-so the strict check falls through to `.length` on null and NREs. Loose
-null equality (`x != null`) matches both values.
-
-This bit the `path.basename` migration on the `posix.basename(p)`
-(no-ext) overload before the rule was pinned here.
-
-### 7. Default parameter values: reference types only
-
-Reference-type default values (strings, objects, arrays) work correctly
-through module imports:
+Omitted optional parameters and parameter defaults round-trip faithfully
+through module imports — including the `$TSFunction.Invoke` value-call /
+cross-module path. Write the natural TypeScript; no boundary-specific
+workarounds are needed.
 
 ```ts
-// Fine — string default, works through module imports
+// Optional param: an omitted arg arrives as `undefined`, so `=== undefined`,
+// `typeof`, and `!= null` all answer correctly across module boundaries.
+export function basename(p: string, ext?: string): string {
+    if (ext !== undefined && ext.length > 0) { /* use ext */ }
+}
+
+// Defaults of any type fire when the arg is omitted — reference (string,
+// object, array) AND value type (number, boolean, bigint).
 export function parse(str: string, sep: string = '&', eq: string = '='): any { ... }
+export function pad(width: number = 4): number { return width * 2; }
 ```
 
-**Value-type defaults (numbers, booleans) are a known limitation through
-module imports.** The compiler's `$TSFunction.Invoke` path dispatches to
-the full-arity method with null-padded args; the inline null-check
-pattern used for reference types doesn't apply to value types (a `double`
-can't be null). If you need a numeric default in a module-exported
-function, use `param?: number` + `??` as a workaround:
+**Why this works:** value-type-defaulted params are widened to an `object`
+slot, and omitted optional args are padded with the `undefined` sentinel
+(not CLR null) for every user-function kind — declarations, arrows,
+methods, and async/generator/async-generator functions. The entry prologue
+fires the default when the slot holds `undefined`. (Previously, value-type
+defaults silently became `0`/`false` and unset optional ref params arrived
+as CLR null; both were fixed in #925 — this section retired the old
+`!= null` / `param?: T` + `??` workarounds.)
 
-```ts
-// Module-exported numeric defaults — use the ?? pattern:
-export function pad(width?: number): number {
-    const actualWidth = width ?? 4;
-    return actualWidth * 2;
-}
-```
-
-### 8. No SharpTS-specific APIs
+### 7. No SharpTS-specific APIs
 
 Shim code should be legal Node.js as far as syntax and semantics go.
 `console.log`, `JSON.*`, `Math.*`, `Array.*`, `Object.*`, standard globals

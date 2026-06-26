@@ -148,11 +148,14 @@ public partial class RuntimeEmitter
         // sentinel (instead of CLR null) when the argument is omitted. Bit i is set iff
         // the wrapped method carries the $PadUndefined marker (i.e. is a user TS function)
         // AND parameter i has an `object` slot. Object slots can hold the sentinel, so
-        // `typeof`/`=== undefined`/default-firing all work; a typed slot (string/double)
-        // would coerce the sentinel to a real value before the entry prologue, so those
-        // stay null-padded and fire their default via the null check. Built-ins have an
-        // all-zero mask and keep pure null padding. Positions >= 32 are not tracked
-        // (such arity is never reached in practice) and pad null. (#640)
+        // `typeof`/`=== undefined`/default-firing all work. An optional or *defaulted*
+        // param is widened to an `object` slot upstream (ParameterTypeResolver), so it
+        // lands here with its bit set and behaves correctly across the boundary (#925).
+        // A still-typed slot (string/double) is a genuinely *required* typed parameter —
+        // it can't coerce the sentinel, so it stays null-padded (an omitted required arg
+        // is a type error anyway). Built-ins have an all-zero mask and keep pure null
+        // padding (their bodies use null-checks for optional-arg absence). Positions >= 32
+        // are not tracked (such arity is never reached in practice) and pad null. (#640, #925)
         var padUndefinedMaskField = typeBuilder.DefineField("_padUndefinedMask", _types.Int32, FieldAttributes.Private);
         // Cached MethodInvoker. .NET 8+'s MethodInvoker.Create() pre-builds
         // the JIT'd dispatch stub for a method, then Invoke(...) calls it
@@ -1701,15 +1704,17 @@ public partial class RuntimeEmitter
         // with the `undefined` sentinel, matching JS semantics and the direct-call path — so
         // `typeof`, `=== undefined`, and `=== null` answer correctly for an omitted optional
         // parameter, and an object-slotted default-valued parameter's entry prologue fires.
+        // Optional and value-type-defaulted params are widened to `object` upstream
+        // (ParameterTypeResolver), so they get the sentinel here for every user-function kind —
+        // declarations, arrows, methods, and async/generator/async-generator functions (#925).
         //
         // Every other slot is left as CLR null (the Newarr zero value). That covers built-ins
         // (mask 0 — their bodies use null-checks for optional-arg absence: stream write/end
-        // callbacks, encodings, ...) and typed default-valued parameters of user functions
-        // (string/double slots can't hold the sentinel — it would coerce to a real value
-        // before the entry prologue, whereas null fires their default via the null check). The
+        // callbacks, encodings, ...) and genuinely value-typed *required* user params (a `double`
+        // can't hold the sentinel; an omitted required arg is a type error regardless). The
         // one built-in that must distinguish absent (skip) from explicit JS null (throw) —
         // value-form Object.create's props — gets a dedicated wrapper instead
-        // (ObjectCreateValueForm in RuntimeEmitter.Objects.Prototype.cs). (#640)
+        // (ObjectCreateValueForm in RuntimeEmitter.Objects.Prototype.cs). (#640, #925)
         var skipUndefinedPad = il.DefineLabel();
         // if (_padUndefinedMask == 0) skip — fast path for built-ins and all-typed signatures.
         il.Emit(OpCodes.Ldarg_0);

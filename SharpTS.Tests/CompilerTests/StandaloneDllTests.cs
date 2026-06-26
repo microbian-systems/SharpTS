@@ -513,6 +513,42 @@ public class StandaloneDllTests
     }
 
     /// <summary>
+    /// #925 guardrail: an exported async function / generator used as an imported value pads omitted
+    /// optional args with the `undefined` sentinel (via the $PadUndefined attribute, which is defined
+    /// in the OUTPUT assembly) — so this must keep running with no SharpTS.dll on disk.
+    /// </summary>
+    [Fact]
+    public void Isolated_OptionalArgUndefinedPadding_ShouldExecuteWithoutSharpTsDll()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["helper.ts"] = """
+                export async function h(x?: any): Promise<string> { return typeof x; }
+                export function* gen(x?: any): Generator<string> { yield typeof x; }
+                """,
+            ["main.ts"] = """
+                import { h, gen } from "./helper";
+                async function main() {
+                    console.log(await h());
+                    console.log(gen().next().value);
+                }
+                main();
+                """
+        };
+
+        var (tempDir, dllPath) = CompileStandaloneModule(files, "main.ts");
+        try
+        {
+            var output = ExecuteCompiledDllIsolated(dllPath, timeoutMs: 15000);
+            Assert.Equal("undefined\nundefined\n", output);
+        }
+        finally
+        {
+            CleanupTempDir(tempDir);
+        }
+    }
+
+    /// <summary>
     /// Phase 23 guardrail: Verifies crypto hash operations work standalone.
     /// </summary>
     [Fact]
