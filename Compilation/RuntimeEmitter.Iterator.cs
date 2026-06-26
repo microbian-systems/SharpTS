@@ -529,6 +529,97 @@ public partial class RuntimeEmitter
             il.MarkLabel(notTypedArrayLabel);
         }
 
+        // 1c. Map fast path — a compiled Map is a Dictionary<object, object?> (see
+        // RuntimeEmitter.Maps.cs CreateMap). Its default iteration must yield real
+        // [key, value] arrays (matching the interpreter's SharpTSMap.EnumerateEntries),
+        // not the boxed KeyValuePair<object,object?> structs the generic IEnumerable arm
+        // below would otherwise produce. Boxed KeyValuePairs aren't List<object?>, so
+        // Array.isArray/JSON.stringify treat them as non-arrays → `[...map]` serialized as
+        // [null,...] (#953). Each pair is a List<object?> [denormalizedKey, value], which is
+        // recognized as an array everywhere ($Array subclasses List<object?>). Gated on
+        // UsesMap: no Map in the program ⇒ no Dictionary<object,object?> ⇒ dead arm.
+        // Mirrors the IL in RuntimeEmitter.Maps.cs EmitMapEntries.
+        if (_features.UsesMap)
+        {
+            var dictType = _types.DictionaryObjectObject;
+            var kvpType = _types.MakeGenericType(_types.KeyValuePairOpen, _types.Object, _types.Object);
+            var enumeratorType = _types.MakeGenericType(typeof(Dictionary<,>.Enumerator).GetGenericTypeDefinition(), _types.Object, _types.Object);
+
+            var notMapLabel = il.DefineLabel();
+            var mapLoopStart = il.DefineLabel();
+            var mapLoopEnd = il.DefineLabel();
+            var mapKeyDone = il.DefineLabel();
+            var dictLocal = il.DeclareLocal(dictType);
+            var mapEnumLocal = il.DeclareLocal(enumeratorType);
+            var mapCurrentLocal = il.DeclareLocal(kvpType);
+            var mapPairLocal = il.DeclareLocal(_types.ListOfObject);
+            var mapKeyLocal = il.DeclareLocal(_types.Object);
+
+            // if (obj is not Dictionary<object, object?> dict) goto notMap;
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, dictType);
+            il.Emit(OpCodes.Stloc, dictLocal);
+            il.Emit(OpCodes.Ldloc, dictLocal);
+            il.Emit(OpCodes.Brfalse, notMapLabel);
+
+            // var e = dict.GetEnumerator();
+            il.Emit(OpCodes.Ldloc, dictLocal);
+            il.Emit(OpCodes.Callvirt, dictType.GetMethod("GetEnumerator")!);
+            il.Emit(OpCodes.Stloc, mapEnumLocal);
+
+            // while (e.MoveNext())
+            il.MarkLabel(mapLoopStart);
+            il.Emit(OpCodes.Ldloca, mapEnumLocal);
+            il.Emit(OpCodes.Call, enumeratorType.GetMethod("MoveNext")!);
+            il.Emit(OpCodes.Brfalse, mapLoopEnd);
+
+            // var current = e.Current;
+            il.Emit(OpCodes.Ldloca, mapEnumLocal);
+            il.Emit(OpCodes.Call, enumeratorType.GetProperty("Current")!.GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, mapCurrentLocal);
+
+            // var pair = new List<object?>();
+            il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.ListOfObject, _types.EmptyTypes));
+            il.Emit(OpCodes.Stloc, mapPairLocal);
+
+            // key = current.Key; if (key == _mapNullSentinel) key = null;  (inline DenormalizeMapKey)
+            il.Emit(OpCodes.Ldloca, mapCurrentLocal);
+            il.Emit(OpCodes.Call, kvpType.GetProperty("Key")!.GetGetMethod()!);
+            il.Emit(OpCodes.Stloc, mapKeyLocal);
+            il.Emit(OpCodes.Ldloc, mapKeyLocal);
+            il.Emit(OpCodes.Ldsfld, runtime.MapNullSentinel);
+            il.Emit(OpCodes.Bne_Un, mapKeyDone);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Stloc, mapKeyLocal);
+            il.MarkLabel(mapKeyDone);
+
+            // pair.Add(key);
+            il.Emit(OpCodes.Ldloc, mapPairLocal);
+            il.Emit(OpCodes.Ldloc, mapKeyLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+            // pair.Add(current.Value);
+            il.Emit(OpCodes.Ldloc, mapPairLocal);
+            il.Emit(OpCodes.Ldloca, mapCurrentLocal);
+            il.Emit(OpCodes.Call, kvpType.GetProperty("Value")!.GetGetMethod()!);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+            // result.Add(pair);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ldloc, mapPairLocal);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObject, "Add", _types.Object));
+
+            il.Emit(OpCodes.Br, mapLoopStart);
+
+            il.MarkLabel(mapLoopEnd);
+            il.Emit(OpCodes.Ldloca, mapEnumLocal);
+            il.Emit(OpCodes.Call, enumeratorType.GetMethod("Dispose")!);
+            il.Emit(OpCodes.Ldloc, resultLocal);
+            il.Emit(OpCodes.Ret);
+
+            il.MarkLabel(notMapLabel);
+        }
+
         // 1. If obj is already List<object>, return it directly (fast path for arrays)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
