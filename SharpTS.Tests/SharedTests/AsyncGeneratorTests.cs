@@ -1802,12 +1802,14 @@ public class AsyncGeneratorTests
         Assert.Equal("5,6\n", TestHarness.Run(source, mode));
     }
 
-    // Out of #924's scope: a generator EXPRESSION whose enclosing function is itself a GENERATOR (here an
-    // async generator). A forwarding arrow there would snapshot the generator's captures at creation, so
-    // the compiler keeps it nested. The interpreter handles the nested declaration natively.
+    // #945 (generator-encloser analog of #924): an async-generator EXPRESSION whose enclosing function is
+    // itself a top-level/module-level `async function*` now runs in BOTH modes. The lifted forwarding
+    // binding is hoisted to the generator body top, and its read-only forwarded capture (`y`) is routed
+    // through the generator's #674 function display class so the hoisted forwarder reads it LIVE — not a
+    // stale by-value snapshot. (Previously interpreter-only + a compiled-fails-cleanly guard.)
     [Theory]
-    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
-    public void AsyncGeneratorExpression_CapturesAsyncGeneratorLocal_RunsInInterpreter(ExecutionMode mode)
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AsyncGeneratorExpression_CapturesAsyncGeneratorLocal(ExecutionMode mode)
     {
         var source = """
             async function* outer() {
@@ -1825,11 +1827,13 @@ public class AsyncGeneratorTests
         Assert.Equal("3,4\n", TestHarness.Run(source, mode));
     }
 
-    // The compiled generator-encloser case must FAIL CLEANLY — never miscompile to a wrong value. (The
-    // forward-reference form in a generator encloser stays unsupported; this pins that it does not
-    // silently produce a different result.)
+    // #945: directly pins the compiled fix for the async-generator encloser — the lifted
+    // `async function* __genArrow_N` is appended at the enclosing async-generator body's END, so its
+    // forwarding binding must be hoisted above the earlier `const g = …` reference AND its forwarded
+    // capture routed through the function DC. Before the fix this miscompiled to a runtime
+    // "object is not a function".
     [Fact]
-    public void AsyncGeneratorExpression_CapturesAsyncGeneratorLocal_CompiledFailsCleanly()
+    public void AsyncGeneratorExpression_CapturesAsyncGeneratorLocal_CompiledHoistsForwardReference()
     {
         var source = """
             async function* outer() {
@@ -1844,6 +1848,32 @@ public class AsyncGeneratorTests
             }
             main();
             """;
+        Assert.Equal("3,4\n", TestHarness.RunCompiled(source));
+    }
+
+    // #945 decline: a class GENERATOR METHOD encloser (here an async-generator instance method) stays
+    // unsupported in compiled mode — its state machine wires no function DC for read-only captures, so
+    // hoisting the forwarding binding would read a stale by-value snapshot. It must fail CLEANLY (compile
+    // error), never miscompile to a wrong value. The interpreter runs the nested declaration natively.
+    [Fact]
+    public void AsyncGeneratorExpression_CapturesAsyncGeneratorMethodLocal_CompiledDeclinesCleanly()
+    {
+        var source = """
+            class C {
+                async *m() {
+                    let y = 3;
+                    const g = async function* () { yield y; yield y + 1; };
+                    for await (const v of g()) yield v;
+                }
+            }
+            async function main() {
+                const out: number[] = [];
+                for await (const v of new C().m()) out.push(v);
+                console.log(out.join(","));
+            }
+            main();
+            """;
+        Assert.Equal("3,4\n", TestHarness.Run(source, ExecutionMode.Interpreted));
         string compiled;
         try { compiled = TestHarness.RunCompiled(source); }
         catch { compiled = "<compile-or-runtime-error>"; }

@@ -239,7 +239,14 @@ public abstract record Expr
     /// IsAsync indicates this is an async function that returns a Promise.
     /// IsGenerator indicates this is a generator function (function*) that can yield values.
     /// </summary>
-    public record ArrowFunction(Token? Name, List<TypeParam>? TypeParams, string? ThisType, List<Stmt.Parameter> Parameters, Expr? ExpressionBody, List<Stmt>? BlockBody, string? ReturnType, bool HasOwnThis = false, bool IsAsync = false, bool IsGenerator = false) : Expr;
+    public record ArrowFunction(Token? Name, List<TypeParam>? TypeParams, string? ThisType, List<Stmt.Parameter> Parameters, Expr? ExpressionBody, List<Stmt>? BlockBody, string? ReturnType, bool HasOwnThis = false, bool IsAsync = false, bool IsGenerator = false) : Expr
+    {
+        // #945: marks the sync forwarding arrow NestedFunctionLifter substitutes for a capturing nested
+        // generator that was hoisted into a generator encloser's body. Tells the generator function-DC
+        // pass (ComputeMutatedCapturedGeneratorVars) to route this arrow's read-only forwarded captures
+        // through the function display class so the hoisted arrow reads them live, not a stale snapshot.
+        public bool IsLiftedForwarder { get; init; }
+    }
     // Template literal
     public record TemplateLiteral(List<string> Strings, List<Expr> Expressions) : Expr;
     // Tagged template literal: tag`template ${expr}`
