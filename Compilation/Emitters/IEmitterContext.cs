@@ -68,6 +68,14 @@ public interface IEmitterContext
     void EmitFetchCall(List<Expr> arguments);
 
     /// <summary>
+    /// Evaluates <paramref name="args"/> and leaves a single <c>object[]</c> on the IL stack with
+    /// any <see cref="Expr.Spread"/> arguments flattened in place (numeric <c>$Array</c> + arbitrary
+    /// iterables). Use when a type-emitter strategy needs the full, spread-expanded argument list as
+    /// a runtime array — e.g. the variadic <c>Math.max/min/hypot</c> adapters (#951).
+    /// </summary>
+    void EmitArgsArrayWithSpread(IReadOnlyList<Expr> args);
+
+    /// <summary>
     /// Emits conversion from the current stack value to the target parameter type.
     /// Handles boxing for object, unboxing for value types, union types, and pass-through.
     /// </summary>

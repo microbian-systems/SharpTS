@@ -933,6 +933,70 @@ public abstract partial class ExpressionEmitterBase
     }
 
     /// <summary>
+    /// Evaluates <paramref name="args"/> and leaves a single <c>object[]</c> on the IL stack with
+    /// any <see cref="Expr.Spread"/> arguments flattened in place (via the emitted-runtime
+    /// <c>ExpandCallArgs</c>, which understands numeric <c>$Array</c> + arbitrary iterables). Each
+    /// argument is evaluated and boxed into a temp local <em>before</em> any array is built, so an
+    /// <c>await</c>/<c>yield</c> in a later argument never strands a partly-built array on the stack
+    /// (#413). Shared by <see cref="EmitFunctionValueCall"/> and the variadic <c>Math.*</c> emitter
+    /// so <c>Math.max(...arr)</c> expands spreads identically to <c>f(...arr)</c> (#951).
+    /// </summary>
+    public void EmitArgsArrayWithSpread(IReadOnlyList<Expr> args)
+    {
+        // Evaluate all arguments into temps first (await-safe for async emitters)
+        List<LocalBuilder> argTemps = [];
+        List<bool> isSpread = [];
+        foreach (var arg in args)
+        {
+            if (arg is Expr.Spread spread)
+            {
+                EmitExpression(spread.Expression);
+                EnsureBoxed();
+                isSpread.Add(true);
+            }
+            else
+            {
+                EmitExpression(arg);
+                EnsureBoxed();
+                isSpread.Add(false);
+            }
+            var temp = IL.DeclareLocal(Types.Object);
+            IL.Emit(OpCodes.Stloc, temp);
+            argTemps.Add(temp);
+        }
+
+        // Build args array from temps (both paths leave object[] on the stack).
+        IL.Emit(OpCodes.Ldc_I4, argTemps.Count);
+        IL.Emit(OpCodes.Newarr, Types.Object);
+        for (int i = 0; i < argTemps.Count; i++)
+        {
+            IL.Emit(OpCodes.Dup);
+            IL.Emit(OpCodes.Ldc_I4, i);
+            IL.Emit(OpCodes.Ldloc, argTemps[i]);
+            IL.Emit(OpCodes.Stelem_Ref);
+        }
+
+        if (!isSpread.Any(s => s))
+            return;
+
+        // Spread case: build the isSpread bool array and flatten via ExpandCallArgs.
+        IL.Emit(OpCodes.Ldc_I4, argTemps.Count);
+        IL.Emit(OpCodes.Newarr, Types.Boolean);
+        for (int i = 0; i < argTemps.Count; i++)
+        {
+            if (isSpread[i])
+            {
+                IL.Emit(OpCodes.Dup);
+                IL.Emit(OpCodes.Ldc_I4, i);
+                IL.Emit(OpCodes.Ldc_I4_1);
+                IL.Emit(OpCodes.Stelem_I1);
+            }
+        }
+
+        EmitExpandCallArgs();
+    }
+
+    /// <summary>
     /// Tries to handle an Expr.Get callee via shared dispatch patterns:
     /// module.promises, class statics, Promise.then/catch/finally, type-first dispatch,
     /// fallback string/array methods, ambiguous methods.
@@ -1209,73 +1273,8 @@ public abstract partial class ExpressionEmitterBase
             IL.Emit(OpCodes.Brtrue, optChainNullishLabel.Value);
         }
 
-        // Evaluate all arguments into temps first (await-safe for async emitters)
-        List<LocalBuilder> argTemps = [];
-        List<bool> isSpread = [];
-        foreach (var arg in c.Arguments)
-        {
-            if (arg is Expr.Spread spread)
-            {
-                EmitExpression(spread.Expression);
-                EnsureBoxed();
-                isSpread.Add(true);
-            }
-            else
-            {
-                EmitExpression(arg);
-                EnsureBoxed();
-                isSpread.Add(false);
-            }
-            var temp = IL.DeclareLocal(Types.Object);
-            IL.Emit(OpCodes.Stloc, temp);
-            argTemps.Add(temp);
-        }
-
-        bool hasSpreads = isSpread.Any(s => s);
-
-        if (!hasSpreads)
-        {
-            // Simple case: build args array from temps
-            IL.Emit(OpCodes.Ldc_I4, argTemps.Count);
-            IL.Emit(OpCodes.Newarr, Types.Object);
-            for (int i = 0; i < argTemps.Count; i++)
-            {
-                IL.Emit(OpCodes.Dup);
-                IL.Emit(OpCodes.Ldc_I4, i);
-                IL.Emit(OpCodes.Ldloc, argTemps[i]);
-                IL.Emit(OpCodes.Stelem_Ref);
-            }
-        }
-        else
-        {
-            // Spread case: build args array from temps
-            IL.Emit(OpCodes.Ldc_I4, argTemps.Count);
-            IL.Emit(OpCodes.Newarr, Types.Object);
-            for (int i = 0; i < argTemps.Count; i++)
-            {
-                IL.Emit(OpCodes.Dup);
-                IL.Emit(OpCodes.Ldc_I4, i);
-                IL.Emit(OpCodes.Ldloc, argTemps[i]);
-                IL.Emit(OpCodes.Stelem_Ref);
-            }
-
-            // Build isSpread bool array
-            IL.Emit(OpCodes.Ldc_I4, argTemps.Count);
-            IL.Emit(OpCodes.Newarr, Types.Boolean);
-            for (int i = 0; i < argTemps.Count; i++)
-            {
-                if (isSpread[i])
-                {
-                    IL.Emit(OpCodes.Dup);
-                    IL.Emit(OpCodes.Ldc_I4, i);
-                    IL.Emit(OpCodes.Ldc_I4_1);
-                    IL.Emit(OpCodes.Stelem_I1);
-                }
-            }
-
-            // ExpandCallArgs
-            EmitExpandCallArgs();
-        }
+        // Evaluate the arguments and leave a (spread-expanded) object[] on the stack.
+        EmitArgsArrayWithSpread(c.Arguments);
 
         // Call InvokeMethodValue(receiver, function, args). The receiver is the spilled `o` for a
         // threaded `o.m()` (#923, above), else null for a detached call.
