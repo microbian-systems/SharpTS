@@ -43,6 +43,11 @@ public partial class ILCompiler
         _async.StateMachines[qualifiedFunctionName] = smBuilder;
         _async.Functions[qualifiedFunctionName] = funcStmt;
 
+        // #925: an async function used as a value (imported cross-module, stored, passed as a
+        // callback → $TSFunction.Invoke) must pad omitted trailing optional args with the `undefined`
+        // sentinel, not CLR null — matching plain functions, arrows, async arrows, and class methods.
+        MarkPadsUndefined(stubMethod);
+
         // Create function-level display class for captured locals (same as sync functions).
         // This enables closure mutation sharing between the async state machine and sync inner arrows.
         RegisterAsyncFunctionDisplayClass(funcStmt, qualifiedFunctionName, analysis);

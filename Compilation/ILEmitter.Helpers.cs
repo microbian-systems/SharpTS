@@ -96,8 +96,11 @@ public partial class ILEmitter
             if (param.DefaultValue == null) continue;
 
             // Skip value-type parameters when we know the resolved types: `ldarg; brtrue`
-            // is meaningless on a double/bool. OverloadGenerator covers these for direct
-            // calls. Known limitation for $TSFunction.Invoke callers.
+            // is meaningless on a double/bool, which can't hold the `$Undefined` sentinel.
+            // A *defaulted* param is widened to an `object` slot upstream (ParameterTypeResolver
+            // WidenDefaultedParamsToObject / WidenValueTypeDefaultedMethodParams), so it does NOT
+            // hit this guard — its default fires for direct AND $TSFunction.Invoke callers (#925).
+            // This only defends a genuinely value-typed slot that reached here without that widening.
             if (paramTypes != null && paramTypes[i].IsValueType) continue;
 
             int argIndex = i + argOffset;
