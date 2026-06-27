@@ -122,19 +122,40 @@ public sealed class Test262Runner
     /// the default (non-collectible) ALC via <see cref="Assembly.Load(byte[])"/>.
     /// Bypasses the collectibility load-time tax (~25% wall on the Math/200
     /// benchmark; LoadFromStream -15%, Invoke/JIT -71%) but leaks the assembly
-    /// for the lifetime of the process — only safe in a worker that restarts
-    /// before its working set exceeds a budget. The in-process fallback path
-    /// (when no worker DLL exists) leaves this off so dev runs don't OOM the
-    /// testhost. Diagnostic profiling code also flips it to compare modes.
+    /// for the lifetime of the process — only safe in a process that restarts
+    /// before its working set exceeds a budget, or that runs only a small,
+    /// bounded set of tests in-process.
+    /// <para>
+    /// It is also the only <em>stable</em> in-process mode: the collectible
+    /// path (false) loads + JIT-compiles + <c>Unload()</c>s a fresh ALC per
+    /// test, and that churn — under Server + Concurrent GC and the periodic
+    /// forced <c>GC.Collect()</c> — intermittently crashes the test host with
+    /// a fatal CLR error (<c>0x80131506</c>) inside the JIT/collectible-ALC
+    /// teardown path. See issue #964 and the .NET unloadability docs. The
+    /// persistent worker (<c>SharpTS.Test262.Worker</c>) and the in-process
+    /// SmokeTest diagnostics therefore set this to true; the in-process
+    /// baseline fallback (whole-subset, ~11k tests) leaves it off and relies
+    /// on collectible unload to avoid OOM (issue #109).
+    /// </para>
+    /// <para>
+    /// Per-instance (not a process-global static) so concurrently-running
+    /// xUnit collections — e.g. SmokeTest (non-collectible) and the baseline
+    /// in-process fallback (collectible) — can't clobber each other's mode.
+    /// </para>
     /// </summary>
-    public static bool UseNonCollectibleLoad = false;
+    public bool UseNonCollectibleLoad { get; }
 
-    public Test262Runner(string test262Root, TimeSpan? timeout = null, HashSet<string>? skipFeatures = null)
+    public Test262Runner(
+        string test262Root,
+        TimeSpan? timeout = null,
+        HashSet<string>? skipFeatures = null,
+        bool useNonCollectibleLoad = false)
     {
         _test262Root = test262Root;
         _assembler = new Test262HarnessAssembler(test262Root);
         _timeout = timeout ?? DefaultTimeout;
         _skipFeatures = skipFeatures ?? new HashSet<string>(StringComparer.Ordinal);
+        UseNonCollectibleLoad = useNonCollectibleLoad;
         EnsureConsoleProxyInstalled();
     }
 

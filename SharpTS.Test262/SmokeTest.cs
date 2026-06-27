@@ -39,7 +39,7 @@ public class SmokeTest
             "built-ins", "Promise", "resolve", "arg-non-thenable.js");
         Assert.True(File.Exists(testPath));
 
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
         var result = runner.RunOne(testPath, mode);
         _output.WriteLine($"{mode} → {result.Outcome}");
         if (result.Message is not null) _output.WriteLine($"  message: {result.Message}");
@@ -107,7 +107,7 @@ public class SmokeTest
 
         foreach (var (label, src) in snippets)
         {
-            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
             runner.RunOne(prior, Test262ExecutionMode.Interpreted);
             var tmp = Path.GetTempFileName() + ".js";
             File.WriteAllText(tmp, src);
@@ -134,7 +134,7 @@ public class SmokeTest
         var src = "var re = /x/iy; re.constructor = function() {}; re.constructor[Symbol.species] = function() { return /[db]/y; }; var r = RegExp.prototype[Symbol.split].call(re, 'abcde'); console.log(r);";
         var tmp = Path.GetTempFileName() + ".js";
         File.WriteAllText(tmp, src);
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
         var result = runner.RunOne(tmp, Test262ExecutionMode.Interpreted);
         _output.WriteLine($"outcome: {result.Outcome}");
         if (result.Message is not null) _output.WriteLine($"message: {result.Message}");
@@ -154,7 +154,7 @@ public class SmokeTest
         if (root is null) return;
         var path = Path.Combine(Test262Paths.TestDir(root),
             "built-ins", "RegExp", "prototype", "Symbol.split", "species-ctor-species-get-err.js");
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
         var result = runner.RunOne(path, Test262ExecutionMode.Interpreted);
         _output.WriteLine($"{result.Outcome}: {result.Message}");
     }
@@ -172,7 +172,7 @@ public class SmokeTest
         };
         foreach (var path in paths)
         {
-            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
             var result = runner.RunOne(path, Test262ExecutionMode.Interpreted);
             _output.WriteLine($"{Path.GetFileName(path)} → {result.Outcome}: {result.Message}");
         }
@@ -194,7 +194,7 @@ public class SmokeTest
         };
         foreach (var p in paths)
         {
-            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
             var result = runner.RunOne(p, Test262ExecutionMode.Compiled);
             _output.WriteLine($"{Path.GetFileName(Path.GetDirectoryName(p))}/{Path.GetFileName(p)} → {result.Outcome}: {result.Message}");
         }
@@ -216,7 +216,7 @@ public class SmokeTest
         };
         foreach (var p in paths)
         {
-            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
             var result = runner.RunOne(p, Test262ExecutionMode.Compiled);
             _output.WriteLine($"{Path.GetFileName(Path.GetDirectoryName(p))}/{Path.GetFileName(p)} → {result.Outcome}: {result.Message}");
         }
@@ -237,7 +237,7 @@ public class SmokeTest
         };
         foreach (var p in paths)
         {
-            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
             var result = runner.RunOne(p, Test262ExecutionMode.Compiled);
             _output.WriteLine($"{Path.GetFileName(Path.GetDirectoryName(p))}/{Path.GetFileName(p)} → {result.Outcome}: {result.Message}");
         }
@@ -250,7 +250,7 @@ public class SmokeTest
         if (root is null) return;
         var path = Path.Combine(Test262Paths.TestDir(root),
             "built-ins", "RegExp", "prototype", "Symbol.replace", "coerce-global.js");
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
         var result = runner.RunOne(path, Test262ExecutionMode.Interpreted);
         _output.WriteLine($"{result.Outcome}: {result.Message}");
     }
@@ -264,7 +264,7 @@ public class SmokeTest
         foreach (var t in tests)
         {
             var path = Path.Combine(Test262Paths.TestDir(root), "built-ins", "RegExp", "prototype", "exec", t);
-            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+            var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
             var result = runner.RunOne(path, Test262ExecutionMode.Interpreted);
             _output.WriteLine($"{t} → {result.Outcome}: {result.Message}");
         }
@@ -338,7 +338,7 @@ public class SmokeTest
             "test/built-ins/Promise/allSettled/ctx-non-object.js",
             "test/built-ins/Promise/any/ctx-non-object.js",
         };
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
         int pass = 0, fail = 0;
         foreach (var t in tests)
         {
@@ -373,7 +373,7 @@ public class SmokeTest
             .Where(p => p.Contains("Object/getOwnPropertyDescriptor/"))
             .ToList();
         _output.WriteLine($"checking {allFails.Count} gOPD failing tests");
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
         int pass = 0, stillFail = 0;
         foreach (var rel in allFails)
         {
@@ -423,7 +423,7 @@ public class SmokeTest
         // Sample every 20th to keep this fast (~50-100 tests, ~30s).
         var sample = allPasses.Where((_, i) => i % 20 == 0).ToList();
         _output.WriteLine($"sampling {sample.Count} of {allPasses.Count} previously-passing tests");
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
         int pass = 0, fail = 0;
         var regressions = new List<string>();
         foreach (var rel in sample)
@@ -489,7 +489,7 @@ public class SmokeTest
             .ToList();
         _output.WriteLine($"checking {failing.Count} baseline-failing tests across touched clusters");
 
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
         int nowPass = 0, stillFail = 0;
         var newPassesByCluster = new Dictionary<string, int>();
         foreach (var rel in failing)
@@ -576,7 +576,7 @@ public class SmokeTest
         _output.WriteLine($"checking {failing.Count} baseline-failing tests");
         if (failing.Count == 0) return;
 
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
         int nowPass = 0, stillFail = 0;
         var byCluster = new Dictionary<string, int>();
         foreach (var rel in failing)
@@ -620,7 +620,7 @@ public class SmokeTest
             "test/built-ins/String/prototype/split/separator-null.js",
         };
         var sb = new System.Text.StringBuilder();
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
         foreach (var rel in probes)
         {
             var abs = Path.Combine(Test262Paths.TestDir(root), rel.Substring("test/".Length));
@@ -722,7 +722,7 @@ public class SmokeTest
         var files = Directory.EnumerateFiles(testDir, "*.js")
             .OrderBy(f => f, StringComparer.Ordinal)
             .ToList();
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: true);
         var failures = new List<string>();
         foreach (var f in files)
         {
@@ -807,7 +807,7 @@ public class SmokeTest
         if (!File.Exists(testPath)) return;
 
         var skip = new HashSet<string>(StringComparer.Ordinal);
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(5), skip);
+        var runner = new Test262Runner(root, TimeSpan.FromSeconds(5), skip, useNonCollectibleLoad: true);
 
         // Warmup so JIT + filesystem caches are hot.
         for (int i = 0; i < 3; i++)
@@ -841,7 +841,12 @@ public class SmokeTest
     /// the steady-state compile + load + invoke path rather than outliers.
     /// Sequential single-threaded so phase ratios are clean (no contention).
     /// </summary>
-    [Fact]
+    // Diagnostic/profiling only. The "collectible ALC" arm intentionally drives
+    // the in-process collectible-ALC load → JIT → Unload churn that crashes the
+    // test host with a fatal CLR error (0x80131506) at volume — see issue #964.
+    // It is therefore skipped in normal runs; un-skip to profile the two load
+    // modes against each other in isolation.
+    [Fact(Skip = "diagnostic/profiling only — collectible-ALC arm crashes the host at volume (issue #964); un-skip to profile load modes")]
     public void Diagnostic_CompiledPhaseBreakdown()
     {
         var root = Test262Paths.TryFindRoot();
@@ -857,56 +862,54 @@ public class SmokeTest
             .ToList();
         _output.WriteLine($"profiling {paths.Count} tests from Math/");
 
-        var runner = new Test262Runner(root, TimeSpan.FromSeconds(15));
+        DumpRun("collectible ALC (current)", useNonCollectibleLoad: false);
+        DumpRun("non-collectible Assembly.Load (diagnostic)", useNonCollectibleLoad: true);
 
-        // Warm up (JIT, file caches, harness cache) so phase 1 isn't full of
-        // cold-start cost.
-        for (int i = 0; i < 3; i++)
-            runner.RunOne(paths[0], Test262ExecutionMode.Compiled);
-
-        DumpRun("collectible ALC (current)", false);
-        DumpRun("non-collectible Assembly.Load (diagnostic)", true);
-
-        void DumpRun(string label, bool nonCollectible)
+        void DumpRun(string label, bool useNonCollectibleLoad)
         {
-            Test262Runner.UseNonCollectibleLoad = nonCollectible;
-            try
-            {
-                CompiledPhaseStats.Reset();
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                foreach (var p in paths)
-                    runner.RunOne(p, Test262ExecutionMode.Compiled);
-                sw.Stop();
+            // The load mode is immutable per Test262Runner instance, so each arm
+            // builds its own runner rather than toggling a shared flag.
+            var runner = new Test262Runner(
+                root, TimeSpan.FromSeconds(15), useNonCollectibleLoad: useNonCollectibleLoad);
 
-                long total = CompiledPhaseStats.LexParseTicks
-                           + CompiledPhaseStats.TypeCheckTicks
-                           + CompiledPhaseStats.DeadCodeTicks
-                           + CompiledPhaseStats.ILCompileTicks
-                           + CompiledPhaseStats.SaveBytesTicks
-                           + CompiledPhaseStats.AlcLoadTicks
-                           + CompiledPhaseStats.InvokeTicks
-                           + CompiledPhaseStats.UnloadTicks
-                           + CompiledPhaseStats.PeriodicGcTicks;
-                long count = CompiledPhaseStats.Count;
-                if (count == 0) { _output.WriteLine($"--- {label}: no tests measured"); return; }
+            // Warm up (JIT, file caches, harness cache) so the measured pass
+            // isn't full of cold-start cost.
+            for (int i = 0; i < 3; i++)
+                runner.RunOne(paths[0], Test262ExecutionMode.Compiled);
 
-                _output.WriteLine($"--- {label} ---");
-                _output.WriteLine($"wall: {sw.Elapsed.TotalSeconds:F2} s   tests: {count}   wall/test: {sw.Elapsed.TotalMilliseconds / count:F2} ms");
-                _output.WriteLine($"  (total measured phase ticks: {CompiledPhaseStats.Ms(total):F1} ms)");
-                Row("LexParse",        CompiledPhaseStats.LexParseTicks, count, total);
-                Row("TypeCheck",       CompiledPhaseStats.TypeCheckTicks, count, total);
-                Row("DeadCode",        CompiledPhaseStats.DeadCodeTicks, count, total);
-                Row("ILCompile",       CompiledPhaseStats.ILCompileTicks, count, total);
-                Row("SaveBytes",       CompiledPhaseStats.SaveBytesTicks, count, total);
-                Row("AlcLoad",         CompiledPhaseStats.AlcLoadTicks, count, total);
-                Row("  AlcCtor",       CompiledPhaseStats.AlcCtorTicks, count, total);
-                Row("  AlcLoadStream", CompiledPhaseStats.AlcLoadFromStreamTicks, count, total);
-                Row("  AlcReflect",    CompiledPhaseStats.AlcReflectionTicks, count, total);
-                Row("Invoke",          CompiledPhaseStats.InvokeTicks, count, total);
-                Row("Unload",          CompiledPhaseStats.UnloadTicks, count, total);
-                Row("PeriodicGc",      CompiledPhaseStats.PeriodicGcTicks, count, total);
-            }
-            finally { Test262Runner.UseNonCollectibleLoad = false; }
+            CompiledPhaseStats.Reset();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            foreach (var p in paths)
+                runner.RunOne(p, Test262ExecutionMode.Compiled);
+            sw.Stop();
+
+            long total = CompiledPhaseStats.LexParseTicks
+                       + CompiledPhaseStats.TypeCheckTicks
+                       + CompiledPhaseStats.DeadCodeTicks
+                       + CompiledPhaseStats.ILCompileTicks
+                       + CompiledPhaseStats.SaveBytesTicks
+                       + CompiledPhaseStats.AlcLoadTicks
+                       + CompiledPhaseStats.InvokeTicks
+                       + CompiledPhaseStats.UnloadTicks
+                       + CompiledPhaseStats.PeriodicGcTicks;
+            long count = CompiledPhaseStats.Count;
+            if (count == 0) { _output.WriteLine($"--- {label}: no tests measured"); return; }
+
+            _output.WriteLine($"--- {label} ---");
+            _output.WriteLine($"wall: {sw.Elapsed.TotalSeconds:F2} s   tests: {count}   wall/test: {sw.Elapsed.TotalMilliseconds / count:F2} ms");
+            _output.WriteLine($"  (total measured phase ticks: {CompiledPhaseStats.Ms(total):F1} ms)");
+            Row("LexParse",        CompiledPhaseStats.LexParseTicks, count, total);
+            Row("TypeCheck",       CompiledPhaseStats.TypeCheckTicks, count, total);
+            Row("DeadCode",        CompiledPhaseStats.DeadCodeTicks, count, total);
+            Row("ILCompile",       CompiledPhaseStats.ILCompileTicks, count, total);
+            Row("SaveBytes",       CompiledPhaseStats.SaveBytesTicks, count, total);
+            Row("AlcLoad",         CompiledPhaseStats.AlcLoadTicks, count, total);
+            Row("  AlcCtor",       CompiledPhaseStats.AlcCtorTicks, count, total);
+            Row("  AlcLoadStream", CompiledPhaseStats.AlcLoadFromStreamTicks, count, total);
+            Row("  AlcReflect",    CompiledPhaseStats.AlcReflectionTicks, count, total);
+            Row("Invoke",          CompiledPhaseStats.InvokeTicks, count, total);
+            Row("Unload",          CompiledPhaseStats.UnloadTicks, count, total);
+            Row("PeriodicGc",      CompiledPhaseStats.PeriodicGcTicks, count, total);
         }
 
         void Row(string name, long ticks, long count, long total)
@@ -936,7 +939,7 @@ public class SmokeTest
 
         Assert.True(File.Exists(testPath), $"Expected Test262 file at {testPath}");
 
-        var runner = new Test262Runner(root);
+        var runner = new Test262Runner(root, useNonCollectibleLoad: true);
         var result = runner.RunOne(testPath, mode);
 
         _output.WriteLine($"{mode} → {result.Outcome}");
