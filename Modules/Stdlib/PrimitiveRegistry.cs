@@ -29,6 +29,8 @@ public static class PrimitiveRegistry
         Prefix + "timers",
         Prefix + "timers/promises",
         Prefix + "readline",
+        Prefix + "fs",
+        Prefix + "fs/promises",
     };
 
     /// <summary>

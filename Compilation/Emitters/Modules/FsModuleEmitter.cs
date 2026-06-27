@@ -10,7 +10,9 @@ namespace SharpTS.Compilation.Emitters.Modules;
 /// </summary>
 public sealed class FsModuleEmitter : IBuiltInModuleEmitter
 {
-    public string ModuleName => "fs";
+    // Registered under the primitive:fs key — the user-facing 'fs' specifier is
+    // served by stdlib/node/fs.ts, which imports from this primitive.
+    public string ModuleName => "primitive:fs";
 
     private static readonly string[] _exportedMembers =
     [

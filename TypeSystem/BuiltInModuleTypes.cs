@@ -1013,8 +1013,10 @@ public static class BuiltInModuleTypes
             // "path" — migrated to stdlib/node/path.ts; types flow from the TS source.
             // "os" — migrated to stdlib/node/os.ts; types flow from the TS source.
             //   Primitive-layer types for primitive:os reuse GetOsModuleTypes via GetPrimitiveTypes.
-            "fs" => GetFsModuleTypes(),
-            "fs/promises" => GetFsPromisesModuleTypes(),
+            // "fs" — migrated to stdlib/node/fs.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:fs reuse GetFsModuleTypes via GetPrimitiveTypes.
+            // "fs/promises" — migrated to stdlib/node/fs/promises.ts; types flow from the TS source.
+            //   Primitive-layer types for primitive:fs/promises reuse GetFsPromisesModuleTypes via GetPrimitiveTypes.
             // "assert" — migrated to stdlib/node/assert.ts; types flow from the TS source.
             // "url" — migrated to stdlib/node/url.ts; types flow from the TS source.
             // "util" — migrated to stdlib/node/util.ts; types flow from the TS source.
@@ -1077,6 +1079,11 @@ public static class BuiltInModuleTypes
             // Readline's primitive surface is the full module surface — the TS
             // facade wraps the returned Interface and forwards calls dynamically.
             "readline" => GetReadlineModuleTypes(),
+            // Primitive fs types reuse the user-facing module type shapes — the
+            // primitive surface matches the Node surface; the TS facade re-exports
+            // the sync ops and derives the callback forms from primitive:fs/promises.
+            "fs" => GetFsModuleTypes(),
+            "fs/promises" => GetFsPromisesModuleTypes(),
             _ => null
         };
     }
