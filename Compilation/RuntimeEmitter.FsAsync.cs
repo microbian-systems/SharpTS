@@ -76,6 +76,16 @@ public partial class RuntimeEmitter
     /// Emits: Task&lt;object?&gt; FsReadFileAsync(object path, object? encoding)
     /// Calls FsReadFileSync and wraps result in Task.FromResult.
     /// </summary>
+    /// <remarks>
+    /// Deliberately synchronous-then-wrapped (not Task.Run). The #969 async proof
+    /// established that genuinely backgrounding this op (Task.Factory.StartNew) is
+    /// functionally correct and parity-clean, BUT the compiled $Promise(Task)
+    /// wrapper does not Ref the event loop for a still-pending task, so a
+    /// fire-and-forget callback/await can race program exit (flaky empty output).
+    /// Real backgrounding therefore needs event-loop ref-counting for adopted
+    /// Tasks — the interpreter's `refsEventLoopWhileInFlight` counterpart — which
+    /// is the core of #971. Until then this stays deterministic Task.FromResult.
+    /// </remarks>
     private void EmitFsReadFileAsync(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(

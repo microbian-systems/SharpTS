@@ -76,7 +76,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "open", path);
+            throw CreateRejection(ex, "open", path);
         }
     }
 
@@ -93,7 +93,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "open", path);
+            throw CreateRejection(ex, "open", path);
         }
     }
 
@@ -110,7 +110,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "open", path);
+            throw CreateRejection(ex, "open", path);
         }
     }
 
@@ -124,7 +124,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "stat", path);
+            throw CreateRejection(ex, "stat", path);
         }
     }
 
@@ -138,7 +138,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "lstat", path);
+            throw CreateRejection(ex, "lstat", path);
         }
     }
 
@@ -153,7 +153,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "unlink", path);
+            throw CreateRejection(ex, "unlink", path);
         }
     }
 
@@ -169,7 +169,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "mkdir", path);
+            throw CreateRejection(ex, "mkdir", path);
         }
     }
 
@@ -185,7 +185,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "rmdir", path);
+            throw CreateRejection(ex, "rmdir", path);
         }
     }
 
@@ -201,7 +201,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "rm", path);
+            throw CreateRejection(ex, "rm", path);
         }
     }
 
@@ -216,7 +216,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "readdir", path);
+            throw CreateRejection(ex, "readdir", path);
         }
     }
 
@@ -232,7 +232,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "rename", oldPath);
+            throw CreateRejection(ex, "rename", oldPath);
         }
     }
 
@@ -249,7 +249,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "copyfile", src);
+            throw CreateRejection(ex, "copyfile", src);
         }
     }
 
@@ -265,7 +265,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "access", path);
+            throw CreateRejection(ex, "access", path);
         }
     }
 
@@ -281,7 +281,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "chmod", path);
+            throw CreateRejection(ex, "chmod", path);
         }
     }
 
@@ -297,7 +297,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "truncate", path);
+            throw CreateRejection(ex, "truncate", path);
         }
     }
 
@@ -314,7 +314,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "utimes", path);
+            throw CreateRejection(ex, "utimes", path);
         }
     }
 
@@ -328,7 +328,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "readlink", path);
+            throw CreateRejection(ex, "readlink", path);
         }
     }
 
@@ -342,7 +342,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "realpath", path);
+            throw CreateRejection(ex, "realpath", path);
         }
     }
 
@@ -359,7 +359,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "symlink", path);
+            throw CreateRejection(ex, "symlink", path);
         }
     }
 
@@ -375,7 +375,7 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "link", newPath);
+            throw CreateRejection(ex, "link", newPath);
         }
     }
 
@@ -389,22 +389,27 @@ public static class FsPromisesModuleInterpreter
         }
         catch (Exception ex)
         {
-            throw CreateNodeError(ex, "mkdtemp", null);
+            throw CreateRejection(ex, "mkdtemp", null);
         }
     }
 
     /// <summary>
-    /// Creates a NodeError from an exception with proper error code.
+    /// Builds the rejection for a failed promise op. Rejects with a guest error
+    /// object (the same <c>{ code, syscall, path, message }</c> shape the callback
+    /// path delivers) wrapped in <see cref="SharpTSPromiseRejectedException"/> so
+    /// the interpreter's promise settling recognizes it as a guest rejection —
+    /// a raw <see cref="NodeError"/> fault would otherwise surface as a host error
+    /// and never reach <c>.then</c>/<c>.catch</c>/<c>await</c>.
     /// </summary>
-    private static NodeError CreateNodeError(Exception ex, string syscall, string? path)
+    private static SharpTSPromiseRejectedException CreateRejection(Exception ex, string syscall, string? path)
     {
-        if (ex is NodeError ne)
+        if (ex is SharpTSPromiseRejectedException rex)
         {
-            return ne;
+            return rex;
         }
 
-        var code = NodeErrorCodes.FromException(ex);
-        return new NodeError(code, ex.Message, syscall, path);
+        var error = FsModuleInterpreter.CreateErrorObject(ex, syscall, path);
+        return new SharpTSPromiseRejectedException(error);
     }
 }
 

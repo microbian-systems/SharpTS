@@ -1174,4 +1174,133 @@ public class FsModuleTests
     }
 
     #endregion
+
+    #region Callback-async parity (facade-derived; #969/#970)
+
+    // Before the primitive:fs migration the compiled emitter had no callback-async
+    // fs at all — `fs.readFile(path, cb)` did not compile. The TS facade now derives
+    // the callback forms from the promise primitives, so they run identically in
+    // both modes. These tests pin that parity.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_CallbackReadFile_ReturnsData(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const file = os.tmpdir() + '/cb_read_{{uid}}.txt';
+                fs.writeFileSync(file, 'callback-data');
+                fs.readFile(file, 'utf8', (err: any, data: any) => {
+                    console.log(err ? 'ERR' : ('DATA:' + data));
+                    fs.unlinkSync(file);
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("DATA:callback-data\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_CallbackReadFile_NoEncoding_ReturnsBuffer(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const file = os.tmpdir() + '/cb_buf_{{uid}}.bin';
+                fs.writeFileSync(file, 'abc');
+                fs.readFile(file, (err: any, data: any) => {
+                    // No encoding => Buffer; toString() recovers the text.
+                    console.log(err ? 'ERR' : (data.length + ':' + data.toString()));
+                    fs.unlinkSync(file);
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("3:abc\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_CallbackWriteFile_ThenReadBack(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const file = os.tmpdir() + '/cb_write_{{uid}}.txt';
+                fs.writeFile(file, 'written-via-cb', (err: any) => {
+                    if (err) { console.log('WRITE-ERR'); return; }
+                    console.log('READBACK:' + fs.readFileSync(file, 'utf8'));
+                    fs.unlinkSync(file);
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("READBACK:written-via-cb\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_CallbackReadFile_MissingFile_PassesError(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const missing = os.tmpdir() + '/does_not_exist_{{uid}}.txt';
+                fs.readFile(missing, 'utf8', (err: any, data: any) => {
+                    console.log('ERR:' + (err ? 'yes' : 'no'));
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("ERR:yes\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_PromisesReadFile_RoundTrips(ExecutionMode mode)
+    {
+        // fs.promises.write/readFile round-trips through await in both modes and
+        // must resolve byte-identically. (The interpreter backs these with real
+        // background I/O; the compiled path stays deterministic Task.FromResult
+        // until the #971 event-loop ref-counting lands.)
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import { promises as fsp } from 'fs';
+                import * as os from 'os';
+                const file = os.tmpdir() + '/prom_{{uid}}.txt';
+                async function main() {
+                    await fsp.writeFile(file, 'promise-data');
+                    const data = await fsp.readFile(file, 'utf8');
+                    console.log('PROM:' + data);
+                    await fsp.unlink(file);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("PROM:promise-data\n", output);
+    }
+
+    #endregion
 }
