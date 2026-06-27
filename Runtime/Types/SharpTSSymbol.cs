@@ -17,89 +17,11 @@ public class SharpTSSymbol : ITypeCategorized
     private readonly int _id;
     private readonly string? _description;
 
-    #region Global Symbol Registry
-    /// <summary>
-    /// Lock object for thread-safe access to the global symbol registry.
-    /// </summary>
-    private static readonly object _registryLock = new();
-
-    /// <summary>
-    /// Global symbol registry mapping keys to symbols (for Symbol.for()).
-    /// </summary>
-    private static readonly Dictionary<string, SharpTSSymbol> _globalRegistry = new();
-
-    /// <summary>
-    /// Reverse registry mapping symbols to their keys (for Symbol.keyFor()).
-    /// </summary>
-    private static readonly Dictionary<SharpTSSymbol, string> _reverseRegistry = new();
-
-    /// <summary>
-    /// Returns a symbol from the global symbol registry matching the given key.
-    /// If no symbol exists, creates a new one and adds it to the registry.
-    /// </summary>
-    /// <param name="key">The key for the symbol in the global registry.</param>
-    /// <returns>The symbol associated with the key.</returns>
-    public static SharpTSSymbol For(string key)
-    {
-        lock (_registryLock)
-        {
-            if (_globalRegistry.TryGetValue(key, out var existing))
-                return existing;
-
-            var symbol = new SharpTSSymbol(key);
-            _globalRegistry[key] = symbol;
-            _reverseRegistry[symbol] = key;
-            return symbol;
-        }
-    }
-
-    /// <summary>
-    /// Returns the key associated with a symbol in the global registry.
-    /// Returns null for symbols not in the global registry (local symbols).
-    /// </summary>
-    /// <param name="symbol">The symbol to look up.</param>
-    /// <returns>The key if the symbol is in the global registry, null otherwise.</returns>
-    public static string? KeyFor(SharpTSSymbol symbol)
-    {
-        lock (_registryLock)
-        {
-            return _reverseRegistry.TryGetValue(symbol, out var key) ? key : null;
-        }
-    }
-
-    /// <summary>
-    /// Clears the process-global <c>Symbol.for</c> registry. The registry is
-    /// realm-spanning (a static the <c>Interpreter</c> doesn't own), so
-    /// <c>Symbol.for(k)</c> would otherwise return the same symbol — and
-    /// <c>Symbol.keyFor</c> leak registrations — across every realm in the
-    /// process. Callers running multiple realms serially in one process (the
-    /// Test262 runner) reset between realms via <see
-    /// cref="SharpTS.Runtime.RealmState"/>. Well-known symbols are not in this
-    /// registry, so they are unaffected.
-    /// </summary>
-    public static void ClearGlobalRegistry()
-    {
-        lock (_registryLock)
-        {
-            _globalRegistry.Clear();
-            _reverseRegistry.Clear();
-        }
-    }
-
-    /// <summary>
-    /// Gets whether this symbol is registered in the global symbol registry.
-    /// </summary>
-    public bool IsInGlobalRegistry
-    {
-        get
-        {
-            lock (_registryLock)
-            {
-                return _reverseRegistry.ContainsKey(this);
-            }
-        }
-    }
-    #endregion
+    // The Symbol.for / Symbol.keyFor registry is per-realm, held on the
+    // Interpreter (see Interpreter.SymbolFor / SymbolKeyFor), not as a static
+    // here — each realm is its own ECMA-262 agent and the old static leaked
+    // (and raced) across realms and worker threads. Well-known symbols below
+    // are intentionally process-wide singletons and are not in that registry.
 
     #region Well-Known Symbols
     /// <summary>

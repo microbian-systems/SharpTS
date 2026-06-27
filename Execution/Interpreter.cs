@@ -326,6 +326,47 @@ public partial class Interpreter : IDisposable
     internal Runtime.Types.SharpTSObject GetRegExpPrototype()
         => _regExpPrototype ??= Runtime.BuiltIns.RegExpBuiltIns.BuildPrototype();
 
+    // Per-realm Symbol.for registry. Held on the Interpreter (not as a
+    // process-wide static on SharpTSSymbol) so `Symbol.for(k)` returns a
+    // symbol unique to this realm and `Symbol.keyFor` cannot leak
+    // registrations across Interpreter instances. Each realm is its own agent
+    // per ECMA-262, so a separate registry is the correct semantics — and it
+    // removes a cross-thread data race: the old static was a plain Dictionary
+    // mutated by every realm in the process, including concurrent worker
+    // threads. Mirrors the per-realm RegExp.prototype (#101). Well-known
+    // symbols (Symbol.iterator, …) are NOT in this registry; they remain
+    // process-wide singletons. Lazily allocated; thread-confined to this
+    // realm's execution thread, so no lock is needed.
+    private Dictionary<string, Runtime.Types.SharpTSSymbol>? _symbolRegistry;
+    private Dictionary<Runtime.Types.SharpTSSymbol, string>? _symbolReverseRegistry;
+
+    /// <summary>
+    /// Returns this realm's registered symbol for <paramref name="key"/>,
+    /// creating and registering one on first use (ECMA-262 <c>Symbol.for</c>).
+    /// </summary>
+    internal Runtime.Types.SharpTSSymbol SymbolFor(string key)
+    {
+        _symbolRegistry ??= [];
+        if (_symbolRegistry.TryGetValue(key, out var existing))
+            return existing;
+
+        var symbol = new Runtime.Types.SharpTSSymbol(key);
+        _symbolRegistry[key] = symbol;
+        (_symbolReverseRegistry ??= [])[symbol] = key;
+        return symbol;
+    }
+
+    /// <summary>
+    /// Returns the registry key for <paramref name="symbol"/> in this realm, or
+    /// <c>null</c> if it was not produced by this realm's <c>Symbol.for</c>
+    /// (ECMA-262 <c>Symbol.keyFor</c>).
+    /// </summary>
+    internal string? SymbolKeyFor(Runtime.Types.SharpTSSymbol symbol)
+        => _symbolReverseRegistry is not null
+            && _symbolReverseRegistry.TryGetValue(symbol, out var key)
+            ? key
+            : null;
+
     // Module support
     private readonly Dictionary<string, ModuleInstance> _loadedModules = [];
     private ModuleResolver? _moduleResolver;

@@ -11,14 +11,14 @@ namespace SharpTS.Runtime;
 /// are immutable. The exceptions are the primitive prototypes
 /// (<see cref="SharpTSNumberPrototype"/>, <see cref="SharpTSBooleanPrototype"/>,
 /// <see cref="SharpTSStringPrototype"/>) and <see cref="SharpTSMath"/>, which
-/// each carry a guest-writable <c>_extras</c> bag, plus the
-/// <see cref="SharpTSSymbol"/> <c>Symbol.for</c> registry. Guest code mutates
-/// these (e.g. <c>Number.prototype.toString = fn</c>, <c>Boolean.prototype[0] = …</c>,
-/// <c>Math.x = …</c>, <c>Symbol.for("k")</c>), and because the backing objects
-/// are static singletons the writes survive into every later
-/// <c>new Interpreter(...)</c> in the same process. (<c>RegExp.prototype</c> was
-/// already moved per-realm onto the <c>Interpreter</c> — issue #101; these were
-/// the remaining vectors.)
+/// each carry a guest-writable <c>_extras</c> bag. Guest code mutates these
+/// (e.g. <c>Number.prototype.toString = fn</c>, <c>Boolean.prototype[0] = …</c>,
+/// <c>Math.x = …</c>), and because the backing objects are static singletons the
+/// writes survive into every later <c>new Interpreter(...)</c> in the same
+/// process. (<c>RegExp.prototype</c> — issue #101 — and the <c>Symbol.for</c>
+/// registry are already per-realm on the <c>Interpreter</c>; these primitive
+/// prototypes and <c>Math</c> are the remaining vectors, tracked for the same
+/// per-realm treatment.)
 /// </para>
 ///
 /// <para>
@@ -53,6 +53,5 @@ public static class RealmState
         SharpTSNumberPrototype.Instance.ClearExtras();
         SharpTSBooleanPrototype.Instance.ClearExtras();
         SharpTSStringPrototype.Instance.ClearExtras();
-        SharpTSSymbol.ClearGlobalRegistry();
     }
 }
