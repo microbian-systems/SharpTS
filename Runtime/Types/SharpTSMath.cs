@@ -48,6 +48,16 @@ public class SharpTSMath
     }
 
     /// <summary>
+    /// Drops all user-assigned properties, restoring the pristine built-in
+    /// Math. <see cref="Instance"/> is a process-wide singleton, so guest
+    /// writes otherwise persist across every <c>Interpreter</c> in the
+    /// process; callers that execute multiple realms in one process (the
+    /// Test262 runner) reset between realms via this. See <see
+    /// cref="SharpTS.Runtime.RealmState"/>.
+    /// </summary>
+    public void ClearExtras() => _extras = null;
+
+    /// <summary>
     /// The own enumerable properties of Math. All built-in members (abs, max,
     /// PI, …) are non-enumerable per ECMA-262, so only user-assigned extras
     /// appear here — empty in the common case. Backs Object.keys/values/entries.
