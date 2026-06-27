@@ -73,4 +73,53 @@ public class RealmIsolationTests
         using var realmC = new Interpreter(TextWriter.Null, TextWriter.Null);
         Assert.Null(realmC.SymbolKeyFor(a1));
     }
+
+    /// <summary>
+    /// Within a realm, the bare <c>Math</c> global and <c>globalThis.Math</c>
+    /// (dotted and bracketed) are the same object, and guest-added properties
+    /// are visible through all three. Math is extensible per ECMA-262.
+    /// Interpreter-only: per-realm-izing Math is interpreter-scoped (compiled
+    /// mode emits its own Math/globalThis handling and is out of scope here).
+    /// </summary>
+    [Fact]
+    public void Math_Identity_AndExtensibility_HoldWithinRealm()
+    {
+        var source = """
+            console.log(globalThis.Math === Math);
+            console.log(globalThis["Math"] === Math);
+            (Math as any).answer = 42;
+            console.log((Math as any).answer);
+            console.log((globalThis.Math as any).answer);
+            """;
+
+        var output = TestHarness.Run(source, ExecutionMode.Interpreted);
+        Assert.Equal("true\ntrue\n42\n42\n", output);
+    }
+
+    /// <summary>
+    /// User-added Math properties are per-realm: a property attached to Math in
+    /// one interpreter is invisible in another, and a pristine realm sees only
+    /// the built-in surface. Before Math was moved onto the Interpreter, the
+    /// extras bag was a process-wide singleton shared across every realm (and
+    /// raced across worker threads). Interpreter-only: inspects realm state via
+    /// the realm-owned Math instance.
+    /// </summary>
+    [Fact]
+    public void Math_Extras_ArePerRealm()
+    {
+        using var realmA = new Interpreter(TextWriter.Null, TextWriter.Null);
+        using var realmB = new Interpreter(TextWriter.Null, TextWriter.Null);
+
+        // Distinct Math objects per realm.
+        Assert.NotSame(realmA.GetMath(), realmB.GetMath());
+
+        // A guest write in realm A lands on realm A's Math only.
+        realmA.GetMath().SetExtra("answer", 42.0);
+        Assert.True(realmA.GetMath().HasExtra("answer"));
+        Assert.False(realmB.GetMath().HasExtra("answer"));
+
+        // A pristine realm has no extras.
+        using var realmC = new Interpreter(TextWriter.Null, TextWriter.Null);
+        Assert.False(realmC.GetMath().HasExtra("answer"));
+    }
 }

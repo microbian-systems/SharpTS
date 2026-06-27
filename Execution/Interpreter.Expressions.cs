@@ -1060,7 +1060,7 @@ public partial class Interpreter
             // after ToPropertyKey normalization.
             IndexTarget.ClassString t => EvaluateGetOnClass(t.Target, t.Key),
             IndexTarget.ClassSymbol t => GetClassSymbolValue(t.Target, t.Key),
-            IndexTarget.GlobalThis t => t.Target.GetProperty(t.Key),
+            IndexTarget.GlobalThis t => ResolveGlobalThisRead(t.Target, t.Key),
             IndexTarget.HeadersString t => (object?)t.Target.Get(t.Key) ?? SharpTSUndefined.Instance,
             IndexTarget.StringChar t => (t.Index >= 0 && t.Index < t.Target.Length)
                 ? (object)t.Target[t.Index].ToString()

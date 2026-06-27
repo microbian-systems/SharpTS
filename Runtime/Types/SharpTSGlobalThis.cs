@@ -26,6 +26,15 @@ public sealed class SharpTSGlobalThis : ISharpTSPropertyAccessor
     private SharpTSGlobalThis() { }
 
     /// <summary>
+    /// True if guest code has assigned an own (user) property with this name.
+    /// A guest assignment (<c>globalThis.Math = x</c>) shadows the built-in of
+    /// the same name per ECMA-262, so per-realm intrinsic resolution must defer
+    /// to it. Distinct from <see cref="HasProperty"/>, which also reports
+    /// built-in globals.
+    /// </summary>
+    public bool HasUserProperty(string name) => _properties.ContainsKey(name);
+
+    /// <summary>
     /// Gets a property from globalThis.
     /// </summary>
     /// <param name="name">The property name.</param>

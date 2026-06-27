@@ -367,6 +367,55 @@ public partial class Interpreter : IDisposable
             ? key
             : null;
 
+    // Per-realm Math. Math is an extensible ECMA-262 object: guest code may add
+    // properties (`Math.x = 1`), which must not leak across realms or race
+    // across worker threads. Held per-Interpreter, mirroring RegExp.prototype
+    // (#101). The base members (PI, sqrt, …) are stateless and resolved the
+    // same way for every instance; only the per-instance `_extras` overlay
+    // differs. Within a realm both the bare `Math` global and `globalThis.Math`
+    // resolve to this one instance, so `Math === globalThis.Math` holds.
+    private Runtime.Types.SharpTSMath? _math;
+    internal Runtime.Types.SharpTSMath GetMath() => _math ??= new Runtime.Types.SharpTSMath();
+
+    /// <summary>
+    /// Resolves a per-realm mutable built-in intrinsic by its global name
+    /// (currently <c>Math</c>). These are the built-ins moved off process-global
+    /// singletons so a realm's guest mutations stay realm-local. Returns
+    /// <c>false</c> for every other name, leaving normal global resolution
+    /// unchanged.
+    /// </summary>
+    internal bool TryGetRealmIntrinsic(string name, out object? value)
+    {
+        if (IsRealmIntrinsicName(name))
+        {
+            value = GetMath();
+            return true;
+        }
+        value = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Names of the per-realm mutable built-ins resolved off the Interpreter
+    /// rather than the shared global-constants table or the namespace
+    /// fast-path. Used to keep all resolution routes (bare global, namespace
+    /// member access, <c>globalThis</c>) pointing at the one realm instance so
+    /// method identity holds (<c>Math.max === Math.max</c>).
+    /// </summary>
+    internal static bool IsRealmIntrinsicName(string name) => name == "Math";
+
+    /// <summary>
+    /// Reads a property off <c>globalThis</c> honoring per-realm intrinsics: a
+    /// guest own-assignment (<c>globalThis.Math = x</c>) wins, then the realm
+    /// intrinsic (so <c>globalThis.Math === Math</c> within a realm), then the
+    /// normal built-in/global resolution. Behaviour is identical to
+    /// <c>globalThis.GetProperty</c> for every non-intrinsic name.
+    /// </summary>
+    private object? ResolveGlobalThisRead(Runtime.Types.SharpTSGlobalThis globalThis, string key)
+        => !globalThis.HasUserProperty(key) && TryGetRealmIntrinsic(key, out var intrinsic)
+            ? intrinsic
+            : globalThis.GetProperty(key);
+
     // Module support
     private readonly Dictionary<string, ModuleInstance> _loadedModules = [];
     private ModuleResolver? _moduleResolver;
@@ -1096,8 +1145,16 @@ public partial class Interpreter : IDisposable
             return rv;
         }
 
+        // Per-realm mutable built-ins (Math, …) shadow the shared global-constants
+        // table so guest mutations stay realm-local. A user `let Math`/`var Math`
+        // already won via the environment check above.
+        if (TryGetRealmIntrinsic(name.Lexeme, out var realmIntrinsic))
+        {
+            return RuntimeValue.FromBoxed(realmIntrinsic);
+        }
+
         // Check global constants and built-in singletons (single frozen dictionary lookup)
-        // This handles: NaN, Infinity, undefined, Math, JSON, Object, console, process, etc.
+        // This handles: NaN, Infinity, undefined, JSON, Object, console, process, etc.
         if (_globalConstants.TryGetValue(name.Lexeme, out var constant))
         {
             return RuntimeValue.FromBoxed(constant);

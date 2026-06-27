@@ -473,8 +473,14 @@ public partial class Interpreter
     private RuntimeValue EvaluateGet(Expr.Get get)
     {
         // Handle namespace static property access (e.g., Number.MAX_VALUE, Number.NaN)
-        // These namespaces don't have runtime values, but have static properties
-        if (get.Object is Expr.Variable nsVar)
+        // These namespaces don't have runtime values, but have static properties.
+        // Per-realm intrinsics (Math) are skipped here so they resolve through the
+        // normal object path onto this realm's instance — that keeps member
+        // identity stable across access forms (`Math.max === Math.max`, and the
+        // value-form `const m = Math; m.max === Math.max`, #288) and lets a user
+        // `let Math = …` shadow correctly, since the static fast-path binds to a
+        // process-wide singleton that the realm instance no longer matches.
+        if (get.Object is Expr.Variable nsVar && !IsRealmIntrinsicName(nsVar.Name.Lexeme))
         {
             var member = BuiltInRegistry.Instance.GetStaticMethod(nsVar.Name.Lexeme, get.Name.Lexeme);
             if (member != null)
@@ -1327,6 +1333,17 @@ public partial class Interpreter
         if (obj is IDictionary<string, object?> dict)
         {
             return dict.TryGetValue(memberName, out var val) ? val : SharpTSUndefined.Instance;
+        }
+
+        // globalThis.Math (and other per-realm intrinsics) must resolve to this
+        // realm's instance, not the process-global singleton, so
+        // `globalThis.Math === Math` within a realm. A guest own-assignment
+        // (`globalThis.Math = x`) takes precedence per ECMA-262.
+        if (obj is SharpTSGlobalThis gtAccessor
+            && !gtAccessor.HasUserProperty(memberName)
+            && TryGetRealmIntrinsic(memberName, out var gtIntrinsic))
+        {
+            return gtIntrinsic;
         }
 
         // Handle objects that implement ISharpTSPropertyAccessor (e.g., SharpTSTemplateStringsArray)
