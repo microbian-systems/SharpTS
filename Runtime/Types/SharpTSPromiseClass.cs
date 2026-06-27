@@ -181,16 +181,13 @@ public class SharpTSPromiseClass : SharpTSClass
                 settled = true;
             }
 
-            // Handle promise flattening - if value is a Promise, wait for it
+            // Handle promise flattening - if value is a Promise, adopt its settled
+            // state. Routed through the event loop (not the thread pool) so the loop
+            // can't exit before the adoption settles — see Interpreter.AdoptInnerPromise
+            // (fixes the resolve-with-thenable Pass/Fail flake under load).
             if (value is SharpTSPromise innerPromise)
             {
-                innerPromise.Task.ContinueWith(t =>
-                {
-                    if (t.IsFaulted)
-                        tcs.TrySetException(t.Exception!.InnerException ?? t.Exception);
-                    else
-                        tcs.TrySetResult(t.Result);
-                }, TaskScheduler.Default);
+                interpreter.AdoptInnerPromise(innerPromise.Task, tcs);
             }
             else
             {

@@ -311,15 +311,11 @@ public partial class Interpreter
         var resolve = new PromiseResolveCallback(v =>
         {
             // Flatten a promise resolution value the same way the executor
-            // resolve callback does, so `await` yields the eventual value.
+            // resolve callback does, so `await` yields the eventual value. Routed
+            // through the event loop (not the thread pool) so the loop can't exit
+            // before the adoption settles — see Interpreter.AdoptInnerPromise.
             if (v is SharpTSPromise inner)
-                inner.Task.ContinueWith(t =>
-                {
-                    if (t.IsFaulted)
-                        tcs.TrySetException(t.Exception!.InnerException ?? t.Exception);
-                    else
-                        tcs.TrySetResult(t.Result);
-                }, TaskScheduler.Default);
+                AdoptInnerPromise(inner.Task, tcs);
             else
                 tcs.TrySetResult(v);
         });

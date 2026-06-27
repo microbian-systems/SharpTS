@@ -8058,7 +8058,7 @@ test/built-ins/Promise/resolve-poisoned-then-immed.js RuntimeError
 test/built-ins/Promise/resolve-prms-cstm-then-deferred.js RuntimeError
 test/built-ins/Promise/resolve-prms-cstm-then-immed.js RuntimeError
 test/built-ins/Promise/resolve-self.js Fail
-test/built-ins/Promise/resolve-thenable-deferred.js Fail
+test/built-ins/Promise/resolve-thenable-deferred.js Pass
 test/built-ins/Promise/resolve-thenable-immed.js Pass
 test/built-ins/Promise/resolve/S25.4.4.5_A1.1_T1.js Pass
 test/built-ins/Promise/resolve/S25.4.4.5_A2.1_T1.js Fail

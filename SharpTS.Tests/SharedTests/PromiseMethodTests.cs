@@ -1143,5 +1143,61 @@ public class PromiseMethodTests
         Assert.Equal("true:raw\n", output);
     }
 
+    /// <summary>
+    /// Resolving a pending promise with another (already-settled) promise must
+    /// adopt the inner promise's value and still run the outer's <c>.then</c>
+    /// reaction (ECMA-262 resolve-with-thenable). The interpreter adopted the
+    /// inner promise on a thread-pool continuation, so the event loop could exit
+    /// before the adoption settled and the reaction was dropped — a load-sensitive
+    /// flake (Test262 Promise/resolve-thenable-deferred flipped Pass/Fail). The
+    /// adoption now runs as an event-loop callback, so the reaction always fires.
+    /// Interpreter-only — compiled mode emits its own event loop (it has the same
+    /// resolve-with-thenable gap, tracked separately).
+    /// </summary>
+    [Fact]
+    public void ResolveWithThenable_Deferred_RunsReactionWithInnerValue()
+    {
+        var mode = ExecutionMode.Interpreted;
+        var source = """
+            const value: any = { tag: "inner" };
+            let resolve: any;
+            const thenable = new Promise((r: any) => r(value));
+            const promise = new Promise((res: any) => { resolve = res; });
+            promise.then((v: any) => {
+                console.log(v === value ? "same" : "different");
+            }, () => {
+                console.log("rejected");
+            });
+            resolve(thenable);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("same\n", output);
+    }
+
+    /// <summary>
+    /// The await form of resolve-with-thenable: awaiting a promise that was
+    /// resolved with another promise yields the inner value (flattening through
+    /// the same event-loop adoption path). Interpreter-only (see above).
+    /// </summary>
+    [Fact]
+    public void ResolveWithThenable_Awaited_YieldsInnerValue()
+    {
+        var mode = ExecutionMode.Interpreted;
+        var source = """
+            async function main(): Promise<void> {
+                let resolve: any;
+                const inner = new Promise((r: any) => r(42));
+                const outer = new Promise((res: any) => { resolve = res; });
+                resolve(inner);
+                console.log(await outer);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("42\n", output);
+    }
+
     #endregion
 }
