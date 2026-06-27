@@ -746,6 +746,48 @@ public partial class Interpreter : IDisposable
     }
 
     /// <summary>
+    /// Adopts an inner promise's settled state into <paramref name="tcs"/> — the
+    /// <c>resolve(thenable)</c> / await-thenable flatten step where the resolution
+    /// value is itself a <see cref="Runtime.Types.SharpTSPromise"/>. The settle is
+    /// delivered as an event-loop callback so it (a) runs on the event-loop thread
+    /// and (b) is visible to the loop's exit check (<c>_callbackQueue</c>).
+    /// </summary>
+    /// <remarks>
+    /// The previous implementation used <c>innerTask.ContinueWith(…, TaskScheduler.Default)</c>,
+    /// which settled <paramref name="tcs"/> on a thread-pool thread with nothing on
+    /// the callback queue. When the inner task was already settled (e.g. resolving a
+    /// pending promise with an already-resolved one — Test262
+    /// <c>Promise/resolve-thenable-deferred</c>), the event loop could observe
+    /// "no active handles AND empty callback queue" and exit before the thread-pool
+    /// continuation settled the outer promise, so its <c>.then</c> reaction never
+    /// ran. Whether the loop won that race depended on scheduling, so the test
+    /// flipped Pass/Fail under machine load.
+    /// <para>
+    /// <see cref="TaskContinuationOptions.ExecuteSynchronously"/> means an
+    /// already-settled inner enqueues the settle callback inline (during
+    /// <c>resolve</c>, before the loop starts), so the loop never starts idle; a
+    /// never-settling inner enqueues nothing and the loop exits normally — matching
+    /// Node, where a pending adoption does not by itself keep the program alive.
+    /// Settling the outer task here synchronously posts any downstream <c>.then</c>
+    /// continuations onto this loop via the interpreter SynchronizationContext.
+    /// </para>
+    /// </remarks>
+    internal void AdoptInnerPromise(Task<object?> innerTask, TaskCompletionSource<object?> tcs)
+    {
+        innerTask.ContinueWith(
+            t => EnqueueCallback(() =>
+            {
+                if (t.IsFaulted)
+                    tcs.TrySetException(t.Exception!.InnerException ?? t.Exception);
+                else if (t.IsCanceled)
+                    tcs.TrySetCanceled();
+                else
+                    tcs.TrySetResult(t.Result);
+            }),
+            TaskContinuationOptions.ExecuteSynchronously);
+    }
+
+    /// <summary>
     /// Calculates the timeout until the next timer fires.
     /// Used by the event loop to efficiently wait without polling.
     /// </summary>
