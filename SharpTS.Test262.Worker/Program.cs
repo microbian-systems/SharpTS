@@ -57,8 +57,8 @@ var skipFeatures = LoadSkipFeatures(skipFeaturesFile);
 // The trade-off — assemblies leak for the worker's lifetime — is bounded by
 // the working-set check below, which exits the worker cleanly when memory
 // crosses 1.5GB so the parent can spawn a fresh worker for the next batch.
-Test262Runner.UseNonCollectibleLoad = true;
-var runner = new Test262Runner(test262Root, TimeSpan.FromSeconds(timeoutSeconds), skipFeatures);
+var runner = new Test262Runner(
+    test262Root, TimeSpan.FromSeconds(timeoutSeconds), skipFeatures, useNonCollectibleLoad: true);
 
 // Memory ceiling for non-collectible mode. Each emitted assembly holds onto
 // metadata + JIT'd code in process memory permanently; left unchecked, a

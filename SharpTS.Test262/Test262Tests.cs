@@ -93,6 +93,12 @@ public abstract class Test262TestsBase
         else
         {
             _output.WriteLine($"[{mode}] worker DLL not found — falling back to in-process (build SharpTS.Test262.Worker for issue #109 batched mode)");
+            // Deliberately collectible (useNonCollectibleLoad: false, the default):
+            // this fallback can run the whole subset (~11k tests) in-process, so it
+            // relies on per-test ALC Unload to avoid OOM (issue #109). The crash-prone
+            // collectible path (issue #964) is the lesser evil here vs. a 28 GB testhost;
+            // build the worker to avoid both. SmokeTest, which runs only small curated
+            // lists, opts into the non-collectible path instead.
             var runner = new Test262Runner(test262Root, config.Timeout, skipFeatures);
             foreach (var (relPath, absPath) in files)
             {
