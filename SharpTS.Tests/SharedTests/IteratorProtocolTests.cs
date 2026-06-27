@@ -928,4 +928,105 @@ public class IteratorProtocolTests
     }
 
     #endregion
+
+    #region Iterator-result fields read via Get (accessor getters)
+
+    // Regression guard for the iterator-protocol fix in
+    // Interpreter.EnumerateWithIteratorProtocol. ECMA-262 7.4.4/7.4.5
+    // (IteratorValue/IteratorComplete) read the result's `value`/`done` through
+    // Get(), which invokes accessor getters and walks the prototype chain. The
+    // interpreter previously read them with a raw field accessor that skipped
+    // `_getters`, so a result defining `value`/`done` as an accessor behaved
+    // wrongly — and a *throwing* `value` getter (the shape in Test262's
+    // Array/from/iter-get-iter-val-err and call/spread-err-*-itr-value, where
+    // `done` is absent → falsy) made the loop spin forever (15s VM timeout),
+    // leaking a CPU-pegged orphan thread. The bounded Test262 baseline guards
+    // the throwing/non-terminating shapes (a unit-test reproduction of those
+    // would hang the suite if the fix regressed); this terminating case pins
+    // the same code path safely: a `value` accessor with a data-property `done`.
+    // Interpreter-only — compiled mode emits its own iterator IL.
+    [Fact]
+    public void CustomIterator_ValueDefinedAsAccessor_InvokesGetter()
+    {
+        var source = """
+            let i = 0;
+            const iterable: any = {
+                [Symbol.iterator]() {
+                    return {
+                        next() {
+                            i = i + 1;
+                            const r: any = { done: i > 3 };
+                            Object.defineProperty(r, "value", { get() { return i * 10; } });
+                            return r;
+                        }
+                    };
+                }
+            };
+            const out: string[] = [];
+            for (const x of iterable) { out.push(String(x)); }
+            console.log(out.join(","));
+            """;
+
+        // Pre-fix: the `value` accessor was never invoked → "undefined,undefined,undefined".
+        var output = TestHarness.Run(source, ExecutionMode.Interpreted);
+        Assert.Equal("10,20,30\n", output);
+    }
+
+    // IteratorClose (ECMA-262 7.4.6): for-of abandoned early (break) must invoke
+    // the iterator's return(). Uses an infinite iterator + break so it terminates
+    // either way (pre-fix it terminated but never closed → close=0).
+    // Interpreter-only — compiled mode emits its own iteration IL.
+    [Fact]
+    public void ForOf_BreakOverCustomIterator_CallsReturn()
+    {
+        var source = """
+            let closed = 0;
+            const iter: any = {
+                [Symbol.iterator]() {
+                    let i = 0;
+                    return {
+                        next() { i = i + 1; return { value: i, done: false }; },
+                        return() { closed = closed + 1; return {}; }
+                    };
+                }
+            };
+            for (const x of iter) { if (x >= 2) break; }
+            console.log("closed=" + closed);
+            """;
+
+        var output = TestHarness.Run(source, ExecutionMode.Interpreted);
+        Assert.Equal("closed=1\n", output);
+    }
+
+    // Array.from(items, mapFn): mapfn is applied DURING iteration, and a throwing
+    // mapfn triggers IteratorClose. Finite iterator so it terminates regardless of
+    // the fix (pre-fix the throw still surfaced after materializing, but return()
+    // was never called → close=0). Interpreter-only.
+    [Fact]
+    public void ArrayFrom_MapFnThrows_AppliedDuringIterationAndClosesIterator()
+    {
+        var source = """
+            let closed = 0;
+            let calls = 0;
+            const iterable: any = {
+                [Symbol.iterator]() {
+                    let i = 0;
+                    return {
+                        next() { i = i + 1; return i <= 3 ? { value: i, done: false } : { value: undefined, done: true }; },
+                        return() { closed = closed + 1; return {}; }
+                    };
+                }
+            };
+            let caught = "none";
+            try {
+                Array.from(iterable, (v: any) => { calls = calls + 1; if (v === 2) throw new Error("stop"); return v; });
+            } catch (e: any) { caught = e.message; }
+            console.log(caught + " calls=" + calls + " closed=" + closed);
+            """;
+
+        var output = TestHarness.Run(source, ExecutionMode.Interpreted);
+        Assert.Equal("stop calls=2 closed=1\n", output);
+    }
+
+    #endregion
 }

@@ -40,23 +40,39 @@ public static class ArrayStaticBuiltIns
                 // ECMA-262 23.1.2.1: prefer the iterator protocol; a source without a usable
                 // iterator (e.g. an array-like { length: n }) is read via its length +
                 // indexed elements rather than throwing "not iterable".
-                var elements = interpreter.IsIterableSource(iterable)
-                    ? interpreter.GetIterableElements(iterable).ToList()
-                    : interpreter.ReadArrayLikeElements(iterable);
+                bool isIterable = interpreter.IsIterableSource(iterable);
 
                 if (mapFn != null)
                 {
+                    // Apply mapfn DURING iteration, not after materializing the
+                    // whole source (ECMA-262 23.1.2.1 step 6.g: map each element as
+                    // it is produced). For an iterator this is observable two ways:
+                    // an infinite iterator whose mapfn throws on the first element
+                    // must surface that throw immediately (materialize-first would
+                    // spin forever); and the throw must trigger IteratorClose. The
+                    // lazy `foreach` here gives both — when mapfn throws, the C#
+                    // enumerator over GetIterableElements is disposed, which runs
+                    // EnumerateWithIteratorProtocol's finally → the iterator's
+                    // return(). Array-likes (ReadArrayLikeElements) have no iterator
+                    // to close, matching the spec.
                     var result = new List<object?>();
                     var callbackArgs = new List<object?>(2) { null, null };
-                    for (int i = 0; i < elements.Count; i++)
+                    var source = isIterable
+                        ? interpreter.GetIterableElements(iterable)
+                        : interpreter.ReadArrayLikeElements(iterable);
+                    int i = 0;
+                    foreach (var element in source)
                     {
-                        callbackArgs[0] = elements[i];
-                        callbackArgs[1] = (double)i;
+                        callbackArgs[0] = element;
+                        callbackArgs[1] = (double)i++;
                         result.Add(mapFn.Call(interpreter, callbackArgs));
                     }
                     return RuntimeValue.FromObject(new SharpTSArray(result));
                 }
 
+                var elements = isIterable
+                    ? interpreter.GetIterableElements(iterable).ToList()
+                    : interpreter.ReadArrayLikeElements(iterable);
                 return RuntimeValue.FromObject(new SharpTSArray(elements));
             }),
             "of" => BuiltInMethod.CreateV2("of", 0, int.MaxValue, static (_, _, args) =>
