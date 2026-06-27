@@ -197,7 +197,7 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
                 // (ToObject result) carries __primitiveType but no own indexed
                 // elements — consult *.prototype extras.
                 if (rawLen is null or SharpTSUndefined)
-                    rawLen = GetBoxedPrimitiveProtoExtra(obj, "length");
+                    rawLen = GetBoxedPrimitiveProtoExtra(obj, "length", interpreter);
                 long len = ToLength(rawLen);
                 len = Math.Min(len, 1 << 20);
                 var list = new List<object?>((int)len);
@@ -209,7 +209,7 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
                     else if (obj.HasProperty(key))
                         list.Add(obj.GetProperty(key));
                     else
-                        list.Add(GetBoxedPrimitiveProtoExtra(obj, key) ?? ArrayHole.Instance);
+                        list.Add(GetBoxedPrimitiveProtoExtra(obj, key, interpreter) ?? ArrayHole.Instance);
                 }
                 tempArr = new SharpTSArray(list);
                 return true;
@@ -285,14 +285,17 @@ internal sealed class ArrayPrototypeMethodWrapper : ISharpTSCallable
     /// Used to implement ECMA-262 LengthOfArrayLike/Get prototype-chain walk for
     /// Number and Boolean wrappers whose own property bags carry no indexed state.
     /// </summary>
-    private static object? GetBoxedPrimitiveProtoExtra(SharpTSObject obj, string name)
+    private static object? GetBoxedPrimitiveProtoExtra(SharpTSObject obj, string name, Interp interpreter)
     {
         if (!obj.HasProperty("__primitiveType")) return null;
+        // Per-realm prototypes: read the boxed primitive's prototype extras off
+        // this realm's instance, not the shared singleton, so they match what
+        // guest `Number.prototype.x = …` wrote in the same realm.
         return obj.GetProperty("__primitiveType") switch
         {
-            "Number"  => SharpTSNumberPrototype.Instance.TryGetExtra(name),
-            "Boolean" => SharpTSBooleanPrototype.Instance.TryGetExtra(name),
-            "String"  => SharpTSStringPrototype.Instance.TryGetExtra(name),
+            "Number"  => interpreter.GetNumberPrototype().TryGetExtra(name),
+            "Boolean" => interpreter.GetBooleanPrototype().TryGetExtra(name),
+            "String"  => interpreter.GetStringPrototype().TryGetExtra(name),
             _ => null
         };
     }

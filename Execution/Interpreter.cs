@@ -404,6 +404,47 @@ public partial class Interpreter : IDisposable
     /// </summary>
     internal static bool IsRealmIntrinsicName(string name) => name == "Math";
 
+    // Per-realm String/Number/Boolean.prototype. Each is an extensible ECMA-262
+    // object carrying a guest-writable _extras bag, so — like Math and
+    // RegExp.prototype (#101) — it is held per-Interpreter: guest writes
+    // (`String.prototype.x = …`, indexed/`length` assignments Test262 makes
+    // before calling Array.prototype.* on a primitive) stay realm-local and
+    // don't race across worker threads. The namespace objects
+    // (String/Number/Boolean themselves) are immutable and stay shared
+    // singletons; only the mutable prototypes are per-realm.
+    private Runtime.Types.SharpTSStringPrototype? _stringPrototype;
+    private Runtime.Types.SharpTSNumberPrototype? _numberPrototype;
+    private Runtime.Types.SharpTSBooleanPrototype? _booleanPrototype;
+    internal Runtime.Types.SharpTSStringPrototype GetStringPrototype() => _stringPrototype ??= new();
+    internal Runtime.Types.SharpTSNumberPrototype GetNumberPrototype() => _numberPrototype ??= new();
+    internal Runtime.Types.SharpTSBooleanPrototype GetBooleanPrototype() => _booleanPrototype ??= new();
+
+    /// <summary>
+    /// Resolves <c>String</c>/<c>Number</c>/<c>Boolean</c><c>.prototype</c> to
+    /// this realm's prototype instance when <paramref name="obj"/> is the
+    /// corresponding built-in namespace, so the read is realm-local rather than
+    /// the shared singleton. Returns <c>false</c> for any other receiver,
+    /// leaving normal member resolution unchanged.
+    /// </summary>
+    private bool TryGetRealmPrototypeForNamespace(object? obj, out object? prototype)
+    {
+        switch (obj)
+        {
+            case Runtime.Types.SharpTSStringNamespace:
+                prototype = GetStringPrototype();
+                return true;
+            case Runtime.Types.SharpTSNumberNamespace:
+                prototype = GetNumberPrototype();
+                return true;
+            case Runtime.Types.SharpTSBooleanNamespace:
+                prototype = GetBooleanPrototype();
+                return true;
+            default:
+                prototype = null;
+                return false;
+        }
+    }
+
     /// <summary>
     /// Reads a property off <c>globalThis</c> honoring per-realm intrinsics: a
     /// guest own-assignment (<c>globalThis.Math = x</c>) wins, then the realm

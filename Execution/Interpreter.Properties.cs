@@ -626,6 +626,16 @@ public partial class Interpreter
             return proxy.TrapGetRV(get.Name.Lexeme, this);
         }
 
+        // String.prototype / Number.prototype / Boolean.prototype resolve to
+        // this realm's prototype instance (per-realm built-in-prototype
+        // mutability, like RegExp.prototype #101) so guest writes stay
+        // realm-local and don't race across worker threads. The namespace
+        // objects themselves stay shared singletons.
+        if (get.Name.Lexeme == "prototype" && TryGetRealmPrototypeForNamespace(obj, out var nsPrototype))
+        {
+            return RuntimeValue.FromBoxed(nsPrototype);
+        }
+
         var category = TypeCategoryResolver.ClassifyRuntime(obj);
         string memberName = get.Name.Lexeme;
 

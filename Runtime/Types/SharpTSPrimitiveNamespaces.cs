@@ -67,8 +67,17 @@ public class SharpTSStringNamespace : ISharpTSCallable
 /// </summary>
 public sealed class SharpTSStringPrototype
 {
+    /// <summary>
+    /// Process-wide template instance. Retained as a fallback, but guest reads
+    /// of <c>String.prototype</c> resolve to a per-realm instance (see
+    /// <c>Interpreter.GetStringPrototype</c>) so user-added properties stay
+    /// realm-local and don't race across worker threads. Mirrors the per-realm
+    /// RegExp.prototype (#101).
+    /// </summary>
     public static readonly SharpTSStringPrototype Instance = new();
-    private SharpTSStringPrototype() { }
+    // internal (not private) so each Interpreter can construct its own realm
+    // instance; only the _extras overlay differs between instances.
+    internal SharpTSStringPrototype() { }
 
     private Dictionary<string, object?>? _extras;
     public bool HasExtra(string name) => _extras is not null && _extras.ContainsKey(name);
@@ -235,8 +244,17 @@ public class SharpTSNumberNamespace : ISharpTSCallable
 /// </summary>
 public sealed class SharpTSNumberPrototype
 {
+    /// <summary>
+    /// Process-wide template instance. Retained as a fallback, but guest reads
+    /// of <c>Number.prototype</c> resolve to a per-realm instance (see
+    /// <c>Interpreter.GetNumberPrototype</c>) so user-added properties stay
+    /// realm-local and don't race across worker threads. Mirrors the per-realm
+    /// RegExp.prototype (#101).
+    /// </summary>
     public static readonly SharpTSNumberPrototype Instance = new();
-    private SharpTSNumberPrototype() { }
+    // internal (not private) so each Interpreter can construct its own realm
+    // instance; only the _extras overlay differs between instances.
+    internal SharpTSNumberPrototype() { }
 
     private Dictionary<string, object?>? _extras;
     public bool HasExtra(string name) => _extras is not null && _extras.ContainsKey(name);
@@ -360,8 +378,17 @@ public class SharpTSBooleanNamespace : ISharpTSCallable
 /// </summary>
 public sealed class SharpTSBooleanPrototype
 {
+    /// <summary>
+    /// Process-wide template instance. Retained as a fallback, but guest reads
+    /// of <c>Boolean.prototype</c> resolve to a per-realm instance (see
+    /// <c>Interpreter.GetBooleanPrototype</c>) so user-added properties stay
+    /// realm-local and don't race across worker threads. Mirrors the per-realm
+    /// RegExp.prototype (#101).
+    /// </summary>
     public static readonly SharpTSBooleanPrototype Instance = new();
-    private SharpTSBooleanPrototype() { }
+    // internal (not private) so each Interpreter can construct its own realm
+    // instance; only the _extras overlay differs between instances.
+    internal SharpTSBooleanPrototype() { }
 
     private Dictionary<string, object?>? _extras;
     public bool HasExtra(string name) => _extras is not null && _extras.ContainsKey(name);

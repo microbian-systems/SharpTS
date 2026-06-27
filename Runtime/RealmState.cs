@@ -1,56 +1,31 @@
-using SharpTS.Runtime.Types;
-
 namespace SharpTS.Runtime;
 
 /// <summary>
-/// Resets process-global mutable built-in state that is shared across
-/// <c>Interpreter</c> instances rather than owned per-realm.
+/// Formerly reset the process-global mutable built-in state shared across
+/// <c>Interpreter</c> instances. That state has now all been moved per-realm
+/// onto the <c>Interpreter</c> — <c>RegExp.prototype</c> (#101), the
+/// <c>Symbol.for</c> registry, <c>Math</c>, and the <c>String</c>/<c>Number</c>/
+/// <c>Boolean</c> prototypes — so a fresh <c>new Interpreter(...)</c> starts
+/// with a pristine realm by construction and there is nothing left to reset.
 ///
 /// <para>
-/// Most built-ins are fine as process-wide singletons because their members
-/// are immutable. The exceptions are the primitive prototypes
-/// (<see cref="SharpTSNumberPrototype"/>, <see cref="SharpTSBooleanPrototype"/>,
-/// <see cref="SharpTSStringPrototype"/>), which each carry a guest-writable
-/// <c>_extras</c> bag. Guest code mutates these (e.g.
-/// <c>Number.prototype.toString = fn</c>, <c>Boolean.prototype[0] = …</c>), and
-/// because the backing objects are static singletons the writes survive into
-/// every later <c>new Interpreter(...)</c> in the same process.
-/// (<c>RegExp.prototype</c> — issue #101 — the <c>Symbol.for</c> registry, and
-/// <c>Math</c> are already per-realm on the <c>Interpreter</c>; these primitive
-/// prototypes are the remaining vectors, tracked for the same per-realm
-/// treatment.)
-/// </para>
-///
-/// <para>
-/// This is only observable when one process runs several realms — the Test262
-/// runner, which executes thousands of guest scripts back-to-back in each
-/// worker. Left unreset, an earlier test's mutation flips the outcome of a
-/// later, order-dependent test, making the conformance results
-/// non-deterministic (issue #964 follow-up). The runner calls
-/// <see cref="ResetMutableBuiltInState"/> before each test so every script sees
-/// a pristine realm. Normal single-program execution (CLI, one Interpreter)
-/// never needs this, and the main test suite does not use it.
-/// </para>
-///
-/// <para>
-/// Not thread-safe with respect to a concurrently-executing interpreter: it
-/// must only be called when no other realm is live in the process (the Test262
-/// worker runs its tests serially). The principled long-term fix is to make
-/// these prototypes per-realm like <c>RegExp.prototype</c>; that is a larger
-/// refactor of the hot primitive-dispatch paths and is tracked separately.
+/// <see cref="ResetMutableBuiltInState"/> is therefore a no-op. It is retained
+/// only so the Test262 runner's per-test call site keeps compiling; both the
+/// method and that call are slated for removal in the final per-realm cleanup
+/// (worker_threads isolation, Phase 5), together with a concurrency regression
+/// test. Unlike the old reset, the per-realm model is also safe under
+/// concurrently-executing realms (worker threads), which the reset was not.
 /// </para>
 /// </summary>
 public static class RealmState
 {
     /// <summary>
-    /// Clears every process-global mutable built-in vector listed above. Cheap
-    /// (nulls a few dictionary references and clears two small maps); safe to
-    /// call once per test.
+    /// No-op: all previously process-global mutable built-in state is now owned
+    /// per-realm by the <c>Interpreter</c>, so each realm is pristine by
+    /// construction. Retained as a no-op for the Test262 runner's call site.
     /// </summary>
     public static void ResetMutableBuiltInState()
     {
-        SharpTSNumberPrototype.Instance.ClearExtras();
-        SharpTSBooleanPrototype.Instance.ClearExtras();
-        SharpTSStringPrototype.Instance.ClearExtras();
+        // Intentionally empty — see the type remarks.
     }
 }

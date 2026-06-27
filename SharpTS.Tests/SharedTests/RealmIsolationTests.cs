@@ -122,4 +122,54 @@ public class RealmIsolationTests
         using var realmC = new Interpreter(TextWriter.Null, TextWriter.Null);
         Assert.False(realmC.GetMath().HasExtra("answer"));
     }
+
+    /// <summary>
+    /// Within a realm, <c>String.prototype</c> has stable identity, accepts
+    /// guest-added properties (ECMA-262: the primitive prototypes are ordinary
+    /// objects), and the built-in methods still dispatch. Interpreter-only:
+    /// per-realm-izing the primitive prototypes is interpreter-scoped (compiled
+    /// mode emits its own prototype handling).
+    /// </summary>
+    [Fact]
+    public void StringPrototype_Identity_AndExtensibility_HoldWithinRealm()
+    {
+        var source = """
+            console.log(String.prototype === String.prototype);
+            (String.prototype as any).foo = 7;
+            console.log((String.prototype as any).foo);
+            console.log("x".toUpperCase());
+            """;
+
+        var output = TestHarness.Run(source, ExecutionMode.Interpreted);
+        Assert.Equal("true\n7\nX\n", output);
+    }
+
+    /// <summary>
+    /// User-added properties on String/Number/Boolean.prototype are per-realm:
+    /// distinct prototype objects per interpreter, and a write in one realm is
+    /// invisible in another. Before these were moved onto the Interpreter the
+    /// <c>_extras</c> bag was a process-wide singleton shared across every realm
+    /// (and raced across worker threads). Interpreter-only.
+    /// </summary>
+    [Fact]
+    public void PrimitivePrototypeExtras_ArePerRealm()
+    {
+        using var realmA = new Interpreter(TextWriter.Null, TextWriter.Null);
+        using var realmB = new Interpreter(TextWriter.Null, TextWriter.Null);
+
+        // Distinct prototype objects per realm.
+        Assert.NotSame(realmA.GetStringPrototype(), realmB.GetStringPrototype());
+        Assert.NotSame(realmA.GetNumberPrototype(), realmB.GetNumberPrototype());
+        Assert.NotSame(realmA.GetBooleanPrototype(), realmB.GetBooleanPrototype());
+
+        // Writes in realm A stay in realm A.
+        realmA.GetStringPrototype().SetExtra("foo", 1.0);
+        realmA.GetNumberPrototype().SetExtra("bar", 2.0);
+        realmA.GetBooleanPrototype().SetExtra("baz", 3.0);
+
+        Assert.True(realmA.GetStringPrototype().HasExtra("foo"));
+        Assert.False(realmB.GetStringPrototype().HasExtra("foo"));
+        Assert.False(realmB.GetNumberPrototype().HasExtra("bar"));
+        Assert.False(realmB.GetBooleanPrototype().HasExtra("baz"));
+    }
 }
