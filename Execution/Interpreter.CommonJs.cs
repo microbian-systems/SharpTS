@@ -129,9 +129,9 @@ public partial class Interpreter
         moduleEnv.Define("module", moduleObj);
         moduleEnv.Define("exports", exportsObj);
         // `global` in Node is a reference to the global object (same as
-        // `globalThis`). Expose it as the property-accessor singleton so
-        // `global.Object`, `global.process`, etc. resolve correctly.
-        moduleEnv.Define("global", Runtime.Types.SharpTSGlobalThis.Instance);
+        // `globalThis`). Bind this realm's global object so `global.Object`,
+        // `global.process`, etc. resolve and `global.x = …` stays realm-local.
+        moduleEnv.Define("global", GlobalThis);
         // In Node CommonJS, top-level `this` === `module.exports` (initially
         // an empty object). UMD wrappers depend on this.
         moduleEnv.Define("this", exportsObj);

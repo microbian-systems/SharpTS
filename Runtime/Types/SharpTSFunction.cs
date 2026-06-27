@@ -210,7 +210,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         else if (!_closure.TryGet("this", out _))
         {
             environment.Define("this",
-                functionStrict ? SharpTSUndefined.Instance : (object?)SharpTSGlobalThis.Instance);
+                functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
         }
 
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
@@ -325,7 +325,7 @@ public class SharpTSFunction : ISharpTSCallable, ITypeCategorized
         else if (!_closure.TryGet("this", out _))
         {
             environment.Define("this",
-                functionStrict ? SharpTSUndefined.Instance : (object?)SharpTSGlobalThis.Instance);
+                functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
         }
 
         ParameterBinder.BindRV(_declaration.Parameters, arguments, environment, interpreter);
@@ -540,7 +540,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             // enclosing closure per spec, so this branch only fires for
             // function expressions.
             environment.Define("this",
-                functionStrict ? SharpTSUndefined.Instance : (object?)SharpTSGlobalThis.Instance);
+                functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
         }
 
         // Function expressions (HasOwnThis) bind their own `arguments`; true arrows
@@ -614,7 +614,7 @@ public class SharpTSArrowFunction : ISharpTSCallable, ITypeCategorized
             // ECMA-262: function-expression's own `this` is globalThis (sloppy)
             // or undefined (strict). Mirrors the legacy Call path above.
             environment.Define("this",
-                functionStrict ? SharpTSUndefined.Instance : (object?)SharpTSGlobalThis.Instance);
+                functionStrict ? SharpTSUndefined.Instance : (object?)interpreter.GlobalThis);
         }
 
         // Function expressions (HasOwnThis) bind their own `arguments`; true arrows do not.

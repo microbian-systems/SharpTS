@@ -59,7 +59,7 @@ public class SharpTSAsyncGeneratorFunction : ISharpTSCallable, IReceiverBindable
         }
         else if (_declaration.HasDynamicThis)
         {
-            environment.Define("this", SharpTSGlobalThis.Instance); // sloppy-mode `this` = globalThis (#775)
+            environment.Define("this", interpreter.GlobalThis); // sloppy-mode `this` = globalThis (#775)
         }
 
         // Bind parameters to arguments
@@ -141,7 +141,7 @@ public class SharpTSAsyncArrowGeneratorFunction : ISharpTSCallable, IReceiverBin
         if (_thisBound)
             environment.Define("this", _boundThis);
         else if (HasOwnThis)
-            environment.Define("this", SharpTSGlobalThis.Instance); // sloppy-mode `this` = globalThis (#775)
+            environment.Define("this", interpreter.GlobalThis); // sloppy-mode `this` = globalThis (#775)
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         // Generator expressions always have a block body (the parser never produces an

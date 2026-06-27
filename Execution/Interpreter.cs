@@ -419,6 +419,18 @@ public partial class Interpreter : IDisposable
     internal Runtime.Types.SharpTSNumberPrototype GetNumberPrototype() => _numberPrototype ??= new();
     internal Runtime.Types.SharpTSBooleanPrototype GetBooleanPrototype() => _booleanPrototype ??= new();
 
+    // Per-realm globalThis. The global object holds guest-assigned properties
+    // (`globalThis.x = …`), which must stay realm-local and not race across
+    // worker threads, so each Interpreter owns its own — like RegExp.prototype
+    // (#101), Math, and the primitive prototypes. Built-in namespaces (Math,
+    // JSON, …) are still resolved live through the shared BuiltInRegistry, so
+    // `globalThis.JSON === JSON` and `globalThis.Math === Math` still hold; only
+    // the user-property bag is per-realm. Bare `globalThis` and the Node
+    // `global` alias resolve here (see LookupVariableRV), and sloppy-mode `this`
+    // binds to it.
+    private Runtime.Types.SharpTSGlobalThis? _globalThis;
+    internal Runtime.Types.SharpTSGlobalThis GlobalThis => _globalThis ??= new Runtime.Types.SharpTSGlobalThis();
+
     /// <summary>
     /// Resolves <c>String</c>/<c>Number</c>/<c>Boolean</c><c>.prototype</c> to
     /// this realm's prototype instance when <paramref name="obj"/> is the
@@ -1184,6 +1196,14 @@ public partial class Interpreter : IDisposable
         if (_environment.TryGet(name.Lexeme, out RuntimeValue rv))
         {
             return rv;
+        }
+
+        // Per-realm globalThis and its Node `global` alias: each realm has its
+        // own global object so guest `globalThis.x = …` stays realm-local. A user
+        // `let globalThis`/`let global` already won via the environment check above.
+        if (name.Lexeme == "globalThis" || name.Lexeme == "global")
+        {
+            return RuntimeValue.FromBoxed(GlobalThis);
         }
 
         // Per-realm mutable built-ins (Math, …) shadow the shared global-constants

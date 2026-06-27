@@ -172,4 +172,55 @@ public class RealmIsolationTests
         Assert.False(realmB.GetNumberPrototype().HasExtra("bar"));
         Assert.False(realmB.GetBooleanPrototype().HasExtra("baz"));
     }
+
+    /// <summary>
+    /// Within a realm, <c>globalThis</c> has stable identity and self-reference,
+    /// still delegates built-in namespaces to the shared registry
+    /// (<c>globalThis.JSON === JSON</c>), carries guest-assigned properties, and
+    /// is what sloppy-mode <c>this</c> binds to. Interpreter-only: per-realm-izing
+    /// globalThis is interpreter-scoped (compiled mode emits its own global object).
+    /// </summary>
+    [Fact]
+    public void GlobalThis_Identity_AndUserProperties_HoldWithinRealm()
+    {
+        var source = """
+            console.log(globalThis === globalThis);
+            console.log(globalThis.globalThis === globalThis);
+            console.log(globalThis.JSON === JSON);
+            (globalThis as any).foo = 123;
+            console.log((globalThis as any).foo);
+            function sloppy() { return (this as any) === globalThis; }
+            console.log(sloppy());
+            """;
+
+        var output = TestHarness.Run(source, ExecutionMode.Interpreted);
+        Assert.Equal("true\ntrue\ntrue\n123\ntrue\n", output);
+    }
+
+    /// <summary>
+    /// The global object is per-realm: distinct <c>globalThis</c> per interpreter,
+    /// and a guest-assigned property (<c>globalThis.x = …</c>) in one realm is
+    /// invisible in another and absent from a pristine realm. Before globalThis
+    /// was moved onto the Interpreter its user-property bag was a process-wide
+    /// singleton shared across every realm (and raced across worker threads).
+    /// Interpreter-only.
+    /// </summary>
+    [Fact]
+    public void GlobalThis_IsPerRealm()
+    {
+        using var realmA = new Interpreter(TextWriter.Null, TextWriter.Null);
+        using var realmB = new Interpreter(TextWriter.Null, TextWriter.Null);
+
+        // Distinct global objects per realm.
+        Assert.NotSame(realmA.GlobalThis, realmB.GlobalThis);
+
+        // A guest property written in realm A stays in realm A.
+        realmA.GlobalThis.SetProperty("foo", 123.0);
+        Assert.True(realmA.GlobalThis.HasUserProperty("foo"));
+        Assert.False(realmB.GlobalThis.HasUserProperty("foo"));
+
+        // A pristine realm has no user properties from A or B.
+        using var realmC = new Interpreter(TextWriter.Null, TextWriter.Null);
+        Assert.False(realmC.GlobalThis.HasUserProperty("foo"));
+    }
 }
