@@ -30,6 +30,17 @@ public static class ForLoopAnalyzer
         Environment.GetEnvironmentVariable("SHARPTS_INT_LOOP_COUNTER") != "0";
 
     /// <summary>
+    /// #928: native int64 modulo for <c>counter % integerLiteral</c>. The integer loop
+    /// counter is already an <c>Int64</c> slot; emitting <c>i % 7</c> as an int64 <c>rem</c> (then
+    /// <c>conv.r8</c>) instead of an FP <c>fmod</c> on two doubles is bit-identical to JS truncated
+    /// remainder for every <c>|i| ≤ 2^53</c> — the same gate the counter representation already
+    /// accepts — and the <c>fmod</c> is the dominant per-iteration cost in write kernels (#928
+    /// measurement). On by default when the counter is on; kill with <c>SHARPTS_INT_MOD=0</c>.
+    /// </summary>
+    public static readonly bool IntegerModuloEnabled =
+        Environment.GetEnvironmentVariable("SHARPTS_INT_MOD") != "0";
+
+    /// <summary>
     /// Identifies a for-loop counter eligible for the native <c>Int64</c> representation, or null.
     /// Stricter than <see cref="Analyze"/>: requires an INTEGER-literal initializer, a pure
     /// <c>++</c>/<c>--</c> step, a numeric condition, no closure capture, and no reassignment or

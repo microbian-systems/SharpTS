@@ -83,6 +83,14 @@ public partial class ILEmitter
                 break;
 
             case Arithmetic arith:
+                // #928: `counter % intLiteral` → native int64 rem instead of FP fmod (the dominant
+                // per-iteration write-kernel cost). Sound within the int-counter gate (truncated
+                // remainder matches JS for |i| ≤ 2^53). Falls through to the double path otherwise.
+                if (arith.Opcode == OpCodes.Rem && TryEmitIntegerCounterModulo(b))
+                {
+                    SetStackType(StackType.Double);
+                    break;
+                }
                 // Numeric arithmetic with direct IL opcodes
                 EmitExpressionAsDouble(b.Left);
                 EmitExpressionAsDouble(b.Right);
@@ -948,6 +956,60 @@ public partial class ILEmitter
         if (double.IsNaN(d) || double.IsInfinity(d) || d != Math.Truncate(d)) return false;
         value = (long)d;
         return true;
+    }
+
+    /// <summary>
+    /// #928: emits <c>counter % integerLiteral</c> as a native int64 <c>rem</c> followed by
+    /// <c>conv.r8</c>, replacing the per-iteration FP <c>fmod</c> (the dominant write-kernel cost).
+    /// The left operand must be an integer-counter expression (the counter, or counter ± int literal)
+    /// and the right a non-zero integer literal. C# <c>long %</c> and JS <c>%</c> are both truncated
+    /// (result takes the dividend's sign), so this is bit-identical to the double computation for every
+    /// <c>|dividend| ≤ 2^53</c> — the same range the int-counter representation already accepts. Divisor
+    /// 0 is left to the double path (<c>fmod(x,0)=NaN</c>), so no <c>DivideByZeroException</c> is risked.
+    /// Returns false (emitting nothing) when the shape does not qualify.
+    /// </summary>
+    private bool TryEmitIntegerCounterModulo(Expr.Binary b)
+    {
+        if (!ForLoopAnalyzer.IntegerModuloEnabled) return false;
+        if (!TryGetIntLiteralValue(b.Right, out long divisor) || divisor == 0) return false;
+        if (!TryEmitIntegerCounterValueI8(b.Left)) return false;
+        IL.Emit(OpCodes.Ldc_I8, divisor);
+        IL.Emit(OpCodes.Rem);
+        IL.Emit(OpCodes.Conv_R8);
+        return true;
+    }
+
+    /// <summary>
+    /// Emits an integer-counter expression as a native <c>Int64</c> (no <c>conv.r8</c>): the counter
+    /// <c>i</c>, or <c>i ± intLiteral</c> / <c>intLiteral + i</c>. Companion to
+    /// <see cref="TryEmitIntegerCounterIndexI4"/> but leaves the value as Int64 on the stack. Returns
+    /// false (emitting nothing) when the shape is not a recognized integer-counter expression.
+    /// </summary>
+    private bool TryEmitIntegerCounterValueI8(Expr e)
+    {
+        switch (e)
+        {
+            case Expr.Variable v when IsIntegerCounterLocal(v.Name.Lexeme):
+                IL.Emit(OpCodes.Ldloc, _ctx.Locals.GetLocal(v.Name.Lexeme)!);
+                return true;
+
+            case Expr.Binary { Operator.Type: TokenType.PLUS or TokenType.MINUS } bb
+                when bb.Left is Expr.Variable lv && IsIntegerCounterLocal(lv.Name.Lexeme)
+                     && TryGetIntLiteralValue(bb.Right, out long k):
+                IL.Emit(OpCodes.Ldloc, _ctx.Locals.GetLocal(lv.Name.Lexeme)!);
+                IL.Emit(OpCodes.Ldc_I8, k);
+                IL.Emit(bb.Operator.Type == TokenType.PLUS ? OpCodes.Add : OpCodes.Sub);
+                return true;
+
+            case Expr.Binary { Operator.Type: TokenType.PLUS } b2
+                when b2.Right is Expr.Variable rv && IsIntegerCounterLocal(rv.Name.Lexeme)
+                     && TryGetIntLiteralValue(b2.Left, out long k2):
+                IL.Emit(OpCodes.Ldc_I8, k2);
+                IL.Emit(OpCodes.Ldloc, _ctx.Locals.GetLocal(rv.Name.Lexeme)!);
+                IL.Emit(OpCodes.Add);
+                return true;
+        }
+        return false;
     }
 
     /// <summary>
