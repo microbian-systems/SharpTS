@@ -295,6 +295,12 @@ public class SharpTSObject(Dictionary<string, object?> fields) : ISharpTSPropert
     {
         if (_fields.ContainsKey(name)) return true;
         if (_getters?.ContainsKey(name) ?? false) return true;
+        // A setter-only accessor (e.g. Object.defineProperty(o, p, {set})) is
+        // still an own property — hasOwnProperty / `in` must report it even with
+        // no getter or data field. Without this, Object.defineProperty with an
+        // accessor descriptor that has only a setter is invisible to
+        // hasOwnProperty (Test262 Object/defineProperty/15.2.3.6-3-253).
+        if (_setters?.ContainsKey(name) ?? false) return true;
         // Treat __proto__ as a virtual own slot mirroring the Prototype
         // property — see GetProperty for the matching read.
         if (name == "__proto__" && Prototype != null) return true;

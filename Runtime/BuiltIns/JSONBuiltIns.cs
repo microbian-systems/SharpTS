@@ -300,7 +300,7 @@ public static class JSONBuiltIns
                 sb.Append(JsonSerializer.Serialize(s));
                 return true;
             case SharpTSBigInt:
-                throw new ThrowException("TypeError: BigInt value can't be serialized in JSON");
+                throw new ThrowException(new SharpTSTypeError("BigInt value can't be serialized in JSON"));
             case SharpTSArray arr:
                 StringifyArray(interp, arr, replacer, allowedKeys, indentStr, depth, sb, seen);
                 return true;
@@ -374,7 +374,7 @@ public static class JSONBuiltIns
         // ECMA-262 25.5.2.5 SerializeJSONArray — throw if we're re-entering
         // the same array mid-serialization (cycle).
         if (!seen.Add(arr))
-            throw new ThrowException("TypeError: Converting circular structure to JSON");
+            throw new ThrowException(new SharpTSTypeError("Converting circular structure to JSON"));
         try
         {
             if (arr.Length == 0)
@@ -425,7 +425,7 @@ public static class JSONBuiltIns
         ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb, HashSet<object> seen)
     {
         if (!seen.Add(dict))
-            throw new ThrowException("TypeError: Converting circular structure to JSON");
+            throw new ThrowException(new SharpTSTypeError("Converting circular structure to JSON"));
         try
         {
             IEnumerable<KeyValuePair<string, object?>> fields = dict;
@@ -490,7 +490,7 @@ public static class JSONBuiltIns
         ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb, HashSet<object> seen)
     {
         if (!seen.Add(obj))
-            throw new ThrowException("TypeError: Converting circular structure to JSON");
+            throw new ThrowException(new SharpTSTypeError("Converting circular structure to JSON"));
         try
         {
             var fields = obj.Fields;
@@ -557,7 +557,7 @@ public static class JSONBuiltIns
         ISharpTSCallable? replacer, HashSet<string>? allowedKeys, string indentStr, int depth, StringBuilder sb, HashSet<object> seen)
     {
         if (!seen.Add(inst))
-            throw new ThrowException("TypeError: Converting circular structure to JSON");
+            throw new ThrowException(new SharpTSTypeError("Converting circular structure to JSON"));
         try
         {
             IEnumerable<string> fieldNames = inst.GetFieldNames();
