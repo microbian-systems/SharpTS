@@ -14,7 +14,12 @@ namespace SharpTS.Runtime.Types;
 public sealed class SharpTSGlobalThis : ISharpTSPropertyAccessor
 {
     /// <summary>
-    /// The singleton instance of globalThis.
+    /// Process-wide template instance, retained as a fallback (and the
+    /// BuiltInRegistry singleton). Guest reads of <c>globalThis</c> / <c>global</c>
+    /// resolve to a per-realm instance (see <c>Interpreter.GlobalThis</c>) so
+    /// user-assigned properties (<c>globalThis.x = …</c>) stay realm-local and
+    /// don't race across worker threads. Mirrors the per-realm RegExp.prototype
+    /// (#101) and Math.
     /// </summary>
     public static readonly SharpTSGlobalThis Instance = new();
 
@@ -23,7 +28,18 @@ public sealed class SharpTSGlobalThis : ISharpTSPropertyAccessor
     /// </summary>
     private readonly Dictionary<string, object?> _properties = new();
 
-    private SharpTSGlobalThis() { }
+    // internal (not private) so each Interpreter can construct its own realm
+    // global object; only the _properties bag differs between instances.
+    internal SharpTSGlobalThis() { }
+
+    /// <summary>
+    /// True if guest code has assigned an own (user) property with this name.
+    /// A guest assignment (<c>globalThis.Math = x</c>) shadows the built-in of
+    /// the same name per ECMA-262, so per-realm intrinsic resolution must defer
+    /// to it. Distinct from <see cref="HasProperty"/>, which also reports
+    /// built-in globals.
+    /// </summary>
+    public bool HasUserProperty(string name) => _properties.ContainsKey(name);
 
     /// <summary>
     /// Gets a property from globalThis.

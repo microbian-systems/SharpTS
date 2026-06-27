@@ -45,20 +45,20 @@ public static class SymbolBuiltIns
             "search" => BuiltInMethod.CreateConstant("search", SharpTSSymbol.Search),
             "split" => BuiltInMethod.CreateConstant("split", SharpTSSymbol.Split),
 
-            // Symbol.for() - returns a shared symbol from the global symbol registry
-            "for" => BuiltInMethod.CreateV2("for", 1, static (_, _, args) =>
+            // Symbol.for() - returns a shared symbol from the realm's symbol registry
+            "for" => BuiltInMethod.CreateV2("for", 1, static (interp, _, args) =>
             {
                 var key = args.Length > 0 ? args[0].ToObject()?.ToString() ?? "undefined" : "undefined";
-                return RuntimeValue.FromSymbol(SharpTSSymbol.For(key));
+                return RuntimeValue.FromSymbol(interp.SymbolFor(key));
             }),
 
-            // Symbol.keyFor() - returns the key for a symbol in the global registry, or undefined
-            "keyFor" => BuiltInMethod.CreateV2("keyFor", 1, static (_, _, args) =>
+            // Symbol.keyFor() - returns the key for a symbol in the realm's registry, or undefined
+            "keyFor" => BuiltInMethod.CreateV2("keyFor", 1, static (interp, _, args) =>
             {
                 if (args.Length > 0 && args[0].IsSymbol)
                 {
-                    var key = SharpTSSymbol.KeyFor(args[0].AsSymbol());
-                    // Return undefined if symbol is not in global registry (matches JS behavior)
+                    var key = interp.SymbolKeyFor(args[0].AsSymbol());
+                    // Return undefined if symbol is not in the realm's registry (matches JS behavior)
                     return key is null ? RuntimeValue.Undefined : RuntimeValue.FromString(key);
                 }
                 return RuntimeValue.Undefined;

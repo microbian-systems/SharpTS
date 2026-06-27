@@ -66,7 +66,7 @@ public class SharpTSGeneratorFunction : ISharpTSCallable, IReceiverBindable
         }
         else if (_declaration.HasDynamicThis)
         {
-            environment.Define("this", SharpTSGlobalThis.Instance); // sloppy-mode `this` = globalThis (#775)
+            environment.Define("this", interpreter.GlobalThis); // sloppy-mode `this` = globalThis (#775)
         }
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
@@ -145,7 +145,7 @@ public class SharpTSArrowGeneratorFunction : ISharpTSCallable, IReceiverBindable
         if (_thisBound)
             environment.Define("this", _boundThis);
         else if (HasOwnThis)
-            environment.Define("this", SharpTSGlobalThis.Instance); // sloppy-mode `this` = globalThis (#775)
+            environment.Define("this", interpreter.GlobalThis); // sloppy-mode `this` = globalThis (#775)
         ParameterBinder.Bind(_declaration.Parameters, arguments, environment, interpreter);
 
         // A generator function expression drives the same SharpTSGenerator as a declaration — only the

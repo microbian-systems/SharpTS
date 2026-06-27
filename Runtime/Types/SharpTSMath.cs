@@ -16,8 +16,19 @@ namespace SharpTS.Runtime.Types;
 /// </remarks>
 public class SharpTSMath
 {
+    /// <summary>
+    /// Process-wide template instance. Retained for existence checks and as the
+    /// BuiltInRegistry singleton (e.g. <c>"Math" in globalThis</c>), but guest
+    /// reads of <c>Math</c> / <c>globalThis.Math</c> resolve to a per-realm
+    /// instance (see <c>Interpreter.GetMath</c>) so user-added properties
+    /// (<c>Math.x = …</c>) stay realm-local and don't race across worker
+    /// threads. Mirrors the per-realm RegExp.prototype (#101).
+    /// </summary>
     public static readonly SharpTSMath Instance = new();
-    private SharpTSMath() { }
+
+    // internal (not private) so each Interpreter can construct its own realm
+    // instance; the base built-in members are stateless, only _extras differs.
+    internal SharpTSMath() { }
 
     // Extra user-assigned properties — populated lazily on first write.
     // Small object population in practice (Test262 tests set a handful);
@@ -46,16 +57,6 @@ public class SharpTSMath
         _extras ??= new Dictionary<string, object?>();
         _extras[name] = value;
     }
-
-    /// <summary>
-    /// Drops all user-assigned properties, restoring the pristine built-in
-    /// Math. <see cref="Instance"/> is a process-wide singleton, so guest
-    /// writes otherwise persist across every <c>Interpreter</c> in the
-    /// process; callers that execute multiple realms in one process (the
-    /// Test262 runner) reset between realms via this. See <see
-    /// cref="SharpTS.Runtime.RealmState"/>.
-    /// </summary>
-    public void ClearExtras() => _extras = null;
 
     /// <summary>
     /// The own enumerable properties of Math. All built-in members (abs, max,

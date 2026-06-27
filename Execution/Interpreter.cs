@@ -326,6 +326,149 @@ public partial class Interpreter : IDisposable
     internal Runtime.Types.SharpTSObject GetRegExpPrototype()
         => _regExpPrototype ??= Runtime.BuiltIns.RegExpBuiltIns.BuildPrototype();
 
+    // Per-realm Symbol.for registry. Held on the Interpreter (not as a
+    // process-wide static on SharpTSSymbol) so `Symbol.for(k)` returns a
+    // symbol unique to this realm and `Symbol.keyFor` cannot leak
+    // registrations across Interpreter instances. Each realm is its own agent
+    // per ECMA-262, so a separate registry is the correct semantics — and it
+    // removes a cross-thread data race: the old static was a plain Dictionary
+    // mutated by every realm in the process, including concurrent worker
+    // threads. Mirrors the per-realm RegExp.prototype (#101). Well-known
+    // symbols (Symbol.iterator, …) are NOT in this registry; they remain
+    // process-wide singletons. Lazily allocated; thread-confined to this
+    // realm's execution thread, so no lock is needed.
+    private Dictionary<string, Runtime.Types.SharpTSSymbol>? _symbolRegistry;
+    private Dictionary<Runtime.Types.SharpTSSymbol, string>? _symbolReverseRegistry;
+
+    /// <summary>
+    /// Returns this realm's registered symbol for <paramref name="key"/>,
+    /// creating and registering one on first use (ECMA-262 <c>Symbol.for</c>).
+    /// </summary>
+    internal Runtime.Types.SharpTSSymbol SymbolFor(string key)
+    {
+        _symbolRegistry ??= [];
+        if (_symbolRegistry.TryGetValue(key, out var existing))
+            return existing;
+
+        var symbol = new Runtime.Types.SharpTSSymbol(key);
+        _symbolRegistry[key] = symbol;
+        (_symbolReverseRegistry ??= [])[symbol] = key;
+        return symbol;
+    }
+
+    /// <summary>
+    /// Returns the registry key for <paramref name="symbol"/> in this realm, or
+    /// <c>null</c> if it was not produced by this realm's <c>Symbol.for</c>
+    /// (ECMA-262 <c>Symbol.keyFor</c>).
+    /// </summary>
+    internal string? SymbolKeyFor(Runtime.Types.SharpTSSymbol symbol)
+        => _symbolReverseRegistry is not null
+            && _symbolReverseRegistry.TryGetValue(symbol, out var key)
+            ? key
+            : null;
+
+    // Per-realm Math. Math is an extensible ECMA-262 object: guest code may add
+    // properties (`Math.x = 1`), which must not leak across realms or race
+    // across worker threads. Held per-Interpreter, mirroring RegExp.prototype
+    // (#101). The base members (PI, sqrt, …) are stateless and resolved the
+    // same way for every instance; only the per-instance `_extras` overlay
+    // differs. Within a realm both the bare `Math` global and `globalThis.Math`
+    // resolve to this one instance, so `Math === globalThis.Math` holds.
+    private Runtime.Types.SharpTSMath? _math;
+    internal Runtime.Types.SharpTSMath GetMath() => _math ??= new Runtime.Types.SharpTSMath();
+
+    /// <summary>
+    /// Resolves a per-realm mutable built-in intrinsic by its global name
+    /// (currently <c>Math</c>). These are the built-ins moved off process-global
+    /// singletons so a realm's guest mutations stay realm-local. Returns
+    /// <c>false</c> for every other name, leaving normal global resolution
+    /// unchanged.
+    /// </summary>
+    internal bool TryGetRealmIntrinsic(string name, out object? value)
+    {
+        if (IsRealmIntrinsicName(name))
+        {
+            value = GetMath();
+            return true;
+        }
+        value = null;
+        return false;
+    }
+
+    /// <summary>
+    /// Names of the per-realm mutable built-ins resolved off the Interpreter
+    /// rather than the shared global-constants table or the namespace
+    /// fast-path. Used to keep all resolution routes (bare global, namespace
+    /// member access, <c>globalThis</c>) pointing at the one realm instance so
+    /// method identity holds (<c>Math.max === Math.max</c>).
+    /// </summary>
+    internal static bool IsRealmIntrinsicName(string name) => name == "Math";
+
+    // Per-realm String/Number/Boolean.prototype. Each is an extensible ECMA-262
+    // object carrying a guest-writable _extras bag, so — like Math and
+    // RegExp.prototype (#101) — it is held per-Interpreter: guest writes
+    // (`String.prototype.x = …`, indexed/`length` assignments Test262 makes
+    // before calling Array.prototype.* on a primitive) stay realm-local and
+    // don't race across worker threads. The namespace objects
+    // (String/Number/Boolean themselves) are immutable and stay shared
+    // singletons; only the mutable prototypes are per-realm.
+    private Runtime.Types.SharpTSStringPrototype? _stringPrototype;
+    private Runtime.Types.SharpTSNumberPrototype? _numberPrototype;
+    private Runtime.Types.SharpTSBooleanPrototype? _booleanPrototype;
+    internal Runtime.Types.SharpTSStringPrototype GetStringPrototype() => _stringPrototype ??= new();
+    internal Runtime.Types.SharpTSNumberPrototype GetNumberPrototype() => _numberPrototype ??= new();
+    internal Runtime.Types.SharpTSBooleanPrototype GetBooleanPrototype() => _booleanPrototype ??= new();
+
+    // Per-realm globalThis. The global object holds guest-assigned properties
+    // (`globalThis.x = …`), which must stay realm-local and not race across
+    // worker threads, so each Interpreter owns its own — like RegExp.prototype
+    // (#101), Math, and the primitive prototypes. Built-in namespaces (Math,
+    // JSON, …) are still resolved live through the shared BuiltInRegistry, so
+    // `globalThis.JSON === JSON` and `globalThis.Math === Math` still hold; only
+    // the user-property bag is per-realm. Bare `globalThis` and the Node
+    // `global` alias resolve here (see LookupVariableRV), and sloppy-mode `this`
+    // binds to it.
+    private Runtime.Types.SharpTSGlobalThis? _globalThis;
+    internal Runtime.Types.SharpTSGlobalThis GlobalThis => _globalThis ??= new Runtime.Types.SharpTSGlobalThis();
+
+    /// <summary>
+    /// Resolves <c>String</c>/<c>Number</c>/<c>Boolean</c><c>.prototype</c> to
+    /// this realm's prototype instance when <paramref name="obj"/> is the
+    /// corresponding built-in namespace, so the read is realm-local rather than
+    /// the shared singleton. Returns <c>false</c> for any other receiver,
+    /// leaving normal member resolution unchanged.
+    /// </summary>
+    private bool TryGetRealmPrototypeForNamespace(object? obj, out object? prototype)
+    {
+        switch (obj)
+        {
+            case Runtime.Types.SharpTSStringNamespace:
+                prototype = GetStringPrototype();
+                return true;
+            case Runtime.Types.SharpTSNumberNamespace:
+                prototype = GetNumberPrototype();
+                return true;
+            case Runtime.Types.SharpTSBooleanNamespace:
+                prototype = GetBooleanPrototype();
+                return true;
+            default:
+                prototype = null;
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Reads a property off <c>globalThis</c> honoring per-realm intrinsics: a
+    /// guest own-assignment (<c>globalThis.Math = x</c>) wins, then the realm
+    /// intrinsic (so <c>globalThis.Math === Math</c> within a realm), then the
+    /// normal built-in/global resolution. Behaviour is identical to
+    /// <c>globalThis.GetProperty</c> for every non-intrinsic name.
+    /// </summary>
+    private object? ResolveGlobalThisRead(Runtime.Types.SharpTSGlobalThis globalThis, string key)
+        => !globalThis.HasUserProperty(key) && TryGetRealmIntrinsic(key, out var intrinsic)
+            ? intrinsic
+            : globalThis.GetProperty(key);
+
     // Module support
     private readonly Dictionary<string, ModuleInstance> _loadedModules = [];
     private ModuleResolver? _moduleResolver;
@@ -1055,8 +1198,24 @@ public partial class Interpreter : IDisposable
             return rv;
         }
 
+        // Per-realm globalThis and its Node `global` alias: each realm has its
+        // own global object so guest `globalThis.x = …` stays realm-local. A user
+        // `let globalThis`/`let global` already won via the environment check above.
+        if (name.Lexeme == "globalThis" || name.Lexeme == "global")
+        {
+            return RuntimeValue.FromBoxed(GlobalThis);
+        }
+
+        // Per-realm mutable built-ins (Math, …) shadow the shared global-constants
+        // table so guest mutations stay realm-local. A user `let Math`/`var Math`
+        // already won via the environment check above.
+        if (TryGetRealmIntrinsic(name.Lexeme, out var realmIntrinsic))
+        {
+            return RuntimeValue.FromBoxed(realmIntrinsic);
+        }
+
         // Check global constants and built-in singletons (single frozen dictionary lookup)
-        // This handles: NaN, Infinity, undefined, Math, JSON, Object, console, process, etc.
+        // This handles: NaN, Infinity, undefined, JSON, Object, console, process, etc.
         if (_globalConstants.TryGetValue(name.Lexeme, out var constant))
         {
             return RuntimeValue.FromBoxed(constant);
