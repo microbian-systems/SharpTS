@@ -52,7 +52,7 @@ test/built-ins/Array/from/calling-from-valid-1-onlyStrict.js Fail
 test/built-ins/Array/from/calling-from-valid-2.js RuntimeError
 test/built-ins/Array/from/elements-added-after.js Pass
 test/built-ins/Array/from/elements-deleted-after.js RuntimeError
-test/built-ins/Array/from/elements-updated-after.js Fail
+test/built-ins/Array/from/elements-updated-after.js Pass
 test/built-ins/Array/from/from-array.js Pass
 test/built-ins/Array/from/from-string.js Pass
 test/built-ins/Array/from/get-iter-method-err.js Fail
@@ -62,9 +62,9 @@ test/built-ins/Array/from/iter-adv-err.js Pass
 test/built-ins/Array/from/iter-cstm-ctor-err.js Fail
 test/built-ins/Array/from/iter-cstm-ctor.js Fail
 test/built-ins/Array/from/iter-get-iter-err.js Pass
-test/built-ins/Array/from/iter-get-iter-val-err.js Timeout
+test/built-ins/Array/from/iter-get-iter-val-err.js Pass
 test/built-ins/Array/from/iter-map-fn-args.js Pass
-test/built-ins/Array/from/iter-map-fn-err.js Timeout
+test/built-ins/Array/from/iter-map-fn-err.js Pass
 test/built-ins/Array/from/iter-map-fn-return.js Pass
 test/built-ins/Array/from/iter-map-fn-this-arg.js RuntimeError
 test/built-ins/Array/from/iter-map-fn-this-non-strict.js Pass
@@ -6279,7 +6279,7 @@ test/built-ins/Object/fromEntries/iterator-closed-for-throwing-entry-key-accesso
 test/built-ins/Object/fromEntries/iterator-closed-for-throwing-entry-key-tostring.js Fail
 test/built-ins/Object/fromEntries/iterator-closed-for-throwing-entry-value-accessor.js Fail
 test/built-ins/Object/fromEntries/iterator-not-closed-for-next-returning-non-object.js Fail
-test/built-ins/Object/fromEntries/iterator-not-closed-for-throwing-done-accessor.js Fail
+test/built-ins/Object/fromEntries/iterator-not-closed-for-throwing-done-accessor.js Pass
 test/built-ins/Object/fromEntries/iterator-not-closed-for-throwing-next.js Pass
 test/built-ins/Object/fromEntries/iterator-not-closed-for-uncallable-next.js Fail
 test/built-ins/Object/fromEntries/key-order.js Pass
@@ -11259,7 +11259,7 @@ test/language/expressions/call/spread-err-mult-err-iter-get-value.js Fail
 test/language/expressions/call/spread-err-mult-err-itr-get-call.js Pass
 test/language/expressions/call/spread-err-mult-err-itr-get-get.js Fail
 test/language/expressions/call/spread-err-mult-err-itr-step.js Pass
-test/language/expressions/call/spread-err-mult-err-itr-value.js Timeout
+test/language/expressions/call/spread-err-mult-err-itr-value.js Pass
 test/language/expressions/call/spread-err-mult-err-obj-unresolvable.js Fail
 test/language/expressions/call/spread-err-mult-err-unresolvable.js Fail
 test/language/expressions/call/spread-err-sngl-err-expr-throws.js Pass
@@ -11267,7 +11267,7 @@ test/language/expressions/call/spread-err-sngl-err-itr-get-call.js Pass
 test/language/expressions/call/spread-err-sngl-err-itr-get-get.js Fail
 test/language/expressions/call/spread-err-sngl-err-itr-get-value.js Fail
 test/language/expressions/call/spread-err-sngl-err-itr-step.js Pass
-test/language/expressions/call/spread-err-sngl-err-itr-value.js Timeout
+test/language/expressions/call/spread-err-sngl-err-itr-value.js Pass
 test/language/expressions/call/spread-err-sngl-err-obj-unresolvable.js Fail
 test/language/expressions/call/spread-err-sngl-err-unresolvable.js Fail
 test/language/expressions/call/spread-mult-empty.js Pass

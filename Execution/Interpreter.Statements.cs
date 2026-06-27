@@ -946,90 +946,182 @@ public partial class Interpreter
             yield break;
         }
 
-        // Iterate using the iterator protocol
-        while (true)
+        // Iterate using the iterator protocol. The surrounding try/finally
+        // implements ECMA-262 7.4.6 IteratorClose: when iteration is abandoned
+        // before the iterator reports done — a for-of break/throw, or a spread/
+        // Array.from element callback throwing (the C# enumerator is disposed on
+        // any early foreach/.ToList() exit) — invoke the iterator's return() so
+        // it can clean up. `iteratorDone` suppresses the close on normal
+        // exhaustion (a completed iterator must not be re-closed). yield is
+        // legal here because the try has only a finally, no catch.
+        bool iteratorDone = false;
+        try
         {
-            // Get the next() method
-            object? nextMethod = null;
-            if (iterator is SharpTSObject iterObj)
+            while (true)
             {
-                nextMethod = iterObj.GetProperty("next");
-            }
-            else if (iterator is SharpTSInstance iterInst)
-            {
-                nextMethod = iterInst.GetRawField("next");
+                // Honor the VM timeout token. A custom iterator whose next() never
+                // reports done — or whose done/value getters loop — would otherwise
+                // spin this thread forever, past the timeout. Under the Test262
+                // harness the timed-out test's worker thread is a background thread
+                // that keeps running after the runner returns Timeout, leaking a
+                // CPU-pegged orphan thread for the rest of the process's life. The
+                // accumulating orphans starve later tests and turn the interpreted
+                // baseline non-deterministic under load. Checking here unwinds the
+                // enumerator (it is consumed via .ToList()/foreach by spread,
+                // Array.from, yield*, etc.) so the thread actually exits.
+                if (_vmTimeoutToken.IsCancellationRequested)
+                    throw new ThrowException(new SharpTSError("Script execution timed out."));
+
+                // Get the next() method
+                object? nextMethod = null;
+                if (iterator is SharpTSObject iterObj)
+                {
+                    nextMethod = iterObj.GetProperty("next");
+                }
+                else if (iterator is SharpTSInstance iterInst)
+                {
+                    nextMethod = iterInst.GetRawField("next");
+                    if (nextMethod == null)
+                    {
+                        // Try getting a method from the class
+                        var tok = new Token(TokenType.IDENTIFIER, "next", null, 0);
+                        try { nextMethod = iterInst.Get(tok); } catch { }
+                    }
+                }
+
                 if (nextMethod == null)
                 {
-                    // Try getting a method from the class
-                    var tok = new Token(TokenType.IDENTIFIER, "next", null, 0);
-                    try { nextMethod = iterInst.Get(tok); } catch { }
+                    throw new InterpreterException("Iterator must have a next() method.");
                 }
-            }
 
-            if (nextMethod == null)
-            {
-                throw new InterpreterException("Iterator must have a next() method.");
-            }
-
-            // Bind next() to the iterator object so 'this' works correctly
-            if (nextMethod is SharpTSArrowFunction arrowFn)
-            {
-                nextMethod = arrowFn.Bind(iterator!);
-            }
-            else if (nextMethod is SharpTSFunction fn && iterator is SharpTSInstance inst)
-            {
-                nextMethod = fn.Bind(inst);
-            }
-
-            // Call next()
-            object? result;
-            if (nextMethod is ISharpTSCallable nextCallable)
-            {
-                result = nextCallable.Call(this, []);
-            }
-            else if (nextMethod is SharpTSFunction nextFn)
-            {
-                result = nextFn.Call(this, []);
-            }
-            else
-            {
-                throw new InterpreterException("Iterator.next must be a function.");
-            }
-
-            // Get done and value from result
-            bool done = false;
-            object? value = null;
-
-            if (result is SharpTSObject resultObj)
-            {
-                var doneVal = resultObj.GetProperty("done");
-                done = IsTruthy(doneVal);
-                value = resultObj.GetProperty("value");
-            }
-            else if (result is SharpTSInstance resultInst)
-            {
-                var doneTok = new Token(TokenType.IDENTIFIER, "done", null, 0);
-                var valueTok = new Token(TokenType.IDENTIFIER, "value", null, 0);
-                try
+                // Bind next() to the iterator object so 'this' works correctly
+                if (nextMethod is SharpTSArrowFunction arrowFn)
                 {
-                    done = IsTruthy(resultInst.Get(doneTok));
-                    value = resultInst.Get(valueTok);
+                    nextMethod = arrowFn.Bind(iterator!);
                 }
-                catch
+                else if (nextMethod is SharpTSFunction fn && iterator is SharpTSInstance inst)
                 {
-                    // Fall back to field access
-                    done = IsTruthy(resultInst.GetRawField("done"));
-                    value = resultInst.GetRawField("value");
+                    nextMethod = fn.Bind(inst);
                 }
-            }
 
-            if (done)
-            {
-                yield break;
-            }
+                // Call next()
+                object? result;
+                if (nextMethod is ISharpTSCallable nextCallable)
+                {
+                    result = nextCallable.Call(this, []);
+                }
+                else if (nextMethod is SharpTSFunction nextFn)
+                {
+                    result = nextFn.Call(this, []);
+                }
+                else
+                {
+                    throw new InterpreterException("Iterator.next must be a function.");
+                }
 
-            yield return value;
+                // Get done and value from result
+                bool done = false;
+                object? value = null;
+
+                if (result is SharpTSObject resultObj)
+                {
+                    // ECMA-262 7.4.5 IteratorComplete / 7.4.4 IteratorValue read
+                    // `done` then `value` via Get(), which invokes accessor getters
+                    // and walks the prototype chain. `resultObj.GetProperty` reads
+                    // only own data fields, so a result with a `get done()`/
+                    // `get value()` accessor (e.g. Test262's poisoned-iterator
+                    // tests: `Object.defineProperty(r, 'value', { get() { throw } })`)
+                    // never fired the getter — `done` stayed undefined/falsy and the
+                    // loop spun forever instead of surfacing the throw. Read `value`
+                    // only when not done, matching IteratorStep (don't invoke the
+                    // value getter once the iterator has completed).
+                    done = IsTruthy(EvaluateGetOnRecord(resultObj, "done"));
+                    value = done ? null : EvaluateGetOnRecord(resultObj, "value");
+                }
+                else if (result is SharpTSInstance resultInst)
+                {
+                    var doneTok = new Token(TokenType.IDENTIFIER, "done", null, 0);
+                    var valueTok = new Token(TokenType.IDENTIFIER, "value", null, 0);
+                    try
+                    {
+                        done = IsTruthy(resultInst.Get(doneTok));
+                        value = resultInst.Get(valueTok);
+                    }
+                    catch
+                    {
+                        // Fall back to field access
+                        done = IsTruthy(resultInst.GetRawField("done"));
+                        value = resultInst.GetRawField("value");
+                    }
+                }
+
+                if (done)
+                {
+                    iteratorDone = true;
+                    yield break;
+                }
+
+                yield return value;
+            }
         }
+        finally
+        {
+            // IteratorClose: only when the consumer abandoned us early (see above).
+            if (!iteratorDone)
+                TryCallIteratorReturn(iterator);
+        }
+    }
+
+    /// <summary>
+    /// ECMA-262 7.4.6 IteratorClose: invoke an iterator's <c>return()</c> method
+    /// when iteration is abandoned before the iterator reports done (a for-of
+    /// break/throw, or a spread / <c>Array.from(items, mapFn)</c> element callback
+    /// throwing). Best-effort: a missing/undefined <c>return</c> is a no-op, and any
+    /// abrupt completion from <c>return()</c> itself is swallowed — this runs inside
+    /// a <c>finally</c> during exception unwind, so letting <c>return()</c> throw
+    /// would mask the original completion (which is what the spec discards when the
+    /// triggering completion is itself a throw).
+    /// </summary>
+    private void TryCallIteratorReturn(object? iterator)
+    {
+        object? returnMethod = iterator switch
+        {
+            // Get(iterator, "return") — getter-aware, walks the prototype chain.
+            SharpTSObject iterObj => EvaluateGetOnRecord(iterObj, "return"),
+            SharpTSInstance iterInst => TryGetInstanceMember(iterInst, "return"),
+            _ => null,
+        };
+        if (returnMethod is null or SharpTSUndefined) return;
+
+        try
+        {
+            if (returnMethod is SharpTSArrowFunction arrowFn)
+                returnMethod = arrowFn.Bind(iterator!);
+            else if (returnMethod is SharpTSFunction fn && iterator is SharpTSInstance inst)
+                returnMethod = fn.Bind(inst);
+
+            // SharpTSFunction also implements ISharpTSCallable, so this covers both.
+            if (returnMethod is ISharpTSCallable callable)
+                callable.Call(this, []);
+        }
+        catch
+        {
+            // Swallow — see remarks. IteratorClose must not let return()'s failure
+            // replace the completion that triggered it.
+        }
+    }
+
+    /// <summary>
+    /// Reads a member from a class instance the way the iterator protocol does:
+    /// raw field first, then a declared method via the class chain (Get throws
+    /// when absent, so it is guarded). Returns null when the member is absent.
+    /// </summary>
+    private object? TryGetInstanceMember(SharpTSInstance instance, string name)
+    {
+        var field = instance.GetRawField(name);
+        if (field != null) return field;
+        var tok = new Token(TokenType.IDENTIFIER, name, null, 0);
+        try { return instance.Get(tok); } catch { return null; }
     }
 
     /// <summary>
