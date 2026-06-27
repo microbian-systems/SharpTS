@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using SharpTS.Execution;
 using SharpTS.Tests.Infrastructure;
 using Xunit;
@@ -222,5 +223,73 @@ public class RealmIsolationTests
         // A pristine realm has no user properties from A or B.
         using var realmC = new Interpreter(TextWriter.Null, TextWriter.Null);
         Assert.False(realmC.GlobalThis.HasUserProperty("foo"));
+    }
+
+    /// <summary>
+    /// The payoff of per-realm-izing the built-in state: N interpreters running
+    /// on N OS threads can mutate every former process-global vector
+    /// (Symbol.for, Math, globalThis, the primitive prototypes) concurrently
+    /// with no cross-realm clobbering and no data race. Each realm writes a
+    /// realm-unique value and immediately reads it back while the others write
+    /// the same logical keys. Under the old shared singletons this both
+    /// clobbered values across realms and raced the backing dictionaries
+    /// (InvalidOperationException / torn state) — so this is the regression
+    /// guard against reverting any phase back to process-global state.
+    /// </summary>
+    [Fact]
+    public void PerRealmState_IsIsolated_UnderConcurrentThreads()
+    {
+        const int realmCount = 8;
+        const int iterations = 500;
+        var errors = new ConcurrentQueue<string>();
+
+        void RunRealm(int id)
+        {
+            static void Check(string what, object? actual, double expected)
+            {
+                if (actual is not double d || d != expected)
+                    throw new Exception(
+                        $"{what} clobbered across realms (got {actual ?? "null"}, expected {expected})");
+            }
+
+            try
+            {
+                using var interp = new Interpreter(TextWriter.Null, TextWriter.Null);
+                double expected = id;
+                var sym = interp.SymbolFor("shared-key");
+
+                for (int i = 0; i < iterations; i++)
+                {
+                    interp.GetMath().SetExtra("realm", expected);
+                    interp.GlobalThis.SetProperty("realm", expected);
+                    interp.GetStringPrototype().SetExtra("realm", expected);
+                    interp.GetNumberPrototype().SetExtra("realm", expected);
+                    interp.GetBooleanPrototype().SetExtra("realm", expected);
+
+                    // Each read-back must see THIS realm's own value, never a
+                    // concurrent realm's; Symbol.for stays idempotent here too.
+                    if (!ReferenceEquals(interp.SymbolFor("shared-key"), sym))
+                        throw new Exception("Symbol.for not idempotent within realm");
+                    Check("Math", interp.GetMath().TryGetExtra("realm"), expected);
+                    Check("globalThis", interp.GlobalThis.GetProperty("realm"), expected);
+                    Check("String.prototype", interp.GetStringPrototype().TryGetExtra("realm"), expected);
+                    Check("Number.prototype", interp.GetNumberPrototype().TryGetExtra("realm"), expected);
+                    Check("Boolean.prototype", interp.GetBooleanPrototype().TryGetExtra("realm"), expected);
+                }
+            }
+            catch (Exception ex)
+            {
+                errors.Enqueue($"realm {id}: {ex.Message}");
+            }
+        }
+
+        var threads = Enumerable.Range(0, realmCount)
+            .Select(id => new Thread(() => RunRealm(id)) { IsBackground = true })
+            .ToList();
+        foreach (var t in threads) t.Start();
+        foreach (var t in threads)
+            Assert.True(t.Join(TimeSpan.FromSeconds(30)), "a realm thread timed out");
+
+        Assert.True(errors.IsEmpty, string.Join("; ", errors));
     }
 }
