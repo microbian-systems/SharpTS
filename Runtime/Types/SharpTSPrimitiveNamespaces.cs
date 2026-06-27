@@ -79,6 +79,10 @@ public sealed class SharpTSStringPrototype
         _extras ??= new Dictionary<string, object?>();
         _extras[name] = value;
     }
+    // Drops user-assigned properties so a fresh realm starts with the pristine
+    // prototype. Needed because Instance is a process-wide singleton — see
+    // SharpTS.Runtime.RealmState.
+    public void ClearExtras() => _extras = null;
 
     public object? GetMember(string name)
     {
@@ -243,6 +247,10 @@ public sealed class SharpTSNumberPrototype
         _extras ??= new Dictionary<string, object?>();
         _extras[name] = value;
     }
+    // Drops user-assigned properties so a fresh realm starts with the pristine
+    // prototype. Needed because Instance is a process-wide singleton — see
+    // SharpTS.Runtime.RealmState.
+    public void ClearExtras() => _extras = null;
 
     public object? GetMember(string name)
     {
@@ -364,6 +372,10 @@ public sealed class SharpTSBooleanPrototype
         _extras ??= new Dictionary<string, object?>();
         _extras[name] = value;
     }
+    // Drops user-assigned properties so a fresh realm starts with the pristine
+    // prototype. Needed because Instance is a process-wide singleton — see
+    // SharpTS.Runtime.RealmState.
+    public void ClearExtras() => _extras = null;
 
     public object? GetMember(string name)
     {

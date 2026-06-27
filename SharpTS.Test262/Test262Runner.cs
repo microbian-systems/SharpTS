@@ -280,6 +280,14 @@ public sealed class Test262Runner
             return new Test262Result(Test262Outcome.HarnessError, ex.Message, null);
         }
 
+        // Each Test262 file is its own realm. Some built-ins are process-wide
+        // singletons carrying guest-writable state (primitive prototypes' extras,
+        // Math, the Symbol.for registry), so an earlier test's mutation would
+        // otherwise leak into this one and flip order-dependent tests run-to-run
+        // (issue #964 follow-up). The worker executes tests serially, so resetting
+        // here gives every script a pristine realm. See SharpTS.Runtime.RealmState.
+        SharpTS.Runtime.RealmState.ResetMutableBuiltInState();
+
         return mode switch
         {
             Test262ExecutionMode.Interpreted => RunInterpreted(assembled, harnessLength, metadata.IsAsync),

@@ -68,6 +68,25 @@ public class SharpTSSymbol : ITypeCategorized
     }
 
     /// <summary>
+    /// Clears the process-global <c>Symbol.for</c> registry. The registry is
+    /// realm-spanning (a static the <c>Interpreter</c> doesn't own), so
+    /// <c>Symbol.for(k)</c> would otherwise return the same symbol — and
+    /// <c>Symbol.keyFor</c> leak registrations — across every realm in the
+    /// process. Callers running multiple realms serially in one process (the
+    /// Test262 runner) reset between realms via <see
+    /// cref="SharpTS.Runtime.RealmState"/>. Well-known symbols are not in this
+    /// registry, so they are unaffected.
+    /// </summary>
+    public static void ClearGlobalRegistry()
+    {
+        lock (_registryLock)
+        {
+            _globalRegistry.Clear();
+            _reverseRegistry.Clear();
+        }
+    }
+
+    /// <summary>
     /// Gets whether this symbol is registered in the global symbol registry.
     /// </summary>
     public bool IsInGlobalRegistry
