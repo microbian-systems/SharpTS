@@ -1303,4 +1303,78 @@ public class FsModuleTests
     }
 
     #endregion
+
+    #region Encoding / binary I/O correctness (#978)
+
+    // Identical asserts across ExecutionModes.All enforce interp==compiled parity.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_WriteReadBuffer_BinaryRoundTrip(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                import { Buffer } from 'buffer';
+                const f = os.tmpdir() + '/bin_{{uid}}.bin';
+                const bin = Buffer.from([0, 255, 128, 10, 0, 200]);
+                fs.writeFileSync(f, bin);
+                const r = fs.readFileSync(f);
+                console.log(r.length === 6 && r[0] === 0 && r[1] === 255 && r[2] === 128 && r[5] === 200);
+                fs.unlinkSync(f);
+                """
+        };
+        Assert.Equal("true\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_Encoding_HexAndBase64(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const f = os.tmpdir() + '/enc_{{uid}}.txt';
+                fs.writeFileSync(f, '48656c6c6f', 'hex');       // "Hello"
+                console.log(fs.readFileSync(f, 'utf8'));
+                console.log(fs.readFileSync(f, 'hex'));
+                fs.writeFileSync(f, 'SGk=', 'base64');           // "Hi"
+                console.log(fs.readFileSync(f, 'utf8'));
+                console.log(fs.readFileSync(f, 'base64url'));
+                fs.unlinkSync(f);
+                """
+        };
+        Assert.Equal("Hello\n48656c6c6f\nHi\nSGk\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_Encoding_Latin1AndUtf16le(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                import { Buffer } from 'buffer';
+                const f = os.tmpdir() + '/enc2_{{uid}}.txt';
+                fs.writeFileSync(f, Buffer.from([0xe9]));        // é (latin1)
+                console.log(fs.readFileSync(f, 'latin1'));
+                fs.writeFileSync(f, 'AB', 'utf16le');
+                console.log(fs.readFileSync(f, 'hex'));          // 41004200
+                console.log(fs.readFileSync(f, 'utf16le'));      // AB
+                fs.unlinkSync(f);
+                """
+        };
+        Assert.Equal("é\n41004200\nAB\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
 }

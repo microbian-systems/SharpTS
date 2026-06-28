@@ -30,12 +30,14 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Call, runtime.FsReadFileSync);
             });
 
-        // writeFileSync(path, data) -> undefined
+        // writeFileSync(path, data) -> undefined (value-import fallback; encoding via
+        // the direct-dispatch path, so this fixed-arity wrapper passes null).
         EmitFsMethodWrapperSimple(typeBuilder, runtime, "writeFileSync", 2,
             il =>
             {
                 il.Emit(OpCodes.Ldarg_0);
                 il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldnull);
                 il.Emit(OpCodes.Call, runtime.FsWriteFileSync);
                 il.Emit(OpCodes.Ldnull);
             });
@@ -46,6 +48,7 @@ public partial class RuntimeEmitter
             {
                 il.Emit(OpCodes.Ldarg_0);
                 il.Emit(OpCodes.Ldarg_1);
+                il.Emit(OpCodes.Ldnull);
                 il.Emit(OpCodes.Call, runtime.FsAppendFileSync);
                 il.Emit(OpCodes.Ldnull);
             });
