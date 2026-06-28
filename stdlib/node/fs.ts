@@ -25,8 +25,8 @@ import {
     rmdirSync as __rmdirSync,
     readdirSync as __readdirSync,
     // Metadata
-    statSync as __statSync,
-    lstatSync as __lstatSync,
+    statRaw as __statRaw,
+    lstatRaw as __lstatRaw,
     // Move / copy
     renameSync as __renameSync,
     copyFileSync as __copyFileSync,
@@ -46,11 +46,10 @@ import {
     closeSync as __closeSync,
     readSync as __readSync,
     writeSync as __writeSync,
-    fstatSync as __fstatSync,
+    fstatRaw as __fstatRaw,
     ftruncateSync as __ftruncateSync,
     // Directory utilities / hard links
     mkdtempSync as __mkdtempSync,
-    opendirSync as __opendirSync,
     linkSync as __linkSync,
     // Stream factories
     createReadStream as __createReadStream,
@@ -59,8 +58,6 @@ import {
     watch as __watch,
     watchFile as __watchFile,
     unwatchFile as __unwatchFile,
-    // Constants
-    constants as __constants,
 } from 'primitive:fs';
 
 import {
@@ -72,7 +69,6 @@ import {
     unlink as __pUnlink,
     mkdir as __pMkdir,
     rmdir as __pRmdir,
-    rm as __pRm,
     readdir as __pReaddir,
     rename as __pRename,
     copyFile as __pCopyFile,
@@ -125,18 +121,150 @@ export function readFileSync(path: string, options?: any): string | Buffer {
 }
 
 /** Synchronously writes data to a file, replacing the file if it already exists. */
-export function writeFileSync(path: string, data: any, options?: any): void { __writeFileSync(path, data); }
+export function writeFileSync(path: string, data: any, options?: any): void {
+    if (options === undefined) { __writeFileSync(path, data); return; }
+    __writeFileSync(path, data, options);
+}
 
 /** Synchronously appends data to a file, creating the file if it does not yet exist. */
-export function appendFileSync(path: string, data: any, options?: any): void { __appendFileSync(path, data); }
+export function appendFileSync(path: string, data: any, options?: any): void {
+    if (options === undefined) { __appendFileSync(path, data); return; }
+    __appendFileSync(path, data, options);
+}
 
 /** Synchronously removes a file or symbolic link. */
 export function unlinkSync(path: string): void { __unlinkSync(path); }
 
+// --- rm / cp (Node 16.7+ recursive remove/copy). The recursion + option logic is
+// pure TS over the sync primitives; the async variants wrap the sync walk in a
+// Promise so sync and async behave identically. ---
+
+/** Joins a directory and a child name (forward slash; .NET accepts it on Windows). */
+function __joinPath(dir: string, name: string): string {
+    if (dir.length === 0) return name;
+    const last = dir[dir.length - 1];
+    return (last === '/' || last === '\\') ? dir + name : dir + '/' + name;
+}
+
+/** Runs a synchronous fs op inside a Promise so the callback/promise variants
+ * share the one implementation (resolves/rejects exactly as the sync op does). */
+function __promisifyVoid(fn: () => void): Promise<void> {
+    return new Promise<void>((resolve: any, reject: any) => {
+        try { fn(); resolve(undefined); } catch (e) { reject(e); }
+    });
+}
+
+/** Like __promisifyVoid but resolves with the sync op's return value. */
+function __promisifyValue(fn: () => any): Promise<any> {
+    return new Promise<any>((resolve: any, reject: any) => {
+        try { resolve(fn()); } catch (e) { reject(e); }
+    });
+}
+
+/** Synchronously removes files and directories. `{ recursive }` removes a whole
+ * tree; `{ force }` makes a nonexistent path a no-op instead of throwing ENOENT. */
+export function rmSync(path: string, options?: any): void {
+    const recursive = !!(options && options.recursive);
+    const force = !!(options && options.force);
+    // `force` makes a missing path a no-op; otherwise Node throws ENOENT. Checking
+    // existence up front keeps this allocation-free of try/catch.
+    if (!existsSync(path)) {
+        if (force) return;
+        throw __fsError('ENOENT', 'no such file or directory', 'rm', path);
+    }
+    if (lstatSync(path).isDirectory()) {
+        if (!recursive) throw __fsError('ERR_FS_EISDIR', 'Path is a directory', 'rm', path);
+        rmdirSync(path, { recursive: true });
+    } else {
+        unlinkSync(path);
+    }
+}
+
+/** Synchronously copies `src` to `dest`, recursively when `{ recursive: true }`.
+ * Honors `force` (default true), `errorOnExist`, `dereference`, `preserveTimestamps`,
+ * and a synchronous `filter(src, dest)` predicate. */
+export function cpSync(src: string, dest: string, options?: any): void {
+    const opts = options || {};
+    if (opts.filter && !opts.filter(src, dest)) return;
+    const st: any = opts.dereference ? statSync(src) : lstatSync(src);
+    if (st.isDirectory()) {
+        if (!opts.recursive) {
+            throw __fsError('ERR_FS_EISDIR', 'Recursive option not enabled, cannot copy a directory', 'cp', src);
+        }
+        mkdirSync(dest, { recursive: true });
+        const names: any = readdirSync(src);
+        for (let i = 0; i < names.length; i++) {
+            cpSync(__joinPath(src, names[i]), __joinPath(dest, names[i]), options);
+        }
+    } else {
+        const force = opts.force !== false; // Node default is to overwrite.
+        if (existsSync(dest)) {
+            if (opts.errorOnExist) throw __fsError('ERR_FS_CP_EEXIST', 'File already exists', 'cp', dest);
+            if (!force) return;
+        }
+        const parent = __parentDir(dest);
+        if (parent && parent !== dest && !existsSync(parent)) mkdirSync(parent, { recursive: true });
+        copyFileSync(src, dest);
+        if (opts.preserveTimestamps) utimesSync(dest, st.atimeMs / 1000, st.mtimeMs / 1000);
+    }
+}
+
 /** Synchronously creates a directory. */
+// --- mkdir helpers (Node semantics live here in TS; the primitive only does the
+// raw, always-recursive directory create, so the facade handles recursive vs not,
+// EEXIST/ENOENT, and the recursive return value). ---
+
+/** Minimal parent-directory of a path, separator-agnostic (handles / and \\). */
+function __parentDir(p: string): string {
+    let end = p.length;
+    while (end > 1 && (p[end - 1] === '/' || p[end - 1] === '\\')) end--;
+    let i = end - 1;
+    while (i >= 0 && p[i] !== '/' && p[i] !== '\\') i--;
+    if (i < 0) return '';
+    if (i === 0) return p[0];
+    return p.slice(0, i);
+}
+
+const __errnoFor: any = { ENOENT: -2, EEXIST: -17, EACCES: -13 };
+
+/** Builds a Node-shaped fs error (code/errno/syscall/path) thrown from the facade. */
+function __fsError(code: string, message: string, syscall: string, path: string): any {
+    const err: any = new Error(code + ': ' + message + ', ' + syscall + " '" + path + "'");
+    err.code = code;
+    err.errno = __errnoFor[code] !== undefined ? __errnoFor[code] : -1;
+    err.syscall = syscall;
+    err.path = path;
+    return err;
+}
+
+/** Synchronously creates a directory. Honors `{ recursive }`: non-recursive throws
+ * EEXIST/ENOENT like Node; recursive returns the first directory created (or undefined). */
 export function mkdirSync(path: string, options?: any): any {
-    if (options === undefined) return __mkdirSync(path);
-    return __mkdirSync(path, options);
+    const recursive = typeof options === 'object' && options !== null && !!options.recursive;
+    if (recursive) {
+        let firstCreated: any = undefined;
+        if (!__existsSync(path)) {
+            let dir = path;
+            while (!__existsSync(dir)) {
+                firstCreated = dir;
+                const parent = __parentDir(dir);
+                if (!parent || parent === dir) break;
+                dir = parent;
+            }
+        }
+        __mkdirSync(path, options);
+        return firstCreated;
+    }
+    // Non-recursive: Node throws ENOENT if a parent is missing, EEXIST if it exists.
+    const parent = __parentDir(path);
+    if (parent && parent !== path && !__existsSync(parent)) {
+        throw __fsError('ENOENT', 'no such file or directory', 'mkdir', path);
+    }
+    if (__existsSync(path)) {
+        throw __fsError('EEXIST', 'file already exists', 'mkdir', path);
+    }
+    __mkdirSync(path);
+    return undefined;
 }
 
 /** Synchronously removes a directory. */
@@ -146,16 +274,122 @@ export function rmdirSync(path: string, options?: any): void {
 }
 
 /** Synchronously reads the contents of a directory. */
-export function readdirSync(path: string, options?: any): string[] {
+export function readdirSync(path: string, options?: any): any {
+    if (__wantsFileTypes(options)) {
+        const names = __readdirRecursive(options) ? __readdirSync(path, { recursive: true }) : __readdirSync(path);
+        return __makeDirents(path, names);
+    }
     if (options === undefined) return __readdirSync(path);
     return __readdirSync(path, options);
 }
 
+// ===========================================================================
+// Stats (#977) — one canonical class built from primitive:fs's flat stat record,
+// so statSync / await stat / fstat all return the SAME shape and values. The
+// seven is*() predicates derive from the mode bits. `{ bigint: true }` stores the
+// numeric fields as BigInt and adds *Ns. Methods live on the prototype, so
+// Object.keys(stat) returns only the data fields (Node-faithful).
+// ===========================================================================
+const __S_IFMT = 0xf000, __S_IFREG = 0x8000, __S_IFDIR = 0x4000, __S_IFLNK = 0xa000,
+    __S_IFBLK = 0x6000, __S_IFCHR = 0x2000, __S_IFIFO = 0x1000, __S_IFSOCK = 0xc000;
+
+class Stats {
+    dev: any; ino: any; mode: any; nlink: any; uid: any; gid: any; rdev: any;
+    size: any; blksize: any; blocks: any;
+    atimeMs: any; mtimeMs: any; ctimeMs: any; birthtimeMs: any;
+    atime: any; mtime: any; ctime: any; birthtime: any;
+    constructor(r: any, big: boolean) {
+        const n = (x: number): any => big ? BigInt(Math.trunc(x)) : x;
+        this.dev = n(r.dev); this.ino = n(r.ino); this.mode = n(r.mode);
+        this.nlink = n(r.nlink); this.uid = n(r.uid); this.gid = n(r.gid); this.rdev = n(r.rdev);
+        this.size = n(r.size); this.blksize = n(r.blksize); this.blocks = n(r.blocks);
+        this.atimeMs = n(r.atimeMs); this.mtimeMs = n(r.mtimeMs);
+        this.ctimeMs = n(r.ctimeMs); this.birthtimeMs = n(r.birthtimeMs);
+        this.atime = new Date(r.atimeMs); this.mtime = new Date(r.mtimeMs);
+        this.ctime = new Date(r.ctimeMs); this.birthtime = new Date(r.birthtimeMs);
+        if (big) {
+            (this as any).atimeNs = BigInt(Math.trunc(r.atimeMs)) * 1000000n;
+            (this as any).mtimeNs = BigInt(Math.trunc(r.mtimeMs)) * 1000000n;
+            (this as any).ctimeNs = BigInt(Math.trunc(r.ctimeMs)) * 1000000n;
+            (this as any).birthtimeNs = BigInt(Math.trunc(r.birthtimeMs)) * 1000000n;
+        }
+    }
+    isFile(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFREG; }
+    isDirectory(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFDIR; }
+    isSymbolicLink(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFLNK; }
+    isBlockDevice(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFBLK; }
+    isCharacterDevice(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFCHR; }
+    isFIFO(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFIFO; }
+    isSocket(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFSOCK; }
+}
+
+/** Whether a stat options arg requests BigInt fields (`{ bigint: true }`). */
+function __statBig(options: any): boolean {
+    return typeof options === 'object' && options !== null && !!options.bigint;
+}
+
+/** Builds the canonical Stats object from a raw record. */
+function __makeStats(raw: any, big: boolean): Stats { return new Stats(raw, big); }
+
+// ===========================================================================
+// Dirent (#977) — one canonical class for readdir({ withFileTypes: true }) in
+// both modes. Built in TS from the entry's lstat mode, so the seven is*() are
+// methods (Node-shaped) and parentPath/path (Node 20+) are present everywhere.
+// ===========================================================================
+class Dirent {
+    name: string;
+    parentPath: string;
+    path: string;
+    mode: number;
+    constructor(name: string, parentPath: string, mode: number) {
+        this.name = name; this.parentPath = parentPath; this.path = parentPath; this.mode = mode;
+    }
+    isFile(): boolean { return (this.mode & __S_IFMT) === __S_IFREG; }
+    isDirectory(): boolean { return (this.mode & __S_IFMT) === __S_IFDIR; }
+    isSymbolicLink(): boolean { return (this.mode & __S_IFMT) === __S_IFLNK; }
+    isBlockDevice(): boolean { return (this.mode & __S_IFMT) === __S_IFBLK; }
+    isCharacterDevice(): boolean { return (this.mode & __S_IFMT) === __S_IFCHR; }
+    isFIFO(): boolean { return (this.mode & __S_IFMT) === __S_IFIFO; }
+    isSocket(): boolean { return (this.mode & __S_IFMT) === __S_IFSOCK; }
+}
+
+/** Last path segment (the entry's own name), separator-agnostic. */
+function __baseName(p: string): string {
+    let end = p.length;
+    while (end > 1 && (p[end - 1] === '/' || p[end - 1] === '\\')) end--;
+    let i = end - 1;
+    while (i >= 0 && p[i] !== '/' && p[i] !== '\\') i--;
+    return p.slice(i + 1, end);
+}
+
+/** Builds a Dirent for an entry `rel` (a name, or relative path under recursive). */
+function __makeDirent(base: string, rel: string): Dirent {
+    const full = base + '/' + rel;
+    let mode = 0;
+    try { mode = __lstatRaw(full).mode; } catch (e) { mode = 0; }
+    return new Dirent(__baseName(full), __parentDir(full), mode);
+}
+
+/** Whether a readdir options arg requested `{ withFileTypes: true }`. */
+function __wantsFileTypes(options: any): boolean {
+    return typeof options === 'object' && options !== null && !!options.withFileTypes;
+}
+
+/** Whether a readdir options arg requested `{ recursive: true }`. */
+function __readdirRecursive(options: any): boolean {
+    return typeof options === 'object' && options !== null && !!options.recursive;
+}
+
+/** Maps a raw name/relative-path listing to Dirent objects. */
+function __makeDirents(base: string, names: any): Dirent[] {
+    return names.map((rel: string) => __makeDirent(base, rel));
+}
+
 /** Synchronously retrieves the Stats for the path. */
-export function statSync(path: string): any { return __statSync(path); }
+export function statSync(path: string, options?: any): any { return __makeStats(__statRaw(path), __statBig(options)); }
 
 /** Synchronously retrieves the Stats for the path without following symbolic links. */
-export function lstatSync(path: string): any { return __lstatSync(path); }
+export function lstatSync(path: string, options?: any): any { return __makeStats(__lstatRaw(path), __statBig(options)); }
 
 /** Synchronously renames (moves) a file or directory. */
 export function renameSync(oldPath: string, newPath: string): void { __renameSync(oldPath, newPath); }
@@ -222,7 +456,7 @@ export function writeSync(fd: number, buffer: any, offset?: number, length?: num
 }
 
 /** Synchronously retrieves the Stats for an open file descriptor. */
-export function fstatSync(fd: number): any { return __fstatSync(fd); }
+export function fstatSync(fd: number, options?: any): any { return __makeStats(__fstatRaw(fd), __statBig(options)); }
 
 /** Synchronously truncates an open file descriptor to the given length. */
 export function ftruncateSync(fd: number, len?: number): void {
@@ -234,7 +468,84 @@ export function ftruncateSync(fd: number, len?: number): void {
 export function mkdtempSync(prefix: string): string { return __mkdtempSync(prefix); }
 
 /** Synchronously opens a directory and returns a Dir handle. */
-export function opendirSync(path: string): any { return __opendirSync(path); }
+// A Dir handle: sync + async iterable over a snapshot of the directory's Dirents.
+// Node reads lazily; reading the whole listing up front is simple and correct for
+// typical sizes. read()/readSync()/iteration share one cursor (as in Node).
+function __makeDir(path: string, entries: any[]): any {
+    let i = 0;
+    return {
+        path,
+        readSync(): any { return i < entries.length ? entries[i++] : null; },
+        read(): Promise<any> { return Promise.resolve(i < entries.length ? entries[i++] : null); },
+        closeSync(): void { i = entries.length; },
+        close(): Promise<void> { i = entries.length; return Promise.resolve(); },
+        [Symbol.asyncIterator](): any {
+            return {
+                next(): any {
+                    const e = i < entries.length ? entries[i++] : null;
+                    return Promise.resolve(e !== null ? { value: e, done: false } : { value: undefined, done: true });
+                }
+            };
+        }
+    };
+}
+
+/** Synchronously opens a directory and returns a Dir handle (sync + async iterable). */
+export function opendirSync(path: string, options?: any): any {
+    return __makeDir(path, readdirSync(path, { withFileTypes: true } as any));
+}
+
+// --- promises.watch: bridge the FSWatcher's 'change' event stream into a
+// pull-based async iterator. Events arriving between pulls are queued; a pull
+// with no pending event parks a resolver until the next event. An AbortSignal
+// (or iterator return()) closes the watcher and ends iteration cleanly so the
+// event loop can drain. ---
+function __watchAsync(filename: string, options?: any): any {
+    const opts = options || {};
+    const signal = opts.signal;
+    const watcher: any = __watch(filename, opts);
+    const queue: any[] = [];
+    const resolvers: any[] = [];
+    let done = false;
+
+    const finish = () => {
+        if (done) return;
+        done = true;
+        try { watcher.close(); } catch (e) { }
+        while (resolvers.length) { resolvers.shift()({ value: undefined, done: true }); }
+    };
+
+    watcher.on('change', (eventType: any, fname: any) => {
+        if (done) return;
+        const ev = { eventType, filename: fname };
+        if (resolvers.length) { resolvers.shift()({ value: ev, done: false }); }
+        else { queue.push(ev); }
+    });
+    watcher.on('error', () => { finish(); });
+
+    if (signal) {
+        if (signal.aborted) {
+            finish();
+        } else {
+            // Immediate termination when the AbortSignal fires while the iterator is
+            // parked. In compiled mode AbortSignal's listener API is not callable from
+            // stdlib code (the call throws), so this is ignored there — abort is then
+            // observed by the `signal.aborted` check in next() on the following pull.
+            try { signal.addEventListener('abort', finish); } catch (e) { }
+        }
+    }
+
+    return {
+        [Symbol.asyncIterator]() { return this; },
+        next(): any {
+            if (signal && signal.aborted) finish();
+            if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
+            if (done) return Promise.resolve({ value: undefined, done: true });
+            return new Promise((resolve: any) => { resolvers.push(resolve); });
+        },
+        return(): any { finish(); return Promise.resolve({ value: undefined, done: true }); }
+    };
+}
 
 /** Synchronously creates a hard link. */
 export function linkSync(existingPath: string, newPath: string): void { __linkSync(existingPath, newPath); }
@@ -254,8 +565,33 @@ export function watchFile(filename: string, options: any, listener?: any): any {
 /** Stops watching a file previously registered with watchFile. */
 export function unwatchFile(filename: string, listener?: any): void { __unwatchFile(filename, listener); }
 
-/** File-system constants (access modes, open flags, copy flags, file-type bits). */
-export const constants: any = __constants;
+/**
+ * File-system constants (access modes, open flags, copy flags, file-type bits,
+ * permission bits, libuv flags). Defined here so `fs.constants` and
+ * `fs.promises.constants` share one complete table across both execution modes.
+ * Values follow the POSIX/Linux set SharpTS's openSync flag parsing expects.
+ */
+export const constants: any = {
+    // Access modes (accessSync)
+    F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
+    // Open flags (openSync)
+    O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
+    O_CREAT: 64, O_EXCL: 128, O_NOCTTY: 256, O_TRUNC: 512,
+    O_APPEND: 1024, O_NONBLOCK: 2048, O_DSYNC: 4096,
+    O_DIRECTORY: 65536, O_NOFOLLOW: 131072, O_NOATIME: 262144,
+    O_SYNC: 1052672,
+    // Copy flags (copyFile)
+    COPYFILE_EXCL: 1, COPYFILE_FICLONE: 2, COPYFILE_FICLONE_FORCE: 4,
+    // File-type bits (stat mode)
+    S_IFMT: 61440, S_IFREG: 32768, S_IFDIR: 16384, S_IFCHR: 8192,
+    S_IFBLK: 24576, S_IFIFO: 4096, S_IFLNK: 40960, S_IFSOCK: 49152,
+    // Permission bits (stat mode)
+    S_IRWXU: 448, S_IRUSR: 256, S_IWUSR: 128, S_IXUSR: 64,
+    S_IRWXG: 56, S_IRGRP: 32, S_IWGRP: 16, S_IXGRP: 8,
+    S_IRWXO: 7, S_IROTH: 4, S_IWOTH: 2, S_IXOTH: 1,
+    // libuv flags
+    UV_FS_O_FILEMAP: 0, UV_FS_SYMLINK_DIR: 1, UV_FS_SYMLINK_JUNCTION: 2,
+};
 
 // ===========================================================================
 // Callback-based async APIs — derived from the promise primitives.
@@ -283,18 +619,32 @@ export function appendFile(path: string, data: any, options?: any, callback?: an
 /** Asynchronously retrieves the Stats for the path. */
 export function stat(path: string, options?: any, callback?: any): void {
     if (typeof options === 'function') { callback = options; options = undefined; }
-    __cbData(__pStat(path), callback);
+    const big = __statBig(options);
+    __pStat(path).then((r: any) => { callback(null, __makeStats(r, big)); }, (e: any) => { callback(e); });
 }
 
 /** Asynchronously retrieves the Stats for the path without following symbolic links. */
 export function lstat(path: string, options?: any, callback?: any): void {
     if (typeof options === 'function') { callback = options; options = undefined; }
-    __cbData(__pLstat(path), callback);
+    const big = __statBig(options);
+    __pLstat(path).then((r: any) => { callback(null, __makeStats(r, big)); }, (e: any) => { callback(e); });
 }
 
 /** Asynchronously removes a file or symbolic link. */
 export function unlink(path: string, callback: any): void {
     __cbVoid(__pUnlink(path), callback);
+}
+
+/** Asynchronously removes files and directories. */
+export function rm(path: string, options?: any, callback?: any): void {
+    if (typeof options === 'function') { callback = options; options = undefined; }
+    __cbVoid(__promisifyVoid(() => rmSync(path, options)), callback);
+}
+
+/** Asynchronously copies src to dest (recursively when `{ recursive: true }`). */
+export function cp(src: string, dest: string, options?: any, callback?: any): void {
+    if (typeof options === 'function') { callback = options; options = undefined; }
+    __cbVoid(__promisifyVoid(() => cpSync(src, dest, options)), callback);
 }
 
 /** Asynchronously creates a directory. */
@@ -312,6 +662,11 @@ export function rmdir(path: string, options?: any, callback?: any): void {
 /** Asynchronously reads the contents of a directory. */
 export function readdir(path: string, options?: any, callback?: any): void {
     if (typeof options === 'function') { callback = options; options = undefined; }
+    if (__wantsFileTypes(options)) {
+        const names = __readdirRecursive(options) ? __pReaddir(path, { recursive: true }) : __pReaddir(path);
+        names.then((n: any) => { callback(null, __makeDirents(path, n)); }, (e: any) => { callback(e); });
+        return;
+    }
     __cbData(__pReaddir(path, options), callback);
 }
 
@@ -377,6 +732,64 @@ export function mkdtemp(prefix: string, options?: any, callback?: any): void {
     __cbData(__pMkdtemp(prefix), callback);
 }
 
+// --- async chown/lchown + callback file-descriptor ops (#974). Thin TS wrappers
+// over the *Sync primitives; the Promise wrap defers the callback off the caller's
+// synchronous frame and carries err.code (e.g. EBADF) through to the callback. ---
+
+/** Asynchronously changes the owner and group of a file. */
+export function chown(path: string, uid: number, gid: number, callback: any): void {
+    __cbVoid(__promisifyVoid(() => chownSync(path, uid, gid)), callback);
+}
+
+/** Asynchronously changes the owner and group of a symbolic link. */
+export function lchown(path: string, uid: number, gid: number, callback: any): void {
+    __cbVoid(__promisifyVoid(() => lchownSync(path, uid, gid)), callback);
+}
+
+/** Asynchronously opens a file; callback receives (err, fd). */
+export function open(path: string, flags?: any, mode?: any, callback?: any): void {
+    if (typeof flags === 'function') { callback = flags; flags = 'r'; mode = undefined; }
+    else if (typeof mode === 'function') { callback = mode; mode = undefined; }
+    __cbData(__promisifyValue(() => mode === undefined ? openSync(path, flags) : openSync(path, flags, mode)), callback);
+}
+
+/** Asynchronously closes a file descriptor; callback receives (err). */
+export function close(fd: number, callback: any): void {
+    __cbVoid(__promisifyVoid(() => closeSync(fd)), callback);
+}
+
+/** Asynchronously reads from a file descriptor; callback receives (err, bytesRead, buffer). */
+export function read(fd: number, buffer: any, offset: number, length: number, position: any, callback: any): void {
+    __promisifyValue(() => readSync(fd, buffer, offset, length, position)).then(
+        (n: any) => { callback(null, n, buffer); },
+        (e: any) => { callback(e, 0, buffer); }
+    );
+}
+
+/** Asynchronously writes to a file descriptor; callback receives (err, bytesWritten, buffer). */
+export function write(fd: number, buffer: any, offset?: any, length?: any, position?: any, callback?: any): void {
+    let cb = callback;
+    if (typeof offset === 'function') { cb = offset; offset = undefined; length = undefined; position = undefined; }
+    else if (typeof length === 'function') { cb = length; length = undefined; position = undefined; }
+    else if (typeof position === 'function') { cb = position; position = undefined; }
+    __promisifyValue(() => writeSync(fd, buffer, offset, length, position)).then(
+        (n: any) => { cb(null, n, buffer); },
+        (e: any) => { cb(e, 0, buffer); }
+    );
+}
+
+/** Asynchronously retrieves the Stats for an open fd; callback receives (err, stats). */
+export function fstat(fd: number, options?: any, callback?: any): void {
+    if (typeof options === 'function') { callback = options; options = undefined; }
+    __cbData(__promisifyValue(() => fstatSync(fd)), callback);
+}
+
+/** Asynchronously truncates an open fd to a length; callback receives (err). */
+export function ftruncate(fd: number, len?: any, callback?: any): void {
+    if (typeof len === 'function') { callback = len; len = undefined; }
+    __cbVoid(__promisifyVoid(() => ftruncateSync(fd, len)), callback);
+}
+
 // ===========================================================================
 // fs.promises namespace — assembled from the promise primitives.
 // Each method is wrapped in an arrow so the call reaches the primitive at a
@@ -388,17 +801,22 @@ export const promises = {
     readFile: (path: string, options?: any): Promise<any> => __pReadFile(path, options),
     writeFile: (path: string, data: any, options?: any): Promise<void> => __pWriteFile(path, data, options),
     appendFile: (path: string, data: any, options?: any): Promise<void> => __pAppendFile(path, data, options),
-    stat: (path: string): Promise<any> => __pStat(path),
-    lstat: (path: string): Promise<any> => __pLstat(path),
+    stat: (path: string, options?: any): Promise<any> => __pStat(path).then((r: any) => __makeStats(r, __statBig(options))),
+    lstat: (path: string, options?: any): Promise<any> => __pLstat(path).then((r: any) => __makeStats(r, __statBig(options))),
     unlink: (path: string): Promise<void> => __pUnlink(path),
     mkdir: (path: string, options?: any): Promise<any> => __pMkdir(path, options),
     rmdir: (path: string, options?: any): Promise<void> => __pRmdir(path, options),
-    rm: (path: string, options?: any): Promise<void> => __pRm(path, options),
-    readdir: (path: string, options?: any): Promise<any> => __pReaddir(path, options),
+    rm: (path: string, options?: any): Promise<void> => __promisifyVoid(() => rmSync(path, options)),
+    cp: (src: string, dest: string, options?: any): Promise<void> => __promisifyVoid(() => cpSync(src, dest, options)),
+    readdir: (path: string, options?: any): Promise<any> => __wantsFileTypes(options)
+        ? (__readdirRecursive(options) ? __pReaddir(path, { recursive: true }) : __pReaddir(path)).then((n: any) => __makeDirents(path, n))
+        : __pReaddir(path, options),
     rename: (oldPath: string, newPath: string): Promise<void> => __pRename(oldPath, newPath),
     copyFile: (src: string, dest: string, mode?: any): Promise<void> => __pCopyFile(src, dest, mode),
     access: (path: string, mode?: any): Promise<void> => __pAccess(path, mode),
     chmod: (path: string, mode: number): Promise<void> => __pChmod(path, mode),
+    chown: (path: string, uid: number, gid: number): Promise<void> => __promisifyVoid(() => chownSync(path, uid, gid)),
+    lchown: (path: string, uid: number, gid: number): Promise<void> => __promisifyVoid(() => lchownSync(path, uid, gid)),
     truncate: (path: string, len?: any): Promise<void> => __pTruncate(path, len),
     utimes: (path: string, atime: number, mtime: number): Promise<void> => __pUtimes(path, atime, mtime),
     readlink: (path: string): Promise<any> => __pReadlink(path),
@@ -406,14 +824,16 @@ export const promises = {
     symlink: (target: string, path: string, type?: any): Promise<void> => __pSymlink(target, path, type),
     link: (existingPath: string, newPath: string): Promise<void> => __pLink(existingPath, newPath),
     mkdtemp: (prefix: string): Promise<any> => __pMkdtemp(prefix),
-    constants: __constants,
+    opendir: (path: string, options?: any): Promise<any> => Promise.resolve(opendirSync(path, options)),
+    watch: (filename: string, options?: any): any => __watchAsync(filename, options),
+    constants,
 };
 
 // Node's `fs` module exposes its surface as both named exports and a default
 // export (the module object). Supports `import fs from 'fs'; fs.readFileSync(...)`.
 export default {
     existsSync, readFileSync, writeFileSync, appendFileSync,
-    unlinkSync, mkdirSync, rmdirSync, readdirSync,
+    unlinkSync, mkdirSync, rmdirSync, rmSync, cpSync, readdirSync,
     statSync, lstatSync, renameSync, copyFileSync, accessSync,
     chmodSync, chownSync, lchownSync, truncateSync,
     symlinkSync, readlinkSync, realpathSync, utimesSync,
@@ -423,7 +843,8 @@ export default {
     watch, watchFile, unwatchFile,
     constants,
     readFile, writeFile, appendFile, stat, lstat, unlink, mkdir, rmdir,
-    readdir, rename, copyFile, access, chmod, truncate, utimes,
+    rm, cp, readdir, rename, copyFile, access, chmod, truncate, utimes,
     readlink, realpath, symlink, link, mkdtemp,
+    chown, lchown, open, close, read, write, fstat, ftruncate,
     promises,
 };

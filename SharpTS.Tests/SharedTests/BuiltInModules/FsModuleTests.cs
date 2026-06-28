@@ -593,11 +593,11 @@ public class FsModuleTests
                     }
                 }
                 console.log(fileEntry !== null);
-                console.log(fileEntry.isFile === true);
-                console.log(fileEntry.isDirectory === false);
+                console.log(fileEntry.isFile() === true);
+                console.log(fileEntry.isDirectory() === false);
 
                 console.log(dirEntry !== null);
-                console.log(dirEntry.isDirectory === true);
+                console.log(dirEntry.isDirectory() === true);
 
                 // Cleanup
                 fs.unlinkSync(testDir + '/file.txt');
@@ -1300,6 +1300,487 @@ public class FsModuleTests
 
         var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Equal("PROM:promise-data\n", output);
+    }
+
+    #endregion
+
+    #region Encoding / binary I/O correctness (#978)
+
+    // Identical asserts across ExecutionModes.All enforce interp==compiled parity.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_WriteReadBuffer_BinaryRoundTrip(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                import { Buffer } from 'buffer';
+                const f = os.tmpdir() + '/bin_{{uid}}.bin';
+                const bin = Buffer.from([0, 255, 128, 10, 0, 200]);
+                fs.writeFileSync(f, bin);
+                const r = fs.readFileSync(f);
+                console.log(r.length === 6 && r[0] === 0 && r[1] === 255 && r[2] === 128 && r[5] === 200);
+                fs.unlinkSync(f);
+                """
+        };
+        Assert.Equal("true\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_Encoding_HexAndBase64(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const f = os.tmpdir() + '/enc_{{uid}}.txt';
+                fs.writeFileSync(f, '48656c6c6f', 'hex');       // "Hello"
+                console.log(fs.readFileSync(f, 'utf8'));
+                console.log(fs.readFileSync(f, 'hex'));
+                fs.writeFileSync(f, 'SGk=', 'base64');           // "Hi"
+                console.log(fs.readFileSync(f, 'utf8'));
+                console.log(fs.readFileSync(f, 'base64url'));
+                fs.unlinkSync(f);
+                """
+        };
+        Assert.Equal("Hello\n48656c6c6f\nHi\nSGk\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_Encoding_Latin1AndUtf16le(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                import { Buffer } from 'buffer';
+                const f = os.tmpdir() + '/enc2_{{uid}}.txt';
+                fs.writeFileSync(f, Buffer.from([0xe9]));        // é (latin1)
+                console.log(fs.readFileSync(f, 'latin1'));
+                fs.writeFileSync(f, 'AB', 'utf16le');
+                console.log(fs.readFileSync(f, 'hex'));          // 41004200
+                console.log(fs.readFileSync(f, 'utf16le'));      // AB
+                fs.unlinkSync(f);
+                """
+        };
+        Assert.Equal("é\n41004200\nAB\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
+
+    #region Sync option semantics + constants (#979)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_MkdirSync_NonRecursive_ThrowsEexistAndEnoent(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const base = os.tmpdir() + '/mkd_{{uid}}';
+                fs.mkdirSync(base);
+                let a = 'none';
+                try { fs.mkdirSync(base); } catch (e: any) { a = e.code; }   // exists -> EEXIST
+                console.log(a);
+                let b = 'none';
+                try { fs.mkdirSync(base + '/x/y/z'); } catch (e: any) { b = e.code; }  // missing parent -> ENOENT
+                console.log(b);
+                """
+        };
+        Assert.Equal("EEXIST\nENOENT\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_MkdirSync_Recursive_ReturnsFirstCreated(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const base = os.tmpdir() + '/mkr_{{uid}}';
+                fs.mkdirSync(base);
+                const created = fs.mkdirSync(base + '/p/q/r', { recursive: true });
+                console.log(typeof created === 'string' && created.endsWith('p'));   // first created = .../p
+                console.log(fs.mkdirSync(base + '/p/q/r', { recursive: true }) === undefined); // nothing new
+                console.log(fs.existsSync(base + '/p/q/r'));
+                """
+        };
+        Assert.Equal("true\ntrue\ntrue\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_AccessSync_WriteOk_ThrowsOnReadOnly(ExecutionMode mode)
+    {
+        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"ro_{Uid()}.txt");
+        System.IO.File.WriteAllText(path, "x");
+        System.IO.File.SetAttributes(path, System.IO.FileAttributes.ReadOnly);
+        try
+        {
+            var jsPath = path.Replace("\\", "\\\\");
+            var files = new Dictionary<string, string>
+            {
+                ["main.ts"] = $$"""
+                    import * as fs from 'fs';
+                    let w = 'none';
+                    try { fs.accessSync('{{jsPath}}', fs.constants.W_OK); w = 'ok'; } catch (e: any) { w = e.code; }
+                    console.log(w);
+                    let r = 'none';
+                    try { fs.accessSync('{{jsPath}}', fs.constants.R_OK); r = 'ok'; } catch (e: any) { r = e.code; }
+                    console.log(r);
+                    """
+            };
+            Assert.Equal("EACCES\nok\n", TestHarness.RunModules(files, "main.ts", mode));
+        }
+        finally
+        {
+            System.IO.File.SetAttributes(path, System.IO.FileAttributes.Normal);
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_Constants_AreComplete(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as fs from 'fs';
+                const c = fs.constants;
+                console.log([c.F_OK, c.R_OK, c.W_OK, c.X_OK].join(','));
+                console.log([c.S_IRUSR, c.S_IWUSR, c.S_IXUSR, c.S_IRWXU].join(','));
+                console.log([c.O_DIRECTORY, c.O_NOFOLLOW, c.O_SYNC, c.O_DSYNC, c.O_NONBLOCK].join(','));
+                console.log([c.UV_FS_SYMLINK_DIR, c.UV_FS_SYMLINK_JUNCTION].join(','));
+                """
+        };
+        Assert.Equal("0,4,2,1\n256,128,64,448\n65536,131072,1052672,4096,2048\n1,2\n",
+            TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
+
+    #region Stats/Dirent unification (#977)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_Stat_SyncAndAsyncSameShapeAndPredicates(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const dir = os.tmpdir() + '/st977_{{uid}}';
+                fs.mkdirSync(dir);
+                const file = dir + '/f.txt';
+                fs.writeFileSync(file, 'hello');
+                async function main() {
+                    const s = fs.statSync(file);
+                    const a = await fs.promises.stat(file);
+                    console.log(s.isFile() === true && s.isDirectory() === false);
+                    console.log(s.size === 5 && a.size === 5);
+                    // sync and async produce the identical key set
+                    console.log(JSON.stringify(Object.keys(s).sort()) === JSON.stringify(Object.keys(a).sort()));
+                    console.log(fs.statSync(dir).isDirectory() === true);
+                    fs.unlinkSync(file);
+                    fs.rmdirSync(dir);
+                }
+                main();
+                """
+        };
+        Assert.Equal("true\ntrue\ntrue\ntrue\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_Stat_BigIntOption(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const file = os.tmpdir() + '/big977_{{uid}}.txt';
+                fs.writeFileSync(file, 'x');
+                const s: any = fs.statSync(file, { bigint: true });
+                console.log(typeof s.size === 'bigint');
+                console.log(typeof s.atimeNs === 'bigint');
+                console.log(s.isFile() === true);
+                fs.unlinkSync(file);
+                """
+        };
+        Assert.Equal("true\ntrue\ntrue\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_Dirent_ParentPathAndPredicates(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const dir = os.tmpdir() + '/de977_{{uid}}';
+                fs.mkdirSync(dir);
+                fs.writeFileSync(dir + '/f.txt', 'x');
+                fs.mkdirSync(dir + '/sub');
+                const ents: any = fs.readdirSync(dir, { withFileTypes: true });
+                let f: any = null, d: any = null;
+                for (let i = 0; i < ents.length; i++) {
+                    if (ents[i].name === 'f.txt') f = ents[i];
+                    if (ents[i].name === 'sub') d = ents[i];
+                }
+                console.log(f.isFile() === true && d.isDirectory() === true);
+                console.log(typeof f.parentPath === 'string' && f.parentPath.length > 0);
+                console.log(f.path === f.parentPath);
+                fs.unlinkSync(dir + '/f.txt');
+                fs.rmdirSync(dir + '/sub');
+                fs.rmdirSync(dir);
+                """
+        };
+        Assert.Equal("true\ntrue\ntrue\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
+
+    #region mkdtemp absolute prefix (#984)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_MkdtempSync_AbsolutePrefix_NotDoubled(ExecutionMode mode)
+    {
+        // Canonical usage mkdtempSync(path.join(os.tmpdir(), 'foo-')) — the compiled
+        // twin used to double the prefix and throw. It must now create '…/mkdt_XXXXXX'.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const d = fs.mkdtempSync(os.tmpdir() + '/mkdt_');
+                console.log(fs.existsSync(d) && d.split('mkdt_').length === 2 && d.startsWith(os.tmpdir()));
+                fs.rmdirSync(d);
+                """
+        };
+        Assert.Equal("true\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
+
+    #region promises.opendir + watch (#975)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_PromisesOpendir_AsyncIteratesEntries(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                async function main() {
+                    const d = os.tmpdir() + '/opendir_{{uid}}';
+                    fs.rmSync(d, { recursive: true, force: true });
+                    fs.mkdirSync(d, { recursive: true });
+                    fs.writeFileSync(d + '/a.txt', '1');
+                    fs.writeFileSync(d + '/b.txt', '2');
+                    fs.mkdirSync(d + '/sub');
+                    const dir = await fs.promises.opendir(d);
+                    let count = 0; let sawDir = false;
+                    for await (const ent of dir) { count++; if (ent.isDirectory()) sawDir = true; }
+                    console.log('count:' + count + ' sawDir:' + sawDir);
+                    fs.rmSync(d, { recursive: true, force: true });
+                }
+                main();
+                """
+        };
+        Assert.Equal("count:3 sawDir:true\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_PromisesWatch_AsyncIteratorTerminatesOnAbort(ExecutionMode mode)
+    {
+        // Real FSWatcher event timing is non-deterministic (and flaky under load), so
+        // this pins the iterator + AbortSignal-termination contract deterministically:
+        // aborting then pulling yields done, and a pre-aborted signal ends a for-await
+        // immediately. (Live change-event observation is covered by manual/e2e checks;
+        // the compiled parked-abort limitation is tracked in #985.)
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                async function main() {
+                    const d = os.tmpdir() + '/watch_{{uid}}';
+                    fs.rmSync(d, { recursive: true, force: true });
+                    fs.mkdirSync(d, { recursive: true });
+                    const ac = new AbortController();
+                    const it: any = fs.promises.watch(d, { signal: ac.signal });
+                    ac.abort();
+                    const r = await it.next();
+                    console.log('done:' + r.done);
+                    const ac2 = new AbortController();
+                    ac2.abort();
+                    let count = 0;
+                    for await (const ev of fs.promises.watch(d, { signal: ac2.signal })) { count++; }
+                    console.log('count:' + count);
+                    fs.rmSync(d, { recursive: true, force: true });
+                }
+                main();
+                """
+        };
+        Assert.Equal("done:true\ncount:0\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
+
+    #region async chown + callback fd ops (#974)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_CallbackFdOps_OpenReadWriteFstatClose(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                import { Buffer } from 'buffer';
+                function p<T>(fn: (cb: any) => void): Promise<T> {
+                    return new Promise<T>((res: any, rej: any) => { fn((e: any, v: any) => e ? rej(e) : res(v)); });
+                }
+                async function main() {
+                    const f = os.tmpdir() + '/fd974_{{uid}}.txt';
+                    fs.writeFileSync(f, 'HELLO WORLD');
+                    const fd: any = await p((cb) => fs.open(f, 'r', cb));
+                    const buf = Buffer.alloc(5);
+                    const n: any = await new Promise((res: any, rej: any) => fs.read(fd, buf, 0, 5, 6, (e: any, c: any) => e ? rej(e) : res(c)));
+                    console.log(n + ':' + buf.toString('utf8'));        // 5:WORLD (position 6)
+                    const st: any = await p((cb) => fs.fstat(fd, cb));
+                    console.log(st.size + ':' + st.isFile());           // 11:true
+                    await new Promise((res: any, rej: any) => fs.close(fd, (e: any) => e ? rej(e) : res(0)));
+                    const fw: any = await p((cb) => fs.open(f, 'w', cb));
+                    const wn: any = await new Promise((res: any, rej: any) => fs.write(fw, Buffer.from('XY'), 0, 2, 0, (e: any, c: any) => e ? rej(e) : res(c)));
+                    await new Promise((res: any, rej: any) => fs.ftruncate(fw, 2, (e: any) => e ? rej(e) : res(0)));
+                    await new Promise((res: any, rej: any) => fs.close(fw, (e: any) => e ? rej(e) : res(0)));
+                    console.log(wn + ':' + fs.readFileSync(f, 'utf8')); // 2:XY
+                    fs.unlinkSync(f);
+                }
+                main();
+                """
+        };
+        Assert.Equal("5:WORLD\n11:true\n2:XY\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_CallbackFd_BadFd_And_Chown_Invoke(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                async function main() {
+                    const f = os.tmpdir() + '/fd974b_{{uid}}.txt';
+                    fs.writeFileSync(f, 'x');
+                    // Bad fd surfaces an error with a code to the callback (the exact code
+                    // differs by mode for a stale fd — a pre-existing primitive divergence).
+                    const hasCode: any = await new Promise((res: any) => fs.fstat(999999, (e: any) => res(!!(e && typeof e.code === 'string' && e.code.length > 0))));
+                    console.log('badfd:' + hasCode);
+                    // chown's callback is invoked (platform/no-op behavior aside).
+                    const called: any = await new Promise((res: any) => fs.chown(f, 0, 0, () => res(true)));
+                    console.log('chown:' + called);
+                    fs.unlinkSync(f);
+                }
+                main();
+                """
+        };
+        Assert.Equal("badfd:true\nchown:true\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
+
+    #region rm / cp (#973)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_RmSync_RecursiveForceAndEisdir(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const root = os.tmpdir() + '/rm973_{{uid}}';
+                fs.mkdirSync(root + '/a/b', { recursive: true });
+                fs.writeFileSync(root + '/a/f.txt', 'x');
+                fs.rmSync(root, { recursive: true });
+                console.log(!fs.existsSync(root));                       // recursive remove
+                let f = 'threw'; try { fs.rmSync(root + '/nope', { force: true }); f = 'ok'; } catch (e) { }
+                console.log(f);                                          // force swallows ENOENT
+                fs.mkdirSync(root, { recursive: true });
+                let c = 'no'; try { fs.rmSync(root); } catch (e: any) { c = e.code; }
+                console.log(c);                                          // dir without recursive -> ERR_FS_EISDIR
+                fs.rmSync(root, { recursive: true });
+                """
+        };
+        Assert.Equal("true\nok\nERR_FS_EISDIR\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_CpSync_RecursiveErrorOnExistAndFilter(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const root = os.tmpdir() + '/cp973_{{uid}}';
+                fs.rmSync(root, { recursive: true, force: true });
+                fs.mkdirSync(root + '/src/sub', { recursive: true });
+                fs.writeFileSync(root + '/src/x.txt', 'X');
+                fs.writeFileSync(root + '/src/sub/y.txt', 'Y');
+                fs.cpSync(root + '/src', root + '/dst', { recursive: true });
+                console.log(fs.readFileSync(root + '/dst/x.txt', 'utf8') === 'X' && fs.readFileSync(root + '/dst/sub/y.txt', 'utf8') === 'Y');
+                let n = 'no'; try { fs.cpSync(root + '/src', root + '/dst2'); } catch (e: any) { n = e.code; }
+                console.log(n);                                          // dir without recursive -> ERR_FS_EISDIR
+                let eoe = 'no'; try { fs.cpSync(root + '/src/x.txt', root + '/dst/x.txt', { errorOnExist: true, force: false }); } catch (e: any) { eoe = e.code; }
+                console.log(eoe);                                        // errorOnExist -> ERR_FS_CP_EEXIST
+                fs.cpSync(root + '/src', root + '/dst3', { recursive: true, filter: (s: string) => s.indexOf('sub') < 0 });
+                console.log(fs.existsSync(root + '/dst3/x.txt') && !fs.existsSync(root + '/dst3/sub'));
+                fs.rmSync(root, { recursive: true });
+                """
+        };
+        Assert.Equal("true\nERR_FS_EISDIR\nERR_FS_CP_EEXIST\ntrue\n", TestHarness.RunModules(files, "main.ts", mode));
     }
 
     #endregion

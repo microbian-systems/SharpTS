@@ -44,6 +44,9 @@ public partial class RuntimeEmitter
         // Low-level helpers using reflection for standalone DLLs (must be first)
         EmitFsLowLevelHelpers(typeBuilder, runtime);
 
+        // Encoding helpers — must precede read/write/append which call them.
+        EmitFsEncodingHelpers(typeBuilder, runtime);
+
         EmitFsExistsSync(typeBuilder, runtime);
         EmitFsReadFileSync(typeBuilder, runtime);
         EmitFsWriteFileSync(typeBuilder, runtime);
@@ -55,6 +58,7 @@ public partial class RuntimeEmitter
         EmitFsReaddirSync(typeBuilder, runtime);
         EmitFsStatSync(typeBuilder, runtime);
         EmitFsLstatSync(typeBuilder, runtime);
+        EmitFsStatRawHelpers(typeBuilder, runtime); // #977: statRaw/lstatRaw/fstatRaw
         EmitFsRenameSync(typeBuilder, runtime);
         EmitFsCopyFileSync(typeBuilder, runtime);
         EmitFsAccessSync(typeBuilder, runtime);

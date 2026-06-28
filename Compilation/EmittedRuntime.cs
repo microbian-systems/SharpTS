@@ -1497,6 +1497,9 @@ public class EmittedRuntime
 
     // Fs module methods
     public MethodBuilder FsExistsSync { get; set; } = null!;
+    // Encoding helpers shared by fs read/write/append (BCL-only, standalone).
+    public MethodBuilder FsEncodingName { get; set; } = null!;
+    public MethodBuilder FsToBytes { get; set; } = null!;
     public MethodBuilder FsReadFileSync { get; set; } = null!;
     public MethodBuilder FsWriteFileSync { get; set; } = null!;
     public MethodBuilder FsAppendFileSync { get; set; } = null!;
@@ -1506,6 +1509,12 @@ public class EmittedRuntime
     public MethodBuilder FsReaddirSync { get; set; } = null!;
     public MethodBuilder FsStatSync { get; set; } = null!;
     public MethodBuilder FsLstatSync { get; set; } = null!;
+    // Raw stat records (#977) — the TS Stats class shapes these.
+    public MethodBuilder FsStatRaw { get; set; } = null!;
+    public MethodBuilder FsLstatRaw { get; set; } = null!;
+    public MethodBuilder FsFstatRaw { get; set; } = null!;
+    public MethodBuilder FsBuildStatRecord { get; set; } = null!;
+    public MethodBuilder FsStatTimeMs { get; set; } = null!;
     public MethodBuilder FsRenameSync { get; set; } = null!;
     public MethodBuilder FsCopyFileSync { get; set; } = null!;
     public MethodBuilder FsAccessSync { get; set; } = null!;

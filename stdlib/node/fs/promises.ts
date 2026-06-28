@@ -9,13 +9,9 @@ import {
     readFile as __readFile,
     writeFile as __writeFile,
     appendFile as __appendFile,
-    stat as __stat,
-    lstat as __lstat,
     unlink as __unlink,
     mkdir as __mkdir,
     rmdir as __rmdir,
-    rm as __rm,
-    readdir as __readdir,
     rename as __rename,
     copyFile as __copyFile,
     access as __access,
@@ -27,8 +23,10 @@ import {
     symlink as __symlink,
     link as __link,
     mkdtemp as __mkdtemp,
-    constants as __constants,
 } from 'primitive:fs/promises';
+// Node guarantees fs.promises.constants === fs.constants; share the one complete
+// table, and the Stats-shaping promise stat/lstat, from the fs facade.
+import { constants, promises as __fsp } from 'fs';
 
 /** Asynchronously reads the entire contents of a file. */
 export function readFile(path: string, options?: any): Promise<any> { return __readFile(path, options); }
@@ -40,10 +38,10 @@ export function writeFile(path: string, data: any, options?: any): Promise<void>
 export function appendFile(path: string, data: any, options?: any): Promise<void> { return __appendFile(path, data, options); }
 
 /** Asynchronously retrieves the Stats for the path. */
-export function stat(path: string): Promise<any> { return __stat(path); }
+export function stat(path: string, options?: any): Promise<any> { return __fsp.stat(path, options); }
 
 /** Asynchronously retrieves the Stats for the path without following symbolic links. */
-export function lstat(path: string): Promise<any> { return __lstat(path); }
+export function lstat(path: string, options?: any): Promise<any> { return __fsp.lstat(path, options); }
 
 /** Asynchronously removes a file or symbolic link. */
 export function unlink(path: string): Promise<void> { return __unlink(path); }
@@ -55,10 +53,13 @@ export function mkdir(path: string, options?: any): Promise<any> { return __mkdi
 export function rmdir(path: string, options?: any): Promise<void> { return __rmdir(path, options); }
 
 /** Asynchronously removes files and directories (recursively when requested). */
-export function rm(path: string, options?: any): Promise<void> { return __rm(path, options); }
+export function rm(path: string, options?: any): Promise<void> { return __fsp.rm(path, options); }
+
+/** Asynchronously copies src to dest (recursively when `{ recursive: true }`). */
+export function cp(src: string, dest: string, options?: any): Promise<void> { return __fsp.cp(src, dest, options); }
 
 /** Asynchronously reads the contents of a directory. */
-export function readdir(path: string, options?: any): Promise<any> { return __readdir(path, options); }
+export function readdir(path: string, options?: any): Promise<any> { return __fsp.readdir(path, options); }
 
 /** Asynchronously renames (moves) a file or directory. */
 export function rename(oldPath: string, newPath: string): Promise<void> { return __rename(oldPath, newPath); }
@@ -71,6 +72,12 @@ export function access(path: string, mode?: any): Promise<void> { return __acces
 
 /** Asynchronously changes the permissions of a file. */
 export function chmod(path: string, mode: number): Promise<void> { return __chmod(path, mode); }
+
+/** Asynchronously changes the owner and group of a file. */
+export function chown(path: string, uid: number, gid: number): Promise<void> { return __fsp.chown(path, uid, gid); }
+
+/** Asynchronously changes the owner and group of a symbolic link. */
+export function lchown(path: string, uid: number, gid: number): Promise<void> { return __fsp.lchown(path, uid, gid); }
 
 /** Asynchronously truncates a file to the given length. */
 export function truncate(path: string, len?: any): Promise<void> { return __truncate(path, len); }
@@ -93,11 +100,17 @@ export function link(existingPath: string, newPath: string): Promise<void> { ret
 /** Asynchronously creates a unique temporary directory. */
 export function mkdtemp(prefix: string): Promise<any> { return __mkdtemp(prefix); }
 
-/** File-system constants (access modes, open flags, copy flags, file-type bits). */
-export const constants: any = __constants;
+/** Asynchronously opens a directory; returns a Dir handle (async iterable). */
+export function opendir(path: string, options?: any): Promise<any> { return __fsp.opendir(path, options); }
+
+/** Returns an async iterator of `{ eventType, filename }` change events for a path. */
+export function watch(filename: string, options?: any): any { return __fsp.watch(filename, options); }
+
+/** File-system constants — re-exported from 'fs' so both share one table. */
+export { constants };
 
 export default {
-    readFile, writeFile, appendFile, stat, lstat, unlink, mkdir, rmdir, rm,
-    readdir, rename, copyFile, access, chmod, truncate, utimes,
-    readlink, realpath, symlink, link, mkdtemp, constants,
+    readFile, writeFile, appendFile, stat, lstat, unlink, mkdir, rmdir, rm, cp,
+    readdir, rename, copyFile, access, chmod, chown, lchown, truncate, utimes,
+    readlink, realpath, symlink, link, mkdtemp, opendir, watch, constants,
 };

@@ -135,14 +135,17 @@ public static class BuiltInModuleTypes
                 RequiredParams: 1
             ),
 
-            // Write operations - return void
+            // Write operations - return void. Data may be a string, Buffer, or
+            // TypedArray (any); the optional third arg carries the encoding/options.
             ["writeFileSync"] = new TypeInfo.Function(
-                [stringType, new TypeInfo.Union([stringType, new TypeInfo.Array(numberType)])],
-                voidType
+                [stringType, anyType, anyType],
+                voidType,
+                RequiredParams: 2
             ),
             ["appendFileSync"] = new TypeInfo.Function(
-                [stringType, stringType],
-                voidType
+                [stringType, anyType, anyType],
+                voidType,
+                RequiredParams: 2
             ),
 
             // File/directory deletion
@@ -170,6 +173,10 @@ public static class BuiltInModuleTypes
             // File info
             ["statSync"] = new TypeInfo.Function([stringType], statsType),
             ["lstatSync"] = new TypeInfo.Function([stringType], statsType),
+            // Raw stat records (#977) — the TS Stats class shapes these.
+            ["statRaw"] = new TypeInfo.Function([stringType], anyType),
+            ["lstatRaw"] = new TypeInfo.Function([stringType], anyType),
+            ["fstatRaw"] = new TypeInfo.Function([numberType], anyType),
 
             // File move/copy
             ["renameSync"] = new TypeInfo.Function(

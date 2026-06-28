@@ -47,8 +47,95 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits the BCL-only encoding helpers used by fs read/write/append. They mirror
+    /// the interpreter's FsModuleInterpreter.EncodingName + BufferEncoding.ToBytes and
+    /// reuse the (corrected) $Buffer encoder so fs encoding == Buffer encoding.
+    /// </summary>
+    private void EmitFsEncodingHelpers(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        // string FsEncodingName(object opt): null when none; the string itself, or
+        // opt.encoding when opt is an options object.
+        var nameMethod = typeBuilder.DefineMethod(
+            "FsEncodingName",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.String,
+            [_types.Object]
+        );
+        runtime.FsEncodingName = nameMethod;
+        {
+            var il = nameMethod.GetILGenerator();
+            var retNull = il.DefineLabel();
+            var retIt = il.DefineLabel();
+            // if (opt == null) return null
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Brfalse, retNull);
+            // if (opt is string) return (string)opt
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Brtrue, retIt);
+            il.Emit(OpCodes.Pop);
+            // e = opt.encoding; return (e is string) ? e : null
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, "encoding");
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Brtrue, retIt);
+            il.Emit(OpCodes.Pop);
+            il.MarkLabel(retNull);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(retIt);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // byte[] FsToBytes(object data, object encodingOpt): a Buffer contributes its
+        // bytes verbatim; a string is encoded via $Buffer.FromString (default utf8).
+        var byteArr = _types.MakeArrayType(_types.Byte);
+        var toBytesMethod = typeBuilder.DefineMethod(
+            "FsToBytes",
+            MethodAttributes.Public | MethodAttributes.Static,
+            byteArr,
+            [_types.Object, _types.Object]
+        );
+        runtime.FsToBytes = toBytesMethod;
+        {
+            var il = toBytesMethod.GetILGenerator();
+            var isBuf = il.DefineLabel();
+            var haveEnc = il.DefineLabel();
+            // buf = data as $Buffer
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSBufferType);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Brtrue, isBuf);
+            il.Emit(OpCodes.Pop);
+            // string s = Stringify(data)
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.Stringify);
+            // string enc = FsEncodingName(encodingOpt) ?? "utf8"
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.FsEncodingName);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Brtrue, haveEnc);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ldstr, "utf8");
+            il.MarkLabel(haveEnc);
+            // $Buffer.FromString(s, enc).GetData()
+            il.Emit(OpCodes.Call, runtime.TSBufferFromString);
+            il.Emit(OpCodes.Callvirt, runtime.TSBufferGetData);
+            il.Emit(OpCodes.Ret);
+            // ((TSBuffer)data).GetData()
+            il.MarkLabel(isBuf);
+            il.Emit(OpCodes.Callvirt, runtime.TSBufferGetData);
+            il.Emit(OpCodes.Ret);
+        }
+    }
+
+    /// <summary>
     /// Emits: public static object FsReadFileSync(object path, object? encoding)
-    /// Returns string if encoding specified, $Buffer otherwise.
+    /// Reads raw bytes; returns a $Buffer when no encoding, else decodes via the
+    /// $Buffer encoder (so every encoding matches the interpreter and Buffer).
     /// </summary>
     private void EmitFsReadFileSync(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -62,6 +149,8 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
         var resultLocal = il.DeclareLocal(_types.Object);
+        var bytesLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+        var encLocal = il.DeclareLocal(_types.String);
 
         // Convert path to string
         il.Emit(OpCodes.Ldarg_0);
@@ -71,24 +160,32 @@ public partial class RuntimeEmitter
 
         EmitWithFsErrorHandling(il, runtime, pathLocal, "open", afterTry =>
         {
-            // Check if encoding is provided (not null)
-            var readBytesLabel = il.DefineLabel();
-            var afterReadLabel = il.DefineLabel();
-            il.Emit(OpCodes.Ldarg_1);
-            il.Emit(OpCodes.Brfalse, readBytesLabel);
-
-            // Read as text: File.ReadAllText(path)
+            // bytes = File.ReadAllBytes(path)
             il.Emit(OpCodes.Ldloc, pathLocal);
-            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "ReadAllText", _types.String));
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "ReadAllBytes", _types.String));
+            il.Emit(OpCodes.Stloc, bytesLocal);
+
+            // enc = FsEncodingName(encoding)
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.FsEncodingName);
+            il.Emit(OpCodes.Stloc, encLocal);
+
+            var asBufferLabel = il.DefineLabel();
+            var afterReadLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, encLocal);
+            il.Emit(OpCodes.Brfalse, asBufferLabel);
+
+            // Decode: new $Buffer(bytes).ToEncodedString(enc)
+            il.Emit(OpCodes.Ldloc, bytesLocal);
+            il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
+            il.Emit(OpCodes.Ldloc, encLocal);
+            il.Emit(OpCodes.Callvirt, runtime.TSBufferToString);
             il.Emit(OpCodes.Stloc, resultLocal);
             il.Emit(OpCodes.Br, afterReadLabel);
 
-            // Read as bytes: File.ReadAllBytes(path) - wrap in $Buffer
-            il.MarkLabel(readBytesLabel);
-            il.Emit(OpCodes.Ldloc, pathLocal);
-            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "ReadAllBytes", _types.String));
-
-            // Create $Buffer from byte[]
+            // No encoding: wrap bytes in $Buffer
+            il.MarkLabel(asBufferLabel);
+            il.Emit(OpCodes.Ldloc, bytesLocal);
             il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
             il.Emit(OpCodes.Stloc, resultLocal);
 
@@ -100,7 +197,8 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits: public static void FsWriteFileSync(object path, object data)
+    /// Emits: public static void FsWriteFileSync(object path, object data, object? encoding)
+    /// Writes raw bytes (Buffer verbatim, string encoded) — never ToString's a Buffer.
     /// </summary>
     private void EmitFsWriteFileSync(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -108,37 +206,38 @@ public partial class RuntimeEmitter
             "FsWriteFileSync",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Void,
-            [_types.Object, _types.Object]
+            [_types.Object, _types.Object, _types.Object]
         );
         runtime.FsWriteFileSync = method;
 
         var il = method.GetILGenerator();
 
-        // Convert path to string
+        // path = Stringify(arg0)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.Stringify);
         var pathLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Stloc, pathLocal);
 
-        // Convert data to string
+        // bytes = FsToBytes(data, encoding)
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
-        var dataLocal = il.DeclareLocal(_types.String);
-        il.Emit(OpCodes.Stloc, dataLocal);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.FsToBytes);
+        var bytesLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+        il.Emit(OpCodes.Stloc, bytesLocal);
 
         EmitWithFsErrorHandling(il, runtime, pathLocal, "open", afterTry =>
         {
-            // File.WriteAllText(path, data)
+            // File.WriteAllBytes(path, bytes)
             il.Emit(OpCodes.Ldloc, pathLocal);
-            il.Emit(OpCodes.Ldloc, dataLocal);
-            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "WriteAllText", _types.String, _types.String));
+            il.Emit(OpCodes.Ldloc, bytesLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "WriteAllBytes", _types.String, _types.MakeArrayType(_types.Byte)));
             il.Emit(OpCodes.Leave, afterTry);
         });
         il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
-    /// Emits: public static void FsAppendFileSync(object path, object data)
+    /// Emits: public static void FsAppendFileSync(object path, object data, object? encoding)
     /// </summary>
     private void EmitFsAppendFileSync(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -146,30 +245,31 @@ public partial class RuntimeEmitter
             "FsAppendFileSync",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Void,
-            [_types.Object, _types.Object]
+            [_types.Object, _types.Object, _types.Object]
         );
         runtime.FsAppendFileSync = method;
 
         var il = method.GetILGenerator();
 
-        // Convert path to string
+        // path = Stringify(arg0)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.Stringify);
         var pathLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Stloc, pathLocal);
 
-        // Convert data to string
+        // bytes = FsToBytes(data, encoding)
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.Stringify);
-        var dataLocal = il.DeclareLocal(_types.String);
-        il.Emit(OpCodes.Stloc, dataLocal);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, runtime.FsToBytes);
+        var bytesLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+        il.Emit(OpCodes.Stloc, bytesLocal);
 
         EmitWithFsErrorHandling(il, runtime, pathLocal, "open", afterTry =>
         {
-            // File.AppendAllText(path, data)
+            // File.AppendAllBytes(path, bytes)
             il.Emit(OpCodes.Ldloc, pathLocal);
-            il.Emit(OpCodes.Ldloc, dataLocal);
-            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "AppendAllText", _types.String, _types.String));
+            il.Emit(OpCodes.Ldloc, bytesLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "AppendAllBytes", _types.String, _types.MakeArrayType(_types.Byte)));
             il.Emit(OpCodes.Leave, afterTry);
         });
         il.Emit(OpCodes.Ret);
@@ -697,6 +797,25 @@ public partial class RuntimeEmitter
         var pathLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Stloc, pathLocal);
 
+        // mode = arg1 is a boxed double ? (int)(double)arg1 : 0. The async access
+        // path forwards an undefined mode, so unbox only when it really is a number.
+        var modeLocal = il.DeclareLocal(_types.Int32);
+        var modeNotDouble = il.DefineLabel();
+        var modeDone = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, modeNotDouble);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, modeLocal);
+        il.Emit(OpCodes.Br, modeDone);
+        il.MarkLabel(modeNotDouble);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, modeLocal);
+        il.MarkLabel(modeDone);
+
         EmitWithFsErrorHandling(il, runtime, pathLocal, "access", afterTry =>
         {
             // Check if exists (File.Exists || Directory.Exists)
@@ -716,6 +835,32 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Throw);
 
             il.MarkLabel(existsLabel);
+
+            // W_OK (mode & 2): a read-only file denies writes (best-effort, mirrors the
+            // interpreter's CheckAccess — surfaced as EACCES by the fs error wrapper).
+            var skipWok = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, modeLocal);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.And);
+            il.Emit(OpCodes.Brfalse, skipWok);
+
+            // Only files have a meaningful read-only attribute here.
+            il.Emit(OpCodes.Ldloc, pathLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "Exists", _types.String));
+            il.Emit(OpCodes.Brfalse, skipWok);
+
+            // (File.GetAttributes(path) & FileAttributes.ReadOnly) != 0
+            il.Emit(OpCodes.Ldloc, pathLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "GetAttributes", _types.String));
+            il.Emit(OpCodes.Ldc_I4_1); // FileAttributes.ReadOnly
+            il.Emit(OpCodes.And);
+            il.Emit(OpCodes.Brfalse, skipWok);
+
+            il.Emit(OpCodes.Ldstr, "permission denied");
+            il.Emit(OpCodes.Newobj, typeof(UnauthorizedAccessException).GetConstructor([_types.String])!);
+            il.Emit(OpCodes.Throw);
+
+            il.MarkLabel(skipWok);
             il.Emit(OpCodes.Leave, afterTry);
         });
         il.Emit(OpCodes.Ret);

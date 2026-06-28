@@ -29,17 +29,10 @@ public static class FsAsyncHelpers
     public static async Task<object?> ReadFileAsync(string path, object? encoding)
     {
         await InjectedTestLatency();
-        if (encoding != null)
-        {
-            // Return as string
-            return await File.ReadAllTextAsync(path);
-        }
-        else
-        {
-            // Return as Buffer
-            var bytes = await File.ReadAllBytesAsync(path);
-            return new SharpTSBuffer(bytes);
-        }
+        var encName = FsModuleInterpreter.EncodingName(encoding);
+        var bytes = await File.ReadAllBytesAsync(path);
+        // No encoding → Buffer; otherwise decode the raw bytes per the encoding.
+        return encName != null ? (object?)BufferEncoding.Decode(bytes, encName) : new SharpTSBuffer(bytes);
     }
 
     /// <summary>
@@ -51,15 +44,9 @@ public static class FsAsyncHelpers
     public static async Task WriteFileAsync(string path, object? data, object? options)
     {
         await InjectedTestLatency();
-        if (data is SharpTSBuffer buffer)
-        {
-            await File.WriteAllBytesAsync(path, buffer.Data);
-        }
-        else
-        {
-            var text = data?.ToString() ?? "";
-            await File.WriteAllTextAsync(path, text);
-        }
+        // Buffer/TypedArray data is written byte-exact; a string honors the encoding option.
+        var bytes = BufferEncoding.ToBytes(data, FsModuleInterpreter.EncodingName(options));
+        await File.WriteAllBytesAsync(path, bytes);
     }
 
     /// <summary>
@@ -70,8 +57,10 @@ public static class FsAsyncHelpers
     /// <param name="options">Optional options (encoding, mode, flag).</param>
     public static async Task AppendFileAsync(string path, object? data, object? options)
     {
-        var text = data?.ToString() ?? "";
-        await File.AppendAllTextAsync(path, text);
+        await InjectedTestLatency();
+        // Buffer/TypedArray data is appended byte-exact; a string honors the encoding option.
+        var bytes = BufferEncoding.ToBytes(data, FsModuleInterpreter.EncodingName(options));
+        await File.AppendAllBytesAsync(path, bytes);
     }
 
     /// <summary>
@@ -81,41 +70,25 @@ public static class FsAsyncHelpers
     /// <returns>A Stats-like object with file information.</returns>
     public static async Task<SharpTSObject> StatAsync(string path)
     {
-        // Use Task.Run to offload the synchronous file info operations
+        // Returns the raw stat record (#977) — same shape/logic as the sync
+        // FsModuleInterpreter.StatRaw, so statSync and await stat agree by
+        // construction; the TS Stats class shapes it. stat follows symlinks.
         return await Task.Run(() =>
         {
             if (Directory.Exists(path))
             {
-                var dirInfo = new DirectoryInfo(path);
-                return CreateStatsObject(
-                    isDirectory: true,
-                    isFile: false,
-                    isSymbolicLink: dirInfo.Attributes.HasFlag(FileAttributes.ReparsePoint),
-                    size: 0,
-                    atime: dirInfo.LastAccessTime,
-                    mtime: dirInfo.LastWriteTime,
-                    ctime: dirInfo.CreationTime,
-                    birthtime: dirInfo.CreationTime
-                );
+                var di = new DirectoryInfo(path);
+                return FsModuleInterpreter.BuildStatRecord(true, false, false, 0.0,
+                    di.LastAccessTime, di.LastWriteTime, di.CreationTime, di.CreationTime);
             }
-            else if (File.Exists(path))
+            if (File.Exists(path))
             {
-                var fileInfo = new FileInfo(path);
-                return CreateStatsObject(
-                    isDirectory: false,
-                    isFile: true,
-                    isSymbolicLink: fileInfo.Attributes.HasFlag(FileAttributes.ReparsePoint),
-                    size: fileInfo.Length,
-                    atime: fileInfo.LastAccessTime,
-                    mtime: fileInfo.LastWriteTime,
-                    ctime: fileInfo.CreationTime,
-                    birthtime: fileInfo.CreationTime
-                );
+                var fi = new FileInfo(path);
+                bool ro = fi.Attributes.HasFlag(FileAttributes.ReadOnly);
+                return FsModuleInterpreter.BuildStatRecord(false, false, ro, fi.Length,
+                    fi.LastAccessTime, fi.LastWriteTime, fi.CreationTime, fi.CreationTime);
             }
-            else
-            {
-                throw new FileNotFoundException("no such file or directory", path);
-            }
+            throw new FileNotFoundException("no such file or directory", path);
         });
     }
 
@@ -249,7 +222,8 @@ public static class FsAsyncHelpers
             {
                 foreach (var entry in entries)
                 {
-                    list.Add(CreateDirent(entry));
+                    // Reuse the one canonical Dirent builder (#977) for sync/async parity.
+                    list.Add(FsModuleInterpreter.CreateDirent(entry, Path.GetDirectoryName(entry) ?? path));
                 }
             }
             else
@@ -268,35 +242,6 @@ public static class FsAsyncHelpers
             }
 
             return new SharpTSArray(list);
-        });
-    }
-
-    /// <summary>
-    /// Creates a Dirent-like object for readdir with withFileTypes option.
-    /// </summary>
-    private static SharpTSObject CreateDirent(string fullPath)
-    {
-        var name = Path.GetFileName(fullPath);
-        var isFile = File.Exists(fullPath);
-        var isDir = Directory.Exists(fullPath);
-        var isSymlink = false;
-
-        var fileInfo = new FileInfo(fullPath);
-        if (fileInfo.Exists || Directory.Exists(fullPath))
-        {
-            isSymlink = fileInfo.Attributes.HasFlag(FileAttributes.ReparsePoint);
-        }
-
-        return new SharpTSObject(new Dictionary<string, object?>
-        {
-            ["name"] = name,
-            ["isFile"] = BuiltInMethod.CreateV2("isFile", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isFile && !isDir)),
-            ["isDirectory"] = BuiltInMethod.CreateV2("isDirectory", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isDir)),
-            ["isSymbolicLink"] = BuiltInMethod.CreateV2("isSymbolicLink", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isSymlink)),
-            ["isBlockDevice"] = BuiltInMethod.CreateV2("isBlockDevice", 0, 0, (_, _, _) => RuntimeValue.False),
-            ["isCharacterDevice"] = BuiltInMethod.CreateV2("isCharacterDevice", 0, 0, (_, _, _) => RuntimeValue.False),
-            ["isFIFO"] = BuiltInMethod.CreateV2("isFIFO", 0, 0, (_, _, _) => RuntimeValue.False),
-            ["isSocket"] = BuiltInMethod.CreateV2("isSocket", 0, 0, (_, _, _) => RuntimeValue.False)
         });
     }
 
@@ -356,16 +301,11 @@ public static class FsAsyncHelpers
     /// <param name="mode">Optional mode specifying the accessibility checks (F_OK=0, R_OK=4, W_OK=2, X_OK=1).</param>
     public static async Task AccessAsync(string path, object? mode)
     {
-        await Task.Run(() =>
-        {
-            if (!File.Exists(path) && !Directory.Exists(path))
-            {
-                throw new FileNotFoundException("no such file or directory", path);
-            }
-
-            // For now, just check existence
-            // Full implementation would check actual permissions based on mode
-        });
+        var modeInt = mode is double d ? (int)d : 0;
+        // Shared with the sync path so callback/promise access enforce the same
+        // F_OK/W_OK semantics as accessSync (and the compiled async path, which
+        // calls the same FsAccessSync helper).
+        await Task.Run(() => FsModuleInterpreter.CheckAccess(path, modeInt));
     }
 
     /// <summary>
@@ -442,38 +382,16 @@ public static class FsAsyncHelpers
                 throw new FileNotFoundException("no such file or directory", path);
             }
 
-            bool isSymlink = false;
+            // Raw record matching the sync FsModuleInterpreter.LstatRaw (#977).
+            bool isSymlink = (fileInfo.Exists ? fileInfo.Attributes : dirInfo.Attributes).HasFlag(FileAttributes.ReparsePoint);
             bool isDir = dirInfo.Exists && !fileInfo.Exists;
-            long size = fileInfo.Exists ? fileInfo.Length : 0;
-            DateTime atime, mtime, ctime, birthtime;
+            double size = fileInfo.Exists ? fileInfo.Length : 0.0;
+            bool ro = fileInfo.Exists && fileInfo.Attributes.HasFlag(FileAttributes.ReadOnly);
+            DateTime atime = isDir ? dirInfo.LastAccessTime : fileInfo.LastAccessTime;
+            DateTime mtime = isDir ? dirInfo.LastWriteTime : fileInfo.LastWriteTime;
+            DateTime ctime = isDir ? dirInfo.CreationTime : fileInfo.CreationTime;
 
-            if (fileInfo.Exists)
-            {
-                isSymlink = fileInfo.Attributes.HasFlag(FileAttributes.ReparsePoint);
-                atime = fileInfo.LastAccessTime;
-                mtime = fileInfo.LastWriteTime;
-                ctime = fileInfo.CreationTime;
-                birthtime = fileInfo.CreationTime;
-            }
-            else
-            {
-                isSymlink = dirInfo.Attributes.HasFlag(FileAttributes.ReparsePoint);
-                atime = dirInfo.LastAccessTime;
-                mtime = dirInfo.LastWriteTime;
-                ctime = dirInfo.CreationTime;
-                birthtime = dirInfo.CreationTime;
-            }
-
-            return CreateStatsObject(
-                isDirectory: isDir,
-                isFile: fileInfo.Exists && !isDir,
-                isSymbolicLink: isSymlink,
-                size: size,
-                atime: atime,
-                mtime: mtime,
-                ctime: ctime,
-                birthtime: birthtime
-            );
+            return FsModuleInterpreter.BuildStatRecord(isDir, isSymlink, ro, size, atime, mtime, ctime, ctime);
         });
     }
 

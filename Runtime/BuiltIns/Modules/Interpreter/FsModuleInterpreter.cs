@@ -73,6 +73,10 @@ public static class FsModuleInterpreter
             ["readdirSync"] = BuiltInMethod.CreateV2("readdirSync", 1, 2, ReaddirSync),
             ["statSync"] = BuiltInMethod.CreateV2("statSync", 1, 1, StatSync),
             ["lstatSync"] = BuiltInMethod.CreateV2("lstatSync", 1, 1, LstatSync),
+            // Raw stat records (#977) — the TS Stats class shapes these.
+            ["statRaw"] = BuiltInMethod.CreateV2("statRaw", 1, 1, StatRaw),
+            ["lstatRaw"] = BuiltInMethod.CreateV2("lstatRaw", 1, 1, LstatRaw),
+            ["fstatRaw"] = BuiltInMethod.CreateV2("fstatRaw", 1, 1, FstatRaw),
             ["renameSync"] = BuiltInMethod.CreateV2("renameSync", 2, 2, RenameSync),
             ["copyFileSync"] = BuiltInMethod.CreateV2("copyFileSync", 2, 3, CopyFileSync),
             ["accessSync"] = BuiltInMethod.CreateV2("accessSync", 1, 2, AccessSync),
@@ -178,40 +182,45 @@ public static class FsModuleInterpreter
         return RuntimeValue.FromBoolean(File.Exists(path) || Directory.Exists(path));
     }
 
+    /// <summary>
+    /// Extracts the encoding name from a string-or-options value (Node accepts both
+    /// <c>'utf8'</c> and <c>{ encoding: 'utf8' }</c>). Returns null when no encoding
+    /// is given — on read that means "return a Buffer".
+    /// </summary>
+    internal static string? EncodingName(object? options)
+    {
+        if (options is string s) return s;
+        if (options is SharpTSObject opts && opts.GetProperty("encoding") is string es) return es;
+        return null;
+    }
+
     private static RuntimeValue ReadFileSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var path = args[0].ToObject()?.ToString() ?? "";
-        var encoding = args.Length >= 2 ? args[1].ToObject() : null;
+        var encoding = EncodingName(args.Length >= 2 ? args[1].ToObject() : null);
 
         return RuntimeValue.FromBoxed(WrapFsOperation("open", path, () =>
         {
-            if (encoding != null)
-            {
-                // Return as string
-                return (object?)File.ReadAllText(path);
-            }
-            else
-            {
-                // Return as Buffer
-                var bytes = File.ReadAllBytes(path);
-                return new SharpTSBuffer(bytes);
-            }
+            var bytes = File.ReadAllBytes(path);
+            // No encoding → Buffer; otherwise decode the raw bytes per the encoding.
+            return encoding != null ? (object?)BufferEncoding.Decode(bytes, encoding) : new SharpTSBuffer(bytes);
         }));
     }
 
     private static RuntimeValue WriteFileSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var path = args[0].ToObject()?.ToString() ?? "";
-        var data = args[1].ToObject()?.ToString() ?? "";
-        WrapFsOperation("open", path, () => File.WriteAllText(path, data));
+        // Buffer/TypedArray data is written byte-exact; a string honors the encoding option.
+        var bytes = BufferEncoding.ToBytes(args[1].ToObject(), EncodingName(args.Length >= 3 ? args[2].ToObject() : null));
+        WrapFsOperation("open", path, () => File.WriteAllBytes(path, bytes));
         return RuntimeValue.Null;
     }
 
     private static RuntimeValue AppendFileSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var path = args[0].ToObject()?.ToString() ?? "";
-        var data = args[1].ToObject()?.ToString() ?? "";
-        WrapFsOperation("open", path, () => File.AppendAllText(path, data));
+        var bytes = BufferEncoding.ToBytes(args[1].ToObject(), EncodingName(args.Length >= 3 ? args[2].ToObject() : null));
+        WrapFsOperation("open", path, () => File.AppendAllBytes(path, bytes));
         return RuntimeValue.Null;
     }
 
@@ -277,7 +286,7 @@ public static class FsModuleInterpreter
             {
                 foreach (var entry in entries)
                 {
-                    list.Add(CreateDirent(entry));
+                    list.Add(CreateDirent(entry, Path.GetDirectoryName(entry) ?? path));
                 }
             }
             else
@@ -303,30 +312,33 @@ public static class FsModuleInterpreter
     /// <summary>
     /// Creates a Dirent-like object for readdirSync({ withFileTypes: true }).
     /// </summary>
-    private static SharpTSObject CreateDirent(string fullPath)
+    internal static SharpTSObject CreateDirent(string fullPath, string parentPath)
     {
         var name = Path.GetFileName(fullPath);
         var isFile = File.Exists(fullPath);
         var isDir = Directory.Exists(fullPath);
         var isSymlink = false;
 
-        // Check for symbolic link
         var fileInfo = new FileInfo(fullPath);
-        if (fileInfo.Exists || Directory.Exists(fullPath))
+        if (fileInfo.Exists || isDir)
         {
             isSymlink = fileInfo.Attributes.HasFlag(FileAttributes.ReparsePoint);
         }
+        var fileOnly = isFile && !isDir;
 
+        // is*() are methods (Node Dirent), uniform across sync/async/compiled (#977).
         return new SharpTSObject(new Dictionary<string, object?>
         {
             ["name"] = name,
-            ["isFile"] = isFile && !isDir,
-            ["isDirectory"] = isDir,
-            ["isSymbolicLink"] = isSymlink,
-            ["isBlockDevice"] = false,
-            ["isCharacterDevice"] = false,
-            ["isFIFO"] = false,
-            ["isSocket"] = false,
+            ["parentPath"] = parentPath,
+            ["path"] = parentPath,
+            ["isFile"] = BuiltInMethod.CreateV2("isFile", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(fileOnly)),
+            ["isDirectory"] = BuiltInMethod.CreateV2("isDirectory", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isDir)),
+            ["isSymbolicLink"] = BuiltInMethod.CreateV2("isSymbolicLink", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isSymlink)),
+            ["isBlockDevice"] = BuiltInMethod.CreateV2("isBlockDevice", 0, 0, (_, _, _) => RuntimeValue.False),
+            ["isCharacterDevice"] = BuiltInMethod.CreateV2("isCharacterDevice", 0, 0, (_, _, _) => RuntimeValue.False),
+            ["isFIFO"] = BuiltInMethod.CreateV2("isFIFO", 0, 0, (_, _, _) => RuntimeValue.False),
+            ["isSocket"] = BuiltInMethod.CreateV2("isSocket", 0, 0, (_, _, _) => RuntimeValue.False),
         });
     }
 
@@ -392,16 +404,34 @@ public static class FsModuleInterpreter
     private static RuntimeValue AccessSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var path = args[0].ToObject()?.ToString() ?? "";
+        var mode = args.Length >= 2 && args[1].ToObject() is double d ? (int)d : 0;
 
-        WrapFsOperation("access", path, () =>
-        {
-            if (!File.Exists(path) && !Directory.Exists(path))
-            {
-                throw new FileNotFoundException("no such file or directory", path);
-            }
-        });
+        WrapFsOperation("access", path, () => CheckAccess(path, mode));
 
         return RuntimeValue.Null;
+    }
+
+    /// <summary>
+    /// Enforces an fs.access mode against a path. F_OK requires existence (ENOENT
+    /// otherwise); W_OK requires the target to be writable — best-effort on Windows
+    /// (a read-only attribute denies writes, EACCES). R_OK/X_OK are treated as
+    /// granted when the path exists on the supported platforms. Shared by the sync
+    /// and async access implementations.
+    /// </summary>
+    internal static void CheckAccess(string path, int mode)
+    {
+        var isFile = File.Exists(path);
+        var isDir = Directory.Exists(path);
+        if (!isFile && !isDir)
+        {
+            throw new FileNotFoundException("no such file or directory", path);
+        }
+
+        // W_OK (2): writability. A read-only file can't be written (Windows + Unix).
+        if ((mode & 2) != 0 && isFile && File.GetAttributes(path).HasFlag(FileAttributes.ReadOnly))
+        {
+            throw new UnauthorizedAccessException($"permission denied, access '{path}'");
+        }
     }
 
     private static RuntimeValue LstatSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
@@ -433,6 +463,107 @@ public static class FsModuleInterpreter
                 ["isSymbolicLink"] = BuiltInMethod.CreateV2("isSymbolicLink", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isSymlink)),
                 ["size"] = size
             });
+        }));
+    }
+
+    // ===== Stats raw record (#977) =====
+    // statRaw/lstatRaw/fstatRaw return a flat numeric record; the TS Stats class
+    // (stdlib/node/fs.ts) shapes it into the Node Stats object. The compiled twin
+    // ($Runtime.FsStatRaw/FsLstatRaw/FsFstatRaw) mirrors this logic byte-for-byte.
+
+    private static double StatTimeMs(DateTime dt) => new DateTimeOffset(dt.ToUniversalTime()).ToUnixTimeMilliseconds();
+
+    /// <summary>
+    /// Builds the flat numeric stat record. Perm bits are best-effort and
+    /// platform-uniform (dir 0o777; file 0o666, or 0o444 when read-only); the
+    /// device/inode/uid/gid fields are documented 0 fallbacks. Mirrored exactly by
+    /// the compiled emitter so interpreter and compiled Stats are byte-identical.
+    /// </summary>
+    internal static SharpTSObject BuildStatRecord(bool isDir, bool isSymlink, bool isReadOnly, double size,
+        DateTime atime, DateTime mtime, DateTime ctime, DateTime birthtime)
+    {
+        int typeBits = isSymlink ? 0xA000 : (isDir ? 0x4000 : 0x8000);
+        int permBits = isDir ? 0x1FF : (isReadOnly ? 0x124 : 0x1B6);
+        double mode = typeBits | permBits;
+        double blocks = Math.Floor((size + 511.0) / 512.0);
+        return new SharpTSObject(new Dictionary<string, object?>
+        {
+            ["mode"] = mode,
+            ["size"] = size,
+            ["atimeMs"] = StatTimeMs(atime),
+            ["mtimeMs"] = StatTimeMs(mtime),
+            ["ctimeMs"] = StatTimeMs(ctime),
+            ["birthtimeMs"] = StatTimeMs(birthtime),
+            ["dev"] = 0.0,
+            ["ino"] = 0.0,
+            ["nlink"] = 1.0,
+            ["uid"] = 0.0,
+            ["gid"] = 0.0,
+            ["rdev"] = 0.0,
+            ["blksize"] = 4096.0,
+            ["blocks"] = blocks,
+        });
+    }
+
+    private static RuntimeValue StatRaw(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var path = args[0].ToObject()?.ToString() ?? "";
+        return RuntimeValue.FromBoxed(WrapFsOperation("stat", path, () =>
+        {
+            if (Directory.Exists(path))
+            {
+                var di = new DirectoryInfo(path);
+                return (object?)BuildStatRecord(true, false, false, 0.0,
+                    di.LastAccessTime, di.LastWriteTime, di.CreationTime, di.CreationTime);
+            }
+            if (File.Exists(path))
+            {
+                var fi = new FileInfo(path);
+                bool ro = fi.Attributes.HasFlag(FileAttributes.ReadOnly);
+                return BuildStatRecord(false, false, ro, fi.Length,
+                    fi.LastAccessTime, fi.LastWriteTime, fi.CreationTime, fi.CreationTime);
+            }
+            throw new FileNotFoundException("no such file or directory", path);
+        }));
+    }
+
+    private static RuntimeValue LstatRaw(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var path = args[0].ToObject()?.ToString() ?? "";
+        return RuntimeValue.FromBoxed(WrapFsOperation("lstat", path, () =>
+        {
+            var fi = new FileInfo(path);
+            var di = new DirectoryInfo(path);
+            if (!fi.Exists && !di.Exists)
+            {
+                throw new FileNotFoundException("no such file or directory", path);
+            }
+            bool isSymlink = (fi.Exists ? fi.Attributes : di.Attributes).HasFlag(FileAttributes.ReparsePoint);
+            bool isDir = di.Exists && !fi.Exists;
+            double size = fi.Exists ? fi.Length : 0.0;
+            bool ro = fi.Exists && fi.Attributes.HasFlag(FileAttributes.ReadOnly);
+            DateTime at = isDir ? di.LastAccessTime : fi.LastAccessTime;
+            DateTime mt = isDir ? di.LastWriteTime : fi.LastWriteTime;
+            DateTime ct = isDir ? di.CreationTime : fi.CreationTime;
+            return (object?)BuildStatRecord(isDir, isSymlink, ro, size, at, mt, ct, ct);
+        }));
+    }
+
+    private static RuntimeValue FstatRaw(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fd = Convert.ToInt32(args[0].ToObject());
+        return RuntimeValue.FromBoxed(WrapFsOperation("fstat", null, () =>
+        {
+            var stream = _fdTable.Get(fd);
+            double size = stream.Length;
+            DateTime at = DateTime.UnixEpoch, mt = DateTime.UnixEpoch, ct = DateTime.UnixEpoch;
+            try
+            {
+                var fi = new FileInfo(stream.Name);
+                if (fi.Exists) { at = fi.LastAccessTime; mt = fi.LastWriteTime; ct = fi.CreationTime; }
+            }
+            catch { /* fd without a recoverable path → epoch fallback */ }
+            return (object?)BuildStatRecord(false, false, false, size, at, mt, ct, ct);
         }));
     }
 
