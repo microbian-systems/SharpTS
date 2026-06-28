@@ -1587,6 +1587,76 @@ public class FsModuleTests
 
     #endregion
 
+    #region promises.opendir + watch (#975)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_PromisesOpendir_AsyncIteratesEntries(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                async function main() {
+                    const d = os.tmpdir() + '/opendir_{{uid}}';
+                    fs.rmSync(d, { recursive: true, force: true });
+                    fs.mkdirSync(d, { recursive: true });
+                    fs.writeFileSync(d + '/a.txt', '1');
+                    fs.writeFileSync(d + '/b.txt', '2');
+                    fs.mkdirSync(d + '/sub');
+                    const dir = await fs.promises.opendir(d);
+                    let count = 0; let sawDir = false;
+                    for await (const ent of dir) { count++; if (ent.isDirectory()) sawDir = true; }
+                    console.log('count:' + count + ' sawDir:' + sawDir);
+                    fs.rmSync(d, { recursive: true, force: true });
+                }
+                main();
+                """
+        };
+        Assert.Equal("count:3 sawDir:true\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_PromisesWatch_AsyncIteratorTerminatesOnAbort(ExecutionMode mode)
+    {
+        // Real FSWatcher event timing is non-deterministic (and flaky under load), so
+        // this pins the iterator + AbortSignal-termination contract deterministically:
+        // aborting then pulling yields done, and a pre-aborted signal ends a for-await
+        // immediately. (Live change-event observation is covered by manual/e2e checks;
+        // the compiled parked-abort limitation is tracked in #985.)
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                async function main() {
+                    const d = os.tmpdir() + '/watch_{{uid}}';
+                    fs.rmSync(d, { recursive: true, force: true });
+                    fs.mkdirSync(d, { recursive: true });
+                    const ac = new AbortController();
+                    const it: any = fs.promises.watch(d, { signal: ac.signal });
+                    ac.abort();
+                    const r = await it.next();
+                    console.log('done:' + r.done);
+                    const ac2 = new AbortController();
+                    ac2.abort();
+                    let count = 0;
+                    for await (const ev of fs.promises.watch(d, { signal: ac2.signal })) { count++; }
+                    console.log('count:' + count);
+                    fs.rmSync(d, { recursive: true, force: true });
+                }
+                main();
+                """
+        };
+        Assert.Equal("done:true\ncount:0\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
+
     #region rm / cp (#973)
 
     [Theory]
