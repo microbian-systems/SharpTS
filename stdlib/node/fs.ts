@@ -1135,11 +1135,22 @@ class FileHandle {
     /** Flushes the fd's data writes to disk (#976). */
     datasync(): Promise<void> { return __promisifyVoid(() => __fsyncSync(this.fd)); }
 
-    /** Returns a ReadStream over the underlying file. */
-    createReadStream(options?: any): any { return createReadStream(this.__path, options); }
+    /** Returns a ReadStream over the handle's fd (#980). autoClose defaults false —
+     *  the handle owns the descriptor; close it via fh.close(). */
+    createReadStream(options?: any): any {
+        const o: any = { autoClose: false };
+        if (options) for (const k in options) o[k] = options[k];
+        o.fd = this.fd;
+        return createReadStream(this.__path, o);
+    }
 
-    /** Returns a WriteStream over the underlying file. */
-    createWriteStream(options?: any): any { return createWriteStream(this.__path, options); }
+    /** Returns a WriteStream over the handle's fd (#980). autoClose defaults false. */
+    createWriteStream(options?: any): any {
+        const o: any = { autoClose: false };
+        if (options) for (const k in options) o[k] = options[k];
+        o.fd = this.fd;
+        return createWriteStream(this.__path, o);
+    }
 
     /** Closes the file descriptor. Idempotent. */
     close(): Promise<void> {
