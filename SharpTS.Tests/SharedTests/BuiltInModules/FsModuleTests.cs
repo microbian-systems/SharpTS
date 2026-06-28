@@ -1657,6 +1657,75 @@ public class FsModuleTests
 
     #endregion
 
+    #region async chown + callback fd ops (#974)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_CallbackFdOps_OpenReadWriteFstatClose(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                import { Buffer } from 'buffer';
+                function p<T>(fn: (cb: any) => void): Promise<T> {
+                    return new Promise<T>((res: any, rej: any) => { fn((e: any, v: any) => e ? rej(e) : res(v)); });
+                }
+                async function main() {
+                    const f = os.tmpdir() + '/fd974_{{uid}}.txt';
+                    fs.writeFileSync(f, 'HELLO WORLD');
+                    const fd: any = await p((cb) => fs.open(f, 'r', cb));
+                    const buf = Buffer.alloc(5);
+                    const n: any = await new Promise((res: any, rej: any) => fs.read(fd, buf, 0, 5, 6, (e: any, c: any) => e ? rej(e) : res(c)));
+                    console.log(n + ':' + buf.toString('utf8'));        // 5:WORLD (position 6)
+                    const st: any = await p((cb) => fs.fstat(fd, cb));
+                    console.log(st.size + ':' + st.isFile());           // 11:true
+                    await new Promise((res: any, rej: any) => fs.close(fd, (e: any) => e ? rej(e) : res(0)));
+                    const fw: any = await p((cb) => fs.open(f, 'w', cb));
+                    const wn: any = await new Promise((res: any, rej: any) => fs.write(fw, Buffer.from('XY'), 0, 2, 0, (e: any, c: any) => e ? rej(e) : res(c)));
+                    await new Promise((res: any, rej: any) => fs.ftruncate(fw, 2, (e: any) => e ? rej(e) : res(0)));
+                    await new Promise((res: any, rej: any) => fs.close(fw, (e: any) => e ? rej(e) : res(0)));
+                    console.log(wn + ':' + fs.readFileSync(f, 'utf8')); // 2:XY
+                    fs.unlinkSync(f);
+                }
+                main();
+                """
+        };
+        Assert.Equal("5:WORLD\n11:true\n2:XY\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_CallbackFd_BadFd_And_Chown_Invoke(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                async function main() {
+                    const f = os.tmpdir() + '/fd974b_{{uid}}.txt';
+                    fs.writeFileSync(f, 'x');
+                    // Bad fd surfaces an error with a code to the callback (the exact code
+                    // differs by mode for a stale fd — a pre-existing primitive divergence).
+                    const hasCode: any = await new Promise((res: any) => fs.fstat(999999, (e: any) => res(!!(e && typeof e.code === 'string' && e.code.length > 0))));
+                    console.log('badfd:' + hasCode);
+                    // chown's callback is invoked (platform/no-op behavior aside).
+                    const called: any = await new Promise((res: any) => fs.chown(f, 0, 0, () => res(true)));
+                    console.log('chown:' + called);
+                    fs.unlinkSync(f);
+                }
+                main();
+                """
+        };
+        Assert.Equal("badfd:true\nchown:true\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
+
     #region rm / cp (#973)
 
     [Theory]
