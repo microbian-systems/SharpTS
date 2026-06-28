@@ -50,7 +50,6 @@ import {
     ftruncateSync as __ftruncateSync,
     // Directory utilities / hard links
     mkdtempSync as __mkdtempSync,
-    opendirSync as __opendirSync,
     linkSync as __linkSync,
     // Stream factories
     createReadStream as __createReadStream,
@@ -462,7 +461,84 @@ export function ftruncateSync(fd: number, len?: number): void {
 export function mkdtempSync(prefix: string): string { return __mkdtempSync(prefix); }
 
 /** Synchronously opens a directory and returns a Dir handle. */
-export function opendirSync(path: string): any { return __opendirSync(path); }
+// A Dir handle: sync + async iterable over a snapshot of the directory's Dirents.
+// Node reads lazily; reading the whole listing up front is simple and correct for
+// typical sizes. read()/readSync()/iteration share one cursor (as in Node).
+function __makeDir(path: string, entries: any[]): any {
+    let i = 0;
+    return {
+        path,
+        readSync(): any { return i < entries.length ? entries[i++] : null; },
+        read(): Promise<any> { return Promise.resolve(i < entries.length ? entries[i++] : null); },
+        closeSync(): void { i = entries.length; },
+        close(): Promise<void> { i = entries.length; return Promise.resolve(); },
+        [Symbol.asyncIterator](): any {
+            return {
+                next(): any {
+                    const e = i < entries.length ? entries[i++] : null;
+                    return Promise.resolve(e !== null ? { value: e, done: false } : { value: undefined, done: true });
+                }
+            };
+        }
+    };
+}
+
+/** Synchronously opens a directory and returns a Dir handle (sync + async iterable). */
+export function opendirSync(path: string, options?: any): any {
+    return __makeDir(path, readdirSync(path, { withFileTypes: true } as any));
+}
+
+// --- promises.watch: bridge the FSWatcher's 'change' event stream into a
+// pull-based async iterator. Events arriving between pulls are queued; a pull
+// with no pending event parks a resolver until the next event. An AbortSignal
+// (or iterator return()) closes the watcher and ends iteration cleanly so the
+// event loop can drain. ---
+function __watchAsync(filename: string, options?: any): any {
+    const opts = options || {};
+    const signal = opts.signal;
+    const watcher: any = __watch(filename, opts);
+    const queue: any[] = [];
+    const resolvers: any[] = [];
+    let done = false;
+
+    const finish = () => {
+        if (done) return;
+        done = true;
+        try { watcher.close(); } catch (e) { }
+        while (resolvers.length) { resolvers.shift()({ value: undefined, done: true }); }
+    };
+
+    watcher.on('change', (eventType: any, fname: any) => {
+        if (done) return;
+        const ev = { eventType, filename: fname };
+        if (resolvers.length) { resolvers.shift()({ value: ev, done: false }); }
+        else { queue.push(ev); }
+    });
+    watcher.on('error', () => { finish(); });
+
+    if (signal) {
+        if (signal.aborted) {
+            finish();
+        } else {
+            // Immediate termination when the AbortSignal fires while the iterator is
+            // parked. In compiled mode AbortSignal's listener API is not callable from
+            // stdlib code (the call throws), so this is ignored there — abort is then
+            // observed by the `signal.aborted` check in next() on the following pull.
+            try { signal.addEventListener('abort', finish); } catch (e) { }
+        }
+    }
+
+    return {
+        [Symbol.asyncIterator]() { return this; },
+        next(): any {
+            if (signal && signal.aborted) finish();
+            if (queue.length) return Promise.resolve({ value: queue.shift(), done: false });
+            if (done) return Promise.resolve({ value: undefined, done: true });
+            return new Promise((resolve: any) => { resolvers.push(resolve); });
+        },
+        return(): any { finish(); return Promise.resolve({ value: undefined, done: true }); }
+    };
+}
 
 /** Synchronously creates a hard link. */
 export function linkSync(existingPath: string, newPath: string): void { __linkSync(existingPath, newPath); }
@@ -681,6 +757,8 @@ export const promises = {
     symlink: (target: string, path: string, type?: any): Promise<void> => __pSymlink(target, path, type),
     link: (existingPath: string, newPath: string): Promise<void> => __pLink(existingPath, newPath),
     mkdtemp: (prefix: string): Promise<any> => __pMkdtemp(prefix),
+    opendir: (path: string, options?: any): Promise<any> => Promise.resolve(opendirSync(path, options)),
+    watch: (filename: string, options?: any): any => __watchAsync(filename, options),
     constants,
 };
 
