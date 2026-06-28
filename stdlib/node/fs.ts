@@ -25,8 +25,8 @@ import {
     rmdirSync as __rmdirSync,
     readdirSync as __readdirSync,
     // Metadata
-    statSync as __statSync,
-    lstatSync as __lstatSync,
+    statRaw as __statRaw,
+    lstatRaw as __lstatRaw,
     // Move / copy
     renameSync as __renameSync,
     copyFileSync as __copyFileSync,
@@ -46,7 +46,7 @@ import {
     closeSync as __closeSync,
     readSync as __readSync,
     writeSync as __writeSync,
-    fstatSync as __fstatSync,
+    fstatRaw as __fstatRaw,
     ftruncateSync as __ftruncateSync,
     // Directory utilities / hard links
     mkdtempSync as __mkdtempSync,
@@ -202,16 +202,122 @@ export function rmdirSync(path: string, options?: any): void {
 }
 
 /** Synchronously reads the contents of a directory. */
-export function readdirSync(path: string, options?: any): string[] {
+export function readdirSync(path: string, options?: any): any {
+    if (__wantsFileTypes(options)) {
+        const names = __readdirRecursive(options) ? __readdirSync(path, { recursive: true }) : __readdirSync(path);
+        return __makeDirents(path, names);
+    }
     if (options === undefined) return __readdirSync(path);
     return __readdirSync(path, options);
 }
 
+// ===========================================================================
+// Stats (#977) — one canonical class built from primitive:fs's flat stat record,
+// so statSync / await stat / fstat all return the SAME shape and values. The
+// seven is*() predicates derive from the mode bits. `{ bigint: true }` stores the
+// numeric fields as BigInt and adds *Ns. Methods live on the prototype, so
+// Object.keys(stat) returns only the data fields (Node-faithful).
+// ===========================================================================
+const __S_IFMT = 0xf000, __S_IFREG = 0x8000, __S_IFDIR = 0x4000, __S_IFLNK = 0xa000,
+    __S_IFBLK = 0x6000, __S_IFCHR = 0x2000, __S_IFIFO = 0x1000, __S_IFSOCK = 0xc000;
+
+class Stats {
+    dev: any; ino: any; mode: any; nlink: any; uid: any; gid: any; rdev: any;
+    size: any; blksize: any; blocks: any;
+    atimeMs: any; mtimeMs: any; ctimeMs: any; birthtimeMs: any;
+    atime: any; mtime: any; ctime: any; birthtime: any;
+    constructor(r: any, big: boolean) {
+        const n = (x: number): any => big ? BigInt(Math.trunc(x)) : x;
+        this.dev = n(r.dev); this.ino = n(r.ino); this.mode = n(r.mode);
+        this.nlink = n(r.nlink); this.uid = n(r.uid); this.gid = n(r.gid); this.rdev = n(r.rdev);
+        this.size = n(r.size); this.blksize = n(r.blksize); this.blocks = n(r.blocks);
+        this.atimeMs = n(r.atimeMs); this.mtimeMs = n(r.mtimeMs);
+        this.ctimeMs = n(r.ctimeMs); this.birthtimeMs = n(r.birthtimeMs);
+        this.atime = new Date(r.atimeMs); this.mtime = new Date(r.mtimeMs);
+        this.ctime = new Date(r.ctimeMs); this.birthtime = new Date(r.birthtimeMs);
+        if (big) {
+            (this as any).atimeNs = BigInt(Math.trunc(r.atimeMs)) * 1000000n;
+            (this as any).mtimeNs = BigInt(Math.trunc(r.mtimeMs)) * 1000000n;
+            (this as any).ctimeNs = BigInt(Math.trunc(r.ctimeMs)) * 1000000n;
+            (this as any).birthtimeNs = BigInt(Math.trunc(r.birthtimeMs)) * 1000000n;
+        }
+    }
+    isFile(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFREG; }
+    isDirectory(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFDIR; }
+    isSymbolicLink(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFLNK; }
+    isBlockDevice(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFBLK; }
+    isCharacterDevice(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFCHR; }
+    isFIFO(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFIFO; }
+    isSocket(): boolean { return (Number(this.mode) & __S_IFMT) === __S_IFSOCK; }
+}
+
+/** Whether a stat options arg requests BigInt fields (`{ bigint: true }`). */
+function __statBig(options: any): boolean {
+    return typeof options === 'object' && options !== null && !!options.bigint;
+}
+
+/** Builds the canonical Stats object from a raw record. */
+function __makeStats(raw: any, big: boolean): Stats { return new Stats(raw, big); }
+
+// ===========================================================================
+// Dirent (#977) — one canonical class for readdir({ withFileTypes: true }) in
+// both modes. Built in TS from the entry's lstat mode, so the seven is*() are
+// methods (Node-shaped) and parentPath/path (Node 20+) are present everywhere.
+// ===========================================================================
+class Dirent {
+    name: string;
+    parentPath: string;
+    path: string;
+    mode: number;
+    constructor(name: string, parentPath: string, mode: number) {
+        this.name = name; this.parentPath = parentPath; this.path = parentPath; this.mode = mode;
+    }
+    isFile(): boolean { return (this.mode & __S_IFMT) === __S_IFREG; }
+    isDirectory(): boolean { return (this.mode & __S_IFMT) === __S_IFDIR; }
+    isSymbolicLink(): boolean { return (this.mode & __S_IFMT) === __S_IFLNK; }
+    isBlockDevice(): boolean { return (this.mode & __S_IFMT) === __S_IFBLK; }
+    isCharacterDevice(): boolean { return (this.mode & __S_IFMT) === __S_IFCHR; }
+    isFIFO(): boolean { return (this.mode & __S_IFMT) === __S_IFIFO; }
+    isSocket(): boolean { return (this.mode & __S_IFMT) === __S_IFSOCK; }
+}
+
+/** Last path segment (the entry's own name), separator-agnostic. */
+function __baseName(p: string): string {
+    let end = p.length;
+    while (end > 1 && (p[end - 1] === '/' || p[end - 1] === '\\')) end--;
+    let i = end - 1;
+    while (i >= 0 && p[i] !== '/' && p[i] !== '\\') i--;
+    return p.slice(i + 1, end);
+}
+
+/** Builds a Dirent for an entry `rel` (a name, or relative path under recursive). */
+function __makeDirent(base: string, rel: string): Dirent {
+    const full = base + '/' + rel;
+    let mode = 0;
+    try { mode = __lstatRaw(full).mode; } catch (e) { mode = 0; }
+    return new Dirent(__baseName(full), __parentDir(full), mode);
+}
+
+/** Whether a readdir options arg requested `{ withFileTypes: true }`. */
+function __wantsFileTypes(options: any): boolean {
+    return typeof options === 'object' && options !== null && !!options.withFileTypes;
+}
+
+/** Whether a readdir options arg requested `{ recursive: true }`. */
+function __readdirRecursive(options: any): boolean {
+    return typeof options === 'object' && options !== null && !!options.recursive;
+}
+
+/** Maps a raw name/relative-path listing to Dirent objects. */
+function __makeDirents(base: string, names: any): Dirent[] {
+    return names.map((rel: string) => __makeDirent(base, rel));
+}
+
 /** Synchronously retrieves the Stats for the path. */
-export function statSync(path: string): any { return __statSync(path); }
+export function statSync(path: string, options?: any): any { return __makeStats(__statRaw(path), __statBig(options)); }
 
 /** Synchronously retrieves the Stats for the path without following symbolic links. */
-export function lstatSync(path: string): any { return __lstatSync(path); }
+export function lstatSync(path: string, options?: any): any { return __makeStats(__lstatRaw(path), __statBig(options)); }
 
 /** Synchronously renames (moves) a file or directory. */
 export function renameSync(oldPath: string, newPath: string): void { __renameSync(oldPath, newPath); }
@@ -278,7 +384,7 @@ export function writeSync(fd: number, buffer: any, offset?: number, length?: num
 }
 
 /** Synchronously retrieves the Stats for an open file descriptor. */
-export function fstatSync(fd: number): any { return __fstatSync(fd); }
+export function fstatSync(fd: number, options?: any): any { return __makeStats(__fstatRaw(fd), __statBig(options)); }
 
 /** Synchronously truncates an open file descriptor to the given length. */
 export function ftruncateSync(fd: number, len?: number): void {
@@ -364,13 +470,15 @@ export function appendFile(path: string, data: any, options?: any, callback?: an
 /** Asynchronously retrieves the Stats for the path. */
 export function stat(path: string, options?: any, callback?: any): void {
     if (typeof options === 'function') { callback = options; options = undefined; }
-    __cbData(__pStat(path), callback);
+    const big = __statBig(options);
+    __pStat(path).then((r: any) => { callback(null, __makeStats(r, big)); }, (e: any) => { callback(e); });
 }
 
 /** Asynchronously retrieves the Stats for the path without following symbolic links. */
 export function lstat(path: string, options?: any, callback?: any): void {
     if (typeof options === 'function') { callback = options; options = undefined; }
-    __cbData(__pLstat(path), callback);
+    const big = __statBig(options);
+    __pLstat(path).then((r: any) => { callback(null, __makeStats(r, big)); }, (e: any) => { callback(e); });
 }
 
 /** Asynchronously removes a file or symbolic link. */
@@ -393,6 +501,11 @@ export function rmdir(path: string, options?: any, callback?: any): void {
 /** Asynchronously reads the contents of a directory. */
 export function readdir(path: string, options?: any, callback?: any): void {
     if (typeof options === 'function') { callback = options; options = undefined; }
+    if (__wantsFileTypes(options)) {
+        const names = __readdirRecursive(options) ? __pReaddir(path, { recursive: true }) : __pReaddir(path);
+        names.then((n: any) => { callback(null, __makeDirents(path, n)); }, (e: any) => { callback(e); });
+        return;
+    }
     __cbData(__pReaddir(path, options), callback);
 }
 
@@ -469,13 +582,15 @@ export const promises = {
     readFile: (path: string, options?: any): Promise<any> => __pReadFile(path, options),
     writeFile: (path: string, data: any, options?: any): Promise<void> => __pWriteFile(path, data, options),
     appendFile: (path: string, data: any, options?: any): Promise<void> => __pAppendFile(path, data, options),
-    stat: (path: string): Promise<any> => __pStat(path),
-    lstat: (path: string): Promise<any> => __pLstat(path),
+    stat: (path: string, options?: any): Promise<any> => __pStat(path).then((r: any) => __makeStats(r, __statBig(options))),
+    lstat: (path: string, options?: any): Promise<any> => __pLstat(path).then((r: any) => __makeStats(r, __statBig(options))),
     unlink: (path: string): Promise<void> => __pUnlink(path),
     mkdir: (path: string, options?: any): Promise<any> => __pMkdir(path, options),
     rmdir: (path: string, options?: any): Promise<void> => __pRmdir(path, options),
     rm: (path: string, options?: any): Promise<void> => __pRm(path, options),
-    readdir: (path: string, options?: any): Promise<any> => __pReaddir(path, options),
+    readdir: (path: string, options?: any): Promise<any> => __wantsFileTypes(options)
+        ? (__readdirRecursive(options) ? __pReaddir(path, { recursive: true }) : __pReaddir(path)).then((n: any) => __makeDirents(path, n))
+        : __pReaddir(path, options),
     rename: (oldPath: string, newPath: string): Promise<void> => __pRename(oldPath, newPath),
     copyFile: (src: string, dest: string, mode?: any): Promise<void> => __pCopyFile(src, dest, mode),
     access: (path: string, mode?: any): Promise<void> => __pAccess(path, mode),

@@ -593,11 +593,11 @@ public class FsModuleTests
                     }
                 }
                 console.log(fileEntry !== null);
-                console.log(fileEntry.isFile === true);
-                console.log(fileEntry.isDirectory === false);
+                console.log(fileEntry.isFile() === true);
+                console.log(fileEntry.isDirectory() === false);
 
                 console.log(dirEntry !== null);
-                console.log(dirEntry.isDirectory === true);
+                console.log(dirEntry.isDirectory() === true);
 
                 // Cleanup
                 fs.unlinkSync(testDir + '/file.txt');
@@ -1472,6 +1472,94 @@ public class FsModuleTests
         };
         Assert.Equal("0,4,2,1\n256,128,64,448\n65536,131072,1052672,4096,2048\n1,2\n",
             TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
+
+    #region Stats/Dirent unification (#977)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_Stat_SyncAndAsyncSameShapeAndPredicates(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const dir = os.tmpdir() + '/st977_{{uid}}';
+                fs.mkdirSync(dir);
+                const file = dir + '/f.txt';
+                fs.writeFileSync(file, 'hello');
+                async function main() {
+                    const s = fs.statSync(file);
+                    const a = await fs.promises.stat(file);
+                    console.log(s.isFile() === true && s.isDirectory() === false);
+                    console.log(s.size === 5 && a.size === 5);
+                    // sync and async produce the identical key set
+                    console.log(JSON.stringify(Object.keys(s).sort()) === JSON.stringify(Object.keys(a).sort()));
+                    console.log(fs.statSync(dir).isDirectory() === true);
+                    fs.unlinkSync(file);
+                    fs.rmdirSync(dir);
+                }
+                main();
+                """
+        };
+        Assert.Equal("true\ntrue\ntrue\ntrue\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_Stat_BigIntOption(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const file = os.tmpdir() + '/big977_{{uid}}.txt';
+                fs.writeFileSync(file, 'x');
+                const s: any = fs.statSync(file, { bigint: true });
+                console.log(typeof s.size === 'bigint');
+                console.log(typeof s.atimeNs === 'bigint');
+                console.log(s.isFile() === true);
+                fs.unlinkSync(file);
+                """
+        };
+        Assert.Equal("true\ntrue\ntrue\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_Dirent_ParentPathAndPredicates(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const dir = os.tmpdir() + '/de977_{{uid}}';
+                fs.mkdirSync(dir);
+                fs.writeFileSync(dir + '/f.txt', 'x');
+                fs.mkdirSync(dir + '/sub');
+                const ents: any = fs.readdirSync(dir, { withFileTypes: true });
+                let f: any = null, d: any = null;
+                for (let i = 0; i < ents.length; i++) {
+                    if (ents[i].name === 'f.txt') f = ents[i];
+                    if (ents[i].name === 'sub') d = ents[i];
+                }
+                console.log(f.isFile() === true && d.isDirectory() === true);
+                console.log(typeof f.parentPath === 'string' && f.parentPath.length > 0);
+                console.log(f.path === f.parentPath);
+                fs.unlinkSync(dir + '/f.txt');
+                fs.rmdirSync(dir + '/sub');
+                fs.rmdirSync(dir);
+                """
+        };
+        Assert.Equal("true\ntrue\ntrue\n", TestHarness.RunModules(files, "main.ts", mode));
     }
 
     #endregion

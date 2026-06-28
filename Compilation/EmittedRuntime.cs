@@ -1509,6 +1509,12 @@ public class EmittedRuntime
     public MethodBuilder FsReaddirSync { get; set; } = null!;
     public MethodBuilder FsStatSync { get; set; } = null!;
     public MethodBuilder FsLstatSync { get; set; } = null!;
+    // Raw stat records (#977) — the TS Stats class shapes these.
+    public MethodBuilder FsStatRaw { get; set; } = null!;
+    public MethodBuilder FsLstatRaw { get; set; } = null!;
+    public MethodBuilder FsFstatRaw { get; set; } = null!;
+    public MethodBuilder FsBuildStatRecord { get; set; } = null!;
+    public MethodBuilder FsStatTimeMs { get; set; } = null!;
     public MethodBuilder FsRenameSync { get; set; } = null!;
     public MethodBuilder FsCopyFileSync { get; set; } = null!;
     public MethodBuilder FsAccessSync { get; set; } = null!;

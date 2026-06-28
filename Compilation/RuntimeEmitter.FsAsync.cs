@@ -190,9 +190,9 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
 
-        // Call FsStatSync(path)
+        // Call FsStatRaw(path) — return the raw record (#977); the TS Stats shapes it.
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.FsStatSync);
+        il.Emit(OpCodes.Call, runtime.FsStatRaw);
 
         // Wrap in Task.FromResult
         il.Emit(OpCodes.Call, fromResult);
@@ -218,9 +218,9 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
 
-        // Call FsLstatSync(path)
+        // Call FsLstatRaw(path) — return the raw record (#977); the TS Stats shapes it.
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.FsLstatSync);
+        il.Emit(OpCodes.Call, runtime.FsLstatRaw);
 
         // Wrap in Task.FromResult
         il.Emit(OpCodes.Call, fromResult);

@@ -173,6 +173,10 @@ public static class BuiltInModuleTypes
             // File info
             ["statSync"] = new TypeInfo.Function([stringType], statsType),
             ["lstatSync"] = new TypeInfo.Function([stringType], statsType),
+            // Raw stat records (#977) — the TS Stats class shapes these.
+            ["statRaw"] = new TypeInfo.Function([stringType], anyType),
+            ["lstatRaw"] = new TypeInfo.Function([stringType], anyType),
+            ["fstatRaw"] = new TypeInfo.Function([numberType], anyType),
 
             // File move/copy
             ["renameSync"] = new TypeInfo.Function(
