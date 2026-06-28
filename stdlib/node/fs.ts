@@ -48,6 +48,10 @@ import {
     writeSync as __writeSync,
     fstatRaw as __fstatRaw,
     ftruncateSync as __ftruncateSync,
+    // Long-tail fd primitives (#976)
+    fsyncSync as __fsyncSync,
+    fdPath as __fdPath,
+    statfsRaw as __statfsRaw,
     // Directory utilities / hard links
     mkdtempSync as __mkdtempSync,
     linkSync as __linkSync,
@@ -225,7 +229,7 @@ function __parentDir(p: string): string {
     return p.slice(0, i);
 }
 
-const __errnoFor: any = { ENOENT: -2, EEXIST: -17, EACCES: -13 };
+const __errnoFor: any = { ENOENT: -2, EEXIST: -17, EACCES: -13, EBADF: -9, ENOSYS: -38, EISDIR: -21 };
 
 /** Builds a Node-shaped fs error (code/errno/syscall/path) thrown from the facade. */
 function __fsError(code: string, message: string, syscall: string, path: string): any {
@@ -462,6 +466,154 @@ export function fstatSync(fd: number, options?: any): any { return __makeStats(_
 export function ftruncateSync(fd: number, len?: number): void {
     if (len === undefined) { __ftruncateSync(fd); return; }
     __ftruncateSync(fd, len);
+}
+
+// ===========================================================================
+// Long-tail sync ops (#976). Durability (fsync/fdatasync), fd-variant metadata
+// (fchmod/fchown/futimes — routed through fdPath to the path ops), symlink
+// metadata (lchmod/lutimes), vectored I/O (readv/writev), filesystem stats
+// (statfs), and glob. All TS over primitive:fs, so both modes share one impl.
+// ===========================================================================
+
+/** Synchronously flushes an fd's buffered writes to disk. */
+export function fsyncSync(fd: number): void { __fsyncSync(fd); }
+
+/** Synchronously flushes an fd's data writes. A full flush is a correct superset. */
+export function fdatasyncSync(fd: number): void { __fsyncSync(fd); }
+
+/** Synchronously changes the permissions of an open fd's file. */
+export function fchmodSync(fd: number, mode: number): void { __chmodSync(__fdPath(fd), mode); }
+
+/** Synchronously changes the owner and group of an open fd's file. */
+export function fchownSync(fd: number, uid: number, gid: number): void { __chownSync(__fdPath(fd), uid, gid); }
+
+/** Synchronously changes the file-system timestamps of an open fd's file. */
+export function futimesSync(fd: number, atime: any, mtime: any): void { __utimesSync(__fdPath(fd), atime, mtime); }
+
+/** Synchronously changes the permissions of a symbolic link. Only BSD/macOS support
+ * this; elsewhere Node fails with ENOSYS, which we surface consistently. */
+export function lchmodSync(path: string, mode: number): void {
+    throw __fsError('ENOSYS', 'function not implemented', 'lchmod', path);
+}
+
+/** Synchronously changes the timestamps of a symbolic link. The BCL has no
+ * no-follow timestamp API, so this approximates by setting the target's times. */
+export function lutimesSync(path: string, atime: any, mtime: any): void { __utimesSync(path, atime, mtime); }
+
+/** Synchronously reads sequentially into an array of buffers; returns total bytes read. */
+export function readvSync(fd: number, buffers: any[], position?: any): number {
+    let pos = (position === undefined || position === null) ? null : position;
+    let total = 0;
+    for (const b of buffers) {
+        const n = readSync(fd, b, 0, b.length, pos);
+        total += n;
+        if (pos !== null) pos += n;
+        if (n < b.length) break; // short read => EOF
+    }
+    return total;
+}
+
+/** Synchronously writes an array of buffers sequentially; returns total bytes written. */
+export function writevSync(fd: number, buffers: any[], position?: any): number {
+    let pos = (position === undefined || position === null) ? null : position;
+    let total = 0;
+    for (const b of buffers) {
+        const n = writeSync(fd, b, 0, b.length, pos);
+        total += n;
+        if (pos !== null) pos += n;
+    }
+    return total;
+}
+
+/** Shapes the flat statfs record, converting fields to BigInt when requested. */
+function __shapeStatfs(raw: any, options: any): any {
+    const big = typeof options === 'object' && options !== null && !!options.bigint;
+    if (!big) return raw;
+    const b = (x: number): any => BigInt(Math.trunc(x));
+    return {
+        type: b(raw.type), bsize: b(raw.bsize), blocks: b(raw.blocks), bfree: b(raw.bfree),
+        bavail: b(raw.bavail), files: b(raw.files), ffree: b(raw.ffree),
+    };
+}
+
+/** Synchronously retrieves filesystem statistics for the path. */
+export function statfsSync(path: string, options?: any): any { return __shapeStatfs(__statfsRaw(path), options); }
+
+// --- Minimal glob (Node 22+): supports `*` and `?` within a path segment and
+// `**` across segments. Matching walks the directory tree under cwd. ---
+
+/** Compiles one glob path-segment (`*`/`?`/literals) to an anchored RegExp. */
+function __globSegRegex(seg: string): RegExp {
+    let re = '^';
+    for (const ch of seg) {
+        if (ch === '*') re += '[^/]*';
+        else if (ch === '?') re += '[^/]';
+        else if ('.+^${}()|[]\\/'.indexOf(ch) >= 0) re += '\\' + ch;
+        else re += ch;
+    }
+    return new RegExp(re + '$');
+}
+
+/** Lists a directory, returning [] when it can't be read (not a dir / missing).
+ * The catch only assigns — a `return` inside a compiled catch can miscompile (#973). */
+function __globReaddir(dir: string): string[] {
+    let entries: string[] = [];
+    try { entries = __readdirSync(dir); } catch (e) { entries = []; }
+    return entries;
+}
+
+/** Recursive glob walk: matches `segs[i]` against entries of `base/rel`, collecting
+ * matched relative paths into `out`. `**` matches zero or more directory levels. */
+function __globWalk(base: string, rel: string, segs: string[], i: number, out: string[]): void {
+    if (i >= segs.length) { if (rel.length > 0) out.push(rel); return; }
+    const seg = segs[i];
+    const dir = rel.length > 0 ? base + '/' + rel : base;
+    const entries = __globReaddir(dir);
+    if (seg === '**') {
+        __globWalk(base, rel, segs, i + 1, out); // ** consumes zero levels
+        for (const e of entries) {
+            const childRel = rel.length > 0 ? rel + '/' + e : e;
+            let isDir = false;
+            try { isDir = statSync(base + '/' + childRel).isDirectory(); } catch (er) { isDir = false; }
+            if (isDir) __globWalk(base, childRel, segs, i, out); // ...or one+ levels
+        }
+        return;
+    }
+    const re = __globSegRegex(seg);
+    for (const e of entries) {
+        if (re.test(e)) {
+            const childRel = rel.length > 0 ? rel + '/' + e : e;
+            __globWalk(base, childRel, segs, i + 1, out);
+        }
+    }
+}
+
+/** Synchronously returns paths matching a glob pattern (or array of patterns),
+ * relative to `options.cwd` (default `.`). */
+export function globSync(pattern: any, options?: any): string[] {
+    const pats: any[] = Array.isArray(pattern) ? pattern : [pattern];
+    const cwd = (options && typeof options === 'object' && options.cwd) ? options.cwd : '.';
+    const out: string[] = [];
+    const seen: any = {};
+    for (const pat of pats) {
+        const segs = ('' + pat).split('/').filter((s: string) => s.length > 0);
+        const local: string[] = [];
+        __globWalk(cwd, '', segs, 0, local);
+        for (const m of local) { if (!seen[m]) { seen[m] = true; out.push(m); } }
+    }
+    return out;
+}
+
+/** Wraps an array as a one-shot async iterable (for fsPromises.glob, Node 22+). */
+function __arrayAsyncIterator(items: any[]): any {
+    let i = 0;
+    return {
+        [Symbol.asyncIterator](): any { return this; },
+        next(): any {
+            if (i < items.length) return Promise.resolve({ value: items[i++], done: false });
+            return Promise.resolve({ value: undefined, done: true });
+        }
+    };
 }
 
 /** Synchronously creates a unique temporary directory and returns its path. */
@@ -790,6 +942,62 @@ export function ftruncate(fd: number, len?: any, callback?: any): void {
     __cbVoid(__promisifyVoid(() => ftruncateSync(fd, len)), callback);
 }
 
+// --- Long-tail callback ops (#976), derived from the sync forms above. ---
+
+/** Asynchronously flushes an fd's buffered writes; callback receives (err). */
+export function fsync(fd: number, callback: any): void { __cbVoid(__promisifyVoid(() => fsyncSync(fd)), callback); }
+
+/** Asynchronously flushes an fd's data writes; callback receives (err). */
+export function fdatasync(fd: number, callback: any): void { __cbVoid(__promisifyVoid(() => fdatasyncSync(fd)), callback); }
+
+/** Asynchronously changes the permissions of an open fd's file; callback receives (err). */
+export function fchmod(fd: number, mode: number, callback: any): void { __cbVoid(__promisifyVoid(() => fchmodSync(fd, mode)), callback); }
+
+/** Asynchronously changes the owner and group of an open fd's file; callback receives (err). */
+export function fchown(fd: number, uid: number, gid: number, callback: any): void { __cbVoid(__promisifyVoid(() => fchownSync(fd, uid, gid)), callback); }
+
+/** Asynchronously changes the timestamps of an open fd's file; callback receives (err). */
+export function futimes(fd: number, atime: any, mtime: any, callback: any): void { __cbVoid(__promisifyVoid(() => futimesSync(fd, atime, mtime)), callback); }
+
+/** Asynchronously changes the permissions of a symbolic link; callback receives (err). */
+export function lchmod(path: string, mode: number, callback: any): void { __cbVoid(__promisifyVoid(() => lchmodSync(path, mode)), callback); }
+
+/** Asynchronously changes the timestamps of a symbolic link; callback receives (err). */
+export function lutimes(path: string, atime: any, mtime: any, callback: any): void { __cbVoid(__promisifyVoid(() => lutimesSync(path, atime, mtime)), callback); }
+
+/** Asynchronously reads into an array of buffers; callback receives (err, bytesRead, buffers). */
+export function readv(fd: number, buffers: any[], position?: any, callback?: any): void {
+    let cb = callback;
+    if (typeof position === 'function') { cb = position; position = undefined; }
+    __promisifyValue(() => readvSync(fd, buffers, position)).then(
+        (n: any) => { cb(null, n, buffers); }, (e: any) => { cb(e, 0, buffers); });
+}
+
+/** Asynchronously writes an array of buffers; callback receives (err, bytesWritten, buffers). */
+export function writev(fd: number, buffers: any[], position?: any, callback?: any): void {
+    let cb = callback;
+    if (typeof position === 'function') { cb = position; position = undefined; }
+    __promisifyValue(() => writevSync(fd, buffers, position)).then(
+        (n: any) => { cb(null, n, buffers); }, (e: any) => { cb(e, 0, buffers); });
+}
+
+/** Asynchronously retrieves filesystem statistics; callback receives (err, stats). */
+export function statfs(path: string, options?: any, callback?: any): void {
+    if (typeof options === 'function') { callback = options; options = undefined; }
+    __cbData(__promisifyValue(() => statfsSync(path, options)), callback);
+}
+
+/** Asynchronously returns paths matching a glob pattern; callback receives (err, matches). */
+export function glob(pattern: any, options?: any, callback?: any): void {
+    if (typeof options === 'function') { callback = options; options = undefined; }
+    __cbData(__promisifyValue(() => globSync(pattern, options)), callback);
+}
+
+/** Deprecated. Tests existence; the callback receives a single boolean (not err-first). */
+export function exists(path: string, callback: any): void {
+    __promisifyValue(() => existsSync(path)).then((b: any) => { callback(b); }, () => { callback(false); });
+}
+
 // ===========================================================================
 // FileHandle (#972) — the promise-based file-descriptor workflow.
 //
@@ -921,11 +1129,11 @@ class FileHandle {
     /** Changes the file-system timestamps of the underlying file. */
     utimes(atime: number, mtime: number): Promise<void> { return __pUtimes(this.__path, atime, mtime); }
 
-    /** Flushes pending writes. SharpTS sync I/O is already durable, so this resolves. */
-    sync(): Promise<void> { return Promise.resolve(); }
+    /** Flushes the fd's buffered writes to disk (#976). */
+    sync(): Promise<void> { return __promisifyVoid(() => __fsyncSync(this.fd)); }
 
-    /** Flushes pending data writes. As with sync(), a resolved no-op here. */
-    datasync(): Promise<void> { return Promise.resolve(); }
+    /** Flushes the fd's data writes to disk (#976). */
+    datasync(): Promise<void> { return __promisifyVoid(() => __fsyncSync(this.fd)); }
 
     /** Returns a ReadStream over the underlying file. */
     createReadStream(options?: any): any { return createReadStream(this.__path, options); }
@@ -989,6 +1197,8 @@ export const promises = {
     open: (path: string, flags?: any, mode?: any): Promise<any> => __openHandle(path, flags, mode),
     opendir: (path: string, options?: any): Promise<any> => Promise.resolve(opendirSync(path, options)),
     watch: (filename: string, options?: any): any => __watchAsync(filename, options),
+    statfs: (path: string, options?: any): Promise<any> => __promisifyValue(() => statfsSync(path, options)),
+    glob: (pattern: any, options?: any): any => __arrayAsyncIterator(globSync(pattern, options)),
     constants,
 };
 
@@ -1001,6 +1211,8 @@ export default {
     chmodSync, chownSync, lchownSync, truncateSync,
     symlinkSync, readlinkSync, realpathSync, utimesSync,
     openSync, closeSync, readSync, writeSync, fstatSync, ftruncateSync,
+    fsyncSync, fdatasyncSync, fchmodSync, fchownSync, futimesSync,
+    lchmodSync, lutimesSync, readvSync, writevSync, statfsSync, globSync,
     mkdtempSync, opendirSync, linkSync,
     createReadStream, createWriteStream,
     watch, watchFile, unwatchFile,
@@ -1009,5 +1221,7 @@ export default {
     rm, cp, readdir, rename, copyFile, access, chmod, truncate, utimes,
     readlink, realpath, symlink, link, mkdtemp,
     chown, lchown, open, close, read, write, fstat, ftruncate,
+    fsync, fdatasync, fchmod, fchown, futimes, lchmod, lutimes,
+    readv, writev, statfs, glob, exists,
     promises,
 };

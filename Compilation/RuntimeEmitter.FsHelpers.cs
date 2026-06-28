@@ -80,6 +80,9 @@ public partial class RuntimeEmitter
         EmitFsFstatSync(typeBuilder, runtime);
         EmitFsFtruncateSync(typeBuilder, runtime);
 
+        // Long-tail fd primitives (#976): fsync, fd→path, statfs
+        EmitFsLongTail(typeBuilder, runtime);
+
         // Directory utilities
         EmitFsMkdtempSync(typeBuilder, runtime);
         EmitFsOpendirSync(typeBuilder, runtime);

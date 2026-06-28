@@ -1537,6 +1537,10 @@ public class EmittedRuntime
     public MethodBuilder FsWriteSyncString { get; set; } = null!;
     public MethodBuilder FsFstatSync { get; set; } = null!;
     public MethodBuilder FsFtruncateSync { get; set; } = null!;
+    // Long-tail fd primitives (#976): fsync, fd→path, and statfs.
+    public MethodBuilder FsFsyncSync { get; set; } = null!;
+    public MethodBuilder FsFdPath { get; set; } = null!;
+    public MethodBuilder FsStatfsRaw { get; set; } = null!;
     public FieldBuilder FsFileDescriptorTable { get; set; } = null!;
 
     // File descriptor low-level helpers (reflection-based for standalone DLLs)

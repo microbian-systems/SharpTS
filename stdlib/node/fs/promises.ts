@@ -109,11 +109,18 @@ export function opendir(path: string, options?: any): Promise<any> { return __fs
 /** Returns an async iterator of `{ eventType, filename }` change events for a path. */
 export function watch(filename: string, options?: any): any { return __fsp.watch(filename, options); }
 
+/** Asynchronously retrieves filesystem statistics for the path. */
+export function statfs(path: string, options?: any): Promise<any> { return __fsp.statfs(path, options); }
+
+/** Returns an async iterator of paths matching a glob pattern (Node 22+). */
+export function glob(pattern: any, options?: any): any { return __fsp.glob(pattern, options); }
+
 /** File-system constants — re-exported from 'fs' so both share one table. */
 export { constants };
 
 export default {
     readFile, writeFile, appendFile, stat, lstat, unlink, mkdir, rmdir, rm, cp,
     readdir, rename, copyFile, access, chmod, chown, lchown, truncate, utimes,
-    readlink, realpath, symlink, link, mkdtemp, open, opendir, watch, constants,
+    readlink, realpath, symlink, link, mkdtemp, open, opendir, watch,
+    statfs, glob, constants,
 };
