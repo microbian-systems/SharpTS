@@ -36,41 +36,31 @@ public partial class RuntimeEmitter
 
         EmitWithFsErrorHandling(il, runtime, pathLocal, "mkdtemp", afterTry =>
         {
-            // Path.GetTempPath()
-            il.Emit(OpCodes.Call, _types.GetMethod(_types.Path, "GetTempPath"));
-
-            // Path.GetRandomFileName()
+            // random = Path.GetRandomFileName().Replace(".", "")
             il.Emit(OpCodes.Call, _types.GetMethod(_types.Path, "GetRandomFileName"));
-
-            // Remove the dot from the random filename
             il.Emit(OpCodes.Ldstr, ".");
             il.Emit(OpCodes.Ldstr, "");
             il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Replace", [typeof(string), typeof(string)])!);
+            var randomLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Stloc, randomLocal);
 
-            // Combine prefix + randomFileName
+            // suffix = prefix + random  (Node appends the random suffix to the prefix)
             il.Emit(OpCodes.Ldloc, prefixLocal);
-            var tempFileNameLocal = il.DeclareLocal(_types.String);
-            il.Emit(OpCodes.Stloc, tempFileNameLocal);
-
-            // string.Concat(tempPath, prefix + randomFileName)
-            var tempPathLocal = il.DeclareLocal(_types.String);
-            // We need to re-emit GetTempPath
-            il.Emit(OpCodes.Call, _types.GetMethod(_types.Path, "GetTempPath"));
-            il.Emit(OpCodes.Stloc, tempPathLocal);
-
-            il.Emit(OpCodes.Ldloc, prefixLocal);
-            il.Emit(OpCodes.Ldloc, tempFileNameLocal);
+            il.Emit(OpCodes.Ldloc, randomLocal);
             il.Emit(OpCodes.Call, _types.String.GetMethod("Concat", [typeof(string), typeof(string)])!);
             var suffixLocal = il.DeclareLocal(_types.String);
             il.Emit(OpCodes.Stloc, suffixLocal);
 
-            // Path.Combine(tempPath, prefix + random)
-            il.Emit(OpCodes.Ldloc, tempPathLocal);
+            // result = Path.Combine(Path.GetTempPath(), suffix). Path.Combine returns
+            // `suffix` verbatim when it is rooted, so an absolute prefix (the canonical
+            // mkdtempSync(path.join(os.tmpdir(),'foo-'))) is NOT doubled — matches the
+            // interpreter and Node. A bare relative prefix lands under the temp dir.
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Path, "GetTempPath"));
             il.Emit(OpCodes.Ldloc, suffixLocal);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.Path, "Combine", _types.String, _types.String));
             il.Emit(OpCodes.Stloc, resultLocal);
 
-            // Directory.CreateDirectory
+            // Directory.CreateDirectory(result)
             il.Emit(OpCodes.Ldloc, resultLocal);
             il.Emit(OpCodes.Call, _types.GetMethod(_types.Directory, "CreateDirectory", _types.String));
             il.Emit(OpCodes.Pop);

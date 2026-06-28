@@ -1563,4 +1563,27 @@ public class FsModuleTests
     }
 
     #endregion
+
+    #region mkdtemp absolute prefix (#984)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_MkdtempSync_AbsolutePrefix_NotDoubled(ExecutionMode mode)
+    {
+        // Canonical usage mkdtempSync(path.join(os.tmpdir(), 'foo-')) — the compiled
+        // twin used to double the prefix and throw. It must now create '…/mkdt_XXXXXX'.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const d = fs.mkdtempSync(os.tmpdir() + '/mkdt_');
+                console.log(fs.existsSync(d) && d.split('mkdt_').length === 2 && d.startsWith(os.tmpdir()));
+                fs.rmdirSync(d);
+                """
+        };
+        Assert.Equal("true\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
 }
