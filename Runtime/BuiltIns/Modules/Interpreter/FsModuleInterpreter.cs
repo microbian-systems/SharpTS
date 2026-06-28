@@ -178,40 +178,45 @@ public static class FsModuleInterpreter
         return RuntimeValue.FromBoolean(File.Exists(path) || Directory.Exists(path));
     }
 
+    /// <summary>
+    /// Extracts the encoding name from a string-or-options value (Node accepts both
+    /// <c>'utf8'</c> and <c>{ encoding: 'utf8' }</c>). Returns null when no encoding
+    /// is given — on read that means "return a Buffer".
+    /// </summary>
+    internal static string? EncodingName(object? options)
+    {
+        if (options is string s) return s;
+        if (options is SharpTSObject opts && opts.GetProperty("encoding") is string es) return es;
+        return null;
+    }
+
     private static RuntimeValue ReadFileSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var path = args[0].ToObject()?.ToString() ?? "";
-        var encoding = args.Length >= 2 ? args[1].ToObject() : null;
+        var encoding = EncodingName(args.Length >= 2 ? args[1].ToObject() : null);
 
         return RuntimeValue.FromBoxed(WrapFsOperation("open", path, () =>
         {
-            if (encoding != null)
-            {
-                // Return as string
-                return (object?)File.ReadAllText(path);
-            }
-            else
-            {
-                // Return as Buffer
-                var bytes = File.ReadAllBytes(path);
-                return new SharpTSBuffer(bytes);
-            }
+            var bytes = File.ReadAllBytes(path);
+            // No encoding → Buffer; otherwise decode the raw bytes per the encoding.
+            return encoding != null ? (object?)BufferEncoding.Decode(bytes, encoding) : new SharpTSBuffer(bytes);
         }));
     }
 
     private static RuntimeValue WriteFileSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var path = args[0].ToObject()?.ToString() ?? "";
-        var data = args[1].ToObject()?.ToString() ?? "";
-        WrapFsOperation("open", path, () => File.WriteAllText(path, data));
+        // Buffer/TypedArray data is written byte-exact; a string honors the encoding option.
+        var bytes = BufferEncoding.ToBytes(args[1].ToObject(), EncodingName(args.Length >= 3 ? args[2].ToObject() : null));
+        WrapFsOperation("open", path, () => File.WriteAllBytes(path, bytes));
         return RuntimeValue.Null;
     }
 
     private static RuntimeValue AppendFileSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var path = args[0].ToObject()?.ToString() ?? "";
-        var data = args[1].ToObject()?.ToString() ?? "";
-        WrapFsOperation("open", path, () => File.AppendAllText(path, data));
+        var bytes = BufferEncoding.ToBytes(args[1].ToObject(), EncodingName(args.Length >= 3 ? args[2].ToObject() : null));
+        WrapFsOperation("open", path, () => File.AppendAllBytes(path, bytes));
         return RuntimeValue.Null;
     }
 

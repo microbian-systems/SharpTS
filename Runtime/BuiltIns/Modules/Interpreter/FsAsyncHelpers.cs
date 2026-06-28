@@ -29,17 +29,10 @@ public static class FsAsyncHelpers
     public static async Task<object?> ReadFileAsync(string path, object? encoding)
     {
         await InjectedTestLatency();
-        if (encoding != null)
-        {
-            // Return as string
-            return await File.ReadAllTextAsync(path);
-        }
-        else
-        {
-            // Return as Buffer
-            var bytes = await File.ReadAllBytesAsync(path);
-            return new SharpTSBuffer(bytes);
-        }
+        var encName = FsModuleInterpreter.EncodingName(encoding);
+        var bytes = await File.ReadAllBytesAsync(path);
+        // No encoding → Buffer; otherwise decode the raw bytes per the encoding.
+        return encName != null ? (object?)BufferEncoding.Decode(bytes, encName) : new SharpTSBuffer(bytes);
     }
 
     /// <summary>
@@ -51,15 +44,9 @@ public static class FsAsyncHelpers
     public static async Task WriteFileAsync(string path, object? data, object? options)
     {
         await InjectedTestLatency();
-        if (data is SharpTSBuffer buffer)
-        {
-            await File.WriteAllBytesAsync(path, buffer.Data);
-        }
-        else
-        {
-            var text = data?.ToString() ?? "";
-            await File.WriteAllTextAsync(path, text);
-        }
+        // Buffer/TypedArray data is written byte-exact; a string honors the encoding option.
+        var bytes = BufferEncoding.ToBytes(data, FsModuleInterpreter.EncodingName(options));
+        await File.WriteAllBytesAsync(path, bytes);
     }
 
     /// <summary>
@@ -70,8 +57,10 @@ public static class FsAsyncHelpers
     /// <param name="options">Optional options (encoding, mode, flag).</param>
     public static async Task AppendFileAsync(string path, object? data, object? options)
     {
-        var text = data?.ToString() ?? "";
-        await File.AppendAllTextAsync(path, text);
+        await InjectedTestLatency();
+        // Buffer/TypedArray data is appended byte-exact; a string honors the encoding option.
+        var bytes = BufferEncoding.ToBytes(data, FsModuleInterpreter.EncodingName(options));
+        await File.AppendAllBytesAsync(path, bytes);
     }
 
     /// <summary>

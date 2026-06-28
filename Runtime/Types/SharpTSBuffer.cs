@@ -1152,62 +1152,11 @@ public class SharpTSBuffer : ITypeCategorized
 
     #region Encoding Helpers
 
-    /// <summary>
-    /// Encodes a string to bytes using the specified encoding.
-    /// </summary>
-    private static byte[] EncodeString(string data, string encoding)
-    {
-        return encoding.ToLowerInvariant() switch
-        {
-            "utf8" or "utf-8" => Encoding.UTF8.GetBytes(data),
-            "ascii" => Encoding.ASCII.GetBytes(data),
-            "base64" => Convert.FromBase64String(data),
-            "hex" => ConvertHexToBytes(data),
-            "latin1" or "binary" => Encoding.Latin1.GetBytes(data),
-            "ucs2" or "ucs-2" or "utf16le" or "utf-16le" => Encoding.Unicode.GetBytes(data),
-            _ => throw new ArgumentException($"Unknown encoding: {encoding}")
-        };
-    }
+    // Encoding conversions delegate to the shared BufferEncoding table so Buffer
+    // and fs agree on every encoding name (and the compiled IL twin stays in sync).
+    private static byte[] EncodeString(string data, string encoding) => BufferEncoding.Encode(data, encoding);
 
-    /// <summary>
-    /// Decodes bytes to string using the specified encoding.
-    /// </summary>
-    private static string DecodeBytes(byte[] data, string encoding)
-    {
-        return encoding.ToLowerInvariant() switch
-        {
-            "utf8" or "utf-8" => Encoding.UTF8.GetString(data),
-            "ascii" => Encoding.ASCII.GetString(data),
-            "base64" => Convert.ToBase64String(data),
-            "hex" => Convert.ToHexString(data).ToLowerInvariant(),
-            "latin1" or "binary" => Encoding.Latin1.GetString(data),
-            "ucs2" or "ucs-2" or "utf16le" or "utf-16le" => Encoding.Unicode.GetString(data),
-            _ => throw new ArgumentException($"Unknown encoding: {encoding}")
-        };
-    }
-
-    /// <summary>
-    /// Converts a hex string to byte array.
-    /// </summary>
-    private static byte[] ConvertHexToBytes(string hex)
-    {
-        if (string.IsNullOrEmpty(hex))
-            return [];
-
-        // Remove any spaces or hyphens
-        hex = hex.Replace(" ", "").Replace("-", "");
-
-        // Handle odd-length strings by padding
-        if (hex.Length % 2 != 0)
-            hex = "0" + hex;
-
-        var bytes = new byte[hex.Length / 2];
-        for (int i = 0; i < bytes.Length; i++)
-        {
-            bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
-        }
-        return bytes;
-    }
+    private static string DecodeBytes(byte[] data, string encoding) => BufferEncoding.Decode(data, encoding);
 
     #endregion
 }
