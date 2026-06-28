@@ -972,7 +972,13 @@ public static class FsModuleInterpreter
     /// <summary>
     /// Converts an exception to a Node.js-style error object for callbacks.
     /// </summary>
-    private static SharpTSObject CreateErrorObject(Exception ex, string syscall, string? path)
+    /// <remarks>
+    /// Shared with <see cref="FsPromisesModuleInterpreter"/>: the promise layer
+    /// rejects with this same guest object (wrapped in
+    /// <see cref="SharpTSPromiseRejectedException"/>) so the callback and promise
+    /// error paths deliver an identical <c>{ code, syscall, path, message }</c>.
+    /// </remarks>
+    internal static SharpTSObject CreateErrorObject(Exception ex, string syscall, string? path)
     {
         var code = ex is NodeError ne ? ne.Code : NodeErrorCodes.FromException(ex);
         var message = ex.Message;

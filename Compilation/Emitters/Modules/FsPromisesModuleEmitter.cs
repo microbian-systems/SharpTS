@@ -10,7 +10,9 @@ namespace SharpTS.Compilation.Emitters.Modules;
 /// </summary>
 public sealed class FsPromisesModuleEmitter : IBuiltInModuleEmitter
 {
-    public string ModuleName => "fs/promises";
+    // Registered under the primitive:fs/promises key — the user-facing 'fs/promises'
+    // specifier is served by stdlib/node/fs/promises.ts, which imports from this primitive.
+    public string ModuleName => "primitive:fs/promises";
 
     private static readonly string[] _exportedMembers =
     [

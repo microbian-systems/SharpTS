@@ -9,8 +9,8 @@ public static class BuiltInModuleRegistry
 {
     private static readonly HashSet<string> _builtInModules =
     [
-        "fs",
-        "fs/promises",
+        // "fs" — migrated to stdlib/node/fs.ts (embedded stdlib, wraps primitive:fs + primitive:fs/promises).
+        // "fs/promises" — migrated to stdlib/node/fs/promises.ts (embedded stdlib, wraps primitive:fs/promises).
         // "path" — migrated to stdlib/node/path.ts (embedded stdlib, uses primitive:process for cwd).
         // "os" — migrated to stdlib/node/os.ts (embedded stdlib, wraps primitive:os).
         // "querystring" — migrated to stdlib/node/querystring.ts (embedded stdlib).

@@ -20,8 +20,10 @@ public static class BuiltInModuleValues
     {
         return moduleName switch
         {
-            "fs" => FsModuleInterpreter.GetExports(),
-            "fs/promises" => FsPromisesModuleInterpreter.GetExports(),
+            // "fs" — migrated to stdlib/node/fs.ts which imports from primitive:fs.
+            //   FsModuleInterpreter is reused by PrimitiveModuleValues; not routed here.
+            // "fs/promises" — migrated to stdlib/node/fs/promises.ts which imports from primitive:fs/promises.
+            //   FsPromisesModuleInterpreter is reused by PrimitiveModuleValues; not routed here.
             // "path" — migrated to stdlib/node/path.ts (pure-TS, uses primitive:process for cwd).
             // "os" — migrated to stdlib/node/os.ts which imports from primitive:os.
             //   OsModuleInterpreter is reused by PrimitiveModuleValues; not routed here.
@@ -65,8 +67,8 @@ public static class BuiltInModuleValues
     /// </summary>
     public static bool HasInterpreterSupport(string moduleName)
     {
-        return moduleName is "fs" or "fs/promises"
-            or "crypto" or "child_process" or "buffer"
+        return moduleName is
+            "crypto" or "child_process" or "buffer"
             or "zlib" or "stream" or "stream/promises" or "stream/web"
             or "http" or "worker_threads" or "dns" or "dns/promises" or "net" or "https" or "tls"
             or "dgram" or "cluster" or "vm";
