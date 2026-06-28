@@ -1497,6 +1497,9 @@ public class EmittedRuntime
 
     // Fs module methods
     public MethodBuilder FsExistsSync { get; set; } = null!;
+    // Encoding helpers shared by fs read/write/append (BCL-only, standalone).
+    public MethodBuilder FsEncodingName { get; set; } = null!;
+    public MethodBuilder FsToBytes { get; set; } = null!;
     public MethodBuilder FsReadFileSync { get; set; } = null!;
     public MethodBuilder FsWriteFileSync { get; set; } = null!;
     public MethodBuilder FsAppendFileSync { get; set; } = null!;

@@ -181,7 +181,18 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
         emitter.EmitExpression(arguments[1]);
         emitter.EmitBoxIfNeeded(arguments[1]);
 
-        // Call runtime helper: FsWriteFileSync(object path, object data)
+        // Emit encoding/options (null if not provided)
+        if (arguments.Count >= 3)
+        {
+            emitter.EmitExpression(arguments[2]);
+            emitter.EmitBoxIfNeeded(arguments[2]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // Call runtime helper: FsWriteFileSync(object path, object data, object? encoding)
         il.Emit(OpCodes.Call, ctx.Runtime!.FsWriteFileSync);
         il.Emit(OpCodes.Ldnull); // undefined return
         return true;
@@ -206,7 +217,18 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
         emitter.EmitExpression(arguments[1]);
         emitter.EmitBoxIfNeeded(arguments[1]);
 
-        // Call runtime helper: FsAppendFileSync(object path, object data)
+        // Emit encoding/options (null if not provided)
+        if (arguments.Count >= 3)
+        {
+            emitter.EmitExpression(arguments[2]);
+            emitter.EmitBoxIfNeeded(arguments[2]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        // Call runtime helper: FsAppendFileSync(object path, object data, object? encoding)
         il.Emit(OpCodes.Call, ctx.Runtime!.FsAppendFileSync);
         il.Emit(OpCodes.Ldnull); // undefined return
         return true;

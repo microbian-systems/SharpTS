@@ -24,7 +24,10 @@ public partial class RuntimeEmitter
         var encodingLocal = il.DeclareLocal(_types.String);
         var utf8Label = il.DefineLabel();
         var asciiLabel = il.DefineLabel();
+        var latin1Label = il.DefineLabel();
+        var utf16leLabel = il.DefineLabel();
         var base64Label = il.DefineLabel();
+        var base64urlLabel = il.DefineLabel();
         var hexLabel = il.DefineLabel();
         var defaultLabel = il.DefineLabel();
 
@@ -45,11 +48,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, encodingLocal);
         il.MarkLabel(afterEncodingLabel);
 
-        // Check encodings
+        // Check encodings (must mirror Runtime/Types/BufferEncoding.Decode exactly).
         CheckStringEquals(il, encodingLocal, "utf8", utf8Label);
         CheckStringEquals(il, encodingLocal, "utf-8", utf8Label);
         CheckStringEquals(il, encodingLocal, "ascii", asciiLabel);
+        CheckStringEquals(il, encodingLocal, "latin1", latin1Label);
+        CheckStringEquals(il, encodingLocal, "binary", latin1Label);
+        CheckStringEquals(il, encodingLocal, "utf16le", utf16leLabel);
+        CheckStringEquals(il, encodingLocal, "utf-16le", utf16leLabel);
+        CheckStringEquals(il, encodingLocal, "ucs2", utf16leLabel);
+        CheckStringEquals(il, encodingLocal, "ucs-2", utf16leLabel);
         CheckStringEquals(il, encodingLocal, "base64", base64Label);
+        CheckStringEquals(il, encodingLocal, "base64url", base64urlLabel);
         CheckStringEquals(il, encodingLocal, "hex", hexLabel);
         il.Emit(OpCodes.Br, defaultLabel);
 
@@ -63,11 +73,31 @@ public partial class RuntimeEmitter
         EmitEncodingGetString(il, "ASCII");
         il.Emit(OpCodes.Ret);
 
+        // Latin1 / binary
+        il.MarkLabel(latin1Label);
+        EmitEncodingGetString(il, "Latin1");
+        il.Emit(OpCodes.Ret);
+
+        // UTF-16LE / ucs2
+        il.MarkLabel(utf16leLabel);
+        EmitEncodingGetString(il, "Unicode");
+        il.Emit(OpCodes.Ret);
+
         // Base64
         il.MarkLabel(base64Label);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsBufferDataField);
         il.Emit(OpCodes.Call, _types.ConvertToBase64String);
+        il.Emit(OpCodes.Ret);
+
+        // Base64url: standard base64 with -/_ alphabet and no padding.
+        il.MarkLabel(base64urlLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsBufferDataField);
+        il.Emit(OpCodes.Call, _types.ConvertToBase64String);
+        EmitStringReplace(il, "=", "");
+        EmitStringReplace(il, "+", "-");
+        EmitStringReplace(il, "/", "_");
         il.Emit(OpCodes.Ret);
 
         // Hex
@@ -82,6 +112,14 @@ public partial class RuntimeEmitter
         il.MarkLabel(defaultLabel);
         EmitEncodingGetString(il, "UTF8");
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>Emits <c>str = str.Replace(oldStr, newStr)</c> on the string atop the stack.</summary>
+    private void EmitStringReplace(ILGenerator il, string oldStr, string newStr)
+    {
+        il.Emit(OpCodes.Ldstr, oldStr);
+        il.Emit(OpCodes.Ldstr, newStr);
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Replace", [_types.String, _types.String])!);
     }
 
     private void EmitEncodingGetString(ILGenerator il, string encodingProperty)

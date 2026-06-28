@@ -23,7 +23,10 @@ public partial class RuntimeEmitter
         var encodingLocal = il.DeclareLocal(_types.String);
         var utf8Label = il.DefineLabel();
         var asciiLabel = il.DefineLabel();
+        var latin1Label = il.DefineLabel();
+        var utf16leLabel = il.DefineLabel();
         var base64Label = il.DefineLabel();
+        var base64urlLabel = il.DefineLabel();
         var hexLabel = il.DefineLabel();
         var defaultLabel = il.DefineLabel();
 
@@ -32,11 +35,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, _types.String.GetMethod("ToLowerInvariant")!);
         il.Emit(OpCodes.Stloc, encodingLocal);
 
-        // Check encodings
+        // Check encodings (must mirror Runtime/Types/BufferEncoding.Encode exactly).
         CheckStringEquals(il, encodingLocal, "utf8", utf8Label);
         CheckStringEquals(il, encodingLocal, "utf-8", utf8Label);
         CheckStringEquals(il, encodingLocal, "ascii", asciiLabel);
+        CheckStringEquals(il, encodingLocal, "latin1", latin1Label);
+        CheckStringEquals(il, encodingLocal, "binary", latin1Label);
+        CheckStringEquals(il, encodingLocal, "utf16le", utf16leLabel);
+        CheckStringEquals(il, encodingLocal, "utf-16le", utf16leLabel);
+        CheckStringEquals(il, encodingLocal, "ucs2", utf16leLabel);
+        CheckStringEquals(il, encodingLocal, "ucs-2", utf16leLabel);
         CheckStringEquals(il, encodingLocal, "base64", base64Label);
+        CheckStringEquals(il, encodingLocal, "base64url", base64urlLabel);
         CheckStringEquals(il, encodingLocal, "hex", hexLabel);
         il.Emit(OpCodes.Br, defaultLabel);
 
@@ -50,9 +60,26 @@ public partial class RuntimeEmitter
         EmitEncodingGetBytes(il, "ASCII", runtime.TSBufferCtor);
         il.Emit(OpCodes.Ret);
 
+        // Latin1 / binary
+        il.MarkLabel(latin1Label);
+        EmitEncodingGetBytes(il, "Latin1", runtime.TSBufferCtor);
+        il.Emit(OpCodes.Ret);
+
+        // UTF-16LE / ucs2
+        il.MarkLabel(utf16leLabel);
+        EmitEncodingGetBytes(il, "Unicode", runtime.TSBufferCtor);
+        il.Emit(OpCodes.Ret);
+
         // Base64
         il.MarkLabel(base64Label);
         il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _types.ConvertFromBase64String);
+        il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
+        il.Emit(OpCodes.Ret);
+
+        // Base64url: map -/_ → +/ and re-pad to a multiple of 4, then decode.
+        il.MarkLabel(base64urlLabel);
+        EmitBase64UrlNormalize(il);
         il.Emit(OpCodes.Call, _types.ConvertFromBase64String);
         il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
         il.Emit(OpCodes.Ret);
@@ -68,6 +95,55 @@ public partial class RuntimeEmitter
         il.MarkLabel(defaultLabel);
         EmitEncodingGetBytes(il, "UTF8", runtime.TSBufferCtor);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: takes the input string (Ldarg_0) and leaves a standard-base64 string on
+    /// the stack — '-'→'+', '_'→'/', and re-padded with '=' to a multiple of 4 length.
+    /// Mirrors BufferEncoding.DecodeBase64's url-safe normalization.
+    /// </summary>
+    private void EmitBase64UrlNormalize(ILGenerator il)
+    {
+        var replace = _types.String.GetMethod("Replace", [_types.String, _types.String])!;
+        var concat = _types.String.GetMethod("Concat", [_types.String, _types.String])!;
+        var getLength = _types.String.GetProperty("Length")!.GetGetMethod()!;
+
+        var s = il.DeclareLocal(_types.String);
+        var rem = il.DeclareLocal(_types.Int32);
+
+        // s = arg0.Replace("-", "+").Replace("_", "/")
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "-"); il.Emit(OpCodes.Ldstr, "+"); il.Emit(OpCodes.Callvirt, replace);
+        il.Emit(OpCodes.Ldstr, "_"); il.Emit(OpCodes.Ldstr, "/"); il.Emit(OpCodes.Callvirt, replace);
+        il.Emit(OpCodes.Stloc, s);
+
+        // rem = s.Length % 4
+        il.Emit(OpCodes.Ldloc, s);
+        il.Emit(OpCodes.Callvirt, getLength);
+        il.Emit(OpCodes.Ldc_I4_4);
+        il.Emit(OpCodes.Rem);
+        il.Emit(OpCodes.Stloc, rem);
+
+        var pad1 = il.DefineLabel();
+        var done = il.DefineLabel();
+
+        // rem == 2 → s + "=="
+        il.Emit(OpCodes.Ldloc, rem); il.Emit(OpCodes.Ldc_I4_2); il.Emit(OpCodes.Bne_Un, pad1);
+        il.Emit(OpCodes.Ldloc, s); il.Emit(OpCodes.Ldstr, "=="); il.Emit(OpCodes.Call, concat);
+        il.Emit(OpCodes.Br, done);
+
+        // rem == 3 → s + "="
+        il.MarkLabel(pad1);
+        var noPad = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, rem); il.Emit(OpCodes.Ldc_I4_3); il.Emit(OpCodes.Bne_Un, noPad);
+        il.Emit(OpCodes.Ldloc, s); il.Emit(OpCodes.Ldstr, "="); il.Emit(OpCodes.Call, concat);
+        il.Emit(OpCodes.Br, done);
+
+        // rem == 0 (or 1) → s unchanged
+        il.MarkLabel(noPad);
+        il.Emit(OpCodes.Ldloc, s);
+
+        il.MarkLabel(done);
     }
 
     private void EmitEncodingGetBytes(ILGenerator il, string encodingProperty, ConstructorBuilder bufferCtor)

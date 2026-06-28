@@ -128,9 +128,10 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
 
-        // Call FsWriteFileSync(path, data) - ignores options for now
+        // Call FsWriteFileSync(path, data, options)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.FsWriteFileSync);
 
         // Return Task.FromResult(null) for void operations
@@ -158,9 +159,10 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
 
-        // Call FsAppendFileSync(path, data)
+        // Call FsAppendFileSync(path, data, options)
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldarg_2);
         il.Emit(OpCodes.Call, runtime.FsAppendFileSync);
 
         // Return Task.FromResult(null) for void operations

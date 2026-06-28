@@ -125,10 +125,16 @@ export function readFileSync(path: string, options?: any): string | Buffer {
 }
 
 /** Synchronously writes data to a file, replacing the file if it already exists. */
-export function writeFileSync(path: string, data: any, options?: any): void { __writeFileSync(path, data); }
+export function writeFileSync(path: string, data: any, options?: any): void {
+    if (options === undefined) { __writeFileSync(path, data); return; }
+    __writeFileSync(path, data, options);
+}
 
 /** Synchronously appends data to a file, creating the file if it does not yet exist. */
-export function appendFileSync(path: string, data: any, options?: any): void { __appendFileSync(path, data); }
+export function appendFileSync(path: string, data: any, options?: any): void {
+    if (options === undefined) { __appendFileSync(path, data); return; }
+    __appendFileSync(path, data, options);
+}
 
 /** Synchronously removes a file or symbolic link. */
 export function unlinkSync(path: string): void { __unlinkSync(path); }
