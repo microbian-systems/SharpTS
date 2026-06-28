@@ -73,6 +73,12 @@ export function access(path: string, mode?: any): Promise<void> { return __acces
 /** Asynchronously changes the permissions of a file. */
 export function chmod(path: string, mode: number): Promise<void> { return __chmod(path, mode); }
 
+/** Asynchronously changes the owner and group of a file. */
+export function chown(path: string, uid: number, gid: number): Promise<void> { return __fsp.chown(path, uid, gid); }
+
+/** Asynchronously changes the owner and group of a symbolic link. */
+export function lchown(path: string, uid: number, gid: number): Promise<void> { return __fsp.lchown(path, uid, gid); }
+
 /** Asynchronously truncates a file to the given length. */
 export function truncate(path: string, len?: any): Promise<void> { return __truncate(path, len); }
 
@@ -105,6 +111,6 @@ export { constants };
 
 export default {
     readFile, writeFile, appendFile, stat, lstat, unlink, mkdir, rmdir, rm, cp,
-    readdir, rename, copyFile, access, chmod, truncate, utimes,
+    readdir, rename, copyFile, access, chmod, chown, lchown, truncate, utimes,
     readlink, realpath, symlink, link, mkdtemp, opendir, watch, constants,
 };

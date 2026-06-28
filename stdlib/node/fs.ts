@@ -154,6 +154,13 @@ function __promisifyVoid(fn: () => void): Promise<void> {
     });
 }
 
+/** Like __promisifyVoid but resolves with the sync op's return value. */
+function __promisifyValue(fn: () => any): Promise<any> {
+    return new Promise<any>((resolve: any, reject: any) => {
+        try { resolve(fn()); } catch (e) { reject(e); }
+    });
+}
+
 /** Synchronously removes files and directories. `{ recursive }` removes a whole
  * tree; `{ force }` makes a nonexistent path a no-op instead of throwing ENOENT. */
 export function rmSync(path: string, options?: any): void {
@@ -725,6 +732,64 @@ export function mkdtemp(prefix: string, options?: any, callback?: any): void {
     __cbData(__pMkdtemp(prefix), callback);
 }
 
+// --- async chown/lchown + callback file-descriptor ops (#974). Thin TS wrappers
+// over the *Sync primitives; the Promise wrap defers the callback off the caller's
+// synchronous frame and carries err.code (e.g. EBADF) through to the callback. ---
+
+/** Asynchronously changes the owner and group of a file. */
+export function chown(path: string, uid: number, gid: number, callback: any): void {
+    __cbVoid(__promisifyVoid(() => chownSync(path, uid, gid)), callback);
+}
+
+/** Asynchronously changes the owner and group of a symbolic link. */
+export function lchown(path: string, uid: number, gid: number, callback: any): void {
+    __cbVoid(__promisifyVoid(() => lchownSync(path, uid, gid)), callback);
+}
+
+/** Asynchronously opens a file; callback receives (err, fd). */
+export function open(path: string, flags?: any, mode?: any, callback?: any): void {
+    if (typeof flags === 'function') { callback = flags; flags = 'r'; mode = undefined; }
+    else if (typeof mode === 'function') { callback = mode; mode = undefined; }
+    __cbData(__promisifyValue(() => mode === undefined ? openSync(path, flags) : openSync(path, flags, mode)), callback);
+}
+
+/** Asynchronously closes a file descriptor; callback receives (err). */
+export function close(fd: number, callback: any): void {
+    __cbVoid(__promisifyVoid(() => closeSync(fd)), callback);
+}
+
+/** Asynchronously reads from a file descriptor; callback receives (err, bytesRead, buffer). */
+export function read(fd: number, buffer: any, offset: number, length: number, position: any, callback: any): void {
+    __promisifyValue(() => readSync(fd, buffer, offset, length, position)).then(
+        (n: any) => { callback(null, n, buffer); },
+        (e: any) => { callback(e, 0, buffer); }
+    );
+}
+
+/** Asynchronously writes to a file descriptor; callback receives (err, bytesWritten, buffer). */
+export function write(fd: number, buffer: any, offset?: any, length?: any, position?: any, callback?: any): void {
+    let cb = callback;
+    if (typeof offset === 'function') { cb = offset; offset = undefined; length = undefined; position = undefined; }
+    else if (typeof length === 'function') { cb = length; length = undefined; position = undefined; }
+    else if (typeof position === 'function') { cb = position; position = undefined; }
+    __promisifyValue(() => writeSync(fd, buffer, offset, length, position)).then(
+        (n: any) => { cb(null, n, buffer); },
+        (e: any) => { cb(e, 0, buffer); }
+    );
+}
+
+/** Asynchronously retrieves the Stats for an open fd; callback receives (err, stats). */
+export function fstat(fd: number, options?: any, callback?: any): void {
+    if (typeof options === 'function') { callback = options; options = undefined; }
+    __cbData(__promisifyValue(() => fstatSync(fd)), callback);
+}
+
+/** Asynchronously truncates an open fd to a length; callback receives (err). */
+export function ftruncate(fd: number, len?: any, callback?: any): void {
+    if (typeof len === 'function') { callback = len; len = undefined; }
+    __cbVoid(__promisifyVoid(() => ftruncateSync(fd, len)), callback);
+}
+
 // ===========================================================================
 // fs.promises namespace — assembled from the promise primitives.
 // Each method is wrapped in an arrow so the call reaches the primitive at a
@@ -750,6 +815,8 @@ export const promises = {
     copyFile: (src: string, dest: string, mode?: any): Promise<void> => __pCopyFile(src, dest, mode),
     access: (path: string, mode?: any): Promise<void> => __pAccess(path, mode),
     chmod: (path: string, mode: number): Promise<void> => __pChmod(path, mode),
+    chown: (path: string, uid: number, gid: number): Promise<void> => __promisifyVoid(() => chownSync(path, uid, gid)),
+    lchown: (path: string, uid: number, gid: number): Promise<void> => __promisifyVoid(() => lchownSync(path, uid, gid)),
     truncate: (path: string, len?: any): Promise<void> => __pTruncate(path, len),
     utimes: (path: string, atime: number, mtime: number): Promise<void> => __pUtimes(path, atime, mtime),
     readlink: (path: string): Promise<any> => __pReadlink(path),
@@ -778,5 +845,6 @@ export default {
     readFile, writeFile, appendFile, stat, lstat, unlink, mkdir, rmdir,
     rm, cp, readdir, rename, copyFile, access, chmod, truncate, utimes,
     readlink, realpath, symlink, link, mkdtemp,
+    chown, lchown, open, close, read, write, fstat, ftruncate,
     promises,
 };
