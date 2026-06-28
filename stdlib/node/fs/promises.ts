@@ -27,8 +27,9 @@ import {
     symlink as __symlink,
     link as __link,
     mkdtemp as __mkdtemp,
-    constants as __constants,
 } from 'primitive:fs/promises';
+// Node guarantees fs.promises.constants === fs.constants; share the one complete table.
+import { constants } from 'fs';
 
 /** Asynchronously reads the entire contents of a file. */
 export function readFile(path: string, options?: any): Promise<any> { return __readFile(path, options); }
@@ -93,8 +94,8 @@ export function link(existingPath: string, newPath: string): Promise<void> { ret
 /** Asynchronously creates a unique temporary directory. */
 export function mkdtemp(prefix: string): Promise<any> { return __mkdtemp(prefix); }
 
-/** File-system constants (access modes, open flags, copy flags, file-type bits). */
-export const constants: any = __constants;
+/** File-system constants — re-exported from 'fs' so both share one table. */
+export { constants };
 
 export default {
     readFile, writeFile, appendFile, stat, lstat, unlink, mkdir, rmdir, rm,

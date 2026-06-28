@@ -397,16 +397,34 @@ public static class FsModuleInterpreter
     private static RuntimeValue AccessSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var path = args[0].ToObject()?.ToString() ?? "";
+        var mode = args.Length >= 2 && args[1].ToObject() is double d ? (int)d : 0;
 
-        WrapFsOperation("access", path, () =>
-        {
-            if (!File.Exists(path) && !Directory.Exists(path))
-            {
-                throw new FileNotFoundException("no such file or directory", path);
-            }
-        });
+        WrapFsOperation("access", path, () => CheckAccess(path, mode));
 
         return RuntimeValue.Null;
+    }
+
+    /// <summary>
+    /// Enforces an fs.access mode against a path. F_OK requires existence (ENOENT
+    /// otherwise); W_OK requires the target to be writable — best-effort on Windows
+    /// (a read-only attribute denies writes, EACCES). R_OK/X_OK are treated as
+    /// granted when the path exists on the supported platforms. Shared by the sync
+    /// and async access implementations.
+    /// </summary>
+    internal static void CheckAccess(string path, int mode)
+    {
+        var isFile = File.Exists(path);
+        var isDir = Directory.Exists(path);
+        if (!isFile && !isDir)
+        {
+            throw new FileNotFoundException("no such file or directory", path);
+        }
+
+        // W_OK (2): writability. A read-only file can't be written (Windows + Unix).
+        if ((mode & 2) != 0 && isFile && File.GetAttributes(path).HasFlag(FileAttributes.ReadOnly))
+        {
+            throw new UnauthorizedAccessException($"permission denied, access '{path}'");
+        }
     }
 
     private static RuntimeValue LstatSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
