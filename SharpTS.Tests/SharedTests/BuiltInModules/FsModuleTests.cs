@@ -1377,4 +1377,102 @@ public class FsModuleTests
     }
 
     #endregion
+
+    #region Sync option semantics + constants (#979)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_MkdirSync_NonRecursive_ThrowsEexistAndEnoent(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const base = os.tmpdir() + '/mkd_{{uid}}';
+                fs.mkdirSync(base);
+                let a = 'none';
+                try { fs.mkdirSync(base); } catch (e: any) { a = e.code; }   // exists -> EEXIST
+                console.log(a);
+                let b = 'none';
+                try { fs.mkdirSync(base + '/x/y/z'); } catch (e: any) { b = e.code; }  // missing parent -> ENOENT
+                console.log(b);
+                """
+        };
+        Assert.Equal("EEXIST\nENOENT\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_MkdirSync_Recursive_ReturnsFirstCreated(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const base = os.tmpdir() + '/mkr_{{uid}}';
+                fs.mkdirSync(base);
+                const created = fs.mkdirSync(base + '/p/q/r', { recursive: true });
+                console.log(typeof created === 'string' && created.endsWith('p'));   // first created = .../p
+                console.log(fs.mkdirSync(base + '/p/q/r', { recursive: true }) === undefined); // nothing new
+                console.log(fs.existsSync(base + '/p/q/r'));
+                """
+        };
+        Assert.Equal("true\ntrue\ntrue\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_AccessSync_WriteOk_ThrowsOnReadOnly(ExecutionMode mode)
+    {
+        var path = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"ro_{Uid()}.txt");
+        System.IO.File.WriteAllText(path, "x");
+        System.IO.File.SetAttributes(path, System.IO.FileAttributes.ReadOnly);
+        try
+        {
+            var jsPath = path.Replace("\\", "\\\\");
+            var files = new Dictionary<string, string>
+            {
+                ["main.ts"] = $$"""
+                    import * as fs from 'fs';
+                    let w = 'none';
+                    try { fs.accessSync('{{jsPath}}', fs.constants.W_OK); w = 'ok'; } catch (e: any) { w = e.code; }
+                    console.log(w);
+                    let r = 'none';
+                    try { fs.accessSync('{{jsPath}}', fs.constants.R_OK); r = 'ok'; } catch (e: any) { r = e.code; }
+                    console.log(r);
+                    """
+            };
+            Assert.Equal("EACCES\nok\n", TestHarness.RunModules(files, "main.ts", mode));
+        }
+        finally
+        {
+            System.IO.File.SetAttributes(path, System.IO.FileAttributes.Normal);
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_Constants_AreComplete(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as fs from 'fs';
+                const c = fs.constants;
+                console.log([c.F_OK, c.R_OK, c.W_OK, c.X_OK].join(','));
+                console.log([c.S_IRUSR, c.S_IWUSR, c.S_IXUSR, c.S_IRWXU].join(','));
+                console.log([c.O_DIRECTORY, c.O_NOFOLLOW, c.O_SYNC, c.O_DSYNC, c.O_NONBLOCK].join(','));
+                console.log([c.UV_FS_SYMLINK_DIR, c.UV_FS_SYMLINK_JUNCTION].join(','));
+                """
+        };
+        Assert.Equal("0,4,2,1\n256,128,64,448\n65536,131072,1052672,4096,2048\n1,2\n",
+            TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
 }

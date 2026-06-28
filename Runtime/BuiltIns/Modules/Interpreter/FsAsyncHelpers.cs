@@ -345,16 +345,11 @@ public static class FsAsyncHelpers
     /// <param name="mode">Optional mode specifying the accessibility checks (F_OK=0, R_OK=4, W_OK=2, X_OK=1).</param>
     public static async Task AccessAsync(string path, object? mode)
     {
-        await Task.Run(() =>
-        {
-            if (!File.Exists(path) && !Directory.Exists(path))
-            {
-                throw new FileNotFoundException("no such file or directory", path);
-            }
-
-            // For now, just check existence
-            // Full implementation would check actual permissions based on mode
-        });
+        var modeInt = mode is double d ? (int)d : 0;
+        // Shared with the sync path so callback/promise access enforce the same
+        // F_OK/W_OK semantics as accessSync (and the compiled async path, which
+        // calls the same FsAccessSync helper).
+        await Task.Run(() => FsModuleInterpreter.CheckAccess(path, modeInt));
     }
 
     /// <summary>

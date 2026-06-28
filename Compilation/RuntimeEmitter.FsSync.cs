@@ -797,6 +797,25 @@ public partial class RuntimeEmitter
         var pathLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Stloc, pathLocal);
 
+        // mode = arg1 is a boxed double ? (int)(double)arg1 : 0. The async access
+        // path forwards an undefined mode, so unbox only when it really is a number.
+        var modeLocal = il.DeclareLocal(_types.Int32);
+        var modeNotDouble = il.DefineLabel();
+        var modeDone = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, modeNotDouble);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, modeLocal);
+        il.Emit(OpCodes.Br, modeDone);
+        il.MarkLabel(modeNotDouble);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, modeLocal);
+        il.MarkLabel(modeDone);
+
         EmitWithFsErrorHandling(il, runtime, pathLocal, "access", afterTry =>
         {
             // Check if exists (File.Exists || Directory.Exists)
@@ -816,6 +835,32 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Throw);
 
             il.MarkLabel(existsLabel);
+
+            // W_OK (mode & 2): a read-only file denies writes (best-effort, mirrors the
+            // interpreter's CheckAccess — surfaced as EACCES by the fs error wrapper).
+            var skipWok = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, modeLocal);
+            il.Emit(OpCodes.Ldc_I4_2);
+            il.Emit(OpCodes.And);
+            il.Emit(OpCodes.Brfalse, skipWok);
+
+            // Only files have a meaningful read-only attribute here.
+            il.Emit(OpCodes.Ldloc, pathLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "Exists", _types.String));
+            il.Emit(OpCodes.Brfalse, skipWok);
+
+            // (File.GetAttributes(path) & FileAttributes.ReadOnly) != 0
+            il.Emit(OpCodes.Ldloc, pathLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "GetAttributes", _types.String));
+            il.Emit(OpCodes.Ldc_I4_1); // FileAttributes.ReadOnly
+            il.Emit(OpCodes.And);
+            il.Emit(OpCodes.Brfalse, skipWok);
+
+            il.Emit(OpCodes.Ldstr, "permission denied");
+            il.Emit(OpCodes.Newobj, typeof(UnauthorizedAccessException).GetConstructor([_types.String])!);
+            il.Emit(OpCodes.Throw);
+
+            il.MarkLabel(skipWok);
             il.Emit(OpCodes.Leave, afterTry);
         });
         il.Emit(OpCodes.Ret);

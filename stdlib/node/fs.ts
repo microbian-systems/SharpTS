@@ -59,8 +59,6 @@ import {
     watch as __watch,
     watchFile as __watchFile,
     unwatchFile as __unwatchFile,
-    // Constants
-    constants as __constants,
 } from 'primitive:fs';
 
 import {
@@ -140,9 +138,61 @@ export function appendFileSync(path: string, data: any, options?: any): void {
 export function unlinkSync(path: string): void { __unlinkSync(path); }
 
 /** Synchronously creates a directory. */
+// --- mkdir helpers (Node semantics live here in TS; the primitive only does the
+// raw, always-recursive directory create, so the facade handles recursive vs not,
+// EEXIST/ENOENT, and the recursive return value). ---
+
+/** Minimal parent-directory of a path, separator-agnostic (handles / and \\). */
+function __parentDir(p: string): string {
+    let end = p.length;
+    while (end > 1 && (p[end - 1] === '/' || p[end - 1] === '\\')) end--;
+    let i = end - 1;
+    while (i >= 0 && p[i] !== '/' && p[i] !== '\\') i--;
+    if (i < 0) return '';
+    if (i === 0) return p[0];
+    return p.slice(0, i);
+}
+
+const __errnoFor: any = { ENOENT: -2, EEXIST: -17, EACCES: -13 };
+
+/** Builds a Node-shaped fs error (code/errno/syscall/path) thrown from the facade. */
+function __fsError(code: string, message: string, syscall: string, path: string): any {
+    const err: any = new Error(code + ': ' + message + ', ' + syscall + " '" + path + "'");
+    err.code = code;
+    err.errno = __errnoFor[code] !== undefined ? __errnoFor[code] : -1;
+    err.syscall = syscall;
+    err.path = path;
+    return err;
+}
+
+/** Synchronously creates a directory. Honors `{ recursive }`: non-recursive throws
+ * EEXIST/ENOENT like Node; recursive returns the first directory created (or undefined). */
 export function mkdirSync(path: string, options?: any): any {
-    if (options === undefined) return __mkdirSync(path);
-    return __mkdirSync(path, options);
+    const recursive = typeof options === 'object' && options !== null && !!options.recursive;
+    if (recursive) {
+        let firstCreated: any = undefined;
+        if (!__existsSync(path)) {
+            let dir = path;
+            while (!__existsSync(dir)) {
+                firstCreated = dir;
+                const parent = __parentDir(dir);
+                if (!parent || parent === dir) break;
+                dir = parent;
+            }
+        }
+        __mkdirSync(path, options);
+        return firstCreated;
+    }
+    // Non-recursive: Node throws ENOENT if a parent is missing, EEXIST if it exists.
+    const parent = __parentDir(path);
+    if (parent && parent !== path && !__existsSync(parent)) {
+        throw __fsError('ENOENT', 'no such file or directory', 'mkdir', path);
+    }
+    if (__existsSync(path)) {
+        throw __fsError('EEXIST', 'file already exists', 'mkdir', path);
+    }
+    __mkdirSync(path);
+    return undefined;
 }
 
 /** Synchronously removes a directory. */
@@ -260,8 +310,33 @@ export function watchFile(filename: string, options: any, listener?: any): any {
 /** Stops watching a file previously registered with watchFile. */
 export function unwatchFile(filename: string, listener?: any): void { __unwatchFile(filename, listener); }
 
-/** File-system constants (access modes, open flags, copy flags, file-type bits). */
-export const constants: any = __constants;
+/**
+ * File-system constants (access modes, open flags, copy flags, file-type bits,
+ * permission bits, libuv flags). Defined here so `fs.constants` and
+ * `fs.promises.constants` share one complete table across both execution modes.
+ * Values follow the POSIX/Linux set SharpTS's openSync flag parsing expects.
+ */
+export const constants: any = {
+    // Access modes (accessSync)
+    F_OK: 0, R_OK: 4, W_OK: 2, X_OK: 1,
+    // Open flags (openSync)
+    O_RDONLY: 0, O_WRONLY: 1, O_RDWR: 2,
+    O_CREAT: 64, O_EXCL: 128, O_NOCTTY: 256, O_TRUNC: 512,
+    O_APPEND: 1024, O_NONBLOCK: 2048, O_DSYNC: 4096,
+    O_DIRECTORY: 65536, O_NOFOLLOW: 131072, O_NOATIME: 262144,
+    O_SYNC: 1052672,
+    // Copy flags (copyFile)
+    COPYFILE_EXCL: 1, COPYFILE_FICLONE: 2, COPYFILE_FICLONE_FORCE: 4,
+    // File-type bits (stat mode)
+    S_IFMT: 61440, S_IFREG: 32768, S_IFDIR: 16384, S_IFCHR: 8192,
+    S_IFBLK: 24576, S_IFIFO: 4096, S_IFLNK: 40960, S_IFSOCK: 49152,
+    // Permission bits (stat mode)
+    S_IRWXU: 448, S_IRUSR: 256, S_IWUSR: 128, S_IXUSR: 64,
+    S_IRWXG: 56, S_IRGRP: 32, S_IWGRP: 16, S_IXGRP: 8,
+    S_IRWXO: 7, S_IROTH: 4, S_IWOTH: 2, S_IXOTH: 1,
+    // libuv flags
+    UV_FS_O_FILEMAP: 0, UV_FS_SYMLINK_DIR: 1, UV_FS_SYMLINK_JUNCTION: 2,
+};
 
 // ===========================================================================
 // Callback-based async APIs — derived from the promise primitives.
@@ -412,7 +487,7 @@ export const promises = {
     symlink: (target: string, path: string, type?: any): Promise<void> => __pSymlink(target, path, type),
     link: (existingPath: string, newPath: string): Promise<void> => __pLink(existingPath, newPath),
     mkdtemp: (prefix: string): Promise<any> => __pMkdtemp(prefix),
-    constants: __constants,
+    constants,
 };
 
 // Node's `fs` module exposes its surface as both named exports and a default
