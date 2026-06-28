@@ -1586,4 +1586,63 @@ public class FsModuleTests
     }
 
     #endregion
+
+    #region rm / cp (#973)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_RmSync_RecursiveForceAndEisdir(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const root = os.tmpdir() + '/rm973_{{uid}}';
+                fs.mkdirSync(root + '/a/b', { recursive: true });
+                fs.writeFileSync(root + '/a/f.txt', 'x');
+                fs.rmSync(root, { recursive: true });
+                console.log(!fs.existsSync(root));                       // recursive remove
+                let f = 'threw'; try { fs.rmSync(root + '/nope', { force: true }); f = 'ok'; } catch (e) { }
+                console.log(f);                                          // force swallows ENOENT
+                fs.mkdirSync(root, { recursive: true });
+                let c = 'no'; try { fs.rmSync(root); } catch (e: any) { c = e.code; }
+                console.log(c);                                          // dir without recursive -> ERR_FS_EISDIR
+                fs.rmSync(root, { recursive: true });
+                """
+        };
+        Assert.Equal("true\nok\nERR_FS_EISDIR\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_CpSync_RecursiveErrorOnExistAndFilter(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const root = os.tmpdir() + '/cp973_{{uid}}';
+                fs.rmSync(root, { recursive: true, force: true });
+                fs.mkdirSync(root + '/src/sub', { recursive: true });
+                fs.writeFileSync(root + '/src/x.txt', 'X');
+                fs.writeFileSync(root + '/src/sub/y.txt', 'Y');
+                fs.cpSync(root + '/src', root + '/dst', { recursive: true });
+                console.log(fs.readFileSync(root + '/dst/x.txt', 'utf8') === 'X' && fs.readFileSync(root + '/dst/sub/y.txt', 'utf8') === 'Y');
+                let n = 'no'; try { fs.cpSync(root + '/src', root + '/dst2'); } catch (e: any) { n = e.code; }
+                console.log(n);                                          // dir without recursive -> ERR_FS_EISDIR
+                let eoe = 'no'; try { fs.cpSync(root + '/src/x.txt', root + '/dst/x.txt', { errorOnExist: true, force: false }); } catch (e: any) { eoe = e.code; }
+                console.log(eoe);                                        // errorOnExist -> ERR_FS_CP_EEXIST
+                fs.cpSync(root + '/src', root + '/dst3', { recursive: true, filter: (s: string) => s.indexOf('sub') < 0 });
+                console.log(fs.existsSync(root + '/dst3/x.txt') && !fs.existsSync(root + '/dst3/sub'));
+                fs.rmSync(root, { recursive: true });
+                """
+        };
+        Assert.Equal("true\nERR_FS_EISDIR\nERR_FS_CP_EEXIST\ntrue\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
 }

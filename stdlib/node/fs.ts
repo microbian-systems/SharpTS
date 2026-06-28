@@ -70,7 +70,6 @@ import {
     unlink as __pUnlink,
     mkdir as __pMkdir,
     rmdir as __pRmdir,
-    rm as __pRm,
     readdir as __pReaddir,
     rename as __pRename,
     copyFile as __pCopyFile,
@@ -136,6 +135,73 @@ export function appendFileSync(path: string, data: any, options?: any): void {
 
 /** Synchronously removes a file or symbolic link. */
 export function unlinkSync(path: string): void { __unlinkSync(path); }
+
+// --- rm / cp (Node 16.7+ recursive remove/copy). The recursion + option logic is
+// pure TS over the sync primitives; the async variants wrap the sync walk in a
+// Promise so sync and async behave identically. ---
+
+/** Joins a directory and a child name (forward slash; .NET accepts it on Windows). */
+function __joinPath(dir: string, name: string): string {
+    if (dir.length === 0) return name;
+    const last = dir[dir.length - 1];
+    return (last === '/' || last === '\\') ? dir + name : dir + '/' + name;
+}
+
+/** Runs a synchronous fs op inside a Promise so the callback/promise variants
+ * share the one implementation (resolves/rejects exactly as the sync op does). */
+function __promisifyVoid(fn: () => void): Promise<void> {
+    return new Promise<void>((resolve: any, reject: any) => {
+        try { fn(); resolve(undefined); } catch (e) { reject(e); }
+    });
+}
+
+/** Synchronously removes files and directories. `{ recursive }` removes a whole
+ * tree; `{ force }` makes a nonexistent path a no-op instead of throwing ENOENT. */
+export function rmSync(path: string, options?: any): void {
+    const recursive = !!(options && options.recursive);
+    const force = !!(options && options.force);
+    // `force` makes a missing path a no-op; otherwise Node throws ENOENT. Checking
+    // existence up front keeps this allocation-free of try/catch.
+    if (!existsSync(path)) {
+        if (force) return;
+        throw __fsError('ENOENT', 'no such file or directory', 'rm', path);
+    }
+    if (lstatSync(path).isDirectory()) {
+        if (!recursive) throw __fsError('ERR_FS_EISDIR', 'Path is a directory', 'rm', path);
+        rmdirSync(path, { recursive: true });
+    } else {
+        unlinkSync(path);
+    }
+}
+
+/** Synchronously copies `src` to `dest`, recursively when `{ recursive: true }`.
+ * Honors `force` (default true), `errorOnExist`, `dereference`, `preserveTimestamps`,
+ * and a synchronous `filter(src, dest)` predicate. */
+export function cpSync(src: string, dest: string, options?: any): void {
+    const opts = options || {};
+    if (opts.filter && !opts.filter(src, dest)) return;
+    const st: any = opts.dereference ? statSync(src) : lstatSync(src);
+    if (st.isDirectory()) {
+        if (!opts.recursive) {
+            throw __fsError('ERR_FS_EISDIR', 'Recursive option not enabled, cannot copy a directory', 'cp', src);
+        }
+        mkdirSync(dest, { recursive: true });
+        const names: any = readdirSync(src);
+        for (let i = 0; i < names.length; i++) {
+            cpSync(__joinPath(src, names[i]), __joinPath(dest, names[i]), options);
+        }
+    } else {
+        const force = opts.force !== false; // Node default is to overwrite.
+        if (existsSync(dest)) {
+            if (opts.errorOnExist) throw __fsError('ERR_FS_CP_EEXIST', 'File already exists', 'cp', dest);
+            if (!force) return;
+        }
+        const parent = __parentDir(dest);
+        if (parent && parent !== dest && !existsSync(parent)) mkdirSync(parent, { recursive: true });
+        copyFileSync(src, dest);
+        if (opts.preserveTimestamps) utimesSync(dest, st.atimeMs / 1000, st.mtimeMs / 1000);
+    }
+}
 
 /** Synchronously creates a directory. */
 // --- mkdir helpers (Node semantics live here in TS; the primitive only does the
@@ -486,6 +552,18 @@ export function unlink(path: string, callback: any): void {
     __cbVoid(__pUnlink(path), callback);
 }
 
+/** Asynchronously removes files and directories. */
+export function rm(path: string, options?: any, callback?: any): void {
+    if (typeof options === 'function') { callback = options; options = undefined; }
+    __cbVoid(__promisifyVoid(() => rmSync(path, options)), callback);
+}
+
+/** Asynchronously copies src to dest (recursively when `{ recursive: true }`). */
+export function cp(src: string, dest: string, options?: any, callback?: any): void {
+    if (typeof options === 'function') { callback = options; options = undefined; }
+    __cbVoid(__promisifyVoid(() => cpSync(src, dest, options)), callback);
+}
+
 /** Asynchronously creates a directory. */
 export function mkdir(path: string, options?: any, callback?: any): void {
     if (typeof options === 'function') { callback = options; options = undefined; }
@@ -587,7 +665,8 @@ export const promises = {
     unlink: (path: string): Promise<void> => __pUnlink(path),
     mkdir: (path: string, options?: any): Promise<any> => __pMkdir(path, options),
     rmdir: (path: string, options?: any): Promise<void> => __pRmdir(path, options),
-    rm: (path: string, options?: any): Promise<void> => __pRm(path, options),
+    rm: (path: string, options?: any): Promise<void> => __promisifyVoid(() => rmSync(path, options)),
+    cp: (src: string, dest: string, options?: any): Promise<void> => __promisifyVoid(() => cpSync(src, dest, options)),
     readdir: (path: string, options?: any): Promise<any> => __wantsFileTypes(options)
         ? (__readdirRecursive(options) ? __pReaddir(path, { recursive: true }) : __pReaddir(path)).then((n: any) => __makeDirents(path, n))
         : __pReaddir(path, options),
@@ -609,7 +688,7 @@ export const promises = {
 // export (the module object). Supports `import fs from 'fs'; fs.readFileSync(...)`.
 export default {
     existsSync, readFileSync, writeFileSync, appendFileSync,
-    unlinkSync, mkdirSync, rmdirSync, readdirSync,
+    unlinkSync, mkdirSync, rmdirSync, rmSync, cpSync, readdirSync,
     statSync, lstatSync, renameSync, copyFileSync, accessSync,
     chmodSync, chownSync, lchownSync, truncateSync,
     symlinkSync, readlinkSync, realpathSync, utimesSync,
@@ -619,7 +698,7 @@ export default {
     watch, watchFile, unwatchFile,
     constants,
     readFile, writeFile, appendFile, stat, lstat, unlink, mkdir, rmdir,
-    readdir, rename, copyFile, access, chmod, truncate, utimes,
+    rm, cp, readdir, rename, copyFile, access, chmod, truncate, utimes,
     readlink, realpath, symlink, link, mkdtemp,
     promises,
 };

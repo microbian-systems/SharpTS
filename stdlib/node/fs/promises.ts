@@ -12,7 +12,6 @@ import {
     unlink as __unlink,
     mkdir as __mkdir,
     rmdir as __rmdir,
-    rm as __rm,
     rename as __rename,
     copyFile as __copyFile,
     access as __access,
@@ -54,7 +53,10 @@ export function mkdir(path: string, options?: any): Promise<any> { return __mkdi
 export function rmdir(path: string, options?: any): Promise<void> { return __rmdir(path, options); }
 
 /** Asynchronously removes files and directories (recursively when requested). */
-export function rm(path: string, options?: any): Promise<void> { return __rm(path, options); }
+export function rm(path: string, options?: any): Promise<void> { return __fsp.rm(path, options); }
+
+/** Asynchronously copies src to dest (recursively when `{ recursive: true }`). */
+export function cp(src: string, dest: string, options?: any): Promise<void> { return __fsp.cp(src, dest, options); }
 
 /** Asynchronously reads the contents of a directory. */
 export function readdir(path: string, options?: any): Promise<any> { return __fsp.readdir(path, options); }
@@ -96,7 +98,7 @@ export function mkdtemp(prefix: string): Promise<any> { return __mkdtemp(prefix)
 export { constants };
 
 export default {
-    readFile, writeFile, appendFile, stat, lstat, unlink, mkdir, rmdir, rm,
+    readFile, writeFile, appendFile, stat, lstat, unlink, mkdir, rmdir, rm, cp,
     readdir, rename, copyFile, access, chmod, truncate, utimes,
     readlink, realpath, symlink, link, mkdtemp, constants,
 };
