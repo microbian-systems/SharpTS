@@ -58,6 +58,7 @@ public partial class RuntimeEmitter
         EmitFsReaddirSync(typeBuilder, runtime);
         EmitFsStatSync(typeBuilder, runtime);
         EmitFsLstatSync(typeBuilder, runtime);
+        EmitFsStatRawHelpers(typeBuilder, runtime); // #977: statRaw/lstatRaw/fstatRaw
         EmitFsRenameSync(typeBuilder, runtime);
         EmitFsCopyFileSync(typeBuilder, runtime);
         EmitFsAccessSync(typeBuilder, runtime);

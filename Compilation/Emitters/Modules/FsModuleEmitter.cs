@@ -18,7 +18,8 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
     [
         "existsSync", "readFileSync", "writeFileSync", "appendFileSync",
         "unlinkSync", "mkdirSync", "rmdirSync", "readdirSync",
-        "statSync", "lstatSync", "renameSync", "copyFileSync", "accessSync",
+        "statSync", "lstatSync", "statRaw", "lstatRaw", "fstatRaw",
+        "renameSync", "copyFileSync", "accessSync",
         "chmodSync", "chownSync", "lchownSync", "truncateSync",
         "symlinkSync", "readlinkSync", "realpathSync", "utimesSync",
         // File descriptor APIs
@@ -52,6 +53,9 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
             "readdirSync" => EmitReaddirSync(emitter, arguments),
             "statSync" => EmitStatSync(emitter, arguments),
             "lstatSync" => EmitLstatSync(emitter, arguments),
+            "statRaw" => EmitStatRawOp(emitter, arguments, emitter.Context.Runtime!.FsStatRaw),
+            "lstatRaw" => EmitStatRawOp(emitter, arguments, emitter.Context.Runtime!.FsLstatRaw),
+            "fstatRaw" => EmitStatRawOp(emitter, arguments, emitter.Context.Runtime!.FsFstatRaw),
             "renameSync" => EmitRenameSync(emitter, arguments),
             "copyFileSync" => EmitCopyFileSync(emitter, arguments),
             "accessSync" => EmitAccessSync(emitter, arguments),
@@ -368,6 +372,23 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
 
         // Call runtime helper: FsStatSync(object path) -> object (Stats-like object)
         il.Emit(OpCodes.Call, ctx.Runtime!.FsStatSync);
+        return true;
+    }
+
+    // statRaw/lstatRaw/fstatRaw (#977): emit the single arg (path or fd) and call
+    // the given raw-record helper, which returns the flat record the TS Stats shapes.
+    private static bool EmitStatRawOp(IEmitterContext emitter, List<Expr> arguments, System.Reflection.MethodInfo helper)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        if (arguments.Count == 0)
+        {
+            il.Emit(OpCodes.Ldnull);
+            return true;
+        }
+        emitter.EmitExpression(arguments[0]);
+        emitter.EmitBoxIfNeeded(arguments[0]);
+        il.Emit(OpCodes.Call, helper);
         return true;
     }
 

@@ -70,41 +70,25 @@ public static class FsAsyncHelpers
     /// <returns>A Stats-like object with file information.</returns>
     public static async Task<SharpTSObject> StatAsync(string path)
     {
-        // Use Task.Run to offload the synchronous file info operations
+        // Returns the raw stat record (#977) — same shape/logic as the sync
+        // FsModuleInterpreter.StatRaw, so statSync and await stat agree by
+        // construction; the TS Stats class shapes it. stat follows symlinks.
         return await Task.Run(() =>
         {
             if (Directory.Exists(path))
             {
-                var dirInfo = new DirectoryInfo(path);
-                return CreateStatsObject(
-                    isDirectory: true,
-                    isFile: false,
-                    isSymbolicLink: dirInfo.Attributes.HasFlag(FileAttributes.ReparsePoint),
-                    size: 0,
-                    atime: dirInfo.LastAccessTime,
-                    mtime: dirInfo.LastWriteTime,
-                    ctime: dirInfo.CreationTime,
-                    birthtime: dirInfo.CreationTime
-                );
+                var di = new DirectoryInfo(path);
+                return FsModuleInterpreter.BuildStatRecord(true, false, false, 0.0,
+                    di.LastAccessTime, di.LastWriteTime, di.CreationTime, di.CreationTime);
             }
-            else if (File.Exists(path))
+            if (File.Exists(path))
             {
-                var fileInfo = new FileInfo(path);
-                return CreateStatsObject(
-                    isDirectory: false,
-                    isFile: true,
-                    isSymbolicLink: fileInfo.Attributes.HasFlag(FileAttributes.ReparsePoint),
-                    size: fileInfo.Length,
-                    atime: fileInfo.LastAccessTime,
-                    mtime: fileInfo.LastWriteTime,
-                    ctime: fileInfo.CreationTime,
-                    birthtime: fileInfo.CreationTime
-                );
+                var fi = new FileInfo(path);
+                bool ro = fi.Attributes.HasFlag(FileAttributes.ReadOnly);
+                return FsModuleInterpreter.BuildStatRecord(false, false, ro, fi.Length,
+                    fi.LastAccessTime, fi.LastWriteTime, fi.CreationTime, fi.CreationTime);
             }
-            else
-            {
-                throw new FileNotFoundException("no such file or directory", path);
-            }
+            throw new FileNotFoundException("no such file or directory", path);
         });
     }
 
@@ -238,7 +222,8 @@ public static class FsAsyncHelpers
             {
                 foreach (var entry in entries)
                 {
-                    list.Add(CreateDirent(entry));
+                    // Reuse the one canonical Dirent builder (#977) for sync/async parity.
+                    list.Add(FsModuleInterpreter.CreateDirent(entry, Path.GetDirectoryName(entry) ?? path));
                 }
             }
             else
@@ -257,35 +242,6 @@ public static class FsAsyncHelpers
             }
 
             return new SharpTSArray(list);
-        });
-    }
-
-    /// <summary>
-    /// Creates a Dirent-like object for readdir with withFileTypes option.
-    /// </summary>
-    private static SharpTSObject CreateDirent(string fullPath)
-    {
-        var name = Path.GetFileName(fullPath);
-        var isFile = File.Exists(fullPath);
-        var isDir = Directory.Exists(fullPath);
-        var isSymlink = false;
-
-        var fileInfo = new FileInfo(fullPath);
-        if (fileInfo.Exists || Directory.Exists(fullPath))
-        {
-            isSymlink = fileInfo.Attributes.HasFlag(FileAttributes.ReparsePoint);
-        }
-
-        return new SharpTSObject(new Dictionary<string, object?>
-        {
-            ["name"] = name,
-            ["isFile"] = BuiltInMethod.CreateV2("isFile", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isFile && !isDir)),
-            ["isDirectory"] = BuiltInMethod.CreateV2("isDirectory", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isDir)),
-            ["isSymbolicLink"] = BuiltInMethod.CreateV2("isSymbolicLink", 0, 0, (_, _, _) => RuntimeValue.FromBoolean(isSymlink)),
-            ["isBlockDevice"] = BuiltInMethod.CreateV2("isBlockDevice", 0, 0, (_, _, _) => RuntimeValue.False),
-            ["isCharacterDevice"] = BuiltInMethod.CreateV2("isCharacterDevice", 0, 0, (_, _, _) => RuntimeValue.False),
-            ["isFIFO"] = BuiltInMethod.CreateV2("isFIFO", 0, 0, (_, _, _) => RuntimeValue.False),
-            ["isSocket"] = BuiltInMethod.CreateV2("isSocket", 0, 0, (_, _, _) => RuntimeValue.False)
         });
     }
 
@@ -426,38 +382,16 @@ public static class FsAsyncHelpers
                 throw new FileNotFoundException("no such file or directory", path);
             }
 
-            bool isSymlink = false;
+            // Raw record matching the sync FsModuleInterpreter.LstatRaw (#977).
+            bool isSymlink = (fileInfo.Exists ? fileInfo.Attributes : dirInfo.Attributes).HasFlag(FileAttributes.ReparsePoint);
             bool isDir = dirInfo.Exists && !fileInfo.Exists;
-            long size = fileInfo.Exists ? fileInfo.Length : 0;
-            DateTime atime, mtime, ctime, birthtime;
+            double size = fileInfo.Exists ? fileInfo.Length : 0.0;
+            bool ro = fileInfo.Exists && fileInfo.Attributes.HasFlag(FileAttributes.ReadOnly);
+            DateTime atime = isDir ? dirInfo.LastAccessTime : fileInfo.LastAccessTime;
+            DateTime mtime = isDir ? dirInfo.LastWriteTime : fileInfo.LastWriteTime;
+            DateTime ctime = isDir ? dirInfo.CreationTime : fileInfo.CreationTime;
 
-            if (fileInfo.Exists)
-            {
-                isSymlink = fileInfo.Attributes.HasFlag(FileAttributes.ReparsePoint);
-                atime = fileInfo.LastAccessTime;
-                mtime = fileInfo.LastWriteTime;
-                ctime = fileInfo.CreationTime;
-                birthtime = fileInfo.CreationTime;
-            }
-            else
-            {
-                isSymlink = dirInfo.Attributes.HasFlag(FileAttributes.ReparsePoint);
-                atime = dirInfo.LastAccessTime;
-                mtime = dirInfo.LastWriteTime;
-                ctime = dirInfo.CreationTime;
-                birthtime = dirInfo.CreationTime;
-            }
-
-            return CreateStatsObject(
-                isDirectory: isDir,
-                isFile: fileInfo.Exists && !isDir,
-                isSymbolicLink: isSymlink,
-                size: size,
-                atime: atime,
-                mtime: mtime,
-                ctime: ctime,
-                birthtime: birthtime
-            );
+            return FsModuleInterpreter.BuildStatRecord(isDir, isSymlink, ro, size, atime, mtime, ctime, ctime);
         });
     }
 
