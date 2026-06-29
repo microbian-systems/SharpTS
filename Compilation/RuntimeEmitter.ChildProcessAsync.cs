@@ -554,11 +554,25 @@ public partial class RuntimeEmitter
     private void EmitCtxKill(EmittedRuntime runtime)
     {
         // object Kill(object signal):
-        //   if (_dict["killed"] truthy already) -> still attempt, but Node returns true.
-        //   _dict["killed"] = true; try { if (!_proc.HasExited) _proc.Kill(true); } catch {}
-        //   return true;
+        //   _dict["killed"] = true; _dict["signalCode"] = signal ?? "SIGTERM";
+        //   try { if (!_proc.HasExited) _proc.Kill(true); } catch {}  return true;
         var il = _childCtxKill.GetILGenerator();
         EmitDictSetFromCtx(il, "killed", () => { il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Box, _types.Boolean); });
+        // signalCode = (signal is string) ? signal : "SIGTERM"
+        EmitDictSetFromCtx(il, "signalCode", () =>
+        {
+            var have = il.DefineLabel();
+            var done = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Brtrue, have);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Ldstr, "SIGTERM");
+            il.Emit(OpCodes.Br, done);
+            il.MarkLabel(have);
+            il.MarkLabel(done);
+        });
 
         var afterKill = il.DefineLabel();
         il.BeginExceptionBlock();

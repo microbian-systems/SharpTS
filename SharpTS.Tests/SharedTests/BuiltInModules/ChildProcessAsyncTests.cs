@@ -127,6 +127,47 @@ public class ChildProcessAsyncTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spawn_Kill_SetsKilledAndSignal(ExecutionMode mode)
+    {
+        // Spawn a long-running process, kill it, and observe live killed/signalCode in 'exit'.
+        var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ping" : "sleep";
+        var args = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? "['-n', '10', '127.0.0.1']"
+            : "['10']";
+
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import { spawn } from 'child_process';
+                const c = spawn('{{command}}', {{args}});
+                c.on('exit', () => console.log('killed=' + c.killed + ' signal=' + c.signalCode));
+                c.kill();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("killed=true signal=SIGTERM\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Exec_ExitCode_IsLiveAfterClose(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { exec } from 'child_process';
+                const c = exec('echo hi');
+                c.on('close', () => console.log('exitCode=' + c.exitCode));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("exitCode=0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Spawn_Stdout_DataAndClose(ExecutionMode mode)
     {
         var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
