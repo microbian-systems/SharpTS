@@ -262,4 +262,93 @@ public class AbortControllerTests
         var output = TestHarness.Run(source, mode);
         Assert.Equal("true\nfalse\ntrue\n", output);
     }
+
+    // #985: the typed strategy (AbortSignalEmitter) only fires when the receiver's
+    // static type is AbortSignal. When a signal flows through an `any` parameter — the
+    // common case for stdlib facades and user helpers — the dynamic dispatch path must
+    // also route the listener API and the onabort setter to the signal helpers. Before
+    // the fix, compiled mode wrote a plain "onabort" dict key (never fired) and threw
+    // "undefined is not a function" for addEventListener.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AbortSignal_OnAbort_DynamicReceiver_Fires(ExecutionMode mode)
+    {
+        var source = @"
+            function reg(signal: any, cb: any): void { signal.onabort = cb; }
+            const ac = new AbortController();
+            let fired = 'no';
+            reg(ac.signal, () => { fired = 'yes'; });
+            ac.abort();
+            console.log(fired);
+        ";
+        Assert.Equal("yes\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AbortSignal_AddEventListener_DynamicReceiver_Fires(ExecutionMode mode)
+    {
+        var source = @"
+            function reg(signal: any, cb: any): void { signal.addEventListener('abort', cb); }
+            const ac = new AbortController();
+            let fired = 'no';
+            reg(ac.signal, () => { fired = 'yes'; });
+            ac.abort();
+            console.log(fired);
+        ";
+        Assert.Equal("yes\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AbortSignal_RemoveEventListener_DynamicReceiver(ExecutionMode mode)
+    {
+        var source = @"
+            function addL(s: any, cb: any): void { s.addEventListener('abort', cb); }
+            function rmL(s: any, cb: any): void { s.removeEventListener('abort', cb); }
+            const ac = new AbortController();
+            let count = 0;
+            const cb = () => { count++; };
+            addL(ac.signal, cb);
+            rmL(ac.signal, cb);
+            ac.abort();
+            console.log(count);
+        ";
+        Assert.Equal("0\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AbortSignal_ThrowIfAborted_DynamicReceiver(ExecutionMode mode)
+    {
+        var source = @"
+            function tryThrow(s: any): string {
+                try { s.throwIfAborted(); return 'noThrow'; } catch (e: any) { return 'threw'; }
+            }
+            const ac = new AbortController();
+            console.log(tryThrow(ac.signal));
+            ac.abort();
+            console.log(tryThrow(ac.signal));
+        ";
+        Assert.Equal("noThrow\nthrew\n", TestHarness.Run(source, mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void AbortSignal_AbortedAndReason_DynamicReceiver(ExecutionMode mode)
+    {
+        // The property reads on an `any` receiver (#224) must keep working alongside
+        // the new method/onabort routing.
+        var source = @"
+            function isAborted(s: any): boolean { return s.aborted; }
+            function reasonOf(s: any): any { return s.reason; }
+            const ac = new AbortController();
+            console.log(isAborted(ac.signal));
+            ac.abort('boom');
+            console.log(isAborted(ac.signal));
+            console.log(reasonOf(ac.signal));
+        ";
+        Assert.Equal("false\ntrue\nboom\n", TestHarness.Run(source, mode));
+    }
 }

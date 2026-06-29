@@ -235,6 +235,66 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
+        // Preserve an already-formed $NodeError verbatim (e.g. EBADF from the fd table's
+        // Get/Close, or ENOSYS from chown/lchown on Windows). These are thrown by emitted
+        // code *inside* the EmitWithFsErrorHandling try block; without this branch the
+        // type-based mapping below would clobber their deliberate codes to the EINVAL
+        // default. Mirrors the interpreter's WrapFsOperation, which rethrows a NodeError
+        // as-is (keeping its own code/syscall/path and pre-formatted message). (#986)
+        var notNodeError = il.DefineLabel();
+        var nodeErrLocal = il.DeclareLocal(runtime.NodeErrorType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.NodeErrorType);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stloc, nodeErrLocal);
+        il.Emit(OpCodes.Brfalse, notNodeError);
+
+        // var preserved = new Exception(ne.Message);  // ne.Message is already the fully
+        // formatted "CODE: syscall: message 'path'" string the interpreter produces.
+        var preservedLocal = il.DeclareLocal(_types.Exception);
+        il.Emit(OpCodes.Ldloc, nodeErrLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Message").GetGetMethod()!);
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Stloc, preservedLocal);
+
+        // preserved.Data["__nodeError"] = true;
+        il.Emit(OpCodes.Ldloc, preservedLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Data").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "__nodeError");
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IDictionary, "set_Item"));
+
+        // preserved.Data["__code"] = ne.Code;
+        il.Emit(OpCodes.Ldloc, preservedLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Data").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "__code");
+        il.Emit(OpCodes.Ldloc, nodeErrLocal);
+        il.Emit(OpCodes.Callvirt, runtime.NodeErrorCodeGetter);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IDictionary, "set_Item"));
+
+        // preserved.Data["__syscall"] = ne.Syscall;
+        il.Emit(OpCodes.Ldloc, preservedLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Data").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "__syscall");
+        il.Emit(OpCodes.Ldloc, nodeErrLocal);
+        il.Emit(OpCodes.Callvirt, runtime.NodeErrorSyscallGetter);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IDictionary, "set_Item"));
+
+        // preserved.Data["__path"] = ne.Path;
+        il.Emit(OpCodes.Ldloc, preservedLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetProperty(_types.Exception, "Data").GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "__path");
+        il.Emit(OpCodes.Ldloc, nodeErrLocal);
+        il.Emit(OpCodes.Callvirt, runtime.NodeErrorPathGetter);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.IDictionary, "set_Item"));
+
+        // throw preserved;
+        il.Emit(OpCodes.Ldloc, preservedLocal);
+        il.Emit(OpCodes.Throw);
+
+        il.MarkLabel(notNodeError);
+
         // Local for the error code string
         var codeLocal = il.DeclareLocal(_types.String);
 
