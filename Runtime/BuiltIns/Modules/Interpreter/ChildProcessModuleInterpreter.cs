@@ -328,7 +328,7 @@ public static class ChildProcessModuleInterpreter
         }
 
         var cwd = GetStringOption(options, "cwd");
-        var useShell = GetBoolOption(options, "shell", false);
+        var (useShell, shellPath) = GetShellOption(options);
 
         // Create the ChildProcess event emitter with streams
         var childProcess = new SharpTSChildProcess();
@@ -346,7 +346,6 @@ public static class ChildProcessModuleInterpreter
         {
             var startInfo = new ProcessStartInfo
             {
-                FileName = command,
                 UseShellExecute = false,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
@@ -354,8 +353,17 @@ public static class ChildProcessModuleInterpreter
                 CreateNoWindow = true
             };
 
-            foreach (var arg in cmdArgs)
-                startInfo.ArgumentList.Add(arg);
+            if (useShell)
+            {
+                // Run "command args" through a shell (cmd.exe / sh), matching exec().
+                ApplyShellCommand(startInfo, command, cmdArgs, shellPath);
+            }
+            else
+            {
+                startInfo.FileName = command;
+                foreach (var arg in cmdArgs)
+                    startInfo.ArgumentList.Add(arg);
+            }
 
             if (!string.IsNullOrEmpty(cwd))
                 startInfo.WorkingDirectory = cwd;
@@ -883,6 +891,41 @@ public static class ChildProcessModuleInterpreter
             return defaultValue;
         var value = options.GetProperty(name);
         return value is double d ? d : defaultValue;
+    }
+
+    /// <summary>
+    /// Reads the `shell` option: true → default platform shell; a string → that shell path;
+    /// false/absent → no shell. Returns (useShell, shellPath?).
+    /// </summary>
+    private static (bool useShell, string? shellPath) GetShellOption(SharpTSObject? options)
+    {
+        if (options == null)
+            return (false, null);
+        var value = options.GetProperty("shell");
+        if (value is bool b)
+            return (b, null);
+        if (value is string s && !string.IsNullOrEmpty(s))
+            return (true, s);
+        return (false, null);
+    }
+
+    /// <summary>
+    /// Configures a ProcessStartInfo to run "command args" through a shell (cmd.exe /c on
+    /// Windows, /bin/sh -c on Unix, or an explicit shell path), mirroring exec().
+    /// </summary>
+    private static void ApplyShellCommand(ProcessStartInfo startInfo, string command, List<string> cmdArgs, string? shellPath)
+    {
+        var fullCommand = cmdArgs.Count > 0 ? command + " " + string.Join(" ", cmdArgs) : command;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            startInfo.FileName = string.IsNullOrEmpty(shellPath) ? "cmd.exe" : shellPath;
+            startInfo.Arguments = "/d /s /c " + fullCommand;
+        }
+        else
+        {
+            startInfo.FileName = string.IsNullOrEmpty(shellPath) ? "/bin/sh" : shellPath;
+            startInfo.Arguments = "-c \"" + fullCommand.Replace("\"", "\\\"") + "\"";
+        }
     }
 
     private static bool GetBoolOption(SharpTSObject? options, string name, bool defaultValue)

@@ -127,6 +127,27 @@ public class ChildProcessAsyncTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spawn_Shell_RunsThroughShell(ExecutionMode mode)
+    {
+        // `echo shellworks` is a shell builtin / single shell command line — it only resolves
+        // with shell:true (there is no executable literally named "echo shellworks").
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { spawn } from 'child_process';
+                const c = spawn('echo shellworks', [], { shell: true });
+                let out = '';
+                c.stdout.on('data', (d: any) => { out += d.toString(); });
+                c.stdout.on('end', () => console.log('shell:' + out.trim()));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("shell:shellworks\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Spawn_Kill_SetsKilledAndSignal(ExecutionMode mode)
     {
         // Spawn a long-running process, kill it, and observe live killed/signalCode in 'exit'.

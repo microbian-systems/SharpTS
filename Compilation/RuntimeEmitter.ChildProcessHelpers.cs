@@ -814,9 +814,8 @@ public partial class RuntimeEmitter
 
         var startInfoLocal = il.DeclareLocal(_types.ProcessStartInfo);
 
-        // startInfo = new ProcessStartInfo(command)
-        il.Emit(OpCodes.Ldarg_0); // command = FileName
-        il.Emit(OpCodes.Newobj, _types.ProcessStartInfo.GetConstructor([_types.String])!);
+        // startInfo = new ProcessStartInfo()
+        il.Emit(OpCodes.Newobj, _types.ProcessStartInfo.GetConstructor(Type.EmptyTypes)!);
         il.Emit(OpCodes.Stloc, startInfoLocal);
 
         il.Emit(OpCodes.Ldloc, startInfoLocal);
@@ -835,54 +834,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("CreateNoWindow")!.GetSetMethod()!);
 
-        // Add args from arg1 if it's a List (proper per-arg via ArgumentList).
-        var noArgsLabel = il.DefineLabel();
-        var argsListLocal = il.DeclareLocal(_types.ListOfObject);
-        var argListLocal = il.DeclareLocal(typeof(System.Collections.ObjectModel.Collection<string>));
-        var iLocal = il.DeclareLocal(_types.Int32);
-        var argTmpLocal = il.DeclareLocal(_types.Object);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Isinst, _types.ListOfObject);
-        il.Emit(OpCodes.Dup);
-        il.Emit(OpCodes.Stloc, argsListLocal);
-        il.Emit(OpCodes.Brfalse, noArgsLabel);
-
-        il.Emit(OpCodes.Ldloc, startInfoLocal);
-        il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("ArgumentList")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stloc, argListLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, iLocal);
-        var argsLoop = il.DefineLabel();
-        var argsLoopEnd = il.DefineLabel();
-        il.MarkLabel(argsLoop);
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Ldloc, argsListLocal);
-        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetProperty("Count")!.GetGetMethod()!);
-        il.Emit(OpCodes.Bge, argsLoopEnd);
-        il.Emit(OpCodes.Ldloc, argsListLocal);
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("get_Item", [_types.Int32])!);
-        il.Emit(OpCodes.Stloc, argTmpLocal);
-        il.Emit(OpCodes.Ldloc, argListLocal);
-        var argNull = il.DefineLabel();
-        var argAdd = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, argTmpLocal);
-        il.Emit(OpCodes.Brfalse, argNull);
-        il.Emit(OpCodes.Ldloc, argTmpLocal);
-        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
-        il.Emit(OpCodes.Br, argAdd);
-        il.MarkLabel(argNull);
-        il.Emit(OpCodes.Ldstr, "");
-        il.MarkLabel(argAdd);
-        il.Emit(OpCodes.Callvirt, typeof(System.Collections.ObjectModel.Collection<string>).GetMethod("Add", [_types.String])!);
-        il.Emit(OpCodes.Ldloc, iLocal);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Add);
-        il.Emit(OpCodes.Stloc, iLocal);
-        il.Emit(OpCodes.Br, argsLoop);
-        il.MarkLabel(argsLoopEnd);
-        il.MarkLabel(noArgsLabel);
-
         // options = arg1 (if dict, the no-args form spawn(cmd, opts)) or arg2.
         var a1 = il.DeclareLocal(_types.Object);
         var a2 = il.DeclareLocal(_types.Object);
@@ -890,6 +841,13 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Stloc, a2);
         var optionsLocal = il.DeclareLocal(_types.Object);
         EmitSelectOptions(il, [a2, a1], optionsLocal);
+
+        // Set FileName/Arguments(/ArgumentList), honoring options.shell.
+        il.Emit(OpCodes.Ldloc, startInfoLocal);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Call, _childConfigureSpawn);
 
         // new Process { StartInfo = startInfo }
         var processLocal = il.DeclareLocal(_types.Process);

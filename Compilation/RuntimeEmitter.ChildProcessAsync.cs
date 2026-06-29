@@ -54,6 +54,7 @@ public partial class RuntimeEmitter
 
     private MethodBuilder _childRunAsync = null!;
     private MethodBuilder _childAsyncUnref = null!;
+    private MethodBuilder _childConfigureSpawn = null!;
 
     // $ChildPush — a one-shot closure that pushes one chunk (or null = EOF) into a
     // $Readable on the event-loop thread, so all stream-buffer access stays single-threaded.
@@ -103,9 +104,202 @@ public partial class RuntimeEmitter
         DefineChildPushType(runtime);
         DefineChildCtxType(runtime);
         EmitChildRunAsyncHelpers(runtimeType, runtime);
+        EmitConfigureSpawnStartInfo(runtimeType, runtime);
         EmitChildCtxMethods(runtime);
         _childCtxType.CreateType();
         _childPushType.CreateType();
+    }
+
+    /// <summary>
+    /// static void ConfigureSpawnStartInfo(ProcessStartInfo si, string command, object args, object options)
+    /// Sets FileName/Arguments(/ArgumentList) honoring the `shell` option (true → default
+    /// platform shell; string → that shell), mirroring the interpreter's ApplyShellCommand.
+    /// </summary>
+    private void EmitConfigureSpawnStartInfo(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var m = runtimeType.DefineMethod("ConfigureSpawnStartInfo",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Void,
+            [_types.ProcessStartInfo, _types.String, _types.Object, _types.Object]);
+        _childConfigureSpawn = m;
+        var il = m.GetILGenerator();
+
+        var argsListLocal = il.DeclareLocal(_types.ListOfObject);
+        var fullCmdLocal = il.DeclareLocal(_types.String);
+        var useShellLocal = il.DeclareLocal(_types.Boolean);
+        var shellPathLocal = il.DeclareLocal(_types.String);
+        var tmpLocal = il.DeclareLocal(_types.Object);
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var concat2 = _types.String.GetMethod("Concat", [_types.String, _types.String])!;
+        var concat3 = _types.String.GetMethod("Concat", [_types.String, _types.String, _types.String])!;
+        var fnSet = _types.ProcessStartInfo.GetProperty("FileName")!.GetSetMethod()!;
+        var argSet = _types.ProcessStartInfo.GetProperty("Arguments")!.GetSetMethod()!;
+
+        // argsList = args as List
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Stloc, argsListLocal);
+
+        // fullCmd = command; if (argsList != null && argsList.Count>0) fullCmd = command + " " + string.Join(" ", argsList.ToArray())
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stloc, fullCmdLocal);
+        var noJoin = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argsListLocal);
+        il.Emit(OpCodes.Brfalse, noJoin);
+        il.Emit(OpCodes.Ldloc, argsListLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, noJoin);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, " ");
+        il.Emit(OpCodes.Ldstr, " ");
+        il.Emit(OpCodes.Ldloc, argsListLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("ToArray")!);
+        il.Emit(OpCodes.Call, typeof(string).GetMethod("Join", [typeof(string), typeof(object[])])!);
+        il.Emit(OpCodes.Call, concat3);
+        il.Emit(OpCodes.Stloc, fullCmdLocal);
+        il.MarkLabel(noJoin);
+
+        // useShell = false; shellPath = null
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, useShellLocal);
+        il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Stloc, shellPathLocal);
+
+        // if (options is Dict && dict.TryGetValue("shell", out tmp)) { ... }
+        var afterShellOpt = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, afterShellOpt);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "shell");
+        il.Emit(OpCodes.Ldloca, tmpLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue", [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, afterShellOpt);
+
+        // if (tmp is bool) useShell = (bool)tmp;
+        var notBool = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, tmpLocal);
+        il.Emit(OpCodes.Isinst, _types.Boolean);
+        il.Emit(OpCodes.Brfalse, notBool);
+        il.Emit(OpCodes.Ldloc, tmpLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.Boolean);
+        il.Emit(OpCodes.Stloc, useShellLocal);
+        il.Emit(OpCodes.Br, afterShellOpt);
+        il.MarkLabel(notBool);
+        // else if (tmp is string s && s.Length>0) { useShell=true; shellPath=s; }
+        var notStr = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, tmpLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brfalse, notStr);          // (string s) on stack
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Callvirt, _types.String.GetProperty("Length")!.GetGetMethod()!);
+        il.Emit(OpCodes.Brfalse, notStr);          // length 0 → leaves the string; handled below
+        il.Emit(OpCodes.Stloc, shellPathLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stloc, useShellLocal);
+        il.Emit(OpCodes.Br, afterShellOpt);
+        il.MarkLabel(notStr);
+        il.Emit(OpCodes.Pop);                       // discard the Isinst result / empty string
+        il.MarkLabel(afterShellOpt);
+
+        // Branch on useShell
+        var directLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, useShellLocal);
+        il.Emit(OpCodes.Brfalse, directLabel);
+
+        // Shell path: platform branch
+        var notWindows = il.DefineLabel();
+        var afterPlatform = il.DefineLabel();
+        il.Emit(OpCodes.Call, _types.OSPlatform.GetProperty("Windows")!.GetGetMethod()!);
+        il.Emit(OpCodes.Call, _types.RuntimeInformation.GetMethod("IsOSPlatform", [_types.OSPlatform])!);
+        il.Emit(OpCodes.Brfalse, notWindows);
+        // Windows: FileName = shellPath ?? "cmd.exe"; Arguments = "/d /s /c " + fullCmd
+        il.Emit(OpCodes.Ldarg_0);
+        EmitShellPathOrDefault(il, shellPathLocal, "cmd.exe");
+        il.Emit(OpCodes.Callvirt, fnSet);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "/d /s /c ");
+        il.Emit(OpCodes.Ldloc, fullCmdLocal);
+        il.Emit(OpCodes.Call, concat2);
+        il.Emit(OpCodes.Callvirt, argSet);
+        il.Emit(OpCodes.Br, afterPlatform);
+        // Unix: FileName = shellPath ?? "/bin/sh"; Arguments = "-c \"" + fullCmd.Replace("\"","\\\"") + "\""
+        il.MarkLabel(notWindows);
+        il.Emit(OpCodes.Ldarg_0);
+        EmitShellPathOrDefault(il, shellPathLocal, "/bin/sh");
+        il.Emit(OpCodes.Callvirt, fnSet);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "-c \"");
+        il.Emit(OpCodes.Ldloc, fullCmdLocal);
+        il.Emit(OpCodes.Ldstr, "\"");
+        il.Emit(OpCodes.Ldstr, "\\\"");
+        il.Emit(OpCodes.Callvirt, _types.String.GetMethod("Replace", [_types.String, _types.String])!);
+        il.Emit(OpCodes.Ldstr, "\"");
+        il.Emit(OpCodes.Call, concat3);
+        il.Emit(OpCodes.Callvirt, argSet);
+        il.MarkLabel(afterPlatform);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // Direct path: FileName = command; add args to ArgumentList
+        il.MarkLabel(directLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, fnSet);
+        var noArgs = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argsListLocal);
+        il.Emit(OpCodes.Brfalse, noArgs);
+        var argListLocal = il.DeclareLocal(typeof(System.Collections.ObjectModel.Collection<string>));
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var aTmp = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("ArgumentList")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, argListLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, iLocal);
+        var loop = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        il.MarkLabel(loop);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, argsListLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Bge, loopEnd);
+        il.Emit(OpCodes.Ldloc, argsListLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("get_Item", [_types.Int32])!);
+        il.Emit(OpCodes.Stloc, aTmp);
+        il.Emit(OpCodes.Ldloc, argListLocal);
+        var aNull = il.DefineLabel();
+        var aAdd = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, aTmp);
+        il.Emit(OpCodes.Brfalse, aNull);
+        il.Emit(OpCodes.Ldloc, aTmp);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
+        il.Emit(OpCodes.Br, aAdd);
+        il.MarkLabel(aNull);
+        il.Emit(OpCodes.Ldstr, "");
+        il.MarkLabel(aAdd);
+        il.Emit(OpCodes.Callvirt, typeof(System.Collections.ObjectModel.Collection<string>).GetMethod("Add", [_types.String])!);
+        il.Emit(OpCodes.Ldloc, iLocal); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loop);
+        il.MarkLabel(loopEnd);
+        il.MarkLabel(noArgs);
+
+        il.MarkLabel(endLabel);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>Emit: (shellPathLocal != null && len>0) ? shellPathLocal : default.</summary>
+    private void EmitShellPathOrDefault(ILGenerator il, LocalBuilder shellPathLocal, string def)
+    {
+        var useDefault = il.DefineLabel();
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, shellPathLocal);
+        il.Emit(OpCodes.Brfalse, useDefault);
+        il.Emit(OpCodes.Ldloc, shellPathLocal);
+        il.Emit(OpCodes.Br, done);
+        il.MarkLabel(useDefault);
+        il.Emit(OpCodes.Ldstr, def);
+        il.MarkLabel(done);
     }
 
     /// <summary>$ChildPush { object _stream; object _chunk; void Run() =&gt; (($Readable)_stream).Push(_chunk); }</summary>
