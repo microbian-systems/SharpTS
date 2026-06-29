@@ -13,6 +13,7 @@ public partial class RuntimeEmitter
     private void EmitChildProcessMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         EmitChildProcessNoOp(typeBuilder);
+        EmitChildProcessAsyncInfra(typeBuilder, runtime);
         EmitChildProcessExecSync(typeBuilder, runtime);
         EmitChildProcessSpawnSync(typeBuilder, runtime);
         EmitChildProcessExec(typeBuilder, runtime);
@@ -764,13 +765,34 @@ public partial class RuntimeEmitter
         runtime.RegisterBuiltInModuleMethod("child_process", "exec", method);
 
         var il = method.GetILGenerator();
-        // Store command arg in a local for EmitCreateExecProcess
+        // exec(command, optionsOrCallback?, callback?)
         var cmdLocal = il.DeclareLocal(_types.String);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Stloc, cmdLocal);
 
+        // a1 = arg1, a2 = arg2
+        var a1 = il.DeclareLocal(_types.Object);
+        var a2 = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Stloc, a1);
+        il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Stloc, a2);
+
+        var optionsLocal = il.DeclareLocal(_types.Object);
+        var callbackLocal = il.DeclareLocal(_types.Object);
+        EmitSelectOptions(il, [a1, a2], optionsLocal);
+        EmitSelectCallback(il, [a2, a1], callbackLocal);
+
+        // Build the shell Process (not started) and apply cwd/env.
         EmitCreateExecProcess(il, cmdLocal); // leaves Process on stack
-        EmitBuildChildProcessObject(il, runtime, includeStdio: false);
+        var processLocal = il.DeclareLocal(_types.Process);
+        il.Emit(OpCodes.Stloc, processLocal);
+        // Re-derive the start info from the process to apply options.
+        var siLocal = il.DeclareLocal(_types.ProcessStartInfo);
+        il.Emit(OpCodes.Ldloc, processLocal);
+        il.Emit(OpCodes.Callvirt, _types.Process.GetProperty("StartInfo")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, siLocal);
+        EmitApplyChildOptions(il, siLocal, optionsLocal);
+
+        EmitBuildChildAndLaunch(il, runtime, processLocal, optionsLocal, callbackLocal, streamed: false);
         il.Emit(OpCodes.Ret);
     }
 
@@ -1077,7 +1099,7 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Similar to spawn: ProcessStartInfo(file) + args
+        // execFile(file, args?, options?, callback?)
         var startInfoLocal = il.DeclareLocal(_types.ProcessStartInfo);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Newobj, _types.ProcessStartInfo.GetConstructor([_types.String])!);
@@ -1099,21 +1121,65 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("CreateNoWindow")!.GetSetMethod()!);
 
-        // Set args from arg1 if it's a List
+        // Add args from arg1 if it's a List (proper per-arg, not space-join).
         var noArgsLabel = il.DefineLabel();
+        var argsListLocal = il.DeclareLocal(_types.ListOfObject);
+        var argListLocal = il.DeclareLocal(typeof(System.Collections.ObjectModel.Collection<string>));
+        var iLocal = il.DeclareLocal(_types.Int32);
+        var argTmpLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Isinst, _types.ListOfObject);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stloc, argsListLocal);
         il.Emit(OpCodes.Brfalse, noArgsLabel);
 
         il.Emit(OpCodes.Ldloc, startInfoLocal);
-        il.Emit(OpCodes.Ldstr, " ");
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Castclass, _types.ListOfObject);
-        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("ToArray")!);
-        il.Emit(OpCodes.Call, typeof(string).GetMethod("Join", [typeof(string), typeof(object[])])!);
-        il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("Arguments")!.GetSetMethod()!);
-
+        il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("ArgumentList")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stloc, argListLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        var argsLoop = il.DefineLabel();
+        var argsLoopEnd = il.DefineLabel();
+        il.MarkLabel(argsLoop);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, argsListLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetProperty("Count")!.GetGetMethod()!);
+        il.Emit(OpCodes.Bge, argsLoopEnd);
+        il.Emit(OpCodes.Ldloc, argsListLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("get_Item", [_types.Int32])!);
+        il.Emit(OpCodes.Stloc, argTmpLocal);
+        il.Emit(OpCodes.Ldloc, argListLocal);
+        var argNull = il.DefineLabel();
+        var argAdd = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, argTmpLocal);
+        il.Emit(OpCodes.Brfalse, argNull);
+        il.Emit(OpCodes.Ldloc, argTmpLocal);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
+        il.Emit(OpCodes.Br, argAdd);
+        il.MarkLabel(argNull);
+        il.Emit(OpCodes.Ldstr, "");
+        il.MarkLabel(argAdd);
+        il.Emit(OpCodes.Callvirt, typeof(System.Collections.ObjectModel.Collection<string>).GetMethod("Add", [_types.String])!);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, argsLoop);
+        il.MarkLabel(argsLoopEnd);
         il.MarkLabel(noArgsLabel);
+
+        // Disambiguate options/callback among arg1/arg2/arg3.
+        var a1 = il.DeclareLocal(_types.Object);
+        var a2 = il.DeclareLocal(_types.Object);
+        var a3 = il.DeclareLocal(_types.Object);
+        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Stloc, a1);
+        il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Stloc, a2);
+        il.Emit(OpCodes.Ldarg_3); il.Emit(OpCodes.Stloc, a3);
+        var optionsLocal = il.DeclareLocal(_types.Object);
+        var callbackLocal = il.DeclareLocal(_types.Object);
+        EmitSelectOptions(il, [a1, a2, a3], optionsLocal);
+        EmitSelectCallback(il, [a3, a2, a1], callbackLocal);
 
         var processLocal = il.DeclareLocal(_types.Process);
         il.Emit(OpCodes.Newobj, _types.Process.GetConstructor(Type.EmptyTypes)!);
@@ -1122,8 +1188,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, startInfoLocal);
         il.Emit(OpCodes.Callvirt, _types.Process.GetProperty("StartInfo")!.GetSetMethod()!);
 
-        il.Emit(OpCodes.Ldloc, processLocal);
-        EmitBuildChildProcessObject(il, runtime, includeStdio: false);
+        EmitApplyChildOptions(il, startInfoLocal, optionsLocal);
+        EmitBuildChildAndLaunch(il, runtime, processLocal, optionsLocal, callbackLocal, streamed: false);
         il.Emit(OpCodes.Ret);
     }
 

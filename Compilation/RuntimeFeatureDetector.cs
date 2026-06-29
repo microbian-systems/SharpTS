@@ -190,7 +190,11 @@ public sealed class RuntimeFeatureDetector
             case "os":
                 _set.UsesOs = true; break;
             case "child_process":
-                _set.UsesChildProcess = true; break;
+                // spawn()/fork() expose stdout/stderr as $Readable and stdin as
+                // $Writable, so the Node-stream runtime types must be emitted too.
+                _set.UsesChildProcess = true;
+                _set.UsesNodeStreams = true;
+                break;
             case "vm":
                 _set.UsesVm = true; break;
             case "tty":

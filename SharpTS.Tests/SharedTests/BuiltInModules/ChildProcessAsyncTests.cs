@@ -217,6 +217,89 @@ public class ChildProcessAsyncTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Exec_Callback_FiresWithStdout(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { exec } from 'child_process';
+                exec('echo hello', (err: any, stdout: any, stderr: any) => {
+                    console.log('cb:' + (err === null) + ':' + stdout.trim());
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("cb:true:hello\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Exec_EmitsCloseThenExit(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { exec } from 'child_process';
+                const c = exec('echo hi');
+                c.on('close', (code: any) => console.log('close:' + code));
+                c.on('exit', (code: any) => console.log('exit:' + code));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("close:0\nexit:0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Exec_NonZeroExit_CallbackReceivesError(ExecutionMode mode)
+    {
+        var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? "exit 3"
+            : "exit 3";
+
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import { exec } from 'child_process';
+                exec('{{command}}', (err: any, stdout: any, stderr: any) => {
+                    console.log('err:' + (err !== null) + ':code:' + (err ? err.code : 'none'));
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("err:true:code:3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExecFile_Callback_FiresWithStdout(ExecutionMode mode)
+    {
+        var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? "cmd.exe"
+            : "/bin/echo";
+        var args = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? "['/c', 'echo', 'filecb']"
+            : "['filecb']";
+
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import { execFile } from 'child_process';
+                execFile('{{command}}', {{args}}, (err: any, stdout: any, stderr: any) => {
+                    console.log('filecb:' + (err === null) + ':' + stdout.trim());
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("filecb:true:filecb\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Exec_ChildProcess_HasPidProperty(ExecutionMode mode)
     {
         var echoCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)

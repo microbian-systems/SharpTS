@@ -198,9 +198,16 @@ public static class ChildProcessModuleInterpreter
         // Create the ChildProcess event emitter
         var childProcess = new SharpTSChildProcess();
 
-        // Run the process asynchronously
+        // Keep the event loop alive while the child runs; the terminal callback /
+        // lifecycle events are marshalled back onto the loop (EnqueueCallback) so they
+        // run on the loop thread AFTER the synchronous script registers its listeners —
+        // matching Node's "deferred to a future tick" guarantee.
+        interpreter.Ref();
         Task.Run(() =>
         {
+            string stdout = "", stderr = "";
+            int code = 0, kind = 0; // kind: 0 normal, 1 timeout, 2 exception
+            object? error = null;
             try
             {
                 var startInfo = new ProcessStartInfo
@@ -232,59 +239,63 @@ public static class ChildProcessModuleInterpreter
                 childProcess.SetPid(process.Id);
                 childProcess.SetProcess(process);
 
-                var stdout = process.StandardOutput.ReadToEnd();
-                var stderr = process.StandardError.ReadToEnd();
+                stdout = process.StandardOutput.ReadToEnd();
+                stderr = process.StandardError.ReadToEnd();
 
                 if (timeout > 0)
                 {
                     if (!process.WaitForExit((int)timeout))
                     {
                         process.Kill();
-                        childProcess.SetExitCode(-1);
-                        childProcess.EmitDirect("error", new SharpTSObject(new Dictionary<string, object?>
-                        {
-                            ["message"] = "Command timed out"
-                        }));
-                        callback?.Call(null!, [new SharpTSObject(new Dictionary<string, object?>
-                        {
-                            ["message"] = "Command timed out"
-                        }), stdout, stderr]);
-                        return;
+                        kind = 1;
                     }
+                    else { code = process.ExitCode; }
                 }
                 else
                 {
                     process.WaitForExit();
+                    code = process.ExitCode;
                 }
 
-                childProcess.SetExitCode(process.ExitCode);
-
-                if (process.ExitCode != 0)
-                {
-                    var errorObj = new SharpTSObject(new Dictionary<string, object?>
+                if (kind == 0 && code != 0)
+                    error = new SharpTSObject(new Dictionary<string, object?>
                     {
-                        ["message"] = $"Command failed with exit code {process.ExitCode}",
-                        ["code"] = (double)process.ExitCode
+                        ["message"] = $"Command failed with exit code {code}",
+                        ["code"] = (double)code
                     });
-                    callback?.Call(null!, [errorObj, stdout, stderr]);
-                }
-                else
-                {
-                    callback?.Call(null!, [null, stdout, stderr]);
-                }
-
-                childProcess.EmitDirect("close", (double)process.ExitCode);
-                childProcess.EmitDirect("exit", (double)process.ExitCode);
             }
             catch (Exception ex)
             {
-                var errorObj = new SharpTSObject(new Dictionary<string, object?>
-                {
-                    ["message"] = ex.Message
-                });
-                childProcess.EmitDirect("error", errorObj);
-                callback?.Call(null!, [errorObj, "", ""]);
+                kind = 2;
+                error = new SharpTSObject(new Dictionary<string, object?> { ["message"] = ex.Message });
             }
+
+            interpreter.EnqueueCallback(() =>
+            {
+                try
+                {
+                    if (kind == 2)
+                    {
+                        childProcess.EmitWith(interpreter, "error", error);
+                        callback?.CallBoxed(interpreter, [error, "", ""]);
+                    }
+                    else if (kind == 1)
+                    {
+                        childProcess.SetExitCode(-1);
+                        var timeoutErr = new SharpTSObject(new Dictionary<string, object?> { ["message"] = "Command timed out" });
+                        childProcess.EmitWith(interpreter, "error", timeoutErr);
+                        callback?.CallBoxed(interpreter, [timeoutErr, stdout, stderr]);
+                    }
+                    else
+                    {
+                        childProcess.SetExitCode(code);
+                        callback?.CallBoxed(interpreter, [error, stdout, stderr]);
+                        childProcess.EmitWith(interpreter, "close", (double)code);
+                        childProcess.EmitWith(interpreter, "exit", (double)code);
+                    }
+                }
+                finally { interpreter.Unref(); }
+            });
         });
 
         return RuntimeValue.FromObject(childProcess);
@@ -535,8 +546,12 @@ public static class ChildProcessModuleInterpreter
 
         var childProcess = new SharpTSChildProcess();
 
+        interpreter.Ref();
         Task.Run(() =>
         {
+            string stdout = "", stderr = "";
+            int code = 0, kind = 0; // kind: 0 normal, 1 timeout, 2 exception
+            object? error = null;
             try
             {
                 var startInfo = new ProcessStartInfo
@@ -561,53 +576,63 @@ public static class ChildProcessModuleInterpreter
                 childProcess.SetPid(process.Id);
                 childProcess.SetProcess(process);
 
-                var stdout = process.StandardOutput.ReadToEnd();
-                var stderr = process.StandardError.ReadToEnd();
+                stdout = process.StandardOutput.ReadToEnd();
+                stderr = process.StandardError.ReadToEnd();
 
                 if (timeout > 0)
                 {
                     if (!process.WaitForExit((int)timeout))
                     {
                         process.Kill();
-                        childProcess.SetExitCode(-1);
-                        var timeoutErr = new SharpTSObject(new Dictionary<string, object?>
-                            { ["message"] = "Command timed out" });
-                        childProcess.EmitDirect("error", timeoutErr);
-                        callback?.Call(null!, [timeoutErr, stdout, stderr]);
-                        return;
+                        kind = 1;
                     }
+                    else { code = process.ExitCode; }
                 }
                 else
                 {
                     process.WaitForExit();
+                    code = process.ExitCode;
                 }
 
-                childProcess.SetExitCode(process.ExitCode);
-
-                if (process.ExitCode != 0)
-                {
-                    var errorObj = new SharpTSObject(new Dictionary<string, object?>
+                if (kind == 0 && code != 0)
+                    error = new SharpTSObject(new Dictionary<string, object?>
                     {
-                        ["message"] = $"Command failed with exit code {process.ExitCode}",
-                        ["code"] = (double)process.ExitCode
+                        ["message"] = $"Command failed with exit code {code}",
+                        ["code"] = (double)code
                     });
-                    callback?.Call(null!, [errorObj, stdout, stderr]);
-                }
-                else
-                {
-                    callback?.Call(null!, [null, stdout, stderr]);
-                }
-
-                childProcess.EmitDirect("close", (double)process.ExitCode);
-                childProcess.EmitDirect("exit", (double)process.ExitCode);
             }
             catch (Exception ex)
             {
-                var errorObj = new SharpTSObject(new Dictionary<string, object?>
-                    { ["message"] = ex.Message });
-                childProcess.EmitDirect("error", errorObj);
-                callback?.Call(null!, [errorObj, "", ""]);
+                kind = 2;
+                error = new SharpTSObject(new Dictionary<string, object?> { ["message"] = ex.Message });
             }
+
+            interpreter.EnqueueCallback(() =>
+            {
+                try
+                {
+                    if (kind == 2)
+                    {
+                        childProcess.EmitWith(interpreter, "error", error);
+                        callback?.CallBoxed(interpreter, [error, "", ""]);
+                    }
+                    else if (kind == 1)
+                    {
+                        childProcess.SetExitCode(-1);
+                        var timeoutErr = new SharpTSObject(new Dictionary<string, object?> { ["message"] = "Command timed out" });
+                        childProcess.EmitWith(interpreter, "error", timeoutErr);
+                        callback?.CallBoxed(interpreter, [timeoutErr, stdout, stderr]);
+                    }
+                    else
+                    {
+                        childProcess.SetExitCode(code);
+                        callback?.CallBoxed(interpreter, [error, stdout, stderr]);
+                        childProcess.EmitWith(interpreter, "close", (double)code);
+                        childProcess.EmitWith(interpreter, "exit", (double)code);
+                    }
+                }
+                finally { interpreter.Unref(); }
+            });
         });
 
         return RuntimeValue.FromObject(childProcess);
