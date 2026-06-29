@@ -771,6 +771,43 @@ public class WorkerThreadsTests
 
     #endregion
 
+    #region markAsUntransferable (#1002)
+
+    /// <summary>
+    /// #1002: an ArrayBuffer passed to <c>markAsUntransferable</c> is ignored in a transfer
+    /// list — it is cloned (copied) instead of transferred, so the source is NOT detached
+    /// (<c>byteLength</c> preserved). Contrast with #999 where an unmarked transferred buffer
+    /// is detached to 0. Dual-mode: <c>markAsUntransferable</c> records the object in the C#
+    /// <c>StructuredClone</c> registry (compiled via a reflection helper), and the Worker
+    /// transferList clone honors it in both modes.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_MarkAsUntransferable_BufferIsClonedNotDetached(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_ok.ts"] = """
+                postMessage("ok");
+                """,
+            ["main.ts"] = """
+                import { Worker, markAsUntransferable } from "worker_threads";
+                const buf = new ArrayBuffer(8);
+                markAsUntransferable(buf);
+                // buf is in the transfer list but marked untransferable → ignored, not detached.
+                const w = new Worker(__dirname + "/worker_ok.ts", { workerData: "go", transferList: [buf] });
+                console.log("len:" + buf.byteLength);
+                w.on("message", (e: any) => { console.log("worker:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("len:8", output);
+        Assert.Contains("worker:ok", output);
+    }
+
+    #endregion
+
     #region 'messageerror' event (#1001)
 
     /// <summary>

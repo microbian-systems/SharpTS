@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace SharpTS.Runtime.Types;
 
@@ -22,6 +23,21 @@ public static class StructuredClone
     {
         public DataCloneError(string message) : base($"DataCloneError: {message}") { }
     }
+
+    // Objects marked via worker_threads.markAsUntransferable. When such an object appears in a
+    // postMessage transfer list it is IGNORED (cloned in the payload instead of transferred),
+    // matching Node (#1002). Reference-keyed and weak so marking does not pin the object.
+    private static readonly ConditionalWeakTable<object, object> _untransferable = new();
+
+    /// <summary>Marks <paramref name="value"/> so it is never transferred (only cloned).</summary>
+    public static void MarkUntransferable(object? value)
+    {
+        if (value != null)
+            _untransferable.AddOrUpdate(value, value);
+    }
+
+    /// <summary>Whether <paramref name="value"/> was marked via <see cref="MarkUntransferable"/>.</summary>
+    public static bool IsUntransferable(object value) => _untransferable.TryGetValue(value, out _);
 
     /// <summary>
     /// Clones a value using the structured clone algorithm.
@@ -50,6 +66,13 @@ public static class StructuredClone
         {
             foreach (var item in transfer)
             {
+                // markAsUntransferable: a marked object in the transfer list is ignored — it is
+                // cloned in the payload instead of transferred (Node semantics, #1002).
+                if (item != null && IsUntransferable(item))
+                {
+                    continue;
+                }
+
                 if (item is SharpTSMessagePort || CompiledMessagePortBridge.IsEmittedMessagePort(item))
                 {
                     transferred.Add(item!);
@@ -291,6 +314,13 @@ public static class StructuredClone
         // one object. Instead mark it and its partner cross-thread: each port then
         // marshals delivery onto its own owner-loop thread and a started port keeps
         // that loop alive (#406).
+        //
+        // #1002 DECISION: SharpTS does NOT neuter the source MessagePort on transfer.
+        // This is an intentional, documented deviation from Node — SharpTS's single-process
+        // two-thread model shares one port object across both threads (unlike V8's separate
+        // serialize/deserialize), so neutering the sender would neuter the receiver too. The
+        // markAsUntransferable + ArrayBuffer-detach paths (#999/#1002) are spec-faithful;
+        // only this port-neuter case is the model-dictated exception.
         port.MarkTransferredAcrossThreads();
         return port;
     }

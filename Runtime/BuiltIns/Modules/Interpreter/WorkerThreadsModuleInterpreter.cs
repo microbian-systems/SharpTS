@@ -63,11 +63,13 @@ public static class WorkerThreadsModuleInterpreter
             // resourceLimits (not fully implemented)
             ["resourceLimits"] = new SharpTSObject(new Dictionary<string, object?>()),
 
-            // markAsUntransferable (no-op in our implementation)
+            // markAsUntransferable: mark the object so it is cloned (never transferred) if it
+            // appears in a postMessage transfer list (#1002).
             ["markAsUntransferable"] = BuiltInMethod.CreateV2("markAsUntransferable", 1, (interp, recv, args) =>
             {
-                // No-op - we don't track transferability at runtime
-                return RuntimeValue.Null;
+                if (args.Length > 0)
+                    StructuredClone.MarkUntransferable(args[0].ToObject());
+                return RuntimeValue.Undefined;
             }),
 
             // moveMessagePortToContext (not fully implemented - requires VM)

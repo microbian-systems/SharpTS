@@ -15,7 +15,8 @@ public sealed class WorkerThreadsModuleEmitter : IBuiltInModuleEmitter
     [
         "Worker", "MessageChannel", "MessagePort", "BroadcastChannel",
         "isMainThread", "threadId", "workerData", "parentPort",
-        "receiveMessageOnPort", "getEnvironmentData", "setEnvironmentData"
+        "receiveMessageOnPort", "getEnvironmentData", "setEnvironmentData",
+        "markAsUntransferable"
     ];
 
     public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
@@ -30,6 +31,7 @@ public sealed class WorkerThreadsModuleEmitter : IBuiltInModuleEmitter
             "receiveMessageOnPort" => EmitReceiveMessageOnPort(emitter, arguments),
             "getEnvironmentData" => EmitGetEnvironmentData(emitter, arguments),
             "setEnvironmentData" => EmitSetEnvironmentData(emitter, arguments),
+            "markAsUntransferable" => EmitMarkAsUntransferable(emitter, arguments),
             _ => false
         };
     }
@@ -223,6 +225,30 @@ public sealed class WorkerThreadsModuleEmitter : IBuiltInModuleEmitter
         il.Emit(OpCodes.Call, ctx.Runtime!.WorkerThreadsSetEnvironmentData);
 
         // setEnvironmentData returns undefined.
+        il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
+        return true;
+    }
+
+    private static bool EmitMarkAsUntransferable(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // Reaching the C# StructuredClone registry needs SharpTS.dll co-located (#1002).
+        ctx.Runtime!.RequireSharpTSRuntime("worker_threads.markAsUntransferable");
+
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+        il.Emit(OpCodes.Call, ctx.Runtime!.WorkerThreadsMarkAsUntransferable);
+
+        // markAsUntransferable returns undefined.
         il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
         return true;
     }

@@ -1821,5 +1821,30 @@ public partial class RuntimeEmitter
         sil.Emit(OpCodes.Pop); // discard Invoke result (Set returns void → null)
         sil.Emit(OpCodes.Ret);
         runtime.WorkerThreadsSetEnvironmentData = setMethod;
+
+        // public static void WorkerThreadsMarkAsUntransferable(object value)
+        //   => StructuredClone.MarkUntransferable(value)   (#1002)
+        var markMethod = runtimeType.DefineMethod(
+            "WorkerThreadsMarkAsUntransferable",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [_types.Object]
+        );
+        var mil = markMethod.GetILGenerator();
+        mil.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.StructuredClone, SharpTS");
+        mil.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        mil.Emit(OpCodes.Ldstr, "MarkUntransferable");
+        mil.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        mil.Emit(OpCodes.Ldnull); // static method — no instance
+        mil.Emit(OpCodes.Ldc_I4_1);
+        mil.Emit(OpCodes.Newarr, _types.Object);
+        mil.Emit(OpCodes.Dup);
+        mil.Emit(OpCodes.Ldc_I4_0);
+        mil.Emit(OpCodes.Ldarg_0); // value
+        mil.Emit(OpCodes.Stelem_Ref);
+        mil.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+        mil.Emit(OpCodes.Pop); // discard Invoke result (MarkUntransferable returns void → null)
+        mil.Emit(OpCodes.Ret);
+        runtime.WorkerThreadsMarkAsUntransferable = markMethod;
     }
 }
