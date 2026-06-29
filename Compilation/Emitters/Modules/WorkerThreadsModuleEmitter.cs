@@ -15,7 +15,7 @@ public sealed class WorkerThreadsModuleEmitter : IBuiltInModuleEmitter
     [
         "Worker", "MessageChannel", "MessagePort", "BroadcastChannel",
         "isMainThread", "threadId", "workerData", "parentPort",
-        "receiveMessageOnPort"
+        "receiveMessageOnPort", "getEnvironmentData", "setEnvironmentData"
     ];
 
     public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
@@ -28,6 +28,8 @@ public sealed class WorkerThreadsModuleEmitter : IBuiltInModuleEmitter
         return methodName switch
         {
             "receiveMessageOnPort" => EmitReceiveMessageOnPort(emitter, arguments),
+            "getEnvironmentData" => EmitGetEnvironmentData(emitter, arguments),
+            "setEnvironmentData" => EmitSetEnvironmentData(emitter, arguments),
             _ => false
         };
     }
@@ -153,6 +155,75 @@ public sealed class WorkerThreadsModuleEmitter : IBuiltInModuleEmitter
         emitter.EmitExpression(arguments[0]);
         emitter.EmitBoxIfNeeded(arguments[0]);
         il.Emit(OpCodes.Call, ctx.Runtime!.WorkerThreadsReceiveMessageOnPort);
+        return true;
+    }
+
+    private static bool EmitGetEnvironmentData(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // Reaching the C# WorkerEnvironmentData store needs SharpTS.dll co-located (#1000).
+        ctx.Runtime!.RequireSharpTSRuntime("worker_threads.getEnvironmentData");
+
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+        il.Emit(OpCodes.Call, ctx.Runtime!.WorkerThreadsGetEnvironmentData);
+
+        // Map absent (CLR null) to JS undefined — stored values are never null (a null/undefined
+        // set deletes the key), so null here means "not present".
+        var result = il.DeclareLocal(ctx.Types.Object);
+        var notNull = il.DefineLabel();
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Stloc, result);
+        il.Emit(OpCodes.Ldloc, result);
+        il.Emit(OpCodes.Brtrue, notNull);
+        il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
+        il.Emit(OpCodes.Br, done);
+        il.MarkLabel(notNull);
+        il.Emit(OpCodes.Ldloc, result);
+        il.MarkLabel(done);
+        return true;
+    }
+
+    private static bool EmitSetEnvironmentData(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        ctx.Runtime!.RequireSharpTSRuntime("worker_threads.setEnvironmentData");
+
+        // key
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+        // value (absent → null, which deletes the key)
+        if (arguments.Count > 1)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+        il.Emit(OpCodes.Call, ctx.Runtime!.WorkerThreadsSetEnvironmentData);
+
+        // setEnvironmentData returns undefined.
+        il.Emit(OpCodes.Ldsfld, ctx.Runtime!.UndefinedInstance);
         return true;
     }
 }

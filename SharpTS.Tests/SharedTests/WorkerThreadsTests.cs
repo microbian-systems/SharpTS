@@ -712,6 +712,65 @@ public class WorkerThreadsTests
 
     #endregion
 
+    #region environment data + receiveMessageOnPort (#1000)
+
+    /// <summary>
+    /// #1000: <c>setEnvironmentData</c>/<c>getEnvironmentData</c> use a real per-process data
+    /// store (not <c>process.env</c>). Data set on the parent is visible in the worker via
+    /// <c>getEnvironmentData</c>, and must NOT leak into <c>process.env</c>. Dual-mode: the
+    /// parent's set routes to the shared C# store in both modes (compiled via a reflection
+    /// helper); the worker reads it through the interpreter.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_EnvironmentData_VisibleInWorker_NotInProcessEnv(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_env.ts"] = """
+                import { getEnvironmentData } from "worker_threads";
+                // process.env must NOT carry the value — setEnvironmentData uses a separate store.
+                const leaked: any = (process as any).env["ed_k1000"];
+                postMessage("env:" + getEnvironmentData("ed_k1000") + ":leak=" + (leaked === undefined ? "no" : "yes"));
+                """,
+            ["main.ts"] = """
+                import { Worker, setEnvironmentData } from "worker_threads";
+                setEnvironmentData("ed_k1000", "ed_val");
+                const w = new Worker(__dirname + "/worker_env.ts");
+                w.on("message", (e: any) => { console.log(e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("env:ed_val:leak=no", output);
+    }
+
+    /// <summary>
+    /// #1000: <c>receiveMessageOnPort</c> on an empty port returns <c>undefined</c> (was CLR
+    /// null). Dual-mode on the main thread. The non-empty <c>{ message }</c> result is covered
+    /// dual-mode by <see cref="Worker_ReceiveMessageOnPort_OnTransferredPort"/> (driven through
+    /// the interpreter inside the worker).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ReceiveMessageOnPort_EmptyPort_IsUndefined(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { MessageChannel, receiveMessageOnPort } from "worker_threads";
+                const { port1, port2 } = new MessageChannel();
+                const r: any = receiveMessageOnPort(port2);
+                console.log("empty:" + (r === undefined));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("empty:true", output);
+    }
+
+    #endregion
+
     #region Running-Worker event-loop liveness (#329)
 
     /// <summary>
