@@ -221,4 +221,118 @@ public class FsStreamTests
     }
 
     #endregion
+
+    #region option/event parity (#980)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ReadStream_EventsBytesReadChunking(ExecutionMode mode)
+    {
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(tempFile, "HELLO STREAM WORLD");
+            var p = EscapePath(tempFile);
+            var files = new Dictionary<string, string>
+            {
+                ["main.ts"] = "import * as fs from 'fs';\n" +
+                    "const ev: string[] = [];\n" +
+                    "const rs: any = fs.createReadStream('" + p + "', { encoding: 'utf8', highWaterMark: 4 });\n" +
+                    "let acc = ''; let n = 0;\n" +
+                    "rs.on('open', () => ev.push('open'));\n" +
+                    "rs.on('ready', () => ev.push('ready'));\n" +
+                    "rs.on('data', (c: any) => { acc += c; n++; });\n" +
+                    "rs.on('end', () => ev.push('end'));\n" +
+                    "rs.on('close', () => { ev.push('close'); console.log(ev.join('>') + '|' + acc + '|chunks=' + n + '|bytesRead=' + rs.bytesRead); });\n"
+            };
+            // highWaterMark 4 over 18 bytes => 5 chunks, identical in both modes.
+            Assert.Equal("open>ready>end>close|HELLO STREAM WORLD|chunks=5|bytesRead=18\n",
+                TestHarness.RunModules(files, "main.ts", mode));
+        }
+        finally { File.Delete(tempFile); }
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ReadStream_EmitCloseFalse_And_StartEnd(ExecutionMode mode)
+    {
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(tempFile, "HELLO STREAM WORLD");
+            var p = EscapePath(tempFile);
+            var files = new Dictionary<string, string>
+            {
+                ["main.ts"] = "import * as fs from 'fs';\n" +
+                    "async function main() {\n" +
+                    "  await new Promise((res: any) => {\n" +
+                    "    const rs: any = fs.createReadStream('" + p + "', { encoding: 'utf8', emitClose: false });\n" +
+                    "    let closed = false;\n" +
+                    "    rs.on('close', () => { closed = true; });\n" +
+                    "    rs.on('data', () => {});\n" +
+                    "    rs.on('end', () => { console.log('emitClose:' + closed); res(0); });\n" +
+                    "  });\n" +
+                    "  await new Promise((res: any) => {\n" +
+                    "    const rs: any = fs.createReadStream('" + p + "', { encoding: 'utf8', start: 6, end: 10 });\n" +
+                    "    let acc = '';\n" +
+                    "    rs.on('data', (c: any) => { acc += c; });\n" +
+                    "    rs.on('end', () => { console.log('slice:' + acc); res(0); });\n" +
+                    "  });\n" +
+                    "}\n" +
+                    "main();\n"
+            };
+            Assert.Equal("emitClose:false\nslice:STREA\n", TestHarness.RunModules(files, "main.ts", mode));
+        }
+        finally { File.Delete(tempFile); }
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void WriteStream_EventsBytesWrittenContent(ExecutionMode mode)
+    {
+        var dstFile = Path.GetTempFileName();
+        try
+        {
+            var p = EscapePath(dstFile);
+            var files = new Dictionary<string, string>
+            {
+                ["main.ts"] = "import * as fs from 'fs';\n" +
+                    "const ev: string[] = [];\n" +
+                    "const ws: any = fs.createWriteStream('" + p + "');\n" +
+                    "ws.on('open', () => ev.push('open'));\n" +
+                    "ws.on('ready', () => ev.push('ready'));\n" +
+                    "ws.on('finish', () => ev.push('finish'));\n" +
+                    "ws.on('close', () => { ev.push('close'); console.log(ev.join('>') + '|bw=' + ws.bytesWritten + '|c=' + fs.readFileSync('" + p + "', 'utf8')); });\n" +
+                    "ws.write('AB'); ws.write('CD'); ws.end();\n"
+            };
+            Assert.Equal("open>ready>finish>close|bw=4|c=ABCD\n", TestHarness.RunModules(files, "main.ts", mode));
+        }
+        finally { File.Delete(dstFile); }
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Pipe_ReadToWrite_MovesContent(ExecutionMode mode)
+    {
+        var srcFile = Path.GetTempFileName();
+        var dstFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(srcFile, "PIPED STREAM CONTENT");
+            var src = EscapePath(srcFile);
+            var dst = EscapePath(dstFile);
+            var files = new Dictionary<string, string>
+            {
+                ["main.ts"] = "import * as fs from 'fs';\n" +
+                    "const rs: any = fs.createReadStream('" + src + "');\n" +
+                    "const ws: any = fs.createWriteStream('" + dst + "');\n" +
+                    "ws.on('close', () => { console.log(fs.readFileSync('" + dst + "', 'utf8')); });\n" +
+                    "rs.pipe(ws);\n"
+            };
+            Assert.Equal("PIPED STREAM CONTENT\n", TestHarness.RunModules(files, "main.ts", mode));
+        }
+        finally { File.Delete(srcFile); File.Delete(dstFile); }
+    }
+
+    #endregion
 }
