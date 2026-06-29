@@ -488,6 +488,566 @@ public class WorkerThreadsTests
         Assert.Contains("terminated", output);
     }
 
+    /// <summary>
+    /// #997: terminating a worker parked in <c>Atomics.wait</c> must actually unwind the
+    /// worker thread (not just settle the promise), and the <c>'exit'</c> event must report
+    /// code 1. The worker parks on a never-notified index, so before the fix the
+    /// <c>Monitor.Wait(Infinite)</c> had no cancellation hook: the 5s join timed out, the
+    /// thread leaked, and its <c>finally</c> — the only emitter of <c>'exit'</c> — never ran.
+    /// </summary>
+    /// <remarks>
+    /// The arriving <c>'exit'</c> event is the correctness signal: it is enqueued solely from
+    /// the worker thread's <c>finally</c>, which executes only once the thread unwinds out of
+    /// the parked wait. A still-leaked thread would never produce it. <c>"survived"</c> after
+    /// the wait must never be delivered — termination is not catchable by guest code.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_Terminate_WakesAtomicsWaitAndEmitsExitCode1(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_wait.ts"] = """
+                // Park on a worker-local SAB index that nothing ever notifies, so the wait
+                // blocks forever unless terminate() unwinds the thread.
+                const view = new Int32Array(new SharedArrayBuffer(16));
+                postMessage("parked");
+                Atomics.wait(view, 0, 0);
+                postMessage("survived"); // unreachable once terminate() aborts the worker
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_wait.ts");
+                w.on("exit", (code: any) => { console.log("exit:" + code); });
+                w.on("message", (e: any) => {
+                    if (e.data === "parked") {
+                        // Give the worker a beat to actually enter the wait, then terminate.
+                        setTimeout(async () => {
+                            await w.terminate();
+                            console.log("terminated");
+                        }, 50);
+                    } else {
+                        console.log("got:" + e.data);
+                    }
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("exit:1", output);
+        Assert.Contains("terminated", output);
+        Assert.DoesNotContain("got:survived", output);
+    }
+
+    /// <summary>
+    /// #997: terminating a cooperatively-idle worker (its event loop held open by a pending
+    /// timer) stops it promptly via <c>Interpreter.Shutdown()</c> and reports <c>'exit'</c>
+    /// code 1 — Node uses 1 for a terminated worker. Before the fix the exit code was
+    /// hardcoded 0 and nothing stopped the loop early, so a terminated worker either reported
+    /// 0 or waited out the 5s join.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_Terminate_StopsCooperativeEventLoopWorkerWithExitCode1(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_idle.ts"] = """
+                // Hold the worker's loop open well past terminate() so the only way it exits
+                // is the terminate() Shutdown(), not the timer firing.
+                setTimeout(() => {}, 3000);
+                postMessage("ready");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_idle.ts");
+                w.on("exit", (code: any) => { console.log("exit:" + code); });
+                w.on("message", (e: any) => {
+                    if (e.data === "ready") {
+                        setTimeout(async () => {
+                            await w.terminate();
+                            console.log("terminated");
+                        }, 50);
+                    }
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("exit:1", output);
+        Assert.Contains("terminated", output);
+    }
+
+    #endregion
+
+    #region 'online' event (#998)
+
+    /// <summary>
+    /// #998: Node emits <c>'online'</c> on a Worker once the worker's JS starts executing,
+    /// before any <c>'message'</c> it posts. SharpTS emitted no such event. The worker posts
+    /// a message at the top of its script; the parent must see <c>'online'</c> first.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_Online_FiresBeforeFirstMessage(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_post.ts"] = """
+                postMessage("hello");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_post.ts");
+                w.on("online", () => { console.log("online"); });
+                w.on("message", (e: any) => { console.log("message:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("online", output);
+        Assert.Contains("message:hello", output);
+        // 'online' must be delivered before the first 'message'.
+        Assert.True(output.IndexOf("online") < output.IndexOf("message:hello"),
+            $"'online' should precede the first 'message'. Output:\n{output}");
+    }
+
+    #endregion
+
+    #region ArrayBuffer transfer + detach (#999)
+
+    /// <summary>
+    /// #999: an ArrayBuffer placed in a Worker's <c>transferList</c> is detached on the
+    /// sender side (Node neuters it — <c>byteLength</c> becomes 0). The Worker constructor
+    /// clones <c>workerData</c> with the transfer list synchronously, so the source buffer
+    /// is detached by the time <c>new Worker</c> returns. Dual-mode: the Worker uses the C#
+    /// <c>StructuredClone</c> in both interpreter and compiled parents.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_ArrayBufferInTransferList_DetachesSource(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_ok.ts"] = """
+                postMessage("ok");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const buf = new ArrayBuffer(8);
+                new Uint8Array(buf)[0] = 1;
+                const w = new Worker(__dirname + "/worker_ok.ts", { workerData: "go", transferList: [buf] });
+                // Transfer happened synchronously during construction — source is detached.
+                console.log("len:" + buf.byteLength);
+                w.on("message", (e: any) => { console.log("worker:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("len:0", output);
+        Assert.Contains("worker:ok", output);
+    }
+
+    /// <summary>
+    /// #999 (gap follow-up): a non-transferred ArrayBuffer passed as <c>workerData</c> is
+    /// deep-copied, not detached — its <c>byteLength</c> is preserved on the sender. Before
+    /// the fix the interpreter had no ArrayBuffer clone arm and threw "Cannot clone value of
+    /// type SharpTSArrayBuffer", so the worker failed to spawn. Dual-mode.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_NonTransferredArrayBufferWorkerData_IsCopiedNotDetached(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_ok.ts"] = """
+                postMessage("ok");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const buf = new ArrayBuffer(8);
+                const w = new Worker(__dirname + "/worker_ok.ts", { workerData: buf });
+                console.log("len:" + buf.byteLength);
+                w.on("message", (e: any) => { console.log("worker:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("len:8", output);
+        Assert.Contains("worker:ok", output);
+    }
+
+    /// <summary>
+    /// #999: full transfer round-trip — the bytes of a transferred ArrayBuffer arrive in the
+    /// worker (it reads them back), and the parent's source buffer is detached. Interpreter
+    /// only: a compiled parent hands the interpreting worker an emitted <c>$ArrayBuffer</c>
+    /// that the interpreter's TypedArray constructor doesn't bridge yet (a separate cross-mode
+    /// gap), so the byte read-back is verified in interpreter mode; detach is covered in both
+    /// modes by <see cref="Worker_ArrayBufferInTransferList_DetachesSource"/>.
+    /// </summary>
+    [Fact]
+    public void Worker_TransferredArrayBuffer_MovesBytesToWorker_Interpreted()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_read.ts"] = """
+                const u = new Uint8Array(workerData);
+                postMessage(u[0] + "," + u[1] + ",len=" + u.length);
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const buf = new ArrayBuffer(4);
+                const u = new Uint8Array(buf);
+                u[0] = 9; u[1] = 8;
+                const w = new Worker(__dirname + "/worker_read.ts", { workerData: buf, transferList: [buf] });
+                console.log("src:" + buf.byteLength);
+                w.on("message", (e: any) => { console.log("got:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", ExecutionMode.Interpreted);
+        Assert.Contains("src:0", output);
+        Assert.Contains("got:9,8,len=4", output);
+    }
+
+    #endregion
+
+    #region environment data + receiveMessageOnPort (#1000)
+
+    /// <summary>
+    /// #1000: <c>setEnvironmentData</c>/<c>getEnvironmentData</c> use a real per-process data
+    /// store (not <c>process.env</c>). Data set on the parent is visible in the worker via
+    /// <c>getEnvironmentData</c>, and must NOT leak into <c>process.env</c>. Dual-mode: the
+    /// parent's set routes to the shared C# store in both modes (compiled via a reflection
+    /// helper); the worker reads it through the interpreter.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_EnvironmentData_VisibleInWorker_NotInProcessEnv(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_env.ts"] = """
+                import { getEnvironmentData } from "worker_threads";
+                // process.env must NOT carry the value — setEnvironmentData uses a separate store.
+                const leaked: any = (process as any).env["ed_k1000"];
+                postMessage("env:" + getEnvironmentData("ed_k1000") + ":leak=" + (leaked === undefined ? "no" : "yes"));
+                """,
+            ["main.ts"] = """
+                import { Worker, setEnvironmentData } from "worker_threads";
+                setEnvironmentData("ed_k1000", "ed_val");
+                const w = new Worker(__dirname + "/worker_env.ts");
+                w.on("message", (e: any) => { console.log(e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("env:ed_val:leak=no", output);
+    }
+
+    /// <summary>
+    /// #1000: <c>receiveMessageOnPort</c> on an empty port returns <c>undefined</c> (was CLR
+    /// null). Dual-mode on the main thread. The non-empty <c>{ message }</c> result is covered
+    /// dual-mode by <see cref="Worker_ReceiveMessageOnPort_OnTransferredPort"/> (driven through
+    /// the interpreter inside the worker).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ReceiveMessageOnPort_EmptyPort_IsUndefined(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { MessageChannel, receiveMessageOnPort } from "worker_threads";
+                const { port1, port2 } = new MessageChannel();
+                const r: any = receiveMessageOnPort(port2);
+                console.log("empty:" + (r === undefined));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("empty:true", output);
+    }
+
+    #endregion
+
+    #region introspection (#1004)
+
+    /// <summary>
+    /// #1004: <c>worker.performance.eventLoopUtilization()</c> returns a best-effort
+    /// <c>{ idle, active, utilization }</c> object (SharpTS has no precise idle/active loop
+    /// accounting). Dual-mode.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_Performance_EventLoopUtilization_ReturnsShape(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_ok.ts"] = """
+                postMessage("ok");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w: any = new Worker(__dirname + "/worker_ok.ts", { workerData: "go" });
+                const elu: any = w.performance.eventLoopUtilization();
+                console.log("elu:" + typeof elu.idle + "," + typeof elu.active + "," + typeof elu.utilization);
+                w.on("message", (e: any) => { console.log("worker:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("elu:number,number,number", output);
+        Assert.Contains("worker:ok", output);
+    }
+
+    /// <summary>
+    /// #1004: <c>worker.getHeapSnapshot()</c> throws a clear "not supported" error — a
+    /// V8-format heap snapshot has no .NET equivalent (epic ceiling). Dual-mode.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_GetHeapSnapshot_ThrowsClearError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_ok.ts"] = """
+                postMessage("ok");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w: any = new Worker(__dirname + "/worker_ok.ts", { workerData: "go" });
+                try {
+                    w.getHeapSnapshot();
+                    console.log("no-throw");
+                } catch (e: any) {
+                    console.log("heap-err:" + (("" + (e && e.message ? e.message : e)).indexOf("not supported") >= 0));
+                }
+                w.on("message", (e: any) => { console.log("worker:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("heap-err:true", output);
+        Assert.DoesNotContain("no-throw", output);
+    }
+
+    /// <summary>
+    /// #1004: <c>moveMessagePortToContext()</c> throws a clear "not supported" error — it needs
+    /// V8 vm contexts/isolates, which SharpTS's single-process model does not provide.
+    /// Interpreter only (the compiled worker_threads emitter does not expose it).
+    /// </summary>
+    [Fact]
+    public void MoveMessagePortToContext_ThrowsClearError_Interpreted()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { moveMessagePortToContext, MessageChannel } from "worker_threads";
+                const ch: any = new MessageChannel();
+                try {
+                    moveMessagePortToContext(ch.port1, {});
+                    console.log("no-throw");
+                } catch (e: any) {
+                    console.log("mvp-err:" + (("" + (e && e.message ? e.message : e)).indexOf("not supported") >= 0));
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", ExecutionMode.Interpreted);
+        Assert.Contains("mvp-err:true", output);
+        Assert.DoesNotContain("no-throw", output);
+    }
+
+    #endregion
+
+    #region worker stdio + resourceLimits (#1003)
+
+    /// <summary>
+    /// #1003: the <c>resourceLimits</c> option is stored and echoed back on
+    /// <c>worker.resourceLimits</c> (cosmetic — .NET cannot enforce V8 heap/stack sizing).
+    /// Dual-mode.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_ResourceLimits_EchoedBack(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_ok.ts"] = """
+                postMessage("ok");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w: any = new Worker(__dirname + "/worker_ok.ts", {
+                    workerData: "go",
+                    resourceLimits: { maxOldGenerationSizeMb: 24, stackSizeMb: 4 },
+                });
+                console.log("rl:" + w.resourceLimits.maxOldGenerationSizeMb + "," + w.resourceLimits.stackSizeMb);
+                w.on("message", (e: any) => { console.log("worker:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("rl:24,4", output);
+        Assert.Contains("worker:ok", output);
+    }
+
+    /// <summary>
+    /// #1003: with <c>stdout: true</c>, the worker's console output is diverted off the shared
+    /// Console into a per-worker Readable <c>worker.stdout</c>; the parent reads it via
+    /// 'data'/'end'. Each chunk is marshalled onto the parent loop before delivery. Dual-mode.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_StdoutTrue_CapturesWorkerConsoleOutput(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_out.ts"] = """
+                console.log("hello-from-worker");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w: any = new Worker(__dirname + "/worker_out.ts", { stdout: true });
+                // Print each chunk directly — don't depend on 'data' vs 'end' ordering.
+                w.stdout.on("data", (chunk: any) => { console.log("OUT[" + ("" + chunk).trim() + "]"); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("OUT[hello-from-worker]", output);
+    }
+
+    #endregion
+
+    #region markAsUntransferable (#1002)
+
+    /// <summary>
+    /// #1002: an ArrayBuffer passed to <c>markAsUntransferable</c> is ignored in a transfer
+    /// list — it is cloned (copied) instead of transferred, so the source is NOT detached
+    /// (<c>byteLength</c> preserved). Contrast with #999 where an unmarked transferred buffer
+    /// is detached to 0. Dual-mode: <c>markAsUntransferable</c> records the object in the C#
+    /// <c>StructuredClone</c> registry (compiled via a reflection helper), and the Worker
+    /// transferList clone honors it in both modes.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_MarkAsUntransferable_BufferIsClonedNotDetached(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_ok.ts"] = """
+                postMessage("ok");
+                """,
+            ["main.ts"] = """
+                import { Worker, markAsUntransferable } from "worker_threads";
+                const buf = new ArrayBuffer(8);
+                markAsUntransferable(buf);
+                // buf is in the transfer list but marked untransferable → ignored, not detached.
+                const w = new Worker(__dirname + "/worker_ok.ts", { workerData: "go", transferList: [buf] });
+                console.log("len:" + buf.byteLength);
+                w.on("message", (e: any) => { console.log("worker:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("len:8", output);
+        Assert.Contains("worker:ok", output);
+    }
+
+    #endregion
+
+    #region 'messageerror' event (#1001)
+
+    /// <summary>
+    /// #1001: when a worker posts a value that fails to clone, the parent <c>Worker</c> fires
+    /// <c>'messageerror'</c> (Node's receiver-side model) rather than throwing in the worker's
+    /// postMessage. Dual-mode: the worker always interprets and posts through the C#
+    /// <c>SharpTSWorker</c>, whose clone throws DataCloneError for a function in both modes.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_PostUncloneableToParent_FiresMessageError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_msgerr.ts"] = """
+                // A function cannot be structured-cloned → parent gets 'messageerror'.
+                postMessage(() => {});
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_msgerr.ts");
+                w.on("messageerror", () => { console.log("parent-messageerror"); });
+                w.on("message", (e: any) => { console.log("message:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("parent-messageerror", output);
+        Assert.DoesNotContain("message:", output);
+    }
+
+    /// <summary>
+    /// #1001: when the parent posts a value that fails to clone, the worker's
+    /// <c>parentPort</c> fires <c>'messageerror'</c>. The worker echoes which event it saw.
+    /// Dual-mode (parent posts through the C# <c>SharpTSWorker</c>).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_ParentPostsUncloneable_WorkerParentPortFiresMessageError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_pw.ts"] = """
+                import { parentPort } from "worker_threads";
+                parentPort.on("messageerror", () => { postMessage("saw-err"); });
+                parentPort.on("message", () => { postMessage("saw-msg"); });
+                postMessage("ready");
+                setTimeout(() => {}, 500); // stay alive to receive the parent's post
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_pw.ts");
+                w.on("message", (e: any) => {
+                    if (e.data === "ready") { w.postMessage(() => {}); }
+                    else { console.log(e.data); }
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("saw-err", output);
+        Assert.DoesNotContain("saw-msg", output);
+    }
+
+    /// <summary>
+    /// #1001: a <c>MessageChannel</c> port whose peer posts an uncloneable value fires
+    /// <c>'messageerror'</c> on the receiver. Interpreter only — the compiled emitted
+    /// structured clone returns uncloneable values by reference (it does not throw), so a
+    /// compiled <c>$MessagePort</c> has no clone-failure point. The Worker paths above cover
+    /// the dual-mode behavior.
+    /// </summary>
+    [Fact]
+    public void MessageChannelPort_PostUncloneable_FiresMessageError_Interpreted()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { MessageChannel } from "worker_threads";
+                const { port1, port2 } = new MessageChannel();
+                port2.on("messageerror", () => { console.log("port-err"); });
+                port2.on("message", () => { console.log("port-msg"); });
+                port1.postMessage(() => {});
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", ExecutionMode.Interpreted);
+        Assert.Contains("port-err", output);
+        Assert.DoesNotContain("port-msg", output);
+    }
+
     #endregion
 
     #region Running-Worker event-loop liveness (#329)
@@ -583,7 +1143,7 @@ public class WorkerThreadsTests
     /// </summary>
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void Worker_UnsupportedStdioAndResourceLimitsOptions_AreIgnored(ExecutionMode mode)
+    public void Worker_StdioAndResourceLimitsOptions_AreHonored(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
         {
@@ -592,13 +1152,16 @@ public class WorkerThreadsTests
                 """,
             ["main.ts"] = """
                 import { Worker } from "worker_threads";
-                const w = new Worker(__dirname + "/worker_echo.ts", {
+                const w: any = new Worker(__dirname + "/worker_echo.ts", {
                     workerData: 42,
                     stdout: true,
                     stderr: true,
                     stdin: true,
                     resourceLimits: { maxOldGenerationSizeMb: 16 },
                 });
+                // #1003: passing all stdio + resourceLimits options no longer breaks
+                // construction; resourceLimits echoes and the worker still runs.
+                console.log("rl:" + w.resourceLimits.maxOldGenerationSizeMb);
                 w.on("message", (e: any) => {
                     console.log("received:" + e.data);
                 });
@@ -607,6 +1170,7 @@ public class WorkerThreadsTests
 
         var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Contains("received:ran", output);
+        Assert.Contains("rl:16", output);
     }
 
     #endregion

@@ -4,6 +4,7 @@ using SharpTS.Execution;
 using SharpTS.Modules;
 using SharpTS.Parsing;
 using SharpTS.Runtime.BuiltIns;
+using SharpTS.Runtime.Exceptions;
 using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
@@ -38,6 +39,27 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     private volatile bool _isTerminated;
     private Exception? _workerError;
     private Interpreter? _parentInterpreter;
+
+    // The worker's own (isolated) interpreter, captured once it starts so terminate()
+    // can Shutdown() its event loop promptly (mirrors SharpTSClusterWorker._workerInterpreter).
+    private volatile Interpreter? _workerInterpreter;
+
+    // Exit code reported via the 'exit' event and the terminate() promise. 0 on clean exit;
+    // 1 on terminate() or an uncaught worker error (Node semantics). Written by the worker
+    // thread's finally; read by Terminate()'s join task — volatile for cross-thread visibility.
+    private volatile int _exitCode;
+
+    // Per-worker stdio + resourceLimits (#1003). When `stdout`/`stderr: true`, the worker's
+    // console output is diverted off the shared Console into these Readable streams (exposed as
+    // worker.stdout/worker.stderr) instead of the parent's stdout. resourceLimits is stored and
+    // echoed on worker.resourceLimits — .NET cannot enforce V8 heap/stack sizing (epic ceiling).
+    private readonly SharpTSReadable? _stdout;
+    private readonly SharpTSReadable? _stderr;
+    private readonly object? _resourceLimits;
+
+    // Wall-clock start, used for the best-effort worker.performance.eventLoopUtilization()
+    // (#1004) — SharpTS has no precise idle/active loop accounting.
+    private readonly long _startTick = Environment.TickCount64;
 
     // Event-loop keep-alive accounting against the parent interpreter. Node keeps
     // the parent process alive for a running Worker's lifetime by default;
@@ -125,30 +147,32 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         // Capture sync context for compiled code to marshal callbacks to main thread
         _syncContext = SynchronizationContext.Current;
 
-        // Extract options. Only workerData and transferList are honored: the worker
-        // runs an isolated interpreter on a dedicated thread in this same process, so
-        // the worker's console output already shares the parent's stdout/stderr by
-        // default. The Node stdio options (stdin/stdout/stderr) and resourceLimits are
-        // intentionally NOT supported:
-        //   - stdin/stdout/stderr=true would have to expose per-worker Readable/Writable
-        //     streams and divert the worker off the shared (process-global) Console,
-        //     which is not thread-safe in a single-process model.
-        //   - resourceLimits maps to V8 heap/stack sizing (maxOldGenerationSizeMb, …)
-        //     for which the .NET runtime exposes no per-thread equivalent.
-        // They are not read here (rather than read-and-ignored) so the dead fields can't
-        // masquerade as support. See issue #407.
+        // Extract options. The worker runs an isolated interpreter on a dedicated thread in
+        // this same process, so by default its console output shares the parent's Console.
+        //
+        // stdout/stderr: true (#1003) diverts the worker's console output off the shared
+        // Console into per-worker Readable streams (worker.stdout/worker.stderr); each chunk
+        // is marshalled onto the parent loop before delivery (the streams are only touched on
+        // the parent's thread). resourceLimits is stored and echoed on worker.resourceLimits —
+        // .NET exposes no per-thread V8 heap/stack sizing, so it cannot be enforced (#407 ceiling).
+        // stdin remains unsupported (no parent→worker process.stdin bridge yet).
         //
         // The bag is a SharpTSObject in interpreter mode and a Dictionary<string, object?>
         // (a compiled object literal) in compiled mode; ReadOption reads through both so
-        // workerData/transferList are honored either way (#380). transferList is read as
-        // IEnumerable<object?> so both the interpreter SharpTSArray and a compiled
-        // List<object?> survive — a transferred MessagePort is then adopted by the worker
-        // (cross-thread for interpreter ports, via CompiledMessagePortBridge for compiled
-        // $MessagePort) inside StructuredClone.Clone (#406).
+        // options are honored either way (#380). transferList is read as IEnumerable<object?>
+        // so both the interpreter SharpTSArray and a compiled List<object?> survive — a
+        // transferred MessagePort is then adopted by the worker (cross-thread for interpreter
+        // ports, via CompiledMessagePortBridge for compiled $MessagePort) inside
+        // StructuredClone.Clone (#406).
         if (options != null)
         {
             _workerData = ReadOption(options, "workerData");
             _transferList = ReadOption(options, "transferList") as IEnumerable<object?>;
+            _resourceLimits = ReadOption(options, "resourceLimits");
+            if (ReadOption(options, "stdout") is true)
+                _stdout = new SharpTSReadable();
+            if (ReadOption(options, "stderr") is true)
+                _stderr = new SharpTSReadable();
         }
 
         // Clone workerData for transfer to worker
@@ -195,12 +219,19 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     /// mode (#380). Returns null when the property is absent or the bag is an
     /// unsupported shape (e.g. a compiled options literal that uses accessors).
     /// </summary>
-    private static object? ReadOption(object? options, string name) => options switch
+    private static object? ReadOption(object? options, string name)
     {
-        SharpTSObject obj => obj.GetProperty(name),
-        IDictionary<string, object?> dict => dict.TryGetValue(name, out var v) ? v : null,
-        _ => null,
-    };
+        object? value = options switch
+        {
+            SharpTSObject obj => obj.GetProperty(name),
+            IDictionary<string, object?> dict => dict.TryGetValue(name, out var v) ? v : null,
+            _ => null,
+        };
+        // A missing SharpTSObject property reads as `undefined`, not null — normalize it so an
+        // absent option is treated as truly absent (e.g. omitting workerData while passing
+        // stdout/resourceLimits must not try to clone `undefined`).
+        return value is SharpTSUndefined ? null : value;
+    }
 
     /// <summary>
     /// Factory used by compiled output to construct a worker whose running-lifetime
@@ -252,21 +283,49 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     /// </summary>
     private void WorkerThreadMain()
     {
+        int exitCode = 0;
         try
         {
             RunWorkerScript();
+
+            // A guest-level uncaught error is printed by the interpreter and surfaced via
+            // LastUncaughtError rather than thrown back here; Node exits such a worker with 1.
+            if (_workerInterpreter?.LastUncaughtError != null)
+                exitCode = 1;
+        }
+        catch (WorkerTerminatedException)
+        {
+            // terminate() unwound the worker (e.g. out of a parked Atomics.wait). This is an
+            // abort, not an error — Node emits 'exit' with code 1 and no 'error' event.
+            exitCode = 1;
         }
         catch (Exception ex)
         {
             _workerError = ex;
-            // Emit error on parent thread
-            EnqueueErrorToParent(ex);
+            // A terminated worker must not surface an 'error' event; a genuine uncaught
+            // host error must.
+            if (!_isTerminated)
+                EnqueueErrorToParent(ex);
+            exitCode = 1;
         }
         finally
         {
+            // terminate() always yields exit code 1 even if the worker happened to unwind
+            // through a clean path (e.g. event loop stopped by Shutdown()).
+            if (_isTerminated)
+                exitCode = 1;
+            _exitCode = exitCode;
+
             _isRunning = false;
             _parentToWorkerQueue.CompleteAdding();
             _workerToParentQueue.CompleteAdding();
+
+            // Signal end-of-stream on the diverted stdio Readables (#1003). Scheduled after the
+            // data pushes (FIFO on the parent loop) so 'end' follows the last 'data'.
+            if (_stdout != null)
+                ScheduleOnMainThread(() => _stdout.PushFromHost(_parentInterpreter, null));
+            if (_stderr != null)
+                ScheduleOnMainThread(() => _stderr.PushFromHost(_parentInterpreter, null));
 
             // Worker is done — stop keeping the parent loop alive (Node unrefs an
             // exited worker). Released before the exit event is enqueued so the
@@ -275,7 +334,7 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             ReleaseRunningRef();
 
             // Notify parent that worker has exited
-            EnqueueExitToParent(0);
+            EnqueueExitToParent(exitCode);
         }
     }
 
@@ -293,8 +352,17 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
 
         string source = File.ReadAllText(absolutePath);
 
-        // Create isolated interpreter for this worker
-        using var interpreter = new Interpreter();
+        // Create isolated interpreter for this worker. With stdout/stderr: true, divert the
+        // worker's console output into the per-worker Readable streams instead of the shared
+        // Console (#1003); otherwise keep the default Console writers.
+        TextWriter outWriter = _stdout != null ? new WorkerStreamWriter(this, _stdout) : Console.Out;
+        TextWriter errWriter = _stderr != null ? new WorkerStreamWriter(this, _stderr) : Console.Error;
+        using var interpreter = new Interpreter(outWriter, errWriter);
+
+        // Expose this worker to terminate(): Shutdown() stops an idle event loop, and the
+        // termination token lets a parked Atomics.wait unwind the thread (#997).
+        _workerInterpreter = interpreter;
+        interpreter.SetWorkerTerminationToken(_cts.Token);
 
         // Set up worker globals
         SetupWorkerGlobals(interpreter);
@@ -302,6 +370,12 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         // Set up message handling loop
         var messageHandler = new WorkerMessageHandler(this, interpreter);
         messageHandler.Start();
+
+        // The worker environment is ready and user JS is about to run — Node emits 'online'
+        // here. Scheduled before any user code so it always precedes the worker's first
+        // 'message'. Not emitted on an earlier failure (e.g. missing script) — the worker
+        // never came online (#998).
+        EnqueueOnlineToParent();
 
         try
         {
@@ -453,8 +527,18 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
 
         try
         {
-            var cloned = StructuredClone.Clone(message, transfer);
-            _workerToParentQueue.Add(new SharpTSMessagePort.ClonedMessage(cloned, transfer));
+            // A clone failure is delivered to the parent Worker as 'messageerror' (Node's
+            // receiver-side model), not thrown back into the worker's postMessage (#1001).
+            SharpTSMessagePort.ClonedMessage delivery;
+            try
+            {
+                delivery = new SharpTSMessagePort.ClonedMessage(StructuredClone.Clone(message, transfer), transfer);
+            }
+            catch (StructuredClone.DataCloneError)
+            {
+                delivery = new SharpTSMessagePort.ClonedMessage(null, null, IsError: true);
+            }
+            _workerToParentQueue.Add(delivery);
 
             // Schedule delivery on the parent thread. Routed through
             // ScheduleOnMainThread so compiled mode (no parent interpreter) marshals
@@ -462,10 +546,6 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             // _parentInterpreter?.ScheduleTimer here would silently drop every worker
             // message in compiled programs (#354).
             ScheduleOnMainThread(DeliverMessagesToParent);
-        }
-        catch (StructuredClone.DataCloneError e)
-        {
-            throw new Exception($"Failed to clone message: {e.Message}");
         }
         catch (InvalidOperationException)
         {
@@ -481,6 +561,14 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     {
         while (_workerToParentQueue.TryTake(out var message))
         {
+            if (message.IsError)
+            {
+                // The worker's postMessage value failed to clone — fire 'messageerror' on
+                // the parent Worker instead of 'message' (#1001).
+                EmitEventOnMainThread("messageerror");
+                continue;
+            }
+
             var eventData = new SharpTSObject(new Dictionary<string, object?>
             {
                 ["data"] = message.Data
@@ -488,6 +576,16 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
 
             EmitEventOnMainThread("message", eventData);
         }
+    }
+
+    /// <summary>
+    /// Enqueues the 'online' event (Node emits it once the worker's JS starts executing).
+    /// Carries no payload, matching Node. Scheduled before the worker runs any user code so
+    /// it is always delivered ahead of the worker's first 'message'.
+    /// </summary>
+    private void EnqueueOnlineToParent()
+    {
+        ScheduleOnMainThread(() => EmitEventOnMainThread("online"));
     }
 
     /// <summary>
@@ -560,6 +658,51 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     }
 
     /// <summary>
+    /// Emits an event with no payload (e.g. 'online') so listeners receive zero arguments,
+    /// matching Node — rather than a spurious trailing null/undefined.
+    /// </summary>
+    private void EmitEventOnMainThread(string eventName)
+    {
+        if (_parentInterpreter != null)
+        {
+            var emitMethod = GetMember("emit") as BuiltInMethod;
+            emitMethod?.Call(_parentInterpreter, [eventName]);
+        }
+        else
+        {
+            EmitDirect(eventName);
+        }
+    }
+
+    /// <summary>
+    /// Feeds a chunk of the worker's diverted console output into a worker.stdout/worker.stderr
+    /// Readable (#1003). Called on the worker thread by <see cref="WorkerStreamWriter"/>; the
+    /// push is marshalled onto the parent loop so the stream is only ever touched — and 'data'
+    /// delivered — on the parent's thread (no cross-thread access to the stream's state).
+    /// </summary>
+    private void PushToWorkerStream(SharpTSReadable target, string text)
+    {
+        ScheduleOnMainThread(() => target.PushFromHost(_parentInterpreter, text));
+    }
+
+    /// <summary>
+    /// A <see cref="TextWriter"/> that redirects the worker interpreter's console output into a
+    /// per-worker Readable stream instead of the shared Console (worker stdout/stderr, #1003).
+    /// </summary>
+    private sealed class WorkerStreamWriter(SharpTSWorker worker, SharpTSReadable target) : TextWriter
+    {
+        public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+        public override void Write(string? value) => Push(value);
+        public override void WriteLine(string? value) => Push((value ?? string.Empty) + Environment.NewLine);
+        public override void Write(char value) => Push(value.ToString());
+        private void Push(string? text)
+        {
+            if (!string.IsNullOrEmpty(text))
+                worker.PushToWorkerStream(target, text);
+        }
+    }
+
+    /// <summary>
     /// Processes any pending callbacks queued for the main thread.
     /// Call this periodically from the main thread in console applications
     /// to receive Worker messages and events.
@@ -603,12 +746,18 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
 
         try
         {
-            var cloned = StructuredClone.Clone(message, transfer);
-            _parentToWorkerQueue.Add(new SharpTSMessagePort.ClonedMessage(cloned, transfer));
-        }
-        catch (StructuredClone.DataCloneError e)
-        {
-            throw new Exception($"Failed to clone message: {e.Message}");
+            // A clone failure is delivered to the worker's parentPort as 'messageerror'
+            // (Node's receiver-side model), not thrown back to the parent's postMessage (#1001).
+            SharpTSMessagePort.ClonedMessage delivery;
+            try
+            {
+                delivery = new SharpTSMessagePort.ClonedMessage(StructuredClone.Clone(message, transfer), transfer);
+            }
+            catch (StructuredClone.DataCloneError)
+            {
+                delivery = new SharpTSMessagePort.ClonedMessage(null, null, IsError: true);
+            }
+            _parentToWorkerQueue.Add(delivery);
         }
         catch (InvalidOperationException)
         {
@@ -630,6 +779,12 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         _cts.Cancel();
         _parentToWorkerQueue.CompleteAdding();
 
+        // Stop an idle/event-loop worker cooperatively at its next blocking point instead of
+        // waiting out the 5s join (mirrors SharpTSClusterWorker Kill/Disconnect). A worker
+        // parked in Atomics.wait is woken by the _cts cancellation hook installed in
+        // SharpTSAtomics; a worker in a tight native call is the documented .NET ceiling.
+        _workerInterpreter?.Shutdown();
+
         // The worker is being torn down — drop its running keep-alive Ref now
         // rather than waiting for the worker thread's finally, so the only loop
         // keep-alive from here is the bounded join Ref below. Idempotent with the
@@ -648,7 +803,11 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         var task = Task.Run<object?>(() =>
         {
             _thread.Join(5000); // Wait up to 5 seconds
-            return (double)0;
+            // Resolve with the worker's actual exit code (1 once the thread unwinds via
+            // terminate; the worker's finally sets _exitCode before the thread ends, so it is
+            // visible here). If a tight native loop outlasts the join, this stays 0 — the
+            // documented ceiling.
+            return (double)_exitCode;
         });
         if (_loopRef != null && loopUnref != null)
         {
@@ -701,6 +860,38 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         return name switch
         {
             "threadId" => ThreadId,
+
+            // #1003: per-worker stdio + resourceLimits. stdout/stderr are Readable streams when
+            // `stdout`/`stderr: true` was passed (else null, matching the no-pipe default).
+            // resourceLimits echoes the passed object (stored, not enforced). stdin is not
+            // supported (no parent→worker process.stdin bridge) — null.
+            "stdout" => _stdout is not null ? (object?)_stdout : null,
+            "stderr" => _stderr is not null ? (object?)_stderr : null,
+            "stdin" => null,
+            "resourceLimits" => _resourceLimits ?? new SharpTSObject(new Dictionary<string, object?>()),
+
+            // #1004 introspection. getHeapSnapshot has no .NET equivalent (V8 snapshot format) —
+            // a clear error beats "undefined is not a function". performance offers a best-effort
+            // eventLoopUtilization (SharpTS lacks precise idle/active loop accounting).
+            "getHeapSnapshot" => BuiltInMethod.CreateV2("getHeapSnapshot", 0, 1, (_, _, _) =>
+                throw new Exception(
+                    "worker.getHeapSnapshot() is not supported in SharpTS: a V8-format heap snapshot has no .NET equivalent.")),
+
+            "performance" => new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["eventLoopUtilization"] = BuiltInMethod.CreateV2("eventLoopUtilization", 0, 2, (_, _, _) =>
+                {
+                    // Best-effort: treat the worker as active for its whole lifetime (no idle
+                    // accounting). `active` is wall-clock ms since the worker was created.
+                    double active = Math.Max(0, Environment.TickCount64 - _startTick);
+                    return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
+                    {
+                        ["idle"] = 0.0,
+                        ["active"] = active,
+                        ["utilization"] = 1.0,
+                    }));
+                }),
+            }),
 
             "postMessage" => BuiltInMethod.CreateV2("postMessage", 1, 2, (_, _, args) =>
             {
@@ -842,18 +1033,25 @@ internal class WorkerMessageHandler
 
             try
             {
-                // Get the parentPort and emit message event
+                // Get the parentPort and emit the message (or messageerror) event
                 if (_interpreter.Environment.TryGet("parentPort", out var portRV) &&
                     portRV.ToObject() is WorkerParentPort parentPort)
                 {
-                    var eventData = new SharpTSObject(new Dictionary<string, object?>
-                    {
-                        ["data"] = message.Data
-                    });
-
-                    // Emit on parentPort
                     var emitMethod = parentPort.GetMember("emit") as BuiltInMethod;
-                    emitMethod?.Call(_interpreter, ["message", eventData]);
+                    if (message.IsError)
+                    {
+                        // The parent's postMessage value failed to clone — fire 'messageerror'
+                        // on the worker's parentPort instead of 'message' (#1001).
+                        emitMethod?.Call(_interpreter, ["messageerror"]);
+                    }
+                    else
+                    {
+                        var eventData = new SharpTSObject(new Dictionary<string, object?>
+                        {
+                            ["data"] = message.Data
+                        });
+                        emitMethod?.Call(_interpreter, ["message", eventData]);
+                    }
                 }
             }
             catch (Exception ex)

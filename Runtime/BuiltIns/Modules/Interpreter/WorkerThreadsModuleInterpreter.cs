@@ -52,7 +52,9 @@ public static class WorkerThreadsModuleInterpreter
                     CompiledMessagePortBridge bridge => bridge.ReceiveMessageSync(),
                     _ => throw new Exception("receiveMessageOnPort requires a MessagePort argument"),
                 };
-                return RuntimeValue.FromBoxed(result);
+                // Node returns `undefined` (not null) when the port has no queued message;
+                // a present message is wrapped as `{ message }` by ReceiveMessageSync.
+                return result is null ? RuntimeValue.Undefined : RuntimeValue.FromBoxed(result);
             }),
 
             // SHARE_ENV constant (placeholder - we don't support env sharing)
@@ -61,46 +63,44 @@ public static class WorkerThreadsModuleInterpreter
             // resourceLimits (not fully implemented)
             ["resourceLimits"] = new SharpTSObject(new Dictionary<string, object?>()),
 
-            // markAsUntransferable (no-op in our implementation)
+            // markAsUntransferable: mark the object so it is cloned (never transferred) if it
+            // appears in a postMessage transfer list (#1002).
             ["markAsUntransferable"] = BuiltInMethod.CreateV2("markAsUntransferable", 1, (interp, recv, args) =>
             {
-                // No-op - we don't track transferability at runtime
-                return RuntimeValue.Null;
+                if (args.Length > 0)
+                    StructuredClone.MarkUntransferable(args[0].ToObject());
+                return RuntimeValue.Undefined;
             }),
 
-            // moveMessagePortToContext (not fully implemented - requires VM)
+            // moveMessagePortToContext: not supported. It re-homes a MessagePort into a vm
+            // context's V8 isolate — SharpTS has no per-context isolate model (one process,
+            // shared interpreters), so there is nothing to move a port into (#1004).
             ["moveMessagePortToContext"] = BuiltInMethod.CreateV2("moveMessagePortToContext", 2, (interp, recv, args) =>
             {
-                throw new Exception("moveMessagePortToContext is not supported in SharpTS");
+                throw new Exception(
+                    "moveMessagePortToContext() is not supported in SharpTS: it requires V8 vm contexts/isolates, which SharpTS's single-process threading model does not provide.");
             }),
 
-            // getEnvironmentData / setEnvironmentData (environment data sharing)
+            // getEnvironmentData / setEnvironmentData — a real per-process data store keyed by
+            // arbitrary values, independent of process.env (#1000).
             ["getEnvironmentData"] = BuiltInMethod.CreateV2("getEnvironmentData", 1, (interp, recv, args) =>
             {
-                // Simple implementation - return from process.env
-                if (args.Length > 0 && args[0].IsString)
-                {
-                    return RuntimeValue.FromBoxed(Environment.GetEnvironmentVariable(args[0].AsStringUnsafe()));
-                }
-                return RuntimeValue.Null;
+                var key = args.Length > 0 ? args[0].ToObject() : null;
+                return WorkerEnvironmentData.TryGet(key, out var value)
+                    ? RuntimeValue.FromBoxed(value)
+                    : RuntimeValue.Undefined;
             }),
 
-            ["setEnvironmentData"] = BuiltInMethod.CreateV2("setEnvironmentData", 2, (interp, recv, args) =>
+            ["setEnvironmentData"] = BuiltInMethod.CreateV2("setEnvironmentData", 1, 2, (interp, recv, args) =>
             {
-                if (args.Length >= 2 && args[0].IsString)
+                if (args.Length >= 1)
                 {
-                    var key = args[0].AsStringUnsafe();
-                    string? value = args[1].ToObject()?.ToString();
-                    if (value != null)
-                    {
-                        Environment.SetEnvironmentVariable(key, value);
-                    }
-                    else
-                    {
-                        Environment.SetEnvironmentVariable(key, null);
-                    }
+                    var key = args[0].ToObject();
+                    // setEnvironmentData(key) with no value (or undefined/null) deletes the key.
+                    var value = args.Length >= 2 ? args[1].ToObject() : null;
+                    WorkerEnvironmentData.Set(key, value);
                 }
-                return RuntimeValue.Null;
+                return RuntimeValue.Undefined;
             }),
         };
     }

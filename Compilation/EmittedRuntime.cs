@@ -2738,6 +2738,9 @@ public class EmittedRuntime
     public MethodBuilder WorkerThreadsIsMainThread { get; set; } = null!;
     public MethodBuilder WorkerThreadsThreadId { get; set; } = null!;
     public MethodBuilder WorkerThreadsReceiveMessageOnPort { get; set; } = null!;
+    public MethodBuilder WorkerThreadsGetEnvironmentData { get; set; } = null!;
+    public MethodBuilder WorkerThreadsSetEnvironmentData { get; set; } = null!;
+    public MethodBuilder WorkerThreadsMarkAsUntransferable { get; set; } = null!;
 
     // DNS module methods
     public MethodBuilder DnsLookup { get; set; } = null!;

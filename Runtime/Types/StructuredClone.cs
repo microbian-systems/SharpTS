@@ -1,4 +1,5 @@
 using System.Numerics;
+using System.Runtime.CompilerServices;
 
 namespace SharpTS.Runtime.Types;
 
@@ -23,6 +24,21 @@ public static class StructuredClone
         public DataCloneError(string message) : base($"DataCloneError: {message}") { }
     }
 
+    // Objects marked via worker_threads.markAsUntransferable. When such an object appears in a
+    // postMessage transfer list it is IGNORED (cloned in the payload instead of transferred),
+    // matching Node (#1002). Reference-keyed and weak so marking does not pin the object.
+    private static readonly ConditionalWeakTable<object, object> _untransferable = new();
+
+    /// <summary>Marks <paramref name="value"/> so it is never transferred (only cloned).</summary>
+    public static void MarkUntransferable(object? value)
+    {
+        if (value != null)
+            _untransferable.AddOrUpdate(value, value);
+    }
+
+    /// <summary>Whether <paramref name="value"/> was marked via <see cref="MarkUntransferable"/>.</summary>
+    public static bool IsUntransferable(object value) => _untransferable.TryGetValue(value, out _);
+
     /// <summary>
     /// Clones a value using the structured clone algorithm.
     /// </summary>
@@ -38,26 +54,70 @@ public static class StructuredClone
     {
         var cloned = new Dictionary<object, object>();
         var transferred = new HashSet<object>();
+        // ArrayBuffers in the transfer list are detached on this (sender) side after the
+        // clone — Node neuters a transferred ArrayBuffer (byteLength becomes 0). Collected
+        // separately because detach must happen AFTER the payload is copied.
+        List<object>? transferredBuffers = null;
 
-        // Process transfer list. A transferable is either the interpreter
-        // SharpTSMessagePort or the emitted compiled $MessagePort (#406).
+        // Process transfer list. Transferables are MessagePort (interpreter
+        // SharpTSMessagePort or the emitted compiled $MessagePort, #406) and ArrayBuffer
+        // (interpreter SharpTSArrayBuffer or the emitted compiled $ArrayBuffer, #999).
         if (transfer != null)
         {
             foreach (var item in transfer)
             {
+                // markAsUntransferable: a marked object in the transfer list is ignored — it is
+                // cloned in the payload instead of transferred (Node semantics, #1002).
+                if (item != null && IsUntransferable(item))
+                {
+                    continue;
+                }
+
                 if (item is SharpTSMessagePort || CompiledMessagePortBridge.IsEmittedMessagePort(item))
                 {
                     transferred.Add(item!);
                 }
+                else if (item is SharpTSArrayBuffer || item?.GetType().Name == "$ArrayBuffer")
+                {
+                    transferred.Add(item!);
+                    (transferredBuffers ??= new List<object>()).Add(item!);
+                }
                 else if (item != null)
                 {
-                    // Only MessagePort is transferable in our implementation
-                    throw new DataCloneError("Only MessagePort objects can be transferred");
+                    throw new DataCloneError("Only ArrayBuffer and MessagePort objects can be transferred");
                 }
             }
         }
 
-        return CloneInternal(value, cloned, transferred);
+        var result = CloneInternal(value, cloned, transferred);
+
+        // Neuter the source ArrayBuffers now that their contents have been copied to the
+        // clone. A buffer in the transfer list is detached whether or not it appeared in
+        // the payload (Node semantics).
+        if (transferredBuffers != null)
+        {
+            foreach (var buffer in transferredBuffers)
+                DetachArrayBuffer(buffer);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Detaches a transferred ArrayBuffer on the sender side: the interpreter
+    /// <see cref="SharpTSArrayBuffer"/> directly, or the emitted compiled <c>$ArrayBuffer</c>
+    /// via its <c>Detach()</c> method (reflection keeps this assembly standalone-agnostic).
+    /// </summary>
+    private static void DetachArrayBuffer(object buffer)
+    {
+        if (buffer is SharpTSArrayBuffer interpBuffer)
+        {
+            interpBuffer.Detach();
+        }
+        else if (buffer.GetType().Name == "$ArrayBuffer")
+        {
+            buffer.GetType().GetMethod("Detach")?.Invoke(buffer, null);
+        }
     }
 
     private static object? CloneInternal(object? value, Dictionary<object, object> cloned, HashSet<object> transferred)
@@ -78,6 +138,11 @@ public static class StructuredClone
         {
             // SharedArrayBuffer - pass by reference (this is the key sharing mechanism!)
             SharpTSSharedArrayBuffer sab => sab,
+
+            // ArrayBuffer (non-shared) - copy the bytes into an independent buffer. When the
+            // source is in the transfer list it is detached afterwards by Clone() (#999); the
+            // receiver always gets its own copy (no cross-thread aliasing of a mutable buffer).
+            SharpTSArrayBuffer arrayBuffer => CloneArrayBuffer(arrayBuffer, cloned),
 
             // TypedArray - recreate view, share backing if SharedArrayBuffer
             SharpTSTypedArray typedArray => CloneTypedArray(typedArray, cloned, transferred),
@@ -249,6 +314,13 @@ public static class StructuredClone
         // one object. Instead mark it and its partner cross-thread: each port then
         // marshals delivery onto its own owner-loop thread and a started port keeps
         // that loop alive (#406).
+        //
+        // #1002 DECISION: SharpTS does NOT neuter the source MessagePort on transfer.
+        // This is an intentional, documented deviation from Node — SharpTS's single-process
+        // two-thread model shares one port object across both threads (unlike V8's separate
+        // serialize/deserialize), so neutering the sender would neuter the receiver too. The
+        // markAsUntransferable + ArrayBuffer-detach paths (#999/#1002) are spec-faithful;
+        // only this port-neuter case is the model-dictated exception.
         port.MarkTransferredAcrossThreads();
         return port;
     }
@@ -433,6 +505,14 @@ public static class StructuredClone
         return new SharpTSBuffer(newData);
     }
 
+    private static SharpTSArrayBuffer CloneArrayBuffer(SharpTSArrayBuffer source, Dictionary<object, object> cloned)
+    {
+        var result = new SharpTSArrayBuffer(source.ByteLength);
+        source.AsSpan().CopyTo(result.AsSpan());
+        cloned[source] = result;
+        return result;
+    }
+
     /// <summary>
     /// Clones an emitted $ArrayBuffer type from compiled code.
     /// Uses reflection to access the buffer and create a new instance.
@@ -504,6 +584,7 @@ public static class StructuredClone
         switch (value)
         {
             case SharpTSSharedArrayBuffer:
+            case SharpTSArrayBuffer:
             case SharpTSDate:
             case SharpTSRegExp:
             case SharpTSError:

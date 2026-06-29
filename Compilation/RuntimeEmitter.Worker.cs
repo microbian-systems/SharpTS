@@ -1736,7 +1736,12 @@ public partial class RuntimeEmitter
         il2.Emit(OpCodes.Ret);
         runtime.WorkerThreadsThreadId = threadIdMethod;
 
-        // receiveMessageOnPort
+        // receiveMessageOnPort — main-thread compiled stub. The $MessagePort type is emitted
+        // AFTER this method (EmitMessageChannelTypes runs after EmitRuntimeClass), so this
+        // helper cannot read the port's queue. It returns `undefined` (Node's empty-port
+        // result) rather than null (#1000). Synchronously draining a $MessagePort on the main
+        // thread in compiled mode remains unimplemented (a worker drives receiveMessageOnPort
+        // through the interpreter, which is fully functional).
         var receiveMethod = runtimeType.DefineMethod(
             "WorkerThreadsReceiveMessageOnPort",
             MethodAttributes.Public | MethodAttributes.Static,
@@ -1745,8 +1750,101 @@ public partial class RuntimeEmitter
         );
 
         var il3 = receiveMethod.GetILGenerator();
-        il3.Emit(OpCodes.Ldnull);
+        il3.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il3.Emit(OpCodes.Ret);
         runtime.WorkerThreadsReceiveMessageOnPort = receiveMethod;
+
+        // getEnvironmentData / setEnvironmentData — route to the C# per-process
+        // WorkerEnvironmentData store via reflection (worker programs co-locate SharpTS.dll;
+        // RequireSharpTSRuntime is recorded at the call sites in WorkerThreadsModuleEmitter so
+        // a program that never calls these stays standalone). #1000.
+        EmitWorkerThreadsEnvironmentData(runtimeType, runtime);
+    }
+
+    /// <summary>
+    /// Emits the getEnvironmentData/setEnvironmentData runtime helpers that reflectively call
+    /// <c>SharpTS.Runtime.Types.WorkerEnvironmentData</c>.
+    /// </summary>
+    private void EmitWorkerThreadsEnvironmentData(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        const string storeType = "SharpTS.Runtime.Types.WorkerEnvironmentData, SharpTS";
+
+        // public static object WorkerThreadsGetEnvironmentData(object key)
+        //   => WorkerEnvironmentData.Get(key)   (null when absent — caller maps to undefined)
+        var getMethod = runtimeType.DefineMethod(
+            "WorkerThreadsGetEnvironmentData",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]
+        );
+        var gil = getMethod.GetILGenerator();
+        gil.Emit(OpCodes.Ldstr, storeType);
+        gil.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        gil.Emit(OpCodes.Ldstr, "Get");
+        gil.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        gil.Emit(OpCodes.Ldnull); // static method — no instance
+        gil.Emit(OpCodes.Ldc_I4_1);
+        gil.Emit(OpCodes.Newarr, _types.Object);
+        gil.Emit(OpCodes.Dup);
+        gil.Emit(OpCodes.Ldc_I4_0);
+        gil.Emit(OpCodes.Ldarg_0); // key
+        gil.Emit(OpCodes.Stelem_Ref);
+        gil.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+        gil.Emit(OpCodes.Ret);
+        runtime.WorkerThreadsGetEnvironmentData = getMethod;
+
+        // public static void WorkerThreadsSetEnvironmentData(object key, object value)
+        //   => WorkerEnvironmentData.Set(key, value)
+        var setMethod = runtimeType.DefineMethod(
+            "WorkerThreadsSetEnvironmentData",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [_types.Object, _types.Object]
+        );
+        var sil = setMethod.GetILGenerator();
+        sil.Emit(OpCodes.Ldstr, storeType);
+        sil.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        sil.Emit(OpCodes.Ldstr, "Set");
+        sil.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        sil.Emit(OpCodes.Ldnull); // static method — no instance
+        sil.Emit(OpCodes.Ldc_I4_2);
+        sil.Emit(OpCodes.Newarr, _types.Object);
+        sil.Emit(OpCodes.Dup);
+        sil.Emit(OpCodes.Ldc_I4_0);
+        sil.Emit(OpCodes.Ldarg_0); // key
+        sil.Emit(OpCodes.Stelem_Ref);
+        sil.Emit(OpCodes.Dup);
+        sil.Emit(OpCodes.Ldc_I4_1);
+        sil.Emit(OpCodes.Ldarg_1); // value
+        sil.Emit(OpCodes.Stelem_Ref);
+        sil.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+        sil.Emit(OpCodes.Pop); // discard Invoke result (Set returns void → null)
+        sil.Emit(OpCodes.Ret);
+        runtime.WorkerThreadsSetEnvironmentData = setMethod;
+
+        // public static void WorkerThreadsMarkAsUntransferable(object value)
+        //   => StructuredClone.MarkUntransferable(value)   (#1002)
+        var markMethod = runtimeType.DefineMethod(
+            "WorkerThreadsMarkAsUntransferable",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [_types.Object]
+        );
+        var mil = markMethod.GetILGenerator();
+        mil.Emit(OpCodes.Ldstr, "SharpTS.Runtime.Types.StructuredClone, SharpTS");
+        mil.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        mil.Emit(OpCodes.Ldstr, "MarkUntransferable");
+        mil.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        mil.Emit(OpCodes.Ldnull); // static method — no instance
+        mil.Emit(OpCodes.Ldc_I4_1);
+        mil.Emit(OpCodes.Newarr, _types.Object);
+        mil.Emit(OpCodes.Dup);
+        mil.Emit(OpCodes.Ldc_I4_0);
+        mil.Emit(OpCodes.Ldarg_0); // value
+        mil.Emit(OpCodes.Stelem_Ref);
+        mil.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodBase, "Invoke", _types.Object, _types.ObjectArray));
+        mil.Emit(OpCodes.Pop); // discard Invoke result (MarkUntransferable returns void → null)
+        mil.Emit(OpCodes.Ret);
+        runtime.WorkerThreadsMarkAsUntransferable = markMethod;
     }
 }
