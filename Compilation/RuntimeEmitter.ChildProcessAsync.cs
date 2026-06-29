@@ -60,6 +60,8 @@ public partial class RuntimeEmitter
     private MethodBuilder _childConfigureSpawn = null!;
     private MethodBuilder _childStdioMode = null!;
     private MethodBuilder _childReadCapped = null!;
+    private MethodBuilder _childSpawnError = null!;
+    private MethodBuilder _childCtxRunSpawnError = null!;
 
     // $ChildPush — a one-shot closure that pushes one chunk (or null = EOF) into a
     // $Readable on the event-loop thread, so all stream-buffer access stays single-threaded.
@@ -111,6 +113,7 @@ public partial class RuntimeEmitter
         EmitChildRunAsyncHelpers(runtimeType, runtime);
         EmitChildStdioMode(runtimeType, runtime);
         EmitChildReadCapped(runtimeType, runtime);
+        EmitChildSpawnError(runtimeType, runtime);
         EmitConfigureSpawnStartInfo(runtimeType, runtime);
         EmitChildCtxMethods(runtime);
         _childCtxType.CreateType();
@@ -478,6 +481,7 @@ public partial class RuntimeEmitter
         _childCtxRunCaptured = t.DefineMethod("RunCaptured", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
         _childCtxEmitCaptured = t.DefineMethod("EmitCaptured", MethodAttributes.Public, _types.Void, Type.EmptyTypes);
         _childCtxRunStreamed = t.DefineMethod("RunStreamed", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        _childCtxRunSpawnError = t.DefineMethod("RunSpawnError", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
         _childCtxEmitStreamClose = t.DefineMethod("EmitStreamClose", MethodAttributes.Public, _types.Void, Type.EmptyTypes);
         _childCtxPumpStdout = t.DefineMethod("PumpStdout", MethodAttributes.Public, _types.Void, Type.EmptyTypes);
         _childCtxPumpStderr = t.DefineMethod("PumpStderr", MethodAttributes.Public, _types.Void, Type.EmptyTypes);
@@ -628,6 +632,7 @@ public partial class RuntimeEmitter
         EmitCtxRunCaptured(runtime);
         EmitCtxEmitCaptured(runtime);
         EmitCtxRunStreamed(runtime);
+        EmitCtxRunSpawnError(runtime);
         EmitCtxPumpStdout(runtime);
         EmitCtxPumpStderr(runtime);
         EmitCtxEmitStreamClose(runtime);
@@ -1029,6 +1034,15 @@ public partial class RuntimeEmitter
         il.EndExceptionBlock();
 
         il.MarkLabel(afterTry);
+        EmitScheduleOnLoop(il, runtime, _childCtxEmitStreamClose);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>Spawn-failure worker: schedule EmitStreamClose (which, with _resKind==2, emits 'error').</summary>
+    private void EmitCtxRunSpawnError(EmittedRuntime runtime)
+    {
+        var il = _childCtxRunSpawnError.GetILGenerator();
         EmitScheduleOnLoop(il, runtime, _childCtxEmitStreamClose);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
@@ -1488,10 +1502,21 @@ public partial class RuntimeEmitter
         // ctx._dict = dict
         StoreCtxField(il, ctxLocal, _childCtxDict, () => il.Emit(OpCodes.Ldloc, dictLocal));
 
-        // For spawn (streamed), start the process synchronously so child.stdin.write()/
-        // .end() called on the same synchronous tick reach a live StandardInput.
+        var funcCtor = typeof(Func<object>).GetConstructor([_types.Object, typeof(IntPtr)])!;
+        void Launch(MethodBuilder worker)
+        {
+            il.Emit(OpCodes.Ldloc, ctxLocal);
+            il.Emit(OpCodes.Ldftn, worker);
+            il.Emit(OpCodes.Newobj, funcCtor);
+            il.Emit(OpCodes.Call, _childRunAsync);
+        }
+
         if (streamed)
         {
+            // Start the process synchronously so child.stdin.write()/.end() on the same tick
+            // reach a live StandardInput. A start failure (e.g. ENOENT) becomes an async 'error'.
+            var afterLaunch = il.DefineLabel();
+            il.BeginExceptionBlock();
             il.Emit(OpCodes.Ldloc, processLocal);
             il.Emit(OpCodes.Callvirt, _miProcStart);
             il.Emit(OpCodes.Pop);
@@ -1502,13 +1527,30 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Conv_R8);
                 il.Emit(OpCodes.Box, _types.Double);
             });
+            Launch(_childCtxRunStreamed);
+            il.Emit(OpCodes.Leave, afterLaunch);
+            il.BeginCatchBlock(_types.Exception);
+            var exLocal = il.DeclareLocal(_types.Exception);
+            il.Emit(OpCodes.Stloc, exLocal);
+            StoreCtxField(il, ctxLocal, _childCtxResKind, () => il.Emit(OpCodes.Ldc_I4_2));
+            StoreCtxField(il, ctxLocal, _childCtxResError, () =>
+            {
+                il.Emit(OpCodes.Ldloc, exLocal);
+                il.Emit(OpCodes.Ldloc, processLocal);
+                il.Emit(OpCodes.Callvirt, _types.Process.GetProperty("StartInfo")!.GetGetMethod()!);
+                il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("FileName")!.GetGetMethod()!);
+                il.Emit(OpCodes.Ldstr, "spawn");
+                il.Emit(OpCodes.Call, _childSpawnError);
+            });
+            Launch(_childCtxRunSpawnError);
+            il.Emit(OpCodes.Leave, afterLaunch);
+            il.EndExceptionBlock();
+            il.MarkLabel(afterLaunch);
         }
-
-        // ChildRunAsync(new Func<object>(ctx, streamed ? RunStreamed : RunCaptured))
-        il.Emit(OpCodes.Ldloc, ctxLocal);
-        il.Emit(OpCodes.Ldftn, streamed ? _childCtxRunStreamed : _childCtxRunCaptured);
-        il.Emit(OpCodes.Newobj, typeof(Func<object>).GetConstructor([_types.Object, typeof(IntPtr)])!);
-        il.Emit(OpCodes.Call, _childRunAsync);
+        else
+        {
+            Launch(_childCtxRunCaptured);
+        }
 
         // return CreateObject(dict)
         il.Emit(OpCodes.Ldloc, dictLocal);
@@ -1705,6 +1747,73 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, loop);
         il.MarkLabel(end);
         il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// static object ChildSpawnError(object exObj, string command, string syscall): a Node-style
+    /// error dict. A missing executable (Win32 error 2) → ENOENT with code/errno/syscall/path.
+    /// </summary>
+    private void EmitChildSpawnError(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var m = runtimeType.DefineMethod("ChildSpawnError",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object,
+            [_types.Object, _types.String, _types.String]);
+        _childSpawnError = m;
+        var il = m.GetILGenerator();
+        var w32 = typeof(System.ComponentModel.Win32Exception);
+        var concat3 = _types.String.GetMethod("Concat", [_types.String, _types.String, _types.String])!;
+        var concat2 = _types.String.GetMethod("Concat", [_types.String, _types.String])!;
+        var prefixLocal = il.DeclareLocal(_types.String);   // "syscall command"
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var wLocal = il.DeclareLocal(w32);
+        var generic = il.DefineLabel();
+
+        // w = exObj as Win32Exception; if (w == null || w.NativeErrorCode != 2) -> generic
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, w32);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Stloc, wLocal);
+        il.Emit(OpCodes.Brfalse, generic);
+        il.Emit(OpCodes.Ldloc, wLocal);
+        il.Emit(OpCodes.Callvirt, w32.GetProperty("NativeErrorCode")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Bne_Un, generic);
+
+        // prefix = syscall + " " + command
+        il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Ldstr, " "); il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, concat3);
+        il.Emit(OpCodes.Stloc, prefixLocal);
+
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, dictLocal);
+        void Set(string key, Action v) { il.Emit(OpCodes.Ldloc, dictLocal); il.Emit(OpCodes.Ldstr, key); v(); il.Emit(OpCodes.Callvirt, _miDictSet); }
+        Set("message", () => { il.Emit(OpCodes.Ldloc, prefixLocal); il.Emit(OpCodes.Ldstr, " ENOENT"); il.Emit(OpCodes.Call, concat2); });
+        Set("code", () => il.Emit(OpCodes.Ldstr, "ENOENT"));
+        Set("errno", () =>
+        {
+            var unix = il.DefineLabel();
+            var done = il.DefineLabel();
+            il.Emit(OpCodes.Call, _types.OSPlatform.GetProperty("Windows")!.GetGetMethod()!);
+            il.Emit(OpCodes.Call, _types.RuntimeInformation.GetMethod("IsOSPlatform", [_types.OSPlatform])!);
+            il.Emit(OpCodes.Brfalse, unix);
+            il.Emit(OpCodes.Ldc_R8, -4058.0); il.Emit(OpCodes.Br, done);
+            il.MarkLabel(unix); il.Emit(OpCodes.Ldc_R8, -2.0);
+            il.MarkLabel(done); il.Emit(OpCodes.Box, _types.Double);
+        });
+        Set("syscall", () => il.Emit(OpCodes.Ldloc, prefixLocal));
+        Set("path", () => il.Emit(OpCodes.Ldarg_1));
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ret);
+
+        // generic: { message: ((Exception)exObj).Message }
+        il.MarkLabel(generic);
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, dictLocal);
+        il.Emit(OpCodes.Ldloc, dictLocal); il.Emit(OpCodes.Ldstr, "message");
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Castclass, _types.Exception); il.Emit(OpCodes.Callvirt, _miExceptionMessageGet);
+        il.Emit(OpCodes.Callvirt, _miDictSet);
+        il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ret);
     }
 

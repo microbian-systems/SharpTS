@@ -418,16 +418,11 @@ public static class ChildProcessModuleInterpreter
         }
         catch (Exception ex)
         {
+            var spawnErr = SpawnError(ex, command, "spawn");
             interpreter.Ref();
             interpreter.EnqueueCallback(() =>
             {
-                try
-                {
-                    childProcess.EmitWith(interpreter, "error", new SharpTSObject(new Dictionary<string, object?>
-                    {
-                        ["message"] = ex.Message
-                    }));
-                }
+                try { childProcess.EmitWith(interpreter, "error", spawnErr); }
                 finally { interpreter.Unref(); }
             });
             return RuntimeValue.FromObject(childProcess);
@@ -1001,6 +996,28 @@ public static class ChildProcessModuleInterpreter
         ["message"] = "stdout maxBuffer length exceeded",
         ["code"] = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
     });
+
+    /// <summary>
+    /// Converts a process-start failure into a Node-style error object. A missing executable
+    /// (Win32 ERROR_FILE_NOT_FOUND) becomes an ENOENT error carrying code/errno/syscall/path.
+    /// </summary>
+    private static SharpTSObject SpawnError(Exception ex, string command, string syscall)
+    {
+        if (ex is System.ComponentModel.Win32Exception w32 && w32.NativeErrorCode == 2)
+        {
+            // libuv reports UV_ENOENT as -4058 on Windows, -2 on POSIX.
+            var errno = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? -4058.0 : -2.0;
+            return new(new Dictionary<string, object?>
+            {
+                ["message"] = $"{syscall} {command} ENOENT",
+                ["code"] = "ENOENT",
+                ["errno"] = errno,
+                ["syscall"] = $"{syscall} {command}",
+                ["path"] = command
+            });
+        }
+        return new(new Dictionary<string, object?> { ["message"] = ex.Message });
+    }
 
     private static (string stdin, string stdout, string stderr) ParseStdioModes(SharpTSObject? options)
     {

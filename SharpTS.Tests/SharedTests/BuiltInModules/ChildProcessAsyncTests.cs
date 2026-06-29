@@ -188,6 +188,25 @@ public class ChildProcessAsyncTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spawn_MissingCommand_EmitsEnoentError(ExecutionMode mode)
+    {
+        // A missing executable emits an async 'error' event with code 'ENOENT' (+ syscall/path),
+        // rather than throwing a generic exception.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { spawn } from 'child_process';
+                const c = spawn('this_command_does_not_exist_xyz');
+                c.on('error', (err: any) => console.log('code=' + err.code + ' syscall=' + err.syscall + ' path=' + err.path));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("code=ENOENT syscall=spawn this_command_does_not_exist_xyz path=this_command_does_not_exist_xyz\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Spawn_Kill_SetsKilledAndSignal(ExecutionMode mode)
     {
         // Spawn a long-running process, kill it, and observe live killed/signalCode in 'exit'.
