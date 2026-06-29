@@ -266,6 +266,12 @@ public partial class Interpreter
             // It is not a guest throw, so leave pendingError null.
             blockResult = ExecutionResult.Return(RuntimeValue.FromBoxed(grex.Value));
         }
+        catch (Runtime.Exceptions.WorkerTerminatedException)
+        {
+            // worker.terminate() abort — not a guest throw and not catchable; re-throw ahead of
+            // the generic handler so it unwinds the worker thread to its host loop.
+            throw;
+        }
         catch (Exception ex)
         {
             // Capture host exceptions as pending errors. A re-caught ThrowException is a guest
@@ -480,6 +486,12 @@ public partial class Interpreter
                 }
             }
         }
+        catch (Runtime.Exceptions.WorkerTerminatedException)
+        {
+            // worker.terminate() abort — not catchable by guest code; re-throw ahead of the
+            // generic handler so it unwinds the worker thread.
+            throw;
+        }
         catch (Exception ex)
         {
             // A re-caught ThrowException is a genuine guest throw crossing back through a host
@@ -546,6 +558,12 @@ public partial class Interpreter
                     }
                     return (true, ExecutionResult.Success());
                 }
+                catch (Runtime.Exceptions.WorkerTerminatedException)
+                {
+                    // worker.terminate() abort raised while running a guest catch block —
+                    // re-throw so it unwinds the worker thread instead of being re-caught.
+                    throw;
+                }
                 catch (Exception ex)
                 {
                     object? catchError = ex is ThrowException tex ? tex.Value : ex.Message;
@@ -609,6 +627,12 @@ public partial class Interpreter
             // try. A return is not catchable, so bypass the catch clause and record a Return;
             // the finally block below still runs (ECMA-262 §27.5.3.4).
             pendingResult = ExecutionResult.Return(RuntimeValue.FromBoxed(grex.Value));
+        }
+        catch (Runtime.Exceptions.WorkerTerminatedException)
+        {
+            // worker.terminate() abort — a worker cannot catch its own termination; re-throw
+            // ahead of the guest catch so it unwinds the worker thread (skips this catch/finally).
+            throw;
         }
         catch (Exception ex)
         {
@@ -681,6 +705,12 @@ public partial class Interpreter
                     // propagate as a Return (which runs the enclosing finally) rather than
                     // re-throwing it as a guest error (ECMA-262 §27.5.3.4).
                     return (true, ExecutionResult.Return(RuntimeValue.FromBoxed(grex.Value)));
+                }
+                catch (Runtime.Exceptions.WorkerTerminatedException)
+                {
+                    // worker.terminate() abort raised while running a guest catch block —
+                    // re-throw so it unwinds the worker thread instead of being re-caught.
+                    throw;
                 }
                 catch (Exception ex)
                 {

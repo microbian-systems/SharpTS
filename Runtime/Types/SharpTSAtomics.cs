@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using SharpTS.Runtime.BuiltIns;
+using SharpTS.Runtime.Exceptions;
 
 namespace SharpTS.Runtime.Types;
 
@@ -62,6 +63,12 @@ public static class SharpTSAtomics
     {
         public readonly object Lock = new();
         public bool Notified;
+
+        /// <summary>
+        /// Set by a worker's CancellationToken when <c>worker.terminate()</c> fires, so a
+        /// parked <c>Monitor.Wait</c> wakes and unwinds the worker thread instead of leaking.
+        /// </summary>
+        public bool Cancelled;
     }
 
     #region Validation
@@ -498,23 +505,47 @@ public static class SharpTSAtomics
     /// Waits until the value at the given position changes from the expected value.
     /// Returns "ok" if notified, "timed-out" if timeout expired, "not-equal" if value doesn't match.
     /// </summary>
-    public static string Wait(SharpTSTypedArray typedArray, int index, object? expectedValue, double? timeout = null)
+    public static string Wait(SharpTSTypedArray typedArray, int index, object? expectedValue, double? timeout = null, CancellationToken cancellationToken = default)
     {
         if (typedArray is SharpTSInt32Array int32Array)
         {
             ValidateSharedInt32Array(typedArray, "wait");
-            return WaitInt32(int32Array, index, (int)Convert.ToDouble(expectedValue), timeout);
+            return WaitInt32(int32Array, index, (int)Convert.ToDouble(expectedValue), timeout, cancellationToken);
         }
         else if (typedArray is SharpTSBigInt64Array bigInt64Array)
         {
             ValidateSharedBigInt64Array(typedArray, "wait");
-            return WaitBigInt64(bigInt64Array, index, ConvertToBigInt64(expectedValue), timeout);
+            return WaitBigInt64(bigInt64Array, index, ConvertToBigInt64(expectedValue), timeout, cancellationToken);
         }
 
         throw new Exception("TypeError: Atomics.wait requires an Int32Array or BigInt64Array");
     }
 
-    private static string WaitInt32(SharpTSInt32Array array, int index, int expectedValue, double? timeout)
+    /// <summary>
+    /// Registers a cancellation hook that wakes <paramref name="entry"/> when the worker's
+    /// token fires (<c>worker.terminate()</c>). Returns a registration the caller disposes.
+    /// Safe against the already-cancelled case: the callback runs synchronously here, before
+    /// the caller takes <c>entry.Lock</c> / parks, and the caller re-checks <c>Cancelled</c>.
+    /// </summary>
+    private static CancellationTokenRegistration RegisterWaitCancellation(WaiterEntry entry, CancellationToken cancellationToken)
+    {
+        if (!cancellationToken.CanBeCanceled)
+            return default;
+
+        return cancellationToken.Register(static state =>
+        {
+            var e = (WaiterEntry)state!;
+            // Monitor.Wait releases e.Lock while parked, so this acquires it, flags the
+            // cancellation, and pulses the parked worker awake.
+            lock (e.Lock)
+            {
+                e.Cancelled = true;
+                Monitor.Pulse(e.Lock);
+            }
+        }, entry);
+    }
+
+    private static string WaitInt32(SharpTSInt32Array array, int index, int expectedValue, double? timeout, CancellationToken cancellationToken)
     {
         ValidateIndex(array, index);
 
@@ -531,6 +562,7 @@ public static class SharpTSAtomics
         var entry = new WaiterEntry();
         waiterList.Add(entry);
 
+        var registration = RegisterWaitCancellation(entry, cancellationToken);
         try
         {
             lock (entry.Lock)
@@ -539,6 +571,10 @@ public static class SharpTSAtomics
                 if (Volatile.Read(ref slot) != expectedValue)
                     return "not-equal";
 
+                // terminate() may have already fired before we registered / parked.
+                if (entry.Cancelled || cancellationToken.IsCancellationRequested)
+                    throw new WorkerTerminatedException();
+
                 int timeoutMs = timeout.HasValue && timeout.Value >= 0
                     ? (int)Math.Min(timeout.Value, int.MaxValue)
                     : Timeout.Infinite;
@@ -546,17 +582,22 @@ public static class SharpTSAtomics
                 if (timeoutMs == 0)
                     return "timed-out";
 
-                bool signaled = Monitor.Wait(entry.Lock, timeoutMs);
+                Monitor.Wait(entry.Lock, timeoutMs);
+
+                if (entry.Cancelled)
+                    throw new WorkerTerminatedException();
+
                 return entry.Notified ? "ok" : "timed-out";
             }
         }
         finally
         {
+            registration.Dispose();
             waiterList.Remove(entry);
         }
     }
 
-    private static string WaitBigInt64(SharpTSBigInt64Array array, int index, long expectedValue, double? timeout)
+    private static string WaitBigInt64(SharpTSBigInt64Array array, int index, long expectedValue, double? timeout, CancellationToken cancellationToken)
     {
         ValidateIndex(array, index);
 
@@ -572,12 +613,16 @@ public static class SharpTSAtomics
         var entry = new WaiterEntry();
         waiterList.Add(entry);
 
+        var registration = RegisterWaitCancellation(entry, cancellationToken);
         try
         {
             lock (entry.Lock)
             {
                 if (Volatile.Read(ref slot) != expectedValue)
                     return "not-equal";
+
+                if (entry.Cancelled || cancellationToken.IsCancellationRequested)
+                    throw new WorkerTerminatedException();
 
                 int timeoutMs = timeout.HasValue && timeout.Value >= 0
                     ? (int)Math.Min(timeout.Value, int.MaxValue)
@@ -586,12 +631,17 @@ public static class SharpTSAtomics
                 if (timeoutMs == 0)
                     return "timed-out";
 
-                bool signaled = Monitor.Wait(entry.Lock, timeoutMs);
+                Monitor.Wait(entry.Lock, timeoutMs);
+
+                if (entry.Cancelled)
+                    throw new WorkerTerminatedException();
+
                 return entry.Notified ? "ok" : "timed-out";
             }
         }
         finally
         {
+            registration.Dispose();
             waiterList.Remove(entry);
         }
     }
@@ -717,12 +767,15 @@ public static class SharpTSAtomics
                 return RuntimeValue.FromBoxed(CompareExchange(arr, (int)args[1].AsNumberUnsafe(), args[2].ToObject(), args[3].ToObject()));
             }),
 
-            "wait" => BuiltInMethod.CreateV2("wait", 3, 4, static (_, _, args) =>
+            "wait" => BuiltInMethod.CreateV2("wait", 3, 4, static (interp, _, args) =>
             {
                 if (args.Length < 3 || args[0].ToObject() is not SharpTSTypedArray arr || !args[1].IsNumber)
                     throw new Exception("Atomics.wait requires a typed array, index, and expected value");
                 double? timeout = args.Length > 3 && args[3].IsNumber ? args[3].AsNumberUnsafe() : null;
-                return RuntimeValue.FromString(Wait(arr, (int)args[1].AsNumberUnsafe(), args[2].ToObject(), timeout));
+                // A worker sets its termination token on the interpreter so terminate() can wake
+                // a parked wait; on the main thread the token is non-cancelable (a no-op).
+                var terminationToken = interp?.WorkerTerminationToken ?? default;
+                return RuntimeValue.FromString(Wait(arr, (int)args[1].AsNumberUnsafe(), args[2].ToObject(), timeout, terminationToken));
             }),
 
             "notify" => BuiltInMethod.CreateV2("notify", 2, 3, static (_, _, args) =>

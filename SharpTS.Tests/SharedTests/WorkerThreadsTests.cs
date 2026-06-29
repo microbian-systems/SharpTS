@@ -488,6 +488,96 @@ public class WorkerThreadsTests
         Assert.Contains("terminated", output);
     }
 
+    /// <summary>
+    /// #997: terminating a worker parked in <c>Atomics.wait</c> must actually unwind the
+    /// worker thread (not just settle the promise), and the <c>'exit'</c> event must report
+    /// code 1. The worker parks on a never-notified index, so before the fix the
+    /// <c>Monitor.Wait(Infinite)</c> had no cancellation hook: the 5s join timed out, the
+    /// thread leaked, and its <c>finally</c> — the only emitter of <c>'exit'</c> — never ran.
+    /// </summary>
+    /// <remarks>
+    /// The arriving <c>'exit'</c> event is the correctness signal: it is enqueued solely from
+    /// the worker thread's <c>finally</c>, which executes only once the thread unwinds out of
+    /// the parked wait. A still-leaked thread would never produce it. <c>"survived"</c> after
+    /// the wait must never be delivered — termination is not catchable by guest code.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_Terminate_WakesAtomicsWaitAndEmitsExitCode1(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_wait.ts"] = """
+                // Park on a worker-local SAB index that nothing ever notifies, so the wait
+                // blocks forever unless terminate() unwinds the thread.
+                const view = new Int32Array(new SharedArrayBuffer(16));
+                postMessage("parked");
+                Atomics.wait(view, 0, 0);
+                postMessage("survived"); // unreachable once terminate() aborts the worker
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_wait.ts");
+                w.on("exit", (code: any) => { console.log("exit:" + code); });
+                w.on("message", (e: any) => {
+                    if (e.data === "parked") {
+                        // Give the worker a beat to actually enter the wait, then terminate.
+                        setTimeout(async () => {
+                            await w.terminate();
+                            console.log("terminated");
+                        }, 50);
+                    } else {
+                        console.log("got:" + e.data);
+                    }
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("exit:1", output);
+        Assert.Contains("terminated", output);
+        Assert.DoesNotContain("got:survived", output);
+    }
+
+    /// <summary>
+    /// #997: terminating a cooperatively-idle worker (its event loop held open by a pending
+    /// timer) stops it promptly via <c>Interpreter.Shutdown()</c> and reports <c>'exit'</c>
+    /// code 1 — Node uses 1 for a terminated worker. Before the fix the exit code was
+    /// hardcoded 0 and nothing stopped the loop early, so a terminated worker either reported
+    /// 0 or waited out the 5s join.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_Terminate_StopsCooperativeEventLoopWorkerWithExitCode1(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_idle.ts"] = """
+                // Hold the worker's loop open well past terminate() so the only way it exits
+                // is the terminate() Shutdown(), not the timer firing.
+                setTimeout(() => {}, 3000);
+                postMessage("ready");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_idle.ts");
+                w.on("exit", (code: any) => { console.log("exit:" + code); });
+                w.on("message", (e: any) => {
+                    if (e.data === "ready") {
+                        setTimeout(async () => {
+                            await w.terminate();
+                            console.log("terminated");
+                        }, 50);
+                    }
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("exit:1", output);
+        Assert.Contains("terminated", output);
+    }
+
     #endregion
 
     #region Running-Worker event-loop liveness (#329)

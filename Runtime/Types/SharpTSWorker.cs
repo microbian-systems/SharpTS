@@ -4,6 +4,7 @@ using SharpTS.Execution;
 using SharpTS.Modules;
 using SharpTS.Parsing;
 using SharpTS.Runtime.BuiltIns;
+using SharpTS.Runtime.Exceptions;
 using SharpTS.TypeSystem;
 
 namespace SharpTS.Runtime.Types;
@@ -38,6 +39,15 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     private volatile bool _isTerminated;
     private Exception? _workerError;
     private Interpreter? _parentInterpreter;
+
+    // The worker's own (isolated) interpreter, captured once it starts so terminate()
+    // can Shutdown() its event loop promptly (mirrors SharpTSClusterWorker._workerInterpreter).
+    private volatile Interpreter? _workerInterpreter;
+
+    // Exit code reported via the 'exit' event and the terminate() promise. 0 on clean exit;
+    // 1 on terminate() or an uncaught worker error (Node semantics). Written by the worker
+    // thread's finally; read by Terminate()'s join task — volatile for cross-thread visibility.
+    private volatile int _exitCode;
 
     // Event-loop keep-alive accounting against the parent interpreter. Node keeps
     // the parent process alive for a running Worker's lifetime by default;
@@ -252,18 +262,39 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     /// </summary>
     private void WorkerThreadMain()
     {
+        int exitCode = 0;
         try
         {
             RunWorkerScript();
+
+            // A guest-level uncaught error is printed by the interpreter and surfaced via
+            // LastUncaughtError rather than thrown back here; Node exits such a worker with 1.
+            if (_workerInterpreter?.LastUncaughtError != null)
+                exitCode = 1;
+        }
+        catch (WorkerTerminatedException)
+        {
+            // terminate() unwound the worker (e.g. out of a parked Atomics.wait). This is an
+            // abort, not an error — Node emits 'exit' with code 1 and no 'error' event.
+            exitCode = 1;
         }
         catch (Exception ex)
         {
             _workerError = ex;
-            // Emit error on parent thread
-            EnqueueErrorToParent(ex);
+            // A terminated worker must not surface an 'error' event; a genuine uncaught
+            // host error must.
+            if (!_isTerminated)
+                EnqueueErrorToParent(ex);
+            exitCode = 1;
         }
         finally
         {
+            // terminate() always yields exit code 1 even if the worker happened to unwind
+            // through a clean path (e.g. event loop stopped by Shutdown()).
+            if (_isTerminated)
+                exitCode = 1;
+            _exitCode = exitCode;
+
             _isRunning = false;
             _parentToWorkerQueue.CompleteAdding();
             _workerToParentQueue.CompleteAdding();
@@ -275,7 +306,7 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             ReleaseRunningRef();
 
             // Notify parent that worker has exited
-            EnqueueExitToParent(0);
+            EnqueueExitToParent(exitCode);
         }
     }
 
@@ -295,6 +326,11 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
 
         // Create isolated interpreter for this worker
         using var interpreter = new Interpreter();
+
+        // Expose this worker to terminate(): Shutdown() stops an idle event loop, and the
+        // termination token lets a parked Atomics.wait unwind the thread (#997).
+        _workerInterpreter = interpreter;
+        interpreter.SetWorkerTerminationToken(_cts.Token);
 
         // Set up worker globals
         SetupWorkerGlobals(interpreter);
@@ -630,6 +666,12 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         _cts.Cancel();
         _parentToWorkerQueue.CompleteAdding();
 
+        // Stop an idle/event-loop worker cooperatively at its next blocking point instead of
+        // waiting out the 5s join (mirrors SharpTSClusterWorker Kill/Disconnect). A worker
+        // parked in Atomics.wait is woken by the _cts cancellation hook installed in
+        // SharpTSAtomics; a worker in a tight native call is the documented .NET ceiling.
+        _workerInterpreter?.Shutdown();
+
         // The worker is being torn down — drop its running keep-alive Ref now
         // rather than waiting for the worker thread's finally, so the only loop
         // keep-alive from here is the bounded join Ref below. Idempotent with the
@@ -648,7 +690,11 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         var task = Task.Run<object?>(() =>
         {
             _thread.Join(5000); // Wait up to 5 seconds
-            return (double)0;
+            // Resolve with the worker's actual exit code (1 once the thread unwinds via
+            // terminate; the worker's finally sets _exitCode before the thread ends, so it is
+            // visible here). If a tight native loop outlasts the join, this stays 0 — the
+            // documented ceiling.
+            return (double)_exitCode;
         });
         if (_loopRef != null && loopUnref != null)
         {

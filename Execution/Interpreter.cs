@@ -538,6 +538,23 @@ public partial class Interpreter : IDisposable
     /// </summary>
     public void SetVmTimeoutToken(CancellationToken token) => _vmTimeoutToken = token;
 
+    // Worker-termination support — a worker sets this to its CancellationToken so a
+    // synchronous runtime op that observes it (Atomics.wait) can unwind the worker thread
+    // when worker.terminate() cancels it. Distinct from _vmTimeoutToken so the worker abort
+    // raises a non-catchable WorkerTerminatedException rather than a guest "timed out" throw.
+    private CancellationToken _workerTerminationToken;
+
+    /// <summary>
+    /// Associates this interpreter with the owning worker's cancellation token so blocking
+    /// runtime operations (notably <c>Atomics.wait</c>) can be woken by <c>worker.terminate()</c>.
+    /// </summary>
+    public void SetWorkerTerminationToken(CancellationToken token) => _workerTerminationToken = token;
+
+    /// <summary>
+    /// The owning worker's termination token, or a non-cancelable default on the main thread.
+    /// </summary>
+    public CancellationToken WorkerTerminationToken => _workerTerminationToken;
+
     /// <summary>
     /// Represents a scheduled timer callback that will be executed by the main thread.
     /// </summary>
@@ -1344,6 +1361,12 @@ public partial class Interpreter : IDisposable
             // Always run the event loop - servers/timers may have been registered
             RunEventLoop();
         }
+        catch (Runtime.Exceptions.WorkerTerminatedException)
+        {
+            // worker.terminate() unwound this worker thread — propagate silently (not a
+            // guest error) so SharpTSWorker.WorkerThreadMain emits exit, not error.
+            throw;
+        }
         catch (Exception error)
         {
             Out.WriteLine($"Runtime Error: {error.Message}");
@@ -1500,6 +1523,11 @@ public partial class Interpreter : IDisposable
             // Always run the event loop at the end - servers/timers may have been
             // registered during module execution (even without a main function)
             RunEventLoop();
+        }
+        catch (Runtime.Exceptions.WorkerTerminatedException)
+        {
+            // worker.terminate() unwound this worker thread — propagate silently (see Interpret).
+            throw;
         }
         catch (ThrowException tex)
         {
