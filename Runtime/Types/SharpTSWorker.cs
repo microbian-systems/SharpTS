@@ -339,6 +339,12 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         var messageHandler = new WorkerMessageHandler(this, interpreter);
         messageHandler.Start();
 
+        // The worker environment is ready and user JS is about to run — Node emits 'online'
+        // here. Scheduled before any user code so it always precedes the worker's first
+        // 'message'. Not emitted on an earlier failure (e.g. missing script) — the worker
+        // never came online (#998).
+        EnqueueOnlineToParent();
+
         try
         {
             // A worker whose script uses import/export must run through the same
@@ -527,6 +533,16 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     }
 
     /// <summary>
+    /// Enqueues the 'online' event (Node emits it once the worker's JS starts executing).
+    /// Carries no payload, matching Node. Scheduled before the worker runs any user code so
+    /// it is always delivered ahead of the worker's first 'message'.
+    /// </summary>
+    private void EnqueueOnlineToParent()
+    {
+        ScheduleOnMainThread(() => EmitEventOnMainThread("online"));
+    }
+
+    /// <summary>
     /// Enqueues an error event to be delivered to the parent.
     /// </summary>
     private void EnqueueErrorToParent(Exception ex)
@@ -592,6 +608,23 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         {
             // Compiled path - use direct emit
             EmitDirect(eventName, data);
+        }
+    }
+
+    /// <summary>
+    /// Emits an event with no payload (e.g. 'online') so listeners receive zero arguments,
+    /// matching Node — rather than a spurious trailing null/undefined.
+    /// </summary>
+    private void EmitEventOnMainThread(string eventName)
+    {
+        if (_parentInterpreter != null)
+        {
+            var emitMethod = GetMember("emit") as BuiltInMethod;
+            emitMethod?.Call(_parentInterpreter, [eventName]);
+        }
+        else
+        {
+            EmitDirect(eventName);
         }
     }
 

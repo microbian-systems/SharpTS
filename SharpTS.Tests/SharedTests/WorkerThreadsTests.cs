@@ -580,6 +580,40 @@ public class WorkerThreadsTests
 
     #endregion
 
+    #region 'online' event (#998)
+
+    /// <summary>
+    /// #998: Node emits <c>'online'</c> on a Worker once the worker's JS starts executing,
+    /// before any <c>'message'</c> it posts. SharpTS emitted no such event. The worker posts
+    /// a message at the top of its script; the parent must see <c>'online'</c> first.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_Online_FiresBeforeFirstMessage(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_post.ts"] = """
+                postMessage("hello");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_post.ts");
+                w.on("online", () => { console.log("online"); });
+                w.on("message", (e: any) => { console.log("message:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("online", output);
+        Assert.Contains("message:hello", output);
+        // 'online' must be delivered before the first 'message'.
+        Assert.True(output.IndexOf("online") < output.IndexOf("message:hello"),
+            $"'online' should precede the first 'message'. Output:\n{output}");
+    }
+
+    #endregion
+
     #region Running-Worker event-loop liveness (#329)
 
     /// <summary>
