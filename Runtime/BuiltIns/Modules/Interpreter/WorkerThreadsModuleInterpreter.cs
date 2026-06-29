@@ -72,10 +72,13 @@ public static class WorkerThreadsModuleInterpreter
                 return RuntimeValue.Undefined;
             }),
 
-            // moveMessagePortToContext (not fully implemented - requires VM)
+            // moveMessagePortToContext: not supported. It re-homes a MessagePort into a vm
+            // context's V8 isolate — SharpTS has no per-context isolate model (one process,
+            // shared interpreters), so there is nothing to move a port into (#1004).
             ["moveMessagePortToContext"] = BuiltInMethod.CreateV2("moveMessagePortToContext", 2, (interp, recv, args) =>
             {
-                throw new Exception("moveMessagePortToContext is not supported in SharpTS");
+                throw new Exception(
+                    "moveMessagePortToContext() is not supported in SharpTS: it requires V8 vm contexts/isolates, which SharpTS's single-process threading model does not provide.");
             }),
 
             // getEnvironmentData / setEnvironmentData — a real per-process data store keyed by

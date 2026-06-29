@@ -771,6 +771,96 @@ public class WorkerThreadsTests
 
     #endregion
 
+    #region introspection (#1004)
+
+    /// <summary>
+    /// #1004: <c>worker.performance.eventLoopUtilization()</c> returns a best-effort
+    /// <c>{ idle, active, utilization }</c> object (SharpTS has no precise idle/active loop
+    /// accounting). Dual-mode.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_Performance_EventLoopUtilization_ReturnsShape(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_ok.ts"] = """
+                postMessage("ok");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w: any = new Worker(__dirname + "/worker_ok.ts", { workerData: "go" });
+                const elu: any = w.performance.eventLoopUtilization();
+                console.log("elu:" + typeof elu.idle + "," + typeof elu.active + "," + typeof elu.utilization);
+                w.on("message", (e: any) => { console.log("worker:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("elu:number,number,number", output);
+        Assert.Contains("worker:ok", output);
+    }
+
+    /// <summary>
+    /// #1004: <c>worker.getHeapSnapshot()</c> throws a clear "not supported" error — a
+    /// V8-format heap snapshot has no .NET equivalent (epic ceiling). Dual-mode.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_GetHeapSnapshot_ThrowsClearError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_ok.ts"] = """
+                postMessage("ok");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w: any = new Worker(__dirname + "/worker_ok.ts", { workerData: "go" });
+                try {
+                    w.getHeapSnapshot();
+                    console.log("no-throw");
+                } catch (e: any) {
+                    console.log("heap-err:" + (("" + (e && e.message ? e.message : e)).indexOf("not supported") >= 0));
+                }
+                w.on("message", (e: any) => { console.log("worker:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("heap-err:true", output);
+        Assert.DoesNotContain("no-throw", output);
+    }
+
+    /// <summary>
+    /// #1004: <c>moveMessagePortToContext()</c> throws a clear "not supported" error — it needs
+    /// V8 vm contexts/isolates, which SharpTS's single-process model does not provide.
+    /// Interpreter only (the compiled worker_threads emitter does not expose it).
+    /// </summary>
+    [Fact]
+    public void MoveMessagePortToContext_ThrowsClearError_Interpreted()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { moveMessagePortToContext, MessageChannel } from "worker_threads";
+                const ch: any = new MessageChannel();
+                try {
+                    moveMessagePortToContext(ch.port1, {});
+                    console.log("no-throw");
+                } catch (e: any) {
+                    console.log("mvp-err:" + (("" + (e && e.message ? e.message : e)).indexOf("not supported") >= 0));
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", ExecutionMode.Interpreted);
+        Assert.Contains("mvp-err:true", output);
+        Assert.DoesNotContain("no-throw", output);
+    }
+
+    #endregion
+
     #region worker stdio + resourceLimits (#1003)
 
     /// <summary>

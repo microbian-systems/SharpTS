@@ -57,6 +57,10 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     private readonly SharpTSReadable? _stderr;
     private readonly object? _resourceLimits;
 
+    // Wall-clock start, used for the best-effort worker.performance.eventLoopUtilization()
+    // (#1004) — SharpTS has no precise idle/active loop accounting.
+    private readonly long _startTick = Environment.TickCount64;
+
     // Event-loop keep-alive accounting against the parent interpreter. Node keeps
     // the parent process alive for a running Worker's lifetime by default;
     // worker.unref() opts out and worker.ref() opts back in. Without this, a
@@ -865,6 +869,29 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             "stderr" => _stderr is not null ? (object?)_stderr : null,
             "stdin" => null,
             "resourceLimits" => _resourceLimits ?? new SharpTSObject(new Dictionary<string, object?>()),
+
+            // #1004 introspection. getHeapSnapshot has no .NET equivalent (V8 snapshot format) —
+            // a clear error beats "undefined is not a function". performance offers a best-effort
+            // eventLoopUtilization (SharpTS lacks precise idle/active loop accounting).
+            "getHeapSnapshot" => BuiltInMethod.CreateV2("getHeapSnapshot", 0, 1, (_, _, _) =>
+                throw new Exception(
+                    "worker.getHeapSnapshot() is not supported in SharpTS: a V8-format heap snapshot has no .NET equivalent.")),
+
+            "performance" => new SharpTSObject(new Dictionary<string, object?>
+            {
+                ["eventLoopUtilization"] = BuiltInMethod.CreateV2("eventLoopUtilization", 0, 2, (_, _, _) =>
+                {
+                    // Best-effort: treat the worker as active for its whole lifetime (no idle
+                    // accounting). `active` is wall-clock ms since the worker was created.
+                    double active = Math.Max(0, Environment.TickCount64 - _startTick);
+                    return RuntimeValue.FromObject(new SharpTSObject(new Dictionary<string, object?>
+                    {
+                        ["idle"] = 0.0,
+                        ["active"] = active,
+                        ["utilization"] = 1.0,
+                    }));
+                }),
+            }),
 
             "postMessage" => BuiltInMethod.CreateV2("postMessage", 1, 2, (_, _, args) =>
             {
