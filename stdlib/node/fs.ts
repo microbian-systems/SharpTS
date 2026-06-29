@@ -791,6 +791,168 @@ export function ftruncate(fd: number, len?: any, callback?: any): void {
 }
 
 // ===========================================================================
+// FileHandle (#972) — the promise-based file-descriptor workflow.
+//
+// `fsPromises.open()` resolves a FileHandle wrapping an open fd. Each method
+// forwards to the existing fd ops (read/write/stat/truncate/close) wrapped in a
+// Promise. The path-scoped conveniences Node also exposes on a handle —
+// readFile/writeFile/appendFile/chmod/chown/utimes and the stream factories —
+// re-derive from the path the handle was opened with. Pure TS over the
+// primitives, so the interpreter and compiled modes are identical by
+// construction.
+//
+// Divergence note: Node backs createReadStream/createWriteStream/appendFile/
+// chmod/chown/utimes by the handle's own fd (shared position, auto-close with
+// the handle). SharpTS re-derives those from the originating path — same file,
+// independent descriptor. The core fd ops (read/write/stat/truncate/close)
+// share the handle's descriptor exactly, so the open→read/write→stat→truncate→
+// close round-trip is faithful.
+// ===========================================================================
+
+/** Extracts a string encoding from a read/readFile options argument (or null). */
+function __encodingOf(options: any): any {
+    if (typeof options === 'string') return options;
+    if (options !== null && typeof options === 'object' && options.encoding) return options.encoding;
+    return null;
+}
+
+class FileHandle {
+    fd: number;
+    private __path: string;
+    private __closed: boolean;
+    constructor(fd: number, path: string) {
+        this.fd = fd;
+        this.__path = path;
+        this.__closed = false;
+    }
+
+    /** Reads into a buffer; resolves `{ bytesRead, buffer }`. Accepts the
+     *  positional `(buffer, offset, length, position)` form or `(options)`. */
+    read(buffer?: any, offset?: any, length?: any, position?: any): Promise<any> {
+        let buf = buffer, off = offset, len = length, pos = position;
+        // read(options): a lone, non-Buffer object holds { buffer, offset, length, position }.
+        if (buffer !== null && buffer !== undefined && typeof buffer === 'object' && !Buffer.isBuffer(buffer)) {
+            buf = buffer.buffer; off = buffer.offset; len = buffer.length; pos = buffer.position;
+        }
+        if (buf === undefined || buf === null) buf = Buffer.alloc(16384);
+        if (off === undefined || off === null) off = 0;
+        if (len === undefined || len === null) len = buf.length - off;
+        if (pos === undefined) pos = null;
+        return __promisifyValue(() => readSync(this.fd, buf, off, len, pos))
+            .then((bytesRead: any) => ({ bytesRead, buffer: buf }));
+    }
+
+    /** Writes a buffer or string; resolves `{ bytesWritten, buffer }`. */
+    write(data: any, a?: any, b?: any, c?: any): Promise<any> {
+        if (typeof data === 'string') {
+            // write(string, position?, encoding?) — the primitive's string path writes UTF-8.
+            return __promisifyValue(() => (a === undefined ? writeSync(this.fd, data) : writeSync(this.fd, data, a)))
+                .then((bytesWritten: any) => ({ bytesWritten, buffer: data }));
+        }
+        return __promisifyValue(() => writeSync(this.fd, data, a, b, c))
+            .then((bytesWritten: any) => ({ bytesWritten, buffer: data }));
+    }
+
+    /** Reads sequentially into an array of buffers; resolves `{ bytesRead, buffers }`. */
+    readv(buffers: any[], position?: any): Promise<any> {
+        return __promisifyValue(() => {
+            let pos = (position === undefined || position === null) ? null : position;
+            let total = 0;
+            for (const b of buffers) {
+                const n = readSync(this.fd, b, 0, b.length, pos);
+                total += n;
+                if (pos !== null) pos += n;
+                if (n < b.length) break; // short read => EOF
+            }
+            return total;
+        }).then((bytesRead: any) => ({ bytesRead, buffers }));
+    }
+
+    /** Writes an array of buffers sequentially; resolves `{ bytesWritten, buffers }`. */
+    writev(buffers: any[], position?: any): Promise<any> {
+        return __promisifyValue(() => {
+            let pos = (position === undefined || position === null) ? null : position;
+            let total = 0;
+            for (const b of buffers) {
+                const n = writeSync(this.fd, b, 0, b.length, pos);
+                total += n;
+                if (pos !== null) pos += n;
+            }
+            return total;
+        }).then((bytesWritten: any) => ({ bytesWritten, buffers }));
+    }
+
+    /** Reads the whole file from the fd; resolves a Buffer (or string with an encoding). */
+    readFile(options?: any): Promise<any> {
+        return __promisifyValue(() => {
+            const size = fstatSync(this.fd).size;
+            const buf = Buffer.alloc(size);
+            let off = 0;
+            while (off < size) {
+                const n = readSync(this.fd, buf, off, size - off, null);
+                if (n <= 0) break;
+                off += n;
+            }
+            const enc = __encodingOf(options);
+            return (enc && enc !== 'buffer') ? buf.toString(enc) : buf;
+        });
+    }
+
+    /** Writes data to the fd, replacing existing contents. */
+    writeFile(data: any, options?: any): Promise<void> {
+        return this.write(data).then(() => undefined);
+    }
+
+    /** Appends data to the underlying file. */
+    appendFile(data: any, options?: any): Promise<void> { return __pAppendFile(this.__path, data, options); }
+
+    /** Retrieves the Stats for the open fd. */
+    stat(options?: any): Promise<any> { return __promisifyValue(() => fstatSync(this.fd, options)); }
+
+    /** Truncates the open fd to `len` (default 0). */
+    truncate(len?: any): Promise<void> { return __promisifyVoid(() => ftruncateSync(this.fd, len)); }
+
+    /** Changes the permissions of the underlying file. */
+    chmod(mode: number): Promise<void> { return __pChmod(this.__path, mode); }
+
+    /** Changes the owner and group of the underlying file. */
+    chown(uid: number, gid: number): Promise<void> { return __promisifyVoid(() => chownSync(this.__path, uid, gid)); }
+
+    /** Changes the file-system timestamps of the underlying file. */
+    utimes(atime: number, mtime: number): Promise<void> { return __pUtimes(this.__path, atime, mtime); }
+
+    /** Flushes pending writes. SharpTS sync I/O is already durable, so this resolves. */
+    sync(): Promise<void> { return Promise.resolve(); }
+
+    /** Flushes pending data writes. As with sync(), a resolved no-op here. */
+    datasync(): Promise<void> { return Promise.resolve(); }
+
+    /** Returns a ReadStream over the underlying file. */
+    createReadStream(options?: any): any { return createReadStream(this.__path, options); }
+
+    /** Returns a WriteStream over the underlying file. */
+    createWriteStream(options?: any): any { return createWriteStream(this.__path, options); }
+
+    /** Closes the file descriptor. Idempotent. */
+    close(): Promise<void> {
+        return __promisifyVoid(() => {
+            if (this.__closed) return;
+            this.__closed = true;
+            closeSync(this.fd);
+        });
+    }
+}
+
+/** Opens a file and resolves a FileHandle (the fsPromises.open workflow). */
+function __openHandle(path: string, flags?: any, mode?: any): Promise<any> {
+    return __promisifyValue(() => {
+        const f = (flags === undefined || flags === null) ? 'r' : flags;
+        const fd = (mode === undefined || mode === null) ? openSync(path, f) : openSync(path, f, mode);
+        return new FileHandle(fd, path);
+    });
+}
+
+// ===========================================================================
 // fs.promises namespace — assembled from the promise primitives.
 // Each method is wrapped in an arrow so the call reaches the primitive at a
 // call-site (the emitter dispatches method calls, not method values).
@@ -824,6 +986,7 @@ export const promises = {
     symlink: (target: string, path: string, type?: any): Promise<void> => __pSymlink(target, path, type),
     link: (existingPath: string, newPath: string): Promise<void> => __pLink(existingPath, newPath),
     mkdtemp: (prefix: string): Promise<any> => __pMkdtemp(prefix),
+    open: (path: string, flags?: any, mode?: any): Promise<any> => __openHandle(path, flags, mode),
     opendir: (path: string, options?: any): Promise<any> => Promise.resolve(opendirSync(path, options)),
     watch: (filename: string, options?: any): any => __watchAsync(filename, options),
     constants,

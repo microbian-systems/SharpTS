@@ -1784,4 +1784,80 @@ public class FsModuleTests
     }
 
     #endregion
+
+    #region FileHandle / fsPromises.open (#972)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_FileHandle_OpenWriteReadStatTruncateClose(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fsp from 'fs/promises';
+                import * as fs from 'fs';
+                import * as os from 'os';
+                import { Buffer } from 'buffer';
+                async function main() {
+                    const f = os.tmpdir() + '/fh972_{{uid}}.txt';
+                    const fh: any = await fsp.open(f, 'w+');
+                    const w: any = await fh.write('HELLO WORLD');
+                    console.log(w.bytesWritten);                            // 11
+                    const buf = Buffer.alloc(5);
+                    const r: any = await fh.read(buf, 0, 5, 6);
+                    console.log(r.bytesRead + ':' + r.buffer.toString('utf8')); // 5:WORLD
+                    const st: any = await fh.stat();
+                    console.log(st.size + ':' + st.isFile());               // 11:true
+                    await fh.truncate(5);
+                    const st2: any = await fh.stat();
+                    console.log(st2.size);                                  // 5
+                    await fh.close();
+                    console.log(fs.readFileSync(f, 'utf8'));                 // HELLO
+                    fs.unlinkSync(f);
+                }
+                main();
+                """
+        };
+        Assert.Equal("11\n5:WORLD\n11:true\n5\nHELLO\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_FileHandle_CreateReadStream_And_OpenMissingRejects(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fsp from 'fs/promises';
+                import * as fs from 'fs';
+                import * as os from 'os';
+                async function main() {
+                    const f = os.tmpdir() + '/fh972b_{{uid}}.txt';
+                    fs.writeFileSync(f, 'STREAMED');
+                    const fh: any = await fsp.open(f, 'r');
+                    const stream: any = fh.createReadStream({ encoding: 'utf8' });
+                    let acc = '';
+                    await new Promise((res: any, rej: any) => {
+                        stream.on('data', (chunk: any) => { acc += chunk; });
+                        stream.on('end', () => res(0));
+                        stream.on('error', rej);
+                    });
+                    console.log(acc);                                       // STREAMED
+                    await fh.close();
+                    // Opening a missing file rejects with an ENOENT-coded error.
+                    let code = 'none';
+                    try { await fsp.open(os.tmpdir() + '/fh972_missing_{{uid}}.txt', 'r'); }
+                    catch (e: any) { code = e.code; }
+                    console.log(code);                                      // ENOENT
+                    fs.unlinkSync(f);
+                }
+                main();
+                """
+        };
+        Assert.Equal("STREAMED\nENOENT\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
 }

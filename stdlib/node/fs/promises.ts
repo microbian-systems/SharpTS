@@ -100,6 +100,9 @@ export function link(existingPath: string, newPath: string): Promise<void> { ret
 /** Asynchronously creates a unique temporary directory. */
 export function mkdtemp(prefix: string): Promise<any> { return __mkdtemp(prefix); }
 
+/** Asynchronously opens a file; resolves a FileHandle wrapping the fd (#972). */
+export function open(path: string, flags?: any, mode?: any): Promise<any> { return __fsp.open(path, flags, mode); }
+
 /** Asynchronously opens a directory; returns a Dir handle (async iterable). */
 export function opendir(path: string, options?: any): Promise<any> { return __fsp.opendir(path, options); }
 
@@ -112,5 +115,5 @@ export { constants };
 export default {
     readFile, writeFile, appendFile, stat, lstat, unlink, mkdir, rmdir, rm, cp,
     readdir, rename, copyFile, access, chmod, chown, lchown, truncate, utimes,
-    readlink, realpath, symlink, link, mkdtemp, opendir, watch, constants,
+    readlink, realpath, symlink, link, mkdtemp, open, opendir, watch, constants,
 };
