@@ -1860,4 +1860,171 @@ public class FsModuleTests
     }
 
     #endregion
+
+    #region long-tail ops (#976)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_LongTail_DurabilityAndFdMetadata(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                async function main() {
+                    const f = os.tmpdir() + '/lt976a_{{uid}}.txt';
+                    const fd = fs.openSync(f, 'w+');
+                    fs.writeSync(fd, 'data');
+                    fs.fsyncSync(fd);
+                    fs.fdatasyncSync(fd);
+                    fs.futimesSync(fd, 1700000000, 1700000000);
+                    fs.fchmodSync(fd, 0o644);
+                    fs.closeSync(fd);
+                    console.log('rt:' + (fs.readFileSync(f, 'utf8') === 'data'));      // true
+                    // fchown's callback fires (platform/perm behavior aside).
+                    const ofd = fs.openSync(f, 'r');
+                    const fchown: any = await new Promise((res: any) => fs.fchown(ofd, 0, 0, () => res(true)));
+                    console.log('fchown:' + fchown);                                    // true
+                    // callback fsync round-trip.
+                    await new Promise((res: any, rej: any) => fs.fsync(ofd, (e: any) => e ? rej(e) : res(0)));
+                    fs.closeSync(ofd);
+                    console.log('cbfsync:ok');
+                    // Bad fd surfaces an error with a code (exact code differs by mode).
+                    const bad: any = await new Promise((res: any) => fs.fsync(999999, (e: any) => res(!!(e && typeof e.code === 'string' && e.code.length > 0))));
+                    console.log('badfd:' + bad);                                        // true
+                    fs.unlinkSync(f);
+                }
+                main();
+                """
+        };
+        Assert.Equal("rt:true\nfchown:true\ncbfsync:ok\nbadfd:true\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_LongTail_VectoredIo(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                import { Buffer } from 'buffer';
+                async function main() {
+                    const f = os.tmpdir() + '/lt976v_{{uid}}.txt';
+                    const wfd = fs.openSync(f, 'w');
+                    const wn = fs.writevSync(wfd, [Buffer.from('AB'), Buffer.from('CD')]);
+                    fs.closeSync(wfd);
+                    const rfd = fs.openSync(f, 'r');
+                    const b1 = Buffer.alloc(2), b2 = Buffer.alloc(2);
+                    const rn: any = await new Promise((res: any, rej: any) => fs.readv(rfd, [b1, b2], (e: any, n: any) => e ? rej(e) : res(n)));
+                    fs.closeSync(rfd);
+                    console.log(wn + ':' + rn + ':' + b1.toString() + b2.toString());   // 4:4:ABCD
+                    fs.unlinkSync(f);
+                }
+                main();
+                """
+        };
+        Assert.Equal("4:4:ABCD\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_LongTail_Statfs(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as fsp from 'fs/promises';
+                import * as os from 'os';
+                async function main() {
+                    const d = os.tmpdir();
+                    const s: any = fs.statfsSync(d);
+                    console.log('sync:' + (s.bsize === 4096 && typeof s.blocks === 'number' && typeof s.bavail === 'number'));
+                    const sb: any = fs.statfsSync(d, { bigint: true });
+                    console.log('bigint:' + (typeof sb.bsize === 'bigint'));
+                    const ps: any = await fsp.statfs(d);
+                    console.log('promise:' + (ps.bsize === 4096));
+                    const cb: any = await new Promise((res: any, rej: any) => fs.statfs(d, (e: any, x: any) => e ? rej(e) : res(x.bsize)));
+                    console.log('cb:' + cb);
+                }
+                main();
+                """
+        };
+        Assert.Equal("sync:true\nbigint:true\npromise:true\ncb:4096\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_LongTail_Glob(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as fsp from 'fs/promises';
+                import * as os from 'os';
+                async function main() {
+                    const root = os.tmpdir() + '/lt976g_{{uid}}';
+                    fs.rmSync(root, { recursive: true, force: true });
+                    fs.mkdirSync(root + '/sub', { recursive: true });
+                    fs.writeFileSync(root + '/a.txt', '');
+                    fs.writeFileSync(root + '/b.log', '');
+                    fs.writeFileSync(root + '/sub/c.txt', '');
+                    console.log('star:' + fs.globSync('*.txt', { cwd: root }).sort().join(','));   // a.txt
+                    console.log('ss:' + fs.globSync('**/*.txt', { cwd: root }).sort().join(','));   // a.txt,sub/c.txt
+                    console.log('q:' + fs.globSync('?.log', { cwd: root }).join(','));              // b.log
+                    console.log('none:' + fs.globSync('*.md', { cwd: root }).length);               // 0
+                    const cb: any = await new Promise((res: any, rej: any) => fs.glob('*.txt', { cwd: root }, (e: any, m: any) => e ? rej(e) : res(m.sort().join(','))));
+                    console.log('cb:' + cb);                                                         // a.txt
+                    const it: string[] = [];
+                    for await (const m of fsp.glob('*.txt', { cwd: root })) { it.push(m); }
+                    console.log('iter:' + it.sort().join(','));                                       // a.txt
+                    fs.rmSync(root, { recursive: true });
+                }
+                main();
+                """
+        };
+        Assert.Equal("star:a.txt\nss:a.txt,sub/c.txt\nq:b.log\nnone:0\ncb:a.txt\niter:a.txt\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_LongTail_LchmodEnosys_Lutimes_Exists(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                async function main() {
+                    const f = os.tmpdir() + '/lt976l_{{uid}}.txt';
+                    fs.writeFileSync(f, 'x');
+                    // lchmod is BSD/macOS-only; elsewhere Node fails ENOSYS (we surface it consistently).
+                    let lc = 'none'; try { fs.lchmodSync(f, 0o600); } catch (e: any) { lc = e.code; }
+                    console.log('lchmod:' + lc);                                          // ENOSYS
+                    const lcb: any = await new Promise((res: any) => fs.lchmod(f, 0o600, (e: any) => res(e ? e.code : 'ok')));
+                    console.log('lchmodcb:' + lcb);                                       // ENOSYS
+                    fs.lutimesSync(f, 1700000000, 1700000000);
+                    console.log('lutimes:ok');
+                    const ex: any = await new Promise((res: any) => fs.exists(f, (b: any) => res(b)));
+                    console.log('exists:' + ex);                                          // true
+                    const nex: any = await new Promise((res: any) => fs.exists(f + '.nope', (b: any) => res(b)));
+                    console.log('nexists:' + nex);                                        // false
+                    fs.unlinkSync(f);
+                }
+                main();
+                """
+        };
+        Assert.Equal("lchmod:ENOSYS\nlchmodcb:ENOSYS\nlutimes:ok\nexists:true\nnexists:false\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
 }

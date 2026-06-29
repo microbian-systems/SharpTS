@@ -267,6 +267,14 @@ public static class BuiltInModuleTypes
                 voidType,
                 RequiredParams: 1
             ),
+            // Long-tail fd primitives (#976): the TS facade derives fsync/fdatasync,
+            // fchmod/fchown/futimes (via fdPath), and statfs from these.
+            // fsyncSync(fd) -> void
+            ["fsyncSync"] = new TypeInfo.Function([numberType], voidType),
+            // fdPath(fd) -> string (the open fd's file path)
+            ["fdPath"] = new TypeInfo.Function([numberType], stringType),
+            // statfsRaw(path) -> flat record the TS StatFs shapes
+            ["statfsRaw"] = new TypeInfo.Function([stringType], anyType),
 
             // Directory utilities
             // mkdtempSync(prefix) -> string

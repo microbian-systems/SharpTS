@@ -24,6 +24,8 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
         "symlinkSync", "readlinkSync", "realpathSync", "utimesSync",
         // File descriptor APIs
         "openSync", "closeSync", "readSync", "writeSync", "fstatSync", "ftruncateSync",
+        // Long-tail fd primitives (#976)
+        "fsyncSync", "fdPath", "statfsRaw",
         // Directory utilities
         "mkdtempSync", "opendirSync",
         // Hard links
@@ -74,6 +76,10 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
             "writeSync" => EmitWriteSync(emitter, arguments),
             "fstatSync" => EmitFstatSync(emitter, arguments),
             "ftruncateSync" => EmitFtruncateSync(emitter, arguments),
+            // Long-tail fd primitives (#976)
+            "fsyncSync" => EmitFsyncSync(emitter, arguments),
+            "fdPath" => EmitFdPath(emitter, arguments),
+            "statfsRaw" => EmitStatfsRaw(emitter, arguments),
             // Directory utilities
             "mkdtempSync" => EmitMkdtempSync(emitter, arguments),
             "opendirSync" => EmitOpendirSync(emitter, arguments),
@@ -922,6 +928,43 @@ public sealed class FsModuleEmitter : IBuiltInModuleEmitter
         // Call runtime helper: FsFtruncateSync(object fd, object len)
         il.Emit(OpCodes.Call, ctx.Runtime!.FsFtruncateSync);
         il.Emit(OpCodes.Ldnull); // undefined return
+        return true;
+    }
+
+    // Long-tail fd primitives (#976): fsyncSync (flush), fdPath (fd → path),
+    // statfsRaw (filesystem stats). Each emits its single arg and calls the helper.
+
+    private static bool EmitFsyncSync(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        if (arguments.Count == 0) { il.Emit(OpCodes.Ldnull); return true; }
+        emitter.EmitExpression(arguments[0]);
+        emitter.EmitBoxIfNeeded(arguments[0]);
+        il.Emit(OpCodes.Call, ctx.Runtime!.FsFsyncSync);
+        il.Emit(OpCodes.Ldnull); // undefined return
+        return true;
+    }
+
+    private static bool EmitFdPath(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        if (arguments.Count == 0) { il.Emit(OpCodes.Ldnull); return true; }
+        emitter.EmitExpression(arguments[0]);
+        emitter.EmitBoxIfNeeded(arguments[0]);
+        il.Emit(OpCodes.Call, ctx.Runtime!.FsFdPath);
+        return true;
+    }
+
+    private static bool EmitStatfsRaw(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        if (arguments.Count == 0) { il.Emit(OpCodes.Ldnull); return true; }
+        emitter.EmitExpression(arguments[0]);
+        emitter.EmitBoxIfNeeded(arguments[0]);
+        il.Emit(OpCodes.Call, ctx.Runtime!.FsStatfsRaw);
         return true;
     }
 

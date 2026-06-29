@@ -95,6 +95,11 @@ public static class FsModuleInterpreter
             ["writeSync"] = BuiltInMethod.CreateV2("writeSync", 2, 5, WriteSync),
             ["fstatSync"] = BuiltInMethod.CreateV2("fstatSync", 1, 1, FstatSync),
             ["ftruncateSync"] = BuiltInMethod.CreateV2("ftruncateSync", 1, 2, FtruncateSync),
+            // Long-tail fd primitives (#976) — the TS facade derives fsync/fdatasync,
+            // fchmod/fchown/futimes (via fdPath), and statfs from these.
+            ["fsyncSync"] = BuiltInMethod.CreateV2("fsyncSync", 1, 1, FsyncSync),
+            ["fdPath"] = BuiltInMethod.CreateV2("fdPath", 1, 1, FdPath),
+            ["statfsRaw"] = BuiltInMethod.CreateV2("statfsRaw", 1, 1, StatfsRaw),
             // Directory utilities
             ["mkdtempSync"] = BuiltInMethod.CreateV2("mkdtempSync", 1, 1, MkdtempSync),
             ["opendirSync"] = BuiltInMethod.CreateV2("opendirSync", 1, 1, OpendirSync),
@@ -956,6 +961,65 @@ public static class FsModuleInterpreter
             stream.SetLength(len);
         });
         return RuntimeValue.Null;
+    }
+
+    // #976 long-tail fd primitives. The TS facade builds fsync/fdatasync and the
+    // fd-variant metadata ops (fchmod/fchown/futimes) on top of these so both
+    // execution modes share one Node-shape implementation.
+
+    /// <summary>fsync/fdatasync: flush an open fd's buffered writes to disk.</summary>
+    private static RuntimeValue FsyncSync(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fd = Convert.ToInt32(args[0].ToObject());
+        WrapFsOperation("fsync", null, () => _fdTable.Get(fd).Flush(true));
+        return RuntimeValue.Null;
+    }
+
+    /// <summary>Resolves an open fd to its file path — lets the facade route the
+    /// fd-variant metadata ops (fchmod/fchown/futimes) through the path ops.</summary>
+    private static RuntimeValue FdPath(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fd = Convert.ToInt32(args[0].ToObject());
+        return RuntimeValue.FromBoxed(WrapFsOperation<object?>("fstat", null, () => _fdTable.Get(fd).Name));
+    }
+
+    /// <summary>statfs: flat filesystem-stats record (type/bsize/blocks/bfree/
+    /// bavail/files/ffree) the TS StatFs class shapes. Derived from DriveInfo.</summary>
+    private static RuntimeValue StatfsRaw(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var path = args[0].ToObject()?.ToString() ?? "";
+        return RuntimeValue.FromBoxed(WrapFsOperation<object?>("statfs", path, () => BuildStatfsRecord(path)));
+    }
+
+    /// <summary>Builds the statfs record from DriveInfo (bsize fixed at 4096; the
+    /// inode counts are unavailable through the BCL, reported as 0 like libuv on
+    /// filesystems that don't expose them).</summary>
+    internal static SharpTSObject BuildStatfsRecord(string path)
+    {
+        const double bsize = 4096.0;
+        double blocks = 0, bfree = 0, bavail = 0;
+        try
+        {
+            var root = Path.GetPathRoot(Path.GetFullPath(path));
+            if (!string.IsNullOrEmpty(root))
+            {
+                var drive = new DriveInfo(root);
+                blocks = Math.Floor(drive.TotalSize / bsize);
+                bfree = Math.Floor(drive.TotalFreeSpace / bsize);
+                bavail = Math.Floor(drive.AvailableFreeSpace / bsize);
+            }
+        }
+        catch { /* unknown/virtual filesystem → zeros */ }
+        return new SharpTSObject(new Dictionary<string, object?>
+        {
+            ["type"] = 0.0,
+            ["bsize"] = bsize,
+            ["blocks"] = blocks,
+            ["bfree"] = bfree,
+            ["bavail"] = bavail,
+            ["files"] = 0.0,
+            ["ffree"] = 0.0,
+        });
     }
 
     #endregion
