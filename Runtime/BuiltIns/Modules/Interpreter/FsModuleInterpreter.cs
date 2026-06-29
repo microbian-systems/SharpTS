@@ -1090,7 +1090,7 @@ public static class FsModuleInterpreter
         if (args.Length > 1 && args[1].ToObject() is SharpTSObject opts)
         {
             options = new Dictionary<string, object?>();
-            foreach (var key in new[] { "encoding", "start", "end", "highWaterMark", "flags", "autoClose" })
+            foreach (var key in new[] { "encoding", "start", "end", "highWaterMark", "flags", "autoClose", "fd", "mode", "emitClose", "signal" })
             {
                 var val = opts.GetProperty(key);
                 if (val != null)
@@ -1099,7 +1099,15 @@ public static class FsModuleInterpreter
         }
 
         var stream = new SharpTSReadStream(path, options);
-        stream.StartReading(interpreter);
+        // Defer reading to the next event-loop tick so listeners attached
+        // synchronously after createReadStream() see open/ready/data/end/close
+        // in Node order (#980). Ref/Unref keeps the loop alive across the tick (#205).
+        interpreter.Ref();
+        interpreter.ScheduleTimer(0, 0, () =>
+        {
+            try { stream.StartReading(interpreter); }
+            finally { interpreter.Unref(); }
+        }, isInterval: false);
         return RuntimeValue.FromObject(stream);
     }
 
@@ -1111,7 +1119,7 @@ public static class FsModuleInterpreter
         if (args.Length > 1 && args[1].ToObject() is SharpTSObject opts)
         {
             options = new Dictionary<string, object?>();
-            foreach (var key in new[] { "flags", "autoClose" })
+            foreach (var key in new[] { "flags", "autoClose", "encoding", "start", "mode", "emitClose", "fd", "signal" })
             {
                 var val = opts.GetProperty(key);
                 if (val != null)

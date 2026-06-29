@@ -52,12 +52,12 @@ public class FsStreamTests
 
             var files = new Dictionary<string, string>
             {
+                // 'end' fires on the next tick (Node-faithful, #980) — log from the
+                // handler rather than synchronously after attaching it.
                 ["main.ts"] = "import * as fs from 'fs';\n" +
                     "const stream = fs.createReadStream('" + p + "', { encoding: 'utf8' });\n" +
-                    "let ended = false;\n" +
                     "stream.on('data', () => {});\n" +
-                    "stream.on('end', () => { ended = true; });\n" +
-                    "console.log(ended);\n"
+                    "stream.on('end', () => { console.log('true'); });\n"
             };
 
             var output = TestHarness.RunModules(files, "main.ts", mode);
