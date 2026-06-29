@@ -436,6 +436,25 @@ public class ChildProcessAsyncTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Exec_MaxBuffer_Overflow_Errors(ExecutionMode mode)
+    {
+        // Output longer than maxBuffer kills the child and surfaces ERR_CHILD_PROCESS_STDIO_MAXBUFFER.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { exec } from 'child_process';
+                exec('echo aaaaaaaaaaaaaaaa', { maxBuffer: 3 }, (err: any, stdout: any) => {
+                  console.log('code:' + (err ? err.code : 'none'));
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("code:ERR_CHILD_PROCESS_STDIO_MAXBUFFER\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Exec_NonZeroExit_CallbackReceivesError(ExecutionMode mode)
     {
         var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)

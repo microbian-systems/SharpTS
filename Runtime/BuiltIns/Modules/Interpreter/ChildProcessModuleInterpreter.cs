@@ -239,8 +239,14 @@ public static class ChildProcessModuleInterpreter
                 childProcess.SetPid(process.Id);
                 childProcess.SetProcess(process);
 
-                stdout = process.StandardOutput.ReadToEnd();
-                stderr = process.StandardError.ReadToEnd();
+                var maxBuffer = (int)GetDoubleOption(options, "maxBuffer", 1024 * 1024);
+                stdout = ReadCapped(process.StandardOutput, maxBuffer, out var oOver);
+                stderr = ReadCapped(process.StandardError, maxBuffer, out var eOver);
+                if (oOver || eOver)
+                {
+                    try { process.Kill(); } catch { }
+                    error = MaxBufferError();
+                }
 
                 if (timeout > 0)
                 {
@@ -257,7 +263,7 @@ public static class ChildProcessModuleInterpreter
                     code = process.ExitCode;
                 }
 
-                if (kind == 0 && code != 0)
+                if (kind == 0 && error == null && code != 0)
                     error = new SharpTSObject(new Dictionary<string, object?>
                     {
                         ["message"] = $"Command failed with exit code {code}",
@@ -648,8 +654,14 @@ public static class ChildProcessModuleInterpreter
                 childProcess.SetPid(process.Id);
                 childProcess.SetProcess(process);
 
-                stdout = process.StandardOutput.ReadToEnd();
-                stderr = process.StandardError.ReadToEnd();
+                var maxBuffer = (int)GetDoubleOption(options, "maxBuffer", 1024 * 1024);
+                stdout = ReadCapped(process.StandardOutput, maxBuffer, out var oOver);
+                stderr = ReadCapped(process.StandardError, maxBuffer, out var eOver);
+                if (oOver || eOver)
+                {
+                    try { process.Kill(); } catch { }
+                    error = MaxBufferError();
+                }
 
                 if (timeout > 0)
                 {
@@ -666,7 +678,7 @@ public static class ChildProcessModuleInterpreter
                     code = process.ExitCode;
                 }
 
-                if (kind == 0 && code != 0)
+                if (kind == 0 && error == null && code != 0)
                     error = new SharpTSObject(new Dictionary<string, object?>
                     {
                         ["message"] = $"Command failed with exit code {code}",
@@ -958,6 +970,38 @@ public static class ChildProcessModuleInterpreter
     /// "inherit", or "ignore". Accepts the string shorthand (applied to all three) or the
     /// array form. fd numbers / streams / 'ipc' fall back to "pipe" (documented limitation).
     /// </summary>
+    /// <summary>
+    /// Reads a stream up to <paramref name="maxBuffer"/> chars (Node's exec maxBuffer, bytes
+    /// approximated by chars). Sets <paramref name="overflowed"/> and stops at the cap; a
+    /// negative cap means unbounded.
+    /// </summary>
+    private static string ReadCapped(System.IO.TextReader reader, int maxBuffer, out bool overflowed)
+    {
+        overflowed = false;
+        if (maxBuffer < 0)
+            return reader.ReadToEnd();
+        var sb = new System.Text.StringBuilder();
+        var buf = new char[4096];
+        int n;
+        while ((n = reader.Read(buf, 0, buf.Length)) > 0)
+        {
+            if (sb.Length + n > maxBuffer)
+            {
+                sb.Append(buf, 0, Math.Max(0, maxBuffer - sb.Length));
+                overflowed = true;
+                break;
+            }
+            sb.Append(buf, 0, n);
+        }
+        return sb.ToString();
+    }
+
+    private static SharpTSObject MaxBufferError() => new(new Dictionary<string, object?>
+    {
+        ["message"] = "stdout maxBuffer length exceeded",
+        ["code"] = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+    });
+
     private static (string stdin, string stdout, string stderr) ParseStdioModes(SharpTSObject? options)
     {
         var value = options?.GetProperty("stdio");

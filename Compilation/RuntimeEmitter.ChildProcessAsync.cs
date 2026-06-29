@@ -38,6 +38,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _childCtxResCode = null!;     // int
     private FieldBuilder _childCtxResError = null!;    // object (error dict or null)
     private FieldBuilder _childCtxResKind = null!;     // int: 0 normal, 1 timeout, 2 exception
+    private FieldBuilder _childCtxMaxBuffer = null!;   // int: exec maxBuffer cap (chars); <0 unbounded
     private FieldBuilder _childCtxStdoutRedir = null!; // bool: stdout redirected (mode != inherit)
     private FieldBuilder _childCtxStderrRedir = null!; // bool: stderr redirected (mode != inherit)
 
@@ -58,6 +59,7 @@ public partial class RuntimeEmitter
     private MethodBuilder _childAsyncUnref = null!;
     private MethodBuilder _childConfigureSpawn = null!;
     private MethodBuilder _childStdioMode = null!;
+    private MethodBuilder _childReadCapped = null!;
 
     // $ChildPush — a one-shot closure that pushes one chunk (or null = EOF) into a
     // $Readable on the event-loop thread, so all stream-buffer access stays single-threaded.
@@ -108,6 +110,7 @@ public partial class RuntimeEmitter
         DefineChildCtxType(runtime);
         EmitChildRunAsyncHelpers(runtimeType, runtime);
         EmitChildStdioMode(runtimeType, runtime);
+        EmitChildReadCapped(runtimeType, runtime);
         EmitConfigureSpawnStartInfo(runtimeType, runtime);
         EmitChildCtxMethods(runtime);
         _childCtxType.CreateType();
@@ -459,6 +462,7 @@ public partial class RuntimeEmitter
         _childCtxResCode = t.DefineField("_resCode", _types.Int32, FieldAttributes.Public);
         _childCtxResError = t.DefineField("_resError", _types.Object, FieldAttributes.Public);
         _childCtxResKind = t.DefineField("_resKind", _types.Int32, FieldAttributes.Public);
+        _childCtxMaxBuffer = t.DefineField("_maxBuffer", _types.Int32, FieldAttributes.Public);
         _childCtxStdoutRedir = t.DefineField("_stdoutRedir", _types.Boolean, FieldAttributes.Public);
         _childCtxStderrRedir = t.DefineField("_stderrRedir", _types.Boolean, FieldAttributes.Public);
 
@@ -669,22 +673,45 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Box, _types.Double);
         });
 
-        // _resStdout = _proc.StandardOutput.ReadToEnd();
+        // bool[] overflow = new bool[1];
+        var overflowLocal = il.DeclareLocal(typeof(bool[]));
+        il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Newarr, typeof(bool)); il.Emit(OpCodes.Stloc, overflowLocal);
+
+        // _resStdout = ChildReadCapped(_proc.StandardOutput, _maxBuffer, overflow);
         StoreCtxField(il, _childCtxResStdout, () =>
         {
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldfld, _childCtxProc);
-            il.Emit(OpCodes.Callvirt, _miProcStdoutGet);
-            il.Emit(OpCodes.Callvirt, _miReadToEnd);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxProc); il.Emit(OpCodes.Callvirt, _miProcStdoutGet);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxMaxBuffer);
+            il.Emit(OpCodes.Ldloc, overflowLocal);
+            il.Emit(OpCodes.Call, _childReadCapped);
         });
-        // _resStderr = _proc.StandardError.ReadToEnd();
+        // _resStderr = ChildReadCapped(_proc.StandardError, _maxBuffer, overflow);
         StoreCtxField(il, _childCtxResStderr, () =>
         {
-            il.Emit(OpCodes.Ldarg_0);
-            il.Emit(OpCodes.Ldfld, _childCtxProc);
-            il.Emit(OpCodes.Callvirt, _miProcStderrGet);
-            il.Emit(OpCodes.Callvirt, _miReadToEnd);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxProc); il.Emit(OpCodes.Callvirt, _miProcStderrGet);
+            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxMaxBuffer);
+            il.Emit(OpCodes.Ldloc, overflowLocal);
+            il.Emit(OpCodes.Call, _childReadCapped);
         });
+
+        // if (overflow[0]) { try { _proc.Kill(true); } catch {}  _resError = maxBuffer error; }
+        var noOverflow = il.DefineLabel();
+        var afterKill = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, overflowLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldelem_I1);
+        il.Emit(OpCodes.Brfalse, noOverflow);
+        il.BeginExceptionBlock();
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxProc);
+        il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Callvirt, _miProcKillTree);
+        il.Emit(OpCodes.Leave, afterKill);
+        il.BeginCatchBlock(_types.Exception); il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, afterKill);
+        il.EndExceptionBlock();
+        il.MarkLabel(afterKill);
+        StoreCtxField(il, _childCtxResError, () =>
+            EmitNewErrorObject(il,
+                () => il.Emit(OpCodes.Ldstr, "stdout maxBuffer length exceeded"),
+                () => il.Emit(OpCodes.Ldstr, "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")));
+        il.MarkLabel(noOverflow);
 
         // Timeout branch
         var noTimeoutWait = il.DefineLabel();
@@ -724,10 +751,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, codeLocal);
         StoreCtxField(il, _childCtxResCode, () => il.Emit(OpCodes.Ldloc, codeLocal));
 
-        // if (code != 0) _resError = { message: "Command failed with exit code N", code: N }
+        // if (code != 0 && _resError == null) _resError = { message: "Command failed with exit code N", code: N }
         var zeroCode = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, codeLocal);
         il.Emit(OpCodes.Brfalse, zeroCode);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxResError);
+        il.Emit(OpCodes.Brtrue, zeroCode); // a maxBuffer (or other) error already set — keep it
         StoreCtxField(il, _childCtxResError, () =>
             EmitNewErrorObject(il,
                 () =>
@@ -1429,6 +1458,8 @@ public partial class RuntimeEmitter
         StoreCtxField(il, ctxLocal, _childCtxCallback, () => il.Emit(OpCodes.Ldloc, callbackLocal));
         StoreCtxField(il, ctxLocal, _childCtxOptions, () => il.Emit(OpCodes.Ldloc, optionsLocal));
         StoreCtxField(il, ctxLocal, _childCtxTimeout, () => il.Emit(OpCodes.Ldloc, timeoutLocal));
+        // maxBuffer (chars), default 1 MB.
+        StoreCtxField(il, ctxLocal, _childCtxMaxBuffer, () => EmitParseMaxBuffer(il, optionsLocal));
 
         // dict = new Dictionary<string,object?>()
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!);
@@ -1576,6 +1607,105 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         emitValue();
         il.Emit(OpCodes.Stfld, field);
+    }
+
+    /// <summary>Leaves an int on the stack: options["maxBuffer"] as int, default 1 MB.</summary>
+    private void EmitParseMaxBuffer(ILGenerator il, LocalBuilder optionsObjLocal)
+    {
+        var resultLocal = il.DeclareLocal(_types.Int32);
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var tmpLocal = il.DeclareLocal(_types.Object);
+        var tryGet = _types.DictionaryStringObject.GetMethod("TryGetValue", [_types.String, _types.Object.MakeByRefType()])!;
+        var done = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldc_I4, 1048576);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, optionsObjLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Dup); il.Emit(OpCodes.Stloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "maxBuffer");
+        il.Emit(OpCodes.Ldloca, tmpLocal);
+        il.Emit(OpCodes.Callvirt, tryGet);
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldloc, tmpLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldloc, tmpLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.MarkLabel(done);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+    }
+
+    /// <summary>
+    /// static string ChildReadCapped(TextReader reader, int maxBuffer, bool[] flag): reads up to
+    /// maxBuffer chars; on overflow sets flag[0]=true and stops. maxBuffer&lt;0 means unbounded.
+    /// </summary>
+    private void EmitChildReadCapped(TypeBuilder runtimeType, EmittedRuntime runtime)
+    {
+        var m = runtimeType.DefineMethod("ChildReadCapped",
+            MethodAttributes.Public | MethodAttributes.Static, _types.String,
+            [_types.TextReader, _types.Int32, typeof(bool[])]);
+        _childReadCapped = m;
+        var il = m.GetILGenerator();
+        var sbLocal = il.DeclareLocal(_types.StringBuilder);
+        var bufLocal = il.DeclareLocal(typeof(char[]));
+        var nLocal = il.DeclareLocal(_types.Int32);
+        var remLocal = il.DeclareLocal(_types.Int32);
+        var readM = _types.TextReader.GetMethod("Read", [typeof(char[]), _types.Int32, _types.Int32])!;
+        var appendM = _types.StringBuilder.GetMethod("Append", [typeof(char[]), _types.Int32, _types.Int32])!;
+        var lenGet = _types.StringBuilder.GetProperty("Length")!.GetGetMethod()!;
+
+        // if (maxBuffer < 0) return reader.ReadToEnd();
+        var bounded = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bge, bounded);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, _miReadToEnd);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(bounded);
+
+        il.Emit(OpCodes.Newobj, _types.StringBuilder.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, sbLocal);
+        il.Emit(OpCodes.Ldc_I4, 4096); il.Emit(OpCodes.Newarr, typeof(char)); il.Emit(OpCodes.Stloc, bufLocal);
+
+        var loop = il.DefineLabel();
+        var end = il.DefineLabel();
+        il.MarkLabel(loop);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldloc, bufLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldc_I4, 4096);
+        il.Emit(OpCodes.Callvirt, readM);
+        il.Emit(OpCodes.Stloc, nLocal);
+        il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ble, end);
+        // if (sb.Length + n > maxBuffer) { rem = max(0, maxBuffer - sb.Length); sb.Append(buf,0,rem); flag[0]=true; break; }
+        var noOverflow = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Callvirt, lenGet);
+        il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ble, noOverflow);
+        // rem = maxBuffer - sb.Length; if (rem<0) rem=0;
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Callvirt, lenGet);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, remLocal);
+        var remOk = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, remLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Bge, remOk);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, remLocal);
+        il.MarkLabel(remOk);
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Ldloc, bufLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldloc, remLocal);
+        il.Emit(OpCodes.Callvirt, appendM); il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Stelem_I1);
+        il.Emit(OpCodes.Br, end);
+        il.MarkLabel(noOverflow);
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Ldloc, bufLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Callvirt, appendM); il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Br, loop);
+        il.MarkLabel(end);
+        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>Emit: new $TSFunction(target, methodof(method)).</summary>
