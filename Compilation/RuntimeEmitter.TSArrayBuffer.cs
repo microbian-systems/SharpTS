@@ -25,6 +25,14 @@ public partial class RuntimeEmitter
             FieldAttributes.Private | FieldAttributes.InitOnly
         );
 
+        // Field: bool _detached — set when this buffer is transferred away via postMessage's
+        // transfer list (#999). Not InitOnly: Detach() mutates it.
+        var detachedField = typeBuilder.DefineField(
+            "_detached",
+            typeof(bool),
+            FieldAttributes.Private
+        );
+
         // Constructor: public $ArrayBuffer(int byteLength)
         var ctor = typeBuilder.DefineConstructor(
             MethodAttributes.Public,
@@ -47,11 +55,14 @@ public partial class RuntimeEmitter
 
         ctorIl.Emit(OpCodes.Ret);
 
-        // Property: public int ByteLength => _buffer.Length
-        EmitArrayBufferByteLength(typeBuilder, runtime, bufferField);
+        // Property: public int ByteLength => _detached ? 0 : _buffer.Length
+        EmitArrayBufferByteLength(typeBuilder, runtime, bufferField, detachedField);
 
         // Method: public byte[] GetBuffer() => _buffer (internal access)
         EmitArrayBufferGetBuffer(typeBuilder, runtime, bufferField);
+
+        // Method: public void Detach() => _detached = true (called by StructuredClone on transfer)
+        EmitArrayBufferDetach(typeBuilder, detachedField);
 
         // Method: public $ArrayBuffer Slice(int begin, int end)
         EmitArrayBufferSlice(typeBuilder, runtime, bufferField, ctor);
@@ -61,9 +72,10 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits: public int ByteLength { get; }
+    /// Emits: public int ByteLength { get; } — returns 0 once detached (Node neuters a
+    /// transferred ArrayBuffer; its byteLength becomes 0).
     /// </summary>
-    private void EmitArrayBufferByteLength(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder bufferField)
+    private void EmitArrayBufferByteLength(TypeBuilder typeBuilder, EmittedRuntime runtime, FieldBuilder bufferField, FieldBuilder detachedField)
     {
         var property = typeBuilder.DefineProperty(
             "ByteLength",
@@ -81,6 +93,15 @@ public partial class RuntimeEmitter
         runtime.ArrayBufferByteLengthGetter = getter;
 
         var il = getter.GetILGenerator();
+        var notDetached = il.DefineLabel();
+        // if (!_detached) goto notDetached
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, detachedField);
+        il.Emit(OpCodes.Brfalse, notDetached);
+        // return 0
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notDetached);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, bufferField);
         il.Emit(OpCodes.Ldlen);
@@ -88,6 +109,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         property.SetGetMethod(getter);
+    }
+
+    /// <summary>
+    /// Emits: public void Detach() => _detached = true.
+    /// </summary>
+    private void EmitArrayBufferDetach(TypeBuilder typeBuilder, FieldBuilder detachedField)
+    {
+        var method = typeBuilder.DefineMethod(
+            "Detach",
+            MethodAttributes.Public,
+            _types.Void,
+            Type.EmptyTypes
+        );
+
+        var il = method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, detachedField);
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>

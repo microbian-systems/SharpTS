@@ -38,9 +38,14 @@ public static class StructuredClone
     {
         var cloned = new Dictionary<object, object>();
         var transferred = new HashSet<object>();
+        // ArrayBuffers in the transfer list are detached on this (sender) side after the
+        // clone — Node neuters a transferred ArrayBuffer (byteLength becomes 0). Collected
+        // separately because detach must happen AFTER the payload is copied.
+        List<object>? transferredBuffers = null;
 
-        // Process transfer list. A transferable is either the interpreter
-        // SharpTSMessagePort or the emitted compiled $MessagePort (#406).
+        // Process transfer list. Transferables are MessagePort (interpreter
+        // SharpTSMessagePort or the emitted compiled $MessagePort, #406) and ArrayBuffer
+        // (interpreter SharpTSArrayBuffer or the emitted compiled $ArrayBuffer, #999).
         if (transfer != null)
         {
             foreach (var item in transfer)
@@ -49,15 +54,47 @@ public static class StructuredClone
                 {
                     transferred.Add(item!);
                 }
+                else if (item is SharpTSArrayBuffer || item?.GetType().Name == "$ArrayBuffer")
+                {
+                    transferred.Add(item!);
+                    (transferredBuffers ??= new List<object>()).Add(item!);
+                }
                 else if (item != null)
                 {
-                    // Only MessagePort is transferable in our implementation
-                    throw new DataCloneError("Only MessagePort objects can be transferred");
+                    throw new DataCloneError("Only ArrayBuffer and MessagePort objects can be transferred");
                 }
             }
         }
 
-        return CloneInternal(value, cloned, transferred);
+        var result = CloneInternal(value, cloned, transferred);
+
+        // Neuter the source ArrayBuffers now that their contents have been copied to the
+        // clone. A buffer in the transfer list is detached whether or not it appeared in
+        // the payload (Node semantics).
+        if (transferredBuffers != null)
+        {
+            foreach (var buffer in transferredBuffers)
+                DetachArrayBuffer(buffer);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Detaches a transferred ArrayBuffer on the sender side: the interpreter
+    /// <see cref="SharpTSArrayBuffer"/> directly, or the emitted compiled <c>$ArrayBuffer</c>
+    /// via its <c>Detach()</c> method (reflection keeps this assembly standalone-agnostic).
+    /// </summary>
+    private static void DetachArrayBuffer(object buffer)
+    {
+        if (buffer is SharpTSArrayBuffer interpBuffer)
+        {
+            interpBuffer.Detach();
+        }
+        else if (buffer.GetType().Name == "$ArrayBuffer")
+        {
+            buffer.GetType().GetMethod("Detach")?.Invoke(buffer, null);
+        }
     }
 
     private static object? CloneInternal(object? value, Dictionary<object, object> cloned, HashSet<object> transferred)
@@ -78,6 +115,11 @@ public static class StructuredClone
         {
             // SharedArrayBuffer - pass by reference (this is the key sharing mechanism!)
             SharpTSSharedArrayBuffer sab => sab,
+
+            // ArrayBuffer (non-shared) - copy the bytes into an independent buffer. When the
+            // source is in the transfer list it is detached afterwards by Clone() (#999); the
+            // receiver always gets its own copy (no cross-thread aliasing of a mutable buffer).
+            SharpTSArrayBuffer arrayBuffer => CloneArrayBuffer(arrayBuffer, cloned),
 
             // TypedArray - recreate view, share backing if SharedArrayBuffer
             SharpTSTypedArray typedArray => CloneTypedArray(typedArray, cloned, transferred),
@@ -433,6 +475,14 @@ public static class StructuredClone
         return new SharpTSBuffer(newData);
     }
 
+    private static SharpTSArrayBuffer CloneArrayBuffer(SharpTSArrayBuffer source, Dictionary<object, object> cloned)
+    {
+        var result = new SharpTSArrayBuffer(source.ByteLength);
+        source.AsSpan().CopyTo(result.AsSpan());
+        cloned[source] = result;
+        return result;
+    }
+
     /// <summary>
     /// Clones an emitted $ArrayBuffer type from compiled code.
     /// Uses reflection to access the buffer and create a new instance.
@@ -504,6 +554,7 @@ public static class StructuredClone
         switch (value)
         {
             case SharpTSSharedArrayBuffer:
+            case SharpTSArrayBuffer:
             case SharpTSDate:
             case SharpTSRegExp:
             case SharpTSError:

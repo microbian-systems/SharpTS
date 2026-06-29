@@ -614,6 +614,104 @@ public class WorkerThreadsTests
 
     #endregion
 
+    #region ArrayBuffer transfer + detach (#999)
+
+    /// <summary>
+    /// #999: an ArrayBuffer placed in a Worker's <c>transferList</c> is detached on the
+    /// sender side (Node neuters it — <c>byteLength</c> becomes 0). The Worker constructor
+    /// clones <c>workerData</c> with the transfer list synchronously, so the source buffer
+    /// is detached by the time <c>new Worker</c> returns. Dual-mode: the Worker uses the C#
+    /// <c>StructuredClone</c> in both interpreter and compiled parents.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_ArrayBufferInTransferList_DetachesSource(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_ok.ts"] = """
+                postMessage("ok");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const buf = new ArrayBuffer(8);
+                new Uint8Array(buf)[0] = 1;
+                const w = new Worker(__dirname + "/worker_ok.ts", { workerData: "go", transferList: [buf] });
+                // Transfer happened synchronously during construction — source is detached.
+                console.log("len:" + buf.byteLength);
+                w.on("message", (e: any) => { console.log("worker:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("len:0", output);
+        Assert.Contains("worker:ok", output);
+    }
+
+    /// <summary>
+    /// #999 (gap follow-up): a non-transferred ArrayBuffer passed as <c>workerData</c> is
+    /// deep-copied, not detached — its <c>byteLength</c> is preserved on the sender. Before
+    /// the fix the interpreter had no ArrayBuffer clone arm and threw "Cannot clone value of
+    /// type SharpTSArrayBuffer", so the worker failed to spawn. Dual-mode.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_NonTransferredArrayBufferWorkerData_IsCopiedNotDetached(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_ok.ts"] = """
+                postMessage("ok");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const buf = new ArrayBuffer(8);
+                const w = new Worker(__dirname + "/worker_ok.ts", { workerData: buf });
+                console.log("len:" + buf.byteLength);
+                w.on("message", (e: any) => { console.log("worker:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("len:8", output);
+        Assert.Contains("worker:ok", output);
+    }
+
+    /// <summary>
+    /// #999: full transfer round-trip — the bytes of a transferred ArrayBuffer arrive in the
+    /// worker (it reads them back), and the parent's source buffer is detached. Interpreter
+    /// only: a compiled parent hands the interpreting worker an emitted <c>$ArrayBuffer</c>
+    /// that the interpreter's TypedArray constructor doesn't bridge yet (a separate cross-mode
+    /// gap), so the byte read-back is verified in interpreter mode; detach is covered in both
+    /// modes by <see cref="Worker_ArrayBufferInTransferList_DetachesSource"/>.
+    /// </summary>
+    [Fact]
+    public void Worker_TransferredArrayBuffer_MovesBytesToWorker_Interpreted()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_read.ts"] = """
+                const u = new Uint8Array(workerData);
+                postMessage(u[0] + "," + u[1] + ",len=" + u.length);
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const buf = new ArrayBuffer(4);
+                const u = new Uint8Array(buf);
+                u[0] = 9; u[1] = 8;
+                const w = new Worker(__dirname + "/worker_read.ts", { workerData: buf, transferList: [buf] });
+                console.log("src:" + buf.byteLength);
+                w.on("message", (e: any) => { console.log("got:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", ExecutionMode.Interpreted);
+        Assert.Contains("src:0", output);
+        Assert.Contains("got:9,8,len=4", output);
+    }
+
+    #endregion
+
     #region Running-Worker event-loop liveness (#329)
 
     /// <summary>

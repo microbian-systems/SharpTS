@@ -13,14 +13,28 @@ namespace SharpTS.Runtime.Types;
 public class SharpTSArrayBuffer : ITypeCategorized
 {
     private readonly byte[] _data;
+    private bool _detached;
 
     /// <inheritdoc />
     public TypeCategory RuntimeCategory => TypeCategory.Buffer;
 
     /// <summary>
-    /// Gets the size of the buffer in bytes.
+    /// Gets the size of the buffer in bytes. A detached buffer (transferred via
+    /// <c>postMessage</c>'s transfer list) reports 0, matching Node neutering.
     /// </summary>
-    public int ByteLength { get; }
+    public int ByteLength => _detached ? 0 : _data.Length;
+
+    /// <summary>
+    /// Whether this buffer has been detached (its memory transferred away).
+    /// </summary>
+    public bool IsDetached => _detached;
+
+    /// <summary>
+    /// Marks this buffer as detached after its contents were transferred to another
+    /// agent. Subsequent access throws and <see cref="ByteLength"/> reports 0 (Node
+    /// neuters the source ArrayBuffer on transfer).
+    /// </summary>
+    public void Detach() => _detached = true;
 
     /// <summary>
     /// Creates a new ArrayBuffer with the specified byte length.
@@ -33,27 +47,44 @@ public class SharpTSArrayBuffer : ITypeCategorized
             throw new Exception("RangeError: Invalid ArrayBuffer length");
         }
 
-        ByteLength = byteLength;
         _data = new byte[byteLength];
     }
 
     /// <summary>
     /// Gets a span over the entire buffer for direct memory access.
     /// </summary>
-    public Span<byte> AsSpan() => _data.AsSpan();
+    public Span<byte> AsSpan()
+    {
+        ThrowIfDetached();
+        return _data.AsSpan();
+    }
 
     /// <summary>
     /// Gets a span over a portion of the buffer.
     /// </summary>
     /// <param name="start">The starting byte offset.</param>
     /// <param name="length">The number of bytes.</param>
-    public Span<byte> AsSpan(int start, int length) => _data.AsSpan(start, length);
+    public Span<byte> AsSpan(int start, int length)
+    {
+        ThrowIfDetached();
+        return _data.AsSpan(start, length);
+    }
 
     /// <summary>
     /// Gets the underlying byte array for direct access.
     /// Use with caution - prefer AsSpan() for bounds-checked access.
     /// </summary>
-    internal byte[] GetBackingArray() => _data;
+    internal byte[] GetBackingArray()
+    {
+        ThrowIfDetached();
+        return _data;
+    }
+
+    private void ThrowIfDetached()
+    {
+        if (_detached)
+            throw new Exception("TypeError: Cannot perform operation on a detached ArrayBuffer");
+    }
 
     /// <summary>
     /// Creates a new ArrayBuffer containing a copy of a portion of this buffer.
@@ -63,6 +94,7 @@ public class SharpTSArrayBuffer : ITypeCategorized
     /// <returns>A new ArrayBuffer containing the copied bytes.</returns>
     public SharpTSArrayBuffer Slice(int begin, int? end = null)
     {
+        ThrowIfDetached();
         // Handle negative indices
         int actualBegin = begin < 0 ? Math.Max(ByteLength + begin, 0) : Math.Min(begin, ByteLength);
         int actualEnd = end.HasValue
