@@ -150,8 +150,9 @@ public class EmitterSyncTests
             "EmitForOf",            // Hoisted enumerator for yield across loop boundaries
             "EmitForIn",            // #547: hoisted key-list/index for yield across for-in iterations
             "EmitYield",            // Core: yield value + suspend
-            "EmitSuper",            // This field indirection
-            "EmitDynamicImport",    // Dynamic import fallback
+            // #1105: EmitSuper/EmitDynamicImport are NO LONGER overridden — the old overrides
+            // pushed `null`, silently miscompiling `super.x`/`import()` in a generator body. The
+            // base implementations (hoisted-this + GetSuperMethod / module registry) work here.
             // #674: a captured-AND-mutated generator local is lifted into a shared function display
             // class; EmitArrowFunction still rejects the residual not-yet-DC-backed write case (e.g.
             // instance generator methods) so it fails fast instead of dropping the write.
@@ -191,7 +192,9 @@ public class EmitterSyncTests
             "EmitYield",            // Core: yield value + suspend
             "EmitAwait",            // Core: suspend/resume state machine
             "EmitArrowFunction",    // Display class in async generator context
-            "EmitSuper",            // This field indirection
+            // #1105: EmitSuper is NO LONGER overridden — the old override pushed `null`, silently
+            // miscompiling `super.x` in an async generator body. The base (hoisted-this +
+            // GetSuperMethod) works here.
             // --- #725: route a captured-and-mutated local through the function display class ---
             "GetFunctionDCField",   // Exposes <>__functionDC so a capturing arrow threads it in
             "EmitVariable",         // Read a captured-and-mutated local through the function DC (+ #766 rename)

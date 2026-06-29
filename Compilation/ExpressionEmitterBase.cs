@@ -2125,12 +2125,44 @@ public abstract partial class ExpressionEmitterBase : IEmitterContext
     protected virtual void EmitSpread(Expr.Spread sp) => EmitExpression(sp.Expression);
 
     /// <summary>
-    /// Emits a regex literal. Default implementation pushes null - override in ILEmitter for actual regex creation.
+    /// Emits a regex literal as a <c>$RegExp</c> instance. Lives in the shared base (not just
+    /// <see cref="ILEmitter"/>) so regex literals work identically in every emission context —
+    /// plain functions, arrows, and the four state-machine bodies (async / async-arrow /
+    /// generator / async-generator). It needs no sync-only state: the per-site hoist fields
+    /// hang off the shared <see cref="EmittedRuntime.RegexHoistFields"/>, reachable everywhere
+    /// (#1105 — previously the base pushed <c>null</c>, silently miscompiling every regex inside
+    /// an async or generator body).
     /// </summary>
     protected virtual void EmitRegexLiteral(Expr.RegexLiteral re)
     {
-        IL.Emit(OpCodes.Ldnull);
-        SetStackUnknown();
+        // Hoisted literal (RegexLiteralHoistAnalyzer flagged this exact node as
+        // used in a safe consuming position): load the per-site static $RegExp,
+        // constructing it once on first evaluation. This removes the
+        // per-evaluation allocation + $RegExp ctor for literals in hot loops.
+        // Lazy init (vs. a .cctor) preserves SyntaxError throw-on-evaluation for
+        // an invalid pattern, and a rare concurrent double-construct just yields
+        // an equivalent instance (we only hoist where lastIndex is irrelevant).
+        if (Ctx.Runtime?.RegexHoistFields is { } hoistFields
+            && hoistFields.TryGetValue(re, out var field))
+        {
+            var done = IL.DefineLabel();
+            IL.Emit(OpCodes.Ldsfld, field);          // [field]
+            IL.Emit(OpCodes.Dup);                    // [field, field]
+            IL.Emit(OpCodes.Brtrue, done);           // non-null → done with [field]
+            IL.Emit(OpCodes.Pop);                    // []
+            IL.Emit(OpCodes.Ldstr, re.Pattern);
+            IL.Emit(OpCodes.Ldstr, re.Flags);
+            IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateRegExpWithFlags); // [new]
+            IL.Emit(OpCodes.Dup);                    // [new, new]
+            IL.Emit(OpCodes.Stsfld, field);          // [new]
+            IL.MarkLabel(done);                      // [regex] on both paths
+            SetStackUnknown();
+            return;
+        }
+
+        IL.Emit(OpCodes.Ldstr, re.Pattern);
+        IL.Emit(OpCodes.Ldstr, re.Flags);
+        EmitCallUnknown(Ctx.Runtime!.CreateRegExpWithFlags);
     }
     #endregion
 

@@ -1,27 +1,15 @@
-using System.Reflection.Emit;
-using SharpTS.Parsing;
-
 namespace SharpTS.Compilation;
 
 public partial class GeneratorMoveNextEmitter
 {
-    // EmitExpression dispatch is inherited from ExpressionEmitterBase
-
-    #region Abstract Implementations
-
-    protected override void EmitSuper(Expr.Super s)
-    {
-        // Not implemented in generator context - push null
-        _il.Emit(OpCodes.Ldnull);
-        SetStackUnknown();
-    }
-
-    protected override void EmitDynamicImport(Expr.DynamicImport di)
-    {
-        // Not implemented in generator context - push null
-        _il.Emit(OpCodes.Ldnull);
-        SetStackUnknown();
-    }
-
-    #endregion
+    // Expression emission is fully inherited from ExpressionEmitterBase.
+    //
+    // EmitRegexLiteral, EmitSuper, and EmitDynamicImport used to be overridden
+    // here (or inherited as a null-pushing base stub) so that a regex literal,
+    // `super.x`, or `import()` inside a generator body silently evaluated to
+    // `null` at runtime (#1105). The shared base now carries working
+    // implementations for all three — regex builds a $RegExp, super loads the
+    // hoisted `this` and resolves through GetSuperMethod, and dynamic import goes
+    // through the module registry — so the generator emitter inherits them
+    // unchanged. EmitterSyncTests enforces that no silent override creeps back.
 }
