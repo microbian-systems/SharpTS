@@ -771,6 +771,66 @@ public class WorkerThreadsTests
 
     #endregion
 
+    #region worker stdio + resourceLimits (#1003)
+
+    /// <summary>
+    /// #1003: the <c>resourceLimits</c> option is stored and echoed back on
+    /// <c>worker.resourceLimits</c> (cosmetic — .NET cannot enforce V8 heap/stack sizing).
+    /// Dual-mode.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_ResourceLimits_EchoedBack(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_ok.ts"] = """
+                postMessage("ok");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w: any = new Worker(__dirname + "/worker_ok.ts", {
+                    workerData: "go",
+                    resourceLimits: { maxOldGenerationSizeMb: 24, stackSizeMb: 4 },
+                });
+                console.log("rl:" + w.resourceLimits.maxOldGenerationSizeMb + "," + w.resourceLimits.stackSizeMb);
+                w.on("message", (e: any) => { console.log("worker:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("rl:24,4", output);
+        Assert.Contains("worker:ok", output);
+    }
+
+    /// <summary>
+    /// #1003: with <c>stdout: true</c>, the worker's console output is diverted off the shared
+    /// Console into a per-worker Readable <c>worker.stdout</c>; the parent reads it via
+    /// 'data'/'end'. Each chunk is marshalled onto the parent loop before delivery. Dual-mode.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_StdoutTrue_CapturesWorkerConsoleOutput(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_out.ts"] = """
+                console.log("hello-from-worker");
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w: any = new Worker(__dirname + "/worker_out.ts", { stdout: true });
+                // Print each chunk directly — don't depend on 'data' vs 'end' ordering.
+                w.stdout.on("data", (chunk: any) => { console.log("OUT[" + ("" + chunk).trim() + "]"); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("OUT[hello-from-worker]", output);
+    }
+
+    #endregion
+
     #region markAsUntransferable (#1002)
 
     /// <summary>
@@ -993,7 +1053,7 @@ public class WorkerThreadsTests
     /// </summary>
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
-    public void Worker_UnsupportedStdioAndResourceLimitsOptions_AreIgnored(ExecutionMode mode)
+    public void Worker_StdioAndResourceLimitsOptions_AreHonored(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
         {
@@ -1002,13 +1062,16 @@ public class WorkerThreadsTests
                 """,
             ["main.ts"] = """
                 import { Worker } from "worker_threads";
-                const w = new Worker(__dirname + "/worker_echo.ts", {
+                const w: any = new Worker(__dirname + "/worker_echo.ts", {
                     workerData: 42,
                     stdout: true,
                     stderr: true,
                     stdin: true,
                     resourceLimits: { maxOldGenerationSizeMb: 16 },
                 });
+                // #1003: passing all stdio + resourceLimits options no longer breaks
+                // construction; resourceLimits echoes and the worker still runs.
+                console.log("rl:" + w.resourceLimits.maxOldGenerationSizeMb);
                 w.on("message", (e: any) => {
                     console.log("received:" + e.data);
                 });
@@ -1017,6 +1080,7 @@ public class WorkerThreadsTests
 
         var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Contains("received:ran", output);
+        Assert.Contains("rl:16", output);
     }
 
     #endregion

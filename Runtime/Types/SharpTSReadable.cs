@@ -301,6 +301,42 @@ public class SharpTSReadable : SharpTSEventEmitter
     }
 
     /// <summary>
+    /// Pushes a chunk into the stream from host (C#) code — used to feed a programmatically
+    /// driven Readable such as a worker's <c>stdout</c>/<c>stderr</c> (#1003). Must be called
+    /// on the stream's owner-loop thread. Emits 'data' when flowing (via the parent interpreter
+    /// when present, or directly for a compiled parent that has no interpreter), otherwise
+    /// buffers until a 'data' listener resumes the stream. Passing null signals EOF ('end').
+    /// </summary>
+    public void PushFromHost(Interp? interpreter, object? chunk)
+    {
+        if (_destroyed)
+            return;
+
+        if (chunk == null)
+        {
+            _ended = true;
+            _readable = false;
+            if (_flowing == true)
+                EmitData(interpreter, "end", null);
+            return;
+        }
+
+        if (_flowing == true)
+            EmitData(interpreter, "data", chunk);
+        else
+            _readBuffer.Enqueue(chunk);
+    }
+
+    private void EmitData(Interp? interpreter, string eventName, object? chunk)
+    {
+        var args = chunk == null ? new List<object?>() : new List<object?> { chunk };
+        if (interpreter != null)
+            EmitEvent(interpreter, eventName, args);
+        else
+            EmitDirect(eventName, args.ToArray());
+    }
+
+    /// <summary>
     /// Pushes data into the stream buffer.
     /// </summary>
     private RuntimeValue Push(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)

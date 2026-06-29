@@ -49,6 +49,14 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     // thread's finally; read by Terminate()'s join task — volatile for cross-thread visibility.
     private volatile int _exitCode;
 
+    // Per-worker stdio + resourceLimits (#1003). When `stdout`/`stderr: true`, the worker's
+    // console output is diverted off the shared Console into these Readable streams (exposed as
+    // worker.stdout/worker.stderr) instead of the parent's stdout. resourceLimits is stored and
+    // echoed on worker.resourceLimits — .NET cannot enforce V8 heap/stack sizing (epic ceiling).
+    private readonly SharpTSReadable? _stdout;
+    private readonly SharpTSReadable? _stderr;
+    private readonly object? _resourceLimits;
+
     // Event-loop keep-alive accounting against the parent interpreter. Node keeps
     // the parent process alive for a running Worker's lifetime by default;
     // worker.unref() opts out and worker.ref() opts back in. Without this, a
@@ -135,30 +143,32 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         // Capture sync context for compiled code to marshal callbacks to main thread
         _syncContext = SynchronizationContext.Current;
 
-        // Extract options. Only workerData and transferList are honored: the worker
-        // runs an isolated interpreter on a dedicated thread in this same process, so
-        // the worker's console output already shares the parent's stdout/stderr by
-        // default. The Node stdio options (stdin/stdout/stderr) and resourceLimits are
-        // intentionally NOT supported:
-        //   - stdin/stdout/stderr=true would have to expose per-worker Readable/Writable
-        //     streams and divert the worker off the shared (process-global) Console,
-        //     which is not thread-safe in a single-process model.
-        //   - resourceLimits maps to V8 heap/stack sizing (maxOldGenerationSizeMb, …)
-        //     for which the .NET runtime exposes no per-thread equivalent.
-        // They are not read here (rather than read-and-ignored) so the dead fields can't
-        // masquerade as support. See issue #407.
+        // Extract options. The worker runs an isolated interpreter on a dedicated thread in
+        // this same process, so by default its console output shares the parent's Console.
+        //
+        // stdout/stderr: true (#1003) diverts the worker's console output off the shared
+        // Console into per-worker Readable streams (worker.stdout/worker.stderr); each chunk
+        // is marshalled onto the parent loop before delivery (the streams are only touched on
+        // the parent's thread). resourceLimits is stored and echoed on worker.resourceLimits —
+        // .NET exposes no per-thread V8 heap/stack sizing, so it cannot be enforced (#407 ceiling).
+        // stdin remains unsupported (no parent→worker process.stdin bridge yet).
         //
         // The bag is a SharpTSObject in interpreter mode and a Dictionary<string, object?>
         // (a compiled object literal) in compiled mode; ReadOption reads through both so
-        // workerData/transferList are honored either way (#380). transferList is read as
-        // IEnumerable<object?> so both the interpreter SharpTSArray and a compiled
-        // List<object?> survive — a transferred MessagePort is then adopted by the worker
-        // (cross-thread for interpreter ports, via CompiledMessagePortBridge for compiled
-        // $MessagePort) inside StructuredClone.Clone (#406).
+        // options are honored either way (#380). transferList is read as IEnumerable<object?>
+        // so both the interpreter SharpTSArray and a compiled List<object?> survive — a
+        // transferred MessagePort is then adopted by the worker (cross-thread for interpreter
+        // ports, via CompiledMessagePortBridge for compiled $MessagePort) inside
+        // StructuredClone.Clone (#406).
         if (options != null)
         {
             _workerData = ReadOption(options, "workerData");
             _transferList = ReadOption(options, "transferList") as IEnumerable<object?>;
+            _resourceLimits = ReadOption(options, "resourceLimits");
+            if (ReadOption(options, "stdout") is true)
+                _stdout = new SharpTSReadable();
+            if (ReadOption(options, "stderr") is true)
+                _stderr = new SharpTSReadable();
         }
 
         // Clone workerData for transfer to worker
@@ -205,12 +215,19 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     /// mode (#380). Returns null when the property is absent or the bag is an
     /// unsupported shape (e.g. a compiled options literal that uses accessors).
     /// </summary>
-    private static object? ReadOption(object? options, string name) => options switch
+    private static object? ReadOption(object? options, string name)
     {
-        SharpTSObject obj => obj.GetProperty(name),
-        IDictionary<string, object?> dict => dict.TryGetValue(name, out var v) ? v : null,
-        _ => null,
-    };
+        object? value = options switch
+        {
+            SharpTSObject obj => obj.GetProperty(name),
+            IDictionary<string, object?> dict => dict.TryGetValue(name, out var v) ? v : null,
+            _ => null,
+        };
+        // A missing SharpTSObject property reads as `undefined`, not null — normalize it so an
+        // absent option is treated as truly absent (e.g. omitting workerData while passing
+        // stdout/resourceLimits must not try to clone `undefined`).
+        return value is SharpTSUndefined ? null : value;
+    }
 
     /// <summary>
     /// Factory used by compiled output to construct a worker whose running-lifetime
@@ -299,6 +316,13 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             _parentToWorkerQueue.CompleteAdding();
             _workerToParentQueue.CompleteAdding();
 
+            // Signal end-of-stream on the diverted stdio Readables (#1003). Scheduled after the
+            // data pushes (FIFO on the parent loop) so 'end' follows the last 'data'.
+            if (_stdout != null)
+                ScheduleOnMainThread(() => _stdout.PushFromHost(_parentInterpreter, null));
+            if (_stderr != null)
+                ScheduleOnMainThread(() => _stderr.PushFromHost(_parentInterpreter, null));
+
             // Worker is done — stop keeping the parent loop alive (Node unrefs an
             // exited worker). Released before the exit event is enqueued so the
             // parent's only remaining work is that event's delivery timer, which
@@ -324,8 +348,12 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
 
         string source = File.ReadAllText(absolutePath);
 
-        // Create isolated interpreter for this worker
-        using var interpreter = new Interpreter();
+        // Create isolated interpreter for this worker. With stdout/stderr: true, divert the
+        // worker's console output into the per-worker Readable streams instead of the shared
+        // Console (#1003); otherwise keep the default Console writers.
+        TextWriter outWriter = _stdout != null ? new WorkerStreamWriter(this, _stdout) : Console.Out;
+        TextWriter errWriter = _stderr != null ? new WorkerStreamWriter(this, _stderr) : Console.Error;
+        using var interpreter = new Interpreter(outWriter, errWriter);
 
         // Expose this worker to terminate(): Shutdown() stops an idle event loop, and the
         // termination token lets a parked Atomics.wait unwind the thread (#997).
@@ -643,6 +671,34 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     }
 
     /// <summary>
+    /// Feeds a chunk of the worker's diverted console output into a worker.stdout/worker.stderr
+    /// Readable (#1003). Called on the worker thread by <see cref="WorkerStreamWriter"/>; the
+    /// push is marshalled onto the parent loop so the stream is only ever touched — and 'data'
+    /// delivered — on the parent's thread (no cross-thread access to the stream's state).
+    /// </summary>
+    private void PushToWorkerStream(SharpTSReadable target, string text)
+    {
+        ScheduleOnMainThread(() => target.PushFromHost(_parentInterpreter, text));
+    }
+
+    /// <summary>
+    /// A <see cref="TextWriter"/> that redirects the worker interpreter's console output into a
+    /// per-worker Readable stream instead of the shared Console (worker stdout/stderr, #1003).
+    /// </summary>
+    private sealed class WorkerStreamWriter(SharpTSWorker worker, SharpTSReadable target) : TextWriter
+    {
+        public override System.Text.Encoding Encoding => System.Text.Encoding.UTF8;
+        public override void Write(string? value) => Push(value);
+        public override void WriteLine(string? value) => Push((value ?? string.Empty) + Environment.NewLine);
+        public override void Write(char value) => Push(value.ToString());
+        private void Push(string? text)
+        {
+            if (!string.IsNullOrEmpty(text))
+                worker.PushToWorkerStream(target, text);
+        }
+    }
+
+    /// <summary>
     /// Processes any pending callbacks queued for the main thread.
     /// Call this periodically from the main thread in console applications
     /// to receive Worker messages and events.
@@ -800,6 +856,15 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         return name switch
         {
             "threadId" => ThreadId,
+
+            // #1003: per-worker stdio + resourceLimits. stdout/stderr are Readable streams when
+            // `stdout`/`stderr: true` was passed (else null, matching the no-pipe default).
+            // resourceLimits echoes the passed object (stored, not enforced). stdin is not
+            // supported (no parent→worker process.stdin bridge) — null.
+            "stdout" => _stdout is not null ? (object?)_stdout : null,
+            "stderr" => _stderr is not null ? (object?)_stderr : null,
+            "stdin" => null,
+            "resourceLimits" => _resourceLimits ?? new SharpTSObject(new Dictionary<string, object?>()),
 
             "postMessage" => BuiltInMethod.CreateV2("postMessage", 1, 2, (_, _, args) =>
             {
