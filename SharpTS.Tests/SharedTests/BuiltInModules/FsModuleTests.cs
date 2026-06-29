@@ -1709,10 +1709,10 @@ public class FsModuleTests
                 async function main() {
                     const f = os.tmpdir() + '/fd974b_{{uid}}.txt';
                     fs.writeFileSync(f, 'x');
-                    // Bad fd surfaces an error with a code to the callback (the exact code
-                    // differs by mode for a stale fd — a pre-existing primitive divergence).
-                    const hasCode: any = await new Promise((res: any) => fs.fstat(999999, (e: any) => res(!!(e && typeof e.code === 'string' && e.code.length > 0))));
-                    console.log('badfd:' + hasCode);
+                    // A stale fd surfaces EBADF to the callback in BOTH modes (#986 — the
+                    // compiled fd table threw EBADF but the catch-all re-mapped it to EINVAL).
+                    const badCode: any = await new Promise((res: any) => fs.fstat(999999, (e: any) => res(e && e.code ? e.code : 'nocode')));
+                    console.log('badfd:' + badCode);
                     // chown's callback is invoked (platform/no-op behavior aside).
                     const called: any = await new Promise((res: any) => fs.chown(f, 0, 0, () => res(true)));
                     console.log('chown:' + called);
@@ -1721,7 +1721,61 @@ public class FsModuleTests
                 main();
                 """
         };
-        Assert.Equal("badfd:true\nchown:true\n", TestHarness.RunModules(files, "main.ts", mode));
+        Assert.Equal("badfd:EBADF\nchown:true\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    // #986: every sync fd op on a stale descriptor surfaces EBADF (not EINVAL) in both
+    // modes. The compiled fd table already threw EBADF, but EmitWithFsErrorHandling's
+    // catch-all re-mapped any non-BCL exception to the EINVAL default before the fix.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_SyncFdOps_BadFd_ReturnEBADF(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as fs from 'fs';
+                const BAD = 999999;
+                const buf = Buffer.alloc(4);
+                function code(fn: () => void): string { try { fn(); return 'ok'; } catch (e: any) { return e.code; } }
+                console.log('fstat:'  + code(() => fs.fstatSync(BAD)));
+                console.log('ftrunc:' + code(() => fs.ftruncateSync(BAD, 0)));
+                console.log('read:'   + code(() => fs.readSync(BAD, buf, 0, 4, 0)));
+                console.log('write:'  + code(() => fs.writeSync(BAD, buf, 0, 4, 0)));
+                console.log('close:'  + code(() => fs.closeSync(BAD)));
+                """
+        };
+        Assert.Equal(
+            "fstat:EBADF\nftrunc:EBADF\nread:EBADF\nwrite:EBADF\nclose:EBADF\n",
+            TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    // #986: chown/lchown on Windows report ENOSYS (function not implemented) in both
+    // modes — the compiled side threw ENOSYS but the catch-all clobbered it to EINVAL.
+    // Windows-gated: on Unix the compiled side is a documented no-op (P/Invoke from IL),
+    // so it diverges from the interpreter's real syscall there (out of scope for #986).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fs_SyncChownLchown_Windows_ReturnENOSYS(ExecutionMode mode)
+    {
+        if (!OperatingSystem.IsWindows())
+            return; // parity only holds on Windows; see comment above.
+
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fs from 'fs';
+                import * as os from 'os';
+                const f = os.tmpdir() + '/fd986_{{uid}}.txt';
+                fs.writeFileSync(f, 'x');
+                function code(fn: () => void): string { try { fn(); return 'ok'; } catch (e: any) { return e.code; } }
+                console.log('chown:'  + code(() => fs.chownSync(f, 0, 0)));
+                console.log('lchown:' + code(() => fs.lchownSync(f, 0, 0)));
+                fs.unlinkSync(f);
+                """
+        };
+        Assert.Equal("chown:ENOSYS\nlchown:ENOSYS\n", TestHarness.RunModules(files, "main.ts", mode));
     }
 
     #endregion
