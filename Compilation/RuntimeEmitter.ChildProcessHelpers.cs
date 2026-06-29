@@ -366,6 +366,29 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("CreateNoWindow")!.GetSetMethod()!);
 
+        // input = options["input"] as string; RedirectStandardInput = input != null. (#1021)
+        var inputLocal = il.DeclareLocal(_types.String);
+        il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Stloc, inputLocal);
+        var noInputOpt = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Dup); il.Emit(OpCodes.Stloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, noInputOpt);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "input");
+        il.Emit(OpCodes.Ldloca, tempObjLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue", [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, noInputOpt);
+        il.Emit(OpCodes.Ldloc, tempObjLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Stloc, inputLocal);
+        il.MarkLabel(noInputOpt);
+        il.Emit(OpCodes.Ldloc, startInfoLocal);
+        il.Emit(OpCodes.Ldloc, inputLocal);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Cgt_Un); // input != null
+        il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("RedirectStandardInput")!.GetSetMethod()!);
+
         // Extract args if provided (args is List<object?>)
         var noArgsLabel = il.DefineLabel();
         var afterArgsLabel = il.DefineLabel();
@@ -471,6 +494,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, processLocal);
         il.Emit(OpCodes.Callvirt, _types.Process.GetMethod("Start", Type.EmptyTypes)!);
         il.Emit(OpCodes.Pop);
+
+        // if (input != null) { process.StandardInput.Write(input); process.StandardInput.Close(); }  (#1021)
+        var noInputWrite = il.DefineLabel();
+        var stdinGet = _types.Process.GetProperty("StandardInput")!.GetGetMethod()!;
+        il.Emit(OpCodes.Ldloc, inputLocal);
+        il.Emit(OpCodes.Brfalse, noInputWrite);
+        il.Emit(OpCodes.Ldloc, processLocal);
+        il.Emit(OpCodes.Callvirt, stdinGet);
+        il.Emit(OpCodes.Ldloc, inputLocal);
+        il.Emit(OpCodes.Callvirt, typeof(System.IO.TextWriter).GetMethod("Write", [_types.String])!);
+        il.Emit(OpCodes.Ldloc, processLocal);
+        il.Emit(OpCodes.Callvirt, stdinGet);
+        il.Emit(OpCodes.Callvirt, typeof(System.IO.TextWriter).GetMethod("Close", Type.EmptyTypes)!);
+        il.MarkLabel(noInputWrite);
 
         il.Emit(OpCodes.Ldloc, processLocal);
         il.Emit(OpCodes.Callvirt, _types.Process.GetProperty("StandardOutput")!.GetGetMethod()!);

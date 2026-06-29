@@ -61,6 +61,24 @@ public class ChildProcessAsyncTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void SpawnSync_Input_FeedsStdin(ExecutionMode mode)
+    {
+        // The `input` option feeds the synchronous child's stdin; `sort` echoes it back sorted.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { spawnSync } from 'child_process';
+                const r = spawnSync('sort', [], { input: 'banana\napple\n' });
+                console.log('sorted:' + r.stdout.trim());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("sorted:apple\nbanana\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void ExecSync_StillWorks(ExecutionMode mode)
     {
         var echoCommand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)

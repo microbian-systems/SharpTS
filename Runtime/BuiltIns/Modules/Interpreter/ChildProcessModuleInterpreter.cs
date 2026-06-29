@@ -107,7 +107,7 @@ public static class ChildProcessModuleInterpreter
 
         var options = args.Length > 2 ? args[2].ToObject() as SharpTSObject : null;
         var cwd = GetStringOption(options, "cwd");
-        var useShell = GetBoolOption(options, "shell", false);
+        var input = GetStringOption(options, "input");
 
         var startInfo = new ProcessStartInfo
         {
@@ -115,6 +115,7 @@ public static class ChildProcessModuleInterpreter
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            RedirectStandardInput = input != null,
             CreateNoWindow = true
         };
 
@@ -137,6 +138,12 @@ public static class ChildProcessModuleInterpreter
         {
             using var process = new Process { StartInfo = startInfo };
             process.Start();
+            if (input != null)
+            {
+                // Feed the synchronous stdin, then close so the child sees EOF.
+                process.StandardInput.Write(input);
+                process.StandardInput.Close();
+            }
             stdout = process.StandardOutput.ReadToEnd();
             stderr = process.StandardError.ReadToEnd();
             process.WaitForExit();
