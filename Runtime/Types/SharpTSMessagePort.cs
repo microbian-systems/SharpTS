@@ -71,9 +71,12 @@ public class SharpTSMessagePort : SharpTSEventEmitter
     // (postMessage/start/close) resolved as undefined (#209).
 
     /// <summary>
-    /// Represents a cloned message ready for delivery.
+    /// Represents a cloned message ready for delivery. When <paramref name="IsError"/> is
+    /// true the message failed to clone on the sender, and the receiver dispatches a
+    /// <c>'messageerror'</c> event instead of <c>'message'</c> (#1001) — mirroring how the
+    /// receiver, not the sender, surfaces a clone failure in Node.
     /// </summary>
-    internal record ClonedMessage(object? Data, SharpTSArray? Transfer);
+    internal record ClonedMessage(object? Data, SharpTSArray? Transfer, bool IsError = false);
 
     /// <summary>
     /// Sets the partner port for bidirectional communication.
@@ -128,15 +131,21 @@ public class SharpTSMessagePort : SharpTSEventEmitter
         if (_closed)
             return; // Silently ignore messages to closed ports
 
-        // Clone the message
-        var clonedMessage = StructuredClone.Clone(message, transfer);
+        if (_partner == null || _partner._closed)
+            return; // No partner (or a worker port) — subclasses can override
 
-        if (_partner != null && !_partner._closed)
+        // Clone the message. A clone failure surfaces on the RECEIVER as 'messageerror'
+        // (Node delivery model), not as a synchronous throw on the sender (#1001).
+        ClonedMessage delivery;
+        try
         {
-            // Direct delivery to partner port
-            _partner.EnqueueMessage(new ClonedMessage(clonedMessage, transfer));
+            delivery = new ClonedMessage(StructuredClone.Clone(message, transfer), transfer);
         }
-        // If no partner, this might be a worker port - subclasses can override
+        catch (StructuredClone.DataCloneError)
+        {
+            delivery = new ClonedMessage(null, null, IsError: true);
+        }
+        _partner.EnqueueMessage(delivery);
     }
 
     /// <summary>
@@ -227,6 +236,12 @@ public class SharpTSMessagePort : SharpTSEventEmitter
 
         while (_queue.TryTake(out var message))
         {
+            if (message.IsError)
+            {
+                // The sender's clone failed — Node fires 'messageerror' on the receiver.
+                EmitEvent("messageerror", []);
+                continue;
+            }
             // Node worker_threads semantics: 'message' listeners receive the
             // cloned input value of postMessage() directly (not a browser-style
             // MessageEvent wrapper).
@@ -284,7 +299,9 @@ public class SharpTSMessagePort : SharpTSEventEmitter
                 var listener = args[1].ToObject()
                     ?? throw new Exception("Listener must be a function");
                 AddListenerDirect(eventName, listener, once: name == "once");
-                if (eventName == "message")
+                // Attaching a 'message' (or 'messageerror', #1001) listener implicitly
+                // starts the port so queued deliveries flow.
+                if (eventName == "message" || eventName == "messageerror")
                 {
                     OwnerInterpreter ??= interp;
                     Start();

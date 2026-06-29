@@ -495,8 +495,18 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
 
         try
         {
-            var cloned = StructuredClone.Clone(message, transfer);
-            _workerToParentQueue.Add(new SharpTSMessagePort.ClonedMessage(cloned, transfer));
+            // A clone failure is delivered to the parent Worker as 'messageerror' (Node's
+            // receiver-side model), not thrown back into the worker's postMessage (#1001).
+            SharpTSMessagePort.ClonedMessage delivery;
+            try
+            {
+                delivery = new SharpTSMessagePort.ClonedMessage(StructuredClone.Clone(message, transfer), transfer);
+            }
+            catch (StructuredClone.DataCloneError)
+            {
+                delivery = new SharpTSMessagePort.ClonedMessage(null, null, IsError: true);
+            }
+            _workerToParentQueue.Add(delivery);
 
             // Schedule delivery on the parent thread. Routed through
             // ScheduleOnMainThread so compiled mode (no parent interpreter) marshals
@@ -504,10 +514,6 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             // _parentInterpreter?.ScheduleTimer here would silently drop every worker
             // message in compiled programs (#354).
             ScheduleOnMainThread(DeliverMessagesToParent);
-        }
-        catch (StructuredClone.DataCloneError e)
-        {
-            throw new Exception($"Failed to clone message: {e.Message}");
         }
         catch (InvalidOperationException)
         {
@@ -523,6 +529,14 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
     {
         while (_workerToParentQueue.TryTake(out var message))
         {
+            if (message.IsError)
+            {
+                // The worker's postMessage value failed to clone — fire 'messageerror' on
+                // the parent Worker instead of 'message' (#1001).
+                EmitEventOnMainThread("messageerror");
+                continue;
+            }
+
             var eventData = new SharpTSObject(new Dictionary<string, object?>
             {
                 ["data"] = message.Data
@@ -672,12 +686,18 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
 
         try
         {
-            var cloned = StructuredClone.Clone(message, transfer);
-            _parentToWorkerQueue.Add(new SharpTSMessagePort.ClonedMessage(cloned, transfer));
-        }
-        catch (StructuredClone.DataCloneError e)
-        {
-            throw new Exception($"Failed to clone message: {e.Message}");
+            // A clone failure is delivered to the worker's parentPort as 'messageerror'
+            // (Node's receiver-side model), not thrown back to the parent's postMessage (#1001).
+            SharpTSMessagePort.ClonedMessage delivery;
+            try
+            {
+                delivery = new SharpTSMessagePort.ClonedMessage(StructuredClone.Clone(message, transfer), transfer);
+            }
+            catch (StructuredClone.DataCloneError)
+            {
+                delivery = new SharpTSMessagePort.ClonedMessage(null, null, IsError: true);
+            }
+            _parentToWorkerQueue.Add(delivery);
         }
         catch (InvalidOperationException)
         {
@@ -921,18 +941,25 @@ internal class WorkerMessageHandler
 
             try
             {
-                // Get the parentPort and emit message event
+                // Get the parentPort and emit the message (or messageerror) event
                 if (_interpreter.Environment.TryGet("parentPort", out var portRV) &&
                     portRV.ToObject() is WorkerParentPort parentPort)
                 {
-                    var eventData = new SharpTSObject(new Dictionary<string, object?>
-                    {
-                        ["data"] = message.Data
-                    });
-
-                    // Emit on parentPort
                     var emitMethod = parentPort.GetMember("emit") as BuiltInMethod;
-                    emitMethod?.Call(_interpreter, ["message", eventData]);
+                    if (message.IsError)
+                    {
+                        // The parent's postMessage value failed to clone — fire 'messageerror'
+                        // on the worker's parentPort instead of 'message' (#1001).
+                        emitMethod?.Call(_interpreter, ["messageerror"]);
+                    }
+                    else
+                    {
+                        var eventData = new SharpTSObject(new Dictionary<string, object?>
+                        {
+                            ["data"] = message.Data
+                        });
+                        emitMethod?.Call(_interpreter, ["message", eventData]);
+                    }
                 }
             }
             catch (Exception ex)

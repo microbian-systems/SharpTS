@@ -771,6 +771,98 @@ public class WorkerThreadsTests
 
     #endregion
 
+    #region 'messageerror' event (#1001)
+
+    /// <summary>
+    /// #1001: when a worker posts a value that fails to clone, the parent <c>Worker</c> fires
+    /// <c>'messageerror'</c> (Node's receiver-side model) rather than throwing in the worker's
+    /// postMessage. Dual-mode: the worker always interprets and posts through the C#
+    /// <c>SharpTSWorker</c>, whose clone throws DataCloneError for a function in both modes.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_PostUncloneableToParent_FiresMessageError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_msgerr.ts"] = """
+                // A function cannot be structured-cloned → parent gets 'messageerror'.
+                postMessage(() => {});
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_msgerr.ts");
+                w.on("messageerror", () => { console.log("parent-messageerror"); });
+                w.on("message", (e: any) => { console.log("message:" + e.data); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("parent-messageerror", output);
+        Assert.DoesNotContain("message:", output);
+    }
+
+    /// <summary>
+    /// #1001: when the parent posts a value that fails to clone, the worker's
+    /// <c>parentPort</c> fires <c>'messageerror'</c>. The worker echoes which event it saw.
+    /// Dual-mode (parent posts through the C# <c>SharpTSWorker</c>).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Worker_ParentPostsUncloneable_WorkerParentPortFiresMessageError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["worker_pw.ts"] = """
+                import { parentPort } from "worker_threads";
+                parentPort.on("messageerror", () => { postMessage("saw-err"); });
+                parentPort.on("message", () => { postMessage("saw-msg"); });
+                postMessage("ready");
+                setTimeout(() => {}, 500); // stay alive to receive the parent's post
+                """,
+            ["main.ts"] = """
+                import { Worker } from "worker_threads";
+                const w = new Worker(__dirname + "/worker_pw.ts");
+                w.on("message", (e: any) => {
+                    if (e.data === "ready") { w.postMessage(() => {}); }
+                    else { console.log(e.data); }
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("saw-err", output);
+        Assert.DoesNotContain("saw-msg", output);
+    }
+
+    /// <summary>
+    /// #1001: a <c>MessageChannel</c> port whose peer posts an uncloneable value fires
+    /// <c>'messageerror'</c> on the receiver. Interpreter only — the compiled emitted
+    /// structured clone returns uncloneable values by reference (it does not throw), so a
+    /// compiled <c>$MessagePort</c> has no clone-failure point. The Worker paths above cover
+    /// the dual-mode behavior.
+    /// </summary>
+    [Fact]
+    public void MessageChannelPort_PostUncloneable_FiresMessageError_Interpreted()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { MessageChannel } from "worker_threads";
+                const { port1, port2 } = new MessageChannel();
+                port2.on("messageerror", () => { console.log("port-err"); });
+                port2.on("message", () => { console.log("port-msg"); });
+                port1.postMessage(() => {});
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", ExecutionMode.Interpreted);
+        Assert.Contains("port-err", output);
+        Assert.DoesNotContain("port-msg", output);
+    }
+
+    #endregion
+
     #region Running-Worker event-loop liveness (#329)
 
     /// <summary>
