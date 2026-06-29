@@ -127,6 +127,46 @@ public class ChildProcessAsyncTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spawn_Stdio_Ignore_NullsStreams(ExecutionMode mode)
+    {
+        // stdio:'ignore' discards the child's output and sets the stdio streams to null,
+        // while the child still runs to completion.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { spawn } from 'child_process';
+                const c = spawn('echo hi', [], { shell: true, stdio: 'ignore' });
+                console.log('out=' + (c.stdout === null || c.stdout === undefined) + ' err=' + (c.stderr === null || c.stderr === undefined));
+                c.on('close', (code: any) => console.log('close:' + code));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("out=true err=true\nclose:0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spawn_Stdio_Array_PipesOnlyStdout(ExecutionMode mode)
+    {
+        // stdio array: [stdin=ignore, stdout=pipe, stderr=ignore] — only stdout is a stream.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { spawn } from 'child_process';
+                const c = spawn('echo arrayform', [], { shell: true, stdio: ['ignore', 'pipe', 'ignore'] });
+                let out = '';
+                c.stdout.on('data', (d: any) => { out += d.toString(); });
+                c.stdout.on('end', () => console.log('out:' + out.trim() + ' stdin=' + (c.stdin === null || c.stdin === undefined)));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("out:arrayform stdin=true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Spawn_Shell_RunsThroughShell(ExecutionMode mode)
     {
         // `echo shellworks` is a shell builtin / single shell command line — it only resolves

@@ -329,15 +329,17 @@ public static class ChildProcessModuleInterpreter
 
         var cwd = GetStringOption(options, "cwd");
         var (useShell, shellPath) = GetShellOption(options);
+        var (stdinMode, stdoutMode, stderrMode) = ParseStdioModes(options);
 
-        // Create the ChildProcess event emitter with streams
+        // Create the ChildProcess; only 'pipe' fds get a real stream (Node sets the others
+        // to null). 'inherit' shares the parent's fd; 'ignore' discards.
         var childProcess = new SharpTSChildProcess();
-        var stdoutStream = new SharpTSReadable();
-        var stderrStream = new SharpTSReadable();
-        var stdinStream = new SharpTSWritable();
-        childProcess.SetStdoutStream(stdoutStream);
-        childProcess.SetStderrStream(stderrStream);
-        childProcess.SetStdinStream(stdinStream);
+        var stdoutStream = stdoutMode == "pipe" ? new SharpTSReadable() : null;
+        var stderrStream = stderrMode == "pipe" ? new SharpTSReadable() : null;
+        var stdinStream = stdinMode == "pipe" ? new SharpTSWritable() : null;
+        if (stdoutStream != null) childProcess.SetStdoutStream(stdoutStream);
+        if (stderrStream != null) childProcess.SetStderrStream(stderrStream);
+        if (stdinStream != null) childProcess.SetStdinStream(stdinStream);
 
         // Start synchronously so child.stdin.write()/.end() on the same tick reach a live
         // StandardInput; a spawn failure is surfaced as an async 'error' event.
@@ -347,9 +349,10 @@ public static class ChildProcessModuleInterpreter
             var startInfo = new ProcessStartInfo
             {
                 UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                RedirectStandardInput = true,
+                // 'inherit' shares the parent's fd (no redirect); 'pipe'/'ignore' redirect.
+                RedirectStandardOutput = stdoutMode != "inherit",
+                RedirectStandardError = stderrMode != "inherit",
+                RedirectStandardInput = stdinMode != "inherit",
                 CreateNoWindow = true
             };
 
@@ -375,34 +378,37 @@ public static class ChildProcessModuleInterpreter
             childProcess.SetPid(process.Id);
             childProcess.SetProcess(process);
 
-            // Wire stdin: forwarding write() to the started process (write() runs on the loop thread).
-            stdinStream.SetWriteCallback(BuiltInMethod.CreateV2("write", 1, 3, (interp, recv, wargs) =>
+            // Wire stdin (only when piped): forwarding write() to the started process.
+            if (stdinStream != null)
             {
-                if (wargs.Length > 0 && !wargs[0].IsNull)
+                stdinStream.SetWriteCallback(BuiltInMethod.CreateV2("write", 1, 3, (interp, recv, wargs) =>
                 {
-                    try
+                    if (wargs.Length > 0 && !wargs[0].IsNull)
                     {
-                        process.StandardInput.Write(wargs[0].ToObject()!.ToString());
-                        process.StandardInput.Flush();
+                        try
+                        {
+                            process.StandardInput.Write(wargs[0].ToObject()!.ToString());
+                            process.StandardInput.Flush();
+                        }
+                        catch { }
                     }
-                    catch { }
-                }
-                if (wargs.Length > 2 && wargs[2].ToObject() is ISharpTSCallable cb)
-                    cb.Call(interpreter, [null]);
-                else if (wargs.Length > 1 && wargs[1].ToObject() is ISharpTSCallable cb2)
-                    cb2.Call(interpreter, [null]);
-                return RuntimeValue.True;
-            }));
+                    if (wargs.Length > 2 && wargs[2].ToObject() is ISharpTSCallable cb)
+                        cb.Call(interpreter, [null]);
+                    else if (wargs.Length > 1 && wargs[1].ToObject() is ISharpTSCallable cb2)
+                        cb2.Call(interpreter, [null]);
+                    return RuntimeValue.True;
+                }));
 
-            // stdin.end() closes the child's StandardInput so it sees EOF.
-            stdinStream.SetFinalCallback(BuiltInMethod.CreateV2("final", 0, 1, (interp, recv, fargs) =>
-            {
-                try { process.StandardInput.Close(); }
-                catch { }
-                if (fargs.Length > 0 && fargs[0].ToObject() is ISharpTSCallable done)
-                    done.Call(interp, [null]);
-                return RuntimeValue.Undefined;
-            }));
+                // stdin.end() closes the child's StandardInput so it sees EOF.
+                stdinStream.SetFinalCallback(BuiltInMethod.CreateV2("final", 0, 1, (interp, recv, fargs) =>
+                {
+                    try { process.StandardInput.Close(); }
+                    catch { }
+                    if (fargs.Length > 0 && fargs[0].ToObject() is ISharpTSCallable done)
+                        done.Call(interp, [null]);
+                    return RuntimeValue.Undefined;
+                }));
+            }
         }
         catch (Exception ex)
         {
@@ -430,33 +436,43 @@ public static class ChildProcessModuleInterpreter
         {
             try
             {
-                var stdoutTask = Task.Run(() =>
+                // Pump each redirected pipe: 'pipe' feeds the stream; 'ignore' drains and
+                // discards; 'inherit' isn't redirected, so it isn't read here.
+                Task? stdoutTask = stdoutMode == "inherit" ? null : Task.Run(() =>
                 {
                     var buffer = new char[4096];
                     int read;
                     while ((read = startedProcess.StandardOutput.Read(buffer, 0, buffer.Length)) > 0)
                     {
-                        var chunk = new string(buffer, 0, read);
-                        interpreter.EnqueueCallback(() => stdoutStream.PushFromHost(interpreter, chunk));
+                        if (stdoutStream != null)
+                        {
+                            var chunk = new string(buffer, 0, read);
+                            interpreter.EnqueueCallback(() => stdoutStream.PushFromHost(interpreter, chunk));
+                        }
                     }
-                    interpreter.EnqueueCallback(() => stdoutStream.PushFromHost(interpreter, null));
+                    if (stdoutStream != null)
+                        interpreter.EnqueueCallback(() => stdoutStream.PushFromHost(interpreter, null));
                 });
 
-                var stderrTask = Task.Run(() =>
+                Task? stderrTask = stderrMode == "inherit" ? null : Task.Run(() =>
                 {
                     var buffer = new char[4096];
                     int read;
                     while ((read = startedProcess.StandardError.Read(buffer, 0, buffer.Length)) > 0)
                     {
-                        var chunk = new string(buffer, 0, read);
-                        interpreter.EnqueueCallback(() => stderrStream.PushFromHost(interpreter, chunk));
+                        if (stderrStream != null)
+                        {
+                            var chunk = new string(buffer, 0, read);
+                            interpreter.EnqueueCallback(() => stderrStream.PushFromHost(interpreter, chunk));
+                        }
                     }
-                    interpreter.EnqueueCallback(() => stderrStream.PushFromHost(interpreter, null));
+                    if (stderrStream != null)
+                        interpreter.EnqueueCallback(() => stderrStream.PushFromHost(interpreter, null));
                 });
 
                 startedProcess.WaitForExit();
-                stdoutTask.Wait();
-                stderrTask.Wait();
+                stdoutTask?.Wait();
+                stderrTask?.Wait();
                 int code = startedProcess.ExitCode;
 
                 interpreter.EnqueueCallback(() =>
@@ -935,6 +951,29 @@ public static class ChildProcessModuleInterpreter
             return defaultValue;
         var value = options.GetProperty(name);
         return value is double d ? d : defaultValue;
+    }
+
+    /// <summary>
+    /// Reads the `stdio` option into per-fd modes (stdin, stdout, stderr), each "pipe",
+    /// "inherit", or "ignore". Accepts the string shorthand (applied to all three) or the
+    /// array form. fd numbers / streams / 'ipc' fall back to "pipe" (documented limitation).
+    /// </summary>
+    private static (string stdin, string stdout, string stderr) ParseStdioModes(SharpTSObject? options)
+    {
+        var value = options?.GetProperty("stdio");
+        static string Norm(object? v) => v is string s && (s == "inherit" || s == "ignore" || s == "pipe") ? s : "pipe";
+
+        if (value is string str)
+        {
+            var m = Norm(str);
+            return (m, m, m);
+        }
+        if (value is SharpTSArray arr)
+        {
+            string At(int i) => i < arr.Count ? Norm(arr[i]) : "pipe";
+            return (At(0), At(1), At(2));
+        }
+        return ("pipe", "pipe", "pipe");
     }
 
     /// <summary>
