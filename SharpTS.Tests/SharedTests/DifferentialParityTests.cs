@@ -207,6 +207,17 @@ internal static class ParityCorpus
         // Regex (verbatim C# strings so the TS keeps its backslashes)
         ["regex-basic"] = @"console.log(/\d+/.test('abc123'), 'a1b2c3'.match(/\d/g)?.join(','), 'hello world'.replace(/o/g, '0'), 'a-b-c'.split(/-/).join('|'));",
         ["regex-groups"] = @"console.log('2020-01-15'.replace(/(\d+)-(\d+)-(\d+)/, '$3/$2/$1'), [...'a1b2'.matchAll(/(\w)(\d)/g)].map(m => m[1] + m[2]).join(','));",
+        // #1105: regex / super inside the four state-machine bodies used to compile to `null`
+        // (silent miscompile) because the state-machine emitters inherited a null-pushing base
+        // stub instead of the real $RegExp / GetSuperMethod emission. These pin the parity.
+        ["regex-in-async-fn"] = @"async function f() { const re = /ab+c/; return re.test('abbbc'); } f().then(r => console.log('async-regex:', r));",
+        ["regex-in-generator"] = @"function* g() { const re = /xy+z/; yield re.test('xyyyz'); } console.log('gen-regex:', g().next().value);",
+        ["regex-in-async-arrow"] = @"const f = async () => /a.c/.test('axc'); f().then(r => console.log('async-arrow-regex:', r));",
+        ["regex-in-async-gen"] = @"async function* g() { yield /\d+/.test('123'); } (async () => { for await (const v of g()) console.log('async-gen-regex:', v); })();",
+        ["regex-hoist-in-async-loop"] = @"async function f() { let c = 0; for (let i = 0; i < 3; i++) if (/foo/.test('foobar')) c++; return c; } f().then(c => console.log('async-hoist:', c));",
+        ["super-in-generator"] = @"class B { greet(n: string) { return 'hi ' + n; } } class D extends B { *g() { yield super.greet('gen'); } } console.log('gen-super:', new D().g().next().value);",
+        ["super-in-async-gen"] = @"class B { greet(n: string) { return 'hi ' + n; } } class D extends B { async *g() { yield super.greet('agen'); } } (async () => { for await (const v of new D().g()) console.log('async-gen-super:', v); })();",
+        ["super-in-async-fn"] = @"class B { greet(n: string) { return 'hi ' + n; } } class D extends B { async f() { return super.greet('afn'); } } new D().f().then(v => console.log('async-fn-super:', v));",
         // JSON parse/round-trip + specials (NaN/Infinity -> null, undefined elided)
         ["json-parse"] = "console.log(JSON.parse('{\"a\":1,\"b\":[true,null,1.5]}').b.length, JSON.stringify(JSON.parse('[1,2,3]')));",
         ["json-special"] = "console.log(JSON.stringify({ a: undefined, b: null, c: NaN, d: Infinity }), JSON.stringify([undefined, null, NaN]));",
