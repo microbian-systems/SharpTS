@@ -33,6 +33,7 @@ public partial class RuntimeEmitter
         EmitAbortSignalThrowIfAborted(typeBuilder, runtime);
         EmitAbortSignalAddEventListener(typeBuilder, runtime);
         EmitAbortSignalRemoveEventListener(typeBuilder, runtime);
+        EmitAbortSignalThisWrappers(typeBuilder, runtime);
         EmitAbortSignalStaticAbort(typeBuilder, runtime);
         EmitAbortSignalStaticTimeout(typeBuilder, runtime);
         EmitAbortSignalStaticAny(typeBuilder, runtime);
@@ -521,6 +522,79 @@ public partial class RuntimeEmitter
         il.MarkLabel(doneLabel);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits `__this`-first wrappers around the AbortSignal method helpers so a
+    /// dynamically-typed (`any`) signal receiver can resolve them as callable methods.
+    /// The GetProperty signal branch returns these wrapped in a $TSFunction (target=null,
+    /// _expectsThis=true via the "__this" first-parameter name), so InvokeMethodValue
+    /// injects the receiver. Each returns object (undefined) — addEventListener and
+    /// throwIfAborted have no JS return value. (#985)
+    /// </summary>
+    private void EmitAbortSignalThisWrappers(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        runtime.AbortSignalAddEventListenerThis =
+            EmitAbortSignalAddRemoveThis(typeBuilder, "AbortSignalAddEventListenerThis", runtime.AbortSignalAddEventListener);
+        runtime.AbortSignalRemoveEventListenerThis =
+            EmitAbortSignalAddRemoveThis(typeBuilder, "AbortSignalRemoveEventListenerThis", runtime.AbortSignalRemoveEventListener);
+
+        // throwIfAborted(): no args beyond the receiver.
+        var throwMethod = typeBuilder.DefineMethod(
+            "AbortSignalThrowIfAbortedThis",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+        throwMethod.DefineParameter(1, ParameterAttributes.None, "__this");
+        runtime.AbortSignalThrowIfAbortedThis = throwMethod;
+        var tIl = throwMethod.GetILGenerator();
+        tIl.Emit(OpCodes.Ldarg_0);
+        tIl.Emit(OpCodes.Call, runtime.AbortSignalThrowIfAborted); // void
+        tIl.Emit(OpCodes.Ldnull);
+        tIl.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits an `(object __this, object type, object listener) → object` wrapper that
+    /// normalizes `type` to a string (null-safe) and forwards to the given base helper
+    /// `(object signal, string type, object listener) → object`. AdjustArgs pads an
+    /// omitted listener with undefined, so calls like addEventListener('abort') are safe.
+    /// </summary>
+    private MethodBuilder EmitAbortSignalAddRemoveThis(TypeBuilder typeBuilder, string name, MethodBuilder baseHelper)
+    {
+        var method = typeBuilder.DefineMethod(
+            name,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]);
+        method.DefineParameter(1, ParameterAttributes.None, "__this");
+        method.DefineParameter(2, ParameterAttributes.None, "type");
+        method.DefineParameter(3, ParameterAttributes.None, "listener");
+
+        var il = method.GetILGenerator();
+
+        // typeStr = type == null ? null : type.ToString()
+        var typeStrLocal = il.DeclareLocal(_types.String);
+        var notNullLabel = il.DefineLabel();
+        var haveTypeLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Dup);
+        il.Emit(OpCodes.Brtrue, notNullLabel);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Br, haveTypeLabel);
+        il.MarkLabel(notNullLabel);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Object, "ToString"));
+        il.MarkLabel(haveTypeLabel);
+        il.Emit(OpCodes.Stloc, typeStrLocal);
+
+        // return baseHelper(__this, typeStr, listener)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, typeStrLocal);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Call, baseHelper);
+        il.Emit(OpCodes.Ret);
+        return method;
     }
 
     /// <summary>

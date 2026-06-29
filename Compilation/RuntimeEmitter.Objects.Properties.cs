@@ -2817,12 +2817,17 @@ public partial class RuntimeEmitter
         var foundLabel = il.DefineLabel();
         il.Emit(OpCodes.Brtrue, foundLabel);
 
-        // $AbortSignal dict surface (#224): "aborted"/"reason"/"onabort" on a
-        // dynamically-typed signal receiver. The typed path intercepts at
-        // compile time (AbortSignalEmitter); an `any` receiver lands here.
-        // Signals are identified by their "_reasonSet" internal slot — the
-        // public keys are computed from the CancellationToken, so they are
-        // never own dict entries and always reach this miss path. Name screen
+        // $AbortSignal dict surface (#224, #985): the properties "aborted"/"reason"/
+        // "onabort" AND the methods "addEventListener"/"removeEventListener"/
+        // "throwIfAborted" on a dynamically-typed (`any`) signal receiver. The typed
+        // path intercepts at compile time (AbortSignalEmitter); an `any` receiver lands
+        // here. The methods are returned as $TSFunction wrappers (target=null,
+        // _expectsThis=true via the "__this" first parameter) so a subsequent
+        // InvokeMethodValue injects the signal as the receiver — i.e.
+        // `signal.addEventListener('abort', cb)` works from inside a helper, not only at
+        // a statically-typed call site. Signals are identified by their "_reasonSet"
+        // internal slot — the public keys are computed from the CancellationToken, so
+        // they are never own dict entries and always reach this miss path. Name screen
         // runs first to keep ordinary dict misses cheap.
         if (_features.UsesAbortController)
         {
@@ -2830,7 +2835,26 @@ public partial class RuntimeEmitter
             var signalNameMatchLabel = il.DefineLabel();
             var strEq = _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String);
 
-            foreach (var signalProp in new[] { "aborted", "reason", "onabort" })
+            // Returns a $TSFunction wrapping `helper`, bound to no target, so the
+            // wrapper's _expectsThis is set (helper's first param is "__this") and
+            // InvokeMethodValue passes the signal receiver through. Same shape as
+            // EmitObjProtoMethodCheck's hasOwnProperty/isPrototypeOf wrappers.
+            void EmitSignalMethodWrapper(MethodBuilder helper, string jsName, int jsLength)
+            {
+                il.Emit(OpCodes.Ldnull);
+                il.Emit(OpCodes.Ldtoken, helper);
+                il.Emit(OpCodes.Ldtoken, helper.DeclaringType!);
+                il.Emit(OpCodes.Call, _types.GetMethod(_types.MethodBase, "GetMethodFromHandle",
+                    _types.RuntimeMethodHandle, _types.RuntimeTypeHandle));
+                il.Emit(OpCodes.Castclass, _types.MethodInfo);
+                il.Emit(OpCodes.Ldstr, jsName);
+                il.Emit(OpCodes.Ldc_I4, jsLength);
+                il.Emit(OpCodes.Newobj, runtime.TSFunctionCtorWithCache);
+                il.Emit(OpCodes.Ret);
+            }
+
+            foreach (var signalProp in new[]
+                { "aborted", "reason", "onabort", "addEventListener", "removeEventListener", "throwIfAborted" })
             {
                 il.Emit(OpCodes.Ldarg_1);
                 il.Emit(OpCodes.Ldstr, signalProp);
@@ -2866,9 +2890,34 @@ public partial class RuntimeEmitter
             il.Emit(OpCodes.Ret);
             il.MarkLabel(notSignalReasonLabel);
 
+            var notSignalOnAbortLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "onabort");
+            il.Emit(OpCodes.Call, strEq);
+            il.Emit(OpCodes.Brfalse, notSignalOnAbortLabel);
             il.Emit(OpCodes.Ldarg_0);
             il.Emit(OpCodes.Call, runtime.AbortSignalGetOnAbort);
             il.Emit(OpCodes.Ret);
+            il.MarkLabel(notSignalOnAbortLabel);
+
+            var notSignalAelLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "addEventListener");
+            il.Emit(OpCodes.Call, strEq);
+            il.Emit(OpCodes.Brfalse, notSignalAelLabel);
+            EmitSignalMethodWrapper(runtime.AbortSignalAddEventListenerThis, "addEventListener", 2);
+            il.MarkLabel(notSignalAelLabel);
+
+            var notSignalRelLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "removeEventListener");
+            il.Emit(OpCodes.Call, strEq);
+            il.Emit(OpCodes.Brfalse, notSignalRelLabel);
+            EmitSignalMethodWrapper(runtime.AbortSignalRemoveEventListenerThis, "removeEventListener", 2);
+            il.MarkLabel(notSignalRelLabel);
+
+            // Only "throwIfAborted" remains among the screened names.
+            EmitSignalMethodWrapper(runtime.AbortSignalThrowIfAbortedThis, "throwIfAborted", 0);
 
             il.MarkLabel(notSignalPropLabel);
         }
@@ -3948,6 +3997,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
 
         il.MarkLabel(dictLabel);
+
+        // $AbortSignal dict surface (#985): `signal.onabort = cb` on a dynamically-
+        // typed (`any`) signal receiver. The typed path intercepts at compile time
+        // (AbortSignalEmitter.TryEmitPropertySet); an `any` receiver lands here and
+        // would otherwise store a plain "onabort" dict key that FireAbortEvent (which
+        // reads the internal "_onabort" slot) never sees — so the handler never fired.
+        // Signals are identified by their "_reasonSet" internal slot. Gated on
+        // UsesAbortController so non-signal programs pay nothing; mirrors the GetProperty
+        // signal branch (#224).
+        if (_features.UsesAbortController)
+        {
+            var notSignalOnAbortSet = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "onabort");
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.String, "op_Equality", _types.String, _types.String));
+            il.Emit(OpCodes.Brfalse, notSignalOnAbortSet);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Castclass, _types.DictionaryStringObject);
+            il.Emit(OpCodes.Ldstr, "_reasonSet");
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.DictionaryStringObject, "ContainsKey", _types.String));
+            il.Emit(OpCodes.Brfalse, notSignalOnAbortSet);
+            il.Emit(OpCodes.Ldarg_0);  // signal
+            il.Emit(OpCodes.Ldarg_2);  // handler
+            il.Emit(OpCodes.Call, runtime.AbortSignalSetOnAbort);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notSignalOnAbortSet);
+        }
+
         // For dictionaries, check frozen/sealed tables and silently ignore if frozen/sealed
         var sealedCheckLabel = il.DefineLabel();
         var doSetLabel = il.DefineLabel();

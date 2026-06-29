@@ -2365,6 +2365,12 @@ public class EmittedRuntime
     public MethodBuilder AbortSignalThrowIfAborted { get; set; } = null!;
     public MethodBuilder AbortSignalAddEventListener { get; set; } = null!;
     public MethodBuilder AbortSignalRemoveEventListener { get; set; } = null!;
+    // #985: `__this`-first wrappers so a dynamically-typed (`any`) signal receiver can
+    // resolve addEventListener/removeEventListener/throwIfAborted as callable methods
+    // via the GetProperty $TSFunction-wrapper path (mirrors hasOwnProperty/isPrototypeOf).
+    public MethodBuilder AbortSignalAddEventListenerThis { get; set; } = null!;
+    public MethodBuilder AbortSignalRemoveEventListenerThis { get; set; } = null!;
+    public MethodBuilder AbortSignalThrowIfAbortedThis { get; set; } = null!;
     public MethodBuilder AbortSignalAbort { get; set; } = null!;
     public MethodBuilder AbortSignalTimeout { get; set; } = null!;
     public MethodBuilder AbortSignalAny { get; set; } = null!;

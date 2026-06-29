@@ -680,9 +680,10 @@ function __watchAsync(filename: string, options?: any): any {
             finish();
         } else {
             // Immediate termination when the AbortSignal fires while the iterator is
-            // parked. In compiled mode AbortSignal's listener API is not callable from
-            // stdlib code (the call throws), so this is ignored there — abort is then
-            // observed by the `signal.aborted` check in next() on the following pull.
+            // parked — `finish` wakes any parked resolver so the loop ends without a
+            // further pull. Works in both modes now that a dynamically-typed signal's
+            // addEventListener is callable from stdlib code (#985). The try/catch and
+            // the `signal.aborted` poll in next() remain as defensive fallbacks.
             try { signal.addEventListener('abort', finish); } catch (e) { }
         }
     }

@@ -1624,9 +1624,11 @@ public class FsModuleTests
     {
         // Real FSWatcher event timing is non-deterministic (and flaky under load), so
         // this pins the iterator + AbortSignal-termination contract deterministically:
-        // aborting then pulling yields done, and a pre-aborted signal ends a for-await
-        // immediately. (Live change-event observation is covered by manual/e2e checks;
-        // the compiled parked-abort limitation is tracked in #985.)
+        // aborting then pulling yields done, a pre-aborted signal ends a for-await
+        // immediately, and — since #985 — aborting while a pull is PARKED (no events)
+        // wakes it promptly in both modes via the signal's abort listener. The parked
+        // case is deterministic here because next() parks synchronously before abort()
+        // fires finish(); no live change event is involved.
         var uid = Uid();
         var files = new Dictionary<string, string>
         {
@@ -1642,17 +1644,24 @@ public class FsModuleTests
                     ac.abort();
                     const r = await it.next();
                     console.log('done:' + r.done);
+                    // Parked-abort (#985): pull first (parks, no events), then abort.
                     const ac2 = new AbortController();
+                    const it2: any = fs.promises.watch(d, { signal: ac2.signal });
+                    const parked = it2.next();
                     ac2.abort();
+                    const pr = await parked;
+                    console.log('parked:' + pr.done);
+                    const ac3 = new AbortController();
+                    ac3.abort();
                     let count = 0;
-                    for await (const ev of fs.promises.watch(d, { signal: ac2.signal })) { count++; }
+                    for await (const ev of fs.promises.watch(d, { signal: ac3.signal })) { count++; }
                     console.log('count:' + count);
                     fs.rmSync(d, { recursive: true, force: true });
                 }
                 main();
                 """
         };
-        Assert.Equal("done:true\ncount:0\n", TestHarness.RunModules(files, "main.ts", mode));
+        Assert.Equal("done:true\nparked:true\ncount:0\n", TestHarness.RunModules(files, "main.ts", mode));
     }
 
     #endregion
