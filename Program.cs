@@ -161,6 +161,10 @@ static void RunModuleFile(string absolutePath, DecoratorMode decoratorMode, bool
         var interpreter = new Interpreter();
         interpreter.SetDecoratorMode(decoratorMode);
 
+        // If this process was forked, wire its IPC channel to this interpreter's loop so
+        // 'message' handlers run with an interpreter and the child stays alive (#1017).
+        SharpTS.Runtime.Types.ForkIpcClient.Instance?.AttachLoop(interpreter);
+
         // Variable Resolution Phase (enables O(1) lookups)
         var varResolver = new VariableResolver(interpreter);
         foreach (var module in allModules)
@@ -208,6 +212,9 @@ static void Run(string source, DecoratorMode decoratorMode, bool emitDecoratorMe
 {
     interpreter ??= new Interpreter();
     interpreter.SetDecoratorMode(decoratorMode);
+
+    // Forked-child IPC: attach this interpreter's loop (idempotent — only acts once).
+    SharpTS.Runtime.Types.ForkIpcClient.Instance?.AttachLoop(interpreter);
 
     Lexer lexer = new(source);
     List<Token> tokens = lexer.ScanTokens();
@@ -655,8 +662,38 @@ static void CopySharpTSRuntimeIfNeeded(ILCompiler compiler, string outputPath, O
     {
         if (!string.Equals(Path.GetFullPath(sharpTsPath), Path.GetFullPath(destPath), StringComparison.OrdinalIgnoreCase))
             File.Copy(sharpTsPath, destPath, overwrite: true);
+
+        // child_process.fork() spawns a SEPARATE `dotnet exec SharpTS.dll <module>` process
+        // (unlike Worker/eval which load SharpTS.dll in-process). That child needs SharpTS's
+        // full runtime closure — its runtimeconfig.json, deps.json, and dependency DLLs — so
+        // co-locate the whole SharpTS bin directory next to the output. Other soft-deps only
+        // need SharpTS.dll loaded in-process.
+        if (reasons.Contains("child_process.fork"))
+        {
+            var sharpTsDir = Path.GetDirectoryName(sharpTsPath);
+            if (!string.IsNullOrEmpty(sharpTsDir))
+            {
+                foreach (var src in Directory.EnumerateFiles(sharpTsDir))
+                {
+                    var name = Path.GetFileName(src);
+                    var ext = Path.GetExtension(name);
+                    bool isRuntimeFile = ext.Equals(".dll", StringComparison.OrdinalIgnoreCase)
+                        || name.Equals("SharpTS.runtimeconfig.json", StringComparison.OrdinalIgnoreCase)
+                        || name.Equals("SharpTS.deps.json", StringComparison.OrdinalIgnoreCase);
+                    if (!isRuntimeFile) continue;
+                    var dst = Path.Combine(outDir, name);
+                    if (string.Equals(Path.GetFullPath(src), Path.GetFullPath(dst), StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    File.Copy(src, dst, overwrite: true);
+                }
+            }
+        }
+
         if (!outputOptions.QuietMode)
-            Console.WriteLine($"Copied SharpTS.dll next to output — required at runtime by: {reasonList}");
+        {
+            var what = reasons.Contains("child_process.fork") ? "SharpTS runtime" : "SharpTS.dll";
+            Console.WriteLine($"Copied {what} next to output — required at runtime by: {reasonList}");
+        }
     }
     catch (Exception ex)
     {

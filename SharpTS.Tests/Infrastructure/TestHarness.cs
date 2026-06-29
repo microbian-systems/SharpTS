@@ -768,11 +768,19 @@ public static class TestHarness
             if (s.Contains("process.exit(") ||
                 s.Contains("process.chdir(") ||
                 s.Contains("process.cwd(") ||
-                s.Contains("process.argv"))
+                s.Contains("process.argv") ||
+                // child_process.fork() spawns a real `dotnet exec SharpTS.dll <module>` child;
+                // the compiled test must run as a real subprocess with the SharpTS runtime present.
+                UsesChildProcessFork(s))
                 return true;
         }
         return false;
     }
+
+    /// <summary>True for a source that calls child_process.fork (imports it from 'child_process'
+    /// and invokes fork(...)). Distinguished from cluster.fork by the import.</summary>
+    private static bool UsesChildProcessFork(string s) =>
+        s.Contains("'child_process'") && s.Contains("fork(") && !s.Contains("cluster.fork(");
 
     /// <summary>
     /// Some test sources need the file to exist on a real disk path:
@@ -790,7 +798,9 @@ public static class TestHarness
         {
             if (s.Contains("__dirname") ||
                 s.Contains("__filename") ||
-                s.Contains("cluster.fork("))
+                s.Contains("cluster.fork(") ||
+                // child_process.fork() loads the child .ts module from disk in a separate process.
+                UsesChildProcessFork(s))
                 return true;
         }
         return false;
@@ -1067,11 +1077,27 @@ public static class TestHarness
             {
                 File.Copy(sharpTsDll, Path.Combine(tempDir, "SharpTS.dll"), overwrite: true);
 
+                var sharpTsDir = Path.GetDirectoryName(sharpTsDll)!;
                 // Copy ZstdSharp.dll (required for zstd compression in compiled mode)
-                var zstdDll = Path.Combine(Path.GetDirectoryName(sharpTsDll)!, "ZstdSharp.dll");
+                var zstdDll = Path.Combine(sharpTsDir, "ZstdSharp.dll");
                 if (File.Exists(zstdDll))
-                {
                     File.Copy(zstdDll, Path.Combine(tempDir, "ZstdSharp.dll"), overwrite: true);
+
+                // child_process.fork spawns `dotnet exec SharpTS.dll <module>` — that separate
+                // process needs SharpTS's full runtime closure (runtimeconfig + deps + dep DLLs),
+                // mirroring Program.CopySharpTSRuntimeIfNeeded.
+                if (files.Values.Any(UsesChildProcessFork))
+                {
+                    foreach (var src in Directory.EnumerateFiles(sharpTsDir))
+                    {
+                        var name = Path.GetFileName(src);
+                        var ext = Path.GetExtension(name);
+                        bool isRuntimeFile = ext.Equals(".dll", StringComparison.OrdinalIgnoreCase)
+                            || name.Equals("SharpTS.runtimeconfig.json", StringComparison.OrdinalIgnoreCase)
+                            || name.Equals("SharpTS.deps.json", StringComparison.OrdinalIgnoreCase);
+                        if (isRuntimeFile)
+                            File.Copy(src, Path.Combine(tempDir, name), overwrite: true);
+                    }
                 }
             }
 
@@ -1317,9 +1343,7 @@ public static class TestHarness
                 // Copy ZstdSharp.dll (required for zstd compression in compiled mode)
                 var zstdDll = Path.Combine(Path.GetDirectoryName(sharpTsDll)!, "ZstdSharp.dll");
                 if (File.Exists(zstdDll))
-                {
                     File.Copy(zstdDll, Path.Combine(tempDir, "ZstdSharp.dll"), overwrite: true);
-                }
             }
 
             // Write runtimeconfig.json

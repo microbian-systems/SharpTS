@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using Interp = SharpTS.Execution.Interpreter;
 
 namespace SharpTS.Runtime.Types;
 
@@ -15,6 +16,9 @@ public sealed class ForkIpcClient : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private bool _connected;
     private bool _disposed;
+    private Interp? _interpreter;
+    private readonly object _refLock = new();
+    private bool _loopRefed;
 
     /// <summary>
     /// Gets the singleton instance if this process was forked with IPC.
@@ -54,13 +58,49 @@ public sealed class ForkIpcClient : IDisposable
 
         try
         {
+            // Connect early (the parent's WaitForConnection blocks until we do), but defer
+            // reading until AttachLoop wires the child interpreter + event loop.
             _instance = new ForkIpcClient(pipeName);
-            _instance.StartReading();
         }
         catch
         {
             // Failed to connect - not a valid fork() child
             _instance = null;
+        }
+    }
+
+    /// <summary>
+    /// Attaches the child's interpreter + event loop. Refs the loop (so the child stays
+    /// alive to receive messages) and starts the IPC reader, which marshals incoming
+    /// 'message'/'disconnect' onto the loop thread so the handlers run with an interpreter.
+    /// Called once, right after the child's interpreter is created.
+    /// </summary>
+    private bool _attached;
+    public void AttachLoop(Interp interpreter)
+    {
+        lock (_refLock)
+        {
+            if (_attached) return; // idempotent — only the first interpreter owns the channel
+            _attached = true;
+            _interpreter = interpreter;
+            if (!_loopRefed && _connected)
+            {
+                _loopRefed = true;
+                interpreter.Ref();
+            }
+        }
+        StartReading();
+    }
+
+    private void ReleaseLoopRef()
+    {
+        lock (_refLock)
+        {
+            if (_loopRefed)
+            {
+                _loopRefed = false;
+                _interpreter?.Unref();
+            }
         }
     }
 
@@ -96,13 +136,14 @@ public sealed class ForkIpcClient : IDisposable
         try { _writer.Dispose(); } catch { }
         try { _pipe.Dispose(); } catch { }
 
-        // Emit 'disconnect' on the process EventEmitter
-        SharpTSProcess.Instance.EmitDirect("disconnect");
+        // Emit 'disconnect' on the loop thread, then drop the keep-alive ref so the child
+        // can exit once its work is done.
+        EmitOnLoop("disconnect", null, releaseRef: true);
     }
 
     /// <summary>
-    /// Starts a background task to read incoming IPC messages from the parent.
-    /// Messages are emitted as 'message' events on the process EventEmitter.
+    /// Starts a background task to read incoming IPC messages from the parent. Messages are
+    /// marshalled onto the loop thread and emitted as 'message' on the process EventEmitter.
     /// </summary>
     private void StartReading()
     {
@@ -116,20 +157,51 @@ public sealed class ForkIpcClient : IDisposable
                     if (line == null)
                     {
                         _connected = false;
-                        SharpTSProcess.Instance.EmitDirect("disconnect");
+                        EmitOnLoop("disconnect", null, releaseRef: true);
                         break;
                     }
 
                     var message = IpcSerializer.Deserialize(line);
-                    SharpTSProcess.Instance.EmitDirect("message", message);
+                    EmitOnLoop("message", message, releaseRef: false);
                 }
             }
             catch (OperationCanceledException) { }
             catch
             {
                 _connected = false;
+                ReleaseLoopRef();
             }
         }, _cts.Token);
+    }
+
+    /// <summary>
+    /// Emits an event on the process EventEmitter from the loop thread (interpreter-aware, so
+    /// handlers that use their interpreter — e.g. process.send inside an 'message' handler —
+    /// work). Falls back to a direct emit if no interpreter is attached.
+    /// </summary>
+    private void EmitOnLoop(string eventName, object? arg, bool releaseRef)
+    {
+        var interp = _interpreter;
+        if (interp == null)
+        {
+            if (arg == null) SharpTSProcess.Instance.EmitDirect(eventName);
+            else SharpTSProcess.Instance.EmitDirect(eventName, arg);
+            if (releaseRef) ReleaseLoopRef();
+            return;
+        }
+
+        interp.EnqueueCallback(() =>
+        {
+            try
+            {
+                if (arg == null) SharpTSProcess.Instance.EmitWith(interp, eventName);
+                else SharpTSProcess.Instance.EmitWith(interp, eventName, arg);
+            }
+            finally
+            {
+                if (releaseRef) ReleaseLoopRef();
+            }
+        });
     }
 
     public void Dispose()

@@ -1189,7 +1189,12 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object ChildProcessFork(string modulePath, object args, object options)
-    /// Pure IL — returns a ChildProcess-like object (fork is a simplified spawn).
+    /// fork runs a child .ts module through the SharpTS interpreter — a compiled standalone
+    /// binary has no in-process compiler, so it co-locates SharpTS.dll (RequireSharpTSRuntime,
+    /// recorded at the fork call site) and bridges by reflection to
+    /// ChildProcessModuleInterpreter.ForkForCompiledLoop, passing the compiled $EventLoop's
+    /// Ref/Unref/Schedule so IPC + lifecycle events marshal onto the compiled loop (#1017).
+    /// Mirrors $Runtime.CreateWorker. With --standalone (SharpTS.dll absent) it throws.
     /// </summary>
     private void EmitChildProcessFork(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -1202,10 +1207,65 @@ public partial class RuntimeEmitter
         runtime.RegisterBuiltInModuleMethod("child_process", "fork", method);
 
         var il = method.GetILGenerator();
-        // Fork needs to run a TS file in a child process. For now, return a minimal ChildProcess object.
-        // Create a dummy process (current process) just to have a pid
-        il.Emit(OpCodes.Call, _types.Process.GetMethod("GetCurrentProcess")!);
-        EmitBuildChildProcessObject(il, runtime, includeStdio: false);
+        var typeLocal = il.DeclareLocal(_types.Type);
+        var loopLocal = il.DeclareLocal(runtime.EventLoopType);
+        var refLocal = il.DeclareLocal(typeof(Action));
+        var unrefLocal = il.DeclareLocal(typeof(Action));
+        var scheduleLocal = il.DeclareLocal(typeof(Action<Action>));
+        var argsLocal = il.DeclareLocal(_types.ObjectArray);
+        var actionCtor = typeof(Action).GetConstructor([_types.Object, typeof(IntPtr)])!;
+        var actionOfActionCtor = typeof(Action<Action>).GetConstructor([_types.Object, typeof(IntPtr)])!;
+
+        // Type t = Type.GetType("SharpTS.Runtime.BuiltIns.Modules.Interpreter.ChildProcessModuleInterpreter, SharpTS");
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.Modules.Interpreter.ChildProcessModuleInterpreter, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        var typeOk = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brtrue, typeOk);
+        il.Emit(OpCodes.Ldstr, "child_process.fork requires the SharpTS runtime (SharpTS.dll) to be present. " +
+                               "Compile without --standalone so it is co-located with the output.");
+        il.Emit(OpCodes.Newobj, _types.InvalidOperationExceptionCtorString);
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(typeOk);
+
+        // loop = $EventLoop.GetInstance();
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        il.Emit(OpCodes.Stloc, loopLocal);
+        // ref/unref/schedule delegates bound to the loop instance
+        il.Emit(OpCodes.Ldloc, loopLocal);
+        il.Emit(OpCodes.Ldftn, runtime.EventLoopRef);
+        il.Emit(OpCodes.Newobj, actionCtor);
+        il.Emit(OpCodes.Stloc, refLocal);
+        il.Emit(OpCodes.Ldloc, loopLocal);
+        il.Emit(OpCodes.Ldftn, runtime.EventLoopUnref);
+        il.Emit(OpCodes.Newobj, actionCtor);
+        il.Emit(OpCodes.Stloc, unrefLocal);
+        il.Emit(OpCodes.Ldloc, loopLocal);
+        il.Emit(OpCodes.Ldftn, runtime.EventLoopSchedule);
+        il.Emit(OpCodes.Newobj, actionOfActionCtor);
+        il.Emit(OpCodes.Stloc, scheduleLocal);
+
+        // object[] args = { modulePath, argsObj, optionsObj, ref, unref, schedule };
+        il.Emit(OpCodes.Ldc_I4_6);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Stloc, argsLocal);
+        void SetArg(int i, OpCode ld) { il.Emit(OpCodes.Ldloc, argsLocal); il.Emit(OpCodes.Ldc_I4, i); il.Emit(ld); il.Emit(OpCodes.Stelem_Ref); }
+        SetArg(0, OpCodes.Ldarg_0);
+        SetArg(1, OpCodes.Ldarg_1);
+        SetArg(2, OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldloc, argsLocal); il.Emit(OpCodes.Ldc_I4_3); il.Emit(OpCodes.Ldloc, refLocal); il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Ldloc, argsLocal); il.Emit(OpCodes.Ldc_I4_4); il.Emit(OpCodes.Ldloc, unrefLocal); il.Emit(OpCodes.Stelem_Ref);
+        il.Emit(OpCodes.Ldloc, argsLocal); il.Emit(OpCodes.Ldc_I4_5); il.Emit(OpCodes.Ldloc, scheduleLocal); il.Emit(OpCodes.Stelem_Ref);
+
+        // return t.GetMethod("ForkForCompiledLoop").Invoke(null, args);
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "ForkForCompiledLoop");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldloc, argsLocal);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
     }
 }

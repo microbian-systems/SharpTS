@@ -290,6 +290,36 @@ public class ChildProcessAsyncTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Fork_IpcRoundTrip(ExecutionMode mode)
+    {
+        // Parent forks a child .ts module, exchanges a JSON message over IPC, then disconnects.
+        // fork spawns a real `dotnet exec SharpTS.dll <child>` process, so the harness runs this
+        // on disk (interp) / via a real subprocess with the SharpTS runtime co-located (compiled).
+        var files = new Dictionary<string, string>
+        {
+            ["child.ts"] = """
+                process.on('message', (m: any) => {
+                  process.send({ reply: 'got ' + m.hello });
+                  process.disconnect();
+                });
+                """,
+            ["main.ts"] = """
+                import { fork } from 'child_process';
+                const c = fork(__dirname + '/child.ts');
+                c.on('message', (m: any) => {
+                  console.log('parent got: ' + m.reply);
+                  c.disconnect();
+                });
+                c.send({ hello: 'world' });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("parent got: got world\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Fork_TypeIsFunction(ExecutionMode mode)
     {
         var files = new Dictionary<string, string>
