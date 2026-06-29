@@ -427,6 +427,41 @@ public class SharpTSEventEmitter : ITypeCategorized
     }
 
     /// <summary>
+    /// Like <see cref="EmitDirect"/> but invokes listeners with a real interpreter, so
+    /// interpreter-function listeners that use their interpreter argument (e.g. ones that
+    /// call <c>console.log</c>) work. Used by async built-ins (child_process, etc.) that
+    /// emit lifecycle events from the event-loop thread.
+    /// </summary>
+    public bool EmitWith(Interp interpreter, string eventName, params object?[] args)
+    {
+        if (!_events.TryGetValue(eventName, out var listeners) || listeners.Count == 0)
+            return false;
+
+        var snapshot = new List<ListenerWrapper>(listeners);
+
+        foreach (var wrapper in snapshot)
+        {
+            if (wrapper.Once)
+            {
+                for (var node = listeners.First; node != null; node = node.Next)
+                {
+                    if (ReferenceEquals(node.Value, wrapper))
+                    {
+                        listeners.Remove(node);
+                        if (listeners.Count == 0)
+                            _events.Remove(eventName);
+                        break;
+                    }
+                }
+            }
+
+            SharpTS.Runtime.RuntimeCallableDispatcher.Invoke(interpreter, wrapper.Listener, args);
+        }
+
+        return true;
+    }
+
+    /// <summary>
     /// Invokes a listener directly without an interpreter.
     /// </summary>
     /// <remarks>

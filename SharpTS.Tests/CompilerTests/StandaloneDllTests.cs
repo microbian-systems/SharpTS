@@ -35,7 +35,8 @@ public class StandaloneDllTests
         "Compilation/RuntimeEmitter.AbortController.cs", // AbortSignal.any() via RuntimeTypes.AbortSignalAnyCompiled
         "Compilation/RuntimeEmitter.ProcessHelpers.cs",      // ProcessEventEmitterCall and ProcessEmitExit fallback
         // "Compilation/RuntimeEmitter.Net.cs" — now uses emitted $NetServer/$NetSocket directly (no reflection)
-        // RuntimeEmitter.ChildProcessHelpers.cs / ZlibHelpers.cs / DnsPromises.cs — pruned: now pure IL, no SharpTS late binding
+        "Compilation/RuntimeEmitter.ChildProcessHelpers.cs", // child_process.fork bridges to the interpreter's ForkForCompiledLoop (requires SharpTS.dll co-located; suppressed by --standalone) — #1017
+        // ZlibHelpers.cs / DnsPromises.cs — pruned: now pure IL, no SharpTS late binding
         // RuntimeEmitter.ClusterHelpers.cs — pure IL, no reflection needed
         "Compilation/RuntimeEmitter.VmHelpers.cs",             // vm module delegation to interpreter via reflection
         "Compilation/RuntimeEmitter.DnsResolver.cs",           // dns.Resolver factory via RuntimeTypes

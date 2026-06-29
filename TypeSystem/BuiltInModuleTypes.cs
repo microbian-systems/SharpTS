@@ -794,6 +794,11 @@ public static class BuiltInModuleTypes
 
         var boolType = new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN);
 
+        // The second positional argument of spawn/execFile/fork is either the args array OR
+        // (when omitted) the options/callback — Node overloads it. Accept all of them so
+        // `spawn(cmd, { shell: true })` and `execFile(file, cb)` type-check (#1022/#1016).
+        var argsOrOptions = new TypeInfo.Union([new TypeInfo.Array(stringType), anyType]);
+
         var childProcessType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
         {
             ["pid"] = numberType,
@@ -806,6 +811,7 @@ public static class BuiltInModuleTypes
             ["signalCode"] = new TypeInfo.Union([stringType, new TypeInfo.Null()]),
             ["on"] = new TypeInfo.Function([stringType, anyType], anyType),
             ["once"] = new TypeInfo.Function([stringType, anyType], anyType),
+            ["addListener"] = new TypeInfo.Function([stringType, anyType], anyType),
             ["kill"] = new TypeInfo.Function([stringType], boolType, RequiredParams: 0),
             ["send"] = new TypeInfo.Function([anyType], boolType),
             ["disconnect"] = new TypeInfo.Function([], new TypeInfo.Void()),
@@ -818,12 +824,12 @@ public static class BuiltInModuleTypes
             // Sync methods
             ["execSync"] = new TypeInfo.Function([stringType, anyType], stringType, RequiredParams: 1),
             ["spawnSync"] = new TypeInfo.Function(
-                [stringType, new TypeInfo.Array(stringType), anyType],
+                [stringType, argsOrOptions, anyType],
                 spawnResultType,
                 RequiredParams: 1
             ),
             ["execFileSync"] = new TypeInfo.Function(
-                [stringType, new TypeInfo.Array(stringType), anyType],
+                [stringType, argsOrOptions, anyType],
                 stringType,
                 RequiredParams: 1
             ),
@@ -834,17 +840,17 @@ public static class BuiltInModuleTypes
                 RequiredParams: 1
             ),
             ["spawn"] = new TypeInfo.Function(
-                [stringType, new TypeInfo.Array(stringType), anyType],
+                [stringType, argsOrOptions, anyType],
                 childProcessType,
                 RequiredParams: 1
             ),
             ["execFile"] = new TypeInfo.Function(
-                [stringType, new TypeInfo.Array(stringType), anyType, anyType],
+                [stringType, argsOrOptions, anyType, anyType],
                 childProcessType,
                 RequiredParams: 1
             ),
             ["fork"] = new TypeInfo.Function(
-                [stringType, new TypeInfo.Array(stringType), anyType],
+                [stringType, argsOrOptions, anyType],
                 childProcessType,
                 RequiredParams: 1
             )

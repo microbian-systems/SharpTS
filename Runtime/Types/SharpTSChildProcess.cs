@@ -24,6 +24,8 @@ public class SharpTSChildProcess : SharpTSEventEmitter
     private StreamWriter? _ipcWriter;
     private CancellationTokenSource? _ipcCts;
     private string? _signalCode;
+    private readonly object _ipcLock = new();
+    private readonly List<object?> _pendingSends = new();
 
     /// <summary>
     /// Sets the underlying OS process for kill() support.
@@ -60,10 +62,26 @@ public class SharpTSChildProcess : SharpTSEventEmitter
     /// </summary>
     public void SetupIpc(NamedPipeServerStream pipeServer, StreamWriter writer, CancellationTokenSource cts)
     {
-        _ipcPipeServer = pipeServer;
-        _ipcWriter = writer;
-        _ipcCts = cts;
-        _connected = true;
+        lock (_ipcLock)
+        {
+            _ipcPipeServer = pipeServer;
+            _ipcWriter = writer;
+            _ipcCts = cts;
+            _connected = true;
+
+            // Flush any messages sent before the channel finished connecting (Node buffers
+            // these rather than throwing — see Send()).
+            foreach (var msg in _pendingSends)
+            {
+                try
+                {
+                    writer.WriteLine(IpcSerializer.Serialize(msg));
+                    writer.Flush();
+                }
+                catch { }
+            }
+            _pendingSends.Clear();
+        }
     }
 
     /// <summary>
@@ -120,20 +138,27 @@ public class SharpTSChildProcess : SharpTSEventEmitter
 
     private RuntimeValue Send(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        if (!_connected || _ipcWriter == null)
-            throw new Exception("channel closed");
-
         var message = args.Length > 0 ? args[0].ToObject() : null;
-        try
+        lock (_ipcLock)
         {
-            var json = IpcSerializer.Serialize(message);
-            _ipcWriter.WriteLine(json);
-            _ipcWriter.Flush();
-            return RuntimeValue.True;
-        }
-        catch
-        {
-            return RuntimeValue.False;
+            // Buffer sends issued before the IPC channel finished connecting (the channel is
+            // established on a background task); they flush in SetupIpc. Matches Node, which
+            // queues messages until the channel is ready instead of throwing.
+            if (!_connected || _ipcWriter == null)
+            {
+                _pendingSends.Add(message);
+                return RuntimeValue.True;
+            }
+            try
+            {
+                _ipcWriter.WriteLine(IpcSerializer.Serialize(message));
+                _ipcWriter.Flush();
+                return RuntimeValue.True;
+            }
+            catch
+            {
+                return RuntimeValue.False;
+            }
         }
     }
 

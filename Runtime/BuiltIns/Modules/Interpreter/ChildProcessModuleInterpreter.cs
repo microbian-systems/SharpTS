@@ -107,7 +107,7 @@ public static class ChildProcessModuleInterpreter
 
         var options = args.Length > 2 ? args[2].ToObject() as SharpTSObject : null;
         var cwd = GetStringOption(options, "cwd");
-        var useShell = GetBoolOption(options, "shell", false);
+        var input = GetStringOption(options, "input");
 
         var startInfo = new ProcessStartInfo
         {
@@ -115,6 +115,7 @@ public static class ChildProcessModuleInterpreter
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            RedirectStandardInput = input != null,
             CreateNoWindow = true
         };
 
@@ -137,6 +138,12 @@ public static class ChildProcessModuleInterpreter
         {
             using var process = new Process { StartInfo = startInfo };
             process.Start();
+            if (input != null)
+            {
+                // Feed the synchronous stdin, then close so the child sees EOF.
+                process.StandardInput.Write(input);
+                process.StandardInput.Close();
+            }
             stdout = process.StandardOutput.ReadToEnd();
             stderr = process.StandardError.ReadToEnd();
             process.WaitForExit();
@@ -198,9 +205,16 @@ public static class ChildProcessModuleInterpreter
         // Create the ChildProcess event emitter
         var childProcess = new SharpTSChildProcess();
 
-        // Run the process asynchronously
+        // Keep the event loop alive while the child runs; the terminal callback /
+        // lifecycle events are marshalled back onto the loop (EnqueueCallback) so they
+        // run on the loop thread AFTER the synchronous script registers its listeners —
+        // matching Node's "deferred to a future tick" guarantee.
+        interpreter.Ref();
         Task.Run(() =>
         {
+            string stdout = "", stderr = "";
+            int code = 0, kind = 0; // kind: 0 normal, 1 timeout, 2 exception
+            object? error = null;
             try
             {
                 var startInfo = new ProcessStartInfo
@@ -232,59 +246,69 @@ public static class ChildProcessModuleInterpreter
                 childProcess.SetPid(process.Id);
                 childProcess.SetProcess(process);
 
-                var stdout = process.StandardOutput.ReadToEnd();
-                var stderr = process.StandardError.ReadToEnd();
+                var maxBuffer = (int)GetDoubleOption(options, "maxBuffer", 1024 * 1024);
+                stdout = ReadCapped(process.StandardOutput, maxBuffer, out var oOver);
+                stderr = ReadCapped(process.StandardError, maxBuffer, out var eOver);
+                if (oOver || eOver)
+                {
+                    try { process.Kill(); } catch { }
+                    error = MaxBufferError();
+                }
 
                 if (timeout > 0)
                 {
                     if (!process.WaitForExit((int)timeout))
                     {
                         process.Kill();
-                        childProcess.SetExitCode(-1);
-                        childProcess.EmitDirect("error", new SharpTSObject(new Dictionary<string, object?>
-                        {
-                            ["message"] = "Command timed out"
-                        }));
-                        callback?.Call(null!, [new SharpTSObject(new Dictionary<string, object?>
-                        {
-                            ["message"] = "Command timed out"
-                        }), stdout, stderr]);
-                        return;
+                        kind = 1;
                     }
+                    else { code = process.ExitCode; }
                 }
                 else
                 {
                     process.WaitForExit();
+                    code = process.ExitCode;
                 }
 
-                childProcess.SetExitCode(process.ExitCode);
-
-                if (process.ExitCode != 0)
-                {
-                    var errorObj = new SharpTSObject(new Dictionary<string, object?>
+                if (kind == 0 && error == null && code != 0)
+                    error = new SharpTSObject(new Dictionary<string, object?>
                     {
-                        ["message"] = $"Command failed with exit code {process.ExitCode}",
-                        ["code"] = (double)process.ExitCode
+                        ["message"] = $"Command failed with exit code {code}",
+                        ["code"] = (double)code
                     });
-                    callback?.Call(null!, [errorObj, stdout, stderr]);
-                }
-                else
-                {
-                    callback?.Call(null!, [null, stdout, stderr]);
-                }
-
-                childProcess.EmitDirect("close", (double)process.ExitCode);
-                childProcess.EmitDirect("exit", (double)process.ExitCode);
             }
             catch (Exception ex)
             {
-                var errorObj = new SharpTSObject(new Dictionary<string, object?>
-                {
-                    ["message"] = ex.Message
-                });
-                childProcess.EmitDirect("error", errorObj);
-                callback?.Call(null!, [errorObj, "", ""]);
+                kind = 2;
+                error = new SharpTSObject(new Dictionary<string, object?> { ["message"] = ex.Message });
             }
+
+            interpreter.EnqueueCallback(() =>
+            {
+                try
+                {
+                    if (kind == 2)
+                    {
+                        childProcess.EmitWith(interpreter, "error", error);
+                        callback?.CallBoxed(interpreter, [error, "", ""]);
+                    }
+                    else if (kind == 1)
+                    {
+                        childProcess.SetExitCode(-1);
+                        var timeoutErr = new SharpTSObject(new Dictionary<string, object?> { ["message"] = "Command timed out" });
+                        childProcess.EmitWith(interpreter, "error", timeoutErr);
+                        callback?.CallBoxed(interpreter, [timeoutErr, stdout, stderr]);
+                    }
+                    else
+                    {
+                        childProcess.SetExitCode(code);
+                        callback?.CallBoxed(interpreter, [error, stdout, stderr]);
+                        childProcess.EmitWith(interpreter, "close", (double)code);
+                        childProcess.EmitWith(interpreter, "exit", (double)code);
+                    }
+                }
+                finally { interpreter.Unref(); }
+            });
         });
 
         return RuntimeValue.FromObject(childProcess);
@@ -317,49 +341,59 @@ public static class ChildProcessModuleInterpreter
         }
 
         var cwd = GetStringOption(options, "cwd");
-        var useShell = GetBoolOption(options, "shell", false);
+        var (useShell, shellPath) = GetShellOption(options);
+        var (stdinMode, stdoutMode, stderrMode) = ParseStdioModes(options);
 
-        // Create the ChildProcess event emitter with streams
+        // Create the ChildProcess; only 'pipe' fds get a real stream (Node sets the others
+        // to null). 'inherit' shares the parent's fd; 'ignore' discards.
         var childProcess = new SharpTSChildProcess();
-        var stdoutStream = new SharpTSReadable();
-        var stderrStream = new SharpTSReadable();
-        var stdinStream = new SharpTSWritable();
-        childProcess.SetStdoutStream(stdoutStream);
-        childProcess.SetStderrStream(stderrStream);
-        childProcess.SetStdinStream(stdinStream);
+        var stdoutStream = stdoutMode == "pipe" ? new SharpTSReadable() : null;
+        var stderrStream = stderrMode == "pipe" ? new SharpTSReadable() : null;
+        var stdinStream = stdinMode == "pipe" ? new SharpTSWritable() : null;
+        if (stdoutStream != null) childProcess.SetStdoutStream(stdoutStream);
+        if (stderrStream != null) childProcess.SetStderrStream(stderrStream);
+        if (stdinStream != null) childProcess.SetStdinStream(stdinStream);
 
-        // Run asynchronously
-        Task.Run(() =>
+        // Start synchronously so child.stdin.write()/.end() on the same tick reach a live
+        // StandardInput; a spawn failure is surfaced as an async 'error' event.
+        Process process;
+        try
         {
-            try
+            var startInfo = new ProcessStartInfo
             {
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = command,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    RedirectStandardInput = true,
-                    CreateNoWindow = true
-                };
+                UseShellExecute = false,
+                // 'inherit' shares the parent's fd (no redirect); 'pipe'/'ignore' redirect.
+                RedirectStandardOutput = stdoutMode != "inherit",
+                RedirectStandardError = stderrMode != "inherit",
+                RedirectStandardInput = stdinMode != "inherit",
+                CreateNoWindow = true
+            };
 
+            if (useShell)
+            {
+                // Run "command args" through a shell (cmd.exe / sh), matching exec().
+                ApplyShellCommand(startInfo, command, cmdArgs, shellPath);
+            }
+            else
+            {
+                startInfo.FileName = command;
                 foreach (var arg in cmdArgs)
-                {
                     startInfo.ArgumentList.Add(arg);
-                }
+            }
 
-                if (!string.IsNullOrEmpty(cwd))
-                    startInfo.WorkingDirectory = cwd;
+            if (!string.IsNullOrEmpty(cwd))
+                startInfo.WorkingDirectory = cwd;
 
-                ApplyEnvOptions(options, startInfo);
+            ApplyEnvOptions(options, startInfo);
 
-                var process = new Process { StartInfo = startInfo };
-                process.Start();
-                childProcess.SetPid(process.Id);
-                childProcess.SetProcess(process);
+            process = new Process { StartInfo = startInfo };
+            process.Start();
+            childProcess.SetPid(process.Id);
+            childProcess.SetProcess(process);
 
-                // Wire up stdin: when write() is called on the writable stream,
-                // forward data to the process stdin
+            // Wire stdin (only when piped): forwarding write() to the started process.
+            if (stdinStream != null)
+            {
                 stdinStream.SetWriteCallback(BuiltInMethod.CreateV2("write", 1, 3, (interp, recv, wargs) =>
                 {
                     if (wargs.Length > 0 && !wargs[0].IsNull)
@@ -371,51 +405,108 @@ public static class ChildProcessModuleInterpreter
                         }
                         catch { }
                     }
-                    // Call the callback if provided (3rd arg in Node.js write(chunk, enc, cb))
                     if (wargs.Length > 2 && wargs[2].ToObject() is ISharpTSCallable cb)
-                        cb.Call(null!, [null]);
+                        cb.Call(interpreter, [null]);
                     else if (wargs.Length > 1 && wargs[1].ToObject() is ISharpTSCallable cb2)
-                        cb2.Call(null!, [null]);
+                        cb2.Call(interpreter, [null]);
                     return RuntimeValue.True;
                 }));
 
-                // Read stdout and stderr asynchronously and push to streams
-                var stdoutTask = Task.Run(() =>
+                // stdin.end() closes the child's StandardInput so it sees EOF.
+                stdinStream.SetFinalCallback(BuiltInMethod.CreateV2("final", 0, 1, (interp, recv, fargs) =>
+                {
+                    try { process.StandardInput.Close(); }
+                    catch { }
+                    if (fargs.Length > 0 && fargs[0].ToObject() is ISharpTSCallable done)
+                        done.Call(interp, [null]);
+                    return RuntimeValue.Undefined;
+                }));
+            }
+        }
+        catch (Exception ex)
+        {
+            var spawnErr = SpawnError(ex, command, "spawn");
+            interpreter.Ref();
+            interpreter.EnqueueCallback(() =>
+            {
+                try { childProcess.EmitWith(interpreter, "error", spawnErr); }
+                finally { interpreter.Unref(); }
+            });
+            return RuntimeValue.FromObject(childProcess);
+        }
+
+        // Keep the loop alive while the child runs; stream chunks and lifecycle events are
+        // marshalled onto the loop thread (PushFromHost / EmitWith) so they run with a real
+        // interpreter and after the synchronous script has attached its listeners.
+        var startedProcess = process;
+        interpreter.Ref();
+        Task.Run(() =>
+        {
+            try
+            {
+                // Pump each redirected pipe: 'pipe' feeds the stream; 'ignore' drains and
+                // discards; 'inherit' isn't redirected, so it isn't read here.
+                Task? stdoutTask = stdoutMode == "inherit" ? null : Task.Run(() =>
                 {
                     var buffer = new char[4096];
                     int read;
-                    while ((read = process.StandardOutput.Read(buffer, 0, buffer.Length)) > 0)
+                    while ((read = startedProcess.StandardOutput.Read(buffer, 0, buffer.Length)) > 0)
                     {
-                        stdoutStream.EmitDirect("data", new string(buffer, 0, read));
+                        if (stdoutStream != null)
+                        {
+                            var chunk = new string(buffer, 0, read);
+                            interpreter.EnqueueCallback(() => stdoutStream.PushFromHost(interpreter, chunk));
+                        }
                     }
-                    stdoutStream.EmitDirect("end");
+                    if (stdoutStream != null)
+                        interpreter.EnqueueCallback(() => stdoutStream.PushFromHost(interpreter, null));
                 });
 
-                var stderrTask = Task.Run(() =>
+                Task? stderrTask = stderrMode == "inherit" ? null : Task.Run(() =>
                 {
                     var buffer = new char[4096];
                     int read;
-                    while ((read = process.StandardError.Read(buffer, 0, buffer.Length)) > 0)
+                    while ((read = startedProcess.StandardError.Read(buffer, 0, buffer.Length)) > 0)
                     {
-                        stderrStream.EmitDirect("data", new string(buffer, 0, read));
+                        if (stderrStream != null)
+                        {
+                            var chunk = new string(buffer, 0, read);
+                            interpreter.EnqueueCallback(() => stderrStream.PushFromHost(interpreter, chunk));
+                        }
                     }
-                    stderrStream.EmitDirect("end");
+                    if (stderrStream != null)
+                        interpreter.EnqueueCallback(() => stderrStream.PushFromHost(interpreter, null));
                 });
 
-                process.WaitForExit();
-                stdoutTask.Wait();
-                stderrTask.Wait();
+                startedProcess.WaitForExit();
+                stdoutTask?.Wait();
+                stderrTask?.Wait();
+                int code = startedProcess.ExitCode;
 
-                childProcess.SetExitCode(process.ExitCode);
-                childProcess.EmitDirect("close", (double)process.ExitCode);
-                childProcess.EmitDirect("exit", (double)process.ExitCode);
+                interpreter.EnqueueCallback(() =>
+                {
+                    try
+                    {
+                        childProcess.SetExitCode(code);
+                        childProcess.EmitWith(interpreter, "close", (double)code);
+                        childProcess.EmitWith(interpreter, "exit", (double)code);
+                    }
+                    finally { interpreter.Unref(); }
+                });
             }
             catch (Exception ex)
             {
-                childProcess.EmitDirect("error", new SharpTSObject(new Dictionary<string, object?>
+                interpreter.EnqueueCallback(() =>
                 {
-                    ["message"] = ex.Message
-                }));
+                    try
+                    {
+                        childProcess.EmitWith(interpreter, "error", new SharpTSObject(new Dictionary<string, object?>
+                        {
+                            ["message"] = ex.Message
+                        }));
+                    }
+                    finally { interpreter.Unref(); }
+                });
             }
         });
 
@@ -535,8 +626,12 @@ public static class ChildProcessModuleInterpreter
 
         var childProcess = new SharpTSChildProcess();
 
+        interpreter.Ref();
         Task.Run(() =>
         {
+            string stdout = "", stderr = "";
+            int code = 0, kind = 0; // kind: 0 normal, 1 timeout, 2 exception
+            object? error = null;
             try
             {
                 var startInfo = new ProcessStartInfo
@@ -561,53 +656,69 @@ public static class ChildProcessModuleInterpreter
                 childProcess.SetPid(process.Id);
                 childProcess.SetProcess(process);
 
-                var stdout = process.StandardOutput.ReadToEnd();
-                var stderr = process.StandardError.ReadToEnd();
+                var maxBuffer = (int)GetDoubleOption(options, "maxBuffer", 1024 * 1024);
+                stdout = ReadCapped(process.StandardOutput, maxBuffer, out var oOver);
+                stderr = ReadCapped(process.StandardError, maxBuffer, out var eOver);
+                if (oOver || eOver)
+                {
+                    try { process.Kill(); } catch { }
+                    error = MaxBufferError();
+                }
 
                 if (timeout > 0)
                 {
                     if (!process.WaitForExit((int)timeout))
                     {
                         process.Kill();
-                        childProcess.SetExitCode(-1);
-                        var timeoutErr = new SharpTSObject(new Dictionary<string, object?>
-                            { ["message"] = "Command timed out" });
-                        childProcess.EmitDirect("error", timeoutErr);
-                        callback?.Call(null!, [timeoutErr, stdout, stderr]);
-                        return;
+                        kind = 1;
                     }
+                    else { code = process.ExitCode; }
                 }
                 else
                 {
                     process.WaitForExit();
+                    code = process.ExitCode;
                 }
 
-                childProcess.SetExitCode(process.ExitCode);
-
-                if (process.ExitCode != 0)
-                {
-                    var errorObj = new SharpTSObject(new Dictionary<string, object?>
+                if (kind == 0 && error == null && code != 0)
+                    error = new SharpTSObject(new Dictionary<string, object?>
                     {
-                        ["message"] = $"Command failed with exit code {process.ExitCode}",
-                        ["code"] = (double)process.ExitCode
+                        ["message"] = $"Command failed with exit code {code}",
+                        ["code"] = (double)code
                     });
-                    callback?.Call(null!, [errorObj, stdout, stderr]);
-                }
-                else
-                {
-                    callback?.Call(null!, [null, stdout, stderr]);
-                }
-
-                childProcess.EmitDirect("close", (double)process.ExitCode);
-                childProcess.EmitDirect("exit", (double)process.ExitCode);
             }
             catch (Exception ex)
             {
-                var errorObj = new SharpTSObject(new Dictionary<string, object?>
-                    { ["message"] = ex.Message });
-                childProcess.EmitDirect("error", errorObj);
-                callback?.Call(null!, [errorObj, "", ""]);
+                kind = 2;
+                error = new SharpTSObject(new Dictionary<string, object?> { ["message"] = ex.Message });
             }
+
+            interpreter.EnqueueCallback(() =>
+            {
+                try
+                {
+                    if (kind == 2)
+                    {
+                        childProcess.EmitWith(interpreter, "error", error);
+                        callback?.CallBoxed(interpreter, [error, "", ""]);
+                    }
+                    else if (kind == 1)
+                    {
+                        childProcess.SetExitCode(-1);
+                        var timeoutErr = new SharpTSObject(new Dictionary<string, object?> { ["message"] = "Command timed out" });
+                        childProcess.EmitWith(interpreter, "error", timeoutErr);
+                        callback?.CallBoxed(interpreter, [timeoutErr, stdout, stderr]);
+                    }
+                    else
+                    {
+                        childProcess.SetExitCode(code);
+                        callback?.CallBoxed(interpreter, [error, stdout, stderr]);
+                        childProcess.EmitWith(interpreter, "close", (double)code);
+                        childProcess.EmitWith(interpreter, "exit", (double)code);
+                    }
+                }
+                finally { interpreter.Unref(); }
+            });
         });
 
         return RuntimeValue.FromObject(childProcess);
@@ -638,8 +749,46 @@ public static class ChildProcessModuleInterpreter
         }
 
         var cwd = GetStringOption(options, "cwd");
+        var childProcess = RunFork(modulePath, forkArgs, options, cwd, interpreter,
+            interpreter.Ref, interpreter.Unref, interpreter.EnqueueCallback,
+            (cp, ev, arg) => cp.EmitWith(interpreter, ev, arg));
+        return RuntimeValue.FromObject(childProcess);
+    }
 
-        // Resolve the module path relative to cwd
+    /// <summary>
+    /// Compiled-output bridge for fork (#1017). The emitted <c>$Runtime.ChildProcessFork</c>
+    /// resolves this by reflection (keeping the standalone DLL free of a hard SharpTS.dll
+    /// reference) and passes the compiled <c>$EventLoop</c>'s Ref/Unref/Schedule so IPC and
+    /// lifecycle events marshal onto the compiled loop — mirroring SharpTSWorker.CreateForCompiledLoop.
+    /// </summary>
+    public static SharpTSChildProcess ForkForCompiledLoop(
+        string modulePath, object? argsObj, object? optionsObj,
+        Action eventLoopRef, Action eventLoopUnref, Action<Action> eventLoopSchedule)
+    {
+        var forkArgs = new List<string>();
+        if (argsObj is SharpTSArray a)
+            foreach (var x in a)
+                forkArgs.Add(x?.ToString() ?? "");
+        var options = optionsObj as SharpTSObject;
+        var cwd = GetStringOption(options, "cwd");
+
+        return RunFork(modulePath, forkArgs, options, cwd, interp: null,
+            eventLoopRef, eventLoopUnref, eventLoopSchedule,
+            (cp, ev, arg) => cp.EmitDirect(ev, arg));
+    }
+
+    /// <summary>
+    /// Shared fork core: spawns the SharpTS runtime to run the child module over a named-pipe
+    /// IPC channel, keeping the owning event loop alive (refLoop/unrefLoop) and marshalling
+    /// IPC messages + stream chunks + lifecycle events onto it (post). <paramref name="interp"/>
+    /// is the interpreter for interp-mode (null in compiled mode — stream pushes/events then
+    /// dispatch compiled listeners directly).
+    /// </summary>
+    private static SharpTSChildProcess RunFork(
+        string modulePath, List<string> forkArgs, SharpTSObject? options, string? cwd,
+        Interp? interp, Action refLoop, Action unrefLoop, Action<Action> post,
+        Action<SharpTSChildProcess, string, object?> emit)
+    {
         var resolvedModule = modulePath;
         if (!Path.IsPathRooted(resolvedModule))
         {
@@ -647,20 +796,11 @@ public static class ChildProcessModuleInterpreter
             resolvedModule = Path.GetFullPath(Path.Combine(basePath, resolvedModule));
         }
 
-        // Create a unique IPC pipe name
         var pipeName = $"sharpts-ipc-{Guid.NewGuid():N}";
-
-        // Create the ChildProcess
         var childProcess = new SharpTSChildProcess();
         var cts = new CancellationTokenSource();
-
-        // Create named pipe server for IPC
         var pipeServer = new NamedPipeServerStream(pipeName, PipeDirection.InOut,
             1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-
-        // Build the command to run SharpTS with the child module
-        var entryAssembly = Assembly.GetEntryAssembly();
-        var sharpTsPath = entryAssembly?.Location ?? "";
 
         var startInfo = new ProcessStartInfo
         {
@@ -670,51 +810,47 @@ public static class ChildProcessModuleInterpreter
             CreateNoWindow = true
         };
 
-        // Determine how to spawn: dotnet <dll> or direct executable
+        // The child must run the SharpTS interpreter on the .ts module. SharpTS.dll is always
+        // the assembly hosting this method — the CLI entry in interp mode, and the co-located
+        // runtime in compiled mode (RequireSharpTSRuntime). (Using the *entry* assembly would
+        // be wrong when SharpTS is embedded, e.g. the xUnit testhost.)
+        var sharpTsPath = typeof(ChildProcessModuleInterpreter).Assembly.Location;
         var processPath = Environment.ProcessPath;
-        if (processPath != null && Path.GetFileNameWithoutExtension(processPath)
-                .Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+        var processName = processPath != null ? Path.GetFileNameWithoutExtension(processPath) : "";
+        bool processIsDotnet = processName.Equals("dotnet", StringComparison.OrdinalIgnoreCase);
+        bool processIsSharpTs = processName.Equals("sharpts", StringComparison.OrdinalIgnoreCase);
+
+        if (processIsSharpTs && !string.IsNullOrEmpty(processPath))
         {
-            // Running via `dotnet run` or `dotnet <dll>`
-            startInfo.FileName = processPath;
-            if (!string.IsNullOrEmpty(sharpTsPath) && sharpTsPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
-            {
-                startInfo.ArgumentList.Add("exec");
-                startInfo.ArgumentList.Add(sharpTsPath);
-            }
-        }
-        else if (!string.IsNullOrEmpty(processPath))
-        {
-            // Running as standalone executable
-            startInfo.FileName = processPath;
+            // Running as a self-contained SharpTS executable — run it directly on the module.
+            startInfo.FileName = processPath!;
         }
         else
         {
-            throw new Exception("Cannot determine SharpTS executable path for fork()");
+            // Everything else (interp via `dotnet SharpTS.dll`, compiled output, or SharpTS
+            // embedded as a library e.g. the test host): run the SharpTS.dll interpreter via
+            // the dotnet host — ProcessPath when it is dotnet, otherwise the muxer on PATH.
+            startInfo.FileName = processIsDotnet ? processPath! : "dotnet";
+            startInfo.ArgumentList.Add("exec");
+            startInfo.ArgumentList.Add(sharpTsPath);
         }
 
         startInfo.ArgumentList.Add(resolvedModule);
-
-        // Pass fork args
         foreach (var arg in forkArgs)
             startInfo.ArgumentList.Add(arg);
 
-        // Set IPC pipe name via environment variable
         startInfo.Environment["SHARPTS_IPC_PIPE"] = pipeName;
-
         if (!string.IsNullOrEmpty(cwd))
             startInfo.WorkingDirectory = cwd;
-
         ApplyEnvOptions(options, startInfo);
-        // Ensure IPC pipe name survives env override
-        startInfo.Environment["SHARPTS_IPC_PIPE"] = pipeName;
+        startInfo.Environment["SHARPTS_IPC_PIPE"] = pipeName; // survive an env override
 
-        // Set up stdout/stderr streams on the child process
         var stdoutStream = new SharpTSReadable();
         var stderrStream = new SharpTSReadable();
         childProcess.SetStdoutStream(stdoutStream);
         childProcess.SetStderrStream(stderrStream);
 
+        refLoop();
         Task.Run(() =>
         {
             try
@@ -724,7 +860,6 @@ public static class ChildProcessModuleInterpreter
                 childProcess.SetPid(process.Id);
                 childProcess.SetProcess(process);
 
-                // Wait for child to connect to IPC pipe
                 var connectTask = pipeServer.WaitForConnectionAsync(cts.Token);
                 if (!connectTask.Wait(10_000))
                 {
@@ -735,7 +870,7 @@ public static class ChildProcessModuleInterpreter
                 var writer = new StreamWriter(pipeServer) { AutoFlush = true };
                 childProcess.SetupIpc(pipeServer, writer, cts);
 
-                // Start reading IPC messages from child
+                // IPC message reader — marshal each message onto the owning loop.
                 var ipcReader = Task.Run(() =>
                 {
                     try
@@ -744,23 +879,25 @@ public static class ChildProcessModuleInterpreter
                         while (!cts.Token.IsCancellationRequested)
                         {
                             var line = reader.ReadLine();
-                            if (line == null) break; // pipe closed
+                            if (line == null) break;
                             var message = IpcSerializer.Deserialize(line);
-                            childProcess.EmitDirect("message", message);
+                            post(() => emit(childProcess, "message", message));
                         }
                     }
                     catch (OperationCanceledException) { }
                     catch { }
                 }, cts.Token);
 
-                // Read stdout/stderr
                 var stdoutTask = Task.Run(() =>
                 {
                     var buffer = new char[4096];
                     int read;
                     while ((read = process.StandardOutput.Read(buffer, 0, buffer.Length)) > 0)
-                        stdoutStream.EmitDirect("data", new string(buffer, 0, read));
-                    stdoutStream.EmitDirect("end");
+                    {
+                        var chunk = new string(buffer, 0, read);
+                        post(() => stdoutStream.PushFromHost(interp, chunk));
+                    }
+                    post(() => stdoutStream.PushFromHost(interp, null));
                 });
 
                 var stderrTask = Task.Run(() =>
@@ -768,29 +905,47 @@ public static class ChildProcessModuleInterpreter
                     var buffer = new char[4096];
                     int read;
                     while ((read = process.StandardError.Read(buffer, 0, buffer.Length)) > 0)
-                        stderrStream.EmitDirect("data", new string(buffer, 0, read));
-                    stderrStream.EmitDirect("end");
+                    {
+                        var chunk = new string(buffer, 0, read);
+                        post(() => stderrStream.PushFromHost(interp, chunk));
+                    }
+                    post(() => stderrStream.PushFromHost(interp, null));
                 });
 
                 process.WaitForExit();
                 cts.Cancel();
                 stdoutTask.Wait();
                 stderrTask.Wait();
+                int code = process.ExitCode;
 
-                childProcess.SetExitCode(process.ExitCode);
-                childProcess.EmitDirect("close", (double)process.ExitCode);
-                childProcess.EmitDirect("exit", (double)process.ExitCode);
+                post(() =>
+                {
+                    try
+                    {
+                        childProcess.SetExitCode(code);
+                        emit(childProcess, "close", (double)code);
+                        emit(childProcess, "exit", (double)code);
+                    }
+                    finally { unrefLoop(); }
+                });
             }
             catch (Exception ex)
             {
-                childProcess.EmitDirect("error", new SharpTSObject(new Dictionary<string, object?>
+                post(() =>
                 {
-                    ["message"] = ex.Message
-                }));
+                    try
+                    {
+                        emit(childProcess, "error", new SharpTSObject(new Dictionary<string, object?>
+                        {
+                            ["message"] = ex.Message
+                        }));
+                    }
+                    finally { unrefLoop(); }
+                });
             }
         });
 
-        return RuntimeValue.FromObject(childProcess);
+        return childProcess;
     }
 
     private static string? GetStringOption(SharpTSObject? options, string name)
@@ -810,6 +965,118 @@ public static class ChildProcessModuleInterpreter
             return defaultValue;
         var value = options.GetProperty(name);
         return value is double d ? d : defaultValue;
+    }
+
+    /// <summary>
+    /// Reads the `stdio` option into per-fd modes (stdin, stdout, stderr), each "pipe",
+    /// "inherit", or "ignore". Accepts the string shorthand (applied to all three) or the
+    /// array form. fd numbers / streams / 'ipc' fall back to "pipe" (documented limitation).
+    /// </summary>
+    /// <summary>
+    /// Reads a stream up to <paramref name="maxBuffer"/> chars (Node's exec maxBuffer, bytes
+    /// approximated by chars). Sets <paramref name="overflowed"/> and stops at the cap; a
+    /// negative cap means unbounded.
+    /// </summary>
+    private static string ReadCapped(System.IO.TextReader reader, int maxBuffer, out bool overflowed)
+    {
+        overflowed = false;
+        if (maxBuffer < 0)
+            return reader.ReadToEnd();
+        var sb = new System.Text.StringBuilder();
+        var buf = new char[4096];
+        int n;
+        while ((n = reader.Read(buf, 0, buf.Length)) > 0)
+        {
+            if (sb.Length + n > maxBuffer)
+            {
+                sb.Append(buf, 0, Math.Max(0, maxBuffer - sb.Length));
+                overflowed = true;
+                break;
+            }
+            sb.Append(buf, 0, n);
+        }
+        return sb.ToString();
+    }
+
+    private static SharpTSObject MaxBufferError() => new(new Dictionary<string, object?>
+    {
+        ["message"] = "stdout maxBuffer length exceeded",
+        ["code"] = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+    });
+
+    /// <summary>
+    /// Converts a process-start failure into a Node-style error object. A missing executable
+    /// (Win32 ERROR_FILE_NOT_FOUND) becomes an ENOENT error carrying code/errno/syscall/path.
+    /// </summary>
+    private static SharpTSObject SpawnError(Exception ex, string command, string syscall)
+    {
+        if (ex is System.ComponentModel.Win32Exception w32 && w32.NativeErrorCode == 2)
+        {
+            // libuv reports UV_ENOENT as -4058 on Windows, -2 on POSIX.
+            var errno = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? -4058.0 : -2.0;
+            return new(new Dictionary<string, object?>
+            {
+                ["message"] = $"{syscall} {command} ENOENT",
+                ["code"] = "ENOENT",
+                ["errno"] = errno,
+                ["syscall"] = $"{syscall} {command}",
+                ["path"] = command
+            });
+        }
+        return new(new Dictionary<string, object?> { ["message"] = ex.Message });
+    }
+
+    private static (string stdin, string stdout, string stderr) ParseStdioModes(SharpTSObject? options)
+    {
+        var value = options?.GetProperty("stdio");
+        static string Norm(object? v) => v is string s && (s == "inherit" || s == "ignore" || s == "pipe") ? s : "pipe";
+
+        if (value is string str)
+        {
+            var m = Norm(str);
+            return (m, m, m);
+        }
+        if (value is SharpTSArray arr)
+        {
+            string At(int i) => i < arr.Count ? Norm(arr[i]) : "pipe";
+            return (At(0), At(1), At(2));
+        }
+        return ("pipe", "pipe", "pipe");
+    }
+
+    /// <summary>
+    /// Reads the `shell` option: true → default platform shell; a string → that shell path;
+    /// false/absent → no shell. Returns (useShell, shellPath?).
+    /// </summary>
+    private static (bool useShell, string? shellPath) GetShellOption(SharpTSObject? options)
+    {
+        if (options == null)
+            return (false, null);
+        var value = options.GetProperty("shell");
+        if (value is bool b)
+            return (b, null);
+        if (value is string s && !string.IsNullOrEmpty(s))
+            return (true, s);
+        return (false, null);
+    }
+
+    /// <summary>
+    /// Configures a ProcessStartInfo to run "command args" through a shell (cmd.exe /c on
+    /// Windows, /bin/sh -c on Unix, or an explicit shell path), mirroring exec().
+    /// </summary>
+    private static void ApplyShellCommand(ProcessStartInfo startInfo, string command, List<string> cmdArgs, string? shellPath)
+    {
+        var fullCommand = cmdArgs.Count > 0 ? command + " " + string.Join(" ", cmdArgs) : command;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            startInfo.FileName = string.IsNullOrEmpty(shellPath) ? "cmd.exe" : shellPath;
+            startInfo.Arguments = "/d /s /c " + fullCommand;
+        }
+        else
+        {
+            startInfo.FileName = string.IsNullOrEmpty(shellPath) ? "/bin/sh" : shellPath;
+            startInfo.Arguments = "-c \"" + fullCommand.Replace("\"", "\\\"") + "\"";
+        }
     }
 
     private static bool GetBoolOption(SharpTSObject? options, string name, bool defaultValue)

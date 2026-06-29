@@ -148,8 +148,11 @@ public class RuntimeTypeSyncTests : IClassFixture<RuntimeTypeSyncTests.CompiledA
 
         new(typeof(SharpTSEventEmitter), "EventEmitter",
             [.. BaseIgnored, "GetMember",
-             // C#-specific optimization methods, not part of JS EventEmitter API
-             "AddListenerDirect", "EmitDirect", "RemoveListenerDirect"]),
+             // C#-specific optimization methods, not part of JS EventEmitter API.
+             // EmitWith is interp-only: async built-ins emit lifecycle events on the
+             // event-loop thread with a real interpreter (compiled $TSFunction listeners
+             // need no interpreter, so the emitted $EventEmitter has no equivalent).
+             "AddListenerDirect", "EmitDirect", "EmitWith", "RemoveListenerDirect"]),
     ];
 
     private record SyncPair(Type RuntimeType, string EmittedNameSuffix, string[] IgnoredMethods);
