@@ -127,6 +127,57 @@ public class ChildProcessAsyncTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spawn_Stdout_DataAndClose(ExecutionMode mode)
+    {
+        var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? "cmd.exe"
+            : "/bin/echo";
+        var args = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? "['/c', 'echo', 'spawned']"
+            : "['spawned']";
+
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import { spawn } from 'child_process';
+                const c = spawn('{{command}}', {{args}});
+                let out = '';
+                c.stdout.on('data', (d: any) => { out += d.toString(); });
+                c.stdout.on('end', () => console.log('end:' + out.trim()));
+                c.on('close', (code: any) => console.log('close:' + code));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("end:spawned\nclose:0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spawn_Stdin_RoundTrip(ExecutionMode mode)
+    {
+        // `sort` reads all of stdin and writes it back; a single line round-trips unchanged.
+        var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "sort" : "sort";
+
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import { spawn } from 'child_process';
+                const c = spawn('{{command}}');
+                let out = '';
+                c.stdout.on('data', (d: any) => { out += d.toString(); });
+                c.stdout.on('end', () => console.log('got:' + out.trim()));
+                c.stdin.write('hello\n');
+                c.stdin.end();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("got:hello\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Spawn_HasStdinStream(ExecutionMode mode)
     {
         var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)

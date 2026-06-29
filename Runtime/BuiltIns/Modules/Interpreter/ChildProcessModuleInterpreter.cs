@@ -339,94 +339,142 @@ public static class ChildProcessModuleInterpreter
         childProcess.SetStderrStream(stderrStream);
         childProcess.SetStdinStream(stdinStream);
 
-        // Run asynchronously
+        // Start synchronously so child.stdin.write()/.end() on the same tick reach a live
+        // StandardInput; a spawn failure is surfaced as an async 'error' event.
+        Process process;
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = command,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                RedirectStandardInput = true,
+                CreateNoWindow = true
+            };
+
+            foreach (var arg in cmdArgs)
+                startInfo.ArgumentList.Add(arg);
+
+            if (!string.IsNullOrEmpty(cwd))
+                startInfo.WorkingDirectory = cwd;
+
+            ApplyEnvOptions(options, startInfo);
+
+            process = new Process { StartInfo = startInfo };
+            process.Start();
+            childProcess.SetPid(process.Id);
+            childProcess.SetProcess(process);
+
+            // Wire stdin: forwarding write() to the started process (write() runs on the loop thread).
+            stdinStream.SetWriteCallback(BuiltInMethod.CreateV2("write", 1, 3, (interp, recv, wargs) =>
+            {
+                if (wargs.Length > 0 && !wargs[0].IsNull)
+                {
+                    try
+                    {
+                        process.StandardInput.Write(wargs[0].ToObject()!.ToString());
+                        process.StandardInput.Flush();
+                    }
+                    catch { }
+                }
+                if (wargs.Length > 2 && wargs[2].ToObject() is ISharpTSCallable cb)
+                    cb.Call(interpreter, [null]);
+                else if (wargs.Length > 1 && wargs[1].ToObject() is ISharpTSCallable cb2)
+                    cb2.Call(interpreter, [null]);
+                return RuntimeValue.True;
+            }));
+
+            // stdin.end() closes the child's StandardInput so it sees EOF.
+            stdinStream.SetFinalCallback(BuiltInMethod.CreateV2("final", 0, 1, (interp, recv, fargs) =>
+            {
+                try { process.StandardInput.Close(); }
+                catch { }
+                if (fargs.Length > 0 && fargs[0].ToObject() is ISharpTSCallable done)
+                    done.Call(interp, [null]);
+                return RuntimeValue.Undefined;
+            }));
+        }
+        catch (Exception ex)
+        {
+            interpreter.Ref();
+            interpreter.EnqueueCallback(() =>
+            {
+                try
+                {
+                    childProcess.EmitWith(interpreter, "error", new SharpTSObject(new Dictionary<string, object?>
+                    {
+                        ["message"] = ex.Message
+                    }));
+                }
+                finally { interpreter.Unref(); }
+            });
+            return RuntimeValue.FromObject(childProcess);
+        }
+
+        // Keep the loop alive while the child runs; stream chunks and lifecycle events are
+        // marshalled onto the loop thread (PushFromHost / EmitWith) so they run with a real
+        // interpreter and after the synchronous script has attached its listeners.
+        var startedProcess = process;
+        interpreter.Ref();
         Task.Run(() =>
         {
             try
             {
-                var startInfo = new ProcessStartInfo
-                {
-                    FileName = command,
-                    UseShellExecute = false,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    RedirectStandardInput = true,
-                    CreateNoWindow = true
-                };
-
-                foreach (var arg in cmdArgs)
-                {
-                    startInfo.ArgumentList.Add(arg);
-                }
-
-                if (!string.IsNullOrEmpty(cwd))
-                    startInfo.WorkingDirectory = cwd;
-
-                ApplyEnvOptions(options, startInfo);
-
-                var process = new Process { StartInfo = startInfo };
-                process.Start();
-                childProcess.SetPid(process.Id);
-                childProcess.SetProcess(process);
-
-                // Wire up stdin: when write() is called on the writable stream,
-                // forward data to the process stdin
-                stdinStream.SetWriteCallback(BuiltInMethod.CreateV2("write", 1, 3, (interp, recv, wargs) =>
-                {
-                    if (wargs.Length > 0 && !wargs[0].IsNull)
-                    {
-                        try
-                        {
-                            process.StandardInput.Write(wargs[0].ToObject()!.ToString());
-                            process.StandardInput.Flush();
-                        }
-                        catch { }
-                    }
-                    // Call the callback if provided (3rd arg in Node.js write(chunk, enc, cb))
-                    if (wargs.Length > 2 && wargs[2].ToObject() is ISharpTSCallable cb)
-                        cb.Call(null!, [null]);
-                    else if (wargs.Length > 1 && wargs[1].ToObject() is ISharpTSCallable cb2)
-                        cb2.Call(null!, [null]);
-                    return RuntimeValue.True;
-                }));
-
-                // Read stdout and stderr asynchronously and push to streams
                 var stdoutTask = Task.Run(() =>
                 {
                     var buffer = new char[4096];
                     int read;
-                    while ((read = process.StandardOutput.Read(buffer, 0, buffer.Length)) > 0)
+                    while ((read = startedProcess.StandardOutput.Read(buffer, 0, buffer.Length)) > 0)
                     {
-                        stdoutStream.EmitDirect("data", new string(buffer, 0, read));
+                        var chunk = new string(buffer, 0, read);
+                        interpreter.EnqueueCallback(() => stdoutStream.PushFromHost(interpreter, chunk));
                     }
-                    stdoutStream.EmitDirect("end");
+                    interpreter.EnqueueCallback(() => stdoutStream.PushFromHost(interpreter, null));
                 });
 
                 var stderrTask = Task.Run(() =>
                 {
                     var buffer = new char[4096];
                     int read;
-                    while ((read = process.StandardError.Read(buffer, 0, buffer.Length)) > 0)
+                    while ((read = startedProcess.StandardError.Read(buffer, 0, buffer.Length)) > 0)
                     {
-                        stderrStream.EmitDirect("data", new string(buffer, 0, read));
+                        var chunk = new string(buffer, 0, read);
+                        interpreter.EnqueueCallback(() => stderrStream.PushFromHost(interpreter, chunk));
                     }
-                    stderrStream.EmitDirect("end");
+                    interpreter.EnqueueCallback(() => stderrStream.PushFromHost(interpreter, null));
                 });
 
-                process.WaitForExit();
+                startedProcess.WaitForExit();
                 stdoutTask.Wait();
                 stderrTask.Wait();
+                int code = startedProcess.ExitCode;
 
-                childProcess.SetExitCode(process.ExitCode);
-                childProcess.EmitDirect("close", (double)process.ExitCode);
-                childProcess.EmitDirect("exit", (double)process.ExitCode);
+                interpreter.EnqueueCallback(() =>
+                {
+                    try
+                    {
+                        childProcess.SetExitCode(code);
+                        childProcess.EmitWith(interpreter, "close", (double)code);
+                        childProcess.EmitWith(interpreter, "exit", (double)code);
+                    }
+                    finally { interpreter.Unref(); }
+                });
             }
             catch (Exception ex)
             {
-                childProcess.EmitDirect("error", new SharpTSObject(new Dictionary<string, object?>
+                interpreter.EnqueueCallback(() =>
                 {
-                    ["message"] = ex.Message
-                }));
+                    try
+                    {
+                        childProcess.EmitWith(interpreter, "error", new SharpTSObject(new Dictionary<string, object?>
+                        {
+                            ["message"] = ex.Message
+                        }));
+                    }
+                    finally { interpreter.Unref(); }
+                });
             }
         });
 

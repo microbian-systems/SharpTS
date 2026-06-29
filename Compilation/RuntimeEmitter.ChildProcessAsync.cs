@@ -42,6 +42,9 @@ public partial class RuntimeEmitter
     private MethodBuilder _childCtxRunCaptured = null!;
     private MethodBuilder _childCtxEmitCaptured = null!;
     private MethodBuilder _childCtxRunStreamed = null!;
+    private MethodBuilder _childCtxEmitStreamClose = null!;
+    private MethodBuilder _childCtxPumpStdout = null!;
+    private MethodBuilder _childCtxPumpStderr = null!;
     private MethodBuilder _childCtxKill = null!;
     private MethodBuilder _childCtxSend = null!;
     private MethodBuilder _childCtxDisconnect = null!;
@@ -51,6 +54,14 @@ public partial class RuntimeEmitter
 
     private MethodBuilder _childRunAsync = null!;
     private MethodBuilder _childAsyncUnref = null!;
+
+    // $ChildPush — a one-shot closure that pushes one chunk (or null = EOF) into a
+    // $Readable on the event-loop thread, so all stream-buffer access stays single-threaded.
+    private TypeBuilder _childPushType = null!;
+    private ConstructorBuilder _childPushCtor = null!;
+    private MethodBuilder _childPushRun = null!;
+    private FieldBuilder _childPushStream = null!;
+    private FieldBuilder _childPushChunk = null!;
 
     // BCL handles, resolved once.
     private MethodInfo _miProcStart = null!;
@@ -89,10 +100,42 @@ public partial class RuntimeEmitter
         _miDictSet = _types.GetMethod(_types.DictionaryStringObject, "set_Item", _types.String, _types.Object)!;
         _miGetMethodFromHandle = typeof(MethodBase).GetMethod("GetMethodFromHandle", [typeof(RuntimeMethodHandle)])!;
 
+        DefineChildPushType(runtime);
         DefineChildCtxType(runtime);
         EmitChildRunAsyncHelpers(runtimeType, runtime);
         EmitChildCtxMethods(runtime);
         _childCtxType.CreateType();
+        _childPushType.CreateType();
+    }
+
+    /// <summary>$ChildPush { object _stream; object _chunk; void Run() =&gt; (($Readable)_stream).Push(_chunk); }</summary>
+    private void DefineChildPushType(EmittedRuntime runtime)
+    {
+        var mb = (ModuleBuilder)((TypeBuilder)runtime.TSEventEmitterType).Module;
+        var t = mb.DefineType("$ChildPush",
+            TypeAttributes.Public | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit, _types.Object);
+        _childPushType = t;
+        _childPushStream = t.DefineField("_stream", _types.Object, FieldAttributes.Public);
+        _childPushChunk = t.DefineField("_chunk", _types.Object, FieldAttributes.Public);
+
+        var ctor = t.DefineConstructor(MethodAttributes.Public, CallingConventions.Standard, [_types.Object, _types.Object]);
+        var cil = ctor.GetILGenerator();
+        cil.Emit(OpCodes.Ldarg_0); cil.Emit(OpCodes.Call, _types.Object.GetConstructor(Type.EmptyTypes)!);
+        cil.Emit(OpCodes.Ldarg_0); cil.Emit(OpCodes.Ldarg_1); cil.Emit(OpCodes.Stfld, _childPushStream);
+        cil.Emit(OpCodes.Ldarg_0); cil.Emit(OpCodes.Ldarg_2); cil.Emit(OpCodes.Stfld, _childPushChunk);
+        cil.Emit(OpCodes.Ret);
+        _childPushCtor = ctor;
+
+        _childPushRun = t.DefineMethod("Run", MethodAttributes.Public, _types.Void, Type.EmptyTypes);
+        var il = _childPushRun.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _childPushStream);
+        il.Emit(OpCodes.Castclass, runtime.TSReadableType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _childPushChunk);
+        il.Emit(OpCodes.Callvirt, runtime.TSReadablePush);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ret);
     }
 
     private void DefineChildCtxType(EmittedRuntime runtime)
@@ -132,6 +175,9 @@ public partial class RuntimeEmitter
         _childCtxRunCaptured = t.DefineMethod("RunCaptured", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
         _childCtxEmitCaptured = t.DefineMethod("EmitCaptured", MethodAttributes.Public, _types.Void, Type.EmptyTypes);
         _childCtxRunStreamed = t.DefineMethod("RunStreamed", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        _childCtxEmitStreamClose = t.DefineMethod("EmitStreamClose", MethodAttributes.Public, _types.Void, Type.EmptyTypes);
+        _childCtxPumpStdout = t.DefineMethod("PumpStdout", MethodAttributes.Public, _types.Void, Type.EmptyTypes);
+        _childCtxPumpStderr = t.DefineMethod("PumpStderr", MethodAttributes.Public, _types.Void, Type.EmptyTypes);
         _childCtxKill = t.DefineMethod("Kill", MethodAttributes.Public, _types.Object, [_types.Object]);
         _childCtxSend = t.DefineMethod("Send", MethodAttributes.Public, _types.Object, [_types.Object]);
         _childCtxDisconnect = t.DefineMethod("Disconnect", MethodAttributes.Public, _types.Object, Type.EmptyTypes);
@@ -279,6 +325,9 @@ public partial class RuntimeEmitter
         EmitCtxRunCaptured(runtime);
         EmitCtxEmitCaptured(runtime);
         EmitCtxRunStreamed(runtime);
+        EmitCtxPumpStdout(runtime);
+        EmitCtxPumpStderr(runtime);
+        EmitCtxEmitStreamClose(runtime);
         EmitCtxKill(runtime);
         EmitCtxSend(runtime);
         EmitCtxDisconnect(runtime);
@@ -565,28 +614,275 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
-    // RunStreamed / StdinWrite / StdinEnd bodies are filled by the spawn child (#1014).
-    // For now they are inert (return null) so the type verifies.
+    /// <summary>
+    /// spawn worker (bg thread): start, pump stdout/stderr on background tasks (each pushing
+    /// chunks into its $Readable on the loop thread), wait, then Schedule EmitStreamClose.
+    /// </summary>
     private void EmitCtxRunStreamed(EmittedRuntime runtime)
     {
         var il = _childCtxRunStreamed.GetILGenerator();
+        var t1 = il.DeclareLocal(typeof(Task));
+        var t2 = il.DeclareLocal(typeof(Task));
+        var afterTry = il.DefineLabel();
+        var actionCtor = typeof(Action).GetConstructor([_types.Object, typeof(IntPtr)])!;
+        var taskRunAction = typeof(Task).GetMethod("Run", [typeof(Action)])!;
+
+        StoreCtxField(il, _childCtxResKind, () => il.Emit(OpCodes.Ldc_I4_0));
+
+        // Process was started synchronously in the dispatch (so stdin is usable immediately).
+        il.BeginExceptionBlock();
+        // t1 = Task.Run(new Action(this, PumpStdout)); t2 = Task.Run(new Action(this, PumpStderr));
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldftn, _childCtxPumpStdout);
+        il.Emit(OpCodes.Newobj, actionCtor);
+        il.Emit(OpCodes.Call, taskRunAction);
+        il.Emit(OpCodes.Stloc, t1);
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldftn, _childCtxPumpStderr);
+        il.Emit(OpCodes.Newobj, actionCtor);
+        il.Emit(OpCodes.Call, taskRunAction);
+        il.Emit(OpCodes.Stloc, t2);
+
+        // _proc.WaitForExit(); t1.Wait(); t2.Wait();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _childCtxProc);
+        il.Emit(OpCodes.Callvirt, _miProcWaitForExit);
+        il.Emit(OpCodes.Ldloc, t1);
+        il.Emit(OpCodes.Callvirt, typeof(Task).GetMethod("Wait", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Ldloc, t2);
+        il.Emit(OpCodes.Callvirt, typeof(Task).GetMethod("Wait", Type.EmptyTypes)!);
+
+        // _resCode = _proc.ExitCode;
+        StoreCtxField(il, _childCtxResCode, () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _childCtxProc);
+            il.Emit(OpCodes.Callvirt, _miProcExitCodeGet);
+        });
+        il.Emit(OpCodes.Leave, afterTry);
+
+        il.BeginCatchBlock(_types.Exception);
+        var exLocal = il.DeclareLocal(_types.Exception);
+        il.Emit(OpCodes.Stloc, exLocal);
+        StoreCtxField(il, _childCtxResKind, () => il.Emit(OpCodes.Ldc_I4_2));
+        StoreCtxField(il, _childCtxResError, () =>
+            EmitNewErrorObject(il,
+                () => { il.Emit(OpCodes.Ldloc, exLocal); il.Emit(OpCodes.Callvirt, _miExceptionMessageGet); },
+                null));
+        il.Emit(OpCodes.Leave, afterTry);
+        il.EndExceptionBlock();
+
+        il.MarkLabel(afterTry);
+        EmitScheduleOnLoop(il, runtime, _childCtxEmitStreamClose);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
     }
 
+    private void EmitCtxPumpStdout(EmittedRuntime runtime) => EmitPumpBody(_childCtxPumpStdout, runtime, _miProcStdoutGet, _childCtxStdout);
+    private void EmitCtxPumpStderr(EmittedRuntime runtime) => EmitPumpBody(_childCtxPumpStderr, runtime, _miProcStderrGet, _childCtxStderr);
+
+    /// <summary>
+    /// Read the redirected pipe in char chunks; for each chunk Schedule a $ChildPush onto
+    /// the loop (data), and on EOF Schedule a $ChildPush(null) (end).
+    /// </summary>
+    private void EmitPumpBody(MethodBuilder method, EmittedRuntime runtime, MethodInfo readerGetter, FieldBuilder streamField)
+    {
+        var il = method.GetILGenerator();
+        var readerLocal = il.DeclareLocal(_types.TextReader);
+        var bufLocal = il.DeclareLocal(typeof(char[]));
+        var nLocal = il.DeclareLocal(_types.Int32);
+        var readMethod = _types.TextReader.GetMethod("Read", [typeof(char[]), _types.Int32, _types.Int32])!;
+        var newStr = typeof(string).GetConstructor([typeof(char[]), _types.Int32, _types.Int32])!;
+        var afterTry = il.DefineLabel();
+
+        // reader = _proc.<getter>(); buf = new char[4096];
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _childCtxProc);
+        il.Emit(OpCodes.Callvirt, readerGetter);
+        il.Emit(OpCodes.Stloc, readerLocal);
+        il.Emit(OpCodes.Ldc_I4, 4096);
+        il.Emit(OpCodes.Newarr, typeof(char));
+        il.Emit(OpCodes.Stloc, bufLocal);
+
+        il.BeginExceptionBlock();
+        var loop = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        il.MarkLabel(loop);
+        // n = reader.Read(buf, 0, 4096)
+        il.Emit(OpCodes.Ldloc, readerLocal);
+        il.Emit(OpCodes.Ldloc, bufLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldc_I4, 4096);
+        il.Emit(OpCodes.Callvirt, readMethod);
+        il.Emit(OpCodes.Stloc, nLocal);
+        // if (n <= 0) break;
+        il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, loopEnd);
+        // Schedule push(stream, new string(buf,0,n))
+        EmitScheduleChildPush(il, runtime,
+            () => { il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, streamField); },
+            () => { il.Emit(OpCodes.Ldloc, bufLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Newobj, newStr); });
+        il.Emit(OpCodes.Br, loop);
+        il.MarkLabel(loopEnd);
+        il.Emit(OpCodes.Leave, afterTry);
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, afterTry);
+        il.EndExceptionBlock();
+        il.MarkLabel(afterTry);
+
+        // Schedule push(stream, null) — EOF/end
+        EmitScheduleChildPush(il, runtime,
+            () => { il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, streamField); },
+            () => il.Emit(OpCodes.Ldnull));
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>Emit: EventLoop.GetInstance().Schedule(new Action(new $ChildPush(stream, chunk), Run)).</summary>
+    private void EmitScheduleChildPush(ILGenerator il, EmittedRuntime runtime, Action emitStream, Action emitChunk)
+    {
+        il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
+        emitStream();
+        emitChunk();
+        il.Emit(OpCodes.Newobj, _childPushCtor);
+        il.Emit(OpCodes.Ldftn, _childPushRun);
+        il.Emit(OpCodes.Newobj, typeof(Action).GetConstructor([_types.Object, typeof(IntPtr)])!);
+        il.Emit(OpCodes.Callvirt, runtime.EventLoopSchedule);
+    }
+
+    /// <summary>Replays spawn close/exit (or error) on the loop thread, after all data/end pushes.</summary>
+    private void EmitCtxEmitStreamClose(EmittedRuntime runtime)
+    {
+        var il = _childCtxEmitStreamClose.GetILGenerator();
+        var codeLocal = il.DeclareLocal(_types.Int32);
+        var ret = il.DefineLabel();
+
+        // if (_resKind == 2) emit error; return
+        var notExc = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _childCtxResKind);
+        il.Emit(OpCodes.Ldc_I4_2);
+        il.Emit(OpCodes.Bne_Un, notExc);
+        EmitCtxEmit(il, runtime, "error", () => { il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxResError); });
+        il.Emit(OpCodes.Br, ret);
+        il.MarkLabel(notExc);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _childCtxResCode);
+        il.Emit(OpCodes.Stloc, codeLocal);
+        EmitDictSetFromCtx(il, "exitCode", () => { il.Emit(OpCodes.Ldloc, codeLocal); il.Emit(OpCodes.Conv_R8); il.Emit(OpCodes.Box, _types.Double); });
+        EmitCtxEmit(il, runtime, "close", () => { il.Emit(OpCodes.Ldloc, codeLocal); il.Emit(OpCodes.Conv_R8); il.Emit(OpCodes.Box, _types.Double); });
+        EmitCtxEmit(il, runtime, "exit", () => { il.Emit(OpCodes.Ldloc, codeLocal); il.Emit(OpCodes.Conv_R8); il.Emit(OpCodes.Box, _types.Double); });
+
+        il.MarkLabel(ret);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>stdin.write(chunk, enc?, cb?) — forward chunk to the child's StandardInput.</summary>
     private void EmitCtxStdinWrite(EmittedRuntime runtime)
     {
         var il = _childCtxStdinWrite.GetILGenerator();
+        var afterWrite = il.DefineLabel();
+        var swGet = _types.Process.GetProperty("StandardInput")!.GetGetMethod()!;
+        var swWrite = typeof(System.IO.TextWriter).GetMethod("Write", [_types.String])!;
+        var swFlush = typeof(System.IO.TextWriter).GetMethod("Flush", Type.EmptyTypes)!;
+
+        // try { if (chunk != null) { var w = _proc.StandardInput; w.Write(chunk.ToString()); w.Flush(); } } catch {}
+        il.BeginExceptionBlock();
+        var skip = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, skip);
+        var wLocal = il.DeclareLocal(typeof(System.IO.TextWriter));
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _childCtxProc);
+        il.Emit(OpCodes.Callvirt, swGet);
+        il.Emit(OpCodes.Stloc, wLocal);
+        il.Emit(OpCodes.Ldloc, wLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
+        il.Emit(OpCodes.Callvirt, swWrite);
+        il.Emit(OpCodes.Ldloc, wLocal);
+        il.Emit(OpCodes.Callvirt, swFlush);
+        il.MarkLabel(skip);
+        il.Emit(OpCodes.Leave, afterWrite);
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, afterWrite);
+        il.EndExceptionBlock();
+        il.MarkLabel(afterWrite);
+
+        // Invoke a write callback if present: prefer arg3 (cb), else arg2 (enc-as-cb).
+        EmitInvokeWriteCb(il, runtime);
+
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Ret);
     }
 
+    /// <summary>stdin.end(chunk?, enc?, cb?) — optionally write, then close the child's StandardInput.</summary>
     private void EmitCtxStdinEnd(EmittedRuntime runtime)
     {
         var il = _childCtxStdinEnd.GetILGenerator();
+        var afterEnd = il.DefineLabel();
+        var swGet = _types.Process.GetProperty("StandardInput")!.GetGetMethod()!;
+        var swWrite = typeof(System.IO.TextWriter).GetMethod("Write", [_types.String])!;
+        var swClose = typeof(System.IO.TextWriter).GetMethod("Close", Type.EmptyTypes)!;
+
+        il.BeginExceptionBlock();
+        var wLocal = il.DeclareLocal(typeof(System.IO.TextWriter));
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _childCtxProc);
+        il.Emit(OpCodes.Callvirt, swGet);
+        il.Emit(OpCodes.Stloc, wLocal);
+        var skip = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, skip);
+        il.Emit(OpCodes.Ldloc, wLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString")!);
+        il.Emit(OpCodes.Callvirt, swWrite);
+        il.MarkLabel(skip);
+        il.Emit(OpCodes.Ldloc, wLocal);
+        il.Emit(OpCodes.Callvirt, swClose);
+        il.Emit(OpCodes.Leave, afterEnd);
+        il.BeginCatchBlock(_types.Exception);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Leave, afterEnd);
+        il.EndExceptionBlock();
+        il.MarkLabel(afterEnd);
+
+        EmitInvokeWriteCb(il, runtime);
         il.Emit(OpCodes.Ldnull);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>If arg3 (or arg2) is a $TSFunction, invoke it with [null].</summary>
+    private void EmitInvokeWriteCb(ILGenerator il, EmittedRuntime runtime)
+    {
+        var done = il.DefineLabel();
+        var tryArg2 = il.DefineLabel();
+        // arg3 callable?
+        il.Emit(OpCodes.Ldarg_3);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, tryArg2);
+        il.Emit(OpCodes.Ldarg_3);
+        EmitInvokeNullArg(il, runtime);
+        il.Emit(OpCodes.Br, done);
+        il.MarkLabel(tryArg2);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldarg_2);
+        EmitInvokeNullArg(il, runtime);
+        il.MarkLabel(done);
+    }
+
+    /// <summary>Stack: [callable]. Emits InvokeValue(callable, new object[]{ null }) and pops.</summary>
+    private void EmitInvokeNullArg(ILGenerator il, EmittedRuntime runtime)
+    {
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, runtime.InvokeValue);
+        il.Emit(OpCodes.Pop);
     }
 
     // ================= Dispatch-side helpers =================
@@ -823,6 +1119,22 @@ public partial class RuntimeEmitter
         // ctx._dict = dict
         StoreCtxField(il, ctxLocal, _childCtxDict, () => il.Emit(OpCodes.Ldloc, dictLocal));
 
+        // For spawn (streamed), start the process synchronously so child.stdin.write()/
+        // .end() called on the same synchronous tick reach a live StandardInput.
+        if (streamed)
+        {
+            il.Emit(OpCodes.Ldloc, processLocal);
+            il.Emit(OpCodes.Callvirt, _miProcStart);
+            il.Emit(OpCodes.Pop);
+            EmitDictSet(il, dictLocal, "pid", () =>
+            {
+                il.Emit(OpCodes.Ldloc, processLocal);
+                il.Emit(OpCodes.Callvirt, _miProcIdGet);
+                il.Emit(OpCodes.Conv_R8);
+                il.Emit(OpCodes.Box, _types.Double);
+            });
+        }
+
         // ChildRunAsync(new Func<object>(ctx, streamed ? RunStreamed : RunCaptured))
         il.Emit(OpCodes.Ldloc, ctxLocal);
         il.Emit(OpCodes.Ldftn, streamed ? _childCtxRunStreamed : _childCtxRunCaptured);
@@ -834,14 +1146,34 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, runtime.CreateObject);
     }
 
-    // Stream wiring (real $Readable/$Writable + pumps) is implemented by the spawn
-    // child (#1014). For now the streamed path is unused (exec/execFile capture to
-    // strings); this placeholder keeps the seam compiling.
+    /// <summary>
+    /// Build real $Readable stdout/stderr (pumped by RunStreamed) and a forwarding stdin
+    /// object whose write/end push to the child's StandardInput. stdout/stderr are stored
+    /// on ctx so the worker can push into them.
+    /// </summary>
     private void EmitBuildChildStreams(ILGenerator il, EmittedRuntime runtime, LocalBuilder ctxLocal, LocalBuilder dictLocal)
     {
-        EmitDictSet(il, dictLocal, "stdout", () => { il.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!); il.Emit(OpCodes.Call, runtime.CreateObject); });
-        EmitDictSet(il, dictLocal, "stderr", () => { il.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!); il.Emit(OpCodes.Call, runtime.CreateObject); });
-        EmitDictSet(il, dictLocal, "stdin", () => { il.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!); il.Emit(OpCodes.Call, runtime.CreateObject); });
+        var stdoutLocal = il.DeclareLocal(runtime.TSReadableType);
+        var stderrLocal = il.DeclareLocal(runtime.TSReadableType);
+
+        il.Emit(OpCodes.Newobj, runtime.TSReadableCtor);
+        il.Emit(OpCodes.Stloc, stdoutLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSReadableCtor);
+        il.Emit(OpCodes.Stloc, stderrLocal);
+
+        StoreCtxField(il, ctxLocal, _childCtxStdout, () => il.Emit(OpCodes.Ldloc, stdoutLocal));
+        StoreCtxField(il, ctxLocal, _childCtxStderr, () => il.Emit(OpCodes.Ldloc, stderrLocal));
+        EmitDictSet(il, dictLocal, "stdout", () => il.Emit(OpCodes.Ldloc, stdoutLocal));
+        EmitDictSet(il, dictLocal, "stderr", () => il.Emit(OpCodes.Ldloc, stderrLocal));
+
+        // stdin = { writable: true, write: ctx.StdinWrite, end: ctx.StdinEnd }
+        var stdinLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        il.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, stdinLocal);
+        EmitDictSet(il, stdinLocal, "writable", () => { il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Box, _types.Boolean); });
+        EmitDictSet(il, stdinLocal, "write", () => EmitTSFunc(il, runtime, () => il.Emit(OpCodes.Ldloc, ctxLocal), _childCtxStdinWrite));
+        EmitDictSet(il, stdinLocal, "end", () => EmitTSFunc(il, runtime, () => il.Emit(OpCodes.Ldloc, ctxLocal), _childCtxStdinEnd));
+        EmitDictSet(il, dictLocal, "stdin", () => { il.Emit(OpCodes.Ldloc, stdinLocal); il.Emit(OpCodes.Call, runtime.CreateObject); });
     }
 
     private void EmitDictSet(ILGenerator il, LocalBuilder dictLocal, string key, Action emitValue)
