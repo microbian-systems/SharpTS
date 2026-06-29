@@ -2027,4 +2027,50 @@ public class FsModuleTests
     }
 
     #endregion
+
+    #region fs/promises real backgrounding (#971)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void FsPromises_RealAsync_ParityLivenessConcurrency(ExecutionMode mode)
+    {
+        var uid = Uid();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as fsp from 'fs/promises';
+                import * as fs from 'fs';
+                import * as os from 'os';
+                async function main() {
+                    const root = os.tmpdir() + '/p971_{{uid}}';
+                    fs.mkdirSync(root, { recursive: true });
+                    fs.writeFileSync(root + '/a.txt', 'HELLO');
+                    // result parity
+                    console.log('read:' + await fsp.readFile(root + '/a.txt', 'utf8'));   // HELLO
+                    // error-code parity
+                    let code = 'none';
+                    try { await fsp.readFile(root + '/nope', 'utf8'); } catch (e: any) { code = e.code; }
+                    console.log('err:' + code);                                            // ENOENT
+                    // loop liveness: a real fs op runs concurrently with a timer; both
+                    // complete (the in-flight op Refs the loop so it can't exit early,
+                    // and the deferred Unref doesn't drop it before they drain).
+                    let timer = false;
+                    setTimeout(() => { timer = true; }, 5);
+                    await fsp.writeFile(root + '/b.txt', 'world');
+                    await new Promise((r: any) => setTimeout(r, 25));
+                    console.log('live:' + (timer && fs.readFileSync(root + '/b.txt', 'utf8') === 'world'));
+                    // concurrency: Promise.all of several reads all return correctly
+                    fs.writeFileSync(root + '/1', 'A'); fs.writeFileSync(root + '/2', 'B'); fs.writeFileSync(root + '/3', 'C');
+                    const all = await Promise.all([
+                        fsp.readFile(root + '/1', 'utf8'), fsp.readFile(root + '/2', 'utf8'), fsp.readFile(root + '/3', 'utf8')]);
+                    console.log('all:' + all.join(''));                                    // ABC
+                    fs.rmSync(root, { recursive: true });
+                }
+                main();
+                """
+        };
+        Assert.Equal("read:HELLO\nerr:ENOENT\nlive:true\nall:ABC\n", TestHarness.RunModules(files, "main.ts", mode));
+    }
+
+    #endregion
 }

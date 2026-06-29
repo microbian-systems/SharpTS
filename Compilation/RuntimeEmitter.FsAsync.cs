@@ -7,11 +7,16 @@ namespace SharpTS.Compilation;
 public partial class RuntimeEmitter
 {
     /// <summary>
-    /// Emits all async fs methods with inline IL (no external FsAsyncHelpers dependency).
-    /// Each method calls the corresponding sync implementation and wraps result with Task.FromResult.
+    /// Emits all async fs methods. Each builds its args and calls FsRunAsync, which
+    /// runs the sync op on the thread pool (real backgrounding) with event-loop
+    /// Ref/Unref so the loop stays alive until it drains (#971). No external
+    /// FsAsyncHelpers dependency.
     /// </summary>
     private void EmitFsAsyncMethods(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // #971: real-async infra (Ref + Task.Run + Unref). Must precede the ops.
+        EmitFsRunAsyncInfra(typeBuilder, runtime);
+
         // Emit all async fs methods with inline IL
         EmitFsReadFileAsync(typeBuilder, runtime);
         EmitFsWriteFileAsync(typeBuilder, runtime);
@@ -37,55 +42,11 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Begins a try-catch block for an async fs method.
-    /// Returns fromResult, a local for the result task, and a label for after the try-catch.
-    /// The caller should emit the sync call body, then call EndFsAsyncTryCatch.
+    /// Emits: Task&lt;object?&gt; FsReadFileAsync(object path, object? encoding) — runs
+    /// FsReadFileSync on the thread pool via FsRunAsync (#971: real backgrounding +
+    /// event-loop Ref/Unref so the loop stays alive until the op and its
+    /// callback/await continuation drain).
     /// </summary>
-    private (MethodInfo fromResult, LocalBuilder resultTask, Label afterTry) BeginFsAsyncTryCatch(ILGenerator il)
-    {
-        var fromResult = typeof(Task).GetMethod("FromResult")!.MakeGenericMethod(_types.Object);
-        var resultTask = il.DeclareLocal(_types.TaskOfObject);
-        var afterTry = il.DefineLabel();
-        il.BeginExceptionBlock();
-        return (fromResult, resultTask, afterTry);
-    }
-
-    /// <summary>
-    /// Ends the try-catch block for an async fs method.
-    /// Expects Task&lt;object&gt; on the stack (result of Task.FromResult).
-    /// Stores it, catches exceptions as Task.FromException, and returns.
-    /// </summary>
-    private void EndFsAsyncTryCatch(ILGenerator il, LocalBuilder resultTask, Label afterTry)
-    {
-        var fromException = typeof(Task).GetMethod("FromException", 1, [typeof(Exception)])!.MakeGenericMethod(_types.Object);
-        il.Emit(OpCodes.Stloc, resultTask);
-        il.Emit(OpCodes.Leave, afterTry);
-
-        il.BeginCatchBlock(typeof(Exception));
-        il.Emit(OpCodes.Call, fromException);
-        il.Emit(OpCodes.Stloc, resultTask);
-        il.Emit(OpCodes.Leave, afterTry);
-
-        il.EndExceptionBlock();
-        il.MarkLabel(afterTry);
-        il.Emit(OpCodes.Ldloc, resultTask);
-        il.Emit(OpCodes.Ret);
-    }
-
-    /// <summary>
-    /// Emits: Task&lt;object?&gt; FsReadFileAsync(object path, object? encoding)
-    /// Calls FsReadFileSync and wraps result in Task.FromResult.
-    /// </summary>
-    /// <remarks>
-    /// Deliberately synchronous-then-wrapped (not Task.Run). The #969 async proof
-    /// established that genuinely backgrounding this op (Task.Factory.StartNew) is
-    /// functionally correct and parity-clean, BUT the compiled $Promise(Task)
-    /// wrapper does not Ref the event loop for a still-pending task, so a
-    /// fire-and-forget callback/await can race program exit (flaky empty output).
-    /// Real backgrounding therefore needs event-loop ref-counting for adopted
-    /// Tasks — the interpreter's `refsEventLoopWhileInFlight` counterpart — which
-    /// is the core of #971. Until then this stays deterministic Task.FromResult.
-    /// </remarks>
     private void EmitFsReadFileAsync(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
         var method = typeBuilder.DefineMethod(
@@ -97,16 +58,7 @@ public partial class RuntimeEmitter
         runtime.FsReadFileAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsReadFileSync(path, encoding)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.FsReadFileSync);
-
-        // Wrap in Task.FromResult
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsReadFileSync, 2);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "readFile", method);
     }
@@ -126,18 +78,7 @@ public partial class RuntimeEmitter
         runtime.FsWriteFileAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsWriteFileSync(path, data, options)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, runtime.FsWriteFileSync);
-
-        // Return Task.FromResult(null) for void operations
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsWriteFileSync, 3);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "writeFile", method);
     }
@@ -157,18 +98,7 @@ public partial class RuntimeEmitter
         runtime.FsAppendFileAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsAppendFileSync(path, data, options)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, runtime.FsAppendFileSync);
-
-        // Return Task.FromResult(null) for void operations
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsAppendFileSync, 3);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "appendFile", method);
     }
@@ -188,15 +118,7 @@ public partial class RuntimeEmitter
         runtime.FsStatAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsStatRaw(path) — return the raw record (#977); the TS Stats shapes it.
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.FsStatRaw);
-
-        // Wrap in Task.FromResult
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsStatRaw, 1);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "stat", method);
     }
@@ -216,15 +138,7 @@ public partial class RuntimeEmitter
         runtime.FsLstatAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsLstatRaw(path) — return the raw record (#977); the TS Stats shapes it.
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.FsLstatRaw);
-
-        // Wrap in Task.FromResult
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsLstatRaw, 1);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "lstat", method);
     }
@@ -244,16 +158,7 @@ public partial class RuntimeEmitter
         runtime.FsUnlinkAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsUnlinkSync(path)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.FsUnlinkSync);
-
-        // Return Task.FromResult(null)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsUnlinkSync, 1);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "unlink", method);
     }
@@ -273,17 +178,7 @@ public partial class RuntimeEmitter
         runtime.FsMkdirAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsMkdirSync(path, options)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.FsMkdirSync);
-
-        // Return Task.FromResult(null)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsMkdirSync, 2);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "mkdir", method);
     }
@@ -303,17 +198,7 @@ public partial class RuntimeEmitter
         runtime.FsRmdirAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsRmdirSync(path, options)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.FsRmdirSync);
-
-        // Return Task.FromResult(null)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsRmdirSync, 2);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "rmdir", method);
     }
@@ -332,96 +217,93 @@ public partial class RuntimeEmitter
         );
         runtime.FsRmAsync = method;
 
-        var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
+        // rm has inline logic (recursive/force), so its sync body lives in
+        // FsRmAsyncImpl and is run on the thread pool via FsRunAsync like the
+        // other ops (#971).
+        var impl = typeBuilder.DefineMethod("FsRmAsyncImpl",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object, _types.Object]);
+        {
+            var il = impl.GetILGenerator();
 
-        // Convert path to string
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.Stringify);
-        var pathLocal = il.DeclareLocal(_types.String);
-        il.Emit(OpCodes.Stloc, pathLocal);
+            // Convert path to string
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.Stringify);
+            var pathLocal = il.DeclareLocal(_types.String);
+            il.Emit(OpCodes.Stloc, pathLocal);
 
-        // Check options for recursive and force flags
-        var recursiveLocal = il.DeclareLocal(_types.Boolean);
-        var forceLocal = il.DeclareLocal(_types.Boolean);
-        var afterOptionsLabel = il.DefineLabel();
-        var afterRecursiveLabel = il.DefineLabel();
+            var recursiveLocal = il.DeclareLocal(_types.Boolean);
+            var forceLocal = il.DeclareLocal(_types.Boolean);
+            var afterOptionsLabel = il.DefineLabel();
+            var afterRecursiveLabel = il.DefineLabel();
 
-        // If options is null, skip
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Brfalse, afterOptionsLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Brfalse, afterOptionsLabel);
 
-        // Check recursive option
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "recursive");
-        il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Call, runtime.IsTruthy);
-        il.Emit(OpCodes.Stloc, recursiveLocal);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "recursive");
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Call, runtime.IsTruthy);
+            il.Emit(OpCodes.Stloc, recursiveLocal);
 
-        // Check force option
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldstr, "force");
-        il.Emit(OpCodes.Call, runtime.GetProperty);
-        il.Emit(OpCodes.Call, runtime.IsTruthy);
-        il.Emit(OpCodes.Stloc, forceLocal);
-        il.Emit(OpCodes.Br, afterRecursiveLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, "force");
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Call, runtime.IsTruthy);
+            il.Emit(OpCodes.Stloc, forceLocal);
+            il.Emit(OpCodes.Br, afterRecursiveLabel);
 
-        il.MarkLabel(afterOptionsLabel);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, recursiveLocal);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Stloc, forceLocal);
+            il.MarkLabel(afterOptionsLabel);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, recursiveLocal);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Stloc, forceLocal);
 
-        il.MarkLabel(afterRecursiveLabel);
+            il.MarkLabel(afterRecursiveLabel);
 
-        // Check if path exists
-        var existsLabel = il.DefineLabel();
-        var doneLabel = il.DefineLabel();
+            var existsLabel = il.DefineLabel();
+            var doneLabel = il.DefineLabel();
 
-        il.Emit(OpCodes.Ldloc, pathLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "Exists", _types.String));
-        il.Emit(OpCodes.Brtrue, existsLabel);
+            il.Emit(OpCodes.Ldloc, pathLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "Exists", _types.String));
+            il.Emit(OpCodes.Brtrue, existsLabel);
 
-        il.Emit(OpCodes.Ldloc, pathLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Directory, "Exists", _types.String));
-        il.Emit(OpCodes.Brtrue, existsLabel);
+            il.Emit(OpCodes.Ldloc, pathLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Directory, "Exists", _types.String));
+            il.Emit(OpCodes.Brtrue, existsLabel);
 
-        // Path doesn't exist - if force, just return; otherwise throw
-        var throwLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, forceLocal);
-        il.Emit(OpCodes.Brfalse, throwLabel);
-        il.Emit(OpCodes.Br, doneLabel);
+            // Path doesn't exist - if force, return; otherwise throw
+            var throwLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, forceLocal);
+            il.Emit(OpCodes.Brfalse, throwLabel);
+            il.Emit(OpCodes.Br, doneLabel);
 
-        il.MarkLabel(throwLabel);
-        il.Emit(OpCodes.Ldstr, "ENOENT: no such file or directory");
-        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
-        il.Emit(OpCodes.Throw);
+            il.MarkLabel(throwLabel);
+            il.Emit(OpCodes.Ldstr, "ENOENT: no such file or directory");
+            il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+            il.Emit(OpCodes.Throw);
 
-        il.MarkLabel(existsLabel);
+            il.MarkLabel(existsLabel);
 
-        // Check if it's a directory
-        var isFileLabel = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, pathLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Directory, "Exists", _types.String));
-        il.Emit(OpCodes.Brfalse, isFileLabel);
+            var isFileLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, pathLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Directory, "Exists", _types.String));
+            il.Emit(OpCodes.Brfalse, isFileLabel);
 
-        // It's a directory - delete recursively if recursive flag set
-        il.Emit(OpCodes.Ldloc, pathLocal);
-        il.Emit(OpCodes.Ldloc, recursiveLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.Directory, "Delete", _types.String, _types.Boolean));
-        il.Emit(OpCodes.Br, doneLabel);
+            il.Emit(OpCodes.Ldloc, pathLocal);
+            il.Emit(OpCodes.Ldloc, recursiveLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.Directory, "Delete", _types.String, _types.Boolean));
+            il.Emit(OpCodes.Br, doneLabel);
 
-        // It's a file - delete it
-        il.MarkLabel(isFileLabel);
-        il.Emit(OpCodes.Ldloc, pathLocal);
-        il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "Delete", _types.String));
+            il.MarkLabel(isFileLabel);
+            il.Emit(OpCodes.Ldloc, pathLocal);
+            il.Emit(OpCodes.Call, _types.GetMethod(_types.File, "Delete", _types.String));
 
-        il.MarkLabel(doneLabel);
+            il.MarkLabel(doneLabel);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ret);
+        }
 
-        // Return Task.FromResult(null)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(method.GetILGenerator(), impl, 2);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "rm", method);
     }
@@ -441,16 +323,7 @@ public partial class RuntimeEmitter
         runtime.FsReaddirAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsReaddirSync(path, options)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.FsReaddirSync);
-
-        // Wrap in Task.FromResult
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsReaddirSync, 2);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "readdir", method);
     }
@@ -470,17 +343,7 @@ public partial class RuntimeEmitter
         runtime.FsRenameAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsRenameSync(oldPath, newPath)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.FsRenameSync);
-
-        // Return Task.FromResult(null)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsRenameSync, 2);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "rename", method);
     }
@@ -500,17 +363,7 @@ public partial class RuntimeEmitter
         runtime.FsCopyFileAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsCopyFileSync(src, dest) - ignores mode for now
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.FsCopyFileSync);
-
-        // Return Task.FromResult(null)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsCopyFileSync, 2);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "copyFile", method);
     }
@@ -530,17 +383,7 @@ public partial class RuntimeEmitter
         runtime.FsAccessAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsAccessSync(path, mode)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.FsAccessSync);
-
-        // Return Task.FromResult(null)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsAccessSync, 2);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "access", method);
     }
@@ -560,17 +403,7 @@ public partial class RuntimeEmitter
         runtime.FsChmodAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsChmodSync(path, mode)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.FsChmodSync);
-
-        // Return Task.FromResult(null)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsChmodSync, 2);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "chmod", method);
     }
@@ -590,17 +423,7 @@ public partial class RuntimeEmitter
         runtime.FsTruncateAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsTruncateSync(path, len)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.FsTruncateSync);
-
-        // Return Task.FromResult(null)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsTruncateSync, 2);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "truncate", method);
     }
@@ -620,18 +443,7 @@ public partial class RuntimeEmitter
         runtime.FsUtimesAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsUtimesSync(path, atime, mtime)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, runtime.FsUtimesSync);
-
-        // Return Task.FromResult(null)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsUtimesSync, 3);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "utimes", method);
     }
@@ -651,15 +463,7 @@ public partial class RuntimeEmitter
         runtime.FsReadlinkAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsReadlinkSync(path)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.FsReadlinkSync);
-
-        // Wrap in Task.FromResult
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsReadlinkSync, 1);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "readlink", method);
     }
@@ -679,15 +483,7 @@ public partial class RuntimeEmitter
         runtime.FsRealpathAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsRealpathSync(path)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.FsRealpathSync);
-
-        // Wrap in Task.FromResult
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsRealpathSync, 1);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "realpath", method);
     }
@@ -707,18 +503,7 @@ public partial class RuntimeEmitter
         runtime.FsSymlinkAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsSymlinkSync(target, path, type)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldarg_2);
-        il.Emit(OpCodes.Call, runtime.FsSymlinkSync);
-
-        // Return Task.FromResult(null)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsSymlinkSync, 3);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "symlink", method);
     }
@@ -738,17 +523,7 @@ public partial class RuntimeEmitter
         runtime.FsLinkAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsLinkSync(existingPath, newPath)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, runtime.FsLinkSync);
-
-        // Return Task.FromResult(null)
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsLinkSync, 2);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "link", method);
     }
@@ -768,15 +543,7 @@ public partial class RuntimeEmitter
         runtime.FsMkdtempAsync = method;
 
         var il = method.GetILGenerator();
-        var (fromResult, resultTask, afterTry) = BeginFsAsyncTryCatch(il);
-
-        // Call FsMkdtempSync(prefix)
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Call, runtime.FsMkdtempSync);
-
-        // Wrap in Task.FromResult
-        il.Emit(OpCodes.Call, fromResult);
-        EndFsAsyncTryCatch(il, resultTask, afterTry);
+        EmitFsAsyncDispatch(il, runtime.FsMkdtempSync, 1);
 
         runtime.RegisterBuiltInModuleMethod("fs/promises", "mkdtemp", method);
     }
