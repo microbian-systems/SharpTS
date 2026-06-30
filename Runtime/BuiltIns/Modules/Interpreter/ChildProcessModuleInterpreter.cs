@@ -894,23 +894,26 @@ public static class ChildProcessModuleInterpreter
                 var writer = new StreamWriter(pipeServer) { AutoFlush = true };
                 childProcess.SetupIpc(pipeServer, writer, cts);
 
-                // IPC message reader — marshal each message onto the owning loop.
+                // IPC message reader — marshal each message onto the owning loop. The loop reads
+                // until EOF (the child closing its write-end / exiting) rather than polling the
+                // cancellation token, so a final message buffered in the pipe (e.g. a reply sent
+                // right before the child exits) is always drained — see the WaitForExit handshake
+                // below, which awaits this task before emitting 'close'/'exit' + unref'ing.
                 var ipcReader = Task.Run(() =>
                 {
                     try
                     {
                         using var reader = new StreamReader(pipeServer, leaveOpen: true);
-                        while (!cts.Token.IsCancellationRequested)
+                        string? line;
+                        while ((line = reader.ReadLine()) != null)
                         {
-                            var line = reader.ReadLine();
-                            if (line == null) break;
                             var message = IpcSerializer.Deserialize(line);
                             post(() => emit(childProcess, "message", message));
                         }
                     }
                     catch (OperationCanceledException) { }
                     catch { }
-                }, cts.Token);
+                });
 
                 var stdoutTask = Task.Run(() =>
                 {
@@ -937,6 +940,14 @@ public static class ChildProcessModuleInterpreter
                 });
 
                 process.WaitForExit();
+
+                // The child has exited, so its IPC write-end is closed: the reader is guaranteed
+                // to drain any remaining buffered message and then see EOF (null), completing
+                // promptly. Awaiting it here ensures a reply written just before the child exited
+                // is posted as 'message' BEFORE we post 'close'/'exit' and drop the keep-alive ref
+                // — otherwise the loop could unref and drain out before the 'message' callback runs
+                // (the Fork_IpcRoundTrip empty-output race under CPU contention).
+                ipcReader.Wait();
                 cts.Cancel();
                 stdoutTask.Wait();
                 stderrTask.Wait();
