@@ -50,6 +50,11 @@ public class SharpTSReadable : SharpTSEventEmitter
     public int HighWaterMark { get => _highWaterMark; set => _highWaterMark = value; }
 
     /// <summary>
+    /// Whether this stream has errored (destroyed with an error) — backs stream.isErrored (#1030).
+    /// </summary>
+    public bool Errored => _errored;
+
+    /// <summary>
     /// Gets a member (method or property) by name for interpreter dispatch.
     /// </summary>
     public new object? GetMember(string name)

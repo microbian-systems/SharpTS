@@ -1922,4 +1922,68 @@ public class StreamModuleTests
     }
 
     #endregion
+
+    #region isErrored + get/setDefaultHighWaterMark + prefinish ordering — #1030
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_IsErrored(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, isErrored } from 'stream';
+                const r = new Readable();
+                r.on('error', () => {});
+                console.log(isErrored(r));
+                r.destroy(new Error('boom'));
+                console.log(isErrored(r));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("false\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_DefaultHighWaterMark_GetSet(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { getDefaultHighWaterMark, setDefaultHighWaterMark } from 'stream';
+                console.log(getDefaultHighWaterMark(false));
+                console.log(getDefaultHighWaterMark(true));
+                setDefaultHighWaterMark(true, 99);
+                console.log(getDefaultHighWaterMark(true));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("16384\n16\n99\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_PrefinishFinishOrdering(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Writable } from 'stream';
+                const w = new Writable({ write(c: any, e: any, cb: any) { cb(); } });
+                const order: string[] = [];
+                w.on('prefinish', () => order.push('prefinish'));
+                w.on('finish', () => order.push('finish'));
+                w.end();
+                console.log(order.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("prefinish,finish\n", output);
+    }
+
+    #endregion
 }

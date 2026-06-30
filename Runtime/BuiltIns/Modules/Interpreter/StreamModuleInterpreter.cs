@@ -34,6 +34,9 @@ public static class StreamModuleInterpreter
             ["pipeline"] = BuiltInMethod.CreateV2("pipeline", 2, int.MaxValue, Pipeline),
             ["addAbortSignal"] = BuiltInMethod.CreateV2("addAbortSignal", 2, AddAbortSignal),
             ["compose"] = BuiltInMethod.CreateV2("compose", 1, int.MaxValue, Compose),
+            ["isErrored"] = BuiltInMethod.CreateV2("isErrored", 1, IsErrored),
+            ["getDefaultHighWaterMark"] = BuiltInMethod.CreateV2("getDefaultHighWaterMark", 0, 1, GetDefaultHighWaterMark),
+            ["setDefaultHighWaterMark"] = BuiltInMethod.CreateV2("setDefaultHighWaterMark", 2, SetDefaultHighWaterMark),
             ["promises"] = StreamPromisesModuleInterpreter.CreatePromisesNamespace()
         };
     }
@@ -376,6 +379,42 @@ public static class StreamModuleInterpreter
             GetStreamMethod(_composed, "destroy")?.Call(interpreter, [error]);
             return null;
         }
+    }
+
+    // Module-level default highWaterMarks (#1030). Shared with the compiled $StreamUtils defaults.
+    private static int _defaultHwmByte = 16384;
+    private static int _defaultHwmObject = 16;
+
+    /// <summary>stream.isErrored(stream) — true if the stream has errored.</summary>
+    private static RuntimeValue IsErrored(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var obj = args.Length > 0 ? args[0].ToObject() : null;
+        bool errored = obj switch
+        {
+            SharpTSReadable r => r.Errored,
+            SharpTSWritable w => w.Errored,
+            _ => false
+        };
+        return RuntimeValue.FromBoolean(errored);
+    }
+
+    /// <summary>stream.getDefaultHighWaterMark(objectMode?) — the current default highWaterMark.</summary>
+    private static RuntimeValue GetDefaultHighWaterMark(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        bool objectMode = args.Length > 0 && args[0].IsTruthy();
+        return RuntimeValue.FromNumber(objectMode ? _defaultHwmObject : _defaultHwmByte);
+    }
+
+    /// <summary>stream.setDefaultHighWaterMark(objectMode, value) — sets the default highWaterMark.</summary>
+    private static RuntimeValue SetDefaultHighWaterMark(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        bool objectMode = args.Length > 0 && args[0].IsTruthy();
+        int value = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+        if (objectMode)
+            _defaultHwmObject = value;
+        else
+            _defaultHwmByte = value;
+        return RuntimeValue.Undefined;
     }
 
     private static BuiltInMethod? GetStreamMethod(object? stream, string methodName)

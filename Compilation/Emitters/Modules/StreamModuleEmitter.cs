@@ -23,6 +23,9 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
         "pipeline",
         "addAbortSignal",
         "compose",
+        "isErrored",
+        "getDefaultHighWaterMark",
+        "setDefaultHighWaterMark",
         "promises"
     ];
 
@@ -43,6 +46,15 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
                 return true;
             case "compose":
                 EmitComposeCall(emitter, arguments);
+                return true;
+            case "isErrored":
+                EmitIsErroredCall(emitter, arguments);
+                return true;
+            case "getDefaultHighWaterMark":
+                EmitDefaultHwmCall(emitter, arguments, emitter.Context.Runtime!.StreamGetDefaultHighWaterMark, getter: true);
+                return true;
+            case "setDefaultHighWaterMark":
+                EmitDefaultHwmCall(emitter, arguments, emitter.Context.Runtime!.StreamSetDefaultHighWaterMark, getter: false);
                 return true;
             case "Readable.from":
                 EmitReadableFromCall(emitter, arguments);
@@ -267,6 +279,91 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
         }
 
         il.Emit(OpCodes.Call, ctx.Runtime!.StreamReadableFrom);
+    }
+
+    /// <summary>
+    /// Emits: isErrored(stream) → bool. Reads $Readable.Errored / $Writable.Errored, else false.
+    /// </summary>
+    private static void EmitIsErroredCall(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        var objLocal = il.DeclareLocal(typeof(object));
+        il.Emit(OpCodes.Stloc, objLocal);
+
+        var notReadable = il.DefineLabel();
+        var falseLabel = il.DefineLabel();
+        var endLabel = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Isinst, ctx.Runtime!.TSReadableType);
+        il.Emit(OpCodes.Brfalse, notReadable);
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Castclass, ctx.Runtime!.TSReadableType);
+        il.Emit(OpCodes.Callvirt, ctx.Runtime!.TSReadableErroredGetter);
+        il.Emit(OpCodes.Box, typeof(bool));
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(notReadable);
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Isinst, ctx.Runtime!.TSWritableType);
+        il.Emit(OpCodes.Brfalse, falseLabel);
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Castclass, ctx.Runtime!.TSWritableType);
+        il.Emit(OpCodes.Callvirt, ctx.Runtime!.TSWritableErroredGetter);
+        il.Emit(OpCodes.Box, typeof(bool));
+        il.Emit(OpCodes.Br, endLabel);
+
+        il.MarkLabel(falseLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, typeof(bool));
+
+        il.MarkLabel(endLabel);
+    }
+
+    /// <summary>Emits get/setDefaultHighWaterMark by forwarding (boxed) args to the runtime helper.</summary>
+    private static void EmitDefaultHwmCall(IEmitterContext emitter, List<Expr> arguments, System.Reflection.MethodInfo target, bool getter)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // arg0 = objectMode (default false/null)
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        if (!getter)
+        {
+            // arg1 = value
+            if (arguments.Count > 1)
+            {
+                emitter.EmitExpression(arguments[1]);
+                emitter.EmitBoxIfNeeded(arguments[1]);
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldnull);
+            }
+        }
+
+        il.Emit(OpCodes.Call, target);
     }
 
     private static void EmitDuplexFromCall(IEmitterContext emitter, List<Expr> arguments)

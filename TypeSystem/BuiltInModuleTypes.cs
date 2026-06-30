@@ -1935,6 +1935,11 @@ public static class BuiltInModuleTypes
         // compose function type (#1028): compose(...streams) → Duplex
         var composeType = new TypeInfo.Function([anyType], streamInstanceType, RequiredParams: 1, HasRestParam: true);
 
+        // #1030 statics
+        var isErroredType = new TypeInfo.Function([anyType], boolType);
+        var getDefaultHwmType = new TypeInfo.Function([boolType], numberType, RequiredParams: 0);
+        var setDefaultHwmType = new TypeInfo.Function([boolType, numberType], voidType);
+
         // promises sub-module
         var promisesType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
         {
@@ -1953,6 +1958,9 @@ public static class BuiltInModuleTypes
             ["pipeline"] = pipelineType,
             ["addAbortSignal"] = addAbortSignalType,
             ["compose"] = composeType,
+            ["isErrored"] = isErroredType,
+            ["getDefaultHighWaterMark"] = getDefaultHwmType,
+            ["setDefaultHighWaterMark"] = setDefaultHwmType,
             ["promises"] = promisesType
         };
     }

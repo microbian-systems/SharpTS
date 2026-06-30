@@ -34,6 +34,7 @@ public partial class RuntimeEmitter
         EmitStreamReadableFrom(typeBuilder, runtime);
         EmitStreamDuplexFrom(typeBuilder, runtime);     // #1028
         EmitStreamComposeMethod(typeBuilder, runtime);  // #1028
+        EmitStreamDefaultHwm(typeBuilder, runtime);     // #1030
         EmitStreamPromisePipeline(typeBuilder, runtime);
         EmitStreamPromiseFinished(typeBuilder, runtime);
         EmitStreamConstructorFactories(typeBuilder, runtime);

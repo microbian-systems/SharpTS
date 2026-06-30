@@ -1231,6 +1231,21 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         readableLengthProp.SetGetMethod(getReadableLength);
 
+        // errored property (#1030): backs stream.isErrored
+        var erroredProp = typeBuilder.DefineProperty("Errored", PropertyAttributes.None, _types.Boolean, null);
+        var getErrored = typeBuilder.DefineMethod(
+            "get_Errored",
+            MethodAttributes.Public | MethodAttributes.SpecialName,
+            _types.Boolean,
+            Type.EmptyTypes
+        );
+        runtime.TSReadableErroredGetter = getErrored;
+        il = getErrored.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsReadableErroredField);
+        il.Emit(OpCodes.Ret);
+        erroredProp.SetGetMethod(getErrored);
+
         // destroyed property
         var destroyedProp = typeBuilder.DefineProperty("Destroyed", PropertyAttributes.None, _types.Boolean, null);
         var getDestroyed = typeBuilder.DefineMethod(

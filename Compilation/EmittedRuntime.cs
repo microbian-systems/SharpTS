@@ -2466,6 +2466,11 @@ public class EmittedRuntime
     public Type StreamAbortCallbackType { get; set; } = null!;
     public ConstructorBuilder StreamAbortCallbackCtor { get; set; } = null!;
     public MethodBuilder StreamAbortCallbackOnAbort { get; set; } = null!;
+    // #1030: isErrored + get/setDefaultHighWaterMark.
+    public MethodBuilder TSReadableErroredGetter { get; set; } = null!;
+    public MethodBuilder TSWritableErroredGetter { get; set; } = null!;
+    public MethodBuilder StreamGetDefaultHighWaterMark { get; set; } = null!;
+    public MethodBuilder StreamSetDefaultHighWaterMark { get; set; } = null!;
     // #1028: compose(...streams) + Duplex.from(source).
     public MethodBuilder StreamDuplexFrom { get; set; } = null!;
     public MethodBuilder StreamCompose { get; set; } = null!;

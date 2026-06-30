@@ -359,6 +359,71 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
     }
 
+    /// <summary>
+    /// Emits the module-level default-highWaterMark state + accessors (#1030):
+    /// static int fields (init 16384 byte / 16 object via .cctor) and
+    /// GetDefaultHwm(objectMode)→double / SetDefaultHwm(objectMode, value)→null.
+    /// </summary>
+    private void EmitStreamDefaultHwm(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var byteField = typeBuilder.DefineField("_defaultHwmByte", _types.Int32, FieldAttributes.Private | FieldAttributes.Static);
+        var objField = typeBuilder.DefineField("_defaultHwmObject", _types.Int32, FieldAttributes.Private | FieldAttributes.Static);
+
+        // .cctor: _defaultHwmByte = 16384; _defaultHwmObject = 16;
+        var cctor = typeBuilder.DefineTypeInitializer();
+        var cil = cctor.GetILGenerator();
+        cil.Emit(OpCodes.Ldc_I4, 16384);
+        cil.Emit(OpCodes.Stsfld, byteField);
+        cil.Emit(OpCodes.Ldc_I4, 16);
+        cil.Emit(OpCodes.Stsfld, objField);
+        cil.Emit(OpCodes.Ret);
+
+        // public static object GetDefaultHwm(object objectMode)
+        var get = typeBuilder.DefineMethod("GetDefaultHwm", MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object]);
+        runtime.StreamGetDefaultHighWaterMark = get;
+        {
+            var il = get.GetILGenerator();
+            var byteLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.IsTruthy);
+            il.Emit(OpCodes.Brfalse, byteLabel);
+            il.Emit(OpCodes.Ldsfld, objField);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(byteLabel);
+            il.Emit(OpCodes.Ldsfld, byteField);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // public static object SetDefaultHwm(object objectMode, object value)
+        var set = typeBuilder.DefineMethod("SetDefaultHwm", MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object, _types.Object]);
+        runtime.StreamSetDefaultHighWaterMark = set;
+        {
+            var il = set.GetILGenerator();
+            var byteLabel = il.DefineLabel();
+            var done = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Call, runtime.IsTruthy);
+            il.Emit(OpCodes.Brfalse, byteLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.ToNumber);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Stsfld, objField);
+            il.Emit(OpCodes.Br, done);
+            il.MarkLabel(byteLabel);
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Call, runtime.ToNumber);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Stsfld, byteField);
+            il.MarkLabel(done);
+            il.Emit(OpCodes.Ldnull);
+            il.Emit(OpCodes.Ret);
+        }
+    }
+
     private void EmitOnListener(ILGenerator il, EmittedRuntime runtime, Action loadEmitter, string eventName, LocalBuilder bridgeLocal, MethodBuilder bridgeMethod)
     {
         loadEmitter();
