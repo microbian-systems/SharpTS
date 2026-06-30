@@ -72,6 +72,17 @@ public class SharpTSReadable : SharpTSEventEmitter
             "map" => BuiltInMethod.CreateV2("map", 1, Map),
             "filter" => BuiltInMethod.CreateV2("filter", 1, Filter),
 
+            // Async iterator helpers (#1025). Consuming helpers return a Promise;
+            // lazy helpers return a new Readable carrying the transformed chunks.
+            "reduce" => BuiltInMethod.CreateV2("reduce", 1, 2, Reduce),
+            "some" => BuiltInMethod.CreateV2("some", 1, Some),
+            "every" => BuiltInMethod.CreateV2("every", 1, Every),
+            "find" => BuiltInMethod.CreateV2("find", 1, Find),
+            "drop" => BuiltInMethod.CreateV2("drop", 1, Drop),
+            "take" => BuiltInMethod.CreateV2("take", 1, Take),
+            "flatMap" => BuiltInMethod.CreateV2("flatMap", 1, FlatMap),
+            "asIndexedPairs" => BuiltInMethod.CreateV2("asIndexedPairs", 0, AsIndexedPairs),
+
             // Wrap event methods to drain buffer after 'data' listener is added
             "on" or "addListener" => BuiltInMethod.CreateV2(name, 2, WrapOnForFlowing),
             "once" => BuiltInMethod.CreateV2("once", 2, WrapOnceForFlowing),
@@ -876,6 +887,156 @@ public class SharpTSReadable : SharpTSEventEmitter
             size += GetChunkLength(chunk);
         }
         return size;
+    }
+
+    // ---- Async iterator helpers (#1025) ----
+    // These consume / transform the currently-buffered chunks (the same buffer model as
+    // toArray/forEach). Consuming helpers return a resolved Promise; lazy helpers return a
+    // new objectMode Readable carrying the transformed chunks. Interp == compiled by construction.
+
+    private List<object?> DrainBufferToList()
+    {
+        var items = new List<object?>(_readBuffer.Count);
+        while (_readBuffer.Count > 0)
+            items.Add(_readBuffer.Dequeue());
+        return items;
+    }
+
+    private static SharpTSReadable MakeHelperReadable(bool objectMode)
+    {
+        var r = new SharpTSReadable { ObjectMode = objectMode };
+        return r;
+    }
+
+    private RuntimeValue Reduce(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("reduce() requires a function argument");
+        var items = DrainBufferToList();
+
+        object? acc;
+        int start;
+        if (args.Length > 1)
+        {
+            acc = args[1].ToObject();
+            start = 0;
+        }
+        else if (items.Count > 0)
+        {
+            acc = items[0];
+            start = 1;
+        }
+        else
+        {
+            // Empty stream with no initial value — yields undefined (matches compiled parity).
+            return RuntimeValue.FromObject(SharpTSPromise.Resolve(SharpTSUndefined.Instance));
+        }
+
+        for (int i = start; i < items.Count; i++)
+            acc = fn.Call(interpreter, [acc, items[i]]);
+
+        return RuntimeValue.FromObject(SharpTSPromise.Resolve(acc));
+    }
+
+    private RuntimeValue Some(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("some() requires a function argument");
+        foreach (var item in DrainBufferToList())
+        {
+            if (RuntimeValue.FromBoxed(fn.Call(interpreter, [item])).IsTruthy())
+                return RuntimeValue.FromObject(SharpTSPromise.Resolve(true));
+        }
+        return RuntimeValue.FromObject(SharpTSPromise.Resolve(false));
+    }
+
+    private RuntimeValue Every(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("every() requires a function argument");
+        foreach (var item in DrainBufferToList())
+        {
+            if (!RuntimeValue.FromBoxed(fn.Call(interpreter, [item])).IsTruthy())
+                return RuntimeValue.FromObject(SharpTSPromise.Resolve(false));
+        }
+        return RuntimeValue.FromObject(SharpTSPromise.Resolve(true));
+    }
+
+    private RuntimeValue Find(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("find() requires a function argument");
+        foreach (var item in DrainBufferToList())
+        {
+            if (RuntimeValue.FromBoxed(fn.Call(interpreter, [item])).IsTruthy())
+                return RuntimeValue.FromObject(SharpTSPromise.Resolve(item));
+        }
+        return RuntimeValue.FromObject(SharpTSPromise.Resolve(SharpTSUndefined.Instance));
+    }
+
+    private RuntimeValue Drop(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        int n = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+        var items = DrainBufferToList();
+        var result = MakeHelperReadable(_objectMode);
+        for (int i = n; i < items.Count; i++)
+            result.PushFromHost(interpreter, items[i]);
+        result.PushFromHost(interpreter, null);
+        return RuntimeValue.FromObject(result);
+    }
+
+    private RuntimeValue Take(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        int n = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+        var items = DrainBufferToList();
+        var result = MakeHelperReadable(_objectMode);
+        for (int i = 0; i < items.Count && i < n; i++)
+            result.PushFromHost(interpreter, items[i]);
+        result.PushFromHost(interpreter, null);
+        return RuntimeValue.FromObject(result);
+    }
+
+    private RuntimeValue FlatMap(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("flatMap() requires a function argument");
+        var result = MakeHelperReadable(true);
+        foreach (var item in DrainBufferToList())
+        {
+            var mapped = fn.Call(interpreter, [item]);
+            if (mapped is SharpTSArray arr)
+            {
+                foreach (var e in arr)
+                    result.PushFromHost(interpreter, e);
+            }
+            else
+            {
+                result.PushFromHost(interpreter, mapped);
+            }
+        }
+        result.PushFromHost(interpreter, null);
+        return RuntimeValue.FromObject(result);
+    }
+
+    private RuntimeValue AsIndexedPairs(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var result = MakeHelperReadable(true);
+        int index = 0;
+        foreach (var item in DrainBufferToList())
+        {
+            var pairElements = new SharpTS.Runtime.Deque<object?>();
+            pairElements.AddLast((double)index);
+            pairElements.AddLast(item);
+            result.PushFromHost(interpreter, new SharpTSArray(pairElements));
+            index++;
+        }
+        result.PushFromHost(interpreter, null);
+        return RuntimeValue.FromObject(result);
     }
 
     // ---- Async iteration support (#1024) ----

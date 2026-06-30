@@ -117,6 +117,9 @@ public partial class RuntimeEmitter
         EmitTSReadableMap(typeBuilder, runtime);
         EmitTSReadableFilter(typeBuilder, runtime);
 
+        // Async iterator helpers (#1025) — need Push/SetObjectMode (Phase 2a) + $Array/$Promise.
+        EmitTSReadableIterHelpers(typeBuilder, runtime, typeof(Queue<object?>));
+
         // Finalize the type
         typeBuilder.CreateType();
     }

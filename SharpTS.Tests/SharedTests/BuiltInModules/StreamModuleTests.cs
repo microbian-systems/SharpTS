@@ -1712,4 +1712,100 @@ public class StreamModuleTests
     }
 
     #endregion
+
+    #region Async iterator helpers (reduce/some/every/find/flatMap/drop/take/asIndexedPairs) — #1025
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_Helper_ReduceSomeEveryFind(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const mk = () => { const r = new Readable({ objectMode: true }); [1, 2, 3, 4].forEach(x => r.push(x)); r.push(null); return r; };
+                    console.log(await mk().reduce((a: number, x: number) => a + x, 0));
+                    console.log(await mk().reduce((a: number, x: number) => a + x));
+                    console.log(await mk().some((x: number) => x > 3));
+                    console.log(await mk().some((x: number) => x > 9));
+                    console.log(await mk().every((x: number) => x > 0));
+                    console.log(await mk().every((x: number) => x > 2));
+                    console.log(await mk().find((x: number) => x > 2));
+                    console.log(await mk().find((x: number) => x > 9));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("10\n10\ntrue\nfalse\ntrue\nfalse\n3\nundefined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_Helper_DropTake(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const mk = () => { const r = new Readable({ objectMode: true }); [1, 2, 3, 4, 5].forEach(x => r.push(x)); r.push(null); return r; };
+                    console.log((await mk().drop(2).toArray()).join(','));
+                    console.log((await mk().take(2).toArray()).join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("3,4,5\n1,2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_Helper_FlatMap(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    [1, 2, 3].forEach(x => r.push(x)); r.push(null);
+                    const out = await r.flatMap((x: number) => [x, x * 10]).toArray();
+                    console.log(out.join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("1,10,2,20,3,30\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_Helper_AsIndexedPairs(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    ['a', 'b', 'c'].forEach(x => r.push(x)); r.push(null);
+                    const out = await r.asIndexedPairs().toArray();
+                    console.log(out.map((p: any) => '[' + p[0] + ',' + p[1] + ']').join(''));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("[0,a][1,b][2,c]\n", output);
+    }
+
+    #endregion
 }
