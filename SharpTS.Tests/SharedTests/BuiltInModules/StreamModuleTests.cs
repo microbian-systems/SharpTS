@@ -1557,6 +1557,26 @@ public class StreamModuleTests
         Assert.Contains("6,8", output);
     }
 
+    // #1026: `Readable.prototype.map` must return a Transform stream, NOT an array — i.e. the
+    // call must dispatch to $Readable.Map, not the Array/Iterator map emitter. Verifies parity.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_Readable_Map_ReturnsStream_NotArray(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const r = new Readable({ objectMode: true });
+                const m = r.map((x: any) => x * 2);
+                console.log(typeof m, typeof m.pipe, Array.isArray(m));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("object function false\n", output);
+    }
+
     #endregion
 
     #region addAbortSignal
