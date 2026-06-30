@@ -2004,6 +2004,10 @@ public class EmittedRuntime
     public MethodBuilder HttpRequest { get; set; } = null!;
     public MethodBuilder HttpGet { get; set; } = null!;
     public MethodBuilder HttpGetMethods { get; set; } = null!;
+    // #1052 utilities
+    public MethodBuilder HttpValidateHeaderName { get; set; } = null!;
+    public MethodBuilder HttpValidateHeaderValue { get; set; } = null!;
+    public MethodBuilder HttpSetMaxIdleParsers { get; set; } = null!;
     public MethodBuilder HttpGetStatusCodes { get; set; } = null!;
     public MethodBuilder HttpGetGlobalAgent { get; set; } = null!;
     public MethodBuilder HttpGetAgentConstructor { get; set; } = null!;

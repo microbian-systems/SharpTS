@@ -27,7 +27,11 @@ public sealed class HttpModuleEmitter : IBuiltInModuleEmitter
         "METHODS",
         "STATUS_CODES",
         "globalAgent",
-        "Agent"
+        "Agent",
+        "validateHeaderName",
+        "validateHeaderValue",
+        "setMaxIdleHTTPParsers",
+        "maxHeaderSize"
     ];
 
     public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
@@ -39,6 +43,9 @@ public sealed class HttpModuleEmitter : IBuiltInModuleEmitter
             "createServer" => EmitCreateServer(emitter, arguments),
             "request" => EmitRequest(emitter, arguments),
             "get" => EmitGet(emitter, arguments),
+            "validateHeaderName" => EmitUtilCall(emitter, arguments, emitter.Context.Runtime!.HttpValidateHeaderName, 1),
+            "validateHeaderValue" => EmitUtilCall(emitter, arguments, emitter.Context.Runtime!.HttpValidateHeaderValue, 2),
+            "setMaxIdleHTTPParsers" => EmitUtilCall(emitter, arguments, emitter.Context.Runtime!.HttpSetMaxIdleParsers, 1),
             _ => false
         };
     }
@@ -51,8 +58,43 @@ public sealed class HttpModuleEmitter : IBuiltInModuleEmitter
             "STATUS_CODES" => EmitStatusCodes(emitter),
             "globalAgent" => EmitGlobalAgent(emitter),
             "Agent" => EmitAgentConstructor(emitter),
+            "maxHeaderSize" => EmitMaxHeaderSize(emitter),
             _ => false
         };
+    }
+
+    /// <summary>
+    /// Emits a call to a $Runtime header-utility helper, padding/truncating to argCount object args.
+    /// </summary>
+    private static bool EmitUtilCall(IEmitterContext emitter, List<Expr> arguments,
+        System.Reflection.Emit.MethodBuilder target, int argCount)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        for (int i = 0; i < argCount; i++)
+        {
+            if (i < arguments.Count)
+            {
+                emitter.EmitExpression(arguments[i]);
+                emitter.EmitBoxIfNeeded(arguments[i]);
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldnull);
+            }
+        }
+        il.Emit(OpCodes.Call, target);
+        emitter.SetStackUnknown();
+        return true;
+    }
+
+    private static bool EmitMaxHeaderSize(IEmitterContext emitter)
+    {
+        var il = emitter.Context.IL;
+        il.Emit(OpCodes.Ldc_R8, 16384.0);
+        il.Emit(OpCodes.Box, emitter.Context.Types.Double);
+        emitter.SetStackUnknown();
+        return true;
     }
 
     private static bool EmitCreateServer(IEmitterContext emitter, List<Expr> arguments)
@@ -186,5 +228,5 @@ public sealed class HttpModuleEmitter : IBuiltInModuleEmitter
     }
 
     public bool IsExportedProperty(string memberName) => memberName is
-        "METHODS" or "STATUS_CODES" or "globalAgent" or "Agent";
+        "METHODS" or "STATUS_CODES" or "globalAgent" or "Agent" or "maxHeaderSize";
 }

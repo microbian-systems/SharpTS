@@ -1616,7 +1616,18 @@ public static class BuiltInModuleTypes
             ["prependListener"] = new TypeInfo.Function([stringType, anyType], anyType),
             ["prependOnceListener"] = new TypeInfo.Function([stringType, anyType], anyType),
             ["setMaxListeners"] = new TypeInfo.Function([numberType], anyType),
-            ["getMaxListeners"] = new TypeInfo.Function([], numberType)
+            ["getMaxListeners"] = new TypeInfo.Function([], numberType),
+
+            // Server lifecycle (#1045)
+            ["closeAllConnections"] = new TypeInfo.Function([], voidType),
+            ["closeIdleConnections"] = new TypeInfo.Function([], voidType),
+            ["setTimeout"] = new TypeInfo.Function([numberType, anyType], anyType, RequiredParams: 0),
+            ["keepAliveTimeout"] = numberType,
+            ["headersTimeout"] = numberType,
+            ["requestTimeout"] = numberType,
+            ["timeout"] = numberType,
+            ["maxHeadersCount"] = numberType,
+            ["maxRequestsPerSocket"] = numberType
         }.ToFrozenDictionary());
 
         // STATUS_CODES type - with string index signature for dynamic property access
@@ -1658,13 +1669,22 @@ public static class BuiltInModuleTypes
 
         return new Dictionary<string, TypeInfo>
         {
-            ["createServer"] = new TypeInfo.Function([callbackType], serverType, RequiredParams: 0),
-            ["request"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1),
-            ["get"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1),
+            // createServer accepts an optional options object (https TLS opts: key/cert/ca/pfx/
+            // passphrase/SNICallback/ALPNProtocols, #1049) and/or a (req,res) handler.
+            ["createServer"] = new TypeInfo.Function([anyType, anyType], serverType, RequiredParams: 0),
+            // request/get return a ClientRequest (#1043) typed as any so the writable + event
+            // surface (write/end/setHeader/on('response')/...) type-checks without over-constraining.
+            ["request"] = new TypeInfo.Function([anyType, anyType, anyType], anyType, RequiredParams: 1),
+            ["get"] = new TypeInfo.Function([anyType, anyType, anyType], anyType, RequiredParams: 1),
             ["METHODS"] = methodsType,
             ["STATUS_CODES"] = statusCodesType,
             ["globalAgent"] = agentType,
-            ["Agent"] = agentConstructorType
+            ["Agent"] = agentConstructorType,
+            // Utilities + constants (#1052)
+            ["validateHeaderName"] = new TypeInfo.Function([stringType, stringType], voidType, RequiredParams: 1),
+            ["validateHeaderValue"] = new TypeInfo.Function([stringType, anyType], voidType, RequiredParams: 2),
+            ["maxHeaderSize"] = numberType,
+            ["setMaxIdleHTTPParsers"] = new TypeInfo.Function([numberType], voidType, RequiredParams: 0)
         };
     }
 

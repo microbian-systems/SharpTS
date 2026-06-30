@@ -235,6 +235,13 @@ public class SharpTSEventEmitter : ITypeCategorized
     internal void ClearAllListenersInternal() => _events.Clear();
 
     /// <summary>
+    /// Returns true if at least one listener is registered for the event (host-side check,
+    /// used to skip building event payloads when nobody is listening).
+    /// </summary>
+    internal bool HasListenersInternal(string eventName)
+        => _events.TryGetValue(eventName, out var l) && l.Count > 0;
+
+    /// <summary>
     /// Returns an array of listener functions for the specified event.
     /// </summary>
     private RuntimeValue Listeners(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)

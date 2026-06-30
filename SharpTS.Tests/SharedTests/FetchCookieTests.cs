@@ -344,21 +344,24 @@ public class FetchCookieTests : IDisposable
     // ========== http.get/http.request cookies ==========
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Cookies_HttpModuleSharesJarWithFetch(ExecutionMode mode)
     {
-        // Set a cookie via fetch, then read it back via http.get — both paths
-        // delegate to the same Fetch runtime method and must hit the same jar.
-        // We use modules so we can `import * as http from 'http'`.
+        // Set a cookie via fetch, then read it back via http.get. The ClientRequest (#1043)
+        // attaches cookies from the shared jar, so echo-cookie reflects the fetch-set cookie.
+        // Interpreted-only: the compiled http client still routes through fetch (which shares
+        // the same jar — covered by the dual-mode fetch cookie tests).
         var files = new Dictionary<string, string>
         {
             ["./main.ts"] = $$"""
                 import * as http from 'http';
                 async function test(): Promise<void> {
                     await fetch('{{_server.BaseUrl}}set-session');
-                    const res = await http.get('{{_server.BaseUrl}}echo-cookie') as any;
-                    const text = await res.text();
-                    console.log(text);
+                    http.get('{{_server.BaseUrl}}echo-cookie', (res: any) => {
+                        let text = '';
+                        res.on('data', (c: any) => { text += c.toString(); });
+                        res.on('end', () => { console.log(text); });
+                    });
                 }
                 test();
                 """
@@ -368,22 +371,28 @@ public class FetchCookieTests : IDisposable
     }
 
     [Theory]
-    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
     public void Cookies_HttpRequestStoresAndSendsCookies(ExecutionMode mode)
     {
-        // Pure http.request flow: set via http.request, read via http.request.
-        // No fetch() call at all — proves http.* alone exercises the cookie jar.
+        // Pure http.request flow: set via http.request, read via http.request — proves the
+        // ClientRequest (#1043) both stores Set-Cookie and re-sends from the shared jar.
+        // Interpreted-only (see the ClientRequest note above).
         var files = new Dictionary<string, string>
         {
             ["./main.ts"] = $$"""
                 import * as http from 'http';
-                async function test(): Promise<void> {
-                    await http.request('{{_server.BaseUrl}}set-session') as any;
-                    const res = await http.request('{{_server.BaseUrl}}echo-cookie') as any;
-                    const text = await res.text();
-                    console.log(text);
-                }
-                test();
+                const setReq: any = http.request('{{_server.BaseUrl}}set-session', (res1: any) => {
+                    res1.on('data', () => {});
+                    res1.on('end', () => {
+                        const getReq: any = http.request('{{_server.BaseUrl}}echo-cookie', (res2: any) => {
+                            let text = '';
+                            res2.on('data', (c: any) => { text += c.toString(); });
+                            res2.on('end', () => { console.log(text); });
+                        });
+                        getReq.end();
+                    });
+                });
+                setReq.end();
                 """
         };
         var output = TestHarness.RunModules(files, "./main.ts", mode);

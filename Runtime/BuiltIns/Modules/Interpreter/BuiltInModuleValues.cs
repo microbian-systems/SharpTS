@@ -51,7 +51,7 @@ public static class BuiltInModuleValues
             "dns" => DnsModuleInterpreter.GetExports(),
             "dns/promises" => DnsModuleInterpreter.GetPromisesExports(),
             "net" => NetModuleInterpreter.GetExports(),
-            "https" => HttpModuleInterpreter.GetExports(), // https delegates to http
+            "https" => HttpModuleInterpreter.GetHttpsExports(), // real TLS server (#1049) + client over TLS (#1050)
             "tls" => TlsModuleInterpreter.GetExports(),
             "dgram" => DgramModuleInterpreter.GetExports(),
             "cluster" => ClusterModuleInterpreter.GetExports(),

@@ -127,7 +127,73 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
         il.Emit(OpCodes.Brtrue, rawHeadersLabel);
 
+        // #1048 additions: version parts, complete/aborted, trailers, socket.
+        var verMajorLabel = il.DefineLabel();
+        var verMinorLabel = il.DefineLabel();
+        var completeLabel = il.DefineLabel();
+        var abortedLabel = il.DefineLabel();
+        var trailersLabel = il.DefineLabel();
+        var rawTrailersLabel = il.DefineLabel();
+        var socketLabel = il.DefineLabel();
+
+        void Check(string n, System.Reflection.Emit.Label lbl)
+        {
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
+            il.Emit(OpCodes.Brtrue, lbl);
+        }
+        Check("httpVersionMajor", verMajorLabel);
+        Check("httpVersionMinor", verMinorLabel);
+        Check("complete", completeLabel);
+        Check("aborted", abortedLabel);
+        Check("trailers", trailersLabel);
+        Check("rawTrailers", rawTrailersLabel);
+        Check("socket", socketLabel);
+        Check("connection", socketLabel);
+
         il.Emit(OpCodes.Br, defaultLabel);
+
+        // httpVersionMajor / httpVersionMinor
+        void EmitVersionPart(System.Reflection.Emit.Label lbl, string propName)
+        {
+            il.MarkLabel(lbl);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _httpRequestRequestField);
+            il.Emit(OpCodes.Callvirt, httpListenerRequestType.GetProperty("ProtocolVersion")!.GetGetMethod()!);
+            il.Emit(OpCodes.Callvirt, typeof(Version).GetProperty(propName)!.GetGetMethod()!);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Ret);
+        }
+        EmitVersionPart(verMajorLabel, "Major");
+        EmitVersionPart(verMinorLabel, "Minor");
+
+        // complete / aborted → false (server request lifecycle not tracked in compiled)
+        il.MarkLabel(completeLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(abortedLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+
+        // trailers → empty dictionary
+        il.MarkLabel(trailersLabel);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Ret);
+
+        // rawTrailers → empty List<object?> (Array.isArray-compatible, same shape as rawHeaders;
+        // runtime.CreateArray is not yet assigned at the $HttpRequest emit phase).
+        il.MarkLabel(rawTrailersLabel);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObject));
+        il.Emit(OpCodes.Ret);
+
+        // socket → minimal { remoteAddress, remotePort, family }
+        il.MarkLabel(socketLabel);
+        EmitHttpRequestSocket(il, runtime, httpListenerRequestType);
+        il.Emit(OpCodes.Ret);
 
         // "method" - return _request.HttpMethod
         il.MarkLabel(methodLabel);
@@ -180,6 +246,61 @@ public partial class RuntimeEmitter
         il.MarkLabel(defaultLabel);
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Builds a minimal request socket dictionary { remoteAddress, remotePort, family } from
+    /// HttpListenerRequest.RemoteEndPoint and leaves it on the stack (#1048).
+    /// </summary>
+    private void EmitHttpRequestSocket(ILGenerator il, EmittedRuntime runtime, Type httpListenerRequestType)
+    {
+        var dictType = _types.DictionaryStringObject;
+        var setItem = dictType.GetMethod("set_Item", [_types.String, _types.Object])!;
+        var ipEndPointType = typeof(System.Net.IPEndPoint);
+
+        var epLocal = il.DeclareLocal(ipEndPointType);
+        var dictLocal = il.DeclareLocal(dictType);
+
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(dictType));
+        il.Emit(OpCodes.Stloc, dictLocal);
+
+        // ep = _request.RemoteEndPoint as IPEndPoint
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpRequestRequestField);
+        il.Emit(OpCodes.Callvirt, httpListenerRequestType.GetProperty("RemoteEndPoint")!.GetGetMethod()!);
+        il.Emit(OpCodes.Isinst, ipEndPointType);
+        il.Emit(OpCodes.Stloc, epLocal);
+
+        var noEpLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, epLocal);
+        il.Emit(OpCodes.Brfalse, noEpLabel);
+
+        // dict["remoteAddress"] = ep.Address.ToString()
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "remoteAddress");
+        il.Emit(OpCodes.Ldloc, epLocal);
+        il.Emit(OpCodes.Callvirt, ipEndPointType.GetProperty("Address")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.IPAddress).GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Callvirt, setItem);
+
+        // dict["remotePort"] = (double)ep.Port
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "remotePort");
+        il.Emit(OpCodes.Ldloc, epLocal);
+        il.Emit(OpCodes.Callvirt, ipEndPointType.GetProperty("Port")!.GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Callvirt, setItem);
+
+        il.MarkLabel(noEpLabel);
+
+        // dict["family"] = "IPv4"
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "family");
+        il.Emit(OpCodes.Ldstr, "IPv4");
+        il.Emit(OpCodes.Callvirt, setItem);
+
+        il.Emit(OpCodes.Ldloc, dictLocal);
     }
 
     private void EmitExtractRequestHeaders(ILGenerator il, Type httpListenerRequestType)
@@ -378,8 +499,33 @@ public partial class RuntimeEmitter
         EmitHttpResponseRemoveHeader(typeBuilder, runtime, httpListenerResponseType);
         EmitHttpResponseGetMember(typeBuilder, runtime, httpListenerResponseType);
         EmitHttpResponseSetMember(typeBuilder, runtime, httpListenerResponseType);
+        EmitHttpResponseExtraMembers(typeBuilder, runtime);
 
         typeBuilder.CreateType();
+    }
+
+    /// <summary>
+    /// Emits the ServerResponse completeness surface (#1047): writeContinue/writeProcessing/
+    /// addTrailers/flushHeaders (reflection-dispatched PascalCase methods). HttpListener
+    /// auto-sends 100-continue and has no trailer/1xx API, so these are compatibility no-ops
+    /// (matching the interpreter).
+    /// </summary>
+    private void EmitHttpResponseExtraMembers(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        void EmitUndefMethod(string name, int argCount)
+        {
+            var paramTypes = new Type[argCount];
+            for (int i = 0; i < argCount; i++) paramTypes[i] = _types.Object;
+            var m = typeBuilder.DefineMethod(name, MethodAttributes.Public, _types.Object, paramTypes);
+            var mil = m.GetILGenerator();
+            mil.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            mil.Emit(OpCodes.Ret);
+        }
+
+        EmitUndefMethod("WriteContinue", 0);
+        EmitUndefMethod("WriteProcessing", 0);
+        EmitUndefMethod("AddTrailers", 1);
+        EmitUndefMethod("FlushHeaders", 0);
     }
 
     private void EmitHttpResponseGetMember(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerResponseType)
@@ -397,6 +543,8 @@ public partial class RuntimeEmitter
         var statusCodeLabel = il.DefineLabel();
         var headersSentLabel = il.DefineLabel();
         var finishedLabel = il.DefineLabel();
+        var statusMessageLabel = il.DefineLabel();
+        var sendDateLabel = il.DefineLabel();
         var defaultLabel = il.DefineLabel();
 
         // Check property names
@@ -414,6 +562,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "finished");
         il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
         il.Emit(OpCodes.Brtrue, finishedLabel);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "statusMessage");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, statusMessageLabel);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "sendDate");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, sendDateLabel);
 
         il.Emit(OpCodes.Br, defaultLabel);
 
@@ -440,6 +598,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Ret);
 
+        // statusMessage - _response.StatusDescription
+        il.MarkLabel(statusMessageLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpResponseResponseField);
+        il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("StatusDescription")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+
+        // sendDate - true (HttpListener always sends Date)
+        il.MarkLabel(sendDateLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+
         // default - return undefined
         il.MarkLabel(defaultLabel);
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
@@ -459,6 +630,7 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
 
         var statusCodeLabel = il.DefineLabel();
+        var statusMessageLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
         // Check "statusCode"
@@ -466,6 +638,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "statusCode");
         il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
         il.Emit(OpCodes.Brtrue, statusCodeLabel);
+
+        // Check "statusMessage"
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "statusMessage");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, statusMessageLabel);
 
         il.Emit(OpCodes.Br, endLabel);
 
@@ -482,6 +660,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("StatusCode")!.GetSetMethod()!);
         il.MarkLabel(notDoubleLabel);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // statusMessage = (string)value
+        il.MarkLabel(statusMessageLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.String);
+        var notStringLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpResponseResponseField);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("StatusDescription")!.GetSetMethod()!);
+        il.MarkLabel(notStringLabel);
 
         il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);
@@ -1051,7 +1243,75 @@ public partial class RuntimeEmitter
         // Property getters for reflection-based access
         EmitHttpServerPropertyGetters(typeBuilder, runtime);
 
+        // Server-management surface (#1045): config getters (Node defaults) + lifecycle methods.
+        EmitHttpServerLifecycleMembers(typeBuilder, runtime, httpListenerType);
+
         typeBuilder.CreateType();
+    }
+
+    /// <summary>
+    /// Emits the server-management surface (#1045): config property getters returning Node
+    /// defaults (resolved via the GetProperty PascalCase-reflection fallback) plus
+    /// closeAllConnections/closeIdleConnections/setTimeout. Compiled exposes the defaults for
+    /// reads; mutating the timeouts is interpreter-only (documented).
+    /// </summary>
+    private void EmitHttpServerLifecycleMembers(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerType)
+    {
+        void EmitConstDoubleProperty(string name, double value)
+        {
+            var prop = typeBuilder.DefineProperty(name, PropertyAttributes.None, _types.Double, null);
+            var getter = typeBuilder.DefineMethod(
+                "get_" + name,
+                MethodAttributes.Public | MethodAttributes.SpecialName,
+                _types.Double,
+                Type.EmptyTypes);
+            var gil = getter.GetILGenerator();
+            gil.Emit(OpCodes.Ldc_R8, value);
+            gil.Emit(OpCodes.Ret);
+            prop.SetGetMethod(getter);
+        }
+
+        EmitConstDoubleProperty("KeepAliveTimeout", 5000);
+        EmitConstDoubleProperty("HeadersTimeout", 60000);
+        EmitConstDoubleProperty("RequestTimeout", 300000);
+        EmitConstDoubleProperty("Timeout", 0);
+        EmitConstDoubleProperty("MaxHeadersCount", 2000);
+        EmitConstDoubleProperty("MaxRequestsPerSocket", 0);
+
+        // CloseAllConnections() → forcibly close (reuse Close); returns this.
+        var closeAll = typeBuilder.DefineMethod("CloseAllConnections",
+            MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var cail = closeAll.GetILGenerator();
+        cail.Emit(OpCodes.Ldarg_0);
+        cail.Emit(OpCodes.Ldnull);
+        cail.Emit(OpCodes.Callvirt, runtime.TSHttpServerClose);
+        cail.Emit(OpCodes.Pop);
+        cail.Emit(OpCodes.Ldarg_0);
+        cail.Emit(OpCodes.Ret);
+
+        // CloseIdleConnections() → no-op (HttpListener manages keep-alive internally); returns undefined.
+        var closeIdle = typeBuilder.DefineMethod("CloseIdleConnections",
+            MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var ciil = closeIdle.GetILGenerator();
+        ciil.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        ciil.Emit(OpCodes.Ret);
+
+        // SetTimeout(msecs, cb) → register cb as a 'timeout' listener (best effort); returns this.
+        var setTimeout = typeBuilder.DefineMethod("SetTimeout",
+            MethodAttributes.Public, _types.Object, [_types.Object, _types.Object]);
+        var stil = setTimeout.GetILGenerator();
+        // if (cb != null) this.On("timeout", cb)
+        var noCbLabel = stil.DefineLabel();
+        stil.Emit(OpCodes.Ldarg_2);
+        stil.Emit(OpCodes.Brfalse, noCbLabel);
+        stil.Emit(OpCodes.Ldarg_0);
+        stil.Emit(OpCodes.Ldstr, "timeout");
+        stil.Emit(OpCodes.Ldarg_2);
+        stil.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOn);
+        stil.Emit(OpCodes.Pop);
+        stil.MarkLabel(noCbLabel);
+        stil.Emit(OpCodes.Ldarg_0);
+        stil.Emit(OpCodes.Ret);
     }
 
     private void EmitHttpServerPropertyGetters(TypeBuilder typeBuilder, EmittedRuntime runtime)
