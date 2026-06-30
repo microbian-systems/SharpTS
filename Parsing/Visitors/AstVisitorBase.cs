@@ -71,6 +71,14 @@ public abstract class AstVisitorBase
             case Expr.Yield e: VisitYield(e); break;
             case Expr.RegexLiteral e: VisitRegexLiteral(e); break;
             case Expr.ClassExpr e: VisitClassExpr(e); break;
+            // Fail loud on an unhandled node rather than silently skipping its subtree. A newly
+            // added Expr kind that nobody wired here would otherwise be invisible to every analyzer
+            // built on AstVisitorBase (closure/suspension/variable analysis) — a latent miscompile,
+            // not just missing coverage (#1107).
+            default:
+                throw new NotSupportedException(
+                    $"AstVisitorBase has no dispatch case for expression node '{expr.GetType().Name}'. " +
+                    "Add a case to Visit(Expr) and a corresponding Visit* method (#1107).");
         }
     }
 
@@ -121,6 +129,11 @@ public abstract class AstVisitorBase
             case Stmt.DeclareModule s: VisitDeclareModule(s); break;
             case Stmt.DeclareGlobal s: VisitDeclareGlobal(s); break;
             case Stmt.Using s: VisitUsing(s); break;
+            // Fail loud on an unhandled node rather than silently skipping its subtree (#1107).
+            default:
+                throw new NotSupportedException(
+                    $"AstVisitorBase has no dispatch case for statement node '{stmt.GetType().Name}'. " +
+                    "Add a case to Visit(Stmt) and a corresponding Visit* method (#1107).");
         }
     }
 
