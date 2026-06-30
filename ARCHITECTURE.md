@@ -504,12 +504,20 @@ The compilation directory has grown substantially. Key organizational patterns:
 | `TypeInspector.cs` | Type introspection |
 | `TypeScriptEmitter.cs` | TypeScript syntax emission |
 
-**Language Server Protocol** (`LspBridge/`):
+**Language Server Protocol** (`SharpTS.LanguageServer/`):
+
+A standalone OmniSharp-based LSP server, distributed as its own `sharpts-lsp` dotnet
+tool (separate from the core `sharpts` compiler — OmniSharp never ships in `SharpTS.dll`).
+It drives live diagnostics, hover, completion, and signature help over SharpTS's own
+`TypeChecker`. Replaced the former bespoke `LspBridge/` JSON protocol (see
+`docs/plans/lsp-server.md`).
+
 | File | Purpose |
 |------|---------|
-| `LspBridge.cs` | Main LSP bridge |
-| `Handlers/*.cs` | Command handlers for IDE features |
-| `Protocol/*.cs` | Request/response models |
+| `SharpTSLanguageServer.cs` | Server bootstrap / capability registration |
+| `Handlers/*.cs` | LSP handlers (completion, hover, signature help, text-document sync) |
+| `Services/*.cs` | Diagnostics, decorator, interop, and member-hover services |
+| `Conversions/`, `PositionMap.cs`, `DocumentStore.cs` | LSP ↔ SharpTS model conversions and document state |
 
 **MSBuild Integration** (`SharpTS.Sdk.Tasks/`):
 | File | Purpose |

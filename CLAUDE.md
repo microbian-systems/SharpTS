@@ -45,7 +45,7 @@ Source → Lexer → Parser → TypeChecker → Interpreter (tree-walk)
 | `Packaging/` | NuGet package generation |
 | `Cli/` | Command-line argument parsing |
 | `Declaration/` | TypeScript declaration generation from .NET types |
-| `LspBridge/` | Language Server Protocol bridge for IDE integration |
+| `SharpTS.LanguageServer/` | Standalone OmniSharp-based LSP server (`sharpts-lsp` tool) for IDE integration |
 | `SharpTS.Tests/` | xUnit test project |
 
 ### Critical Architecture Patterns
@@ -125,13 +125,20 @@ var method = typeof(RuntimeTypes).GetMethod("SomeMethod");
 il.Emit(OpCodes.Call, method);
 ```
 
-**Instead, use reflection-based IL that resolves at runtime:**
+**Instead, emit reflection-based IL that resolves the type at runtime via
+`Type.GetType("…, SharpTS")`.** The `RuntimeEmitter.*` partials provide per-feature
+helpers that already follow this pattern — reuse the closest one rather than calling
+`typeof(...)` directly. For example:
 ```csharp
-// GOOD - uses RuntimeEmitter helper methods
-EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "SomeMethod", argCount);
-// or for void methods:
-EmitReflectionCallVoid(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", "SomeMethod", argCount);
+// GOOD - defines a static helper on the emitted runtime type whose body does
+// Type.GetType("SharpTS.Compilation.RuntimeTypes, SharpTS").GetMethod(name).Invoke(...)
+runtime.SomeMethod = EmitReflectionHelper(typeBuilder, "SomeMethod", argCount);
 ```
+Other variants emit the same late-bound `Type.GetType("…, SharpTS")` dispatch inline
+(e.g. `EmitVmReflectionCall` in `RuntimeEmitter.VmHelpers.cs`,
+`EmitReflectionConstructFromType` in `ILEmitter.Calls.Constructors.cs`). When no
+existing helper fits, add one alongside them — never reference a SharpTS type via a
+metadata token.
 
 The same applies to `PropertyDescriptorStore`, `ObjectBuiltIns`, and any other SharpTS types.
 
