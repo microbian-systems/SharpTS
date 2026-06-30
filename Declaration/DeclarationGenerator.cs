@@ -11,12 +11,6 @@ public class DeclarationGenerator
     private readonly TypeScriptEmitter _emitter = new();
 
     /// <summary>
-    /// Gets or sets whether to include nested types in the generated declarations.
-    /// Default is false for backward compatibility.
-    /// </summary>
-    public bool IncludeNestedTypes { get; set; } = false;
-
-    /// <summary>
     /// Generates a TypeScript declaration for a single type by name.
     /// </summary>
     /// <param name="typeName">The fully-qualified type name (e.g., "System.Console")</param>
@@ -72,8 +66,8 @@ public class DeclarationGenerator
             if (type.Name.StartsWith("<"))
                 continue;
 
-            // Skip nested types unless explicitly included
-            if (type.IsNested && !IncludeNestedTypes)
+            // Skip nested types
+            if (type.IsNested)
                 continue;
 
             // Skip generic type definitions for MVP
@@ -91,7 +85,7 @@ public class DeclarationGenerator
             }
         }
 
-        return _emitter.EmitAll(metadataList, IncludeNestedTypes);
+        return _emitter.EmitAll(metadataList);
     }
 
     /// <summary>
@@ -126,8 +120,8 @@ public class DeclarationGenerator
             if (type.Name.StartsWith("<"))
                 continue;
 
-            // Skip nested types unless explicitly included
-            if (type.IsNested && !IncludeNestedTypes)
+            // Skip nested types
+            if (type.IsNested)
                 continue;
 
             // Skip generic type definitions for MVP
@@ -149,7 +143,7 @@ public class DeclarationGenerator
             }
         }
 
-        return _emitter.EmitAll(metadataList, IncludeNestedTypes);
+        return _emitter.EmitAll(metadataList);
     }
 
     private static Type? ResolveType(string typeName)
