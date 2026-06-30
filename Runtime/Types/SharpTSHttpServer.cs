@@ -13,7 +13,14 @@ namespace SharpTS.Runtime.Types;
 /// Extends SharpTSEventEmitter for full event handling support (on, once, off, emit, etc.).
 /// Implements IAsyncHandle to keep the event loop alive while listening.
 /// Methods: listen(port, callback?), close(callback?)
-/// Events: 'listening', 'request', 'error', 'close'
+/// Events: 'listening', 'request', 'error', 'close', 'connection', 'checkContinue'.
+///
+/// #1046 ceiling: 'upgrade'/'connect'/'clientError' are registrable (this is an EventEmitter)
+/// but cannot fire under HttpListener, which fully owns the connection and never exposes the
+/// raw socket required to hand off a protocol upgrade or CONNECT tunnel. This matches the epic's
+/// stated scope ceilings (WebSocket framing / CONNECT tunneling are userland). 'checkContinue'
+/// IS supported: when the client sends "Expect: 100-continue" and a 'checkContinue' listener is
+/// present, it is emitted in place of 'request'.
 /// </remarks>
 public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
 {
@@ -541,11 +548,27 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
                         });
                     }
 
-                    // Emit 'request' event
-                    EmitEvent("request", new List<object?> { req, res });
+                    // checkContinue (#1046): when the client sent "Expect: 100-continue" and a
+                    // 'checkContinue' listener is registered, Node emits 'checkContinue' INSTEAD
+                    // of 'request' and the listener owns the response (typically calls
+                    // res.writeContinue() then proceeds). HttpListener already sent 100-continue
+                    // when the body is read, so writeContinue() is a no-op here.
+                    var expect = context.Request.Headers["Expect"];
+                    bool wantsContinue = expect != null &&
+                        expect.Contains("100-continue", StringComparison.OrdinalIgnoreCase);
 
-                    // Call the request handler
-                    _requestHandler.Call(_interpreter!, new List<object?> { req, res });
+                    if (wantsContinue && HasListenersInternal("checkContinue"))
+                    {
+                        EmitEvent("checkContinue", new List<object?> { req, res });
+                    }
+                    else
+                    {
+                        // Emit 'request' event
+                        EmitEvent("request", new List<object?> { req, res });
+
+                        // Call the request handler
+                        _requestHandler.Call(_interpreter!, new List<object?> { req, res });
+                    }
 
                     // Read and emit body events
                     await req.EmitDataEventsAsync(_interpreter!);
