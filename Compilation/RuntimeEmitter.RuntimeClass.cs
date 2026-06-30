@@ -1182,6 +1182,10 @@ public partial class RuntimeEmitter
         // Zlib module methods — gated.
         if (_features.UsesZlib)
             EmitZlibMethods(typeBuilder, runtime);
+        // Buffer module helper functions (atob/btoa/isUtf8/isAscii/transcode/SlowBuffer/
+        // constants) — gated; the $Buffer class they compose is also UsesBuffer-gated.
+        if (_features.UsesBuffer)
+            EmitBufferModuleMethods(typeBuilder, runtime);
         // DNS module methods — gated.
         if (_features.UsesDns)
             EmitDnsModuleMethods(typeBuilder, runtime);

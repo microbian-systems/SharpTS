@@ -892,9 +892,32 @@ public static class BuiltInModuleTypes
             ["isEncoding"] = new TypeInfo.Function([stringType], BooleanType)
         }.ToFrozenDictionary());
 
+        var anyType = new TypeInfo.Any();
+        var byteSource = new TypeInfo.Union([bufferType, new TypeInfo.Array(numberType), stringType]);
+
         return new Dictionary<string, TypeInfo>
         {
-            ["Buffer"] = bufferConstructorType
+            ["Buffer"] = bufferConstructorType,
+
+            // Base64 (also globals)
+            ["atob"] = new TypeInfo.Function([stringType], stringType),
+            ["btoa"] = new TypeInfo.Function([stringType], stringType),
+
+            // Validation
+            ["isUtf8"] = new TypeInfo.Function([byteSource], BooleanType),
+            ["isAscii"] = new TypeInfo.Function([byteSource], BooleanType),
+
+            // Encoding conversion
+            ["transcode"] = new TypeInfo.Function([byteSource, stringType, stringType], bufferType),
+
+            // Deprecated unsafe allocation
+            ["SlowBuffer"] = new TypeInfo.Function([numberType], bufferType),
+
+            // Constants
+            ["constants"] = anyType,
+            ["kMaxLength"] = numberType,
+            ["kStringMaxLength"] = numberType,
+            ["INSPECT_MAX_BYTES"] = numberType,
         };
     }
 

@@ -38,6 +38,10 @@ internal static class GlobalFunctionHandlers
         registry.RegisterV2(BuiltInNames.EncodeURIComponent, HandleEncodeURIComponent);
         registry.RegisterV2(BuiltInNames.DecodeURIComponent, HandleDecodeURIComponent);
 
+        // Base64 globals (also exported by the 'buffer' module)
+        registry.RegisterV2(BuiltInNames.Atob, HandleAtob);
+        registry.RegisterV2(BuiltInNames.Btoa, HandleBtoa);
+
         // Timer functions
         registry.RegisterV2(BuiltInNames.SetTimeout, HandleSetTimeout);
         registry.RegisterV2(BuiltInNames.ClearTimeout, HandleClearTimeout);
@@ -244,6 +248,28 @@ internal static class GlobalFunctionHandlers
         {
             throw new InterpreterException($"URIError: {ex.Message}");
         }
+    }
+
+    private static async ValueTask<RuntimeValue> HandleAtob(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
+        IReadOnlyList<Expr> arguments,
+        Interpreter interpreter)
+    {
+        if (arguments.Count < 1)
+            throw new InterpreterException($"{BuiltInNames.Atob}() requires exactly one argument.");
+        var str = CoerceToString(await evaluateArg(arguments[0]));
+        return RuntimeValue.FromString(Types.BufferModuleHelpers.Atob(str));
+    }
+
+    private static async ValueTask<RuntimeValue> HandleBtoa(
+        Func<Expr, ValueTask<RuntimeValue>> evaluateArg,
+        IReadOnlyList<Expr> arguments,
+        Interpreter interpreter)
+    {
+        if (arguments.Count < 1)
+            throw new InterpreterException($"{BuiltInNames.Btoa}() requires exactly one argument.");
+        var str = CoerceToString(await evaluateArg(arguments[0]));
+        return RuntimeValue.FromString(Types.BufferModuleHelpers.Btoa(str));
     }
 
     private static string CoerceToString(RuntimeValue value)

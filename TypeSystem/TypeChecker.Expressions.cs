@@ -1728,6 +1728,9 @@ public partial class TypeChecker
         if (name.Lexeme == "queueMicrotask") return new TypeInfo.Any(); // queueMicrotask() global function
         if (name.Lexeme == "encodeURIComponent") return new TypeInfo.Any(); // URI encoding global
         if (name.Lexeme == "decodeURIComponent") return new TypeInfo.Any(); // URI decoding global
+        // Base64 globals (also exported by the 'buffer' module): (data: string) => string
+        if (name.Lexeme == "atob" || name.Lexeme == "btoa")
+            return new TypeInfo.Function([new TypeInfo.String()], new TypeInfo.String());
         if (name.Lexeme == "undefined") return new TypeInfo.Undefined(); // Global undefined
         if (name.Lexeme == "NaN") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER); // Global NaN
         if (name.Lexeme == "Infinity") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER); // Global Infinity

@@ -31,8 +31,31 @@ public class GlobalFunctionHandler : ICallHandler
             "Boolean" => EmitBooleanConversion(emitter, il, ctx, call),
             "encodeURIComponent" => EmitEncodeURIComponent(emitter, il, ctx, call),
             "decodeURIComponent" => EmitDecodeURIComponent(emitter, il, ctx, call),
+            "atob" => EmitBase64Global(emitter, il, ctx, call, ctx.Runtime!.BufferAtob),
+            "btoa" => EmitBase64Global(emitter, il, ctx, call, ctx.Runtime!.BufferBtoa),
             _ => false
         };
+    }
+
+    /// <summary>
+    /// Emits a compiled global <c>atob(x)</c>/<c>btoa(x)</c> by routing to the pure-BCL
+    /// $Runtime.BufferAtob/BufferBtoa helper (the same one the buffer module export uses).
+    /// </summary>
+    private static bool EmitBase64Global(IEmitterContext emitter, System.Reflection.Emit.ILGenerator il,
+        CompilationContext ctx, Expr.Call call, System.Reflection.Emit.MethodBuilder target)
+    {
+        if (call.Arguments.Count == 0)
+        {
+            il.Emit(System.Reflection.Emit.OpCodes.Ldnull);
+        }
+        else
+        {
+            emitter.EmitExpression(call.Arguments[0]);
+            emitter.EmitBoxIfNeeded(call.Arguments[0]);
+        }
+        il.Emit(System.Reflection.Emit.OpCodes.Call, target);
+        emitter.SetStackType(StackType.String);
+        return true;
     }
 
     /// <summary>

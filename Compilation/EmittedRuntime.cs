@@ -2109,6 +2109,15 @@ public class EmittedRuntime
     public MethodBuilder TSBufferToString { get; set; } = null!;
     public MethodBuilder TSBufferSlice { get; set; } = null!;
     public MethodBuilder TSBufferGetData { get; set; } = null!;
+
+    // buffer module helper functions (#1160) — pure-BCL, standalone.
+    public MethodBuilder BufferAtob { get; set; } = null!;
+    public MethodBuilder BufferBtoa { get; set; } = null!;
+    public MethodBuilder BufferIsUtf8 { get; set; } = null!;
+    public MethodBuilder BufferIsAscii { get; set; } = null!;
+    public MethodBuilder BufferTranscode { get; set; } = null!;
+    public MethodBuilder BufferSlowBuffer { get; set; } = null!;
+    public MethodBuilder BufferModuleConstants { get; set; } = null!;
     public MethodBuilder TSBufferCopy { get; set; } = null!;
     public MethodBuilder TSBufferCompare { get; set; } = null!;
     public MethodBuilder TSBufferEquals { get; set; } = null!;

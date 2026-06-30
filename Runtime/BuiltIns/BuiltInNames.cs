@@ -153,7 +153,8 @@ public static class BuiltInNames
         StructuredClone, Fetch,
         SetTimeout, ClearTimeout, SetInterval, ClearInterval,
         SetImmediate, ClearImmediate,
-        QueueMicrotask
+        QueueMicrotask,
+        Atob, Btoa
     ];
 
     // Individual function constants
@@ -175,6 +176,8 @@ public static class BuiltInNames
     public const string SetImmediate = "setImmediate";
     public const string ClearImmediate = "clearImmediate";
     public const string QueueMicrotask = "queueMicrotask";
+    public const string Atob = "atob";
+    public const string Btoa = "btoa";
     public const string Require = "require";
 
     #endregion

@@ -1195,4 +1195,97 @@ public class BufferTests
     }
 
     #endregion
+
+    #region buffer module exports (#1160)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BufferModule_AtobBtoa_RoundTrip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { atob, btoa } from 'buffer';
+                const encoded = btoa('hello world');
+                console.log(encoded === 'aGVsbG8gd29ybGQ=');
+                console.log(atob(encoded) === 'hello world');
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BufferModule_GlobalAtobBtoa(ExecutionMode mode)
+    {
+        // atob/btoa are also globals (no import).
+        var source = """
+            console.log(btoa('SharpTS'));
+            console.log(atob(btoa('SharpTS')) === 'SharpTS');
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("U2hhcnBUUw==\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BufferModule_IsUtf8IsAscii(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { isUtf8, isAscii } from 'buffer';
+                console.log(isUtf8(Buffer.from('héllo')));
+                console.log(isAscii(Buffer.from('héllo')));
+                console.log(isAscii(Buffer.from('hello')));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\nfalse\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BufferModule_Transcode(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { transcode } from 'buffer';
+                const out = transcode(Buffer.from('hello'), 'utf8', 'latin1');
+                console.log(out.toString('latin1'));
+                console.log(out.length);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("hello\n5\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BufferModule_ConstantsAndSlowBuffer(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { constants, kMaxLength, kStringMaxLength, INSPECT_MAX_BYTES, SlowBuffer } from 'buffer';
+                console.log(constants.MAX_LENGTH > 0);
+                console.log(constants.MAX_STRING_LENGTH > 0);
+                console.log(kMaxLength === constants.MAX_LENGTH);
+                console.log(kStringMaxLength === constants.MAX_STRING_LENGTH);
+                console.log(INSPECT_MAX_BYTES);
+                console.log(SlowBuffer(8).length);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\ntrue\ntrue\n50\n8\n", output);
+    }
+
+    #endregion
 }

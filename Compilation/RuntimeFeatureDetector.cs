@@ -187,6 +187,10 @@ public sealed class RuntimeFeatureDetector
                 _set.UsesCrypto = true; break;
             case "zlib":
                 _set.UsesZlib = true; break;
+            case "buffer":
+                // `import { atob, isUtf8, ... } from 'buffer'` may not reference the
+                // Buffer class directly; ensure $Buffer + the module helpers are emitted.
+                _set.UsesBuffer = true; break;
             case "os":
                 _set.UsesOs = true; break;
             case "child_process":
@@ -387,6 +391,10 @@ public sealed class RuntimeFeatureDetector
             // `new Buffer(...)` (deprecated but still supported), and bare
             // value-form access.
             case "Buffer":
+            // Global atob/btoa compile to $Runtime.BufferAtob/BufferBtoa, which compose
+            // the $Buffer helpers — ensure $Buffer + the buffer module methods are emitted.
+            case "atob":
+            case "btoa":
                 _set.UsesBuffer = true; break;
 
             // BigInt — `BigInt(123)` constructor calls, `BigInt.asIntN(...)`,
