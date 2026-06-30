@@ -1728,11 +1728,14 @@ public partial class TypeChecker
         if (name.Lexeme == "queueMicrotask") return new TypeInfo.Any(); // queueMicrotask() global function
         if (name.Lexeme == "encodeURIComponent") return new TypeInfo.Any(); // URI encoding global
         if (name.Lexeme == "decodeURIComponent") return new TypeInfo.Any(); // URI decoding global
+        // Base64 globals (also exported by the 'buffer' module): (data: string) => string
+        if (name.Lexeme == "atob" || name.Lexeme == "btoa")
+            return new TypeInfo.Function([new TypeInfo.String()], new TypeInfo.String());
         if (name.Lexeme == "undefined") return new TypeInfo.Undefined(); // Global undefined
         if (name.Lexeme == "NaN") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER); // Global NaN
         if (name.Lexeme == "Infinity") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER); // Global Infinity
-        if (name.Lexeme == "__dirname") return new TypeInfo.Primitive(TokenType.TYPE_STRING); // Node.js __dirname
-        if (name.Lexeme == "__filename") return new TypeInfo.Primitive(TokenType.TYPE_STRING); // Node.js __filename
+        if (name.Lexeme == "__dirname") return new TypeInfo.String(); // Node.js __dirname
+        if (name.Lexeme == "__filename") return new TypeInfo.String(); // Node.js __filename
         // CommonJS globals — bound by the CJS module wrapper at runtime. Treated as `any` because
         // CJS modules don't carry static type info for module.exports.
         if (name.Lexeme == "require") return new TypeInfo.Any();
@@ -1767,6 +1770,7 @@ public partial class TypeChecker
         if (name.Lexeme is "ReadableStream" or "WritableStream" or "TransformStream"
             or "ByteLengthQueuingStrategy" or "CountQueuingStrategy")
             return new TypeInfo.Any(); // Web Streams constructors
+        if (name.Lexeme is "Blob" or "File") return new TypeInfo.Any(); // Blob/File constructors
         // TypedArray constructors
         if (name.Lexeme is "Int8Array" or "Uint8Array" or "Uint8ClampedArray"
             or "Int16Array" or "Uint16Array" or "Int32Array" or "Uint32Array"

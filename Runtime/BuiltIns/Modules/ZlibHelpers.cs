@@ -28,7 +28,7 @@ public static class ZlibHelpers
     public static byte[] GzipCompress(byte[] input, ZlibOptions options)
     {
         using var output = new MemoryStream();
-        using (var gzip = new GZipStream(output, options.ToCompressionLevel(), leaveOpen: true))
+        using (var gzip = new GZipStream(output, options.ToZLibCompressionOptions(), leaveOpen: true))
         {
             gzip.Write(input, 0, input.Length);
         }
@@ -66,7 +66,7 @@ public static class ZlibHelpers
     public static byte[] DeflateCompress(byte[] input, ZlibOptions options)
     {
         using var output = new MemoryStream();
-        using (var deflate = new ZLibStream(output, options.ToCompressionLevel(), leaveOpen: true))
+        using (var deflate = new ZLibStream(output, options.ToZLibCompressionOptions(), leaveOpen: true))
         {
             deflate.Write(input, 0, input.Length);
         }
@@ -104,7 +104,7 @@ public static class ZlibHelpers
     public static byte[] DeflateRawCompress(byte[] input, ZlibOptions options)
     {
         using var output = new MemoryStream();
-        using (var deflate = new DeflateStream(output, options.ToCompressionLevel(), leaveOpen: true))
+        using (var deflate = new DeflateStream(output, options.ToZLibCompressionOptions(), leaveOpen: true))
         {
             deflate.Write(input, 0, input.Length);
         }
@@ -141,24 +141,20 @@ public static class ZlibHelpers
     /// <returns>Brotli-compressed bytes.</returns>
     public static byte[] BrotliCompress(byte[] input, ZlibOptions options)
     {
-        using var output = new MemoryStream();
+        // Honor the exact Brotli quality (BROTLI_PARAM_QUALITY, 0-11) and window
+        // (BROTLI_PARAM_LGWIN, 10-24) via the one-shot BrotliEncoder — finer control
+        // than BrotliStream's coarse CompressionLevel. BROTLI_PARAM_MODE and
+        // BROTLI_PARAM_SIZE_HINT have no public BCL knob and are not applied.
+        int quality = options.GetBrotliQuality();
+        int window = options.GetBrotliWindow();
 
-        // Use BrotliEncoder for quality control
-        var quality = options.GetBrotliQuality();
-        var level = quality switch
-        {
-            0 => CompressionLevel.NoCompression,
-            1 or 2 or 3 or 4 => CompressionLevel.Fastest,
-            5 or 6 or 7 or 8 or 9 or 10 => CompressionLevel.Optimal,
-            11 => CompressionLevel.SmallestSize,
-            _ => CompressionLevel.Optimal
-        };
+        int maxLength = BrotliEncoder.GetMaxCompressedLength(input.Length);
+        var destination = new byte[maxLength];
+        if (!BrotliEncoder.TryCompress(input, destination, out int written, quality, window))
+            throw new InvalidOperationException("Brotli compression failed");
 
-        using (var brotli = new BrotliStream(output, level, leaveOpen: true))
-        {
-            brotli.Write(input, 0, input.Length);
-        }
-        var result = output.ToArray();
+        var result = new byte[written];
+        Array.Copy(destination, result, written);
         ValidateOutputLength(result, options.MaxOutputLength, "brotli");
         return result;
     }
@@ -209,6 +205,34 @@ public static class ZlibHelpers
         var result = decompressor.Unwrap(input).ToArray();
         ValidateOutputLength(result, options.MaxOutputLength, "zstd");
         return result;
+    }
+
+    #endregion
+
+    #region CRC-32
+
+    /// <summary>
+    /// Computes the CRC-32 checksum (IEEE 802.3, the same polynomial zlib's
+    /// <c>crc32()</c> uses) of <paramref name="data"/>, optionally continuing from a
+    /// previous <paramref name="initial"/> value. Returns an unsigned 32-bit result.
+    /// </summary>
+    /// <remarks>
+    /// Pure-BCL by design — a hand-rolled bitwise implementation rather than
+    /// <c>System.IO.Hashing.Crc32</c> so compiled standalone output stays
+    /// dependency-free (System.IO.Hashing is an out-of-band NuGet package, not part
+    /// of the shared framework). The compiled IL twin (<c>$Runtime.ZlibCrc32</c>)
+    /// emits the identical bitwise loop so interpreter and compiled agree exactly.
+    /// </remarks>
+    public static uint Crc32(byte[] data, uint initial = 0)
+    {
+        uint crc = ~initial;
+        foreach (byte b in data)
+        {
+            crc ^= b;
+            for (int k = 0; k < 8; k++)
+                crc = (crc >> 1) ^ (0xEDB88320u & (uint)(-(int)(crc & 1)));
+        }
+        return ~crc;
     }
 
     #endregion

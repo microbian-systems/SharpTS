@@ -106,8 +106,13 @@ public sealed class WorkerThreadsModuleEmitter : IBuiltInModuleEmitter
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // parentPort is only available in worker context
-        // For now, return null in compiled code
+        // null is the CORRECT value here, not a stub (#1109). parentPort is the worker→parent port and
+        // is null on the main thread in Node. A worker's body never runs as compiled code: even when the
+        // main program is compiled, SharpTSWorker.RunWorkerScript spins up a fresh INTERPRETER for the
+        // worker file, and that interpreter binds the real WorkerParentPort via SetupWorkerGlobals. So
+        // this compiled path is only ever reached on the MAIN thread — exactly the EmitWorkerData case —
+        // where parentPort is null. Wiring a "$MessagePort" would be wrong (none exists in compiled mode),
+        // and throwing would break the canonical `if (parentPort) { ... }` main-thread guard.
         il.Emit(OpCodes.Ldnull);
         return true;
     }

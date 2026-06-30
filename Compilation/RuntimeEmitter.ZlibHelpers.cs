@@ -15,6 +15,12 @@ public partial class RuntimeEmitter
         // Emit helper methods FIRST (they are used by compression methods)
         EmitGetZlibInputBytes(typeBuilder, runtime);
         EmitGetZlibCompressionLevel(typeBuilder, runtime);
+        EmitGetZlibRawLevel(typeBuilder, runtime);
+        EmitGetZlibStrategy(typeBuilder, runtime);
+        EmitGetBrotliQuality(typeBuilder, runtime);
+        EmitGetBrotliWindow(typeBuilder, runtime);
+        EmitGetZlibMaxOutputLength(typeBuilder, runtime);
+        EmitCopyStreamWithLimit(typeBuilder, runtime);
 
         // Compression methods
         EmitZlibGzipSync(typeBuilder, runtime);
@@ -29,6 +35,8 @@ public partial class RuntimeEmitter
         EmitZlibZstdDecompressSync(typeBuilder, runtime);
         EmitZlibUnzipSync(typeBuilder, runtime);
         EmitZlibGetConstants(typeBuilder, runtime);
+        EmitZlibGetCodes(typeBuilder, runtime);
+        EmitZlibCrc32(typeBuilder, runtime);
 
         // Emit streaming create* methods (pure-IL, no reflection)
         EmitZlibStreamingMethods(typeBuilder, runtime);
@@ -123,28 +131,18 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        var hasOptionsLabel = il.DefineLabel();
-        var checkValueLabel = il.DefineLabel();
         var level0Label = il.DefineLabel();
         var level1Label = il.DefineLabel();
         var level9Label = il.DefineLabel();
         var defaultLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
-        // If options is null, return Optimal (2)
+        // Read "level" through the generic GetProperty so plain-Dictionary option
+        // literals (the common case — CreateObject returns the dict as-is) are honored,
+        // not just $Object instances. A null/undefined receiver returns null.
         il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Brfalse, defaultLabel);
-
-        // Check if options is a $Object
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Isinst, runtime.TSObjectType);
-        il.Emit(OpCodes.Brfalse, defaultLabel);
-
-        // Call GetProperty("level") on the $Object
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Castclass, runtime.TSObjectType);
         il.Emit(OpCodes.Ldstr, "level");
-        il.Emit(OpCodes.Callvirt, runtime.TSObjectGetProperty);
+        il.Emit(OpCodes.Call, runtime.GetProperty);
         var levelLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Stloc, levelLocal);
 
@@ -205,6 +203,267 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
     }
 
+    private MethodBuilder? _getZlibRawLevel;
+    private MethodBuilder? _getZlibStrategy;
+    private MethodBuilder? _getBrotliQuality;
+    private MethodBuilder? _getBrotliWindow;
+    private MethodBuilder? _getZlibMaxOutputLength;
+    private MethodBuilder? _copyStreamWithLimit;
+
+    // Honors the exact Node `level` (-1..9), strategy (0..4) and Brotli params,
+    // mirroring ZlibOptions.ToZLibCompressionOptions / GetBrotliQuality/Window so
+    // interpreter and compiled emit byte-identical output for non-default options.
+    private void EmitGetZlibRawLevel(TypeBuilder typeBuilder, EmittedRuntime runtime)
+        => _getZlibRawLevel = EmitIntOptionGetter(typeBuilder, runtime, "GetZlibRawLevel", "level", null, -1, -1, 9);
+
+    private void EmitGetZlibStrategy(TypeBuilder typeBuilder, EmittedRuntime runtime)
+        => _getZlibStrategy = EmitIntOptionGetter(typeBuilder, runtime, "GetZlibStrategy", "strategy", null, 0, 0, 4);
+
+    private void EmitGetBrotliQuality(TypeBuilder typeBuilder, EmittedRuntime runtime)
+        => _getBrotliQuality = EmitIntOptionGetter(typeBuilder, runtime, "GetZlibBrotliQuality", "1", "params", 11, 0, 11);
+
+    private void EmitGetBrotliWindow(TypeBuilder typeBuilder, EmittedRuntime runtime)
+        => _getBrotliWindow = EmitIntOptionGetter(typeBuilder, runtime, "GetZlibBrotliWindow", "2", "params", 22, 10, 24);
+
+    /// <summary>
+    /// Emits <c>int Name(object options)</c> that reads a numeric option named
+    /// <paramref name="key"/> (optionally nested inside the <c>options[nestedObjectKey]</c>
+    /// object — used for Brotli <c>params</c>), clamping it to
+    /// [<paramref name="clampLo"/>, <paramref name="clampHi"/>] and falling back to
+    /// <paramref name="defaultValue"/> when absent/undefined.
+    /// </summary>
+    private MethodBuilder EmitIntOptionGetter(TypeBuilder typeBuilder, EmittedRuntime runtime,
+        string methodName, string key, string? nestedObjectKey, int defaultValue, int clampLo, int clampHi)
+    {
+        var method = typeBuilder.DefineMethod(
+            methodName,
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Int32,
+            [_types.Object]);
+
+        var il = method.GetILGenerator();
+
+        var def = il.DefineLabel();
+        var done = il.DefineLabel();
+        var notBelow = il.DefineLabel();
+
+        var resultLocal = il.DeclareLocal(_types.Int32);
+        var valLocal = il.DeclareLocal(_types.Object);
+
+        // Use the generic $Runtime.GetProperty(object, string) so this works whether
+        // the options value is a plain Dictionary (literal — CreateObject returns the
+        // dict as-is) or a $Object. A null/undefined receiver returns null here.
+        if (nestedObjectKey != null)
+        {
+            // nested = GetProperty(options, nestedObjectKey); if null/undefined -> default
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, nestedObjectKey);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            var nestedLocal = il.DeclareLocal(_types.Object);
+            il.Emit(OpCodes.Stloc, nestedLocal);
+            il.Emit(OpCodes.Ldloc, nestedLocal);
+            il.Emit(OpCodes.Brfalse, def);
+            il.Emit(OpCodes.Ldloc, nestedLocal);
+            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+            il.Emit(OpCodes.Brtrue, def);
+            // val = GetProperty(nested, key)
+            il.Emit(OpCodes.Ldloc, nestedLocal);
+            il.Emit(OpCodes.Ldstr, key);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Stloc, valLocal);
+        }
+        else
+        {
+            // val = GetProperty(options, key)
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldstr, key);
+            il.Emit(OpCodes.Call, runtime.GetProperty);
+            il.Emit(OpCodes.Stloc, valLocal);
+        }
+
+        // if (val == null || val is Undefined) -> default
+        il.Emit(OpCodes.Ldloc, valLocal);
+        il.Emit(OpCodes.Brfalse, def);
+        il.Emit(OpCodes.Ldloc, valLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, def);
+
+        // n = (int)(double)val
+        il.Emit(OpCodes.Ldloc, valLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        // clamp [clampLo, clampHi]
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldc_I4, clampLo);
+        il.Emit(OpCodes.Bge, notBelow);
+        il.Emit(OpCodes.Ldc_I4, clampLo);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.MarkLabel(notBelow);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldc_I4, clampHi);
+        il.Emit(OpCodes.Ble, done);
+        il.Emit(OpCodes.Ldc_I4, clampHi);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Br, done);
+
+        il.MarkLabel(def);
+        il.Emit(OpCodes.Ldc_I4, defaultValue);
+        il.Emit(OpCodes.Stloc, resultLocal);
+
+        il.MarkLabel(done);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ret);
+
+        return method;
+    }
+
+    /// <summary>
+    /// Emits <c>long GetZlibMaxOutputLength(object options)</c> — the maxOutputLength
+    /// option (0 = no limit), read through the generic GetProperty.
+    /// </summary>
+    private void EmitGetZlibMaxOutputLength(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "GetZlibMaxOutputLength",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Int64,
+            [_types.Object]);
+        _getZlibMaxOutputLength = method;
+
+        var il = method.GetILGenerator();
+        var def = il.DefineLabel();
+        var valLocal = il.DeclareLocal(_types.Object);
+
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "maxOutputLength");
+        il.Emit(OpCodes.Call, runtime.GetProperty);
+        il.Emit(OpCodes.Stloc, valLocal);
+
+        il.Emit(OpCodes.Ldloc, valLocal);
+        il.Emit(OpCodes.Brfalse, def);
+        il.Emit(OpCodes.Ldloc, valLocal);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, def);
+
+        // (long)(double)val
+        il.Emit(OpCodes.Ldloc, valLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(def);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits <c>void CopyStreamWithLimit(Stream source, MemoryStream dest, long max)</c>
+    /// — drains <paramref name="source"/> into <paramref name="dest"/>, throwing when the
+    /// running total exceeds <c>max</c> (when max &gt; 0). Mirrors ZlibHelpers.CopyWithLimit.
+    /// </summary>
+    private void EmitCopyStreamWithLimit(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "CopyStreamWithLimit",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Void,
+            [_types.Stream, typeof(MemoryStream), _types.Int64]);
+        _copyStreamWithLimit = method;
+
+        var il = method.GetILGenerator();
+        var byteArr = _types.MakeArrayType(_types.Byte);
+        var streamRead = _types.GetMethod(_types.Stream, "Read", byteArr, _types.Int32, _types.Int32);
+        var streamWrite = _types.GetMethod(_types.Stream, "Write", byteArr, _types.Int32, _types.Int32);
+
+        var bufLocal = il.DeclareLocal(byteArr);
+        var totalLocal = il.DeclareLocal(_types.Int64);
+        var readLocal = il.DeclareLocal(_types.Int32);
+
+        il.Emit(OpCodes.Ldc_I4, 16384);
+        il.Emit(OpCodes.Newarr, _types.Byte);
+        il.Emit(OpCodes.Stloc, bufLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Stloc, totalLocal);
+
+        var loop = il.DefineLabel();
+        var done = il.DefineLabel();
+        var noCheck = il.DefineLabel();
+
+        il.MarkLabel(loop);
+        // read = source.Read(buf, 0, 16384)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldloc, bufLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldc_I4, 16384);
+        il.Emit(OpCodes.Callvirt, streamRead);
+        il.Emit(OpCodes.Stloc, readLocal);
+        // if (read <= 0) done
+        il.Emit(OpCodes.Ldloc, readLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ble, done);
+        // if (max <= 0) skip limit check
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Ble, noCheck);
+        // total += read; if (total > max) throw
+        il.Emit(OpCodes.Ldloc, totalLocal);
+        il.Emit(OpCodes.Ldloc, readLocal);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, totalLocal);
+        il.Emit(OpCodes.Ldloc, totalLocal);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Ble, noCheck);
+        il.Emit(OpCodes.Ldstr, "Output length exceeds maxOutputLength");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(noCheck);
+        // dest.Write(buf, 0, read)
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldloc, bufLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, readLocal);
+        il.Emit(OpCodes.Callvirt, streamWrite);
+        il.Emit(OpCodes.Br, loop);
+
+        il.MarkLabel(done);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits the post-compression maxOutputLength guard: throws when
+    /// <c>result.Length &gt; GetZlibMaxOutputLength(options)</c> (options = arg1).
+    /// </summary>
+    private void EmitMaxOutputCheck(ILGenerator il, LocalBuilder resultLocal)
+    {
+        var maxLocal = il.DeclareLocal(_types.Int64);
+        var skip = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _getZlibMaxOutputLength!);
+        il.Emit(OpCodes.Stloc, maxLocal);
+        // if (max <= 0) skip
+        il.Emit(OpCodes.Ldloc, maxLocal);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Ble, skip);
+        // if (result.Length <= max) skip
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Ldloc, maxLocal);
+        il.Emit(OpCodes.Ble, skip);
+        il.Emit(OpCodes.Ldstr, "Output length exceeds maxOutputLength");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(skip);
+    }
+
     #endregion
 
     #region Gzip
@@ -222,7 +481,7 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]);
         runtime.ZlibGzipSync = method;
 
-        EmitCompressMethod(method.GetILGenerator(), runtime, typeof(GZipStream), true);
+        EmitDeflateFamilyCompress(method.GetILGenerator(), runtime, typeof(GZipStream));
     }
 
     /// <summary>
@@ -258,7 +517,7 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]);
         runtime.ZlibDeflateSync = method;
 
-        EmitCompressMethod(method.GetILGenerator(), runtime, typeof(ZLibStream), true);
+        EmitDeflateFamilyCompress(method.GetILGenerator(), runtime, typeof(ZLibStream));
     }
 
     /// <summary>
@@ -294,7 +553,7 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]);
         runtime.ZlibDeflateRawSync = method;
 
-        EmitCompressMethod(method.GetILGenerator(), runtime, typeof(DeflateStream), true);
+        EmitDeflateFamilyCompress(method.GetILGenerator(), runtime, typeof(DeflateStream));
     }
 
     /// <summary>
@@ -330,7 +589,7 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]);
         runtime.ZlibBrotliCompressSync = method;
 
-        EmitCompressMethod(method.GetILGenerator(), runtime, typeof(BrotliStream), true);
+        EmitBrotliCompress(method.GetILGenerator(), runtime);
     }
 
     /// <summary>
@@ -539,6 +798,24 @@ public partial class RuntimeEmitter
         AddConstant("Z_MIN_MEMLEVEL", 1);
         AddConstant("Z_MAX_MEMLEVEL", 9);
         AddConstant("Z_DEFAULT_CHUNK", 16384);
+        AddConstant("Z_MIN_CHUNK", 64);
+        AddConstant("Z_MAX_CHUNK", double.PositiveInfinity);
+        AddConstant("Z_MIN_LEVEL", -1);
+        AddConstant("Z_MAX_LEVEL", 9);
+        AddConstant("Z_DEFAULT_LEVEL", 6);
+
+        // Codec mode identifiers
+        AddConstant("DEFLATE", 1);
+        AddConstant("INFLATE", 2);
+        AddConstant("GZIP", 3);
+        AddConstant("GUNZIP", 4);
+        AddConstant("DEFLATERAW", 5);
+        AddConstant("INFLATERAW", 6);
+        AddConstant("UNZIP", 7);
+        AddConstant("BROTLI_DECODE", 8);
+        AddConstant("BROTLI_ENCODE", 9);
+        AddConstant("ZSTD_COMPRESS", 10);
+        AddConstant("ZSTD_DECOMPRESS", 11);
 
         // Brotli constants
         AddConstant("BROTLI_OPERATION_PROCESS", 0);
@@ -566,6 +843,10 @@ public partial class RuntimeEmitter
         AddConstant("BROTLI_DEFAULT_WINDOW", 22);
         AddConstant("BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION", 0);
         AddConstant("BROTLI_DECODER_PARAM_LARGE_WINDOW", 1);
+        AddConstant("BROTLI_DECODER_RESULT_ERROR", 0);
+        AddConstant("BROTLI_DECODER_RESULT_SUCCESS", 1);
+        AddConstant("BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT", 2);
+        AddConstant("BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT", 3);
 
         // Zstd constants
         AddConstant("ZSTD_c_compressionLevel", 100);
@@ -585,8 +866,171 @@ public partial class RuntimeEmitter
         AddConstant("ZSTD_minCLevel", -131072);
         AddConstant("ZSTD_maxCLevel", 22);
         AddConstant("ZSTD_defaultCLevel", 3);
+        AddConstant("ZSTD_e_continue", 0);
+        AddConstant("ZSTD_e_flush", 1);
+        AddConstant("ZSTD_e_end", 2);
 
         il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static object ZlibGetCodes()
+    /// Creates the bidirectional zlib.codes object (name↔number) mirroring
+    /// <c>ZlibConstants.CreateCodesObject</c>.
+    /// </summary>
+    private void EmitZlibGetCodes(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ZlibGetCodes",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            Type.EmptyTypes);
+        runtime.ZlibGetCodes = method;
+
+        var il = method.GetILGenerator();
+
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Newobj, runtime.TSObjectCtor);
+        var objLocal = il.DeclareLocal(runtime.TSObjectType);
+        il.Emit(OpCodes.Stloc, objLocal);
+
+        void AddNumber(string name, double value)
+        {
+            il.Emit(OpCodes.Ldloc, objLocal);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Ldc_R8, value);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Callvirt, runtime.TSObjectSetProperty);
+        }
+
+        void AddString(string key, string value)
+        {
+            il.Emit(OpCodes.Ldloc, objLocal);
+            il.Emit(OpCodes.Ldstr, key);
+            il.Emit(OpCodes.Ldstr, value);
+            il.Emit(OpCodes.Callvirt, runtime.TSObjectSetProperty);
+        }
+
+        foreach (var (name, value) in SharpTS.Runtime.BuiltIns.Modules.ZlibConstants.ReturnCodes)
+        {
+            AddNumber(name, value);                 // name -> number
+            AddString(value.ToString(), name);      // numeric string -> name
+        }
+
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static object ZlibCrc32(object data, object value)
+    /// Computes CRC-32 (IEEE 802.3) with a hand-rolled bitwise loop — pure BCL,
+    /// byte-for-byte identical to <c>ZlibHelpers.Crc32</c> (interpreter twin), so
+    /// standalone output stays free of a System.IO.Hashing dependency.
+    /// </summary>
+    private void EmitZlibCrc32(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ZlibCrc32",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]);
+        runtime.ZlibCrc32 = method;
+
+        var il = method.GetILGenerator();
+
+        // byte[] bytes = GetZlibInputBytes(data)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _getZlibInputBytes!);
+        var bytesLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+        il.Emit(OpCodes.Stloc, bytesLocal);
+
+        // uint crc = ~initial   (initial = (value is double) ? (uint)value : 0)
+        var initZero = il.DefineLabel();
+        var haveInit = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, initZero);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, initZero);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_U4);
+        il.Emit(OpCodes.Br, haveInit);
+        il.MarkLabel(initZero);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.MarkLabel(haveInit);
+        il.Emit(OpCodes.Ldc_I4_M1);  // 0xFFFFFFFF
+        il.Emit(OpCodes.Xor);        // crc = ~initial
+        var crcLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Stloc, crcLocal);
+
+        // for (int i = 0; i < bytes.Length; i++)
+        var iLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, bytesLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // crc ^= bytes[i]
+        il.Emit(OpCodes.Ldloc, crcLocal);
+        il.Emit(OpCodes.Ldloc, bytesLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Xor);
+        il.Emit(OpCodes.Stloc, crcLocal);
+
+        // for (int k = 0; k < 8; k++)
+        var kLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, kLocal);
+        var innerStart = il.DefineLabel();
+        var innerEnd = il.DefineLabel();
+        il.MarkLabel(innerStart);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Bge, innerEnd);
+
+        // crc = (crc >>> 1) ^ (0xEDB88320 & -(crc & 1))
+        il.Emit(OpCodes.Ldloc, crcLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Shr_Un);
+        il.Emit(OpCodes.Ldc_I4, unchecked((int)0xEDB88320));
+        il.Emit(OpCodes.Ldloc, crcLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Neg);        // mask: 0 or 0xFFFFFFFF
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Xor);
+        il.Emit(OpCodes.Stloc, crcLocal);
+
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, kLocal);
+        il.Emit(OpCodes.Br, innerStart);
+        il.MarkLabel(innerEnd);
+
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopStart);
+        il.MarkLabel(loopEnd);
+
+        // return (double)(uint)(~crc)
+        il.Emit(OpCodes.Ldloc, crcLocal);
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Xor);
+        il.Emit(OpCodes.Conv_R_Un);  // treat as unsigned -> float
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
     }
 
@@ -787,7 +1231,8 @@ public partial class RuntimeEmitter
             ("brotliDecompressSync", runtime.ZlibBrotliDecompressSync),
             ("zstdCompressSync", runtime.ZlibZstdCompressSync),
             ("zstdDecompressSync", runtime.ZlibZstdDecompressSync),
-            ("unzipSync", runtime.ZlibUnzipSync)
+            ("unzipSync", runtime.ZlibUnzipSync),
+            ("crc32", runtime.ZlibCrc32)
         };
 
         foreach (var (name, targetMethod) in methodNames)
@@ -879,49 +1324,51 @@ public partial class RuntimeEmitter
     #region Compression/Decompression Emission Helpers
 
     /// <summary>
-    /// Emits compression using a BCL compression stream type.
+    /// Emits deflate-family compression (gzip/deflate/deflateRaw) honoring the exact
+    /// Node <c>level</c> (-1..9) and <c>strategy</c> via <see cref="ZLibCompressionOptions"/>,
+    /// matching <c>ZlibHelpers</c> in the interpreter byte-for-byte. Pure BCL.
     /// </summary>
-    private void EmitCompressMethod(ILGenerator il, EmittedRuntime runtime, Type streamType, bool useLevel)
+    private void EmitDeflateFamilyCompress(ILGenerator il, EmittedRuntime runtime, Type streamType)
     {
+        var zoptsType = typeof(ZLibCompressionOptions);
+        var zoptsCtor = zoptsType.GetConstructor(Type.EmptyTypes)!;
+        var setLevel = zoptsType.GetProperty("CompressionLevel")!.GetSetMethod()!;
+        var setStrategy = zoptsType.GetProperty("CompressionStrategy")!.GetSetMethod()!;
+        var streamCtor = streamType.GetConstructor([typeof(Stream), zoptsType, typeof(bool)])!;
+
         // Get input bytes
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, _getZlibInputBytes!);
         var inputLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
         il.Emit(OpCodes.Stloc, inputLocal);
 
-        // Get compression level
+        // ZLibCompressionOptions opts = new() { CompressionLevel = level, CompressionStrategy = strategy }
+        il.Emit(OpCodes.Newobj, zoptsCtor);
+        var optsLocal = il.DeclareLocal(zoptsType);
+        il.Emit(OpCodes.Stloc, optsLocal);
+        il.Emit(OpCodes.Ldloc, optsLocal);
         il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Call, _getZlibCompressionLevel!);
-        var levelLocal = il.DeclareLocal(_types.Int32);
-        il.Emit(OpCodes.Stloc, levelLocal);
+        il.Emit(OpCodes.Call, _getZlibRawLevel!);
+        il.Emit(OpCodes.Callvirt, setLevel);
+        il.Emit(OpCodes.Ldloc, optsLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _getZlibStrategy!);
+        il.Emit(OpCodes.Callvirt, setStrategy);
 
         // Create output MemoryStream
         il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(typeof(MemoryStream)));
         var outputLocal = il.DeclareLocal(typeof(MemoryStream));
         il.Emit(OpCodes.Stloc, outputLocal);
 
-        // Create compression stream
-        // Constructor: (Stream stream, CompressionLevel level, bool leaveOpen)
-        var streamCtor = streamType.GetConstructor([typeof(Stream), typeof(CompressionLevel), typeof(bool)]);
-        if (streamCtor == null)
-        {
-            // Fallback for older APIs
-            streamCtor = streamType.GetConstructor([typeof(Stream), typeof(CompressionLevel)])!;
-            il.Emit(OpCodes.Ldloc, outputLocal);
-            il.Emit(OpCodes.Ldloc, levelLocal);
-            il.Emit(OpCodes.Newobj, streamCtor);
-        }
-        else
-        {
-            il.Emit(OpCodes.Ldloc, outputLocal);
-            il.Emit(OpCodes.Ldloc, levelLocal);
-            il.Emit(OpCodes.Ldc_I4_1); // leaveOpen = true
-            il.Emit(OpCodes.Newobj, streamCtor);
-        }
+        // compress = new streamType(output, opts, leaveOpen: true)
+        il.Emit(OpCodes.Ldloc, outputLocal);
+        il.Emit(OpCodes.Ldloc, optsLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Newobj, streamCtor);
         var compressLocal = il.DeclareLocal(streamType);
         il.Emit(OpCodes.Stloc, compressLocal);
 
-        // Write input to compression stream
+        // Write input
         il.Emit(OpCodes.Ldloc, compressLocal);
         il.Emit(OpCodes.Ldloc, inputLocal);
         il.Emit(OpCodes.Ldc_I4_0);
@@ -934,17 +1381,92 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, compressLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IDisposable), "Dispose"));
 
-        // Get result from output stream
+        // result = output.ToArray()
         il.Emit(OpCodes.Ldloc, outputLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(MemoryStream), "ToArray"));
         var resultLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
         il.Emit(OpCodes.Stloc, resultLocal);
 
-        // Dispose output stream
         il.Emit(OpCodes.Ldloc, outputLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IDisposable), "Dispose"));
 
-        // Create $Buffer from result
+        EmitMaxOutputCheck(il, resultLocal);
+
+        // new $Buffer(result)
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits Brotli compression honoring the exact <c>BROTLI_PARAM_QUALITY</c> (0-11)
+    /// and <c>BROTLI_PARAM_LGWIN</c> (10-24) via the one-shot <see cref="BrotliEncoder"/>,
+    /// matching the interpreter byte-for-byte. Pure BCL; mode/size_hint are not applied
+    /// (no public BCL knob).
+    /// </summary>
+    private void EmitBrotliCompress(ILGenerator il, EmittedRuntime runtime)
+    {
+        var byteArr = _types.MakeArrayType(_types.Byte);
+        var roSpanByte = typeof(ReadOnlySpan<byte>);
+        var spanByte = typeof(Span<byte>);
+        var roSpanOp = roSpanByte.GetMethod("op_Implicit", [byteArr])!;
+        var spanOp = spanByte.GetMethod("op_Implicit", [byteArr])!;
+        var getMaxLen = typeof(BrotliEncoder).GetMethod("GetMaxCompressedLength", [_types.Int32])!;
+        var tryCompress = typeof(BrotliEncoder).GetMethod("TryCompress",
+            [roSpanByte, spanByte, _types.Int32.MakeByRefType(), _types.Int32, _types.Int32])!;
+        var arrayCopy = typeof(Array).GetMethod("Copy", [typeof(Array), typeof(Array), _types.Int32])!;
+
+        // input = GetZlibInputBytes(arg0)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _getZlibInputBytes!);
+        var inputLocal = il.DeclareLocal(byteArr);
+        il.Emit(OpCodes.Stloc, inputLocal);
+
+        // quality, window from options
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _getBrotliQuality!);
+        var qualityLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Stloc, qualityLocal);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _getBrotliWindow!);
+        var windowLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Stloc, windowLocal);
+
+        // dest = new byte[GetMaxCompressedLength(input.Length)]
+        il.Emit(OpCodes.Ldloc, inputLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Call, getMaxLen);
+        il.Emit(OpCodes.Newarr, _types.Byte);
+        var destLocal = il.DeclareLocal(byteArr);
+        il.Emit(OpCodes.Stloc, destLocal);
+
+        var writtenLocal = il.DeclareLocal(_types.Int32);
+
+        // TryCompress((ReadOnlySpan<byte>)input, (Span<byte>)dest, out written, quality, window)
+        il.Emit(OpCodes.Ldloc, inputLocal);
+        il.Emit(OpCodes.Call, roSpanOp);
+        il.Emit(OpCodes.Ldloc, destLocal);
+        il.Emit(OpCodes.Call, spanOp);
+        il.Emit(OpCodes.Ldloca, writtenLocal);
+        il.Emit(OpCodes.Ldloc, qualityLocal);
+        il.Emit(OpCodes.Ldloc, windowLocal);
+        il.Emit(OpCodes.Call, tryCompress);
+        il.Emit(OpCodes.Pop); // GetMaxCompressedLength guarantees the buffer fits
+
+        // result = new byte[written]; Array.Copy(dest, result, written)
+        il.Emit(OpCodes.Ldloc, writtenLocal);
+        il.Emit(OpCodes.Newarr, _types.Byte);
+        var resultLocal = il.DeclareLocal(byteArr);
+        il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, destLocal);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+        il.Emit(OpCodes.Ldloc, writtenLocal);
+        il.Emit(OpCodes.Call, arrayCopy);
+
+        EmitMaxOutputCheck(il, resultLocal);
+
+        // new $Buffer(result)
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
         il.Emit(OpCodes.Ret);
@@ -981,10 +1503,12 @@ public partial class RuntimeEmitter
         var outputLocal = il.DeclareLocal(typeof(MemoryStream));
         il.Emit(OpCodes.Stloc, outputLocal);
 
-        // Copy from decompression stream to output
+        // Copy from decompression stream to output, enforcing maxOutputLength
         il.Emit(OpCodes.Ldloc, decompressLocal);
         il.Emit(OpCodes.Ldloc, outputLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Stream, "CopyTo", _types.Stream));
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _getZlibMaxOutputLength!);
+        il.Emit(OpCodes.Call, _copyStreamWithLimit!);
 
         // Dispose streams
         il.Emit(OpCodes.Ldloc, decompressLocal);
@@ -1104,6 +1628,8 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, outputLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IDisposable), "Dispose"));
 
+        EmitMaxOutputCheck(il, resultLocal);
+
         // Create $Buffer from result
         il.Emit(OpCodes.Ldloc, resultLocal);
         il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
@@ -1144,10 +1670,12 @@ public partial class RuntimeEmitter
         var outputLocal = il.DeclareLocal(typeof(MemoryStream));
         il.Emit(OpCodes.Stloc, outputLocal);
 
-        // Copy from decompression stream to output
+        // Copy from decompression stream to output, enforcing maxOutputLength
         il.Emit(OpCodes.Ldloc, decompressLocal);
         il.Emit(OpCodes.Ldloc, outputLocal);
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Stream, "CopyTo", _types.Stream));
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Call, _getZlibMaxOutputLength!);
+        il.Emit(OpCodes.Call, _copyStreamWithLimit!);
 
         // Dispose streams
         il.Emit(OpCodes.Ldloc, decompressLocal);

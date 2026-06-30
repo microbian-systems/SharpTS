@@ -117,6 +117,8 @@ public static class BuiltInNames
     public const string TransformStream = "TransformStream";
     public const string ByteLengthQueuingStrategy = "ByteLengthQueuingStrategy";
     public const string CountQueuingStrategy = "CountQueuingStrategy";
+    public const string Blob = "Blob";
+    public const string File = "File";
     public const string ReadableStreamDefaultReader = "ReadableStreamDefaultReader";
     public const string WritableStreamDefaultWriter = "WritableStreamDefaultWriter";
     public const string ReadableStreamDefaultController = "ReadableStreamDefaultController";
@@ -146,6 +148,8 @@ public static class BuiltInNames
     public const string SetImmediate = "setImmediate";
     public const string ClearImmediate = "clearImmediate";
     public const string QueueMicrotask = "queueMicrotask";
+    public const string Atob = "atob";
+    public const string Btoa = "btoa";
     public const string Require = "require";
 
     #endregion

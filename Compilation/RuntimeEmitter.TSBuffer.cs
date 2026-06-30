@@ -75,6 +75,12 @@ public partial class RuntimeEmitter
         EmitTSBufferReadBigUInt64LE(typeBuilder, runtime);
         EmitTSBufferReadBigUInt64BE(typeBuilder, runtime);
 
+        // Variable-length integer reads (#1161)
+        EmitTSBufferVarIntRead(typeBuilder, runtime, "ReadUIntLE", bigEndian: false, signed: false, m => runtime.TSBufferReadUIntLE = m);
+        EmitTSBufferVarIntRead(typeBuilder, runtime, "ReadUIntBE", bigEndian: true, signed: false, m => runtime.TSBufferReadUIntBE = m);
+        EmitTSBufferVarIntRead(typeBuilder, runtime, "ReadIntLE", bigEndian: false, signed: true, m => runtime.TSBufferReadIntLE = m);
+        EmitTSBufferVarIntRead(typeBuilder, runtime, "ReadIntBE", bigEndian: true, signed: true, m => runtime.TSBufferReadIntBE = m);
+
         // Multi-byte write methods
         EmitTSBufferWriteInt8(typeBuilder, runtime);
         EmitTSBufferWriteUInt16LE(typeBuilder, runtime);
@@ -93,6 +99,11 @@ public partial class RuntimeEmitter
         EmitTSBufferWriteBigInt64BE(typeBuilder, runtime);
         EmitTSBufferWriteBigUInt64LE(typeBuilder, runtime);
         EmitTSBufferWriteBigUInt64BE(typeBuilder, runtime);
+
+        // Variable-length integer writes (#1161). Signed and unsigned writes produce
+        // identical two's-complement bytes, so writeInt*LE/BE route to these.
+        EmitTSBufferVarIntWrite(typeBuilder, runtime, "WriteUIntLE", bigEndian: false, m => runtime.TSBufferWriteUIntLE = m);
+        EmitTSBufferVarIntWrite(typeBuilder, runtime, "WriteUIntBE", bigEndian: true, m => runtime.TSBufferWriteUIntBE = m);
 
         // Search methods
         EmitTSBufferIndexOf(typeBuilder, runtime);

@@ -215,8 +215,7 @@ public class UnionTypeGenerator
 
     private string GetTypePropertyName(TSTypeInfo type, int index) => type switch
     {
-        TSTypeInfo.String => "String", // New String type
-        TSTypeInfo.Primitive { Type: Parsing.TokenType.TYPE_STRING } => "String",
+        TSTypeInfo.String => "String", // `string` is always TypeInfo.String (#1108)
         TSTypeInfo.Primitive { Type: Parsing.TokenType.TYPE_NUMBER } => "Number",
         TSTypeInfo.Primitive { Type: Parsing.TokenType.TYPE_BOOLEAN } => "Boolean",
         TSTypeInfo.Class c => c.Name,

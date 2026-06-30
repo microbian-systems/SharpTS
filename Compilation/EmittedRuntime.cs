@@ -2113,6 +2113,16 @@ public class EmittedRuntime
     public MethodBuilder TSBufferToString { get; set; } = null!;
     public MethodBuilder TSBufferSlice { get; set; } = null!;
     public MethodBuilder TSBufferGetData { get; set; } = null!;
+
+    // buffer module helper functions (#1160) — pure-BCL, standalone.
+    public MethodBuilder BufferAtob { get; set; } = null!;
+    public MethodBuilder BufferBtoa { get; set; } = null!;
+    public MethodBuilder BufferIsUtf8 { get; set; } = null!;
+    public MethodBuilder BufferIsAscii { get; set; } = null!;
+    public MethodBuilder BufferTranscode { get; set; } = null!;
+    public MethodBuilder BufferSlowBuffer { get; set; } = null!;
+    public MethodBuilder BufferModuleConstants { get; set; } = null!;
+    public MethodBuilder BufferCopyBytesFrom { get; set; } = null!;
     public MethodBuilder TSBufferCopy { get; set; } = null!;
     public MethodBuilder TSBufferCompare { get; set; } = null!;
     public MethodBuilder TSBufferEquals { get; set; } = null!;
@@ -2126,6 +2136,12 @@ public class EmittedRuntime
     // Multi-byte read methods
     public MethodBuilder TSBufferReadInt8 { get; set; } = null!;
     public MethodBuilder TSBufferReadUInt16LE { get; set; } = null!;
+    public MethodBuilder TSBufferReadUIntLE { get; set; } = null!;
+    public MethodBuilder TSBufferReadUIntBE { get; set; } = null!;
+    public MethodBuilder TSBufferReadIntLE { get; set; } = null!;
+    public MethodBuilder TSBufferReadIntBE { get; set; } = null!;
+    public MethodBuilder TSBufferWriteUIntLE { get; set; } = null!;
+    public MethodBuilder TSBufferWriteUIntBE { get; set; } = null!;
     public MethodBuilder TSBufferReadUInt16BE { get; set; } = null!;
     public MethodBuilder TSBufferReadUInt32LE { get; set; } = null!;
     public MethodBuilder TSBufferReadUInt32BE { get; set; } = null!;
@@ -2295,6 +2311,8 @@ public class EmittedRuntime
     public MethodBuilder ZlibZstdDecompressSync { get; set; } = null!;
     public MethodBuilder ZlibUnzipSync { get; set; } = null!;
     public MethodBuilder ZlibGetConstants { get; set; } = null!;
+    public MethodBuilder ZlibGetCodes { get; set; } = null!;
+    public MethodBuilder ZlibCrc32 { get; set; } = null!;
 
     // Zlib streaming APIs
     public MethodBuilder ZlibCreateGzip { get; set; } = null!;

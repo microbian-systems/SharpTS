@@ -420,13 +420,13 @@ public partial class TypeChecker
     /// <summary>Marker types for variance measurement: Sub is structurally assignable to Super
     /// but not conversely (extra member).</summary>
     private static readonly TypeInfo.Record VarianceMarkerSuper = new(
-        new Dictionary<string, TypeInfo> { ["'variance"] = new TypeInfo.Primitive(Parsing.TokenType.TYPE_STRING) }
+        new Dictionary<string, TypeInfo> { ["'variance"] = new TypeInfo.String() }
             .ToFrozenDictionary());
     private static readonly TypeInfo.Record VarianceMarkerSub = new(
         new Dictionary<string, TypeInfo>
         {
-            ["'variance"] = new TypeInfo.Primitive(Parsing.TokenType.TYPE_STRING),
-            ["'sub"] = new TypeInfo.Primitive(Parsing.TokenType.TYPE_STRING),
+            ["'variance"] = new TypeInfo.String(),
+            ["'sub"] = new TypeInfo.String(),
         }.ToFrozenDictionary());
 
     private Dictionary<TypeInfo.GenericInterface, TypeParameterVariance[]>? _measuredVariances;

@@ -10,7 +10,7 @@ namespace SharpTS.Tests.ParserTests;
 public class NamedTupleTests
 {
     private static TypeInfo NumberType => new TypeInfo.Primitive(TokenType.TYPE_NUMBER);
-    private static TypeInfo StringType => new TypeInfo.Primitive(TokenType.TYPE_STRING);
+    private static TypeInfo StringType => new TypeInfo.String(); // 'string' is TypeInfo.String, not Primitive(TYPE_STRING) (#1108)
 
     [Fact]
     public void NamedTuple_BasicParsing_Works()

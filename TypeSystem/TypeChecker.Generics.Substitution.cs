@@ -32,78 +32,118 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Substitutes type parameters with concrete types.
+    /// Substitutes type parameters with concrete types, evaluating any conditional types reached.
     /// </summary>
     private TypeInfo Substitute(TypeInfo type, Dictionary<string, TypeInfo> substitutions)
+        => Substitute(type, substitutions, evalConditionals: true);
+
+    /// <summary>
+    /// Single recursive substitution switch shared by <see cref="Substitute(TypeInfo, Dictionary{string, TypeInfo})"/>
+    /// and <see cref="SubstituteWithoutConditionalEval"/>. The <paramref name="evalConditionals"/> flag is the ONLY
+    /// behavioural axis between the two callers:
+    /// <list type="bullet">
+    ///   <item>conditional types: evaluate now (<c>true</c>) vs. recurse into their parts without evaluating
+    ///         (<c>false</c>, the recursion-safe form used while a conditional is mid-evaluation);</item>
+    ///   <item>function parameter positions: marked as instantiated (<c>true</c>, gates the callback comparison
+    ///         rule) vs. left unmarked (<c>false</c>);</item>
+    ///   <item>records: rebuilt fields-only (<c>true</c> — see the NOTE) vs. signature/index preserving
+    ///         (<c>false</c>, which #316 needs so <c>T extends new (...) =&gt; infer U</c> can bind U);</item>
+    ///   <item>indexed access: concrete accesses collapsed to the member type (<c>true</c>) vs. left as a
+    ///         deferred node (<c>false</c>; the conditional machinery resolves these itself).</item>
+    /// </list>
+    /// Keeping ONE switch means a newly added <see cref="TypeInfo"/> variant is substituted on both paths —
+    /// the conditional copy previously fell through <c>SpreadType</c>/<c>MappedType</c>/<c>RecursiveTypeAlias</c>
+    /// to <c>_ =&gt; type</c>, silently returning a type parameter inside any of them un-substituted (#1106).
+    /// </summary>
+    private TypeInfo Substitute(TypeInfo type, Dictionary<string, TypeInfo> substitutions, bool evalConditionals)
     {
+        TypeInfo Sub(TypeInfo t) => Substitute(t, substitutions, evalConditionals);
         return type switch
         {
             TypeInfo.TypeParameter tp =>
                 substitutions.TryGetValue(tp.Name, out var sub) ? sub : type,
             TypeInfo.Array arr =>
-                new TypeInfo.Array(Substitute(arr.ElementType, substitutions)),
+                new TypeInfo.Array(Sub(arr.ElementType)),
             TypeInfo.Promise promise =>
-                new TypeInfo.Promise(Substitute(promise.ValueType, substitutions)),
+                new TypeInfo.Promise(Sub(promise.ValueType)),
             TypeInfo.Function func =>
                 new TypeInfo.Function(
-                    func.ParamTypes.Select(p => Substitute(p, substitutions)).ToList(),
-                    Substitute(func.ReturnType, substitutions),
+                    func.ParamTypes.Select(Sub).ToList(),
+                    Sub(func.ReturnType),
                     func.RequiredParams,
                     func.HasRestParam,
                     ThisType: null,
                     ParamNames: null,
-                    InstantiatedTypeParamPositions: MarkInstantiatedParamPositions(func, substitutions)),
+                    // Marking instantiated parameter positions gates the callback comparison rule; only the
+                    // assignability path (evalConditionals) needs it. The conditional path leaves them unmarked.
+                    InstantiatedTypeParamPositions: evalConditionals
+                        ? MarkInstantiatedParamPositions(func, substitutions)
+                        : null),
             TypeInfo.Tuple tuple =>
-                SubstituteTupleWithFlattening(tuple, substitutions),
+                SubstituteTupleWithFlattening(tuple, substitutions, evalConditionals),
             TypeInfo.SpreadType spread =>
-                new TypeInfo.SpreadType(Substitute(spread.Inner, substitutions)),
+                new TypeInfo.SpreadType(Sub(spread.Inner)),
             TypeInfo.Union union =>
-                new TypeInfo.Union(union.Types.Select(t => Substitute(t, substitutions)).ToList()),
-            // NOTE: fields only. Preserving call/construct signatures here would feed generic
-            // construct-signature *assignment* relating (which erases/instantiates via Substitute)
-            // types it does not yet compare correctly, regressing assignmentCompatWithConstructSignatures.
-            // The conditional-type path that #316 needs preserves them in SubstituteWithoutConditionalEval.
+                new TypeInfo.Union(union.Types.Select(Sub).ToList()),
+            // Assignability path (evalConditionals): fields only. Preserving call/construct signatures here
+            // would feed generic construct-signature *assignment* relating (which erases/instantiates via
+            // Substitute) types it does not yet compare correctly, regressing
+            // assignmentCompatWithConstructSignatures. The conditional-type path that #316 needs preserves
+            // them (SubstituteRecordMembers).
             TypeInfo.Record rec =>
-                new TypeInfo.Record(
-                    rec.Fields.ToDictionary(
-                        kvp => kvp.Key,
-                        kvp => Substitute(kvp.Value, substitutions)).ToFrozenDictionary()),
+                evalConditionals
+                    ? new TypeInfo.Record(
+                        rec.Fields.ToDictionary(
+                            kvp => kvp.Key,
+                            kvp => Sub(kvp.Value)).ToFrozenDictionary())
+                    : SubstituteRecordMembers(rec, Sub),
             TypeInfo.InstantiatedGeneric ig =>
                 new TypeInfo.InstantiatedGeneric(
                     ig.GenericDefinition,
-                    ig.TypeArguments.Select(a => Substitute(a, substitutions)).ToList()),
+                    ig.TypeArguments.Select(Sub).ToList()),
             // Handle new mapped type constructs
             TypeInfo.KeyOf keyOf =>
-                new TypeInfo.KeyOf(Substitute(keyOf.SourceType, substitutions)),
+                new TypeInfo.KeyOf(Sub(keyOf.SourceType)),
             TypeInfo.TypeOf => type, // typeof doesn't contain type parameters, return as-is
             TypeInfo.MappedType mapped =>
                 new TypeInfo.MappedType(
                     mapped.ParameterName,
-                    Substitute(mapped.Constraint, substitutions),
-                    Substitute(mapped.ValueType, substitutions),
+                    Sub(mapped.Constraint),
+                    Sub(mapped.ValueType),
                     mapped.Modifiers,
-                    mapped.AsClause != null ? Substitute(mapped.AsClause, substitutions) : null),
+                    mapped.AsClause != null ? Sub(mapped.AsClause) : null),
             TypeInfo.IndexedAccess ia =>
-                SimplifyConcreteIndexedAccess(
-                    Substitute(ia.ObjectType, substitutions),
-                    Substitute(ia.IndexType, substitutions)),
-            // Conditional types: evaluate with current substitutions
+                evalConditionals
+                    // Collapse a fully concrete access to the member type; a generic one stays deferred.
+                    ? SimplifyConcreteIndexedAccess(Sub(ia.ObjectType), Sub(ia.IndexType))
+                    // The conditional machinery resolves indexed accesses itself (EvaluateConditionalType),
+                    // so leave the node deferred here.
+                    : new TypeInfo.IndexedAccess(Sub(ia.ObjectType), Sub(ia.IndexType)),
+            // Conditional types: evaluate with current substitutions, or (recursion-safe form) substitute
+            // into the parts without evaluating — preserving distributivity.
             TypeInfo.ConditionalType cond =>
-                EvaluateConditionalType(cond, substitutions),
+                evalConditionals
+                    ? EvaluateConditionalType(cond, substitutions)
+                    : new TypeInfo.ConditionalType(
+                        Sub(cond.CheckType),
+                        Sub(cond.ExtendsType),
+                        Sub(cond.TrueType),
+                        Sub(cond.FalseType))
+                      { IsDistributive = cond.IsDistributive },
             // Inferred type parameters: substitute if bound, else keep as-is (substituting any
             // outer type parameters referenced by the constraint)
             TypeInfo.InferredTypeParameter infer =>
                 substitutions.TryGetValue(infer.Name, out var inferSub)
                     ? inferSub
                     : infer.Constraint is { } inferConstraint
-                        ? infer with { Constraint = Substitute(inferConstraint, substitutions) }
+                        ? infer with { Constraint = Sub(inferConstraint) }
                         : type,
             // Recursive type alias: substitute type arguments if present
             TypeInfo.RecursiveTypeAlias rta =>
                 rta.TypeArguments is { Count: > 0 }
                     ? new TypeInfo.RecursiveTypeAlias(
                         rta.AliasName,
-                        rta.TypeArguments.Select(a => Substitute(a, substitutions)).ToList())
+                        rta.TypeArguments.Select(Sub).ToList())
                     : rta,
             // Primitives, Any, Void, Never, Unknown, Null pass through unchanged
             _ => type
@@ -176,8 +216,10 @@ public partial class TypeChecker
     /// <summary>
     /// Substitutes type parameters in a tuple with flattening of spread elements.
     /// When a spread resolves to a concrete tuple, its elements are inlined.
+    /// <paramref name="evalConditionals"/> threads through to the element substitutions (see
+    /// <see cref="Substitute(TypeInfo, Dictionary{string, TypeInfo}, bool)"/>).
     /// </summary>
-    private TypeInfo SubstituteTupleWithFlattening(TypeInfo.Tuple tuple, Dictionary<string, TypeInfo> substitutions)
+    private TypeInfo SubstituteTupleWithFlattening(TypeInfo.Tuple tuple, Dictionary<string, TypeInfo> substitutions, bool evalConditionals)
     {
         List<TypeInfo.TupleElement> newElements = [];
         int newRequiredCount = 0;
@@ -186,7 +228,7 @@ public partial class TypeChecker
         {
             if (elem.Kind == TupleElementKind.Spread)
             {
-                var substitutedInner = Substitute(elem.Type, substitutions);
+                var substitutedInner = Substitute(elem.Type, substitutions, evalConditionals);
 
                 // Flatten if spread resolves to concrete tuple
                 if (substitutedInner is TypeInfo.Tuple innerTuple)
@@ -219,7 +261,7 @@ public partial class TypeChecker
             }
             else
             {
-                var substitutedType = Substitute(elem.Type, substitutions);
+                var substitutedType = Substitute(elem.Type, substitutions, evalConditionals);
                 newElements.Add(new TypeInfo.TupleElement(substitutedType, elem.Kind, elem.Name));
                 if (elem.Kind == TupleElementKind.Required)
                     newRequiredCount++;
@@ -227,7 +269,7 @@ public partial class TypeChecker
         }
 
         var newRestType = tuple.RestElementType != null
-            ? Substitute(tuple.RestElementType, substitutions)
+            ? Substitute(tuple.RestElementType, substitutions, evalConditionals)
             : null;
 
         return new TypeInfo.Tuple(newElements, newRequiredCount, newRestType);

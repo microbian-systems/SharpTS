@@ -864,4 +864,334 @@ public class ZlibModuleTests
     }
 
     #endregion
+
+    #region crc32 / codes / constants (#1162)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Crc32_KnownValue(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            // Node's zlib.crc32('hello') === 907060870
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                console.log(zlib.crc32('hello'));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("907060870\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Crc32_EmptyIsZero(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                console.log(zlib.crc32(Buffer.alloc(0)));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Crc32_RunningValueChains(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            // crc32(' world', crc32('hello')) === crc32('hello world')
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const whole = zlib.crc32('hello world');
+                const chained = zlib.crc32(' world', zlib.crc32('hello'));
+                console.log(whole === chained);
+                console.log(whole === zlib.crc32(Buffer.from('hello world')));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Crc32_NamedImport(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { crc32 } from 'zlib';
+                console.log(crc32('hello'));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("907060870\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Codes_Bidirectional(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                console.log(zlib.codes.Z_OK);
+                console.log(zlib.codes.Z_STREAM_END);
+                console.log(zlib.codes.Z_DATA_ERROR);
+                console.log(zlib.codes['0']);
+                console.log(zlib.codes['-3']);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("0\n1\n-3\nZ_OK\nZ_DATA_ERROR\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Constants_Completeness(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                console.log(zlib.constants.Z_DEFAULT_LEVEL);
+                console.log(zlib.constants.Z_MIN_CHUNK);
+                console.log(zlib.constants.GZIP);
+                console.log(zlib.constants.ZSTD_e_end);
+                console.log(zlib.constants.BROTLI_DECODER_RESULT_SUCCESS);
+                console.log(zlib.constants.Z_MAX_CHUNK === Infinity);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("6\n64\n3\n2\n1\ntrue\n", output);
+    }
+
+    #endregion
+
+    #region Compression options (#1163)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Deflate_LevelExtremesRoundTrip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const input = Buffer.from('hello world '.repeat(200));
+                const c0 = zlib.deflateSync(input, { level: 0 });
+                const c9 = zlib.deflateSync(input, { level: 9 });
+                // level 0 (stored) must be larger than level 9 (best)
+                console.log(c0.length > c9.length);
+                console.log(zlib.inflateSync(c0).toString() === input.toString());
+                console.log(zlib.inflateSync(c9).toString() === input.toString());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Deflate_StrategyRoundTrip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const input = Buffer.from('aaaaabbbbbcccccddddd'.repeat(50));
+                const c = zlib.deflateSync(input, { level: 9, strategy: zlib.constants.Z_RLE });
+                console.log(zlib.inflateSync(c).toString() === input.toString());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Brotli_QualityExtremesDifferAndRoundTrip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const input = Buffer.from('the quick brown fox '.repeat(200));
+                const low = zlib.brotliCompressSync(input, {
+                    params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1 }
+                });
+                const high = zlib.brotliCompressSync(input, {
+                    params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 }
+                });
+                // quality is genuinely honored: q11 compresses strictly better than q1
+                console.log(high.length < low.length);
+                console.log(zlib.brotliDecompressSync(low).toString() === input.toString());
+                console.log(zlib.brotliDecompressSync(high).toString() === input.toString());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Brotli_WindowRoundTrip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const input = Buffer.from('compress me with a small window '.repeat(100));
+                const c = zlib.brotliCompressSync(input, {
+                    params: {
+                        [zlib.constants.BROTLI_PARAM_QUALITY]: 11,
+                        [zlib.constants.BROTLI_PARAM_LGWIN]: 10
+                    }
+                });
+                console.log(zlib.brotliDecompressSync(c).toString() === input.toString());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Deflate_DictionaryRoundTrip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            // dictionary is a documented BCL ceiling (accepted, not applied), so a
+            // symmetric compress/decompress with the same option must still round-trip.
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const dict = Buffer.from('hello');
+                const input = Buffer.from('hello world hello world');
+                const c = zlib.deflateSync(input, { dictionary: dict });
+                console.log(zlib.inflateSync(c, { dictionary: dict }).toString() === input.toString());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_MaxOutputLength_Throws(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const input = Buffer.from('x'.repeat(10000));
+                const compressed = zlib.gzipSync(input);
+                let threw = false;
+                try {
+                    zlib.gunzipSync(compressed, { maxOutputLength: 10 });
+                } catch (e) {
+                    threw = true;
+                }
+                console.log(threw);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
+
+    #region Stream control methods (#1164)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Stream_FlushAndCounters(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const gzip = zlib.createGzip();
+                const chunks: Buffer[] = [];
+                gzip.on('data', (c: Buffer) => { chunks.push(c); });
+                gzip.on('end', () => {
+                    const all = Buffer.concat(chunks);
+                    console.log(zlib.gunzipSync(all).toString() === 'hello flush world');
+                    console.log(gzip.bytesWritten);
+                    console.log(gzip.bytesRead);
+                });
+                gzip.write('hello ');
+                gzip.flush(() => { console.log('flushed'); });
+                gzip.write('flush world');
+                gzip.end();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("flushed\ntrue\n17\n17\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Stream_Close(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const gzip = zlib.createGzip();
+                gzip.on('close', () => { console.log('close-event'); });
+                gzip.close(() => { console.log('close-cb'); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("close-event\nclose-cb\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Stream_Reset(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            // reset() restores a fresh, usable compression stream and zeroes the
+            // counter. (Our streams emit output per-write, so reset is meaningful on a
+            // freshly created stream — see #1164 notes.)
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const gzip = zlib.createGzip();
+                gzip.reset();
+                console.log(gzip.bytesWritten);
+                const chunks: Buffer[] = [];
+                gzip.on('data', (c: Buffer) => { chunks.push(c); });
+                gzip.on('end', () => {
+                    const all = Buffer.concat(chunks);
+                    console.log(zlib.gunzipSync(all).toString() === 'after reset');
+                });
+                gzip.end('after reset');
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("0\ntrue\n", output);
+    }
+
+    #endregion
 }

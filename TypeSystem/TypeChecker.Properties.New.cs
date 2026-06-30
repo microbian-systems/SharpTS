@@ -370,7 +370,8 @@ public partial class TypeChecker
         // so they're resolved through normal import lookup, not special-cased.
         if (isSimpleName && simpleClassName is "Headers" or "Request" or "Response"
             or "ReadableStream" or "WritableStream" or "TransformStream"
-            or "ByteLengthQueuingStrategy" or "CountQueuingStrategy")
+            or "ByteLengthQueuingStrategy" or "CountQueuingStrategy"
+            or "Blob" or "File")
         {
             foreach (var arg in newExpr.Arguments)
                 CheckExpr(arg);
