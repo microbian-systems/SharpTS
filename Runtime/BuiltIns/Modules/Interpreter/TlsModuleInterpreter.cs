@@ -16,6 +16,32 @@ namespace SharpTS.Runtime.BuiltIns.Modules.Interpreter;
 public static class TlsModuleInterpreter
 {
     /// <summary>
+    /// The list returned by tls.getCiphers() — lowercased TLS 1.2/1.3 cipher-suite names.
+    /// This is the single source of truth: the compiled $Runtime.TlsGetCiphers emitter reads
+    /// this same array, so interp == compiled by construction.
+    /// </summary>
+    public static readonly string[] StandardCiphers =
+    [
+        "tls_aes_128_gcm_sha256",
+        "tls_aes_256_gcm_sha384",
+        "tls_chacha20_poly1305_sha256",
+        "ecdhe-ecdsa-aes128-gcm-sha256",
+        "ecdhe-rsa-aes128-gcm-sha256",
+        "ecdhe-ecdsa-aes256-gcm-sha384",
+        "ecdhe-rsa-aes256-gcm-sha384",
+        "ecdhe-ecdsa-chacha20-poly1305",
+        "ecdhe-rsa-chacha20-poly1305",
+        "dhe-rsa-aes128-gcm-sha256",
+        "dhe-rsa-aes256-gcm-sha384",
+        "ecdhe-rsa-aes128-sha256",
+        "ecdhe-rsa-aes256-sha384",
+        "aes128-gcm-sha256",
+        "aes256-gcm-sha384",
+        "aes128-sha256",
+        "aes256-sha256"
+    ];
+
+    /// <summary>
     /// Gets all exported values for the tls module.
     /// </summary>
     public static Dictionary<string, object?> GetExports()
@@ -26,11 +52,54 @@ public static class TlsModuleInterpreter
             ["connect"] = BuiltInMethod.CreateV2("connect", 1, 4, Connect),
             ["createSecureContext"] = BuiltInMethod.CreateV2("createSecureContext", 0, 1, CreateSecureContext),
             ["checkServerIdentity"] = BuiltInMethod.CreateV2("checkServerIdentity", 2, CheckServerIdentity),
+            ["getCiphers"] = BuiltInMethod.CreateV2("getCiphers", 0, GetCiphers),
+            ["rootCertificates"] = RootCertificatesArray(),
             ["Server"] = BuiltInMethod.CreateV2("Server", 0, 2, CreateServer),
             ["TLSSocket"] = BuiltInMethod.CreateV2("TLSSocket", 0, 1, CreateTlsSocket),
             ["DEFAULT_MIN_VERSION"] = "TLSv1.2",
             ["DEFAULT_MAX_VERSION"] = "TLSv1.3"
         };
+    }
+
+    /// <summary>tls.getCiphers() — lowercased supported cipher-suite names.</summary>
+    private static RuntimeValue GetCiphers(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var arr = new SharpTSArray();
+        foreach (var c in StandardCiphers)
+            arr.Add(c);
+        return RuntimeValue.FromObject(arr);
+    }
+
+    private static string[]? _rootCertCache;
+
+    /// <summary>The bundled trusted root CA certificates, as PEM strings (from the platform trust store).</summary>
+    internal static string[] RootCertificatePems()
+    {
+        if (_rootCertCache != null) return _rootCertCache;
+        var list = new List<string>();
+        foreach (var loc in new[] { System.Security.Cryptography.X509Certificates.StoreLocation.CurrentUser,
+                                    System.Security.Cryptography.X509Certificates.StoreLocation.LocalMachine })
+        {
+            try
+            {
+                using var store = new System.Security.Cryptography.X509Certificates.X509Store(
+                    System.Security.Cryptography.X509Certificates.StoreName.Root, loc);
+                store.Open(System.Security.Cryptography.X509Certificates.OpenFlags.ReadOnly);
+                foreach (var cert in store.Certificates)
+                    list.Add(cert.ExportCertificatePem());
+            }
+            catch { /* trust store may be unavailable on some platforms */ }
+        }
+        _rootCertCache = list.ToArray();
+        return _rootCertCache;
+    }
+
+    private static SharpTSArray RootCertificatesArray()
+    {
+        var arr = new SharpTSArray();
+        foreach (var pem in RootCertificatePems())
+            arr.Add(pem);
+        return arr;
     }
 
     /// <summary>

@@ -22,10 +22,13 @@ public sealed class TlsModuleEmitter : IBuiltInModuleEmitter
         "createServer",
         "connect",
         "createSecureContext",
+        "checkServerIdentity",
+        "getCiphers",
         "Server",
         "TLSSocket",
         "DEFAULT_MIN_VERSION",
-        "DEFAULT_MAX_VERSION"
+        "DEFAULT_MAX_VERSION",
+        "rootCertificates"
     ];
 
     public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
@@ -37,9 +40,40 @@ public sealed class TlsModuleEmitter : IBuiltInModuleEmitter
             "createServer" or "Server" => EmitCreateServer(emitter, arguments),
             "connect" => EmitConnect(emitter, arguments),
             "createSecureContext" => EmitCreateSecureContext(emitter, arguments),
+            "checkServerIdentity" => EmitCheckServerIdentity(emitter, arguments),
+            "getCiphers" => EmitNoArgCall(emitter, emitter.Context.Runtime!.TlsGetCiphers),
             "TLSSocket" => EmitCreateSocket(emitter),
             _ => false
         };
+    }
+
+    private static bool EmitCheckServerIdentity(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        for (int i = 0; i < 2; i++)
+        {
+            if (i < arguments.Count)
+            {
+                emitter.EmitExpression(arguments[i]);
+                emitter.EmitBoxIfNeeded(arguments[i]);
+            }
+            else
+            {
+                il.Emit(OpCodes.Ldnull);
+            }
+        }
+        var checkServerIdentity = ctx.Runtime!.GetBuiltInModuleMethod("tls", "checkServerIdentity")!;
+        il.Emit(OpCodes.Call, checkServerIdentity);
+        emitter.SetStackUnknown();
+        return true;
+    }
+
+    private static bool EmitNoArgCall(IEmitterContext emitter, MethodBuilder method)
+    {
+        emitter.Context.IL.Emit(OpCodes.Call, method);
+        emitter.SetStackUnknown();
+        return true;
     }
 
     public bool TryEmitPropertyGet(IEmitterContext emitter, string propertyName)
@@ -51,6 +85,7 @@ public sealed class TlsModuleEmitter : IBuiltInModuleEmitter
         {
             "DEFAULT_MIN_VERSION" => EmitConstantProperty(il, ctx.Runtime!.TlsGetDefaultMinVersion),
             "DEFAULT_MAX_VERSION" => EmitConstantProperty(il, ctx.Runtime!.TlsGetDefaultMaxVersion),
+            "rootCertificates" => EmitConstantProperty(il, ctx.Runtime!.TlsRootCertificates),
             _ => false
         };
     }
@@ -151,5 +186,5 @@ public sealed class TlsModuleEmitter : IBuiltInModuleEmitter
     }
 
     public bool IsExportedProperty(string memberName) =>
-        memberName is "DEFAULT_MIN_VERSION" or "DEFAULT_MAX_VERSION";
+        memberName is "DEFAULT_MIN_VERSION" or "DEFAULT_MAX_VERSION" or "rootCertificates";
 }

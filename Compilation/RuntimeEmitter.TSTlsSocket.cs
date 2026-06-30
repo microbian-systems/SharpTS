@@ -755,6 +755,36 @@ public partial class RuntimeEmitter
         // key
         EmitTlsCtorExtractString(ctorIL, optLocal, tempLocal, dictTryGet, "key", _tlsServerKeyField);
 
+        // secureContext fallback: if cert/key absent, pull them from options.secureContext
+        // (a tls.createSecureContext result).
+        var noSecureCtx = ctorIL.DefineLabel();
+        var scLocal = ctorIL.DeclareLocal(dictType);
+        ctorIL.Emit(OpCodes.Ldloc, optLocal);
+        ctorIL.Emit(OpCodes.Ldstr, "secureContext");
+        ctorIL.Emit(OpCodes.Ldloca, tempLocal);
+        ctorIL.Emit(OpCodes.Callvirt, dictTryGet);
+        ctorIL.Emit(OpCodes.Brfalse, noSecureCtx);
+        ctorIL.Emit(OpCodes.Ldloc, tempLocal);
+        ctorIL.Emit(OpCodes.Isinst, dictType);
+        ctorIL.Emit(OpCodes.Stloc, scLocal);
+        ctorIL.Emit(OpCodes.Ldloc, scLocal);
+        ctorIL.Emit(OpCodes.Brfalse, noSecureCtx);
+        // if (_cert == null) extract sc["cert"]
+        var skipScCert = ctorIL.DefineLabel();
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldfld, _tlsServerCertField);
+        ctorIL.Emit(OpCodes.Brtrue, skipScCert);
+        EmitTlsCtorExtractString(ctorIL, scLocal, tempLocal, dictTryGet, "cert", _tlsServerCertField);
+        ctorIL.MarkLabel(skipScCert);
+        // if (_key == null) extract sc["key"]
+        var skipScKey = ctorIL.DefineLabel();
+        ctorIL.Emit(OpCodes.Ldarg_0);
+        ctorIL.Emit(OpCodes.Ldfld, _tlsServerKeyField);
+        ctorIL.Emit(OpCodes.Brtrue, skipScKey);
+        EmitTlsCtorExtractString(ctorIL, scLocal, tempLocal, dictTryGet, "key", _tlsServerKeyField);
+        ctorIL.MarkLabel(skipScKey);
+        ctorIL.MarkLabel(noSecureCtx);
+
         // requestCert (bool)
         var noReq = ctorIL.DefineLabel();
         ctorIL.Emit(OpCodes.Ldloc, optLocal);

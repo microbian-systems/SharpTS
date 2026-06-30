@@ -2046,6 +2046,8 @@ public class EmittedRuntime
     public MethodBuilder TlsCreateSecureContext { get; set; } = null!;
     public MethodBuilder TlsGetDefaultMinVersion { get; set; } = null!;
     public MethodBuilder TlsGetDefaultMaxVersion { get; set; } = null!;
+    public MethodBuilder TlsGetCiphers { get; set; } = null!;
+    public MethodBuilder TlsRootCertificates { get; set; } = null!;
     public MethodBuilder TlsCreateSocket { get; set; } = null!;
 
     // $TlsSocket emitted type - pure IL standalone TLS socket

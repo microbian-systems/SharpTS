@@ -19,6 +19,8 @@ public partial class RuntimeEmitter
         EmitTlsCreateSocket(typeBuilder, runtime);
         EmitTlsCreateSecureContext(typeBuilder, runtime);
         EmitTlsCheckServerIdentity(typeBuilder, runtime);
+        EmitTlsGetCiphers(typeBuilder, runtime);
+        EmitTlsRootCertificates(typeBuilder, runtime);
         EmitTlsGetDefaultMinVersion(typeBuilder, runtime);
         EmitTlsGetDefaultMaxVersion(typeBuilder, runtime);
     }
@@ -248,7 +250,9 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object TlsCreateSecureContext(object? options)
-    /// Returns a new empty Dictionary (standalone mode doesn't need real secure context).
+    /// Returns a SecureContext dictionary holding the parsed cert/key/ca/minVersion/maxVersion,
+    /// which createServer/connect accept via options.secureContext. Mirrors interp
+    /// TlsModuleInterpreter.CreateSecureContext.
     /// </summary>
     private void EmitTlsCreateSecureContext(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -262,9 +266,42 @@ public partial class RuntimeEmitter
         runtime.RegisterBuiltInModuleMethod("tls", "createSecureContext", method);
 
         var il = method.GetILGenerator();
+        var dictType = _types.DictionaryStringObject;
+        var tryGet = dictType.GetMethod("TryGetValue")!;
+        var setItem = _types.GetMethod(dictType, "set_Item", _types.String, _types.Object);
 
-        // Return a new Dictionary<string,object?> to indicate success
-        il.Emit(OpCodes.Newobj, typeof(Dictionary<string, object?>).GetConstructor([])!);
+        // var ctx = new Dictionary<string,object?>();
+        var ctxLocal = il.DeclareLocal(dictType);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(dictType));
+        il.Emit(OpCodes.Stloc, ctxLocal);
+
+        // if (options is Dictionary<string,object?> opts) copy known keys
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, dictType);
+        il.Emit(OpCodes.Brfalse, done);
+        var optsLocal = il.DeclareLocal(dictType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, dictType);
+        il.Emit(OpCodes.Stloc, optsLocal);
+        var tmpLocal = il.DeclareLocal(_types.Object);
+        foreach (var key in new[] { "cert", "key", "ca", "minVersion", "maxVersion" })
+        {
+            var skip = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, optsLocal);
+            il.Emit(OpCodes.Ldstr, key);
+            il.Emit(OpCodes.Ldloca, tmpLocal);
+            il.Emit(OpCodes.Callvirt, tryGet);
+            il.Emit(OpCodes.Brfalse, skip);
+            il.Emit(OpCodes.Ldloc, ctxLocal);
+            il.Emit(OpCodes.Ldstr, key);
+            il.Emit(OpCodes.Ldloc, tmpLocal);
+            il.Emit(OpCodes.Callvirt, setItem);
+            il.MarkLabel(skip);
+        }
+        il.MarkLabel(done);
+
+        il.Emit(OpCodes.Ldloc, ctxLocal);
         il.Emit(OpCodes.Ret);
     }
 
