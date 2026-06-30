@@ -132,8 +132,32 @@ public abstract record TypeInfo
         }
     }
 
-    public record Primitive(TokenType Type) : TypeInfo
+    public record Primitive : TypeInfo
     {
+        private readonly TokenType _type;
+
+        public Primitive(TokenType type) => Type = type; // routes through the validating init accessor
+
+        /// <summary>
+        /// The primitive token. <c>string</c> is intentionally NOT representable here — it has a
+        /// dedicated <see cref="TypeInfo.String"/>. A <c>Primitive(TYPE_STRING)</c> value is matched by
+        /// neither the <c>is TypeInfo.String or StringLiteral</c> type-guards (so <c>typeof x === "string"</c>
+        /// narrowing silently fails) nor several compiled-path string switches, so the vestigial
+        /// representation is forbidden at construction (#1108).
+        /// </summary>
+        public TokenType Type
+        {
+            get => _type;
+            init => _type = value != TokenType.TYPE_STRING
+                ? value
+                : throw new ArgumentException(
+                    "Use TypeInfo.String for the 'string' type; Primitive(TYPE_STRING) is forbidden — " +
+                    "it is not matched by typeof type-guards (#1108).",
+                    nameof(value));
+        }
+
+        public void Deconstruct(out TokenType Type) => Type = _type;
+
         public override string ToString() => Type.ToString().Replace("TYPE_", "").ToLower();
     }
     
