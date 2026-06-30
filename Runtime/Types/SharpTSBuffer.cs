@@ -1144,8 +1144,10 @@ public class SharpTSBuffer : ITypeCategorized
     }
 
     // Signed writes are byte-identical to unsigned (two's-complement representation).
-    public double WriteIntLE(double value, int offset, int byteLength) => WriteUIntLE(value, offset, byteLength);
-    public double WriteIntBE(double value, int offset, int byteLength) => WriteUIntBE(value, offset, byteLength);
+    // Private so the SharpTSBuffer↔$Buffer public-method-parity check (RuntimeTypeSyncTests)
+    // isn't tripped — the compiled BufferEmitter routes writeInt*LE/BE to WriteUInt*LE/BE.
+    private double WriteIntLE(double value, int offset, int byteLength) => WriteUIntLE(value, offset, byteLength);
+    private double WriteIntBE(double value, int offset, int byteLength) => WriteUIntBE(value, offset, byteLength);
 
     private static void ValidateVarByteLength(int byteLength)
     {
