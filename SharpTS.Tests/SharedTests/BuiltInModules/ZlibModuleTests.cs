@@ -978,4 +978,142 @@ public class ZlibModuleTests
     }
 
     #endregion
+
+    #region Compression options (#1163)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Deflate_LevelExtremesRoundTrip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const input = Buffer.from('hello world '.repeat(200));
+                const c0 = zlib.deflateSync(input, { level: 0 });
+                const c9 = zlib.deflateSync(input, { level: 9 });
+                // level 0 (stored) must be larger than level 9 (best)
+                console.log(c0.length > c9.length);
+                console.log(zlib.inflateSync(c0).toString() === input.toString());
+                console.log(zlib.inflateSync(c9).toString() === input.toString());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Deflate_StrategyRoundTrip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const input = Buffer.from('aaaaabbbbbcccccddddd'.repeat(50));
+                const c = zlib.deflateSync(input, { level: 9, strategy: zlib.constants.Z_RLE });
+                console.log(zlib.inflateSync(c).toString() === input.toString());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Brotli_QualityExtremesDifferAndRoundTrip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const input = Buffer.from('the quick brown fox '.repeat(200));
+                const low = zlib.brotliCompressSync(input, {
+                    params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1 }
+                });
+                const high = zlib.brotliCompressSync(input, {
+                    params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11 }
+                });
+                // quality is genuinely honored: q11 compresses strictly better than q1
+                console.log(high.length < low.length);
+                console.log(zlib.brotliDecompressSync(low).toString() === input.toString());
+                console.log(zlib.brotliDecompressSync(high).toString() === input.toString());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Brotli_WindowRoundTrip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const input = Buffer.from('compress me with a small window '.repeat(100));
+                const c = zlib.brotliCompressSync(input, {
+                    params: {
+                        [zlib.constants.BROTLI_PARAM_QUALITY]: 11,
+                        [zlib.constants.BROTLI_PARAM_LGWIN]: 10
+                    }
+                });
+                console.log(zlib.brotliDecompressSync(c).toString() === input.toString());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Deflate_DictionaryRoundTrip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            // dictionary is a documented BCL ceiling (accepted, not applied), so a
+            // symmetric compress/decompress with the same option must still round-trip.
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const dict = Buffer.from('hello');
+                const input = Buffer.from('hello world hello world');
+                const c = zlib.deflateSync(input, { dictionary: dict });
+                console.log(zlib.inflateSync(c, { dictionary: dict }).toString() === input.toString());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_MaxOutputLength_Throws(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const input = Buffer.from('x'.repeat(10000));
+                const compressed = zlib.gzipSync(input);
+                let threw = false;
+                try {
+                    zlib.gunzipSync(compressed, { maxOutputLength: 10 });
+                } catch (e) {
+                    threw = true;
+                }
+                console.log(threw);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
 }
