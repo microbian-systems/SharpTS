@@ -23,7 +23,9 @@ public class SharpTSAgent : SharpTSEventEmitter
         maxSockets: double.PositiveInfinity, maxTotalSockets: double.PositiveInfinity,
         maxFreeSockets: 256, timeout: 0, scheduling: "lifo");
 
+    #pragma warning disable CS0414 // Field is assigned but never read — tracks agent lifecycle state
     private bool _destroyed;
+    #pragma warning restore CS0414
 
     // Observable connection-pool state (#1051). Real socket ownership lives in HttpClient's
     // connection pool, so these dictionaries are a Node-shaped shadow keyed by origin
