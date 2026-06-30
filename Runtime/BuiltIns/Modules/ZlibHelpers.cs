@@ -213,6 +213,34 @@ public static class ZlibHelpers
 
     #endregion
 
+    #region CRC-32
+
+    /// <summary>
+    /// Computes the CRC-32 checksum (IEEE 802.3, the same polynomial zlib's
+    /// <c>crc32()</c> uses) of <paramref name="data"/>, optionally continuing from a
+    /// previous <paramref name="initial"/> value. Returns an unsigned 32-bit result.
+    /// </summary>
+    /// <remarks>
+    /// Pure-BCL by design — a hand-rolled bitwise implementation rather than
+    /// <c>System.IO.Hashing.Crc32</c> so compiled standalone output stays
+    /// dependency-free (System.IO.Hashing is an out-of-band NuGet package, not part
+    /// of the shared framework). The compiled IL twin (<c>$Runtime.ZlibCrc32</c>)
+    /// emits the identical bitwise loop so interpreter and compiled agree exactly.
+    /// </remarks>
+    public static uint Crc32(byte[] data, uint initial = 0)
+    {
+        uint crc = ~initial;
+        foreach (byte b in data)
+        {
+            crc ^= b;
+            for (int k = 0; k < 8; k++)
+                crc = (crc >> 1) ^ (0xEDB88320u & (uint)(-(int)(crc & 1)));
+        }
+        return ~crc;
+    }
+
+    #endregion
+
     #region Helpers
 
     /// <summary>

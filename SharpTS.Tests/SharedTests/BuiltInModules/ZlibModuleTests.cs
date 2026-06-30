@@ -864,4 +864,118 @@ public class ZlibModuleTests
     }
 
     #endregion
+
+    #region crc32 / codes / constants (#1162)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Crc32_KnownValue(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            // Node's zlib.crc32('hello') === 907060870
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                console.log(zlib.crc32('hello'));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("907060870\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Crc32_EmptyIsZero(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                console.log(zlib.crc32(Buffer.alloc(0)));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("0\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Crc32_RunningValueChains(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            // crc32(' world', crc32('hello')) === crc32('hello world')
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const whole = zlib.crc32('hello world');
+                const chained = zlib.crc32(' world', zlib.crc32('hello'));
+                console.log(whole === chained);
+                console.log(whole === zlib.crc32(Buffer.from('hello world')));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Crc32_NamedImport(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { crc32 } from 'zlib';
+                console.log(crc32('hello'));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("907060870\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Codes_Bidirectional(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                console.log(zlib.codes.Z_OK);
+                console.log(zlib.codes.Z_STREAM_END);
+                console.log(zlib.codes.Z_DATA_ERROR);
+                console.log(zlib.codes['0']);
+                console.log(zlib.codes['-3']);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("0\n1\n-3\nZ_OK\nZ_DATA_ERROR\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Constants_Completeness(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                console.log(zlib.constants.Z_DEFAULT_LEVEL);
+                console.log(zlib.constants.Z_MIN_CHUNK);
+                console.log(zlib.constants.GZIP);
+                console.log(zlib.constants.ZSTD_e_end);
+                console.log(zlib.constants.BROTLI_DECODER_RESULT_SUCCESS);
+                console.log(zlib.constants.Z_MAX_CHUNK === Infinity);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("6\n64\n3\n2\n1\ntrue\n", output);
+    }
+
+    #endregion
 }

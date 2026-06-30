@@ -1017,8 +1017,15 @@ public static class BuiltInModuleTypes
             ["unzip"] = new TypeInfo.Function(
                 [inputType, anyType, anyType], new TypeInfo.Void(), RequiredParams: 2),
 
-            // Constants object
-            ["constants"] = anyType
+            // Checksums (Node 22+): crc32(data[, value]) -> number
+            ["crc32"] = new TypeInfo.Function(
+                [inputType, new TypeInfo.Primitive(TokenType.TYPE_NUMBER)],
+                new TypeInfo.Primitive(TokenType.TYPE_NUMBER),
+                RequiredParams: 1),
+
+            // Constants and error-code objects
+            ["constants"] = anyType,
+            ["codes"] = anyType
         };
     }
 

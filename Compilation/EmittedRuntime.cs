@@ -2291,6 +2291,8 @@ public class EmittedRuntime
     public MethodBuilder ZlibZstdDecompressSync { get; set; } = null!;
     public MethodBuilder ZlibUnzipSync { get; set; } = null!;
     public MethodBuilder ZlibGetConstants { get; set; } = null!;
+    public MethodBuilder ZlibGetCodes { get; set; } = null!;
+    public MethodBuilder ZlibCrc32 { get; set; } = null!;
 
     // Zlib streaming APIs
     public MethodBuilder ZlibCreateGzip { get; set; } = null!;

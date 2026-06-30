@@ -130,6 +130,35 @@ public static class ZlibConstants
     /// <summary>Default chunk size for streaming operations.</summary>
     public const int Z_DEFAULT_CHUNK = 16384;
 
+    /// <summary>Minimum chunk size.</summary>
+    public const int Z_MIN_CHUNK = 64;
+
+    /// <summary>Minimum compression level.</summary>
+    public const int Z_MIN_LEVEL = -1;
+
+    /// <summary>Maximum compression level.</summary>
+    public const int Z_MAX_LEVEL = 9;
+
+    /// <summary>Default compression level (zlib's level 6).</summary>
+    public const int Z_DEFAULT_LEVEL = 6;
+
+    #endregion
+
+    #region Codec Mode Identifiers
+
+    // Node's internal numeric codec ids (zlib.constants.DEFLATE etc.).
+    public const int DEFLATE = 1;
+    public const int INFLATE = 2;
+    public const int GZIP = 3;
+    public const int GUNZIP = 4;
+    public const int DEFLATERAW = 5;
+    public const int INFLATERAW = 6;
+    public const int UNZIP = 7;
+    public const int BROTLI_DECODE = 8;
+    public const int BROTLI_ENCODE = 9;
+    public const int ZSTD_COMPRESS = 10;
+    public const int ZSTD_DECOMPRESS = 11;
+
     #endregion
 
     #region Brotli Constants
@@ -214,6 +243,19 @@ public static class ZlibConstants
     /// <summary>Brotli decoder large window.</summary>
     public const int BROTLI_DECODER_PARAM_LARGE_WINDOW = 1;
 
+    // Brotli decoder result codes
+    /// <summary>Brotli decoder result: error.</summary>
+    public const int BROTLI_DECODER_RESULT_ERROR = 0;
+
+    /// <summary>Brotli decoder result: success.</summary>
+    public const int BROTLI_DECODER_RESULT_SUCCESS = 1;
+
+    /// <summary>Brotli decoder result: needs more input.</summary>
+    public const int BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT = 2;
+
+    /// <summary>Brotli decoder result: needs more output.</summary>
+    public const int BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT = 3;
+
     #endregion
 
     #region Zstd Constants
@@ -271,6 +313,16 @@ public static class ZlibConstants
     /// <summary>Default Zstd compression level.</summary>
     public const int ZSTD_defaultCLevel = 3;
 
+    // Zstd end-directive (streaming) constants
+    /// <summary>Zstd directive: continue collecting more input.</summary>
+    public const int ZSTD_e_continue = 0;
+
+    /// <summary>Zstd directive: flush any buffered data.</summary>
+    public const int ZSTD_e_flush = 1;
+
+    /// <summary>Zstd directive: flush and end the frame.</summary>
+    public const int ZSTD_e_end = 2;
+
     #endregion
 
     /// <summary>
@@ -321,6 +373,24 @@ public static class ZlibConstants
             ["Z_MIN_MEMLEVEL"] = (double)Z_MIN_MEMLEVEL,
             ["Z_MAX_MEMLEVEL"] = (double)Z_MAX_MEMLEVEL,
             ["Z_DEFAULT_CHUNK"] = (double)Z_DEFAULT_CHUNK,
+            ["Z_MIN_CHUNK"] = (double)Z_MIN_CHUNK,
+            ["Z_MAX_CHUNK"] = double.PositiveInfinity,
+            ["Z_MIN_LEVEL"] = (double)Z_MIN_LEVEL,
+            ["Z_MAX_LEVEL"] = (double)Z_MAX_LEVEL,
+            ["Z_DEFAULT_LEVEL"] = (double)Z_DEFAULT_LEVEL,
+
+            // Codec mode identifiers
+            ["DEFLATE"] = (double)DEFLATE,
+            ["INFLATE"] = (double)INFLATE,
+            ["GZIP"] = (double)GZIP,
+            ["GUNZIP"] = (double)GUNZIP,
+            ["DEFLATERAW"] = (double)DEFLATERAW,
+            ["INFLATERAW"] = (double)INFLATERAW,
+            ["UNZIP"] = (double)UNZIP,
+            ["BROTLI_DECODE"] = (double)BROTLI_DECODE,
+            ["BROTLI_ENCODE"] = (double)BROTLI_ENCODE,
+            ["ZSTD_COMPRESS"] = (double)ZSTD_COMPRESS,
+            ["ZSTD_DECOMPRESS"] = (double)ZSTD_DECOMPRESS,
 
             // Brotli operations
             ["BROTLI_OPERATION_PROCESS"] = (double)BROTLI_OPERATION_PROCESS,
@@ -358,6 +428,10 @@ public static class ZlibConstants
             // Brotli decoder parameters
             ["BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION"] = (double)BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION,
             ["BROTLI_DECODER_PARAM_LARGE_WINDOW"] = (double)BROTLI_DECODER_PARAM_LARGE_WINDOW,
+            ["BROTLI_DECODER_RESULT_ERROR"] = (double)BROTLI_DECODER_RESULT_ERROR,
+            ["BROTLI_DECODER_RESULT_SUCCESS"] = (double)BROTLI_DECODER_RESULT_SUCCESS,
+            ["BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT"] = (double)BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT,
+            ["BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT"] = (double)BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT,
 
             // Zstd compression parameters
             ["ZSTD_c_compressionLevel"] = (double)ZSTD_c_compressionLevel,
@@ -378,9 +452,47 @@ public static class ZlibConstants
             // Zstd compression level bounds
             ["ZSTD_minCLevel"] = (double)ZSTD_minCLevel,
             ["ZSTD_maxCLevel"] = (double)ZSTD_maxCLevel,
-            ["ZSTD_defaultCLevel"] = (double)ZSTD_defaultCLevel
+            ["ZSTD_defaultCLevel"] = (double)ZSTD_defaultCLevel,
+
+            // Zstd end directives
+            ["ZSTD_e_continue"] = (double)ZSTD_e_continue,
+            ["ZSTD_e_flush"] = (double)ZSTD_e_flush,
+            ["ZSTD_e_end"] = (double)ZSTD_e_end
         };
 
         return new SharpTSObject(constants);
+    }
+
+    /// <summary>
+    /// The nine zlib return codes as (name, value) pairs — the single source of
+    /// truth for both <see cref="CreateCodesObject"/> and the compiled
+    /// <c>$Runtime.ZlibGetCodes</c> twin.
+    /// </summary>
+    public static readonly (string Name, int Value)[] ReturnCodes =
+    [
+        ("Z_OK", Z_OK),
+        ("Z_STREAM_END", Z_STREAM_END),
+        ("Z_NEED_DICT", Z_NEED_DICT),
+        ("Z_ERRNO", Z_ERRNO),
+        ("Z_STREAM_ERROR", Z_STREAM_ERROR),
+        ("Z_DATA_ERROR", Z_DATA_ERROR),
+        ("Z_MEM_ERROR", Z_MEM_ERROR),
+        ("Z_BUF_ERROR", Z_BUF_ERROR),
+        ("Z_VERSION_ERROR", Z_VERSION_ERROR),
+    ];
+
+    /// <summary>
+    /// Creates the bidirectional <c>zlib.codes</c> object: every return code maps
+    /// name → numeric value AND numeric-value-string → name (matching Node).
+    /// </summary>
+    public static SharpTSObject CreateCodesObject()
+    {
+        var codes = new Dictionary<string, object?>();
+        foreach (var (name, value) in ReturnCodes)
+        {
+            codes[name] = (double)value;                 // name -> number
+            codes[value.ToString()] = name;              // numeric string -> name
+        }
+        return new SharpTSObject(codes);
     }
 }

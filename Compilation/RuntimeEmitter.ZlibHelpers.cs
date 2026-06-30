@@ -29,6 +29,8 @@ public partial class RuntimeEmitter
         EmitZlibZstdDecompressSync(typeBuilder, runtime);
         EmitZlibUnzipSync(typeBuilder, runtime);
         EmitZlibGetConstants(typeBuilder, runtime);
+        EmitZlibGetCodes(typeBuilder, runtime);
+        EmitZlibCrc32(typeBuilder, runtime);
 
         // Emit streaming create* methods (pure-IL, no reflection)
         EmitZlibStreamingMethods(typeBuilder, runtime);
@@ -539,6 +541,24 @@ public partial class RuntimeEmitter
         AddConstant("Z_MIN_MEMLEVEL", 1);
         AddConstant("Z_MAX_MEMLEVEL", 9);
         AddConstant("Z_DEFAULT_CHUNK", 16384);
+        AddConstant("Z_MIN_CHUNK", 64);
+        AddConstant("Z_MAX_CHUNK", double.PositiveInfinity);
+        AddConstant("Z_MIN_LEVEL", -1);
+        AddConstant("Z_MAX_LEVEL", 9);
+        AddConstant("Z_DEFAULT_LEVEL", 6);
+
+        // Codec mode identifiers
+        AddConstant("DEFLATE", 1);
+        AddConstant("INFLATE", 2);
+        AddConstant("GZIP", 3);
+        AddConstant("GUNZIP", 4);
+        AddConstant("DEFLATERAW", 5);
+        AddConstant("INFLATERAW", 6);
+        AddConstant("UNZIP", 7);
+        AddConstant("BROTLI_DECODE", 8);
+        AddConstant("BROTLI_ENCODE", 9);
+        AddConstant("ZSTD_COMPRESS", 10);
+        AddConstant("ZSTD_DECOMPRESS", 11);
 
         // Brotli constants
         AddConstant("BROTLI_OPERATION_PROCESS", 0);
@@ -566,6 +586,10 @@ public partial class RuntimeEmitter
         AddConstant("BROTLI_DEFAULT_WINDOW", 22);
         AddConstant("BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION", 0);
         AddConstant("BROTLI_DECODER_PARAM_LARGE_WINDOW", 1);
+        AddConstant("BROTLI_DECODER_RESULT_ERROR", 0);
+        AddConstant("BROTLI_DECODER_RESULT_SUCCESS", 1);
+        AddConstant("BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT", 2);
+        AddConstant("BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT", 3);
 
         // Zstd constants
         AddConstant("ZSTD_c_compressionLevel", 100);
@@ -585,8 +609,171 @@ public partial class RuntimeEmitter
         AddConstant("ZSTD_minCLevel", -131072);
         AddConstant("ZSTD_maxCLevel", 22);
         AddConstant("ZSTD_defaultCLevel", 3);
+        AddConstant("ZSTD_e_continue", 0);
+        AddConstant("ZSTD_e_flush", 1);
+        AddConstant("ZSTD_e_end", 2);
 
         il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static object ZlibGetCodes()
+    /// Creates the bidirectional zlib.codes object (name↔number) mirroring
+    /// <c>ZlibConstants.CreateCodesObject</c>.
+    /// </summary>
+    private void EmitZlibGetCodes(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ZlibGetCodes",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            Type.EmptyTypes);
+        runtime.ZlibGetCodes = method;
+
+        var il = method.GetILGenerator();
+
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Newobj, runtime.TSObjectCtor);
+        var objLocal = il.DeclareLocal(runtime.TSObjectType);
+        il.Emit(OpCodes.Stloc, objLocal);
+
+        void AddNumber(string name, double value)
+        {
+            il.Emit(OpCodes.Ldloc, objLocal);
+            il.Emit(OpCodes.Ldstr, name);
+            il.Emit(OpCodes.Ldc_R8, value);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Callvirt, runtime.TSObjectSetProperty);
+        }
+
+        void AddString(string key, string value)
+        {
+            il.Emit(OpCodes.Ldloc, objLocal);
+            il.Emit(OpCodes.Ldstr, key);
+            il.Emit(OpCodes.Ldstr, value);
+            il.Emit(OpCodes.Callvirt, runtime.TSObjectSetProperty);
+        }
+
+        foreach (var (name, value) in SharpTS.Runtime.BuiltIns.Modules.ZlibConstants.ReturnCodes)
+        {
+            AddNumber(name, value);                 // name -> number
+            AddString(value.ToString(), name);      // numeric string -> name
+        }
+
+        il.Emit(OpCodes.Ldloc, objLocal);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: public static object ZlibCrc32(object data, object value)
+    /// Computes CRC-32 (IEEE 802.3) with a hand-rolled bitwise loop — pure BCL,
+    /// byte-for-byte identical to <c>ZlibHelpers.Crc32</c> (interpreter twin), so
+    /// standalone output stays free of a System.IO.Hashing dependency.
+    /// </summary>
+    private void EmitZlibCrc32(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "ZlibCrc32",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]);
+        runtime.ZlibCrc32 = method;
+
+        var il = method.GetILGenerator();
+
+        // byte[] bytes = GetZlibInputBytes(data)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, _getZlibInputBytes!);
+        var bytesLocal = il.DeclareLocal(_types.MakeArrayType(_types.Byte));
+        il.Emit(OpCodes.Stloc, bytesLocal);
+
+        // uint crc = ~initial   (initial = (value is double) ? (uint)value : 0)
+        var initZero = il.DefineLabel();
+        var haveInit = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Brfalse, initZero);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+        il.Emit(OpCodes.Brtrue, initZero);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_U4);
+        il.Emit(OpCodes.Br, haveInit);
+        il.MarkLabel(initZero);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.MarkLabel(haveInit);
+        il.Emit(OpCodes.Ldc_I4_M1);  // 0xFFFFFFFF
+        il.Emit(OpCodes.Xor);        // crc = ~initial
+        var crcLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Stloc, crcLocal);
+
+        // for (int i = 0; i < bytes.Length; i++)
+        var iLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, iLocal);
+        var loopStart = il.DefineLabel();
+        var loopEnd = il.DefineLabel();
+        il.MarkLabel(loopStart);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldloc, bytesLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Bge, loopEnd);
+
+        // crc ^= bytes[i]
+        il.Emit(OpCodes.Ldloc, crcLocal);
+        il.Emit(OpCodes.Ldloc, bytesLocal);
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldelem_U1);
+        il.Emit(OpCodes.Xor);
+        il.Emit(OpCodes.Stloc, crcLocal);
+
+        // for (int k = 0; k < 8; k++)
+        var kLocal = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, kLocal);
+        var innerStart = il.DefineLabel();
+        var innerEnd = il.DefineLabel();
+        il.MarkLabel(innerStart);
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldc_I4_8);
+        il.Emit(OpCodes.Bge, innerEnd);
+
+        // crc = (crc >>> 1) ^ (0xEDB88320 & -(crc & 1))
+        il.Emit(OpCodes.Ldloc, crcLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Shr_Un);
+        il.Emit(OpCodes.Ldc_I4, unchecked((int)0xEDB88320));
+        il.Emit(OpCodes.Ldloc, crcLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Neg);        // mask: 0 or 0xFFFFFFFF
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Xor);
+        il.Emit(OpCodes.Stloc, crcLocal);
+
+        il.Emit(OpCodes.Ldloc, kLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, kLocal);
+        il.Emit(OpCodes.Br, innerStart);
+        il.MarkLabel(innerEnd);
+
+        il.Emit(OpCodes.Ldloc, iLocal);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, iLocal);
+        il.Emit(OpCodes.Br, loopStart);
+        il.MarkLabel(loopEnd);
+
+        // return (double)(uint)(~crc)
+        il.Emit(OpCodes.Ldloc, crcLocal);
+        il.Emit(OpCodes.Ldc_I4_M1);
+        il.Emit(OpCodes.Xor);
+        il.Emit(OpCodes.Conv_R_Un);  // treat as unsigned -> float
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
         il.Emit(OpCodes.Ret);
     }
 
@@ -787,7 +974,8 @@ public partial class RuntimeEmitter
             ("brotliDecompressSync", runtime.ZlibBrotliDecompressSync),
             ("zstdCompressSync", runtime.ZlibZstdCompressSync),
             ("zstdDecompressSync", runtime.ZlibZstdDecompressSync),
-            ("unzipSync", runtime.ZlibUnzipSync)
+            ("unzipSync", runtime.ZlibUnzipSync),
+            ("crc32", runtime.ZlibCrc32)
         };
 
         foreach (var (name, targetMethod) in methodNames)
