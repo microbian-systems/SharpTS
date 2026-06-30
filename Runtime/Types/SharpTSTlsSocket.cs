@@ -63,6 +63,16 @@ public class SharpTSTlsSocket : SharpTSSocket
             "getProtocol" => BuiltInMethod.CreateV2("getProtocol", 0, GetProtocol),
             "renegotiate" => BuiltInMethod.CreateV2("renegotiate", 0, 2, Renegotiate),
 
+            // Advanced TLS APIs not exposed by .NET SslStream — throw a clear error rather than
+            // a silent no-op (documented ceilings; kept in sync with the compiled $TlsSocket).
+            "getSession" => UnsupportedMethod("getSession"),
+            "setSession" => UnsupportedMethod("setSession"),
+            "getTLSTicket" => UnsupportedMethod("getTLSTicket"),
+            "getPeerFinished" => UnsupportedMethod("getPeerFinished"),
+            "getFinished" => UnsupportedMethod("getFinished"),
+            "setMaxSendFragment" => UnsupportedMethod("setMaxSendFragment"),
+            "exportKeyingMaterial" => UnsupportedMethod("exportKeyingMaterial"),
+
             // Fall through to base Socket members
             _ => base.GetMember(name)
         };
@@ -205,6 +215,16 @@ public class SharpTSTlsSocket : SharpTSSocket
         // Node.js renegotiate() - not widely used, return this for chaining
         return RuntimeValue.FromObject(this);
     }
+
+    /// <summary>
+    /// Returns a built-in that throws a clear "not supported on this runtime" error — used for the
+    /// TLS APIs .NET SslStream doesn't expose (session tickets, Finished messages, keying material,
+    /// max-fragment, PSK). See the "Known .NET / SslStream ceilings" in epic #1032.
+    /// </summary>
+    private static BuiltInMethod UnsupportedMethod(string name) =>
+        BuiltInMethod.CreateV2(name, 0, int.MaxValue, (interp, receiver, args) =>
+            throw new SharpTS.Runtime.Exceptions.ThrowException(new SharpTSError(
+                $"tls.TLSSocket.{name}() is not supported on this runtime (not exposed by .NET SslStream)")));
 
     /// <summary>
     /// Maps SslStream chain-validation errors to a Node-ish authorizationError string.

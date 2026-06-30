@@ -117,6 +117,11 @@ public partial class RuntimeEmitter
         EmitTlsSocketGetProtocol(typeBuilder);
         EmitTlsSocketGetPeerCertificate(typeBuilder);
         EmitTlsSocketRenegotiate(typeBuilder);
+        // Advanced TLS APIs not exposed by .NET SslStream — throw a clear error (not a silent
+        // no-op), matching interp SharpTSTlsSocket. See the #1032 "Known SslStream ceilings".
+        foreach (var m in new[] { "GetSession", "SetSession", "GetTLSTicket", "GetPeerFinished",
+                                  "GetFinished", "SetMaxSendFragment", "ExportKeyingMaterial" })
+            EmitTlsSocketUnsupported(typeBuilder, runtime, m);
         EmitTlsSocketGetMember(typeBuilder, runtime);
 
         // NOTE: CreateType() deferred to EmitTlsSocketFinalize (Phase 2).
@@ -626,6 +631,23 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits a 0-arg method that throws a "$methodName is not supported on this runtime" $Error.
+    /// The leading "Get/Set" is lowercased to derive the JS name for the message.
+    /// </summary>
+    private void EmitTlsSocketUnsupported(TypeBuilder typeBuilder, EmittedRuntime runtime, string methodName)
+    {
+        var method = typeBuilder.DefineMethod(methodName, MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var il = method.GetILGenerator();
+        var jsName = char.ToLowerInvariant(methodName[0]) + methodName.Substring(1);
+        il.Emit(OpCodes.Ldstr, $"tls.TLSSocket.{jsName}() is not supported on this runtime (not exposed by .NET SslStream)");
+        il.Emit(OpCodes.Newobj, runtime.TSErrorCtorMessage);
+        // Wrap the $Error so the compiled guest try/catch can catch it (a raw $Error is not a
+        // System.Exception and would surface as a RuntimeWrappedException).
+        il.Emit(OpCodes.Call, runtime.CreateException);
+        il.Emit(OpCodes.Throw);
     }
 
     /// <summary>
