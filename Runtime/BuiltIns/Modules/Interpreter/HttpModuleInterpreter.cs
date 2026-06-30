@@ -46,6 +46,35 @@ public static class HttpModuleInterpreter
     }
 
     /// <summary>
+    /// Gets the exports for the 'https' module: the http client surface over TLS (#1050) plus a
+    /// real TLS-terminating createServer (#1049, interpreter).
+    /// </summary>
+    public static Dictionary<string, object?> GetHttpsExports()
+    {
+        var exports = GetExports(isHttps: true);
+        exports["createServer"] = BuiltInMethod.CreateV2("createServer", 0, 2, CreateHttpsServer);
+        // https.Agent / globalAgent are TLS-aware aliases (same Agent surface; #1050).
+        return exports;
+    }
+
+    /// <summary>
+    /// Creates a real HTTPS server (#1049): builds <see cref="SharpTSHttpsServer"/> over the
+    /// tls #1032 server, terminating TLS and running the HTTP pipeline over each connection.
+    /// </summary>
+    private static RuntimeValue CreateHttpsServer(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        SharpTSObject? options = null;
+        ISharpTSCallable? handler = null;
+        if (args.Length > 0)
+        {
+            if (args[0].ToObject() is SharpTSObject o) options = o;
+            else if (args[0].ToObject() is ISharpTSCallable c) handler = c;
+        }
+        if (args.Length > 1 && args[1].ToObject() is ISharpTSCallable c2) handler = c2;
+        return RuntimeValue.FromObject(new SharpTSHttpsServer(options, handler));
+    }
+
+    /// <summary>
     /// Creates an HTTP server.
     /// </summary>
     /// <param name="interpreter">The interpreter instance.</param>
