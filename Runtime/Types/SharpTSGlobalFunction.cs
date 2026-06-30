@@ -44,15 +44,6 @@ public sealed class SharpTSGlobalFunction : ISharpTSCallable, ITypeCategorized
             return task.GetAwaiter().GetResult().ToObject();
         }
 
-        if (GlobalFunctionRegistry.Instance.TryGetHandler(Name, out var handler) && handler != null)
-        {
-            var task = handler(
-                expr => ValueTask.FromResult(interpreter.Evaluate(expr)),
-                argExprs,
-                interpreter);
-            return task.GetAwaiter().GetResult();
-        }
-
         throw new Exception($"Runtime Error: Global function '{Name}' is not registered.");
     }
 

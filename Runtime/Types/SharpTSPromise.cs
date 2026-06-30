@@ -164,11 +164,6 @@ public class SharpTSPromise : ITypeCategorized
     /// </summary>
     public bool IsFaulted => _task.IsFaulted;
 
-    /// <summary>
-    /// Checks if the Promise was successfully resolved.
-    /// </summary>
-    public bool IsResolved => _task.IsCompletedSuccessfully;
-
     public override string ToString() => _task.Status switch
     {
         TaskStatus.RanToCompletion => $"Promise {{ <resolved>: {_task.Result} }}",

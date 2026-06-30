@@ -10,7 +10,6 @@ namespace SharpTS.Runtime.Types;
 /// Follows Node.js-style Timeout object behavior with:
 /// - Unique ID for each timeout (thread-safe generation)
 /// - CancellationTokenSource for cancellation support
-/// - Timer reference for System.Threading.Timer-based implementation
 /// - ref()/unref() methods for controlling program exit behavior
 /// </remarks>
 public class SharpTSTimeout : ITypeCategorized
@@ -20,8 +19,6 @@ public class SharpTSTimeout : ITypeCategorized
     private static int _nextId = 0;
     private readonly int _id;
     private readonly CancellationTokenSource _cts;
-    private Task? _task;
-    private Timer? _timer;
     private bool _hasRef = true;
     private bool _isRefed;
     private Action? _onRef;
@@ -38,18 +35,6 @@ public class SharpTSTimeout : ITypeCategorized
     }
 
     /// <summary>
-    /// Creates a new timeout handle with a unique ID, cancellation support, and task reference.
-    /// </summary>
-    /// <param name="cts">The cancellation token source for this timeout.</param>
-    /// <param name="task">The task representing the delayed execution.</param>
-    public SharpTSTimeout(CancellationTokenSource cts, Task task)
-    {
-        _id = Interlocked.Increment(ref _nextId);
-        _cts = cts;
-        _task = task;
-    }
-
-    /// <summary>
     /// Gets the unique identifier for this timeout.
     /// </summary>
     public int Id => _id;
@@ -58,24 +43,6 @@ public class SharpTSTimeout : ITypeCategorized
     /// Gets the cancellation token source for this timeout.
     /// </summary>
     public CancellationTokenSource CancellationTokenSource => _cts;
-
-    /// <summary>
-    /// Gets or sets the task representing the delayed execution (for Task-based implementation).
-    /// </summary>
-    public Task? Task
-    {
-        get => _task;
-        set => _task = value;
-    }
-
-    /// <summary>
-    /// Gets or sets the timer for System.Threading.Timer-based implementation.
-    /// </summary>
-    public Timer? Timer
-    {
-        get => _timer;
-        set => _timer = value;
-    }
 
     /// <summary>
     /// Gets whether this timeout has been cancelled.
@@ -98,9 +65,6 @@ public class SharpTSTimeout : ITypeCategorized
         {
             _cts.Cancel();
         }
-        // Dispose the timer to stop it from firing
-        _timer?.Dispose();
-        _timer = null;
 
         ReleaseRef();
     }

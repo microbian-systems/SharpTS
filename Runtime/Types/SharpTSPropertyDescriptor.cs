@@ -368,17 +368,4 @@ public class SharpTSPropertyDescriptor
             configurable: true
         );
     }
-
-    /// <summary>
-    /// Creates a descriptor for an accessor pair.
-    /// </summary>
-    public static SharpTSPropertyDescriptor ForAccessor(ISharpTSCallable? getter, ISharpTSCallable? setter)
-    {
-        return new SharpTSPropertyDescriptor(
-            getter: getter,
-            setter: setter,
-            enumerable: false,
-            configurable: true
-        );
-    }
 }
