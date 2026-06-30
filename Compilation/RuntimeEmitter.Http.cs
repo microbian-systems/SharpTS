@@ -97,6 +97,7 @@ public partial class RuntimeEmitter
         EmitHttpRequest(typeBuilder, runtime);
         EmitHttpGet(typeBuilder, runtime);
         EmitHttpGetMethods(typeBuilder, runtime);
+        EmitHttpHeaderUtilities(typeBuilder, runtime);
         EmitHttpGetStatusCodes(typeBuilder, runtime);
         EmitAgentHelperMethods(typeBuilder, runtime);
         EmitHttpGetGlobalAgent(typeBuilder, runtime);
@@ -2828,8 +2829,15 @@ public partial class RuntimeEmitter
 
         var il = method.GetILGenerator();
 
-        // Create array with common HTTP methods
-        string[] methods = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "CONNECT", "TRACE"];
+        // Full Node 24 http.METHODS list (kept in sync with HttpModuleInterpreter.GetMethods).
+        string[] methods =
+        [
+            "ACL", "BIND", "CHECKOUT", "CONNECT", "COPY", "DELETE", "GET", "HEAD",
+            "LINK", "LOCK", "M-SEARCH", "MERGE", "MKACTIVITY", "MKCALENDAR", "MKCOL",
+            "MOVE", "NOTIFY", "OPTIONS", "PATCH", "POST", "PROPFIND", "PROPPATCH",
+            "PURGE", "PUT", "REBIND", "REPORT", "SEARCH", "SOURCE", "SUBSCRIBE",
+            "TRACE", "UNBIND", "UNLINK", "UNLOCK", "UNSUBSCRIBE"
+        ];
 
         il.Emit(OpCodes.Ldc_I4, methods.Length);
         il.Emit(OpCodes.Newarr, _types.Object);
@@ -2845,6 +2853,100 @@ public partial class RuntimeEmitter
         // Wrap in $Array
         il.Emit(OpCodes.Call, runtime.CreateArray);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits the #1052 header utilities: validateHeaderName / validateHeaderValue (Regex-based,
+    /// throwing guest TypeErrors with the Node error codes) and setMaxIdleHTTPParsers (no-op).
+    /// Pure BCL (Regex) — standalone-safe.
+    /// </summary>
+    private void EmitHttpHeaderUtilities(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var regexType = typeof(System.Text.RegularExpressions.Regex);
+        var isMatch = regexType.GetMethod("IsMatch", [_types.String, _types.String])!;
+        var objToString = _types.Object.GetMethod("ToString", Type.EmptyTypes)!;
+
+        void EmitThrowTypeError(ILGenerator il, string message, string code)
+        {
+            il.Emit(OpCodes.Ldstr, message);
+            il.Emit(OpCodes.Newobj, runtime.TSTypeErrorCtor);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldstr, code);
+            il.Emit(OpCodes.Callvirt, runtime.TSErrorCodeSetter);
+            il.Emit(OpCodes.Call, runtime.CreateException);
+            il.Emit(OpCodes.Throw);
+        }
+
+        // object HttpValidateHeaderName(object name)
+        var vn = typeBuilder.DefineMethod("HttpValidateHeaderName",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object]);
+        runtime.HttpValidateHeaderName = vn;
+        {
+            var il = vn.GetILGenerator();
+            var sLocal = il.DeclareLocal(_types.String);
+            var okLabel = il.DefineLabel();
+            var throwLabel = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, _types.String);
+            il.Emit(OpCodes.Stloc, sLocal);
+            il.Emit(OpCodes.Ldloc, sLocal);
+            il.Emit(OpCodes.Brfalse, throwLabel);
+            il.Emit(OpCodes.Ldloc, sLocal);
+            il.Emit(OpCodes.Ldstr, "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$");
+            il.Emit(OpCodes.Call, isMatch);
+            il.Emit(OpCodes.Brtrue, okLabel);
+            il.MarkLabel(throwLabel);
+            EmitThrowTypeError(il, "Header name must be a valid HTTP token", "ERR_INVALID_HTTP_TOKEN");
+            il.MarkLabel(okLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // object HttpValidateHeaderValue(object name, object value)
+        var vv = typeBuilder.DefineMethod("HttpValidateHeaderValue",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object, _types.Object]);
+        runtime.HttpValidateHeaderValue = vv;
+        {
+            var il = vv.GetILGenerator();
+            var vstr = il.DeclareLocal(_types.String);
+            var throwUndef = il.DefineLabel();
+            var throwChar = il.DefineLabel();
+            var okLabel = il.DefineLabel();
+            // value == null → throw ERR_HTTP_INVALID_HEADER_VALUE
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Brfalse, throwUndef);
+            // value is Undefined → throw
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Isinst, runtime.UndefinedType);
+            il.Emit(OpCodes.Brtrue, throwUndef);
+            // vstr = value.ToString()
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Callvirt, objToString);
+            il.Emit(OpCodes.Stloc, vstr);
+            // if (Regex.IsMatch(vstr, invalidPattern)) throw ERR_INVALID_CHAR
+            il.Emit(OpCodes.Ldloc, vstr);
+            il.Emit(OpCodes.Ldstr, "[\\u0000-\\u0008\\u000A-\\u001F\\u007F]");
+            il.Emit(OpCodes.Call, isMatch);
+            il.Emit(OpCodes.Brtrue, throwChar);
+            il.Emit(OpCodes.Br, okLabel);
+            il.MarkLabel(throwUndef);
+            EmitThrowTypeError(il, "Invalid value \"undefined\" for header", "ERR_HTTP_INVALID_HEADER_VALUE");
+            il.MarkLabel(throwChar);
+            EmitThrowTypeError(il, "Invalid character in header content", "ERR_INVALID_CHAR");
+            il.MarkLabel(okLabel);
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Ret);
+        }
+
+        // object HttpSetMaxIdleParsers(object max) — no-op
+        var sp = typeBuilder.DefineMethod("HttpSetMaxIdleParsers",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object, [_types.Object]);
+        runtime.HttpSetMaxIdleParsers = sp;
+        {
+            var il = sp.GetILGenerator();
+            il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            il.Emit(OpCodes.Ret);
+        }
     }
 
     /// <summary>

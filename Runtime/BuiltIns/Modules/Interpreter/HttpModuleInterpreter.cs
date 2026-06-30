@@ -41,8 +41,43 @@ public static class HttpModuleInterpreter
             ["METHODS"] = GetMethods(),
             ["STATUS_CODES"] = GetStatusCodes(),
             ["globalAgent"] = SharpTSAgent.GlobalAgent,
-            ["Agent"] = BuiltInMethod.CreateV2("Agent", 0, 1, ConstructAgent)
+            ["Agent"] = BuiltInMethod.CreateV2("Agent", 0, 1, ConstructAgent),
+            // Utilities + constants (#1052).
+            ["validateHeaderName"] = BuiltInMethod.CreateV2("validateHeaderName", 1, 2, ValidateHeaderName),
+            ["validateHeaderValue"] = BuiltInMethod.CreateV2("validateHeaderValue", 2, ValidateHeaderValue),
+            ["maxHeaderSize"] = (double)HttpHeaderValidation.MaxHeaderSize,
+            ["setMaxIdleHTTPParsers"] = BuiltInMethod.CreateV2("setMaxIdleHTTPParsers", 1,
+                (_, _, _) => RuntimeValue.Undefined)
         };
+    }
+
+    private static RuntimeValue ValidateHeaderName(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var name = args.Length > 0 ? args[0].ToObject() as string : null;
+        if (name == null || !HttpHeaderValidation.IsValidHttpToken(name))
+        {
+            var shown = args.Length > 0 ? args[0].ToObject()?.ToString() ?? "undefined" : "undefined";
+            throw new Runtime.Exceptions.ThrowException(
+                new SharpTSTypeError($"Header name must be a valid HTTP token [\"{shown}\"]") { Code = "ERR_INVALID_HTTP_TOKEN" });
+        }
+        return RuntimeValue.Undefined;
+    }
+
+    private static RuntimeValue ValidateHeaderValue(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var name = args.Length > 0 ? args[0].ToObject()?.ToString() ?? "" : "";
+        if (args.Length < 2 || args[1].IsUndefined)
+        {
+            throw new Runtime.Exceptions.ThrowException(
+                new SharpTSTypeError($"Invalid value \"undefined\" for header \"{name}\"") { Code = "ERR_HTTP_INVALID_HEADER_VALUE" });
+        }
+        var value = args[1].ToObject()?.ToString() ?? "";
+        if (HttpHeaderValidation.HasInvalidHeaderChar(value))
+        {
+            throw new Runtime.Exceptions.ThrowException(
+                new SharpTSTypeError($"Invalid character in header content [\"{name}\"]") { Code = "ERR_INVALID_CHAR" });
+        }
+        return RuntimeValue.Undefined;
     }
 
     /// <summary>
