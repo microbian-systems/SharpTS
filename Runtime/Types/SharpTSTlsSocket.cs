@@ -177,7 +177,9 @@ public class SharpTSTlsSocket : SharpTSSocket
             ["issuer"] = _peerCertificate.Issuer,
             ["valid_from"] = _peerCertificate.NotBefore.ToString("R"),
             ["valid_to"] = _peerCertificate.NotAfter.ToString("R"),
-            ["serialNumber"] = _peerCertificate.SerialNumber
+            ["serialNumber"] = _peerCertificate.SerialNumber,
+            ["fingerprint"] = _peerCertificate.Thumbprint,
+            ["subjectaltname"] = SubjectAltName(_peerCertificate)
         }));
     }
 
@@ -191,6 +193,27 @@ public class SharpTSTlsSocket : SharpTSSocket
     {
         // Node.js renegotiate() - not widely used, return this for chaining
         return RuntimeValue.FromObject(this);
+    }
+
+    /// <summary>
+    /// Formats a certificate's Subject Alternative Name extension the way Node does:
+    /// "DNS:localhost, IP Address:127.0.0.1". Returns null if no SAN extension is present.
+    /// </summary>
+    internal static string? SubjectAltName(X509Certificate2 cert)
+    {
+        foreach (var ext in cert.Extensions)
+        {
+            if (ext.Oid?.Value != "2.5.29.17") continue;
+            var san = ext as X509SubjectAlternativeNameExtension
+                      ?? new X509SubjectAlternativeNameExtension(ext.RawData);
+            var parts = new List<string>();
+            foreach (var dns in san.EnumerateDnsNames())
+                parts.Add("DNS:" + dns);
+            foreach (var ip in san.EnumerateIPAddresses())
+                parts.Add("IP Address:" + ip.ToString());
+            return parts.Count > 0 ? string.Join(", ", parts) : null;
+        }
+        return null;
     }
 
     private static string? GetProtocolString(SslProtocols protocol)

@@ -18,6 +18,7 @@ public partial class RuntimeEmitter
         EmitTlsConnect(typeBuilder, runtime);
         EmitTlsCreateSocket(typeBuilder, runtime);
         EmitTlsCreateSecureContext(typeBuilder, runtime);
+        EmitTlsCheckServerIdentity(typeBuilder, runtime);
         EmitTlsGetDefaultMinVersion(typeBuilder, runtime);
         EmitTlsGetDefaultMaxVersion(typeBuilder, runtime);
     }

@@ -36,6 +36,7 @@ public partial class RuntimeEmitter
     private MethodBuilder _tlsAcceptAnyCertMethod = null!;      // static bool _AcceptAnyCert(...) for rejectUnauthorized:false
     private MethodBuilder _tlsAlpnStringMethod = null!;         // static string _AlpnString(SslStream)
     private MethodBuilder _tlsLoadCertMethod = null!;           // static X509Certificate2 _LoadCert(string cert, string key)
+    private MethodBuilder _tlsSanStringMethod = null!;          // static string _SanString(X509Certificate2)
 
     // ---- $TlsServer field builders ----
     private TypeBuilder _tlsServerTypeBuilder = null!;
@@ -109,6 +110,7 @@ public partial class RuntimeEmitter
         EmitTlsAcceptAnyCertHelper(typeBuilder);
         EmitTlsAlpnStringHelper(typeBuilder);
         EmitTlsLoadCertHelper(typeBuilder);
+        EmitTlsSanStringHelper(typeBuilder);
 
         // TLS-specific methods
         EmitTlsSocketGetCipher(typeBuilder);
@@ -327,6 +329,118 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits: internal static string _SanString(X509Certificate2 cert)
+    /// Formats the Subject Alternative Name extension as "DNS:host, IP Address:1.2.3.4" (Node style),
+    /// or null when absent. Mirrors interp SharpTSTlsSocket.SubjectAltName.
+    /// </summary>
+    private void EmitTlsSanStringHelper(TypeBuilder typeBuilder)
+    {
+        var sanExtType = typeof(X509SubjectAlternativeNameExtension);
+        var method = typeBuilder.DefineMethod(
+            "_SanString",
+            MethodAttributes.Assembly | MethodAttributes.Static,
+            _types.String,
+            [typeof(X509Certificate2)]
+        );
+        _tlsSanStringMethod = method;
+        var il = method.GetILGenerator();
+
+        var listType = typeof(List<string>);
+        var listAdd = listType.GetMethod("Add")!;
+        var listCount = listType.GetProperty("Count")!.GetGetMethod()!;
+        var concat2 = _types.String.GetMethod("Concat", [_types.String, _types.String])!;
+        var joinEnum = _types.String.GetMethod("Join", [_types.String, typeof(IEnumerable<string>)])!;
+
+        // ext = cert.Extensions["2.5.29.17"]; if (ext == null) return null;
+        var extLocal = il.DeclareLocal(typeof(System.Security.Cryptography.X509Certificates.X509Extension));
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Callvirt, typeof(X509Certificate2).GetProperty("Extensions")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ldstr, "2.5.29.17");
+        il.Emit(OpCodes.Callvirt, typeof(System.Security.Cryptography.X509Certificates.X509ExtensionCollection).GetMethod("get_Item", [_types.String])!);
+        il.Emit(OpCodes.Stloc, extLocal);
+        var retNull = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, extLocal);
+        il.Emit(OpCodes.Brfalse, retNull);
+
+        // san = ext as X509SubjectAlternativeNameExtension; if (san == null) return null;
+        var sanLocal = il.DeclareLocal(sanExtType);
+        il.Emit(OpCodes.Ldloc, extLocal);
+        il.Emit(OpCodes.Isinst, sanExtType);
+        il.Emit(OpCodes.Stloc, sanLocal);
+        il.Emit(OpCodes.Ldloc, sanLocal);
+        il.Emit(OpCodes.Brfalse, retNull);
+
+        // parts = new List<string>()
+        var partsLocal = il.DeclareLocal(listType);
+        il.Emit(OpCodes.Newobj, listType.GetConstructor(Type.EmptyTypes)!);
+        il.Emit(OpCodes.Stloc, partsLocal);
+
+        // foreach (var dns in san.EnumerateDnsNames()) parts.Add("DNS:" + dns);
+        EmitTlsSanForeach(il, sanLocal, partsLocal, listAdd, concat2, "DNS:",
+            sanExtType.GetMethod("EnumerateDnsNames", Type.EmptyTypes)!,
+            typeof(IEnumerable<string>), typeof(IEnumerator<string>), needsToString: false);
+
+        // foreach (var ip in san.EnumerateIPAddresses()) parts.Add("IP Address:" + ip.ToString());
+        EmitTlsSanForeach(il, sanLocal, partsLocal, listAdd, concat2, "IP Address:",
+            sanExtType.GetMethod("EnumerateIPAddresses", Type.EmptyTypes)!,
+            typeof(IEnumerable<System.Net.IPAddress>), typeof(IEnumerator<System.Net.IPAddress>),
+            needsToString: true);
+
+        // return parts.Count > 0 ? string.Join(", ", parts) : null;
+        var someParts = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, partsLocal);
+        il.Emit(OpCodes.Callvirt, listCount);
+        il.Emit(OpCodes.Brtrue, someParts);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(someParts);
+        il.Emit(OpCodes.Ldstr, ", ");
+        il.Emit(OpCodes.Ldloc, partsLocal);
+        il.Emit(OpCodes.Call, joinEnum);
+        il.Emit(OpCodes.Ret);
+
+        il.MarkLabel(retNull);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits a foreach over <paramref name="enumerateMethod"/> that appends prefix+item (item.ToString()
+    /// when <paramref name="needsToString"/>) to the parts list.
+    /// </summary>
+    private void EmitTlsSanForeach(ILGenerator il, LocalBuilder sanLocal, LocalBuilder partsLocal, MethodInfo listAdd,
+        MethodInfo concat2, string prefix, MethodInfo enumerateMethod, Type enumerableType, Type enumeratorType, bool needsToString)
+    {
+        var getEnumerator = enumerableType.GetMethod("GetEnumerator", Type.EmptyTypes)!;
+        var moveNext = typeof(System.Collections.IEnumerator).GetMethod("MoveNext")!;
+        var getCurrent = enumeratorType.GetProperty("Current")!.GetGetMethod()!;
+
+        var enumLocal = il.DeclareLocal(enumeratorType);
+        il.Emit(OpCodes.Ldloc, sanLocal);
+        il.Emit(OpCodes.Callvirt, enumerateMethod);
+        il.Emit(OpCodes.Callvirt, getEnumerator);
+        il.Emit(OpCodes.Stloc, enumLocal);
+
+        var top = il.DefineLabel();
+        var chk = il.DefineLabel();
+        il.Emit(OpCodes.Br, chk);
+        il.MarkLabel(top);
+        // parts.Add(prefix + current[.ToString()])
+        il.Emit(OpCodes.Ldloc, partsLocal);
+        il.Emit(OpCodes.Ldstr, prefix);
+        il.Emit(OpCodes.Ldloc, enumLocal);
+        il.Emit(OpCodes.Callvirt, getCurrent);
+        if (needsToString)
+            il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Call, concat2);
+        il.Emit(OpCodes.Callvirt, listAdd);
+        il.MarkLabel(chk);
+        il.Emit(OpCodes.Ldloc, enumLocal);
+        il.Emit(OpCodes.Callvirt, moveNext);
+        il.Emit(OpCodes.Brtrue, top);
+    }
+
+    /// <summary>
     /// Emits: public object? GetCipher()
     /// Reads the negotiated cipher suite + protocol from the retained SslStream.
     /// </summary>
@@ -433,6 +547,14 @@ public partial class RuntimeEmitter
         // valid_from = _peerCert.NotBefore.ToString("R")
         EmitTlsDictPut(il, dictLocal, "valid_from", () => EmitLoadCertDateProp(il, "NotBefore"), setItem);
         EmitTlsDictPut(il, dictLocal, "valid_to", () => EmitLoadCertDateProp(il, "NotAfter"), setItem);
+
+        // subjectaltname = _SanString(_peerCert)  (may be null)
+        EmitTlsDictPut(il, dictLocal, "subjectaltname", () =>
+        {
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tlsSocketPeerCertField);
+            il.Emit(OpCodes.Call, _tlsSanStringMethod);
+        }, setItem);
 
         il.Emit(OpCodes.Ldloc, dictLocal);
         il.Emit(OpCodes.Ret);

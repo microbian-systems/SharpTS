@@ -504,6 +504,38 @@ public class TlsModuleTests
             output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TlsSocket_PeerCertSubjectAltName_Parity(ExecutionMode mode)
+    {
+        // getPeerCertificate().subjectaltname is formatted "DNS:…, IP Address:…" identically in
+        // both modes, and is consumable by tls.checkServerIdentity.
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key }, (socket: any) => {
+                    socket.end();
+                    server.close();
+                });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect(addr.port, '127.0.0.1', { rejectUnauthorized: false }, () => {
+                        const pc = client.getPeerCertificate();
+                        console.log('san-dns:' + (pc.subjectaltname.indexOf('DNS:localhost') >= 0));
+                        console.log('identity-ok:' + (tls.checkServerIdentity('localhost', pc) === undefined));
+                        client.end();
+                    });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Equal("san-dns:true\nidentity-ok:true\n", output);
+    }
+
     #endregion
 
     #region I/O + renegotiate parity (#1035)

@@ -25,6 +25,7 @@ public static class TlsModuleInterpreter
             ["createServer"] = BuiltInMethod.CreateV2("createServer", 0, 2, CreateServer),
             ["connect"] = BuiltInMethod.CreateV2("connect", 1, 4, Connect),
             ["createSecureContext"] = BuiltInMethod.CreateV2("createSecureContext", 0, 1, CreateSecureContext),
+            ["checkServerIdentity"] = BuiltInMethod.CreateV2("checkServerIdentity", 2, CheckServerIdentity),
             ["Server"] = BuiltInMethod.CreateV2("Server", 0, 2, CreateServer),
             ["TLSSocket"] = BuiltInMethod.CreateV2("TLSSocket", 0, 1, CreateTlsSocket),
             ["DEFAULT_MIN_VERSION"] = "TLSv1.2",
@@ -131,5 +132,81 @@ public static class TlsModuleInterpreter
     private static RuntimeValue CreateTlsSocket(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         return RuntimeValue.FromObject(new SharpTSTlsSocket());
+    }
+
+    /// <summary>
+    /// tls.checkServerIdentity(hostname, cert) — Node's default identity check.
+    /// Verifies the hostname against the certificate's subjectaltname (DNS/IP entries,
+    /// with simple wildcard support) or, when no SAN is present, the subject CN.
+    /// Returns undefined on match, or an Error on mismatch.
+    /// </summary>
+    private static RuntimeValue CheckServerIdentity(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        string host = args.Length > 0 && args[0].IsString ? args[0].AsStringUnsafe() : "";
+        string? san = null;
+        string? subjectDN = null;
+        if (args.Length > 1 && args[1].ToObject() is SharpTSObject cert)
+        {
+            san = cert.GetProperty("subjectaltname") as string;
+            if (cert.GetProperty("subject") is string subjStr) subjectDN = subjStr;
+            else if (cert.GetProperty("subject") is SharpTSObject subjObj) subjectDN = subjObj.GetProperty("CN") as string;
+        }
+
+        var error = CheckIdentityCore(host, san, subjectDN);
+        return error == null
+            ? RuntimeValue.Undefined
+            : RuntimeValue.FromObject(new SharpTSError(error) { Code = "ERR_TLS_CERT_ALTNAME_INVALID" });
+    }
+
+    /// <summary>
+    /// Shared identity-check logic (kept in sync with the compiled $Runtime.TlsCheckServerIdentity IL).
+    /// <paramref name="subjectDN"/> may be a full DN ("CN=localhost, O=…") or a bare CN; the CN value
+    /// is extracted when no SAN entries apply. Returns null when the host is valid, else a Node-style
+    /// error message.
+    /// </summary>
+    internal static string? CheckIdentityCore(string host, string? subjectAltName, string? subjectDN)
+    {
+        var names = new List<string>();
+        if (!string.IsNullOrEmpty(subjectAltName))
+        {
+            foreach (var raw in subjectAltName.Split(','))
+            {
+                var part = raw.Trim();
+                if (part.StartsWith("DNS:", StringComparison.Ordinal)) names.Add(part.Substring(4));
+                else if (part.StartsWith("IP Address:", StringComparison.Ordinal)) names.Add(part.Substring(11));
+            }
+        }
+        if (names.Count == 0 && !string.IsNullOrEmpty(subjectDN))
+        {
+            var cn = ExtractCN(subjectDN!);
+            if (!string.IsNullOrEmpty(cn)) names.Add(cn!);
+        }
+
+        foreach (var name in names)
+            if (HostMatches(host, name))
+                return null;
+
+        var altText = names.Count > 0 ? string.Join(", ", names) : "<no cert names>";
+        return $"Host: {host}. is not in the cert's altnames: {altText}";
+    }
+
+    private static string? ExtractCN(string subjectDN)
+    {
+        int i = subjectDN.IndexOf("CN=", StringComparison.OrdinalIgnoreCase);
+        if (i < 0) return subjectDN; // already a bare CN
+        int start = i + 3;
+        int end = subjectDN.IndexOf(',', start);
+        return (end < 0 ? subjectDN.Substring(start) : subjectDN.Substring(start, end - start)).Trim();
+    }
+
+    private static bool HostMatches(string host, string name)
+    {
+        if (name.StartsWith("*.", StringComparison.Ordinal))
+        {
+            // Wildcard matches exactly one leading label: *.example.com ⇒ foo.example.com
+            int dot = host.IndexOf('.');
+            return dot > 0 && string.Equals(host.Substring(dot), name.Substring(1), StringComparison.OrdinalIgnoreCase);
+        }
+        return string.Equals(host, name, StringComparison.OrdinalIgnoreCase);
     }
 }
