@@ -10,9 +10,9 @@ namespace SharpTS.TypeSystem;
 /// Expression type checking - CheckExpr dispatch and basic expression handlers.
 /// </summary>
 /// <remarks>
-/// Contains the main expression dispatch (CheckExpr) via <see cref="IExprVisitor{TResult}"/>
-/// and handlers for: literals, arrays, objects, templates, spread, arrow functions, assign,
-/// type assertions, and basic helper methods (LookupVariable, GetLiteralType).
+/// Contains the main expression dispatch (CheckExpr) and handlers for: literals, arrays,
+/// objects, templates, spread, arrow functions, assign, type assertions, and basic helper
+/// methods (LookupVariable, GetLiteralType).
 /// </remarks>
 public partial class TypeChecker
 {

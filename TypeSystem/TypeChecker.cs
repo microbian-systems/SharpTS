@@ -18,9 +18,8 @@ namespace SharpTS.TypeSystem;
 /// typing (classes). Type checking runs at compile-time, completely separate from runtime
 /// execution. Errors throw exceptions with "Type Error:" prefix.
 ///
-/// Implements <see cref="IExprVisitor{TResult}"/> and <see cref="IStmtVisitor{TResult}"/> for
-/// exhaustive dispatch to all AST node types. The visitor pattern ensures compile-time safety
-/// when new expression or statement types are added.
+/// Dispatches to all AST node types through the <see cref="NodeRegistry{TContext, TExprResult, TStmtResult}"/>,
+/// which ensures compile-time safety when new expression or statement types are added.
 ///
 /// This class is split across partial files:
 /// <list type="bullet">
