@@ -49,8 +49,9 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object TlsConnect(object? portOrOptions, object? hostOrCallback, object? optionsOrNull, object? callbackOrNull)
-    /// Creates a new $TlsSocket. Parses port/host/options, calls TlsConnectAndHandshake
-    /// via late-binding on a background thread, populates socket, invokes callback.
+    /// Creates a new $TlsSocket. Parses port/host/options, registers the callback as a
+    /// 'secureConnect' listener, then runs the pure-BCL SslStream handshake on a ThreadPool
+    /// thread via $TlsConnectClosure (no SharpTS.dll dependency).
     /// NOTE: The TlsConnect body is deferred to EmitTlsConnectBody (Phase 2) since it
     /// depends on the $TlsConnectClosure type defined after EmitRuntimeClass.
     /// </summary>
@@ -186,6 +187,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, hostLocal);
         il.Emit(OpCodes.Stfld, _tlsSocketServernameField);
 
+        // Register the connect callback as a 'secureConnect' listener (Node semantics):
+        // the OK closure emits 'secureConnect' once the handshake completes.
+        var noConnectCb = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Brfalse, noConnectCb);
+        il.Emit(OpCodes.Ldloc, socketLocal);
+        il.Emit(OpCodes.Ldstr, "secureConnect");
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOn);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(noConnectCb);
+
         // EventLoop.Ref()
         il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
         il.Emit(OpCodes.Call, runtime.EventLoopRef);
@@ -196,7 +209,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, hostLocal);
         il.Emit(OpCodes.Ldloc, rejectLocal);
         il.Emit(OpCodes.Ldloc, alpnLocal);
-        il.Emit(OpCodes.Ldloc, callbackLocal);
         il.Emit(OpCodes.Newobj, _tlsConnectClosureCtor);
         var closureLocal = il.DeclareLocal(_tlsConnectClosureType);
         il.Emit(OpCodes.Stloc, closureLocal);

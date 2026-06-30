@@ -1017,6 +1017,73 @@ public class StandaloneDllTests
         }
     }
 
+    /// <summary>
+    /// #1033 guardrail: a --compile'd tls client↔server program must complete a real SslStream
+    /// handshake and exchange data with NO SharpTS.dll co-located. The handshake, introspection,
+    /// and socket I/O are all emitted as pure-BCL IL, so the output DLL is genuinely standalone.
+    /// </summary>
+    [Fact]
+    public void Isolated_Tls_ShouldExecuteWithoutSharpTsDll()
+    {
+        var (certPem, keyPem) = GenerateSelfSignedCertForStandalone();
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key }, (socket: any) => {
+                    socket.write('hi-from-server');
+                    socket.end();
+                    server.close();
+                });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect(addr.port, '127.0.0.1', { rejectUnauthorized: false });
+                    client.setEncoding('utf8');
+                    let data = '';
+                    client.on('data', (c: string) => { data += c; });
+                    client.on('end', () => {
+                        console.log('recv:' + data);
+                        console.log('encrypted:' + client.encrypted);
+                        const proto = client.getProtocol() as string;
+                        console.log('protoOk:' + (proto !== null && proto.indexOf('TLSv1.') === 0));
+                        client.destroy();
+                    });
+                });
+                """
+        };
+
+        var (tempDir, dllPath) = CompileStandaloneModule(files, "main.ts");
+        try
+        {
+            // No SharpTS.dll is copied next to the DLL — a genuine standalone run.
+            Assert.DoesNotContain(GetAssemblyReferences(dllPath), r => r == "SharpTS");
+
+            var output = ExecuteCompiledDllIsolated(dllPath, timeoutMs: 20000);
+            Assert.Equal("recv:hi-from-server\nencrypted:true\nprotoOk:true\n", output);
+        }
+        finally
+        {
+            CleanupTempDir(tempDir);
+        }
+    }
+
+    private static (string certPem, string keyPem) GenerateSelfSignedCertForStandalone()
+    {
+        using var rsa = System.Security.Cryptography.RSA.Create(2048);
+        var certReq = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            "CN=localhost", rsa,
+            System.Security.Cryptography.HashAlgorithmName.SHA256,
+            System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        var sanBuilder = new System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder();
+        sanBuilder.AddDnsName("localhost");
+        sanBuilder.AddIpAddress(System.Net.IPAddress.Loopback);
+        certReq.CertificateExtensions.Add(sanBuilder.Build());
+        var cert = certReq.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(365));
+        return (cert.ExportCertificatePem().Replace("`", "\\`"), rsa.ExportPkcs8PrivateKeyPem().Replace("`", "\\`"));
+    }
+
     private static (string tempDir, string dllPath) CompileStandalone(string source)
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_standalone_guard_{Guid.NewGuid()}");

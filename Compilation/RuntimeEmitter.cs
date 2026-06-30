@@ -208,12 +208,14 @@ public partial class RuntimeEmitter
         // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSEventEmitter
         EmitTSEventEmitterClass(moduleBuilder, runtime);
 
-        // HTTP / TLS types — gated on UsesHttp / UsesTls. The detector arranges
-        // implications so UsesFetch ⇒ UsesHttp ⇒ UsesNet, UsesTls ⇒ UsesNet.
+        // HTTP types — gated on UsesHttp. The detector arranges implications so
+        // UsesFetch ⇒ UsesHttp ⇒ UsesNet, UsesTls ⇒ UsesNet.
         if (features.UsesHttp)
             EmitHttpTypes(moduleBuilder, runtime);
-        if (features.UsesTls)
-            EmitTlsTypes(moduleBuilder, runtime);
+        // TLS type emission ($TlsSocket : $NetSocket, $TlsServer : $EventEmitter) is
+        // deferred to just after $NetSocket Phase 1 below — $TlsSocket extends $NetSocket
+        // (mirroring interp SharpTSTlsSocket : SharpTSSocket), so the base TypeBuilder must
+        // exist first.
 
         // Emit cluster types for standalone cluster support
         // NOTE: Must come after EventEmitter ($ClusterWorker and $ClusterManager extend it)
@@ -363,6 +365,11 @@ public partial class RuntimeEmitter
             EmitTSNetSocketPhase1(moduleBuilder, runtime);
             EmitTSNetServerPhase1(moduleBuilder, runtime);
         }
+        // TLS types — Phase 1 (type + fields + method stubs, no CreateType). Must come
+        // after $NetSocket Phase 1 ($TlsSocket : $NetSocket) and before EmitRuntimeClass
+        // (the tls module methods reference TlsSocketCtor/TlsServerCtor). UsesTls ⇒ UsesNet.
+        if (features.UsesTls)
+            EmitTlsTypesPhase1(moduleBuilder, runtime);
         if (features.UsesDgram)
             EmitDatagramSocketTypeDefinition(moduleBuilder, runtime);
 
@@ -491,6 +498,10 @@ public partial class RuntimeEmitter
             EmitTlsAcceptClosureClass(moduleBuilder, runtime);
             EmitTlsConnectClosureClass(moduleBuilder, runtime);
             EmitTlsConnectBody(runtime);
+            // $TlsSocket Phase 2: emit method bodies + CreateType. Must come after the
+            // connect closure (its Connect body sets $TlsSocket fields) and after
+            // $NetSocket.CreateType (base, already finalized above).
+            EmitTlsSocketFinalize(runtime);
         }
 
         EmitRuntimeClassFinalize();     // Finalize $Runtime after all method bodies
