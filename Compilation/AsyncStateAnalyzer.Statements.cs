@@ -11,8 +11,6 @@ public partial class AsyncStateAnalyzer
         // Track variable declaration under its (possibly disambiguated) storage name (#766).
         var name = StorageName(stmt, stmt.Name.Lexeme);
         _declaredVariables.Add(name);
-        if (!_seenAwait)
-            _variablesDeclaredBeforeAwait.Add(name);
 
         base.VisitVar(stmt);
     }
@@ -22,8 +20,6 @@ public partial class AsyncStateAnalyzer
         // Track const variable declaration under its (possibly disambiguated) storage name (#766).
         var name = StorageName(stmt, stmt.Name.Lexeme);
         _declaredVariables.Add(name);
-        if (!_seenAwait)
-            _variablesDeclaredBeforeAwait.Add(name);
 
         base.VisitConst(stmt);
     }
@@ -32,8 +28,6 @@ public partial class AsyncStateAnalyzer
     {
         // Loop variable is declared and potentially survives await
         _declaredVariables.Add(stmt.Variable.Lexeme);
-        if (!_seenAwait)
-            _variablesDeclaredBeforeAwait.Add(stmt.Variable.Lexeme);
 
         if (stmt.IsAsync)
         {
@@ -56,8 +50,6 @@ public partial class AsyncStateAnalyzer
     {
         // Loop variable is declared and potentially survives await
         _declaredVariables.Add(stmt.Variable.Lexeme);
-        if (!_seenAwait)
-            _variablesDeclaredBeforeAwait.Add(stmt.Variable.Lexeme);
 
         base.VisitForIn(stmt);
     }
@@ -132,8 +124,6 @@ public partial class AsyncStateAnalyzer
             {
                 _declaredVariables.Add(t.CatchParam.Lexeme);
                 _catchParameters.Add(t.CatchParam.Lexeme);  // Track as catch param (should not be hoisted)
-                if (!_seenAwait)
-                    _variablesDeclaredBeforeAwait.Add(t.CatchParam.Lexeme);
             }
             foreach (var cs in t.CatchBlock)
                 Visit(cs);

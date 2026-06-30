@@ -30,13 +30,6 @@ public partial class AsyncArrowMoveNextEmitter : AsyncFunctionMoveNextEmitter, I
     private LocalBuilder? _resultLocal;
     private LocalBuilder? _exceptionLocal;
 
-    // Stack type tracking via shared helpers (use base class _helpers)
-    private StackType _stackType
-    {
-        get => _helpers.StackType;
-        set => _helpers.StackType = value;
-    }
-
     // Non-hoisted local variables (live within a single MoveNext invocation)
     private readonly Dictionary<string, LocalBuilder> _locals = [];
 

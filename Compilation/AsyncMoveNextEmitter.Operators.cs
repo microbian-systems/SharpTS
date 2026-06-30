@@ -369,23 +369,4 @@ public partial class AsyncMoveNextEmitter
         _il.Emit(OpCodes.Throw);
     }
 
-    /// <summary>
-    /// Emits the typeof() for the declaring class containing the private member.
-    /// </summary>
-    private void EmitDeclaringClassType()
-    {
-        if (_ctx?.CurrentClassBuilder != null)
-        {
-            _il.Emit(OpCodes.Ldtoken, _ctx.CurrentClassBuilder);
-            _il.Emit(OpCodes.Call, Types.TypeGetTypeFromHandle);
-        }
-        else
-        {
-            // Should not happen if called correctly - throw at runtime
-            _il.Emit(OpCodes.Ldstr, "Cannot access private members outside of class context");
-            _il.Emit(OpCodes.Newobj, Types.InvalidOperationExceptionCtorString);
-            _il.Emit(OpCodes.Throw);
-        }
-    }
-
 }

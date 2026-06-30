@@ -60,7 +60,6 @@ public class AsyncStateMachineBuilder
 
     // Builder type (Task vs Task<T>)
     public Type BuilderType { get; private set; } = null!;
-    public Type TaskType { get; private set; } = null!;
     public Type AwaiterType { get; private set; } = null!;
 
     public AsyncStateMachineBuilder(ModuleBuilder moduleBuilder, TypeProvider types, int counter = 0)
@@ -92,12 +91,10 @@ public class AsyncStateMachineBuilder
         if (returnType == _types.Void)
         {
             BuilderType = _types.AsyncTaskMethodBuilder;
-            TaskType = _types.Task;
         }
         else
         {
             BuilderType = _types.MakeGenericType(_types.AsyncTaskMethodBuilderOpen, returnType);
-            TaskType = _types.MakeGenericType(_types.TaskOpen, returnType);
         }
 
         // Define the state machine struct
@@ -280,11 +277,6 @@ public class AsyncStateMachineBuilder
     /// Gets a field for a variable by name, checking both parameters and locals.
     /// </summary>
     public FieldBuilder? GetVariableField(string name) => _hoisting.GetVariableField(name);
-
-    /// <summary>
-    /// Checks if a variable is hoisted to the state machine.
-    /// </summary>
-    public bool IsHoisted(string name) => _hoisting.IsHoisted(name);
 
     /// <summary>
     /// Finalizes the type after MoveNext body has been emitted.
