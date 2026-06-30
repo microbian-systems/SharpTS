@@ -1,12 +1,14 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- TargetFramework / Nullable / LangVersion inherited from Directory.Build.props. -->
 
     <!-- This is an MSBuild tasks assembly, not a standalone app -->
     <OutputType>Library</OutputType>
 
-    <!-- C# language version -->
-    <LangVersion>14</LangVersion>
+    <!-- Opt out of the repo-wide ImplicitUsings: the implicit `global using
+         System.Threading.Tasks;` would make the unqualified `Task` base class
+         (Microsoft.Build.Utilities.Task) ambiguous in ReadTsConfigTask. -->
+    <ImplicitUsings>disable</ImplicitUsings>
 
     <!-- Sign the assembly for use in MSBuild -->
     <SignAssembly>false</SignAssembly>

@@ -49,7 +49,8 @@ public class StandaloneDllTests
     /// SharpTS types that would embed assembly references in emitted IL.
     ///
     /// WRONG: typeof(RuntimeTypes).GetMethod(...) - embeds SharpTS.dll reference
-    /// RIGHT: EmitReflectionCall(il, "SharpTS.Compilation.RuntimeTypes, SharpTS", ...) - runtime lookup
+    /// RIGHT: EmitReflectionHelper(typeBuilder, "SomeMethod", argCount) - emits a
+    ///        Type.GetType("SharpTS.Compilation.RuntimeTypes, SharpTS") runtime lookup
     /// </summary>
     [Fact]
     public void CompilationFiles_ShouldNotUseTypeofForEmittedIL()
@@ -103,7 +104,7 @@ public class StandaloneDllTests
 
         Assert.True(violations.Count == 0,
             $"Found {violations.Count} typeof() references that create SharpTS.dll dependencies in emitted IL.\n" +
-            $"Use EmitReflectionCall/EmitReflectionCallVoid instead.\n\n" +
+            $"Use a Type.GetType(\"…, SharpTS\") reflection helper (e.g. EmitReflectionHelper) instead.\n\n" +
             string.Join("\n", violations.Take(20)));
     }
 
