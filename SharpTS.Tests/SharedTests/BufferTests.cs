@@ -1195,4 +1195,290 @@ public class BufferTests
     }
 
     #endregion
+
+    #region buffer module exports (#1160)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BufferModule_AtobBtoa_RoundTrip(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { atob, btoa } from 'buffer';
+                const encoded = btoa('hello world');
+                console.log(encoded === 'aGVsbG8gd29ybGQ=');
+                console.log(atob(encoded) === 'hello world');
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BufferModule_GlobalAtobBtoa(ExecutionMode mode)
+    {
+        // atob/btoa are also globals (no import).
+        var source = """
+            console.log(btoa('SharpTS'));
+            console.log(atob(btoa('SharpTS')) === 'SharpTS');
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("U2hhcnBUUw==\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BufferModule_IsUtf8IsAscii(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { isUtf8, isAscii } from 'buffer';
+                console.log(isUtf8(Buffer.from('héllo')));
+                console.log(isAscii(Buffer.from('héllo')));
+                console.log(isAscii(Buffer.from('hello')));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\nfalse\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BufferModule_Transcode(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { transcode } from 'buffer';
+                const out = transcode(Buffer.from('hello'), 'utf8', 'latin1');
+                console.log(out.toString('latin1'));
+                console.log(out.length);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("hello\n5\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void BufferModule_ConstantsAndSlowBuffer(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { constants, kMaxLength, kStringMaxLength, INSPECT_MAX_BYTES, SlowBuffer } from 'buffer';
+                console.log(constants.MAX_LENGTH > 0);
+                console.log(constants.MAX_STRING_LENGTH > 0);
+                console.log(kMaxLength === constants.MAX_LENGTH);
+                console.log(kStringMaxLength === constants.MAX_STRING_LENGTH);
+                console.log(INSPECT_MAX_BYTES);
+                console.log(SlowBuffer(8).length);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\ntrue\ntrue\n50\n8\n", output);
+    }
+
+    #endregion
+
+    #region Buffer statics + read/write matrix (#1161)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Of_And_PoolSize(ExecutionMode mode)
+    {
+        var source = """
+            const b = Buffer.of(72, 105);
+            console.log(b.toString());
+            console.log(b.length);
+            console.log(Buffer.poolSize);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Hi\n2\n8192\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_VariableLengthReadWrite(ExecutionMode mode)
+    {
+        var source = """
+            const b = Buffer.from([1, 2, 3, 4, 5, 6]);
+            console.log(b.readUIntLE(0, 3));
+            console.log(b.readUIntBE(0, 3));
+            console.log(b.readIntLE(3, 3));
+            const w = Buffer.alloc(6);
+            w.writeUIntLE(197121, 0, 3);
+            console.log(w.readUIntLE(0, 3));
+            w.writeIntBE(-1000, 0, 4);
+            console.log(w.readIntBE(0, 4));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("197121\n66051\n394500\n197121\n-1000\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Subarray(ExecutionMode mode)
+    {
+        var source = """
+            const b = Buffer.from([10, 20, 30, 40, 50]);
+            console.log(b.subarray(1, 3).toString('hex'));
+            console.log(b.subarray(2).length);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("141e\n3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_LowercaseUintAliases(ExecutionMode mode)
+    {
+        var source = """
+            const b = Buffer.from([1, 0, 2, 0]);
+            console.log(b.readUint8(0));
+            console.log(b.readUint16LE(0));
+            const w = Buffer.alloc(2);
+            w.writeUint16LE(513, 0);
+            console.log(w.readUint16LE(0));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n1\n513\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_CopyBytesFrom(ExecutionMode mode)
+    {
+        var source = """
+            const u16 = new Uint16Array([0x0102, 0x0304]);
+            const b = Buffer.copyBytesFrom(u16);
+            console.log(b.length);
+            const sub = Buffer.copyBytesFrom(u16, 1);
+            console.log(sub.length);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("4\n2\n", output);
+    }
+
+    #endregion
+
+    #region Blob / File (#1159)
+
+    // Blob/File are interpreter-complete; the compiled $Blob/$File IL type is a
+    // documented follow-up (see the compiled deferral test below), so the behavioral
+    // tests are interpreter-only.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Blob_SizeTypeTextSlice(ExecutionMode mode)
+    {
+        var source = """
+            const b = new Blob(['Hello, ', 'world!'], { type: 'text/plain' });
+            console.log(b.size);
+            console.log(b.type);
+            b.text().then((t: string) => console.log(t));
+            b.slice(0, 5).text().then((t: string) => console.log(t));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("13\ntext/plain\nHello, world!\nHello\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Blob_ArrayBufferBytesStream(ExecutionMode mode)
+    {
+        var source = """
+            async function main() {
+              const b = new Blob(['ab', 'cd']);
+              const ab = await b.arrayBuffer();
+              console.log(ab.byteLength);
+              const bytes = await b.bytes();
+              console.log(bytes.length + ' ' + bytes[0]);
+              let total = 0;
+              let first = -1;
+              for await (const chunk of b.stream()) {
+                total += chunk.length;
+                if (first < 0) first = chunk[0];
+              }
+              console.log(total + ' ' + first);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("4\n4 97\n4 97\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void File_NameLastModified(ExecutionMode mode)
+    {
+        var source = """
+            const f = new File(['data'], 'f.txt', { type: 'text/plain', lastModified: 12345 });
+            console.log(f.name);
+            console.log(f.lastModified);
+            console.log(f.size);
+            console.log(f.type);
+            f.text().then((t: string) => console.log(t));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("f.txt\n12345\n4\ntext/plain\ndata\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Blob_BufferModuleImport(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Blob, File, resolveObjectURL } from 'buffer';
+                const b = new Blob(['hi']);
+                console.log(b.size);
+                const f = new File(['x'], 'a.txt');
+                console.log(f.name);
+                console.log(resolveObjectURL('blob:unknown'));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("2\na.txt\nundefined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void Blob_CompiledThrowsClearDeferral(ExecutionMode mode)
+    {
+        // Compiled mode emits a clear, documented deferral error rather than the
+        // misleading "undefined variable Blob".
+        var source = """
+            let msg = '';
+            try {
+                const b = new Blob(['x']);
+            } catch (e) {
+                msg = (e as Error).message;
+            }
+            console.log(msg.includes('not yet supported in compiled mode'));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
 }

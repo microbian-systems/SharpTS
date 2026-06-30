@@ -42,7 +42,9 @@ public sealed class ZlibModuleEmitter : IBuiltInModuleEmitter
         "brotliCompress", "brotliDecompress",
         "zstdCompress", "zstdDecompress",
         "unzip",
-        "constants"
+        // Checksums
+        "crc32",
+        "constants", "codes"
     ];
 
     public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
@@ -86,21 +88,62 @@ public sealed class ZlibModuleEmitter : IBuiltInModuleEmitter
             "zstdCompress" => EmitAsyncMethod(emitter, arguments, "ZlibZstdCompressAsync"),
             "zstdDecompress" => EmitAsyncMethod(emitter, arguments, "ZlibZstdDecompressAsync"),
             "unzip" => EmitAsyncMethod(emitter, arguments, "ZlibUnzipAsync"),
+            // Checksums (Node 22+): crc32(data[, value])
+            "crc32" => EmitCrc32(emitter, arguments),
             _ => false
         };
     }
 
-    public bool TryEmitPropertyGet(IEmitterContext emitter, string propertyName)
+    /// <summary>
+    /// Emits crc32(data[, value]) -> number. Routes to $Runtime.ZlibCrc32(object, object).
+    /// </summary>
+    private static bool EmitCrc32(IEmitterContext emitter, List<Expr> arguments)
     {
-        if (propertyName != "constants")
-            return false;
-
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Call runtime helper: ZlibGetConstants() -> object
-        il.Emit(OpCodes.Call, ctx.Runtime!.ZlibGetConstants);
+        // data argument
+        if (arguments.Count == 0)
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+        else
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+
+        // optional running value
+        if (arguments.Count >= 2)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.ZlibCrc32);
         return true;
+    }
+
+    public bool TryEmitPropertyGet(IEmitterContext emitter, string propertyName)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        switch (propertyName)
+        {
+            case "constants":
+                il.Emit(OpCodes.Call, ctx.Runtime!.ZlibGetConstants);
+                return true;
+            case "codes":
+                il.Emit(OpCodes.Call, ctx.Runtime!.ZlibGetCodes);
+                return true;
+            default:
+                return false;
+        }
     }
 
     /// <summary>

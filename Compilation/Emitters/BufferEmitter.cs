@@ -15,13 +15,23 @@ public sealed class BufferEmitter : ITypeEmitterStrategy
     /// </summary>
     public bool TryEmitMethodCall(IEmitterContext emitter, Expr receiver, string methodName, List<Expr> arguments)
     {
+        // Accept Node's lowercase `Uint` spelling (readUint8, writeBigUint64LE, …) as an
+        // alias for the canonical `UInt` form (matches the interpreter's normalization).
+        if (methodName.Contains("Uint"))
+            methodName = methodName.Replace("Uint", "UInt");
+
         // Check if we can handle this method BEFORE emitting anything
         // This prevents emitting the receiver when we can't handle the method,
         // which would leave stale values on the stack for union type fallback handling
-        if (methodName is not "toString" and not "slice"
+        if (methodName is not "toString" and not "slice" and not "subarray"
             and not "copy" and not "compare" and not "equals"
             and not "fill" and not "write" and not "readUInt8"
             and not "writeUInt8" and not "toJSON"
+            // Variable-length integer reads/writes
+            and not "readUIntLE" and not "readUIntBE"
+            and not "readIntLE" and not "readIntBE"
+            and not "writeUIntLE" and not "writeUIntBE"
+            and not "writeIntLE" and not "writeIntBE"
             // Multi-byte reads
             and not "readInt8"
             and not "readUInt16LE" and not "readUInt16BE"
@@ -76,6 +86,10 @@ public sealed class BufferEmitter : ITypeEmitterStrategy
                 return true;
 
             case "slice":
+            // subarray uses the same windowing arithmetic; SharpTS Buffers wrap a flat
+            // byte[] so the result is an independent copy (documented deviation — no
+            // shared-memory view) just like this Buffer's copying slice.
+            case "subarray":
                 // Start argument
                 if (arguments.Count > 0)
                 {
@@ -386,6 +400,31 @@ public sealed class BufferEmitter : ITypeEmitterStrategy
                 EmitReadBigIntMethod(emitter, arguments, ctx.Runtime!.TSBufferReadBigUInt64BE);
                 return true;
 
+            // Variable-length integer reads (offset, byteLength)
+            case "readUIntLE":
+                EmitVarReadMethod(emitter, arguments, ctx.Runtime!.TSBufferReadUIntLE);
+                return true;
+            case "readUIntBE":
+                EmitVarReadMethod(emitter, arguments, ctx.Runtime!.TSBufferReadUIntBE);
+                return true;
+            case "readIntLE":
+                EmitVarReadMethod(emitter, arguments, ctx.Runtime!.TSBufferReadIntLE);
+                return true;
+            case "readIntBE":
+                EmitVarReadMethod(emitter, arguments, ctx.Runtime!.TSBufferReadIntBE);
+                return true;
+
+            // Variable-length integer writes (value, offset, byteLength). Signed and
+            // unsigned writes emit identical two's-complement bytes.
+            case "writeUIntLE":
+            case "writeIntLE":
+                EmitVarWriteMethod(emitter, arguments, ctx.Runtime!.TSBufferWriteUIntLE);
+                return true;
+            case "writeUIntBE":
+            case "writeIntBE":
+                EmitVarWriteMethod(emitter, arguments, ctx.Runtime!.TSBufferWriteUIntBE);
+                return true;
+
             // Multi-byte write methods
             case "writeInt8":
                 EmitWriteMethod(emitter, arguments, ctx.Runtime!.TSBufferWriteInt8);
@@ -603,6 +642,58 @@ public sealed class BufferEmitter : ITypeEmitterStrategy
 
         il.Emit(OpCodes.Call, method);
         il.Emit(OpCodes.Box, ctx.Types.Double);
+    }
+
+    /// <summary>
+    /// Emits a variable-length read method call: (offset, byteLength) both required.
+    /// Stack: buffer -> result (boxed double)
+    /// </summary>
+    private void EmitVarReadMethod(IEmitterContext emitter, List<Expr> arguments, MethodBuilder method)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        EmitIntArg(emitter, arguments, 0);  // offset
+        EmitIntArg(emitter, arguments, 1);  // byteLength
+        il.Emit(OpCodes.Call, method);
+        il.Emit(OpCodes.Box, ctx.Types.Double);
+    }
+
+    /// <summary>
+    /// Emits a variable-length write method call: (value, offset, byteLength).
+    /// Stack: buffer -> result (boxed double)
+    /// </summary>
+    private void EmitVarWriteMethod(IEmitterContext emitter, List<Expr> arguments, MethodBuilder method)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // value (required, double)
+        emitter.EmitExpression(arguments[0]);
+        emitter.EmitBoxIfNeeded(arguments[0]);
+        il.Emit(OpCodes.Unbox_Any, ctx.Types.Double);
+
+        EmitIntArg(emitter, arguments, 1);  // offset
+        EmitIntArg(emitter, arguments, 2);  // byteLength
+        il.Emit(OpCodes.Call, method);
+        il.Emit(OpCodes.Box, ctx.Types.Double);
+    }
+
+    /// <summary>Emits arg <paramref name="index"/> unboxed to int (default 0 when absent).</summary>
+    private static void EmitIntArg(IEmitterContext emitter, List<Expr> arguments, int index)
+    {
+        var il = emitter.Context.IL;
+        if (arguments.Count > index)
+        {
+            emitter.EmitExpression(arguments[index]);
+            emitter.EmitBoxIfNeeded(arguments[index]);
+            il.Emit(OpCodes.Unbox_Any, emitter.Context.Types.Double);
+            il.Emit(OpCodes.Conv_I4);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldc_I4_0);
+        }
     }
 
     /// <summary>

@@ -17,6 +17,13 @@ public sealed class SharpTSBufferConstructor
     private SharpTSBufferConstructor() { }
 
     /// <summary>
+    /// Buffer.poolSize — the internal pre-allocation pool size. SharpTS doesn't pool
+    /// (every Buffer owns its byte[]), so this is purely informational; the default
+    /// matches Node (8 KiB) and a write updates the stored value.
+    /// </summary>
+    public static double PoolSize { get; set; } = 8192;
+
+    /// <summary>
     /// Gets a property from the Buffer namespace.
     /// </summary>
     public object? GetProperty(string name)
@@ -24,16 +31,65 @@ public sealed class SharpTSBufferConstructor
         return name switch
         {
             "from" => BuiltInMethod.CreateV2("from", 1, 2, BufferFrom),
+            "of" => BuiltInMethod.CreateV2("of", 0, int.MaxValue, BufferOf),
             "alloc" => BuiltInMethod.CreateV2("alloc", 1, 3, BufferAlloc),
             "allocUnsafe" => BuiltInMethod.CreateV2("allocUnsafe", 1, BufferAllocUnsafe),
             "allocUnsafeSlow" => BuiltInMethod.CreateV2("allocUnsafeSlow", 1, BufferAllocUnsafe), // Same as allocUnsafe
             "concat" => BuiltInMethod.CreateV2("concat", 1, 2, BufferConcat),
+            "copyBytesFrom" => BuiltInMethod.CreateV2("copyBytesFrom", 1, 3, BufferCopyBytesFrom),
             "isBuffer" => BuiltInMethod.CreateV2("isBuffer", 1, BufferIsBuffer),
             "byteLength" => BuiltInMethod.CreateV2("byteLength", 1, 2, BufferByteLength),
             "compare" => BuiltInMethod.CreateV2("compare", 2, BufferCompare),
             "isEncoding" => BuiltInMethod.CreateV2("isEncoding", 1, BufferIsEncoding),
+            "poolSize" => PoolSize,
             _ => null
         };
+    }
+
+    /// <summary>Sets a property on the Buffer namespace (currently only poolSize).</summary>
+    public bool SetProperty(string name, object? value)
+    {
+        if (name == "poolSize" && value is double d)
+        {
+            PoolSize = d;
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Buffer.of(...bytes) — creates a Buffer from the given byte values.
+    /// </summary>
+    private static RuntimeValue BufferOf(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var items = new List<object?>(args.Length);
+        foreach (var a in args)
+            items.Add(a.ToObject());
+        return RuntimeValue.FromObject(SharpTSBuffer.FromArray(items));
+    }
+
+    /// <summary>
+    /// Buffer.copyBytesFrom(view[, offset[, length]]) (Node 19+) — copies the underlying
+    /// bytes of a TypedArray view (offset/length are in view elements) into a new Buffer.
+    /// </summary>
+    private static RuntimeValue BufferCopyBytesFrom(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length == 0 || args[0].ToObject() is not SharpTSTypedArray view)
+            throw new Exception("Buffer.copyBytesFrom requires a TypedArray argument");
+
+        int elementSize = view.BytesPerElement;
+        int offset = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+        int length = args.Length > 2 && args[2].IsNumber ? (int)args[2].AsNumberUnsafe() : view.Length - offset;
+
+        if (offset < 0) offset = 0;
+        if (length < 0) length = 0;
+        if (offset + length > view.Length) length = Math.Max(0, view.Length - offset);
+
+        int byteStart = view.ByteOffset + offset * elementSize;
+        int byteLen = length * elementSize;
+        var bytes = new byte[byteLen];
+        Array.Copy(view.Buffer, byteStart, bytes, 0, byteLen);
+        return RuntimeValue.FromObject(new SharpTSBuffer(bytes));
     }
 
     /// <summary>

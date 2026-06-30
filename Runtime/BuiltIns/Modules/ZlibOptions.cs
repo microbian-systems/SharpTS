@@ -69,6 +69,27 @@ public class ZlibOptions
     public int ZstdLevel { get; set; } = ZlibConstants.ZSTD_defaultCLevel;
 
     /// <summary>
+    /// Preset compression dictionary, or null. Parsed from a Buffer/TypedArray.
+    /// </summary>
+    /// <remarks>
+    /// BCL ceiling: <c>System.IO.Compression</c> exposes no preset-dictionary API,
+    /// so this is accepted but NOT applied. Round-trips still succeed because both
+    /// compress and decompress ignore it symmetrically; output will not match a
+    /// native zlib stream produced with a dictionary.
+    /// </remarks>
+    public byte[]? Dictionary { get; set; }
+
+    /// <summary>
+    /// Per-write flush behavior for streams (Z_NO_FLUSH, Z_SYNC_FLUSH, ...).
+    /// </summary>
+    public int Flush { get; set; } = ZlibConstants.Z_NO_FLUSH;
+
+    /// <summary>
+    /// Flush behavior when the stream ends (defaults to Z_FINISH).
+    /// </summary>
+    public int FinishFlush { get; set; } = ZlibConstants.Z_FINISH;
+
+    /// <summary>
     /// Parses options from a SharpTSObject.
     /// </summary>
     /// <param name="obj">The options object, or null for defaults.</param>
@@ -103,6 +124,25 @@ public class ZlibOptions
         // MaxOutputLength
         if (obj.GetProperty("maxOutputLength") is double maxOutputLength)
             options.MaxOutputLength = (long)maxOutputLength;
+
+        // Flush / finishFlush
+        if (obj.GetProperty("flush") is double flush)
+            options.Flush = (int)flush;
+        if (obj.GetProperty("finishFlush") is double finishFlush)
+            options.FinishFlush = (int)finishFlush;
+
+        // Preset dictionary (Buffer or TypedArray view)
+        switch (obj.GetProperty("dictionary"))
+        {
+            case SharpTSBuffer dictBuf:
+                options.Dictionary = dictBuf.Data;
+                break;
+            case SharpTSTypedArray dictTa:
+                var dictBytes = new byte[dictTa.ByteLength];
+                Array.Copy(dictTa.Buffer, dictTa.ByteOffset, dictBytes, 0, dictTa.ByteLength);
+                options.Dictionary = dictBytes;
+                break;
+        }
 
         // Brotli-specific options (from params object)
         if (obj.GetProperty("params") is SharpTSObject paramsObj)
@@ -154,12 +194,40 @@ public class ZlibOptions
     }
 
     /// <summary>
+    /// Builds a <see cref="ZLibCompressionOptions"/> honoring the exact Node
+    /// <c>level</c> (-1..9) and <c>strategy</c> (Z_DEFAULT_STRATEGY..Z_FIXED, which
+    /// map 1:1 onto <see cref="ZLibCompressionStrategy"/>). This is the deflate
+    /// family's source of truth so the BCL honors the precise level rather than the
+    /// coarse 4-bucket <see cref="CompressionLevel"/> mapping.
+    /// </summary>
+    public ZLibCompressionOptions ToZLibCompressionOptions()
+    {
+        int level = Level is >= -1 and <= 9 ? Level : -1;
+        var strategy = Strategy is >= 0 and <= 4
+            ? (ZLibCompressionStrategy)Strategy
+            : ZLibCompressionStrategy.Default;
+        return new ZLibCompressionOptions
+        {
+            CompressionLevel = level,
+            CompressionStrategy = strategy
+        };
+    }
+
+    /// <summary>
     /// Gets the Brotli compression quality (0-11) mapped to .NET's 0-11 range.
     /// </summary>
     public int GetBrotliQuality()
     {
         // .NET BrotliStream supports quality 0-11
         return Math.Clamp(BrotliQuality, 0, 11);
+    }
+
+    /// <summary>
+    /// Gets the Brotli window bits (10-24), clamped to the BCL-supported range.
+    /// </summary>
+    public int GetBrotliWindow()
+    {
+        return Math.Clamp(BrotliLgwin, 10, 24);
     }
 
     /// <summary>

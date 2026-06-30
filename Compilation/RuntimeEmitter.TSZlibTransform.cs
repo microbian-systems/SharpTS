@@ -17,6 +17,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsZlibCompressField = null!;     // Stream: the BCL compression stream
     private FieldBuilder _tsZlibInputMsField = null!;      // MemoryStream: decompression accumulation buffer
     private FieldBuilder _tsZlibLevelField = null!;        // int (CompressionLevel): compression level
+    private FieldBuilder _tsZlibBytesWrittenField = null!; // long: total bytes written into the engine
 
     // Kind constants matching ZlibTransformKind enum
     private const int KindGzip = 0;
@@ -50,12 +51,20 @@ public partial class RuntimeEmitter
         _tsZlibCompressField = typeBuilder.DefineField("_compressStream", _types.Stream, FieldAttributes.Private);
         _tsZlibInputMsField = typeBuilder.DefineField("_inputMs", typeof(MemoryStream), FieldAttributes.Private);
         _tsZlibLevelField = typeBuilder.DefineField("_level", _types.Int32, FieldAttributes.Private);
+        _tsZlibBytesWrittenField = typeBuilder.DefineField("_bytesWritten", _types.Int64, FieldAttributes.Private);
 
         // Emit ChunkToBytes as a static method on $ZlibTransform itself
         EmitTSZlibChunkToBytesOnType(typeBuilder, runtime);
         EmitTSZlibTransformCtor(typeBuilder, runtime);
         EmitTSZlibTransformWrite(typeBuilder, runtime);
         EmitTSZlibTransformEnd(typeBuilder, runtime);
+        // Node zlib stream control surface (#1164). Reflection dispatch resolves the
+        // camelCase JS names to these PascalCase members via ToPascalCase + IgnoreCase.
+        EmitTSZlibBytesProperties(typeBuilder, runtime);
+        EmitTSZlibTransformFlush(typeBuilder, runtime);
+        EmitTSZlibTransformParams(typeBuilder, runtime);
+        EmitTSZlibTransformReset(typeBuilder, runtime);
+        EmitTSZlibTransformClose(typeBuilder, runtime);
 
         typeBuilder.CreateType();
     }
@@ -273,6 +282,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Beq, afterWriteLabel);
 
+        // _bytesWritten += bytes.Length (Node's bytesWritten counts engine input)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibBytesWrittenField);
+        il.Emit(OpCodes.Ldloc, bytesLocal);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stfld, _tsZlibBytesWrittenField);
+
         // if (_compressStream != null) -> compression path, else -> decompression path
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldfld, _tsZlibCompressField);
@@ -409,6 +428,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Call, _tsZlibChunkToBytesMethod!);
         il.Emit(OpCodes.Stloc, chunkBytes);
+
+        // _bytesWritten += chunk.Length
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibBytesWrittenField);
+        il.Emit(OpCodes.Ldloc, chunkBytes);
+        il.Emit(OpCodes.Ldlen);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stfld, _tsZlibBytesWrittenField);
 
         // if (_compressStream != null) -> write to compress stream
         var chunkDecompLabel = il.DefineLabel();
@@ -699,6 +728,220 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stloc, decompStreamLocal);
 
         il.MarkLabel(doneLabel);
+    }
+
+    // ── Stream control surface (#1164) ───────────────────────────────────────────
+    // These PascalCase members are resolved from the camelCase JS names by the
+    // runtime's reflection dispatch (ToPascalCase + IgnoreCase GetProperty/GetMethod).
+
+    /// <summary>
+    /// Emits the bytesWritten / bytesRead read-only properties (both surface the
+    /// engine-input byte count; Node's bytesRead is a deprecated alias).
+    /// </summary>
+    private void EmitTSZlibBytesProperties(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        foreach (var name in new[] { "BytesWritten", "BytesRead" })
+        {
+            var prop = typeBuilder.DefineProperty(name, PropertyAttributes.None, _types.Double, null);
+            var getter = typeBuilder.DefineMethod(
+                "get_" + name,
+                MethodAttributes.Public | MethodAttributes.SpecialName | MethodAttributes.HideBySig,
+                _types.Double,
+                Type.EmptyTypes);
+            var il = getter.GetILGenerator();
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _tsZlibBytesWrittenField);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Ret);
+            prop.SetGetMethod(getter);
+        }
+    }
+
+    /// <summary>
+    /// Invokes the first of the given argument positions that is a $TSFunction, with no
+    /// arguments (the Node zlib control callbacks take none).
+    /// </summary>
+    private void EmitInvokeFirstCallback(ILGenerator il, EmittedRuntime runtime, params int[] argIndices)
+    {
+        var done = il.DefineLabel();
+        foreach (var idx in argIndices)
+        {
+            var next = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg, idx);
+            il.Emit(OpCodes.Brfalse, next);
+            il.Emit(OpCodes.Ldarg, idx);
+            il.Emit(OpCodes.Isinst, runtime.TSFunctionType);
+            il.Emit(OpCodes.Brfalse, next);
+            il.Emit(OpCodes.Ldarg, idx);
+            il.Emit(OpCodes.Castclass, runtime.TSFunctionType);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Callvirt, runtime.TSFunctionInvoke);
+            il.Emit(OpCodes.Pop);
+            il.Emit(OpCodes.Br, done);
+            il.MarkLabel(next);
+        }
+        il.MarkLabel(done);
+    }
+
+    /// <summary>
+    /// flush([kind][, callback]): pushes buffered compressor output and invokes the
+    /// callback. (BCL streams cannot emit a true zlib flush boundary — documented.)
+    /// </summary>
+    private void EmitTSZlibTransformFlush(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "Flush",
+            MethodAttributes.Public | MethodAttributes.HideBySig,
+            _types.Object,
+            [_types.Object, _types.Object]);  // kindOrCallback, callback
+        var il = method.GetILGenerator();
+
+        var notComp = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibCompressField);
+        il.Emit(OpCodes.Brfalse, notComp);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibCompressField);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Stream, "Flush"));
+        EmitPushOutputBuffer(il, runtime);
+        il.MarkLabel(notComp);
+
+        EmitInvokeFirstCallback(il, runtime, 2, 1);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// params(level, strategy[, callback]): BCL ceiling — an in-flight stream cannot be
+    /// retuned, so we flush and invoke the callback; the values are not applied to
+    /// already-written data.
+    /// </summary>
+    private void EmitTSZlibTransformParams(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "Params",
+            MethodAttributes.Public | MethodAttributes.HideBySig,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]);  // level, strategy, callback
+        var il = method.GetILGenerator();
+
+        var notComp = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibCompressField);
+        il.Emit(OpCodes.Brfalse, notComp);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibCompressField);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Stream, "Flush"));
+        EmitPushOutputBuffer(il, runtime);
+        il.MarkLabel(notComp);
+
+        EmitInvokeFirstCallback(il, runtime, 3);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// reset(): restores the stream to its initial state for reuse and zeroes the counter.
+    /// </summary>
+    private void EmitTSZlibTransformReset(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "Reset",
+            MethodAttributes.Public | MethodAttributes.HideBySig,
+            _types.Object,
+            Type.EmptyTypes);
+        var il = method.GetILGenerator();
+
+        var decomp = il.DefineLabel();
+        var done = il.DefineLabel();
+
+        // Compression streams keep _outputMs; decompression streams keep _inputMs.
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibOutputMsField);
+        il.Emit(OpCodes.Brfalse, decomp);
+
+        // dispose old compression stream if present
+        var skipDispose = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibCompressField);
+        il.Emit(OpCodes.Brfalse, skipDispose);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibCompressField);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IDisposable), "Dispose"));
+        il.MarkLabel(skipDispose);
+
+        // _outputMs = new MemoryStream(); recreate _compressStream
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(typeof(MemoryStream)));
+        il.Emit(OpCodes.Stfld, _tsZlibOutputMsField);
+        EmitCreateCompressionStreamSwitch(il, runtime);
+        il.Emit(OpCodes.Br, done);
+
+        // decompression: _inputMs = new MemoryStream()
+        il.MarkLabel(decomp);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(typeof(MemoryStream)));
+        il.Emit(OpCodes.Stfld, _tsZlibInputMsField);
+
+        il.MarkLabel(done);
+        // _bytesWritten = 0
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Conv_I8);
+        il.Emit(OpCodes.Stfld, _tsZlibBytesWrittenField);
+
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// close([callback]): releases the streams, emits 'close', and invokes the callback.
+    /// </summary>
+    private void EmitTSZlibTransformClose(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "Close",
+            MethodAttributes.Public | MethodAttributes.HideBySig,
+            _types.Object,
+            [_types.Object]);  // callback
+        var il = method.GetILGenerator();
+
+        var skipComp = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibCompressField);
+        il.Emit(OpCodes.Brfalse, skipComp);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibCompressField);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IDisposable), "Dispose"));
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stfld, _tsZlibCompressField);
+        il.MarkLabel(skipComp);
+
+        var skipInput = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibInputMsField);
+        il.Emit(OpCodes.Brfalse, skipInput);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _tsZlibInputMsField);
+        il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(typeof(IDisposable), "Dispose"));
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Stfld, _tsZlibInputMsField);
+        il.MarkLabel(skipInput);
+
+        // emit 'close'
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, "close");
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Call, runtime.TSEventEmitterEmit);
+        il.Emit(OpCodes.Pop);
+
+        EmitInvokeFirstCallback(il, runtime, 1);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ret);
     }
 
     // Static helper method for converting chunk to byte[]

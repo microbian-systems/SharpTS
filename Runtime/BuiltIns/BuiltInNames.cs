@@ -92,7 +92,8 @@ public static class BuiltInNames
         TextEncoder, TextDecoder,
         Request, Response,
         ReadableStream, WritableStream, TransformStream,
-        ByteLengthQueuingStrategy, CountQueuingStrategy
+        ByteLengthQueuingStrategy, CountQueuingStrategy,
+        Blob, File
     ];
 
     // Individual constructor constants
@@ -133,6 +134,8 @@ public static class BuiltInNames
     public const string TransformStream = "TransformStream";
     public const string ByteLengthQueuingStrategy = "ByteLengthQueuingStrategy";
     public const string CountQueuingStrategy = "CountQueuingStrategy";
+    public const string Blob = "Blob";
+    public const string File = "File";
     public const string ReadableStreamDefaultReader = "ReadableStreamDefaultReader";
     public const string WritableStreamDefaultWriter = "WritableStreamDefaultWriter";
     public const string ReadableStreamDefaultController = "ReadableStreamDefaultController";
@@ -153,7 +156,8 @@ public static class BuiltInNames
         StructuredClone, Fetch,
         SetTimeout, ClearTimeout, SetInterval, ClearInterval,
         SetImmediate, ClearImmediate,
-        QueueMicrotask
+        QueueMicrotask,
+        Atob, Btoa
     ];
 
     // Individual function constants
@@ -175,6 +179,8 @@ public static class BuiltInNames
     public const string SetImmediate = "setImmediate";
     public const string ClearImmediate = "clearImmediate";
     public const string QueueMicrotask = "queueMicrotask";
+    public const string Atob = "atob";
+    public const string Btoa = "btoa";
     public const string Require = "require";
 
     #endregion

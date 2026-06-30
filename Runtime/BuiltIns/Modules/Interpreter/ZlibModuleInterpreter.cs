@@ -73,10 +73,30 @@ public static class ZlibModuleInterpreter
             ["zstdDecompress"] = BuiltInMethod.CreateV2("zstdDecompress", 2, 3, ZstdDecompressAsync),
             ["unzip"] = BuiltInMethod.CreateV2("unzip", 2, 3, UnzipAsync),
 
-            // Constants
-            ["constants"] = ZlibConstants.CreateConstantsObject()
+            // Checksums (Node 22+)
+            ["crc32"] = BuiltInMethod.CreateV2("crc32", 1, 2, Crc32Method),
+
+            // Constants and error codes
+            ["constants"] = ZlibConstants.CreateConstantsObject(),
+            ["codes"] = ZlibConstants.CreateCodesObject()
         };
     }
+
+    #region Checksums
+
+    private static RuntimeValue Crc32Method(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var input = GetInputBytes(args, 0, "crc32");
+
+        // Optional running value (Node: crc32(data[, value])). A 32-bit unsigned int.
+        uint initial = 0;
+        if (args.Length > 1 && args[1].IsNumber)
+            initial = unchecked((uint)(long)args[1].AsNumberUnsafe());
+
+        return RuntimeValue.FromNumber(ZlibHelpers.Crc32(input, initial));
+    }
+
+    #endregion
 
     #region Gzip
 

@@ -892,9 +892,37 @@ public static class BuiltInModuleTypes
             ["isEncoding"] = new TypeInfo.Function([stringType], BooleanType)
         }.ToFrozenDictionary());
 
+        var anyType = new TypeInfo.Any();
+        var byteSource = new TypeInfo.Union([bufferType, new TypeInfo.Array(numberType), stringType]);
+
         return new Dictionary<string, TypeInfo>
         {
-            ["Buffer"] = bufferConstructorType
+            ["Buffer"] = bufferConstructorType,
+
+            // Blob/File constructors (also globals) + resolveObjectURL
+            ["Blob"] = anyType,
+            ["File"] = anyType,
+            ["resolveObjectURL"] = new TypeInfo.Function([stringType], anyType, RequiredParams: 1),
+
+            // Base64 (also globals)
+            ["atob"] = new TypeInfo.Function([stringType], stringType),
+            ["btoa"] = new TypeInfo.Function([stringType], stringType),
+
+            // Validation
+            ["isUtf8"] = new TypeInfo.Function([byteSource], BooleanType),
+            ["isAscii"] = new TypeInfo.Function([byteSource], BooleanType),
+
+            // Encoding conversion
+            ["transcode"] = new TypeInfo.Function([byteSource, stringType, stringType], bufferType),
+
+            // Deprecated unsafe allocation
+            ["SlowBuffer"] = new TypeInfo.Function([numberType], bufferType),
+
+            // Constants
+            ["constants"] = anyType,
+            ["kMaxLength"] = numberType,
+            ["kStringMaxLength"] = numberType,
+            ["INSPECT_MAX_BYTES"] = numberType,
         };
     }
 
@@ -1017,8 +1045,15 @@ public static class BuiltInModuleTypes
             ["unzip"] = new TypeInfo.Function(
                 [inputType, anyType, anyType], new TypeInfo.Void(), RequiredParams: 2),
 
-            // Constants object
-            ["constants"] = anyType
+            // Checksums (Node 22+): crc32(data[, value]) -> number
+            ["crc32"] = new TypeInfo.Function(
+                [inputType, new TypeInfo.Primitive(TokenType.TYPE_NUMBER)],
+                new TypeInfo.Primitive(TokenType.TYPE_NUMBER),
+                RequiredParams: 1),
+
+            // Constants and error-code objects
+            ["constants"] = anyType,
+            ["codes"] = anyType
         };
     }
 

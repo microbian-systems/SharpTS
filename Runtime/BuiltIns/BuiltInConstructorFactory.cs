@@ -62,6 +62,8 @@ public static class BuiltInConstructorFactory
             var encoding = args.Count > 0 ? args[0]?.ToString() ?? "utf-8" : "utf-8";
             return new SharpTSTextDecoder(encoding, fatal: false, ignoreBOM: false);
         },
+        [BuiltInNames.Blob] = CreateBlob,
+        [BuiltInNames.File] = CreateFile,
     };
 
     /// <summary>
@@ -313,6 +315,36 @@ public static class BuiltInConstructorFactory
             return new SharpTSHeaders(obj);
 
         return new SharpTSHeaders();
+    }
+
+    private static object CreateBlob(IReadOnlyList<object?> args)
+    {
+        var parts = args.Count > 0 ? args[0] as IEnumerable<object?> : null;
+        var (type, endings) = ReadBlobOptions(args.Count > 1 ? args[1] : null);
+        return SharpTSBlob.FromParts(parts, type, endings);
+    }
+
+    private static object CreateFile(IReadOnlyList<object?> args)
+    {
+        var parts = args.Count > 0 ? args[0] as IEnumerable<object?> : null;
+        var name = args.Count > 1 ? args[1]?.ToString() ?? "" : "";
+        var (type, endings) = ReadBlobOptions(args.Count > 2 ? args[2] : null);
+        double lastModified = (double)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (args.Count > 2 && args[2] is SharpTSObject opts && opts.GetProperty("lastModified") is double lm)
+            lastModified = lm;
+        return SharpTSFile.FromParts(parts, name, type, lastModified, endings);
+    }
+
+    private static (string type, string endings) ReadBlobOptions(object? options)
+    {
+        string type = "";
+        string endings = "transparent";
+        if (options is SharpTSObject opts)
+        {
+            type = opts.GetProperty("type")?.ToString() ?? "";
+            endings = opts.GetProperty("endings")?.ToString() ?? "transparent";
+        }
+        return (type, endings);
     }
 
     private static object CreateRequest(IReadOnlyList<object?> args)
