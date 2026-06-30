@@ -495,6 +495,67 @@ public class TlsModuleTests
 
     #endregion
 
+    #region rejectUnauthorized parity (#1040)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TlsRejectUnauthorized_Parity(ExecutionMode mode)
+    {
+        // rejectUnauthorized:true against a self-signed peer fails the handshake ('error'),
+        // identically in interp and compiled.
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key }, (socket: any) => { socket.destroy(); });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect(addr.port, '127.0.0.1', { rejectUnauthorized: true });
+                    client.on('error', () => { console.log('rejected'); server.close(); });
+                    client.on('secureConnect', () => { console.log('should-not-connect'); client.destroy(); server.close(); });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Equal("rejected\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TlsRoundTrip_ServerToClientData_Parity(ExecutionMode mode)
+    {
+        // Full client↔server round trip: server writes, client receives, identical in both modes.
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key }, (socket: any) => {
+                    socket.write('hello from server');
+                    socket.end();
+                    server.close();
+                });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect({ port: addr.port, host: '127.0.0.1', rejectUnauthorized: false });
+                    client.setEncoding('utf8');
+                    let data = '';
+                    client.on('data', (c: string) => { data += c; });
+                    client.on('end', () => { console.log('received: ' + data); client.destroy(); });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Equal("received: hello from server\n", output);
+    }
+
+    #endregion
+
     #region Introspection parity (#1034)
 
     [Theory]

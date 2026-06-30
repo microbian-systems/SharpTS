@@ -139,6 +139,46 @@ public partial class RuntimeEmitter
             il.MarkLabel(skipCb);
         }
 
+        // tls.connect(options) form: when port/host weren't given positionally, read them from
+        // the options dict (options.port / options.host). Mirrors interp Connect's options branch.
+        var optTryGet = _types.DictionaryStringObject.GetMethod("TryGetValue")!;
+        var optTmpLocal = il.DeclareLocal(_types.Object);
+        var optParseDone = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Brfalse, optParseDone);
+        // if (port == 0 && options["port"] is double) port = (int)d
+        var skipOptPort = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, portLocal);
+        il.Emit(OpCodes.Brtrue, skipOptPort);
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Ldstr, "port");
+        il.Emit(OpCodes.Ldloca, optTmpLocal);
+        il.Emit(OpCodes.Callvirt, optTryGet);
+        il.Emit(OpCodes.Brfalse, skipOptPort);
+        il.Emit(OpCodes.Ldloc, optTmpLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, skipOptPort);
+        il.Emit(OpCodes.Ldloc, optTmpLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, portLocal);
+        il.MarkLabel(skipOptPort);
+        // if (options["host"] is string) host = it
+        var skipOptHost = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Ldstr, "host");
+        il.Emit(OpCodes.Ldloca, optTmpLocal);
+        il.Emit(OpCodes.Callvirt, optTryGet);
+        il.Emit(OpCodes.Brfalse, skipOptHost);
+        il.Emit(OpCodes.Ldloc, optTmpLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, skipOptHost);
+        il.Emit(OpCodes.Ldloc, optTmpLocal);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, hostLocal);
+        il.MarkLabel(skipOptHost);
+        il.MarkLabel(optParseDone);
+
         // Check rejectUnauthorized
         var rejectLocal = il.DeclareLocal(_types.Boolean);
         il.Emit(OpCodes.Ldc_I4_1);
