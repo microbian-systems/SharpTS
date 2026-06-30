@@ -82,23 +82,11 @@ export function memoryUsage(): { rss: number; heapTotal: number; heapUsed: numbe
     return __memoryUsage();
 }
 
-// `nextTick` cannot be wrapped with `...args` + spread-forwarded to the
-// primitive: the compiled `primitive:process` emitter's EmitNextTick packs
-// a single Expr.Spread as a nested-array element rather than expanding it,
-// so `__nextTick(callback, ...args)` drops the trailing args. Workaround:
-// manually dispatch by arity up to a reasonable limit (matches Node's
-// common usage pattern; a callback with more than 8 payload args is rare).
+// `nextTick` forwards its trailing `...args` straight to the primitive; the
+// built-in module emitters now expand a trailing `Expr.Spread` at runtime (see
+// ProcessModuleEmitter.EmitArgsArray), so there is no arity ceiling.
 export function nextTick(callback: any, ...args: any[]): void {
-    const n = args.length;
-    if (n === 0) __nextTick(callback);
-    else if (n === 1) __nextTick(callback, args[0]);
-    else if (n === 2) __nextTick(callback, args[0], args[1]);
-    else if (n === 3) __nextTick(callback, args[0], args[1], args[2]);
-    else if (n === 4) __nextTick(callback, args[0], args[1], args[2], args[3]);
-    else if (n === 5) __nextTick(callback, args[0], args[1], args[2], args[3], args[4]);
-    else if (n === 6) __nextTick(callback, args[0], args[1], args[2], args[3], args[4], args[5]);
-    else if (n === 7) __nextTick(callback, args[0], args[1], args[2], args[3], args[4], args[5], args[6]);
-    else __nextTick(callback, args[0], args[1], args[2], args[3], args[4], args[5], args[6], args[7]);
+    __nextTick(callback, ...args);
 }
 
 // Node's `process` module exposes its surface as both named exports and a

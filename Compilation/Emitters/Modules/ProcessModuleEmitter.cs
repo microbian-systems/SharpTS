@@ -195,36 +195,19 @@ public sealed class ProcessModuleEmitter : IBuiltInModuleEmitter
     }
 
     /// <summary>
-    /// Emits an object[] array with remaining arguments starting from startIndex.
+    /// Emits an object[] array with the remaining arguments starting from startIndex,
+    /// expanding any <see cref="Expr.Spread"/> (<c>...args</c>) at runtime via the shared
+    /// spread-aware builder. Leaves an <c>object[]</c> on the stack. Forwarding spreads
+    /// here is what lets <c>process.nextTick</c>'s TS facade pass <c>...args</c> straight
+    /// through instead of hand-unrolling an arity ladder (#1149).
     /// </summary>
     private static void EmitArgsArray(IEmitterContext emitter, List<Expr> arguments, int startIndex)
     {
-        var ctx = emitter.Context;
-        var il = ctx.IL;
-
         int extraArgCount = Math.Max(0, arguments.Count - startIndex);
-
-        if (extraArgCount > 0)
-        {
-            // Create array with remaining arguments
-            il.Emit(OpCodes.Ldc_I4, extraArgCount);
-            il.Emit(OpCodes.Newarr, ctx.Types.Object);
-
-            for (int i = startIndex; i < arguments.Count; i++)
-            {
-                il.Emit(OpCodes.Dup);
-                il.Emit(OpCodes.Ldc_I4, i - startIndex);
-                emitter.EmitExpression(arguments[i]);
-                emitter.EmitBoxIfNeeded(arguments[i]);
-                il.Emit(OpCodes.Stelem_Ref);
-            }
-        }
-        else
-        {
-            // Empty args array
-            il.Emit(OpCodes.Ldc_I4_0);
-            il.Emit(OpCodes.Newarr, ctx.Types.Object);
-        }
+        var extra = extraArgCount > 0
+            ? arguments.GetRange(startIndex, extraArgCount)
+            : new List<Expr>();
+        emitter.EmitArgsArrayWithSpread(extra);
     }
 
     #endregion

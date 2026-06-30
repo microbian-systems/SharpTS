@@ -151,6 +151,55 @@ public class ProcessNextTickTests
         Assert.Equal("42\nhello\n", output);
     }
 
+    // Regression for #1149: the facade forwards `...args` to the primitive instead
+    // of hand-unrolling an arity ladder, so more than 8 trailing args now survive in
+    // both interpreter and compiled modes (the old ladder capped at 8).
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NextTick_PassesArguments_BeyondEightArgs(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { nextTick } from 'process';
+                let received: any[] = [];
+                nextTick((...rest: any[]) => { received = rest; },
+                    1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+                let start = Date.now();
+                while (Date.now() - start < 50) { }
+                console.log(received.length);
+                console.log(received.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("10\n1,2,3,4,5,6,7,8,9,10\n", output);
+    }
+
+    // Regression for #1149: a caller-side spread (`...payload`) is expanded by the
+    // built-in module emitter rather than packed as a single nested-array element.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void NextTick_ForwardsCallerSpread(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { nextTick } from 'process';
+                let received: any[] = [];
+                const payload = ['a', 'b', 'c'];
+                nextTick((...rest: any[]) => { received = rest; }, ...payload);
+                let start = Date.now();
+                while (Date.now() - start < 50) { }
+                console.log(received.length);
+                console.log(received.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("3\na,b,c\n", output);
+    }
+
     #endregion
 
     #region Multiple Callbacks Tests
