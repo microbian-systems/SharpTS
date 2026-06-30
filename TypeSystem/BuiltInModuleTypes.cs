@@ -2186,6 +2186,7 @@ public static class BuiltInModuleTypes
             ["constants"] = constantsType,
             ["Script"] = new TypeInfo.Function([stringType, anyType], scriptType, RequiredParams: 1),
             ["SourceTextModule"] = new TypeInfo.Function([stringType, anyType], moduleType, RequiredParams: 1),
+            ["SyntheticModule"] = new TypeInfo.Function([stringArrayType, anyType, anyType], moduleType, RequiredParams: 2),
         };
     }
 

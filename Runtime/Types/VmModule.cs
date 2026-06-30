@@ -108,8 +108,19 @@ public abstract class VmModuleBase
                 RuntimeValue.FromObject(SharpTSBuffer.FromString(sourceForCache, "utf8"))),
         };
 
+        ConfigureFacade(Facade);
         VmModuleRegistry.Register(Facade, this);
         return Facade;
+    }
+
+    /// <summary>Subclass hook to add type-specific facade members (e.g. SyntheticModule.setExport).</summary>
+    protected virtual void ConfigureFacade(Dictionary<string, object?> facade) { }
+
+    /// <summary>Sets a named export value (vm.SyntheticModule.setExport); updates the namespace.</summary>
+    protected void SetExport(string name, object? value)
+    {
+        Namespace[name] = value;
+        if (Facade != null) Facade["namespace"] = Namespace;
     }
 
     /// <summary>
@@ -130,7 +141,7 @@ public abstract class VmModuleBase
         {
             foreach (var specifier in DependencySpecifiers)
             {
-                var resolved = CallGuest(interp, linker, specifier, Facade);
+                var resolved = CallGuest(interp, linker, thisArg: null, [specifier, Facade]);
                 resolved = UnwrapSettled(resolved);
                 var child = VmModuleRegistry.Get(resolved)
                     ?? throw new Exception($"TypeError: linker for '{specifier}' did not return a vm.Module");
@@ -203,21 +214,30 @@ public abstract class VmModuleBase
     /// <summary>The exported bindings (used by dependents that import this module).</summary>
     public IReadOnlyDictionary<string, object?> Exports => Namespace;
 
-    /// <summary>Invokes a guest callable (ISharpTSCallable or a compiled $TSFunction) with boxed args.</summary>
-    protected static object? CallGuest(Interp? interp, object? callable, params object?[] args)
+    /// <summary>
+    /// Invokes a guest callable (an interpreter ISharpTSCallable or a compiled
+    /// $TSFunction) with the given <c>this</c> value and boxed args. Used for the
+    /// linker (this = null) and the SyntheticModule evaluateCallback (this = the
+    /// module facade, so <c>this.setExport(...)</c> resolves).
+    /// </summary>
+    protected static object? CallGuest(Interp? interp, object? callable, object? thisArg, object?[] args)
     {
-        switch (callable)
+        if (callable is ISharpTSCallable c)
+            return FunctionBuiltIns.CallWithThis(interp!, c, thisArg, args.ToList());
+        if (callable == null)
+            throw new Exception("TypeError: callback is not a function");
+
+        var type = callable.GetType();
+        if (type.Name is "$TSFunction" or "$BoundTSFunction")
         {
-            case ISharpTSCallable c:
-                return c.Call(interp!, args.ToList());
-            case null:
-                throw new Exception("TypeError: linker is not a function");
-            default:
-                var invoke = callable.GetType().GetMethod("Invoke", [typeof(object[])]);
-                if (invoke != null)
-                    return invoke.Invoke(callable, [args]);
-                throw new Exception("TypeError: linker is not a function");
+            var withThis = type.GetMethod("InvokeWithThis", [typeof(object), typeof(object[])]);
+            if (withThis != null)
+                return withThis.Invoke(callable, [thisArg, args]);
         }
+        var invoke = type.GetMethod("Invoke", [typeof(object[])]);
+        if (invoke != null)
+            return invoke.Invoke(callable, [args]);
+        throw new Exception("TypeError: callback is not a function");
     }
 
     /// <summary>If a settled SharpTSPromise was returned by the linker, unwrap to its value.</summary>
@@ -371,5 +391,91 @@ public sealed class VmSourceTextModuleConstructor : ISharpTSCallable
         var options = args.Count > 1 ? args[1] : null;
         var module = new VmSourceTextModule(code, options);
         return module.BuildFacade(code);
+    }
+}
+
+/// <summary>
+/// vm.SyntheticModule — a module whose exports are defined programmatically rather than
+/// from source. <c>exportNames</c> are declared up front; the <c>evaluateCallback</c> runs
+/// at evaluation with <c>this</c> bound to the module and calls <c>this.setExport(name, value)</c>
+/// to populate them. Has no source-level dependencies; participates in link()/evaluate() and
+/// the status state machine like SourceTextModule.
+/// </summary>
+public sealed class VmSyntheticModule : VmModuleBase
+{
+    private static readonly string[] _noDeps = [];
+    private readonly List<string> _exportNames;
+    private readonly object? _evaluateCallback;
+
+    public override IReadOnlyList<string> DependencySpecifiers => _noDeps;
+
+    public VmSyntheticModule(IEnumerable<string> exportNames, object? evaluateCallback, object? options)
+    {
+        _exportNames = exportNames.ToList();
+        _evaluateCallback = evaluateCallback;
+        Identifier = VmModuleInterpreter.GetStringOption(options, "identifier") ?? $"vm:synthetic-module({NextId()})";
+        ContextObject = VmModuleInterpreter.GetOption(options, "context");
+    }
+
+    protected override void ConfigureFacade(Dictionary<string, object?> facade)
+    {
+        facade["setExport"] = BuiltInMethod.CreateV2("setExport", 2, 2, (interp, recv, a) =>
+        {
+            var name = a.Length > 0 ? a[0].ToObject() as string : null;
+            var value = a.Length > 1 ? a[1].ToObject() : null;
+            DoSetExport(name, value);
+            return RuntimeValue.Undefined;
+        });
+    }
+
+    private void DoSetExport(string? name, object? value)
+    {
+        if (Status == "unlinked")
+            throw new Exception("TypeError [ERR_VM_MODULE_STATUS]: Module must be linked before calling setExport()");
+        if (name == null || !_exportNames.Contains(name))
+            throw new Exception($"TypeError [ERR_VM_MODULE_NOT_MODULE]: '{name}' is not a declared export of this SyntheticModule");
+        SetExport(name, value);
+    }
+
+    protected override void EvaluateBody(Interp? interp)
+    {
+        // Run the evaluate callback with `this` bound to the module facade so the
+        // idiomatic `this.setExport(...)` resolves (in both interpreter and compiled mode).
+        if (_evaluateCallback != null)
+            CallGuest(interp, _evaluateCallback, thisArg: Facade, []);
+    }
+}
+
+/// <summary>
+/// Constructor for vm.SyntheticModule —
+/// <c>new vm.SyntheticModule(exportNames, evaluateCallback[, options])</c>.
+/// </summary>
+public sealed class VmSyntheticModuleConstructor : ISharpTSCallable
+{
+    public int Arity() => 2;
+
+    public object? Call(Interp interpreter, List<object?> args)
+    {
+        var exportNames = ExtractStringList(args.Count > 0 ? args[0] : null);
+        var evaluateCallback = args.Count > 1 ? args[1] : null;
+        var options = args.Count > 2 ? args[2] : null;
+        var module = new VmSyntheticModule(exportNames, evaluateCallback, options);
+        return module.BuildFacade(string.Join(",", exportNames));
+    }
+
+    private static List<string> ExtractStringList(object? value)
+    {
+        var result = new List<string>();
+        IEnumerable<object?>? items = value switch
+        {
+            SharpTSArray arr => arr,
+            List<object?> list => list,
+            _ => null,
+        };
+        if (items != null)
+            foreach (var item in items)
+                if (item is string s)
+                    result.Add(s);
+        return result;
     }
 }

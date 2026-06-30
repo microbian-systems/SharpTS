@@ -23,6 +23,7 @@ public partial class RuntimeEmitter
         EmitVmGetScriptConstructor(typeBuilder, runtime);
         EmitVmNewScript(typeBuilder, runtime);
         EmitVmNewSourceTextModule(typeBuilder, runtime);
+        EmitVmNewSyntheticModule(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -296,6 +297,22 @@ public partial class RuntimeEmitter
         runtime.VmNewSourceTextModule = method;
 
         EmitVmConstructorCall(method.GetILGenerator(), "SourceTextModule", 2);
+    }
+
+    /// <summary>
+    /// Emits: public static object VmNewSyntheticModule(object exportNames, object evaluateCallback, object options)
+    /// Creates a vm.SyntheticModule facade via reflection to VmSyntheticModuleConstructor.
+    /// </summary>
+    private void EmitVmNewSyntheticModule(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "VmNewSyntheticModule",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]);
+        runtime.VmNewSyntheticModule = method;
+
+        EmitVmConstructorCall(method.GetILGenerator(), "SyntheticModule", 3);
     }
 
     /// <summary>

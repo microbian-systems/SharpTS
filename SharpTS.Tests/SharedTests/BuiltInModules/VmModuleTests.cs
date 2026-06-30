@@ -871,6 +871,61 @@ public class VmModuleTests
 
     #endregion
 
+    #region SyntheticModule Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SyntheticModule_ImportedBySourceTextModule_LiveBinding(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule, SyntheticModule } from 'vm';
+                async function main() {
+                    const syn = new SyntheticModule(['x', 'y'], function (this: any) {
+                        this.setExport('x', 42);
+                        this.setExport('y', 'hello');
+                    });
+                    const m = new SourceTextModule('import { x, y } from "syn"; export const r = x + 1; export const s = y + "!";');
+                    await m.link((spec: string) => syn);
+                    await m.evaluate();
+                    console.log(m.namespace.r);
+                    console.log(m.namespace.s);
+                    console.log(syn.namespace.x);
+                    console.log(syn.status);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("43\nhello!\n42\nevaluated\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SyntheticModule_SetExportBeforeLink_Throws(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SyntheticModule } from 'vm';
+                const syn = new SyntheticModule(['a'], function (this: any) { this.setExport('a', 1); });
+                try {
+                    syn.setExport('a', 5);
+                    console.log('no error');
+                } catch (e: any) {
+                    console.log('threw');
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("threw\n", output);
+    }
+
+    #endregion
+
     #region Error Handling Tests
 
     [Theory]

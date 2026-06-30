@@ -498,6 +498,15 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
+            // --- vm.SyntheticModule ---
+            case "SyntheticModule":
+                EmitBoxedArgOrNull(arguments, 0);
+                EmitBoxedArgOrNull(arguments, 1);
+                EmitBoxedArgOrNull(arguments, 2);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.VmNewSyntheticModule);
+                SetStackUnknown();
+                return true;
+
             // --- Stream constructors ---
             case "Readable":
                 EmitNewReadableConstructor(arguments);
