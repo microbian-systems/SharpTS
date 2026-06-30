@@ -438,6 +438,176 @@ public class VmModuleTests
 
     #endregion
 
+    #region Script/compileFunction options + cachedData Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_Filename_InSyntaxError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                try {
+                    new Script('let x = ;', { filename: 'my-file.js' });
+                    console.log('no error');
+                } catch (e: any) {
+                    console.log(e.message.indexOf('my-file.js') >= 0);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_OffsetsAndDisplayErrors_Accepted(ExecutionMode mode)
+    {
+        // filename/lineOffset/columnOffset/displayErrors are honored without altering
+        // a successful run's result.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                const s = new Script('40 + 2', {
+                    filename: 'calc.js', lineOffset: 5, columnOffset: 2, displayErrors: true
+                });
+                console.log(s.runInNewContext({}));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_CreateCachedData_ReturnsValue(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                const s = new Script('1 + 1');
+                const cd = s.createCachedData();
+                console.log(cd !== undefined && cd !== null);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_CreateCachedData_IsBuffer(ExecutionMode mode)
+    {
+        // The marker is a real Buffer; Buffer.isBuffer/length only recognize it within
+        // the interpreter (compiled Buffer.isBuffer is blind to a cross-boundary
+        // SharpTSBuffer — a known interop detail; cross-mode the value is defined+round-trips).
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                const s = new Script('1 + 1');
+                const cd = s.createCachedData();
+                console.log(Buffer.isBuffer(cd));
+                console.log(cd.length > 0);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_ProduceCachedData(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                const s = new Script('1 + 1', { produceCachedData: true });
+                console.log(s.cachedDataProduced);
+                console.log(s.cachedData !== undefined && s.cachedData !== null);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_CachedData_RoundTrips_NotRejected(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                const s1 = new Script('2 * 21', { produceCachedData: true });
+                const s2 = new Script('2 * 21', { cachedData: s1.cachedData });
+                console.log(s2.cachedDataRejected);
+                console.log(s2.runInNewContext({}));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("false\n42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_Filename_InTimeoutErrorStack(ExecutionMode mode)
+    {
+        // The origin frame is attached to errors that propagate as a live guest error
+        // object (the timeout error). User throws/runtime faults are reconstructed at the
+        // execution boundary and don't carry the frame (a documented limitation); the
+        // filename DOES flow into SyntaxErrors cross-mode (covered above).
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                const s = new Script('while(true){}', { filename: 'loop.js' });
+                try {
+                    s.runInNewContext({}, { timeout: 50 });
+                    console.log('no error');
+                } catch (e: any) {
+                    console.log((e.stack || '').indexOf('loop.js') >= 0);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_Filename_InSyntaxError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compileFunction } from 'vm';
+                try {
+                    compileFunction('return ;; @@', [], { filename: 'fn-src.js' });
+                    console.log('no error');
+                } catch (e: any) {
+                    console.log(e.message.indexOf('fn-src.js') >= 0);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
+
     #region Error Handling Tests
 
     [Theory]

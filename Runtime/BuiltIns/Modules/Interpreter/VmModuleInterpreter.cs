@@ -40,8 +40,11 @@ public static class VmModuleInterpreter
             throw new Exception("vm.runInNewContext requires a code string");
 
         var contextObject = args.Length > 1 ? args[1].ToObject() : null;
-        var timeout = GetTimeoutOption(args.Length > 2 ? args[2].ToObject() : null);
-        return RuntimeValue.FromBoxed(ExecuteInNewContext(code, contextObject, interpreter, timeout));
+        var options = args.Length > 2 ? args[2].ToObject() : null;
+        var timeout = GetTimeoutOption(options);
+        var origin = ScriptOrigin.From(options);
+        return RuntimeValue.FromBoxed(WithScriptOrigin(origin,
+            () => ExecuteInNewContext(code, contextObject, interpreter, timeout, origin.Filename)));
     }
 
     /// <summary>
@@ -52,8 +55,11 @@ public static class VmModuleInterpreter
         if (args.Length == 0 || args[0].ToObject() is not string code)
             throw new Exception("vm.runInThisContext requires a code string");
 
-        var timeout = GetTimeoutOption(args.Length > 1 ? args[1].ToObject() : null);
-        return RuntimeValue.FromBoxed(ExecuteInCurrentContext(code, interpreter, timeout));
+        var options = args.Length > 1 ? args[1].ToObject() : null;
+        var timeout = GetTimeoutOption(options);
+        var origin = ScriptOrigin.From(options);
+        return RuntimeValue.FromBoxed(WithScriptOrigin(origin,
+            () => ExecuteInCurrentContext(code, interpreter, timeout, origin.Filename)));
     }
 
     /// <summary>
@@ -72,7 +78,9 @@ public static class VmModuleInterpreter
 
         var options = args.Length > 2 ? args[2].ToObject() : null;
         var timeout = GetTimeoutOption(options);
-        return RuntimeValue.FromBoxed(ExecuteInNewContext(code, contextObject, interpreter, timeout));
+        var origin = ScriptOrigin.From(options);
+        return RuntimeValue.FromBoxed(WithScriptOrigin(origin,
+            () => ExecuteInNewContext(code, contextObject, interpreter, timeout, origin.Filename)));
     }
 
     /// <summary>
@@ -97,10 +105,10 @@ public static class VmModuleInterpreter
     /// Executes code in a fresh interpreter with context object properties seeded as variables.
     /// Mutations to context variables are written back to the context object.
     /// </summary>
-    internal static object? ExecuteInNewContext(string code, object? contextObject, Interp? parentInterpreter = null, int timeout = -1)
+    internal static object? ExecuteInNewContext(string code, object? contextObject, Interp? parentInterpreter = null, int timeout = -1, string? filename = null)
     {
         // Parse the code
-        var statements = ParseCode(code);
+        var statements = ParseCode(code, filename);
 
         // Extract context properties
         var contextProps = VmContext.ExtractProperties(contextObject);
@@ -145,9 +153,9 @@ public static class VmModuleInterpreter
     /// <summary>
     /// Executes code in the current interpreter's scope.
     /// </summary>
-    internal static object? ExecuteInCurrentContext(string code, Interp interpreter, int timeout = -1)
+    internal static object? ExecuteInCurrentContext(string code, Interp interpreter, int timeout = -1, string? filename = null)
     {
-        var statements = ParseCode(code);
+        var statements = ParseCode(code, filename);
 
         var resolver = new VariableResolver(interpreter);
         resolver.Resolve(statements);
@@ -284,10 +292,12 @@ public static class VmModuleInterpreter
         // Extract options
         object? parsingContext = null;
         List<object?>? contextExtensions = null;
+        var rawOptions = args.Length > 2 && !args[2].IsNull ? args[2].ToObject() : null;
+        var origin = ScriptOrigin.From(rawOptions);
 
-        if (args.Length > 2 && !args[2].IsNull)
+        if (rawOptions != null)
         {
-            var options = VmContext.ExtractProperties(args[2].ToObject());
+            var options = VmContext.ExtractProperties(rawOptions);
             if (options.TryGetValue("parsingContext", out var ctx))
             {
                 if (ctx != null && !VmContext.IsContext(ctx))
@@ -301,6 +311,9 @@ public static class VmModuleInterpreter
                 else if (ext is SharpTSArray extArray)
                     contextExtensions = extArray.ToList();
             }
+            // produceCachedData is accepted but cachedData is a documented .NET ceiling
+            // (#1150); compileFunction returns a bare callable that can't carry a
+            // cachedData property, so the marker is not surfaced here.
         }
 
         // Wrap code as function body and parse
@@ -310,7 +323,7 @@ public static class VmModuleInterpreter
             trimmedCode += ";";
         var paramsStr = string.Join(", ", paramNames);
         var wrappedCode = $"function __vmfn__({paramsStr}) {{ {trimmedCode} }}";
-        var funcDeclStatements = ParseCode(wrappedCode);
+        var funcDeclStatements = ParseCode(wrappedCode, origin.Filename);
 
         // Return a callable that executes the function body in a fresh interpreter
         var compiledFn = BuiltInMethod.CreateV2("compiledFunction", 0, paramNames.Count,
@@ -319,7 +332,8 @@ public static class VmModuleInterpreter
                 var boxedCallArgs = new List<object?>(callArgs.Length);
                 for (int i = 0; i < callArgs.Length; i++)
                     boxedCallArgs.Add(callArgs[i].ToObject());
-                return RuntimeValue.FromBoxed(ExecuteCompiledFunction(funcDeclStatements, paramNames, boxedCallArgs, parsingContext, contextExtensions, interp));
+                return RuntimeValue.FromBoxed(WithScriptOrigin(origin,
+                    () => ExecuteCompiledFunction(funcDeclStatements, paramNames, boxedCallArgs, parsingContext, contextExtensions, interp)));
             });
 
         return RuntimeValue.FromObject(compiledFn);
@@ -391,23 +405,106 @@ public static class VmModuleInterpreter
     }
 
     /// <summary>
+    /// Reads a single option by name from an options object (SharpTSObject, Dictionary,
+    /// or an emitted $Object via reflection). Returns null if absent.
+    /// </summary>
+    internal static object? GetOption(object? options, string key)
+    {
+        switch (options)
+        {
+            case null:
+                return null;
+            case SharpTSObject obj:
+                return obj.GetProperty(key);
+            case Dictionary<string, object?> dict:
+                return dict.TryGetValue(key, out var val) ? val : null;
+            default:
+                // Emitted $Object / other shapes — reflect on a "Fields" dictionary.
+                var fieldsProp = options.GetType().GetProperty("Fields");
+                if (fieldsProp?.GetValue(options) is IEnumerable<KeyValuePair<string, object?>> fields)
+                {
+                    foreach (var kv in fields)
+                        if (kv.Key == key)
+                            return kv.Value;
+                }
+                return null;
+        }
+    }
+
+    /// <summary>Reads a string option, returning <paramref name="fallback"/> if absent/non-string.</summary>
+    internal static string? GetStringOption(object? options, string key, string? fallback = null)
+        => GetOption(options, key) is string s ? s : fallback;
+
+    /// <summary>Reads an integer option (stored as double), returning <paramref name="fallback"/> if absent.</summary>
+    internal static int GetIntOption(object? options, string key, int fallback = 0)
+        => GetOption(options, key) is double d ? (int)d : fallback;
+
+    /// <summary>Reads a boolean option, returning <paramref name="fallback"/> if absent.</summary>
+    internal static bool GetBoolOption(object? options, string key, bool fallback = false)
+        => GetOption(options, key) is bool b ? b : fallback;
+
+    /// <summary>
     /// Extracts the timeout option (in milliseconds) from an options object.
     /// Returns -1 if not specified.
     /// </summary>
     internal static int GetTimeoutOption(object? options)
     {
-        if (options is SharpTSObject obj)
-        {
-            var val = obj.GetProperty("timeout");
-            if (val is double d && d > 0)
-                return (int)d;
-        }
-        else if (options is Dictionary<string, object?> dict)
-        {
-            if (dict.TryGetValue("timeout", out var val) && val is double d && d > 0)
-                return (int)d;
-        }
+        var val = GetOption(options, "timeout");
+        if (val is double d && d > 0)
+            return (int)d;
         return -1;
+    }
+
+    /// <summary>
+    /// Captures the script-origin options (filename / line / column offsets) that flow
+    /// into thrown error stacks. Mirrors Node's defaults.
+    /// </summary>
+    internal readonly record struct ScriptOrigin(string Filename, int LineOffset, int ColumnOffset)
+    {
+        public static ScriptOrigin From(object? options) => new(
+            GetStringOption(options, "filename", "evalmachine.<anonymous>")!,
+            GetIntOption(options, "lineOffset", 0),
+            GetIntOption(options, "columnOffset", 0));
+
+        public static readonly ScriptOrigin Default = new("evalmachine.<anonymous>", 0, 0);
+    }
+
+    /// <summary>
+    /// Runs <paramref name="run"/> and, if a guest error escapes, prepends the script
+    /// origin (filename:line:col) to its stack — matching Node, where vm errors are
+    /// reported against the supplied filename/offsets rather than the host caller.
+    /// </summary>
+    internal static object? WithScriptOrigin(ScriptOrigin origin, Func<object?> run)
+    {
+        try
+        {
+            return run();
+        }
+        catch (Runtime.Exceptions.ThrowException te) when (te.Value is SharpTSError err)
+        {
+            // A guest error object propagated directly (e.g. the timeout error).
+            // Rewrite its stack so the top frame points at the script origin
+            // (filename:line:col), matching how Node reports vm errors. We touch only
+            // .Stack (never .name/.message) and keep the same exception type/flow, so
+            // interpreter and compiled callers stay in agreement.
+            //
+            // LIMITATION: a user `throw` or runtime fault is stringified by the
+            // sub-interpreter's REPL boundary into a host Exception and reconstructed
+            // by the outer interpreter (interp) / $Runtime.WrapException (compiled),
+            // which mint a fresh stack — so the origin frame is not attached for those.
+            // The supplied filename DOES flow into SyntaxError messages at parse time
+            // (see ParseCode), which is the common, cross-mode-faithful case.
+            PrependOriginFrame(err, origin);
+            throw;
+        }
+    }
+
+    private static void PrependOriginFrame(SharpTSError err, ScriptOrigin origin)
+    {
+        if (err.Stack != null && err.Stack.Contains(origin.Filename)) return;
+        var frame = $"    at {origin.Filename}:{origin.LineOffset + 1}:{origin.ColumnOffset + 1}";
+        var header = $"{err.Name}: {err.Message}";
+        err.Stack = header + "\n" + frame;
     }
 
     /// <summary>
@@ -428,7 +525,7 @@ public static class VmModuleInterpreter
     /// Parses a code string into statements. Throws on parse errors.
     /// Follows the REPL pattern: retries with appended ";" on parse failure.
     /// </summary>
-    internal static List<Stmt> ParseCode(string code)
+    internal static List<Stmt> ParseCode(string code, string? filename = null)
     {
         var result = TryParse(code);
 
@@ -441,7 +538,9 @@ public static class VmModuleInterpreter
             if (retryErrors.Count == 0)
                 return retryResult.Statements;
 
-            throw new Exception($"SyntaxError: {errors[0].Message}");
+            // Node reports vm syntax errors against the supplied filename.
+            var prefix = filename != null ? $"{filename}: " : "";
+            throw new Exception($"SyntaxError: {prefix}{errors[0].Message}");
         }
 
         return result.Statements;
@@ -468,8 +567,13 @@ public sealed class VmScriptConstructor : ISharpTSCallable
         if (args.Count == 0 || args[0] is not string code)
             throw new Exception("vm.Script requires a code string");
 
-        // Pre-parse the code (with semicolon retry)
-        var statements = VmModuleInterpreter.ParseCode(code);
+        var options = args.Count > 1 ? args[1] : null;
+        var origin = VmModuleInterpreter.ScriptOrigin.From(options);
+        var produceCachedData = VmModuleInterpreter.GetBoolOption(options, "produceCachedData");
+        var hasCachedDataInput = VmModuleInterpreter.GetOption(options, "cachedData") != null;
+
+        // Pre-parse the code (with semicolon retry); syntax errors carry the filename.
+        var statements = VmModuleInterpreter.ParseCode(code, origin.Filename);
 
         // Create Script as a dictionary — works in both interpreter (via SharpTSObject wrapper)
         // and compiled mode (dictionary is native object representation).
@@ -479,35 +583,64 @@ public sealed class VmScriptConstructor : ISharpTSCallable
             {
                 var contextObject = methodArgs.Length > 0 ? methodArgs[0].ToObject() : null;
                 var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Length > 1 ? methodArgs[1].ToObject() : null);
-                return RuntimeValue.FromBoxed(VmModuleInterpreter.ExecuteParsedInNewContext(statements, contextObject, interp, timeout));
+                return RuntimeValue.FromBoxed(VmModuleInterpreter.WithScriptOrigin(origin,
+                    () => VmModuleInterpreter.ExecuteParsedInNewContext(statements, contextObject, interp, timeout)));
             });
 
         var runInThisCtx = BuiltInMethod.CreateV2("runInThisContext", 0, 1,
             (interp, recv, methodArgs) =>
             {
                 var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Length > 0 ? methodArgs[0].ToObject() : null);
-                if (interp != null)
-                    return RuntimeValue.FromBoxed(VmModuleInterpreter.ExecuteParsedInCurrentContext(statements, interp, timeout));
-                // Compiled mode: no interpreter available, fall back to new context
-                return RuntimeValue.FromBoxed(VmModuleInterpreter.ExecuteParsedInNewContext(statements, null, interp, timeout));
+                return RuntimeValue.FromBoxed(VmModuleInterpreter.WithScriptOrigin(origin, () =>
+                {
+                    if (interp != null)
+                        return VmModuleInterpreter.ExecuteParsedInCurrentContext(statements, interp, timeout);
+                    // Compiled mode: no interpreter available, fall back to new context
+                    return VmModuleInterpreter.ExecuteParsedInNewContext(statements, null, interp, timeout);
+                }));
             });
 
         var runInCtx = BuiltInMethod.CreateV2("runInContext", 1, 2,
             (interp, recv, methodArgs) =>
             {
                 var context = methodArgs.Length > 0 ? methodArgs[0].ToObject() : null;
+                if (!VmContext.IsContext(context))
+                    throw new Exception("TypeError [ERR_INVALID_ARG_TYPE]: The \"contextifiedObject\" argument must be of type vm.Context.");
                 var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Length > 1 ? methodArgs[1].ToObject() : null);
-                return RuntimeValue.FromBoxed(VmModuleInterpreter.ExecuteParsedInNewContext(statements, context, interp, timeout));
+                return RuntimeValue.FromBoxed(VmModuleInterpreter.WithScriptOrigin(origin,
+                    () => VmModuleInterpreter.ExecuteParsedInNewContext(statements, context, interp, timeout)));
             });
+
+        // vm bytecode caching has no .NET equivalent (#1150 ceiling): createCachedData()
+        // returns a deterministic marker Buffer derived from the source. It round-trips
+        // (a passed-in cachedData is never rejected) but yields no real speedup.
+        var createCachedData = BuiltInMethod.CreateV2("createCachedData", 0, 0,
+            (interp, recv, methodArgs) =>
+                RuntimeValue.FromObject(SharpTSBuffer.FromString(code, "utf8")));
 
         // Return as Dictionary<string, object?> — works in both modes:
         // Interpreter: EvaluateGetOnFallback handles IDictionary<string, object?>
         // Compiled: GetFieldsProperty handles Dictionary<string, object?>
-        return new Dictionary<string, object?>
+        var script = new Dictionary<string, object?>
         {
             ["runInNewContext"] = runInNewCtx,
             ["runInThisContext"] = runInThisCtx,
             ["runInContext"] = runInCtx,
+            ["createCachedData"] = createCachedData,
+            ["sourceMapURL"] = null,
         };
+
+        // produceCachedData: emit the marker Buffer up front and flag it produced.
+        if (produceCachedData)
+        {
+            script["cachedData"] = SharpTSBuffer.FromString(code, "utf8");
+            script["cachedDataProduced"] = true;
+        }
+
+        // cachedData input is accepted but never rejected (no real bytecode validation).
+        if (hasCachedDataInput)
+            script["cachedDataRejected"] = false;
+
+        return script;
     }
 }
