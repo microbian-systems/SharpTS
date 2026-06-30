@@ -1196,9 +1196,8 @@ public partial class RuntimeEmitter
             EmitIntlMethods(typeBuilder, runtime);
         }
 
-        // TLS handshake helpers — only meaningful with TLS types emitted.
-        if (_features.UsesTls)
-            EmitTlsHandshakeHelpers(typeBuilder, runtime);
+        // (TLS handshake is now emitted as pure-BCL IL inside $TlsSocket/$TlsServer —
+        //  no late-bind helpers, so a --compile'd tls program is genuinely standalone.)
 
         // Worker Threads support (SharedArrayBuffer, TypedArrays, Atomics, MessagePort, Worker)
         EmitWorkerHelpers(typeBuilder, runtime);

@@ -18,6 +18,9 @@ public partial class RuntimeEmitter
         EmitTlsConnect(typeBuilder, runtime);
         EmitTlsCreateSocket(typeBuilder, runtime);
         EmitTlsCreateSecureContext(typeBuilder, runtime);
+        EmitTlsCheckServerIdentity(typeBuilder, runtime);
+        EmitTlsGetCiphers(typeBuilder, runtime);
+        EmitTlsRootCertificates(typeBuilder, runtime);
         EmitTlsGetDefaultMinVersion(typeBuilder, runtime);
         EmitTlsGetDefaultMaxVersion(typeBuilder, runtime);
     }
@@ -49,8 +52,9 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object TlsConnect(object? portOrOptions, object? hostOrCallback, object? optionsOrNull, object? callbackOrNull)
-    /// Creates a new $TlsSocket. Parses port/host/options, calls TlsConnectAndHandshake
-    /// via late-binding on a background thread, populates socket, invokes callback.
+    /// Creates a new $TlsSocket. Parses port/host/options, registers the callback as a
+    /// 'secureConnect' listener, then runs the pure-BCL SslStream handshake on a ThreadPool
+    /// thread via $TlsConnectClosure (no SharpTS.dll dependency).
     /// NOTE: The TlsConnect body is deferred to EmitTlsConnectBody (Phase 2) since it
     /// depends on the $TlsConnectClosure type defined after EmitRuntimeClass.
     /// </summary>
@@ -135,6 +139,46 @@ public partial class RuntimeEmitter
             il.MarkLabel(skipCb);
         }
 
+        // tls.connect(options) form: when port/host weren't given positionally, read them from
+        // the options dict (options.port / options.host). Mirrors interp Connect's options branch.
+        var optTryGet = _types.DictionaryStringObject.GetMethod("TryGetValue")!;
+        var optTmpLocal = il.DeclareLocal(_types.Object);
+        var optParseDone = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Brfalse, optParseDone);
+        // if (port == 0 && options["port"] is double) port = (int)d
+        var skipOptPort = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, portLocal);
+        il.Emit(OpCodes.Brtrue, skipOptPort);
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Ldstr, "port");
+        il.Emit(OpCodes.Ldloca, optTmpLocal);
+        il.Emit(OpCodes.Callvirt, optTryGet);
+        il.Emit(OpCodes.Brfalse, skipOptPort);
+        il.Emit(OpCodes.Ldloc, optTmpLocal);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, skipOptPort);
+        il.Emit(OpCodes.Ldloc, optTmpLocal);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, portLocal);
+        il.MarkLabel(skipOptPort);
+        // if (options["host"] is string) host = it
+        var skipOptHost = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, optionsLocal);
+        il.Emit(OpCodes.Ldstr, "host");
+        il.Emit(OpCodes.Ldloca, optTmpLocal);
+        il.Emit(OpCodes.Callvirt, optTryGet);
+        il.Emit(OpCodes.Brfalse, skipOptHost);
+        il.Emit(OpCodes.Ldloc, optTmpLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Brfalse, skipOptHost);
+        il.Emit(OpCodes.Ldloc, optTmpLocal);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Stloc, hostLocal);
+        il.MarkLabel(skipOptHost);
+        il.MarkLabel(optParseDone);
+
         // Check rejectUnauthorized
         var rejectLocal = il.DeclareLocal(_types.Boolean);
         il.Emit(OpCodes.Ldc_I4_1);
@@ -186,6 +230,18 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, hostLocal);
         il.Emit(OpCodes.Stfld, _tlsSocketServernameField);
 
+        // Register the connect callback as a 'secureConnect' listener (Node semantics):
+        // the OK closure emits 'secureConnect' once the handshake completes.
+        var noConnectCb = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Brfalse, noConnectCb);
+        il.Emit(OpCodes.Ldloc, socketLocal);
+        il.Emit(OpCodes.Ldstr, "secureConnect");
+        il.Emit(OpCodes.Ldloc, callbackLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOn);
+        il.Emit(OpCodes.Pop);
+        il.MarkLabel(noConnectCb);
+
         // EventLoop.Ref()
         il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
         il.Emit(OpCodes.Call, runtime.EventLoopRef);
@@ -196,7 +252,6 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, hostLocal);
         il.Emit(OpCodes.Ldloc, rejectLocal);
         il.Emit(OpCodes.Ldloc, alpnLocal);
-        il.Emit(OpCodes.Ldloc, callbackLocal);
         il.Emit(OpCodes.Newobj, _tlsConnectClosureCtor);
         var closureLocal = il.DeclareLocal(_tlsConnectClosureType);
         il.Emit(OpCodes.Stloc, closureLocal);
@@ -235,7 +290,9 @@ public partial class RuntimeEmitter
 
     /// <summary>
     /// Emits: public static object TlsCreateSecureContext(object? options)
-    /// Returns a new empty Dictionary (standalone mode doesn't need real secure context).
+    /// Returns a SecureContext dictionary holding the parsed cert/key/ca/minVersion/maxVersion,
+    /// which createServer/connect accept via options.secureContext. Mirrors interp
+    /// TlsModuleInterpreter.CreateSecureContext.
     /// </summary>
     private void EmitTlsCreateSecureContext(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
@@ -249,9 +306,42 @@ public partial class RuntimeEmitter
         runtime.RegisterBuiltInModuleMethod("tls", "createSecureContext", method);
 
         var il = method.GetILGenerator();
+        var dictType = _types.DictionaryStringObject;
+        var tryGet = dictType.GetMethod("TryGetValue")!;
+        var setItem = _types.GetMethod(dictType, "set_Item", _types.String, _types.Object);
 
-        // Return a new Dictionary<string,object?> to indicate success
-        il.Emit(OpCodes.Newobj, typeof(Dictionary<string, object?>).GetConstructor([])!);
+        // var ctx = new Dictionary<string,object?>();
+        var ctxLocal = il.DeclareLocal(dictType);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(dictType));
+        il.Emit(OpCodes.Stloc, ctxLocal);
+
+        // if (options is Dictionary<string,object?> opts) copy known keys
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, dictType);
+        il.Emit(OpCodes.Brfalse, done);
+        var optsLocal = il.DeclareLocal(dictType);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Castclass, dictType);
+        il.Emit(OpCodes.Stloc, optsLocal);
+        var tmpLocal = il.DeclareLocal(_types.Object);
+        foreach (var key in new[] { "cert", "key", "ca", "minVersion", "maxVersion" })
+        {
+            var skip = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, optsLocal);
+            il.Emit(OpCodes.Ldstr, key);
+            il.Emit(OpCodes.Ldloca, tmpLocal);
+            il.Emit(OpCodes.Callvirt, tryGet);
+            il.Emit(OpCodes.Brfalse, skip);
+            il.Emit(OpCodes.Ldloc, ctxLocal);
+            il.Emit(OpCodes.Ldstr, key);
+            il.Emit(OpCodes.Ldloc, tmpLocal);
+            il.Emit(OpCodes.Callvirt, setItem);
+            il.MarkLabel(skip);
+        }
+        il.MarkLabel(done);
+
+        il.Emit(OpCodes.Ldloc, ctxLocal);
         il.Emit(OpCodes.Ret);
     }
 

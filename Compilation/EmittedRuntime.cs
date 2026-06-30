@@ -2046,6 +2046,8 @@ public class EmittedRuntime
     public MethodBuilder TlsCreateSecureContext { get; set; } = null!;
     public MethodBuilder TlsGetDefaultMinVersion { get; set; } = null!;
     public MethodBuilder TlsGetDefaultMaxVersion { get; set; } = null!;
+    public MethodBuilder TlsGetCiphers { get; set; } = null!;
+    public MethodBuilder TlsRootCertificates { get; set; } = null!;
     public MethodBuilder TlsCreateSocket { get; set; } = null!;
 
     // $TlsSocket emitted type - pure IL standalone TLS socket
@@ -2508,10 +2510,6 @@ public class EmittedRuntime
     // Note: Transform inherits SetObjectMode and SetWriteCallback from Duplex
     public MethodBuilder? TSTransformSetTransformCallback { get; set; }
     public MethodBuilder? TSTransformSetFlushCallback { get; set; }
-
-    // TLS handshake helpers (called via late-binding)
-    public MethodBuilder TlsAcceptAndHandshake { get; set; } = null!;
-    public MethodBuilder TlsConnectAndHandshake { get; set; } = null!;
 
     // $MapTransformCallback / $FilterTransformCallback helper classes
     public ConstructorBuilder MapTransformCallbackCtor { get; set; } = null!;

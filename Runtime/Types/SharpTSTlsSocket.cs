@@ -14,6 +14,7 @@ public class SharpTSTlsSocket : SharpTSSocket
 {
     private SslStream? _sslStream;
     private bool _authorized;
+    private string? _authorizationError;
     private string? _alpnProtocol;
     private X509Certificate2? _peerCertificate;
     private SslProtocols _negotiatedProtocol;
@@ -51,6 +52,7 @@ public class SharpTSTlsSocket : SharpTSSocket
         {
             // TLS-specific properties
             "authorized" => _authorized,
+            "authorizationError" => (object?)_authorizationError,
             "encrypted" => _sslStream != null,
             "alpnProtocol" => (object?)_alpnProtocol ?? SharpTSUndefined.Instance,
             "servername" => (object?)_servername ?? SharpTSUndefined.Instance,
@@ -60,6 +62,16 @@ public class SharpTSTlsSocket : SharpTSSocket
             "getPeerCertificate" => BuiltInMethod.CreateV2("getPeerCertificate", 0, 1, GetPeerCertificate),
             "getProtocol" => BuiltInMethod.CreateV2("getProtocol", 0, GetProtocol),
             "renegotiate" => BuiltInMethod.CreateV2("renegotiate", 0, 2, Renegotiate),
+
+            // Advanced TLS APIs not exposed by .NET SslStream — throw a clear error rather than
+            // a silent no-op (documented ceilings; kept in sync with the compiled $TlsSocket).
+            "getSession" => UnsupportedMethod("getSession"),
+            "setSession" => UnsupportedMethod("setSession"),
+            "getTLSTicket" => UnsupportedMethod("getTLSTicket"),
+            "getPeerFinished" => UnsupportedMethod("getPeerFinished"),
+            "getFinished" => UnsupportedMethod("getFinished"),
+            "setMaxSendFragment" => UnsupportedMethod("setMaxSendFragment"),
+            "exportKeyingMaterial" => UnsupportedMethod("exportKeyingMaterial"),
 
             // Fall through to base Socket members
             _ => base.GetMember(name)
@@ -99,8 +111,16 @@ public class SharpTSTlsSocket : SharpTSSocket
                 await _client.ConnectAsync(capturedHost, capturedPort);
                 var networkStream = _client.GetStream();
 
+                // Always observe the chain validation result so authorized/authorizationError
+                // reflect Node semantics (false + reason for a self-signed/untrusted peer), even
+                // when rejectUnauthorized:false lets the handshake proceed.
+                var capturedErrors = SslPolicyErrors.None;
                 _sslStream = new SslStream(networkStream, false,
-                    capturedReject ? null : (_, _, _, _) => true);
+                    (sender, cert, chain, errors) =>
+                    {
+                        capturedErrors = errors;
+                        return !capturedReject || errors == SslPolicyErrors.None;
+                    });
 
                 var sslOptions = new SslClientAuthenticationOptions
                 {
@@ -120,7 +140,8 @@ public class SharpTSTlsSocket : SharpTSSocket
                 await _sslStream.AuthenticateAsClientAsync(sslOptions);
 
                 _stream = _sslStream;
-                _authorized = _sslStream.IsAuthenticated;
+                _authorized = capturedErrors == SslPolicyErrors.None;
+                _authorizationError = _authorized ? null : DescribePolicyErrors(capturedErrors);
                 _negotiatedProtocol = _sslStream.SslProtocol;
                 _peerCertificate = _sslStream.RemoteCertificate as X509Certificate2;
                 _alpnProtocol = _sslStream.NegotiatedApplicationProtocol.ToString();
@@ -177,7 +198,9 @@ public class SharpTSTlsSocket : SharpTSSocket
             ["issuer"] = _peerCertificate.Issuer,
             ["valid_from"] = _peerCertificate.NotBefore.ToString("R"),
             ["valid_to"] = _peerCertificate.NotAfter.ToString("R"),
-            ["serialNumber"] = _peerCertificate.SerialNumber
+            ["serialNumber"] = _peerCertificate.SerialNumber,
+            ["fingerprint"] = _peerCertificate.Thumbprint,
+            ["subjectaltname"] = SubjectAltName(_peerCertificate)
         }));
     }
 
@@ -191,6 +214,52 @@ public class SharpTSTlsSocket : SharpTSSocket
     {
         // Node.js renegotiate() - not widely used, return this for chaining
         return RuntimeValue.FromObject(this);
+    }
+
+    /// <summary>
+    /// Returns a built-in that throws a clear "not supported on this runtime" error — used for the
+    /// TLS APIs .NET SslStream doesn't expose (session tickets, Finished messages, keying material,
+    /// max-fragment, PSK). See the "Known .NET / SslStream ceilings" in epic #1032.
+    /// </summary>
+    private static BuiltInMethod UnsupportedMethod(string name) =>
+        BuiltInMethod.CreateV2(name, 0, int.MaxValue, (interp, receiver, args) =>
+            throw new SharpTS.Runtime.Exceptions.ThrowException(new SharpTSError(
+                $"tls.TLSSocket.{name}() is not supported on this runtime (not exposed by .NET SslStream)")));
+
+    /// <summary>
+    /// Maps SslStream chain-validation errors to a Node-ish authorizationError string.
+    /// Kept in sync with the compiled $TlsConnectClosure validation path.
+    /// </summary>
+    internal static string DescribePolicyErrors(SslPolicyErrors errors)
+    {
+        if ((errors & SslPolicyErrors.RemoteCertificateChainErrors) != 0)
+            return "self-signed certificate";
+        if ((errors & SslPolicyErrors.RemoteCertificateNameMismatch) != 0)
+            return "Hostname/IP does not match certificate's altnames";
+        if ((errors & SslPolicyErrors.RemoteCertificateNotAvailable) != 0)
+            return "no certificate provided";
+        return errors.ToString();
+    }
+
+    /// <summary>
+    /// Formats a certificate's Subject Alternative Name extension the way Node does:
+    /// "DNS:localhost, IP Address:127.0.0.1". Returns null if no SAN extension is present.
+    /// </summary>
+    internal static string? SubjectAltName(X509Certificate2 cert)
+    {
+        foreach (var ext in cert.Extensions)
+        {
+            if (ext.Oid?.Value != "2.5.29.17") continue;
+            var san = ext as X509SubjectAlternativeNameExtension
+                      ?? new X509SubjectAlternativeNameExtension(ext.RawData);
+            var parts = new List<string>();
+            foreach (var dns in san.EnumerateDnsNames())
+                parts.Add("DNS:" + dns);
+            foreach (var ip in san.EnumerateIPAddresses())
+                parts.Add("IP Address:" + ip.ToString());
+            return parts.Count > 0 ? string.Join(", ", parts) : null;
+        }
+        return null;
     }
 
     private static string? GetProtocolString(SslProtocols protocol)

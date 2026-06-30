@@ -75,7 +75,10 @@ public partial class RuntimeEmitter
         runtime.NetSocketType = typeBuilder;
 
         // ── Fields ──
-        _netSocketClientField = typeBuilder.DefineField("_client", typeof(TcpClient), FieldAttributes.Private);
+        // Assembly (internal) rather than Private so the $TlsSocket subclass and the
+        // TLS connect/accept workers (same emitted module) can assign the negotiated
+        // TcpClient — TLSSocket extends net.Socket, mirroring interp SharpTSTlsSocket : SharpTSSocket.
+        _netSocketClientField = typeBuilder.DefineField("_client", typeof(TcpClient), FieldAttributes.Assembly);
         _netSocketStreamField = typeBuilder.DefineField("_stream", typeof(System.IO.Stream), FieldAttributes.Assembly);
         _netSocketConnectingField = typeBuilder.DefineField("_connecting", _types.Boolean, FieldAttributes.Assembly);
         _netSocketDestroyedField = typeBuilder.DefineField("_destroyed", _types.Boolean, FieldAttributes.Assembly);

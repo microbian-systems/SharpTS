@@ -43,9 +43,15 @@ public class SharpTSTlsServer : SharpTSEventEmitter, IDisposable
 
         if (options != null)
         {
-            // Parse certificate from PEM strings
+            // Parse certificate from PEM strings — directly, or from a SecureContext
+            // (tls.createSecureContext result) passed as options.secureContext.
             var certPem = options.GetProperty("cert") as string;
             var keyPem = options.GetProperty("key") as string;
+            if ((certPem == null || keyPem == null) && options.GetProperty("secureContext") is SharpTSObject sc)
+            {
+                certPem ??= sc.GetProperty("cert") as string;
+                keyPem ??= sc.GetProperty("key") as string;
+            }
 
             if (certPem != null && keyPem != null)
             {

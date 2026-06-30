@@ -439,6 +439,38 @@ public class TlsModuleTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TlsClient_AlpnProtocol_Exposed(ExecutionMode mode)
+    {
+        // The client sends ALPNProtocols and exposes the negotiated client.alpnProtocol — both modes.
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key, ALPNProtocols: ['h2', 'http/1.1'] }, (socket: any) => {
+                    socket.end();
+                    server.close();
+                });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect(addr.port, '127.0.0.1', {
+                        rejectUnauthorized: false,
+                        ALPNProtocols: ['h2', 'http/1.1']
+                    }, () => {
+                        console.log('client-alpn:' + client.alpnProtocol);
+                        client.end();
+                    });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Contains("client-alpn:h2", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void TlsServer_SNICallback_Accepted(ExecutionMode mode)
     {
         var (certPem, keyPem) = GenerateSelfSignedCert();
@@ -459,6 +491,188 @@ public class TlsModuleTests
         };
         var output = TestHarness.RunModules(files, "./main.ts", mode);
         Assert.Contains("true", output);
+    }
+
+    #endregion
+
+    #region rejectUnauthorized parity (#1040)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TlsRejectUnauthorized_Parity(ExecutionMode mode)
+    {
+        // rejectUnauthorized:true against a self-signed peer fails the handshake ('error'),
+        // identically in interp and compiled.
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key }, (socket: any) => { socket.destroy(); });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect(addr.port, '127.0.0.1', { rejectUnauthorized: true });
+                    client.on('error', () => { console.log('rejected'); server.close(); });
+                    client.on('secureConnect', () => { console.log('should-not-connect'); client.destroy(); server.close(); });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Equal("rejected\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TlsRoundTrip_ServerToClientData_Parity(ExecutionMode mode)
+    {
+        // Full client↔server round trip: server writes, client receives, identical in both modes.
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key }, (socket: any) => {
+                    socket.write('hello from server');
+                    socket.end();
+                    server.close();
+                });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect({ port: addr.port, host: '127.0.0.1', rejectUnauthorized: false });
+                    client.setEncoding('utf8');
+                    let data = '';
+                    client.on('data', (c: string) => { data += c; });
+                    client.on('end', () => { console.log('received: ' + data); client.destroy(); });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Equal("received: hello from server\n", output);
+    }
+
+    #endregion
+
+    #region Introspection parity (#1034)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TlsSocket_Introspection_Parity(ExecutionMode mode)
+    {
+        // After a real handshake, getCipher/getProtocol/getPeerCertificate/authorized/encrypted
+        // must read the negotiated SslStream identically in interp and compiled mode.
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key }, (socket: any) => {
+                    socket.end();
+                    server.close();
+                });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect(addr.port, '127.0.0.1', { rejectUnauthorized: false }, () => {
+                        const cipher = client.getCipher();
+                        console.log('cipher-name:' + (cipher !== null && typeof cipher.name === 'string' && cipher.name.length > 0));
+                        console.log('version-ok:' + (cipher !== null && (cipher.version as string).indexOf('TLSv1.') === 0));
+                        console.log('proto-ok:' + ((client.getProtocol() as string).indexOf('TLSv1.') === 0));
+                        const pc = client.getPeerCertificate();
+                        console.log('peer-localhost:' + (pc.subject.indexOf('localhost') >= 0));
+                        // Self-signed peer with rejectUnauthorized:false ⇒ authorized=false + a reason (Node semantics).
+                        console.log('authorized:' + client.authorized);
+                        console.log('authError:' + (typeof client.authorizationError === 'string' && client.authorizationError.length > 0));
+                        console.log('encrypted:' + client.encrypted);
+                        client.end();
+                    });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Equal(
+            "cipher-name:true\nversion-ok:true\nproto-ok:true\npeer-localhost:true\nauthorized:false\nauthError:true\nencrypted:true\n",
+            output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TlsSocket_PeerCertSubjectAltName_Parity(ExecutionMode mode)
+    {
+        // getPeerCertificate().subjectaltname is formatted "DNS:…, IP Address:…" identically in
+        // both modes, and is consumable by tls.checkServerIdentity.
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key }, (socket: any) => {
+                    socket.end();
+                    server.close();
+                });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect(addr.port, '127.0.0.1', { rejectUnauthorized: false }, () => {
+                        const pc = client.getPeerCertificate();
+                        console.log('san-dns:' + (pc.subjectaltname.indexOf('DNS:localhost') >= 0));
+                        console.log('identity-ok:' + (tls.checkServerIdentity('localhost', pc) === undefined));
+                        client.end();
+                    });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Equal("san-dns:true\nidentity-ok:true\n", output);
+    }
+
+    #endregion
+
+    #region I/O + renegotiate parity (#1035)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TlsSocket_WriteEchoAndClose_Parity(ExecutionMode mode)
+    {
+        // Bidirectional write-through over the negotiated SslStream + close lifecycle,
+        // plus renegotiate() returning the socket — identical interp == compiled.
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key }, (socket: any) => {
+                    socket.setEncoding('utf8');
+                    socket.on('data', (d: string) => { socket.write('echo:' + d); });
+                    socket.on('end', () => { socket.end(); });
+                });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect(addr.port, '127.0.0.1', { rejectUnauthorized: false }, () => {
+                        console.log('reneg-self:' + (client.renegotiate({}, () => {}) === client));
+                        client.write('ping');
+                        client.end();
+                    });
+                    client.setEncoding('utf8');
+                    let recv = '';
+                    client.on('data', (d: string) => { recv += d; });
+                    client.on('close', () => {
+                        console.log('recv:' + recv);
+                        console.log('closed:true');
+                        server.close();
+                    });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Equal("reneg-self:true\nrecv:echo:ping\nclosed:true\n", output);
     }
 
     #endregion
