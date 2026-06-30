@@ -1557,6 +1557,26 @@ public class StreamModuleTests
         Assert.Contains("6,8", output);
     }
 
+    // #1026: `Readable.prototype.map` must return a Transform stream, NOT an array — i.e. the
+    // call must dispatch to $Readable.Map, not the Array/Iterator map emitter. Verifies parity.
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_Readable_Map_ReturnsStream_NotArray(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                const r = new Readable({ objectMode: true });
+                const m = r.map((x: any) => x * 2);
+                console.log(typeof m, typeof m.pipe, Array.isArray(m));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("object function false\n", output);
+    }
+
     #endregion
 
     #region addAbortSignal
@@ -1578,6 +1598,442 @@ public class StreamModuleTests
 
         var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_AddAbortSignal_DestroysOnAbort(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, addAbortSignal } from 'stream';
+                const r = new Readable();
+                const ac = new AbortController();
+                addAbortSignal(ac.signal, r);
+                const events: string[] = [];
+                r.on('error', (e: any) => events.push('error:' + (e.name ?? e)));
+                r.on('close', () => events.push('close'));
+                ac.abort();
+                console.log(events.join(','), r.destroyed);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("error:AbortError,close true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_AddAbortSignal_AlreadyAborted_DestroysImmediately(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, addAbortSignal } from 'stream';
+                const r = new Readable();
+                const ac = new AbortController();
+                ac.abort();
+                const events: string[] = [];
+                r.on('error', (e: any) => events.push('error:' + (e.name ?? e)));
+                addAbortSignal(ac.signal, r);
+                console.log(events.join(','), r.destroyed);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("error:AbortError true\n", output);
+    }
+
+    #endregion
+
+    #region Async iteration (Symbol.asyncIterator) — #1024
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_AsyncIterator_SyncProducer(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    r.push(1); r.push(2); r.push(3); r.push(null);
+                    const out: number[] = [];
+                    for await (const x of r) { out.push(x); }
+                    console.log(out.join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("1,2,3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_AsyncIterator_SlowProducer(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    let i = 0;
+                    const t = setInterval(() => {
+                        i++;
+                        if (i <= 3) { r.push(i * 10); }
+                        else { r.push(null); clearInterval(t); }
+                    }, 5);
+                    const out: number[] = [];
+                    for await (const x of r) { out.push(x); }
+                    console.log(out.join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("10,20,30\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_AsyncIterator_EarlyBreak_Destroys(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    r.push('a'); r.push('b'); r.push('c'); r.push(null);
+                    const out: string[] = [];
+                    for await (const x of r) { out.push(x); if (out.length === 2) break; }
+                    console.log(out.join(','), r.destroyed);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("a,b true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_AsyncIterator_ErrorRejects(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    let i = 0;
+                    const t = setInterval(() => {
+                        i++;
+                        if (i === 1) { r.push('x'); }
+                        else { r.destroy(new Error('boom')); clearInterval(t); }
+                    }, 5);
+                    try {
+                        for await (const x of r) { console.log('got', x); }
+                        console.log('no error');
+                    } catch (e: any) {
+                        console.log('caught:', e.message ?? e);
+                    }
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("got x\ncaught: boom\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_AsyncIterator_FromArray(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = Readable.from([10, 20, 30]);
+                    let sum = 0;
+                    for await (const x of r) { sum += x; }
+                    console.log(sum);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("60\n", output);
+    }
+
+    #endregion
+
+    #region Async iterator helpers (reduce/some/every/find/flatMap/drop/take/asIndexedPairs) — #1025
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_Helper_ReduceSomeEveryFind(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const mk = () => { const r = new Readable({ objectMode: true }); [1, 2, 3, 4].forEach(x => r.push(x)); r.push(null); return r; };
+                    console.log(await mk().reduce((a: number, x: number) => a + x, 0));
+                    console.log(await mk().reduce((a: number, x: number) => a + x));
+                    console.log(await mk().some((x: number) => x > 3));
+                    console.log(await mk().some((x: number) => x > 9));
+                    console.log(await mk().every((x: number) => x > 0));
+                    console.log(await mk().every((x: number) => x > 2));
+                    console.log(await mk().find((x: number) => x > 2));
+                    console.log(await mk().find((x: number) => x > 9));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("10\n10\ntrue\nfalse\ntrue\nfalse\n3\nundefined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_Helper_DropTake(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const mk = () => { const r = new Readable({ objectMode: true }); [1, 2, 3, 4, 5].forEach(x => r.push(x)); r.push(null); return r; };
+                    console.log((await mk().drop(2).toArray()).join(','));
+                    console.log((await mk().take(2).toArray()).join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("3,4,5\n1,2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_Helper_FlatMap(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    [1, 2, 3].forEach(x => r.push(x)); r.push(null);
+                    const out = await r.flatMap((x: number) => [x, x * 10]).toArray();
+                    console.log(out.join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("1,10,2,20,3,30\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_Helper_AsIndexedPairs(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    ['a', 'b', 'c'].forEach(x => r.push(x)); r.push(null);
+                    const out = await r.asIndexedPairs().toArray();
+                    console.log(out.map((p: any) => '[' + p[0] + ',' + p[1] + ']').join(''));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("[0,a][1,b][2,c]\n", output);
+    }
+
+    #endregion
+
+    #region compose + Duplex.from — #1028
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_Compose_TransformChain(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compose, Transform } from 'stream';
+                const up = new Transform({ objectMode: true, transform(c: any, e: any, cb: any) { cb(null, String(c).toUpperCase()); } });
+                const bang = new Transform({ objectMode: true, transform(c: any, e: any, cb: any) { cb(null, c + '!'); } });
+                const composed = compose(up, bang);
+                const out: string[] = [];
+                composed.on('data', (d: any) => out.push(d));
+                composed.write('a');
+                composed.write('b');
+                console.log(out.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("A!,B!\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_DuplexFrom_Iterable(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Duplex } from 'stream';
+                async function main(): Promise<void> {
+                    const d = Duplex.from([1, 2, 3]);
+                    const got: number[] = [];
+                    for await (const x of d) got.push(x);
+                    console.log(got.join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("1,2,3\n", output);
+    }
+
+    #endregion
+
+    #region isErrored + get/setDefaultHighWaterMark + prefinish ordering — #1030
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_IsErrored(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, isErrored } from 'stream';
+                const r = new Readable();
+                r.on('error', () => {});
+                console.log(isErrored(r));
+                r.destroy(new Error('boom'));
+                console.log(isErrored(r));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("false\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_DefaultHighWaterMark_GetSet(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { getDefaultHighWaterMark, setDefaultHighWaterMark } from 'stream';
+                console.log(getDefaultHighWaterMark(false));
+                console.log(getDefaultHighWaterMark(true));
+                setDefaultHighWaterMark(true, 99);
+                console.log(getDefaultHighWaterMark(true));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("16384\n16\n99\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_PrefinishFinishOrdering(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Writable } from 'stream';
+                const w = new Writable({ write(c: any, e: any, cb: any) { cb(); } });
+                const order: string[] = [];
+                w.on('prefinish', () => order.push('prefinish'));
+                w.on('finish', () => order.push('finish'));
+                w.end();
+                console.log(order.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("prefinish,finish\n", output);
+    }
+
+    #endregion
+
+    #region Node↔Web conversions (toWeb/fromWeb) — #1029 (interpreter-only documented subset)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Readable_ToWeb(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    r.push('a'); r.push('b'); r.push(null);
+                    const web = Readable.toWeb(r);
+                    const got: string[] = [];
+                    for await (const c of web) got.push(c);
+                    console.log(got.join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("a,b\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Readable_FromWeb(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const ws = new ReadableStream({ start(c: any) { c.enqueue(1); c.enqueue(2); c.enqueue(3); c.close(); } });
+                    const node = Readable.fromWeb(ws);
+                    const got: number[] = [];
+                    for await (const x of node) got.push(x);
+                    console.log(got.join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("1,2,3\n", output);
     }
 
     #endregion

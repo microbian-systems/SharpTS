@@ -23,6 +23,12 @@ public class SharpTSReadable : SharpTSEventEmitter
     private bool _objectMode;
     private int _highWaterMark = 16384; // bytes for binary mode, 16 for object mode
 
+    // Async iteration support (#1024): tracks error state for `for await` rejection,
+    // and parks a pending next() pull when the buffer is empty and the stream is live.
+    private bool _errored;
+    private object? _error;
+    private System.Threading.Tasks.TaskCompletionSource<object?>? _iterWaiter;
+
     /// <summary>
     /// Gets or sets whether this stream operates in object mode.
     /// In object mode, chunks can be any JavaScript value (not just strings/Buffers).
@@ -42,6 +48,11 @@ public class SharpTSReadable : SharpTSEventEmitter
     /// Gets or sets the high water mark for this stream.
     /// </summary>
     public int HighWaterMark { get => _highWaterMark; set => _highWaterMark = value; }
+
+    /// <summary>
+    /// Whether this stream has errored (destroyed with an error) — backs stream.isErrored (#1030).
+    /// </summary>
+    public bool Errored => _errored;
 
     /// <summary>
     /// Gets a member (method or property) by name for interpreter dispatch.
@@ -65,6 +76,17 @@ public class SharpTSReadable : SharpTSEventEmitter
             "forEach" => BuiltInMethod.CreateV2("forEach", 1, ForEach),
             "map" => BuiltInMethod.CreateV2("map", 1, Map),
             "filter" => BuiltInMethod.CreateV2("filter", 1, Filter),
+
+            // Async iterator helpers (#1025). Consuming helpers return a Promise;
+            // lazy helpers return a new Readable carrying the transformed chunks.
+            "reduce" => BuiltInMethod.CreateV2("reduce", 1, 2, Reduce),
+            "some" => BuiltInMethod.CreateV2("some", 1, Some),
+            "every" => BuiltInMethod.CreateV2("every", 1, Every),
+            "find" => BuiltInMethod.CreateV2("find", 1, Find),
+            "drop" => BuiltInMethod.CreateV2("drop", 1, Drop),
+            "take" => BuiltInMethod.CreateV2("take", 1, Take),
+            "flatMap" => BuiltInMethod.CreateV2("flatMap", 1, FlatMap),
+            "asIndexedPairs" => BuiltInMethod.CreateV2("asIndexedPairs", 0, AsIndexedPairs),
 
             // Wrap event methods to drain buffer after 'data' listener is added
             "on" or "addListener" => BuiltInMethod.CreateV2(name, 2, WrapOnForFlowing),
@@ -316,10 +338,14 @@ public class SharpTSReadable : SharpTSEventEmitter
         {
             _ended = true;
             _readable = false;
+            TryDeliverToIterWaiter(null, end: true);
             if (_flowing == true)
                 EmitData(interpreter, "end", null);
             return;
         }
+
+        if (TryDeliverToIterWaiter(chunk, end: false))
+            return;
 
         if (_flowing == true)
             EmitData(interpreter, "data", chunk);
@@ -353,6 +379,7 @@ public class SharpTSReadable : SharpTSEventEmitter
             // EOF signal
             _ended = true;
             _readable = false;
+            TryDeliverToIterWaiter(null, end: true);
             if (_flowing == true)
             {
                 EmitEvent(interpreter, "end", []);
@@ -363,6 +390,12 @@ public class SharpTSReadable : SharpTSEventEmitter
             }
             FlushPipes(interpreter);
             return RuntimeValue.False;
+        }
+
+        // Hand the chunk directly to a parked `for await` pull, if any (#1024).
+        if (TryDeliverToIterWaiter(chunk, end: false))
+        {
+            return RuntimeValue.FromBoolean(GetBufferSize() < _highWaterMark);
         }
 
         if (_flowing == true)
@@ -570,10 +603,21 @@ public class SharpTSReadable : SharpTSEventEmitter
         _readBuffer.Clear();
         _pipeDestinations.Clear();
 
-        if (args.Length > 0 && args[0].ToObject() is { } error)
+        var destroyError = args.Length > 0 ? args[0].ToObject() : null;
+        if (destroyError is not null)
         {
+            _errored = true;
+            _error = destroyError;
+            // A pending `for await` pull rejects with the destroy error (#1024).
+            var faulted = _iterWaiter;
+            _iterWaiter = null;
+            faulted?.TrySetException(new SharpTSPromiseRejectedException(destroyError));
             // Emit error event
-            EmitEvent(interpreter, "error", [error]);
+            EmitEvent(interpreter, "error", [destroyError]);
+        }
+        else
+        {
+            TryDeliverToIterWaiter(null, end: true);
         }
 
         EmitEvent(interpreter, "close", []);
@@ -848,6 +892,218 @@ public class SharpTSReadable : SharpTSEventEmitter
             size += GetChunkLength(chunk);
         }
         return size;
+    }
+
+    // ---- Async iterator helpers (#1025) ----
+    // These consume / transform the currently-buffered chunks (the same buffer model as
+    // toArray/forEach). Consuming helpers return a resolved Promise; lazy helpers return a
+    // new objectMode Readable carrying the transformed chunks. Interp == compiled by construction.
+
+    internal List<object?> DrainBufferToList()
+    {
+        var items = new List<object?>(_readBuffer.Count);
+        while (_readBuffer.Count > 0)
+            items.Add(_readBuffer.Dequeue());
+        return items;
+    }
+
+    private static SharpTSReadable MakeHelperReadable(bool objectMode)
+    {
+        var r = new SharpTSReadable { ObjectMode = objectMode };
+        return r;
+    }
+
+    private RuntimeValue Reduce(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("reduce() requires a function argument");
+        var items = DrainBufferToList();
+
+        object? acc;
+        int start;
+        if (args.Length > 1)
+        {
+            acc = args[1].ToObject();
+            start = 0;
+        }
+        else if (items.Count > 0)
+        {
+            acc = items[0];
+            start = 1;
+        }
+        else
+        {
+            // Empty stream with no initial value — yields undefined (matches compiled parity).
+            return RuntimeValue.FromObject(SharpTSPromise.Resolve(SharpTSUndefined.Instance));
+        }
+
+        for (int i = start; i < items.Count; i++)
+            acc = fn.Call(interpreter, [acc, items[i]]);
+
+        return RuntimeValue.FromObject(SharpTSPromise.Resolve(acc));
+    }
+
+    private RuntimeValue Some(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("some() requires a function argument");
+        foreach (var item in DrainBufferToList())
+        {
+            if (RuntimeValue.FromBoxed(fn.Call(interpreter, [item])).IsTruthy())
+                return RuntimeValue.FromObject(SharpTSPromise.Resolve(true));
+        }
+        return RuntimeValue.FromObject(SharpTSPromise.Resolve(false));
+    }
+
+    private RuntimeValue Every(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("every() requires a function argument");
+        foreach (var item in DrainBufferToList())
+        {
+            if (!RuntimeValue.FromBoxed(fn.Call(interpreter, [item])).IsTruthy())
+                return RuntimeValue.FromObject(SharpTSPromise.Resolve(false));
+        }
+        return RuntimeValue.FromObject(SharpTSPromise.Resolve(true));
+    }
+
+    private RuntimeValue Find(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("find() requires a function argument");
+        foreach (var item in DrainBufferToList())
+        {
+            if (RuntimeValue.FromBoxed(fn.Call(interpreter, [item])).IsTruthy())
+                return RuntimeValue.FromObject(SharpTSPromise.Resolve(item));
+        }
+        return RuntimeValue.FromObject(SharpTSPromise.Resolve(SharpTSUndefined.Instance));
+    }
+
+    private RuntimeValue Drop(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        int n = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+        var items = DrainBufferToList();
+        var result = MakeHelperReadable(_objectMode);
+        for (int i = n; i < items.Count; i++)
+            result.PushFromHost(interpreter, items[i]);
+        result.PushFromHost(interpreter, null);
+        return RuntimeValue.FromObject(result);
+    }
+
+    private RuntimeValue Take(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        int n = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+        var items = DrainBufferToList();
+        var result = MakeHelperReadable(_objectMode);
+        for (int i = 0; i < items.Count && i < n; i++)
+            result.PushFromHost(interpreter, items[i]);
+        result.PushFromHost(interpreter, null);
+        return RuntimeValue.FromObject(result);
+    }
+
+    private RuntimeValue FlatMap(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var fn = args.Length > 0 ? args[0].ToObject() as ISharpTSCallable : null;
+        if (fn == null)
+            throw new Exception("flatMap() requires a function argument");
+        var result = MakeHelperReadable(true);
+        foreach (var item in DrainBufferToList())
+        {
+            var mapped = fn.Call(interpreter, [item]);
+            if (mapped is SharpTSArray arr)
+            {
+                foreach (var e in arr)
+                    result.PushFromHost(interpreter, e);
+            }
+            else
+            {
+                result.PushFromHost(interpreter, mapped);
+            }
+        }
+        result.PushFromHost(interpreter, null);
+        return RuntimeValue.FromObject(result);
+    }
+
+    private RuntimeValue AsIndexedPairs(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var result = MakeHelperReadable(true);
+        int index = 0;
+        foreach (var item in DrainBufferToList())
+        {
+            var pairElements = new SharpTS.Runtime.Deque<object?>();
+            pairElements.AddLast((double)index);
+            pairElements.AddLast(item);
+            result.PushFromHost(interpreter, new SharpTSArray(pairElements));
+            index++;
+        }
+        result.PushFromHost(interpreter, null);
+        return RuntimeValue.FromObject(result);
+    }
+
+    // ---- Async iteration support (#1024) ----
+
+    private static Dictionary<string, object?> MakeIterResult(object? value, bool done)
+        => new() { ["value"] = done ? SharpTSUndefined.Instance : value, ["done"] = done };
+
+    /// <summary>
+    /// Pulls the next chunk for <c>[Symbol.asyncIterator]().next()</c>. Returns a Task that
+    /// resolves to an <c>{ value, done }</c> record. When the buffer is empty and the stream
+    /// is still live, the returned task is parked until the next push / end / error so a slow
+    /// (asynchronous) producer is awaited rather than ending the loop prematurely.
+    /// </summary>
+    internal System.Threading.Tasks.Task<object?> IterNextAsync()
+    {
+        if (_readBuffer.Count > 0)
+            return System.Threading.Tasks.Task.FromResult<object?>(MakeIterResult(_readBuffer.Dequeue(), false));
+        if (_errored)
+        {
+            var tcs = new System.Threading.Tasks.TaskCompletionSource<object?>();
+            tcs.SetException(new SharpTSPromiseRejectedException(_error));
+            return tcs.Task;
+        }
+        if (_ended || _destroyed)
+            return System.Threading.Tasks.Task.FromResult<object?>(MakeIterResult(null, true));
+
+        // Park until a producer pushes more, ends, or errors.
+        _iterWaiter = new System.Threading.Tasks.TaskCompletionSource<object?>(
+            System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+        return _iterWaiter.Task;
+    }
+
+    /// <summary>
+    /// Cleanup for an early <c>for await</c> exit (break/return/throw) — destroys the stream
+    /// and settles any parked pull as done.
+    /// </summary>
+    internal void IterReturn()
+    {
+        if (!_destroyed)
+        {
+            _destroyed = true;
+            _readable = false;
+            _readBuffer.Clear();
+            _pipeDestinations.Clear();
+        }
+        var waiter = _iterWaiter;
+        _iterWaiter = null;
+        waiter?.TrySetResult(MakeIterResult(null, true));
+    }
+
+    /// <summary>
+    /// Hands a value to a parked async-iterator pull, if one is waiting. Returns true when the
+    /// value was consumed by the iterator (so the caller must not also buffer / emit it).
+    /// </summary>
+    private bool TryDeliverToIterWaiter(object? chunk, bool end)
+    {
+        var waiter = _iterWaiter;
+        if (waiter == null)
+            return false;
+        _iterWaiter = null;
+        waiter.TrySetResult(end ? MakeIterResult(null, true) : MakeIterResult(chunk, false));
+        return true;
     }
 
     public override string ToString() => "Readable {}";

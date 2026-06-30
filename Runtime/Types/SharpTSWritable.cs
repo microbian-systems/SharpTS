@@ -27,6 +27,12 @@ public class SharpTSWritable : SharpTSEventEmitter
     private bool _needDrain;
     private bool _objectMode;
     private bool _autoDestroy;
+    private bool _errored;
+
+    /// <summary>
+    /// Whether this stream has errored — backs stream.isErrored (#1030).
+    /// </summary>
+    public bool Errored => _errored;
 
     /// <summary>
     /// Gets or sets whether this stream operates in object mode.
@@ -373,6 +379,7 @@ public class SharpTSWritable : SharpTSEventEmitter
 
     private void EmitError(Interp interpreter, object? error)
     {
+        _errored = true;
         EmitEvent(interpreter, "error", [error]);
     }
 

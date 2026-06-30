@@ -26,9 +26,15 @@ public partial class RuntimeEmitter
             TypeAttributes.Public | TypeAttributes.Abstract | TypeAttributes.Sealed | TypeAttributes.BeforeFieldInit
         );
 
+        // compose bridge closure (#1028) — needs $Duplex/$Writable Write/End + $Readable Push.
+        EmitStreamComposeBridgeClass(moduleBuilder, runtime);
+
         EmitStreamFinished(typeBuilder, runtime);
         EmitStreamPipeline(typeBuilder, runtime);
         EmitStreamReadableFrom(typeBuilder, runtime);
+        EmitStreamDuplexFrom(typeBuilder, runtime);     // #1028
+        EmitStreamComposeMethod(typeBuilder, runtime);  // #1028
+        EmitStreamDefaultHwm(typeBuilder, runtime);     // #1030
         EmitStreamPromisePipeline(typeBuilder, runtime);
         EmitStreamPromiseFinished(typeBuilder, runtime);
         EmitStreamConstructorFactories(typeBuilder, runtime);

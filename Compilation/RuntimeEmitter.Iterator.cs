@@ -385,6 +385,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Brfalse, returnNullLabel);
 
+        // #1024: node:stream $Readable exposes [Symbol.asyncIterator] via GetAsyncIterator().
+        // It carries no per-object symbol dict and isn't a user class, so hook it here:
+        //   if (symbol == SymbolAsyncIterator && obj is $Readable) return new $TSFunction(obj, GetAsyncIterator);
+        if (runtime.TSReadableType != null && runtime.TSReadableGetAsyncIterator != null)
+        {
+            var notReadableAsyncIter = il.DefineLabel();
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldsfld, runtime.SymbolAsyncIterator);
+            il.Emit(OpCodes.Bne_Un, notReadableAsyncIter);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Isinst, runtime.TSReadableType);
+            il.Emit(OpCodes.Brfalse, notReadableAsyncIter);
+            il.Emit(OpCodes.Ldarg_0); // target
+            EmitInstanceMethodInfoLiteral(il, runtime.TSReadableGetAsyncIterator, runtime.TSReadableType);
+            il.Emit(OpCodes.Newobj, runtime.TSFunctionCtor);
+            il.Emit(OpCodes.Ret);
+            il.MarkLabel(notReadableAsyncIter);
+        }
+
         // Get symbol dict: var dict = GetSymbolDict(obj);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Call, runtime.GetSymbolDictMethod);

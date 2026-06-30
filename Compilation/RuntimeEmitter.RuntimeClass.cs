@@ -688,6 +688,10 @@ public partial class RuntimeEmitter
         {
             EmitFireAbortEvent(typeBuilder, runtime);
             EmitAbortControllerMethods(typeBuilder, runtime);
+            // stream.addAbortSignal destroy-on-abort wiring (#1027) — needs the AbortSignal
+            // helpers above + the $StreamAbortCallback closure emitted in the stream block.
+            if (_features.UsesNodeStreams)
+                EmitStreamAddAbortSignalMethod(typeBuilder, runtime);
         }
         // String/Number/Boolean populate shells already defined above
         // (before cctor) so the cctor can call them eagerly.

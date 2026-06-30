@@ -30,6 +30,7 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsWritableAutoDestroyField = null!;
     private FieldBuilder _tsWritableLengthField = null!;
     private FieldBuilder _tsWritableNeedDrainField = null!;
+    private FieldBuilder _tsWritableErroredField = null!;
 
     /// <summary>
     /// Emits the $WriteCallbackWrapper helper class.
@@ -212,6 +213,7 @@ public partial class RuntimeEmitter
         _tsWritableAutoDestroyField = typeBuilder.DefineField("_autoDestroy", _types.Boolean, FieldAttributes.Private);
         _tsWritableLengthField = typeBuilder.DefineField("_writableLength", _types.Int32, FieldAttributes.Public);
         _tsWritableNeedDrainField = typeBuilder.DefineField("_needDrain", _types.Boolean, FieldAttributes.Public);
+        _tsWritableErroredField = typeBuilder.DefineField("_errored", _types.Boolean, FieldAttributes.Private); // #1030
 
         // Emit the helper callback wrapper class (after fields so it can reference them)
         EmitTSWriteCallbackWrapperClass(moduleBuilder, runtime);
@@ -748,9 +750,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, _tsWritableCorkBufferField);
         il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("Clear")!);
 
-        // if (error != null) emit 'error'
+        // if (error != null) { _errored = true; emit 'error'; }  (#1030)
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, noErrorLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _tsWritableErroredField);
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "error");
         il.Emit(OpCodes.Ldc_I4_1);
@@ -883,6 +888,21 @@ public partial class RuntimeEmitter
 
     private void EmitTSWritablePropertyGetters(TypeBuilder typeBuilder, EmittedRuntime runtime)
     {
+        // errored property (#1030): backs stream.isErrored
+        var erroredProp = typeBuilder.DefineProperty("Errored", PropertyAttributes.None, _types.Boolean, null);
+        var getErrored = typeBuilder.DefineMethod(
+            "get_Errored",
+            MethodAttributes.Public | MethodAttributes.SpecialName,
+            _types.Boolean,
+            Type.EmptyTypes
+        );
+        runtime.TSWritableErroredGetter = getErrored;
+        var eil = getErrored.GetILGenerator();
+        eil.Emit(OpCodes.Ldarg_0);
+        eil.Emit(OpCodes.Ldfld, _tsWritableErroredField);
+        eil.Emit(OpCodes.Ret);
+        erroredProp.SetGetMethod(getErrored);
+
         // writable property: _writable && !_ended && !_destroyed
         // Note: Use PascalCase getter names (get_Writable) for GetFieldsProperty lookup
         var writableProp = typeBuilder.DefineProperty("Writable", PropertyAttributes.None, _types.Boolean, null);

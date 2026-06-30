@@ -1820,7 +1820,21 @@ public static class BuiltInModuleTypes
             ["toArray"] = new TypeInfo.Function([], new TypeInfo.Array(anyType)),
             ["forEach"] = new TypeInfo.Function([anyType], voidType),
             ["map"] = new TypeInfo.Function([anyType], anyType),
-            ["filter"] = new TypeInfo.Function([anyType], anyType)
+            ["filter"] = new TypeInfo.Function([anyType], anyType),
+
+            // Async-iterator helpers (#1025): consuming helpers return Promises,
+            // transform-returning helpers (drop/take/flatMap/asIndexedPairs) return a stream.
+            ["reduce"] = new TypeInfo.Function([anyType, anyType], new TypeInfo.Promise(anyType), RequiredParams: 1),
+            ["some"] = new TypeInfo.Function([anyType], new TypeInfo.Promise(boolType)),
+            ["every"] = new TypeInfo.Function([anyType], new TypeInfo.Promise(boolType)),
+            ["find"] = new TypeInfo.Function([anyType], new TypeInfo.Promise(anyType)),
+            ["flatMap"] = new TypeInfo.Function([anyType], anyType),
+            ["drop"] = new TypeInfo.Function([numberType], anyType),
+            ["take"] = new TypeInfo.Function([numberType], anyType),
+            ["asIndexedPairs"] = new TypeInfo.Function([], anyType),
+
+            // Async-iterable surface (#1024): `for await (const x of readable)`.
+            ["@@asyncIterator"] = new TypeInfo.Function([], anyType)
         }.ToFrozenDictionary());
 
         // Readable constructor with static methods
@@ -1829,7 +1843,9 @@ public static class BuiltInModuleTypes
             Members: new Dictionary<string, TypeInfo>
             {
                 ["from"] = new TypeInfo.Function([anyType, anyType], streamInstanceType, RequiredParams: 1),
-                ["isReadable"] = new TypeInfo.Function([anyType], boolType)
+                ["isReadable"] = new TypeInfo.Function([anyType], boolType),
+                ["toWeb"] = new TypeInfo.Function([anyType], anyType),     // #1029
+                ["fromWeb"] = new TypeInfo.Function([anyType], streamInstanceType) // #1029
             }.ToFrozenDictionary(),
             OptionalMembers: FrozenSet<string>.Empty,
             ConstructorSignatures:
@@ -1869,7 +1885,10 @@ public static class BuiltInModuleTypes
         // Duplex constructor
         var duplexConstructorType = new TypeInfo.Interface(
             Name: "Duplex",
-            Members: new Dictionary<string, TypeInfo>().ToFrozenDictionary(),
+            Members: new Dictionary<string, TypeInfo>
+            {
+                ["from"] = new TypeInfo.Function([anyType, anyType], streamInstanceType, RequiredParams: 1)
+            }.ToFrozenDictionary(),
             OptionalMembers: FrozenSet<string>.Empty,
             ConstructorSignatures:
             [
@@ -1929,6 +1948,14 @@ public static class BuiltInModuleTypes
         // addAbortSignal function type
         var addAbortSignalType = new TypeInfo.Function([anyType, anyType], anyType);
 
+        // compose function type (#1028): compose(...streams) → Duplex
+        var composeType = new TypeInfo.Function([anyType], streamInstanceType, RequiredParams: 1, HasRestParam: true);
+
+        // #1030 statics
+        var isErroredType = new TypeInfo.Function([anyType], boolType);
+        var getDefaultHwmType = new TypeInfo.Function([boolType], numberType, RequiredParams: 0);
+        var setDefaultHwmType = new TypeInfo.Function([boolType, numberType], voidType);
+
         // promises sub-module
         var promisesType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
         {
@@ -1946,6 +1973,10 @@ public static class BuiltInModuleTypes
             ["finished"] = finishedType,
             ["pipeline"] = pipelineType,
             ["addAbortSignal"] = addAbortSignalType,
+            ["compose"] = composeType,
+            ["isErrored"] = isErroredType,
+            ["getDefaultHighWaterMark"] = getDefaultHwmType,
+            ["setDefaultHighWaterMark"] = setDefaultHwmType,
             ["promises"] = promisesType
         };
     }

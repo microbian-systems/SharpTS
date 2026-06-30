@@ -33,6 +33,10 @@ public static class StreamModuleInterpreter
             ["finished"] = BuiltInMethod.CreateV2("finished", 1, 3, Finished),
             ["pipeline"] = BuiltInMethod.CreateV2("pipeline", 2, int.MaxValue, Pipeline),
             ["addAbortSignal"] = BuiltInMethod.CreateV2("addAbortSignal", 2, AddAbortSignal),
+            ["compose"] = BuiltInMethod.CreateV2("compose", 1, int.MaxValue, Compose),
+            ["isErrored"] = BuiltInMethod.CreateV2("isErrored", 1, IsErrored),
+            ["getDefaultHighWaterMark"] = BuiltInMethod.CreateV2("getDefaultHighWaterMark", 0, 1, GetDefaultHighWaterMark),
+            ["setDefaultHighWaterMark"] = BuiltInMethod.CreateV2("setDefaultHighWaterMark", 2, SetDefaultHighWaterMark),
             ["promises"] = StreamPromisesModuleInterpreter.CreatePromisesNamespace()
         };
     }
@@ -218,16 +222,199 @@ public static class StreamModuleInterpreter
     }
 
     /// <summary>
-    /// stream.addAbortSignal(signal, stream) — destroys stream when signal is aborted.
+    /// stream.addAbortSignal(signal, stream) — destroys the stream with an AbortError when the
+    /// signal fires (#1027). If the signal is already aborted, the stream is destroyed at once.
     /// </summary>
     private static RuntimeValue AddAbortSignal(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        // Basic implementation: just return the stream
-        // AbortSignal integration requires async runtime support
         if (args.Length < 2)
             throw new Exception("addAbortSignal() requires signal and stream arguments");
 
+        var signal = args[0].ToObject() as SharpTSAbortSignal;
+        var stream = args[1].ToObject();
+
+        if (signal != null && stream != null)
+        {
+            if (signal.Aborted)
+                DestroyStreamWithAbort(interpreter, stream, signal);
+            else
+                signal.AddEventListener("abort", new AbortDestroyListener(stream, signal));
+        }
+
         return args[1]; // Return the stream
+    }
+
+    /// <summary>Destroys a stream with the signal's reason (or a fresh AbortError).</summary>
+    private static void DestroyStreamWithAbort(Interp interpreter, object stream, SharpTSAbortSignal signal)
+    {
+        var destroy = GetStreamMethod(stream, "destroy");
+        destroy?.Call(interpreter, [MakeAbortError(signal)]);
+    }
+
+    /// <summary>Returns the signal's reason when it is an Error/object, else a Node-style AbortError.</summary>
+    private static object MakeAbortError(SharpTSAbortSignal signal)
+    {
+        var reason = signal.Reason;
+        if (reason is SharpTSError || reason is SharpTSObject)
+            return reason;
+        return new SharpTSError("The operation was aborted") { Name = "AbortError", Code = "ABORT_ERR" };
+    }
+
+    /// <summary>Listener that destroys the stream when its AbortSignal fires.</summary>
+    private sealed class AbortDestroyListener : ISharpTSCallable
+    {
+        private readonly object _stream;
+        private readonly SharpTSAbortSignal _signal;
+        public AbortDestroyListener(object stream, SharpTSAbortSignal signal) { _stream = stream; _signal = signal; }
+        public int Arity() => 0;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            DestroyStreamWithAbort(interpreter, _stream, _signal);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// stream.compose(...streams) — composes streams into a single Duplex (#1028). Writing to the
+    /// returned Duplex feeds the first stream; the chain is piped together; the last stream's output
+    /// is pushed onto the Duplex's readable side.
+    /// </summary>
+    private static RuntimeValue Compose(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length < 1)
+            throw new Exception("compose() requires at least one stream");
+
+        var streams = new List<object?>(args.Length);
+        for (int i = 0; i < args.Length; i++)
+            streams.Add(args[i].ToObject());
+
+        // Pipe consecutive streams together.
+        for (int i = 0; i < streams.Count - 1; i++)
+            GetStreamMethod(streams[i], "pipe")?.Call(interpreter, [streams[i + 1]]);
+
+        var first = streams[0];
+        var last = streams[^1];
+
+        var composed = new SharpTSDuplex { ObjectMode = true, WritableObjectMode = true };
+        composed.SetWriteCallback(new ComposeForwardListener(first));
+        composed.SetFinalCallback(new ComposeFinalListener(first));
+
+        if (last is SharpTSEventEmitter lastEmitter)
+        {
+            lastEmitter.AddListenerDirect("data", new ComposeDataListener(composed));
+            lastEmitter.AddListenerDirect("end", new ComposeEndListener(composed));
+            lastEmitter.AddListenerDirect("error", new ComposeErrorListener(composed));
+        }
+
+        return RuntimeValue.FromObject(composed);
+    }
+
+    /// <summary>Write callback for a composed Duplex: forwards each chunk to the first stream.</summary>
+    private sealed class ComposeForwardListener : ISharpTSCallable
+    {
+        private readonly object? _first;
+        public ComposeForwardListener(object? first) => _first = first;
+        public int Arity() => 3;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            var chunk = arguments.Count > 0 ? arguments[0] : null;
+            var done = arguments.Count > 2 ? arguments[2] as ISharpTSCallable : null;
+            GetStreamMethod(_first, "write")?.Call(interpreter, [chunk]);
+            done?.Call(interpreter, []);
+            return null;
+        }
+    }
+
+    /// <summary>Final callback for a composed Duplex: ends the first stream when the Duplex ends.</summary>
+    private sealed class ComposeFinalListener : ISharpTSCallable
+    {
+        private readonly object? _first;
+        public ComposeFinalListener(object? first) => _first = first;
+        public int Arity() => 1;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            var done = arguments.Count > 0 ? arguments[0] as ISharpTSCallable : null;
+            GetStreamMethod(_first, "end")?.Call(interpreter, []);
+            done?.Call(interpreter, []);
+            return null;
+        }
+    }
+
+    /// <summary>Pushes the last stream's data onto the composed Duplex's readable side.</summary>
+    private sealed class ComposeDataListener : ISharpTSCallable
+    {
+        private readonly SharpTSDuplex _composed;
+        public ComposeDataListener(SharpTSDuplex composed) => _composed = composed;
+        public int Arity() => 1;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            var chunk = arguments.Count > 0 ? arguments[0] : null;
+            GetStreamMethod(_composed, "push")?.Call(interpreter, [chunk]);
+            return null;
+        }
+    }
+
+    /// <summary>Ends the composed Duplex's readable side when the last stream ends.</summary>
+    private sealed class ComposeEndListener : ISharpTSCallable
+    {
+        private readonly SharpTSDuplex _composed;
+        public ComposeEndListener(SharpTSDuplex composed) => _composed = composed;
+        public int Arity() => 0;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            GetStreamMethod(_composed, "push")?.Call(interpreter, [(object?)null]);
+            return null;
+        }
+    }
+
+    /// <summary>Propagates the last stream's error to the composed Duplex.</summary>
+    private sealed class ComposeErrorListener : ISharpTSCallable
+    {
+        private readonly SharpTSDuplex _composed;
+        public ComposeErrorListener(SharpTSDuplex composed) => _composed = composed;
+        public int Arity() => 1;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            var error = arguments.Count > 0 ? arguments[0] : null;
+            GetStreamMethod(_composed, "destroy")?.Call(interpreter, [error]);
+            return null;
+        }
+    }
+
+    // Module-level default highWaterMarks (#1030). Shared with the compiled $StreamUtils defaults.
+    private static int _defaultHwmByte = 16384;
+    private static int _defaultHwmObject = 16;
+
+    /// <summary>stream.isErrored(stream) — true if the stream has errored.</summary>
+    private static RuntimeValue IsErrored(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var obj = args.Length > 0 ? args[0].ToObject() : null;
+        bool errored = obj switch
+        {
+            SharpTSReadable r => r.Errored,
+            SharpTSWritable w => w.Errored,
+            _ => false
+        };
+        return RuntimeValue.FromBoolean(errored);
+    }
+
+    /// <summary>stream.getDefaultHighWaterMark(objectMode?) — the current default highWaterMark.</summary>
+    private static RuntimeValue GetDefaultHighWaterMark(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        bool objectMode = args.Length > 0 && args[0].IsTruthy();
+        return RuntimeValue.FromNumber(objectMode ? _defaultHwmObject : _defaultHwmByte);
+    }
+
+    /// <summary>stream.setDefaultHighWaterMark(objectMode, value) — sets the default highWaterMark.</summary>
+    private static RuntimeValue SetDefaultHighWaterMark(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        bool objectMode = args.Length > 0 && args[0].IsTruthy();
+        int value = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : 0;
+        if (objectMode)
+            _defaultHwmObject = value;
+        else
+            _defaultHwmByte = value;
+        return RuntimeValue.Undefined;
     }
 
     private static BuiltInMethod? GetStreamMethod(object? stream, string methodName)
