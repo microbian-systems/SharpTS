@@ -5,7 +5,7 @@ namespace SharpTS.Compilation;
 
 /// <summary>
 /// OS module methods for standalone assemblies.
-/// Replaces SystemInfoHelper references with cross-platform .NET implementations.
+/// Emits cross-platform .NET implementations of the OS system-info queries.
 /// </summary>
 public partial class RuntimeEmitter
 {

@@ -5,7 +5,7 @@ namespace SharpTS.Runtime.BuiltIns;
 
 /// <summary>
 /// Shared BCL plumbing for the Node-style http(s) client (<c>SharpTSClientRequest</c>).
-/// Kept separate from <see cref="FetchHelpers"/> because Node's <c>http.request</c> does NOT
+/// Distinct from the <c>fetch</c> client because Node's <c>http.request</c> does NOT
 /// follow redirects or auto-decompress — it hands the raw response to the caller.
 /// </summary>
 public static class HttpClientRequestHelpers

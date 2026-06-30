@@ -88,7 +88,6 @@ public class SharpTSECDH
     /// </summary>
     public void SetPublicKey(object key, string? encoding = null)
     {
-        var keyBytes = DecodeInput(key, encoding);
         // Note: ECDiffieHellman doesn't have ImportSubjectPublicKeyInfo that sets the public key alone
         // This is a limitation - in Node.js, this would set the public key for the ECDH instance
         // For now, we throw as this isn't commonly used

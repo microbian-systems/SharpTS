@@ -35,12 +35,6 @@ public sealed class BuiltInTypeBuilder<TReceiver>
     public static BuiltInTypeBuilder<TReceiver> ForInstanceType() => new(requiresBind: true);
 
     /// <summary>
-    /// Creates a builder for a static type where methods don't need binding.
-    /// Use this for types like Math, JSON, Number (static members).
-    /// </summary>
-    public static BuiltInTypeBuilder<TReceiver> ForStaticType() => new(requiresBind: false);
-
-    /// <summary>
     /// Registers a read-only property that computes a value from the receiver.
     /// </summary>
     /// <param name="name">The property name (e.g., "size", "length")</param>

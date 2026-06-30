@@ -83,19 +83,6 @@ public static class BuiltInModuleTypes
             ["size"] = numberType
         }.ToFrozenDictionary());
 
-        // Dirent-like type for readdirSync with withFileTypes
-        var direntType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
-        {
-            ["name"] = stringType,
-            ["isFile"] = new TypeInfo.Union([BooleanType, new TypeInfo.Function([], BooleanType)]),
-            ["isDirectory"] = new TypeInfo.Union([BooleanType, new TypeInfo.Function([], BooleanType)]),
-            ["isSymbolicLink"] = new TypeInfo.Union([BooleanType, new TypeInfo.Function([], BooleanType)]),
-            ["isBlockDevice"] = new TypeInfo.Union([BooleanType, new TypeInfo.Function([], BooleanType)]),
-            ["isCharacterDevice"] = new TypeInfo.Union([BooleanType, new TypeInfo.Function([], BooleanType)]),
-            ["isFIFO"] = new TypeInfo.Union([BooleanType, new TypeInfo.Function([], BooleanType)]),
-            ["isSocket"] = new TypeInfo.Union([BooleanType, new TypeInfo.Function([], BooleanType)])
-        }.ToFrozenDictionary());
-
         // fs.constants type
         var constantsType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
         {

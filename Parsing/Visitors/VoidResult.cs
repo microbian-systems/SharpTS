@@ -1,8 +1,8 @@
 namespace SharpTS.Parsing.Visitors;
 
 /// <summary>
-/// Unit type for void-returning visitors that must implement IStmtVisitor{T}.
-/// Used when a visitor needs to implement IStmtVisitor but doesn't produce meaningful values.
+/// Unit type for void-returning visitors (e.g. the statement-dispatch NodeRegistry the
+/// type checker uses) that need a result type but don't produce meaningful values.
 /// </summary>
 /// <remarks>
 /// Since C# doesn't have a built-in unit/void type that can be used as a generic argument,

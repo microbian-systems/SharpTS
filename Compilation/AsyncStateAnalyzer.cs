@@ -63,20 +63,12 @@ public partial class AsyncStateAnalyzer : AstVisitorBase
         // Capturing-arrow node → (captured source name → renamed storage) (#767, async analog). Pivots
         // an inner arrow's captured field to a renamed shadow's storage. Null treated as empty.
         IReadOnlyDictionary<object, IReadOnlyDictionary<string, string>>? BlockScopeCaptureRenames = null
-    )
-    {
-        /// <summary>
-        /// Whether any try block contains await points (requires special handling).
-        /// </summary>
-        public bool HasAwaitsInTryBlocks =>
-            TryBlocks?.Any(t => t.HasAwaitsInTry || t.HasAwaitsInCatch || t.HasAwaitsInFinally) ?? false;
-    }
+    );
 
     // State during analysis
     private readonly List<AwaitPoint> _awaitPoints = [];
     private readonly HashSet<string> _declaredVariables = [];
     private readonly HashSet<string> _variablesUsedAfterAwait = [];
-    private readonly HashSet<string> _variablesDeclaredBeforeAwait = [];
     private readonly HashSet<string> _catchParameters = [];  // Catch params should not be hoisted
     private readonly List<AsyncArrowInfo> _asyncArrows = [];
     private readonly List<TryBlockInfo> _tryBlocks = [];
@@ -141,7 +133,6 @@ public partial class AsyncStateAnalyzer : AstVisitorBase
         {
             parameters.Add(param.Name.Lexeme);
             _declaredVariables.Add(param.Name.Lexeme);
-            _variablesDeclaredBeforeAwait.Add(param.Name.Lexeme);
         }
 
         // Analyze the function body using visitor pattern
@@ -210,7 +201,6 @@ public partial class AsyncStateAnalyzer : AstVisitorBase
         _awaitPoints.Clear();
         _declaredVariables.Clear();
         _variablesUsedAfterAwait.Clear();
-        _variablesDeclaredBeforeAwait.Clear();
         _catchParameters.Clear();
         _asyncArrows.Clear();
         _tryBlocks.Clear();

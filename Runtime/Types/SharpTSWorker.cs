@@ -89,7 +89,6 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
 
     // For compiled code support - enables Worker communication without interpreter
     private readonly SynchronizationContext? _syncContext;
-    private readonly ConcurrentQueue<Action> _pendingCallbacks = new();
 
     /// <summary>
     /// Gets the unique thread ID for this worker.
@@ -610,8 +609,8 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
 
     /// <summary>
     /// Schedules an action to run on the main thread.
-    /// Uses interpreter timers if available, SynchronizationContext if available,
-    /// or queues for manual processing via ProcessPendingCallbacks().
+    /// Uses interpreter timers, the compiled event loop, or a SynchronizationContext
+    /// if available; otherwise the action cannot be marshaled and is dropped.
     /// </summary>
     private void ScheduleOnMainThread(Action action)
     {
@@ -630,12 +629,8 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
             // Compiled path with sync context (WinForms, WPF, etc.)
             _syncContext.Post(_ => action(), null);
         }
-        else
-        {
-            // Compiled path without sync context (console app)
-            // Queue for manual processing
-            _pendingCallbacks.Enqueue(action);
-        }
+        // Compiled path without an interpreter, event loop, or sync context has no
+        // main thread to marshal onto, so the callback cannot be delivered.
     }
 
     /// <summary>
@@ -699,40 +694,6 @@ public class SharpTSWorker : SharpTSEventEmitter, IDisposable
         {
             if (!string.IsNullOrEmpty(text))
                 worker.PushToWorkerStream(target, text);
-        }
-    }
-
-    /// <summary>
-    /// Processes any pending callbacks queued for the main thread.
-    /// Call this periodically from the main thread in console applications
-    /// to receive Worker messages and events.
-    /// </summary>
-    /// <remarks>
-    /// In GUI applications with a SynchronizationContext (WinForms, WPF),
-    /// callbacks are automatically marshaled to the UI thread.
-    /// In console applications, you must call this method to process events.
-    /// </remarks>
-    /// <example>
-    /// <code>
-    /// var worker = new Worker('./worker.ts');
-    /// worker.on('message', (data) => console.log(data));
-    ///
-    /// // In console app main loop:
-    /// while (worker.IsRunning) {
-    ///     worker.ProcessPendingCallbacks();
-    ///     Thread.Sleep(10); // Small delay to avoid busy-wait
-    /// }
-    /// </code>
-    /// </example>
-    public void ProcessPendingCallbacks()
-    {
-        // Process all queued messages first
-        DeliverMessagesToParent();
-
-        // Then process any pending callbacks
-        while (_pendingCallbacks.TryDequeue(out var callback))
-        {
-            callback();
         }
     }
 

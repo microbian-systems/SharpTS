@@ -247,8 +247,7 @@ public partial class Interpreter : IDisposable
     private readonly SyncEvaluationContext _syncContext;
     private readonly AsyncEvaluationContext _asyncContext;
 
-    // Cached wrappers for GlobalFunctionHandler delegate compatibility
-    private Func<Expr, ValueTask<object?>>? _syncEvalWrapperCached;
+    // Cached wrapper for GlobalFunctionHandlerV2 delegate compatibility
     private Func<Expr, ValueTask<RuntimeValue>>? _syncEvalWrapperV2Cached;
 
     /// <summary>

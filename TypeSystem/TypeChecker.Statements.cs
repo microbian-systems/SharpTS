@@ -8,9 +8,8 @@ namespace SharpTS.TypeSystem;
 /// Statement type checking - CheckStmt and the main dispatch switch.
 /// </summary>
 /// <remarks>
-/// Contains the main statement dispatch (CheckStmt) via <see cref="IStmtVisitor{TResult}"/>
-/// and inline handling for simple statements. Complex statement handlers are split into
-/// separate partial files:
+/// Contains the main statement dispatch (CheckStmt) and inline handling for simple
+/// statements. Complex statement handlers are split into separate partial files:
 /// <list type="bullet">
 ///   <item><description><c>TypeChecker.Statements.Classes.cs</c> - Class declaration checking</description></item>
 ///   <item><description><c>TypeChecker.Statements.Interfaces.cs</c> - Interface declaration checking</description></item>

@@ -87,10 +87,6 @@ internal sealed class DotCommands
                 LoadFile(arg);
                 return true;
 
-            case ".editor":
-                Console.WriteLine("Editor mode is not yet supported. Use Shift+Enter for multi-line input.");
-                return true;
-
             default:
                 Console.WriteLine($"Unknown command: {command}. Type .help for available commands.");
                 return true;
@@ -108,7 +104,6 @@ internal sealed class DotCommands
               .type <expr>       Show the TypeScript type of an expression
               .save <file>       Save session history to a TypeScript file
               .load <file>       Load and execute a TypeScript file
-              .editor            Enter multi-line editing mode (not yet implemented)
 
             Keyboard Shortcuts:
               Enter              Submit input (or continue on incomplete input)

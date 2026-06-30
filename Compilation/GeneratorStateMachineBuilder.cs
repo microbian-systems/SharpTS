@@ -433,11 +433,6 @@ public class GeneratorStateMachineBuilder
     public FieldBuilder? GetVariableField(string name) => _hoisting.GetVariableField(name);
 
     /// <summary>
-    /// Checks if a variable is hoisted to the state machine.
-    /// </summary>
-    public bool IsHoisted(string name) => _hoisting.IsHoisted(name);
-
-    /// <summary>
     /// Gets the hoisted enumerator field for a for...of loop, or null if not hoisted.
     /// </summary>
     public FieldBuilder? GetEnumeratorField(Parsing.Stmt.ForOf loop) => _hoisting.GetEnumeratorField(loop);

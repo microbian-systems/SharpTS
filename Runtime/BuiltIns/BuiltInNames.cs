@@ -79,23 +79,6 @@ public static class BuiltInNames
 
     #region Global Constructor Names
 
-    /// <summary>
-    /// Global constructor function names (can be called with or without 'new').
-    /// </summary>
-    public static readonly string[] GlobalConstructorNames =
-    [
-        Symbol, BigInt, Date, RegExp,
-        Map, Set, WeakMap, WeakSet, WeakRef, FinalizationRegistry, Proxy,
-        Array, Object, Number, String, Boolean,
-        Promise, ArrayBuffer, SharedArrayBuffer, DataView,
-        MessageChannel, EventEmitter, AbortController, Headers,
-        TextEncoder, TextDecoder,
-        Request, Response,
-        ReadableStream, WritableStream, TransformStream,
-        ByteLengthQueuingStrategy, CountQueuingStrategy,
-        Blob, File
-    ];
-
     // Individual constructor constants
     public const string Request = "Request";
     public const string Response = "Response";
@@ -146,20 +129,6 @@ public static class BuiltInNames
 
     #region Global Function Names
 
-    /// <summary>
-    /// Global function names (not constructors).
-    /// </summary>
-    public static readonly string[] GlobalFunctionNames =
-    [
-        ParseInt, ParseFloat, IsNaN, IsFinite,
-        EncodeURI, DecodeURI, EncodeURIComponent, DecodeURIComponent,
-        StructuredClone, Fetch,
-        SetTimeout, ClearTimeout, SetInterval, ClearInterval,
-        SetImmediate, ClearImmediate,
-        QueueMicrotask,
-        Atob, Btoa
-    ];
-
     // Individual function constants
     public const string Eval = "eval";
     public const string ParseInt = "parseInt";
@@ -186,14 +155,6 @@ public static class BuiltInNames
     #endregion
 
     #region Built-in Namespace/Singleton Names
-
-    /// <summary>
-    /// Built-in namespace singleton names (Math, JSON, console, etc.).
-    /// </summary>
-    public static readonly string[] NamespaceNames =
-    [
-        Math, JSON, Console, Process, Reflect, Atomics, Intl
-    ];
 
     // Individual namespace constants
     public const string Math = "Math";

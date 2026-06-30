@@ -15,14 +15,6 @@ public sealed class GlobalFunctionRegistry
     public static GlobalFunctionRegistry Instance { get; } = CreateDefault();
 
     /// <summary>
-    /// Legacy handler delegate for global functions (object? boxing).
-    /// </summary>
-    public delegate ValueTask<object?> GlobalFunctionHandler(
-        Func<Expr, ValueTask<object?>> evaluateArg,
-        IReadOnlyList<Expr> arguments,
-        Interpreter interpreter);
-
-    /// <summary>
     /// V2 handler delegate for global functions (RuntimeValue — no boxing).
     /// </summary>
     public delegate ValueTask<RuntimeValue> GlobalFunctionHandlerV2(
@@ -30,7 +22,6 @@ public sealed class GlobalFunctionRegistry
         IReadOnlyList<Expr> arguments,
         Interpreter interpreter);
 
-    private readonly Dictionary<string, GlobalFunctionHandler> _handlers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, GlobalFunctionHandlerV2> _handlersV2 = new(StringComparer.Ordinal);
 
     private GlobalFunctionRegistry() { }
@@ -42,28 +33,10 @@ public sealed class GlobalFunctionRegistry
         => _handlersV2.TryGetValue(name, out handler);
 
     /// <summary>
-    /// Tries to get a legacy handler for a global function by name.
-    /// </summary>
-    public bool TryGetHandler(string name, out GlobalFunctionHandler? handler)
-        => _handlers.TryGetValue(name, out handler);
-
-    /// <summary>
-    /// Returns true if a handler (V2 or legacy) exists for this name.
-    /// </summary>
-    public bool HasHandler(string name)
-        => _handlersV2.ContainsKey(name) || _handlers.ContainsKey(name);
-
-    /// <summary>
     /// Registers a V2 handler for a global function.
     /// </summary>
     public void RegisterV2(string name, GlobalFunctionHandlerV2 handler)
         => _handlersV2[name] = handler;
-
-    /// <summary>
-    /// Registers a legacy handler for a global function.
-    /// </summary>
-    public void Register(string name, GlobalFunctionHandler handler)
-        => _handlers[name] = handler;
 
     /// <summary>
     /// Creates the default registry with all built-in global functions registered.

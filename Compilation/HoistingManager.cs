@@ -86,12 +86,6 @@ public class HoistingManager
     }
 
     /// <summary>
-    /// Checks if a variable is hoisted.
-    /// </summary>
-    public bool IsHoisted(string name) =>
-        HoistedParameters.ContainsKey(name) || HoistedLocals.ContainsKey(name);
-
-    /// <summary>
     /// Defines fields for hoisted enumerators from for...of loops containing yields.
     /// </summary>
     public void DefineHoistedEnumerators(IEnumerable<Stmt.ForOf> forOfLoops, Type enumeratorType)

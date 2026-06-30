@@ -43,25 +43,6 @@ public sealed class BuiltInTypeMemberLookup<TReceiver>
     }
 
     /// <summary>
-    /// Gets a static member (for types like Math, JSON that don't have receivers).
-    /// </summary>
-    public object? GetStaticMember(string name)
-    {
-        if (_properties.TryGetValue(name, out var propertyGetter))
-        {
-            // For static properties, pass default(TReceiver) - typically unused
-            return propertyGetter(default!);
-        }
-
-        if (_methods.TryGetValue(name, out var method))
-        {
-            return method;
-        }
-
-        return null;
-    }
-
-    /// <summary>
     /// Gets the raw (unbound) <see cref="BuiltInMethod"/> for a method name,
     /// or null if not found. Used by prototype objects (e.g.
     /// <c>Array.prototype</c>) that need to expose the same method instance
@@ -70,13 +51,6 @@ public sealed class BuiltInTypeMemberLookup<TReceiver>
     /// </summary>
     public BuiltInMethod? GetMethod(string name)
         => _methods.TryGetValue(name, out var method) ? method : null;
-
-    /// <summary>
-    /// Enumerates every method name registered on this lookup. Prototype
-    /// objects iterate this to advertise the same method set as the instance
-    /// lookup without manually duplicating the list.
-    /// </summary>
-    public IEnumerable<string> MethodNames => _methods.Keys;
 }
 
 /// <summary>

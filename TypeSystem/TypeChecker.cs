@@ -18,9 +18,8 @@ namespace SharpTS.TypeSystem;
 /// typing (classes). Type checking runs at compile-time, completely separate from runtime
 /// execution. Errors throw exceptions with "Type Error:" prefix.
 ///
-/// Implements <see cref="IExprVisitor{TResult}"/> and <see cref="IStmtVisitor{TResult}"/> for
-/// exhaustive dispatch to all AST node types. The visitor pattern ensures compile-time safety
-/// when new expression or statement types are added.
+/// Dispatches to all AST node types through the <see cref="NodeRegistry{TContext, TExprResult, TStmtResult}"/>,
+/// which ensures compile-time safety when new expression or statement types are added.
 ///
 /// This class is split across partial files:
 /// <list type="bullet">
@@ -756,50 +755,6 @@ public partial class TypeChecker
     }
 
     /// <summary>
-    /// Widens literal types to their base primitive types for mutable variable inference.
-    /// In TypeScript, `let x = 1` infers `number`, not literal type `1`.
-    /// Const bindings preserve narrower types (handled separately).
-    /// </summary>
-    /// <param name="type">The type to potentially widen</param>
-    /// <param name="isConst">Whether this is a const binding (preserves literals)</param>
-    /// <returns>Widened type or original if not a literal</returns>
-    private TypeInfo WidenLiteralType(TypeInfo type, bool isConst = false)
-    {
-        // Const bindings preserve literal types
-        if (isConst) return type;
-
-        return type switch
-        {
-            // Widen literal primitives to base types
-            TypeInfo.StringLiteral => new TypeInfo.String(),
-            TypeInfo.NumberLiteral => new TypeInfo.Primitive(TokenType.TYPE_NUMBER),
-            TypeInfo.BooleanLiteral => new TypeInfo.Primitive(TokenType.TYPE_BOOLEAN),
-
-            // Widen array element types recursively
-            TypeInfo.Array a => new TypeInfo.Array(WidenLiteralType(a.ElementType, false)),
-
-            // Widen object property types recursively
-            TypeInfo.Record r => new TypeInfo.Record(
-                r.Fields.ToFrozenDictionary(
-                    kv => kv.Key,
-                    kv => WidenLiteralType(kv.Value, false)
-                ),
-                r.StringIndexType != null ? WidenLiteralType(r.StringIndexType, false) : null,
-                r.NumberIndexType != null ? WidenLiteralType(r.NumberIndexType, false) : null,
-                r.SymbolIndexType
-            ),
-
-            // Widen union members and collapse single-element unions
-            TypeInfo.Union u => CollapseOrCreateUnion(
-                u.Types.Select(t => WidenLiteralType(t, false)).Distinct(TypeInfoEqualityComparer.Instance).ToList()
-            ),
-
-            // Other types pass through unchanged
-            _ => type
-        };
-    }
-
-    /// <summary>
     /// Collapses a list of types into a single type or union.
     /// If the list has only one element, returns that element directly.
     /// Otherwise, creates a Union type.
@@ -997,8 +952,6 @@ public partial class TypeChecker
         DiagnosticCode code = ex switch
         {
             TypeMismatchException => DiagnosticCode.TypeMismatch,
-            UndefinedMemberException => DiagnosticCode.UndefinedMember,
-            InvalidCallException => DiagnosticCode.InvalidCall,
             TypeOperationException => DiagnosticCode.TypeOperation,
             _ => DiagnosticCode.TypeError
         };

@@ -93,7 +93,6 @@ public class AsyncArrowStateMachineBuilder
 
     // Builder type
     public Type BuilderType { get; private set; } = null!;
-    public Type TaskType { get; private set; } = null!;
     public Type AwaiterType { get; private set; } = null!;
 
     public AsyncArrowStateMachineBuilder(
@@ -109,7 +108,6 @@ public class AsyncArrowStateMachineBuilder
         Captures = captures;
         _counter = counter;
         BuilderType = _types.AsyncTaskMethodBuilderOfObject;
-        TaskType = _types.TaskOfObject;
         AwaiterType = _types.TaskAwaiterOfObject;
     }
 
@@ -563,14 +561,6 @@ public class AsyncArrowStateMachineBuilder
     public bool IsCaptured(string name)
     {
         return CapturedFieldMap.ContainsKey(name) || (name == "this" && Captures.Contains("this"));
-    }
-
-    /// <summary>
-    /// Checks if a variable is a standalone capture (stored in this state machine, not outer).
-    /// </summary>
-    public bool IsStandaloneCapture(string name)
-    {
-        return StandaloneCaptureFields.ContainsKey(name);
     }
 
     /// <summary>

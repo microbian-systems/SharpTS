@@ -181,11 +181,6 @@ public partial class Interpreter
                     Func<Expr, ValueTask<RuntimeValue>> evalWrapper = expr => ctx.EvaluateExprAsync(expr);
                     return await handlerV2!(evalWrapper, call.Arguments, this);
                 }
-                if (GlobalFunctionRegistry.Instance.TryGetHandler(gvName, out var handler))
-                {
-                    Func<Expr, ValueTask<object?>> evalWrapperLegacy = async expr => (await ctx.EvaluateExprAsync(expr)).ToObject();
-                    return RuntimeValue.FromBoxed(await handler!(evalWrapperLegacy, call.Arguments, this));
-                }
             }
         }
 
@@ -429,11 +424,6 @@ public partial class Interpreter
                 {
                     _syncEvalWrapperV2Cached ??= expr => _syncContext.EvaluateExprAsync(expr);
                     return handlerV2!(_syncEvalWrapperV2Cached, call.Arguments, this).GetAwaiter().GetResult();
-                }
-                if (GlobalFunctionRegistry.Instance.TryGetHandler(gvName, out var handler))
-                {
-                    _syncEvalWrapperCached ??= expr => new ValueTask<object?>(_syncContext.EvaluateExprAsync(expr).Result.ToObject());
-                    return RuntimeValue.FromBoxed(handler!(_syncEvalWrapperCached, call.Arguments, this).GetAwaiter().GetResult());
                 }
             }
         }

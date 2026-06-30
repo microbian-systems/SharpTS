@@ -32,7 +32,6 @@ namespace SharpTS.Compilation;
 /// <seealso cref="Interpreter"/>
 public partial class ILCompiler
 {
-    private readonly string _assemblyName;
     /// <summary>
     /// The assembly builder. Concrete type is either <see cref="PersistedAssemblyBuilder"/>
     /// (default; supports <see cref="SaveToBytes"/> for shipping a standalone DLL) or the
@@ -76,9 +75,6 @@ public partial class ILCompiler
 
     // Registry services
     private ClassRegistry? _classRegistry;
-
-    // Configuration options
-    private readonly bool _preserveConstEnums;
 
     // Namespace support: namespace path -> static field
     private readonly Dictionary<string, FieldBuilder> _namespaceFields = [];
@@ -188,7 +184,6 @@ public partial class ILCompiler
     private readonly AssemblyMetadata? _metadata;
 
     // External assembly references for @DotNetType support
-    private readonly IReadOnlyList<string>? _referenceAssemblies;
     private AssemblyReferenceLoader? _referenceLoader;
 
     // Output target type (DLL or EXE)
@@ -272,12 +267,9 @@ public partial class ILCompiler
     /// </summary>
     public ILCompiler(string assemblyName, bool preserveConstEnums, bool useReferenceAssemblies, string? sdkPath, AssemblyMetadata? metadata, IReadOnlyList<string>? references, OutputTarget target, bool inMemoryOnly)
     {
-        _assemblyName = assemblyName;
-        _preserveConstEnums = preserveConstEnums;
         _useReferenceAssemblies = useReferenceAssemblies;
         _sdkPath = sdkPath;
         _metadata = metadata;
-        _referenceAssemblies = references;
         _outputTarget = target;
         _inMemoryOnly = inMemoryOnly;
 
