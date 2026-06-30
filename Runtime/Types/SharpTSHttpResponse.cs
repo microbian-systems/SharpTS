@@ -24,8 +24,10 @@ public class SharpTSHttpResponse : SharpTSWritable
     private readonly HttpListenerResponse _response;
     private bool _headersSent;
     private bool _finished;
-    private readonly List<byte> _bodyBuffer = new();
+    private bool _streaming;      // true once write() has committed headers and started streaming
+    private bool _sendDate = true;
     private readonly Dictionary<string, string> _pendingHeaders = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _trailers = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Creates a new ServerResponse wrapping an HttpListenerResponse.
@@ -76,7 +78,9 @@ public class SharpTSHttpResponse : SharpTSWritable
             "statusMessage" => StatusMessage,
             "headersSent" => HeadersSent,
             "finished" => Finished,
-            "sendDate" => true,
+            "writableEnded" => Finished,
+            "writableFinished" => Finished,
+            "sendDate" => _sendDate,
             "connection" => (object?)null,
             "socket" => (object?)null,
 
@@ -125,7 +129,19 @@ public class SharpTSHttpResponse : SharpTSWritable
                 FlushHeaders();
                 return RuntimeValue.Null;
             }).Bind(this),
-            "writeContinue" => BuiltInMethod.CreateV2("writeContinue", 0, (_, _, _) => RuntimeValue.Null).Bind(this),
+            // 100 Continue / 102 Processing — HttpListener auto-sends 100-continue when the
+            // request body is read and cannot send 1xx interim responses, so these are no-ops
+            // exposed for API compatibility.
+            "writeContinue" => BuiltInMethod.CreateV2("writeContinue", 0, (_, _, _) => RuntimeValue.Undefined).Bind(this),
+            "writeProcessing" => BuiltInMethod.CreateV2("writeProcessing", 0, (_, _, _) => RuntimeValue.Undefined).Bind(this),
+            // addTrailers stores trailing headers; HttpListener has no trailer API, so they are
+            // recorded (and observable via getHeader-style introspection is not offered) but not
+            // emitted on the wire — documented limitation.
+            "addTrailers" => BuiltInMethod.CreateV2("addTrailers", 1, (_, receiver, args) =>
+            {
+                if (receiver.ToObject() is SharpTSHttpResponse res) res.AddTrailers(args);
+                return RuntimeValue.Undefined;
+            }).Bind(this),
 
             // Inherit Writable stream methods (on, once, cork, uncork, etc.)
             _ => base.GetMember(name)
@@ -150,7 +166,18 @@ public class SharpTSHttpResponse : SharpTSWritable
                 if (value is string s)
                     StatusMessage = s;
                 break;
+            case "sendDate":
+                if (value is bool b)
+                    _sendDate = b;
+                break;
         }
+    }
+
+    private void AddTrailers(ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length == 0 || args[0].ToObject() is not SharpTSObject headers) return;
+        foreach (var kv in headers.Fields)
+            _trailers[kv.Key] = kv.Value?.ToString() ?? "";
     }
 
     /// <summary>
@@ -187,66 +214,76 @@ public class SharpTSHttpResponse : SharpTSWritable
     }
 
     /// <summary>
-    /// Writes data to the response body.
+    /// Writes a body chunk. The first write() commits the headers and switches the response
+    /// into streaming mode — chunked transfer-encoding when no Content-Length was set —
+    /// matching Node's behaviour (a lone end(chunk) instead sends a Content-Length response).
     /// </summary>
     private RuntimeValue WriteData(Interpreter interpreter, ReadOnlySpan<RuntimeValue> args)
     {
         if (_finished)
             throw new Exception("Runtime Error: Cannot write after response has ended");
 
-        if (args.Length == 0) return RuntimeValue.True;
-
-        byte[] data;
-        var encoding = args.Length > 1 && args[1].IsString ? args[1].AsStringUnsafe() : "utf8";
-
-        switch (args[0].ToObject())
+        if (args.Length == 0 || args[0].ToObject() is ISharpTSCallable)
         {
-            case string str:
-                data = GetEncoding(encoding).GetBytes(str);
-                break;
-            case SharpTSBuffer buffer:
-                data = buffer.Data;
-                break;
-            default:
-                data = Encoding.UTF8.GetBytes(args[0].ToObject()?.ToString() ?? "");
-                break;
+            // write(cb) with no data — invoke the callback, nothing to send.
+            if (args.Length > 0 && args[0].ToObject() is ISharpTSCallable cbOnly)
+                cbOnly.Call(interpreter, []);
+            return RuntimeValue.True;
         }
 
-        _bodyBuffer.AddRange(data);
+        byte[] data = EncodeChunk(args);
 
-        // Call write callback if provided
+        EnsureHeadersCommitted(forceChunked: true);
+        _streaming = true;
+        try
+        {
+            if (data.Length > 0)
+                _response.OutputStream.Write(data, 0, data.Length);
+        }
+        catch { /* client may have disconnected */ }
+
+        // Optional write callback: (chunk, encoding?, callback?)
         ISharpTSCallable? callback = null;
         if (args.Length > 1 && args[1].ToObject() is ISharpTSCallable cb1) callback = cb1;
         if (args.Length > 2 && args[2].ToObject() is ISharpTSCallable cb2) callback = cb2;
         callback?.Call(interpreter, []);
 
+        // Synchronous write — no internal buffering, so never apply backpressure.
         return RuntimeValue.True;
     }
 
     /// <summary>
-    /// Ends the response, optionally writing final data.
+    /// Ends the response, optionally writing a final chunk.
     /// </summary>
     private RuntimeValue EndResponse(Interpreter interpreter, ReadOnlySpan<RuntimeValue> args)
     {
         if (_finished) return RuntimeValue.FromObject(this);
 
-        // Write any final data
-        if (args.Length > 0 && args[0].ToObject() is { } first && first is not ISharpTSCallable)
+        byte[]? finalChunk = null;
+        if (args.Length > 0)
         {
-            WriteData(interpreter, args);
+            var first = args[0].ToObject();
+            if (first is not ISharpTSCallable && first is not null && first is not SharpTSUndefined)
+                finalChunk = EncodeChunk(args);
         }
 
-        // Flush pending headers
-        FlushHeaders();
-
-        // Actually send the response
         try
         {
-            _headersSent = true;
-            _response.ContentLength64 = _bodyBuffer.Count;
-            if (_bodyBuffer.Count > 0)
+            if (_streaming)
             {
-                _response.OutputStream.Write(_bodyBuffer.ToArray(), 0, _bodyBuffer.Count);
+                // Headers already committed (chunked). Just write the final chunk.
+                if (finalChunk is { Length: > 0 })
+                    _response.OutputStream.Write(finalChunk, 0, finalChunk.Length);
+            }
+            else
+            {
+                // Simple single-body response: commit with an explicit Content-Length.
+                EnsureHeadersCommitted(forceChunked: false);
+                var body = finalChunk ?? Array.Empty<byte>();
+                if (!_pendingHeaders.ContainsKey("Content-Length"))
+                    _response.ContentLength64 = body.Length;
+                if (body.Length > 0)
+                    _response.OutputStream.Write(body, 0, body.Length);
             }
             _response.OutputStream.Close();
         }
@@ -257,7 +294,7 @@ public class SharpTSHttpResponse : SharpTSWritable
 
         _finished = true;
 
-        // Call callback
+        // Call callback (any trailing function argument).
         ISharpTSCallable? callback = null;
         foreach (var arg in args)
         {
@@ -265,12 +302,38 @@ public class SharpTSHttpResponse : SharpTSWritable
         }
         callback?.Call(interpreter, []);
 
-        // Emit 'finish' event (Writable stream semantics)
+        // Writable stream semantics.
         EmitEvent(interpreter, "finish", []);
-        // Emit 'close' event
         EmitEvent(interpreter, "close", []);
 
         return RuntimeValue.FromObject(this);
+    }
+
+    /// <summary>
+    /// Commits the status line + headers if not already sent. When <paramref name="forceChunked"/>
+    /// is set and no Content-Length was provided, switches to chunked transfer-encoding.
+    /// </summary>
+    private void EnsureHeadersCommitted(bool forceChunked)
+    {
+        if (_headersSent) return;
+        FlushHeaders();
+        if (forceChunked && !_pendingHeaders.ContainsKey("Content-Length"))
+        {
+            try { _response.SendChunked = true; } catch { /* already committed */ }
+        }
+        _headersSent = true;
+    }
+
+    private byte[] EncodeChunk(ReadOnlySpan<RuntimeValue> args)
+    {
+        var encoding = args.Length > 1 && args[1].IsString ? args[1].AsStringUnsafe() : "utf8";
+        return args[0].ToObject() switch
+        {
+            string str => GetEncoding(encoding).GetBytes(str),
+            SharpTSBuffer buffer => buffer.Data,
+            null => Array.Empty<byte>(),
+            var other => Encoding.UTF8.GetBytes(other.ToString() ?? "")
+        };
     }
 
     /// <summary>

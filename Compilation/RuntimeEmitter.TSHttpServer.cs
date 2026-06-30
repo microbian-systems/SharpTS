@@ -378,8 +378,33 @@ public partial class RuntimeEmitter
         EmitHttpResponseRemoveHeader(typeBuilder, runtime, httpListenerResponseType);
         EmitHttpResponseGetMember(typeBuilder, runtime, httpListenerResponseType);
         EmitHttpResponseSetMember(typeBuilder, runtime, httpListenerResponseType);
+        EmitHttpResponseExtraMembers(typeBuilder, runtime);
 
         typeBuilder.CreateType();
+    }
+
+    /// <summary>
+    /// Emits the ServerResponse completeness surface (#1047): writeContinue/writeProcessing/
+    /// addTrailers/flushHeaders (reflection-dispatched PascalCase methods). HttpListener
+    /// auto-sends 100-continue and has no trailer/1xx API, so these are compatibility no-ops
+    /// (matching the interpreter).
+    /// </summary>
+    private void EmitHttpResponseExtraMembers(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        void EmitUndefMethod(string name, int argCount)
+        {
+            var paramTypes = new Type[argCount];
+            for (int i = 0; i < argCount; i++) paramTypes[i] = _types.Object;
+            var m = typeBuilder.DefineMethod(name, MethodAttributes.Public, _types.Object, paramTypes);
+            var mil = m.GetILGenerator();
+            mil.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+            mil.Emit(OpCodes.Ret);
+        }
+
+        EmitUndefMethod("WriteContinue", 0);
+        EmitUndefMethod("WriteProcessing", 0);
+        EmitUndefMethod("AddTrailers", 1);
+        EmitUndefMethod("FlushHeaders", 0);
     }
 
     private void EmitHttpResponseGetMember(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerResponseType)
@@ -397,6 +422,8 @@ public partial class RuntimeEmitter
         var statusCodeLabel = il.DefineLabel();
         var headersSentLabel = il.DefineLabel();
         var finishedLabel = il.DefineLabel();
+        var statusMessageLabel = il.DefineLabel();
+        var sendDateLabel = il.DefineLabel();
         var defaultLabel = il.DefineLabel();
 
         // Check property names
@@ -414,6 +441,16 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "finished");
         il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
         il.Emit(OpCodes.Brtrue, finishedLabel);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "statusMessage");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, statusMessageLabel);
+
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "sendDate");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, sendDateLabel);
 
         il.Emit(OpCodes.Br, defaultLabel);
 
@@ -440,6 +477,19 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Box, _types.Boolean);
         il.Emit(OpCodes.Ret);
 
+        // statusMessage - _response.StatusDescription
+        il.MarkLabel(statusMessageLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpResponseResponseField);
+        il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("StatusDescription")!.GetGetMethod()!);
+        il.Emit(OpCodes.Ret);
+
+        // sendDate - true (HttpListener always sends Date)
+        il.MarkLabel(sendDateLabel);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+
         // default - return undefined
         il.MarkLabel(defaultLabel);
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
@@ -459,6 +509,7 @@ public partial class RuntimeEmitter
         var il = method.GetILGenerator();
 
         var statusCodeLabel = il.DefineLabel();
+        var statusMessageLabel = il.DefineLabel();
         var endLabel = il.DefineLabel();
 
         // Check "statusCode"
@@ -466,6 +517,12 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldstr, "statusCode");
         il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
         il.Emit(OpCodes.Brtrue, statusCodeLabel);
+
+        // Check "statusMessage"
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Ldstr, "statusMessage");
+        il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
+        il.Emit(OpCodes.Brtrue, statusMessageLabel);
 
         il.Emit(OpCodes.Br, endLabel);
 
@@ -482,6 +539,20 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Conv_I4);
         il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("StatusCode")!.GetSetMethod()!);
         il.MarkLabel(notDoubleLabel);
+        il.Emit(OpCodes.Br, endLabel);
+
+        // statusMessage = (string)value
+        il.MarkLabel(statusMessageLabel);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.String);
+        var notStringLabel = il.DefineLabel();
+        il.Emit(OpCodes.Brfalse, notStringLabel);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpResponseResponseField);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Castclass, _types.String);
+        il.Emit(OpCodes.Callvirt, httpListenerResponseType.GetProperty("StatusDescription")!.GetSetMethod()!);
+        il.MarkLabel(notStringLabel);
 
         il.MarkLabel(endLabel);
         il.Emit(OpCodes.Ret);
