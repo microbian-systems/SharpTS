@@ -1530,6 +1530,7 @@ public static class BuiltInModuleTypes
             ["readyState"] = stringType,
             // TLS-specific properties
             ["authorized"] = booleanType,
+            ["authorizationError"] = new TypeInfo.Union([stringType, new TypeInfo.Null()]),
             ["encrypted"] = booleanType,
             ["alpnProtocol"] = new TypeInfo.Union([stringType, new TypeInfo.Null()]),
             ["servername"] = new TypeInfo.Union([stringType, new TypeInfo.Undefined()]),
@@ -1537,7 +1538,15 @@ public static class BuiltInModuleTypes
             ["getCipher"] = new TypeInfo.Function([], anyType),
             ["getPeerCertificate"] = new TypeInfo.Function([booleanType], anyType, RequiredParams: 0),
             ["getProtocol"] = new TypeInfo.Function([], new TypeInfo.Union([stringType, new TypeInfo.Null()])),
-            ["renegotiate"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 0)
+            ["renegotiate"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 0),
+            // Advanced TLS APIs (throw "not supported" on this runtime — see #1032 SslStream ceilings)
+            ["getSession"] = new TypeInfo.Function([], anyType),
+            ["setSession"] = new TypeInfo.Function([anyType], anyType),
+            ["getTLSTicket"] = new TypeInfo.Function([], anyType),
+            ["getPeerFinished"] = new TypeInfo.Function([], anyType),
+            ["getFinished"] = new TypeInfo.Function([], anyType),
+            ["setMaxSendFragment"] = new TypeInfo.Function([numberType], anyType),
+            ["exportKeyingMaterial"] = new TypeInfo.Function([numberType, stringType, anyType], anyType, RequiredParams: 2)
         };
         var tlsSocketType = new TypeInfo.Record(tlsSocketMembers.ToFrozenDictionary());
 
@@ -1560,6 +1569,11 @@ public static class BuiltInModuleTypes
             ["createServer"] = new TypeInfo.Function([anyType, anyType], serverType, RequiredParams: 0),
             ["connect"] = new TypeInfo.Function([anyType, anyType, anyType, anyType], tlsSocketType, RequiredParams: 1),
             ["createSecureContext"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
+            // checkServerIdentity(host, cert) → Error | undefined
+            ["checkServerIdentity"] = new TypeInfo.Function([stringType, anyType],
+                new TypeInfo.Union([anyType, new TypeInfo.Undefined()])),
+            ["getCiphers"] = new TypeInfo.Function([], new TypeInfo.Array(stringType)),
+            ["rootCertificates"] = new TypeInfo.Array(stringType),
             ["Server"] = new TypeInfo.Function([anyType, anyType], serverType, RequiredParams: 0),
             ["TLSSocket"] = new TypeInfo.Function([anyType], tlsSocketType, RequiredParams: 0),
             ["DEFAULT_MIN_VERSION"] = stringType,
