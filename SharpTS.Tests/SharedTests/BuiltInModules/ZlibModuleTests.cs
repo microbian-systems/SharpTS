@@ -1116,4 +1116,82 @@ public class ZlibModuleTests
     }
 
     #endregion
+
+    #region Stream control methods (#1164)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Stream_FlushAndCounters(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const gzip = zlib.createGzip();
+                const chunks: Buffer[] = [];
+                gzip.on('data', (c: Buffer) => { chunks.push(c); });
+                gzip.on('end', () => {
+                    const all = Buffer.concat(chunks);
+                    console.log(zlib.gunzipSync(all).toString() === 'hello flush world');
+                    console.log(gzip.bytesWritten);
+                    console.log(gzip.bytesRead);
+                });
+                gzip.write('hello ');
+                gzip.flush(() => { console.log('flushed'); });
+                gzip.write('flush world');
+                gzip.end();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("flushed\ntrue\n17\n17\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Stream_Close(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const gzip = zlib.createGzip();
+                gzip.on('close', () => { console.log('close-event'); });
+                gzip.close(() => { console.log('close-cb'); });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("close-event\nclose-cb\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Zlib_Stream_Reset(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            // reset() restores a fresh, usable compression stream and zeroes the
+            // counter. (Our streams emit output per-write, so reset is meaningful on a
+            // freshly created stream — see #1164 notes.)
+            ["main.ts"] = """
+                import * as zlib from 'zlib';
+                const gzip = zlib.createGzip();
+                gzip.reset();
+                console.log(gzip.bytesWritten);
+                const chunks: Buffer[] = [];
+                gzip.on('data', (c: Buffer) => { chunks.push(c); });
+                gzip.on('end', () => {
+                    const all = Buffer.concat(chunks);
+                    console.log(zlib.gunzipSync(all).toString() === 'after reset');
+                });
+                gzip.end('after reset');
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("0\ntrue\n", output);
+    }
+
+    #endregion
 }

@@ -34,7 +34,7 @@ public enum ZlibTransformKind
 public class SharpTSZlibTransform : SharpTSTransform
 {
     private readonly ZlibTransformKind _kind;
-    private readonly ZlibOptions _options;
+    private ZlibOptions _options;
 
     // For compression: streaming output
     private MemoryStream? _outputBuffer;
@@ -42,6 +42,10 @@ public class SharpTSZlibTransform : SharpTSTransform
 
     // For decompression: accumulate then decompress
     private MemoryStream? _inputBuffer;
+
+    // Total bytes written INTO the engine (input). Node's bytesWritten; bytesRead is
+    // a deprecated alias of the same value.
+    private long _bytesWritten;
 
     public SharpTSZlibTransform(ZlibTransformKind kind, ZlibOptions options)
     {
@@ -83,10 +87,120 @@ public class SharpTSZlibTransform : SharpTSTransform
         };
     }
 
+    /// <summary>
+    /// Gets a zlib-stream-specific member, falling back to the Transform/Duplex base.
+    /// Adds the Node zlib control methods (params/flush/reset/close) and the
+    /// bytesWritten/bytesRead counters on top of the generic stream surface.
+    /// </summary>
+    public new object? GetMember(string name)
+    {
+        return name switch
+        {
+            // Node's bytesWritten = bytes written into the engine; bytesRead is a
+            // deprecated alias returning the same value.
+            "bytesWritten" => (double)_bytesWritten,
+            "bytesRead" => (double)_bytesWritten,
+
+            "flush" => BuiltInMethod.CreateV2("flush", 0, 2, FlushMethod),
+            "params" => BuiltInMethod.CreateV2("params", 2, 3, ParamsMethod),
+            "reset" => BuiltInMethod.CreateV2("reset", 0, ResetMethod),
+            "close" => BuiltInMethod.CreateV2("close", 0, 1, CloseMethod),
+
+            _ => base.GetMember(name)
+        };
+    }
+
+    /// <summary>
+    /// flush([kind][, callback]). Pushes any buffered compressor output and invokes
+    /// the callback. BCL ceiling: <c>System.IO.Compression</c> streams cannot emit a
+    /// true zlib sync/full-flush boundary, so a flushed point is not independently
+    /// decodable the way Node's would be — the data still round-trips at end().
+    /// </summary>
+    private RuntimeValue FlushMethod(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var callback = ExtractCallback(args);
+        if (IsCompression && _compressionStream != null)
+        {
+            _compressionStream.Flush();
+            PushOutputBuffer(interpreter);
+        }
+        callback?.Call(interpreter, []);
+        return RuntimeValue.Undefined;
+    }
+
+    /// <summary>
+    /// params(level, strategy[, callback]). BCL ceiling: the level/strategy of an
+    /// in-flight compression stream cannot be retuned, so the new values are recorded
+    /// (affecting a subsequent reset()) and the stream is flushed, but they are not
+    /// applied to already-written data. The callback is invoked on completion.
+    /// </summary>
+    private RuntimeValue ParamsMethod(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length > 0 && args[0].IsNumber)
+            _options.Level = (int)args[0].AsNumberUnsafe();
+        if (args.Length > 1 && args[1].IsNumber)
+            _options.Strategy = (int)args[1].AsNumberUnsafe();
+
+        var callback = args.Length > 2 ? args[2].ToObject() as ISharpTSCallable : null;
+        if (IsCompression && _compressionStream != null)
+        {
+            _compressionStream.Flush();
+            PushOutputBuffer(interpreter);
+        }
+        callback?.Call(interpreter, []);
+        return RuntimeValue.Undefined;
+    }
+
+    /// <summary>
+    /// reset(). Restores the stream to its initial state for reuse and zeroes the
+    /// byte counter (honoring any params() changes for the fresh stream).
+    /// </summary>
+    private RuntimeValue ResetMethod(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (IsCompression)
+        {
+            _compressionStream?.Dispose();
+            _outputBuffer = new MemoryStream();
+            _compressionStream = CreateCompressionStream(_outputBuffer);
+        }
+        else
+        {
+            _inputBuffer = new MemoryStream();
+        }
+        _bytesWritten = 0;
+        return RuntimeValue.Undefined;
+    }
+
+    /// <summary>
+    /// close([callback]). Releases the underlying streams, emits 'close', and invokes
+    /// the callback.
+    /// </summary>
+    private RuntimeValue CloseMethod(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var callback = ExtractCallback(args);
+        _compressionStream?.Dispose();
+        _compressionStream = null;
+        _inputBuffer?.Dispose();
+        _inputBuffer = null;
+        EmitEvent(interpreter, "close", []);
+        callback?.Call(interpreter, []);
+        return RuntimeValue.Undefined;
+    }
+
+    private static ISharpTSCallable? ExtractCallback(ReadOnlySpan<RuntimeValue> args)
+    {
+        for (int i = args.Length - 1; i >= 0; i--)
+            if (args[i].ToObject() is ISharpTSCallable cb)
+                return cb;
+        return null;
+    }
+
     private void TransformChunk(Interp interpreter, object? chunk)
     {
         var bytes = ChunkToBytes(chunk);
         if (bytes.Length == 0) return;
+
+        _bytesWritten += bytes.Length;
 
         if (IsCompression)
         {
