@@ -38,7 +38,11 @@ public partial class RuntimeEmitter
     private FieldBuilder _childCtxResCode = null!;     // int
     private FieldBuilder _childCtxResError = null!;    // object (error dict or null)
     private FieldBuilder _childCtxResKind = null!;     // int: 0 normal, 1 timeout, 2 exception
-    private FieldBuilder _childCtxMaxBuffer = null!;   // int: exec maxBuffer cap (chars); <0 unbounded
+    private FieldBuilder _childCtxMaxBuffer = null!;   // int: exec maxBuffer cap (bytes); <0 unbounded
+    private FieldBuilder _childCtxAsBuffer = null!;    // bool: encoding:'buffer' → raw $Buffer output
+    private FieldBuilder _childCtxEncoding = null!;    // string: decode encoding (default "utf8")
+    private MethodBuilder _childReadCappedBytes = null!;
+    private MethodBuilder _childDecodeOutput = null!;
     private FieldBuilder _childCtxStdoutRedir = null!; // bool: stdout redirected (mode != inherit)
     private FieldBuilder _childCtxStderrRedir = null!; // bool: stderr redirected (mode != inherit)
 
@@ -355,6 +359,23 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Callvirt, fnSet);
+
+        // windowsVerbatimArguments: pass the args verbatim as a raw Arguments string (no .NET
+        // quoting), as Node asks. options = arg3; args list = argsListLocal.
+        var notVerbatim = il.DefineLabel();
+        EmitOptionBool(il, 3, "windowsVerbatimArguments");
+        il.Emit(OpCodes.Brfalse, notVerbatim);
+        il.Emit(OpCodes.Ldloc, argsListLocal);
+        il.Emit(OpCodes.Brfalse, notVerbatim);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldstr, " ");
+        il.Emit(OpCodes.Ldloc, argsListLocal);
+        il.Emit(OpCodes.Callvirt, _types.ListOfObject.GetMethod("ToArray")!);
+        il.Emit(OpCodes.Call, typeof(string).GetMethod("Join", [typeof(string), typeof(object[])])!);
+        il.Emit(OpCodes.Callvirt, argSet);
+        il.Emit(OpCodes.Br, endLabel);
+        il.MarkLabel(notVerbatim);
+
         var noArgs = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, argsListLocal);
         il.Emit(OpCodes.Brfalse, noArgs);
@@ -466,6 +487,8 @@ public partial class RuntimeEmitter
         _childCtxResError = t.DefineField("_resError", _types.Object, FieldAttributes.Public);
         _childCtxResKind = t.DefineField("_resKind", _types.Int32, FieldAttributes.Public);
         _childCtxMaxBuffer = t.DefineField("_maxBuffer", _types.Int32, FieldAttributes.Public);
+        _childCtxAsBuffer = t.DefineField("_asBuffer", _types.Boolean, FieldAttributes.Public);
+        _childCtxEncoding = t.DefineField("_encoding", _types.String, FieldAttributes.Public);
         _childCtxStdoutRedir = t.DefineField("_stdoutRedir", _types.Boolean, FieldAttributes.Public);
         _childCtxStderrRedir = t.DefineField("_stderrRedir", _types.Boolean, FieldAttributes.Public);
 
@@ -682,22 +705,25 @@ public partial class RuntimeEmitter
         var overflowLocal = il.DeclareLocal(typeof(bool[]));
         il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Newarr, typeof(bool)); il.Emit(OpCodes.Stloc, overflowLocal);
 
-        // _resStdout = ChildReadCapped(_proc.StandardOutput, _maxBuffer, overflow);
-        StoreCtxField(il, _childCtxResStdout, () =>
+        // _resStdout/_resStderr = ChildDecodeOutput(ChildReadCappedBytes(<pipe>.BaseStream,
+        //   _maxBuffer, overflow), _asBuffer, _encoding) — Buffer or decoded string.
+        var baseStreamGet = typeof(System.IO.StreamReader).GetProperty("BaseStream")!.GetGetMethod()!;
+        void ReadDecoded(FieldBuilder resField, MethodInfo pipeGet)
         {
-            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxProc); il.Emit(OpCodes.Callvirt, _miProcStdoutGet);
-            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxMaxBuffer);
-            il.Emit(OpCodes.Ldloc, overflowLocal);
-            il.Emit(OpCodes.Call, _childReadCapped);
-        });
-        // _resStderr = ChildReadCapped(_proc.StandardError, _maxBuffer, overflow);
-        StoreCtxField(il, _childCtxResStderr, () =>
-        {
-            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxProc); il.Emit(OpCodes.Callvirt, _miProcStderrGet);
-            il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxMaxBuffer);
-            il.Emit(OpCodes.Ldloc, overflowLocal);
-            il.Emit(OpCodes.Call, _childReadCapped);
-        });
+            StoreCtxField(il, resField, () =>
+            {
+                il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxProc); il.Emit(OpCodes.Callvirt, pipeGet);
+                il.Emit(OpCodes.Callvirt, baseStreamGet);
+                il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxMaxBuffer);
+                il.Emit(OpCodes.Ldloc, overflowLocal);
+                il.Emit(OpCodes.Call, _childReadCappedBytes);
+                il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxAsBuffer);
+                il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, _childCtxEncoding);
+                il.Emit(OpCodes.Call, _childDecodeOutput);
+            });
+        }
+        ReadDecoded(_childCtxResStdout, _miProcStdoutGet);
+        ReadDecoded(_childCtxResStderr, _miProcStderrGet);
 
         // if (overflow[0]) { try { _proc.Kill(true); } catch {}  _resError = maxBuffer error; }
         var noOverflow = il.DefineLabel();
@@ -1474,6 +1500,7 @@ public partial class RuntimeEmitter
         StoreCtxField(il, ctxLocal, _childCtxTimeout, () => il.Emit(OpCodes.Ldloc, timeoutLocal));
         // maxBuffer (chars), default 1 MB.
         StoreCtxField(il, ctxLocal, _childCtxMaxBuffer, () => EmitParseMaxBuffer(il, optionsLocal));
+        EmitStoreEncodingFields(il, ctxLocal, optionsLocal);
 
         // dict = new Dictionary<string,object?>()
         il.Emit(OpCodes.Newobj, _types.DictionaryStringObject.GetConstructor(Type.EmptyTypes)!);
@@ -1651,6 +1678,74 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Stfld, field);
     }
 
+    /// <summary>
+    /// Sets ctx._asBuffer + ctx._encoding from options["encoding"]: 'buffer' → asBuffer=true;
+    /// any other name → that encoding; absent → 'utf8' (Node's exec default).
+    /// </summary>
+    private void EmitStoreEncodingFields(ILGenerator il, LocalBuilder ctxLocal, LocalBuilder optionsObjLocal)
+    {
+        var encStr = il.DeclareLocal(_types.String);
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var tmpLocal = il.DeclareLocal(_types.Object);
+        var tryGet = _types.DictionaryStringObject.GetMethod("TryGetValue", [_types.String, _types.Object.MakeByRefType()])!;
+        var strEq = _types.String.GetMethod("op_Equality", [_types.String, _types.String])!;
+        var done = il.DefineLabel();
+
+        il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Stloc, encStr);
+        il.Emit(OpCodes.Ldloc, optionsObjLocal);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Dup); il.Emit(OpCodes.Stloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "encoding");
+        il.Emit(OpCodes.Ldloca, tmpLocal);
+        il.Emit(OpCodes.Callvirt, tryGet);
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldloc, tmpLocal);
+        il.Emit(OpCodes.Isinst, _types.String);
+        il.Emit(OpCodes.Stloc, encStr);
+        il.MarkLabel(done);
+
+        // _asBuffer = encStr == "buffer"
+        StoreCtxField(il, ctxLocal, _childCtxAsBuffer, () =>
+        {
+            il.Emit(OpCodes.Ldloc, encStr); il.Emit(OpCodes.Ldstr, "buffer"); il.Emit(OpCodes.Call, strEq);
+        });
+        // _encoding = (encStr == null || encStr == "buffer") ? "utf8" : encStr
+        StoreCtxField(il, ctxLocal, _childCtxEncoding, () =>
+        {
+            var useDefault = il.DefineLabel();
+            var got = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, encStr); il.Emit(OpCodes.Brfalse, useDefault);
+            il.Emit(OpCodes.Ldloc, encStr); il.Emit(OpCodes.Ldstr, "buffer"); il.Emit(OpCodes.Call, strEq); il.Emit(OpCodes.Brtrue, useDefault);
+            il.Emit(OpCodes.Ldloc, encStr); il.Emit(OpCodes.Br, got);
+            il.MarkLabel(useDefault); il.Emit(OpCodes.Ldstr, "utf8");
+            il.MarkLabel(got);
+        });
+    }
+
+    /// <summary>Leaves a bool on the stack: (arg[argIdx] as dict)?[key] is bool b ? b : false.</summary>
+    private void EmitOptionBool(ILGenerator il, int argIdx, string key)
+    {
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var tmpLocal = il.DeclareLocal(_types.Object);
+        var resultLocal = il.DeclareLocal(_types.Boolean);
+        var tryGet = _types.DictionaryStringObject.GetMethod("TryGetValue", [_types.String, _types.Object.MakeByRefType()])!;
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, resultLocal);
+        il.Emit(OpCodes.Ldarg, argIdx);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Dup); il.Emit(OpCodes.Stloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldloc, dictLocal); il.Emit(OpCodes.Ldstr, key); il.Emit(OpCodes.Ldloca, tmpLocal);
+        il.Emit(OpCodes.Callvirt, tryGet);
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldloc, tmpLocal); il.Emit(OpCodes.Isinst, _types.Boolean); il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldloc, tmpLocal); il.Emit(OpCodes.Unbox_Any, _types.Boolean); il.Emit(OpCodes.Stloc, resultLocal);
+        il.MarkLabel(done);
+        il.Emit(OpCodes.Ldloc, resultLocal);
+    }
+
     /// <summary>Leaves an int on the stack: options["maxBuffer"] as int, default 1 MB.</summary>
     private void EmitParseMaxBuffer(ILGenerator il, LocalBuilder optionsObjLocal)
     {
@@ -1683,37 +1778,29 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// static string ChildReadCapped(TextReader reader, int maxBuffer, bool[] flag): reads up to
-    /// maxBuffer chars; on overflow sets flag[0]=true and stops. maxBuffer&lt;0 means unbounded.
+    /// static byte[] ChildReadCappedBytes(Stream stream, int maxBuffer, bool[] flag): reads up
+    /// to maxBuffer bytes; on overflow sets flag[0]=true and stops. maxBuffer&lt;0 = unbounded.
     /// </summary>
     private void EmitChildReadCapped(TypeBuilder runtimeType, EmittedRuntime runtime)
     {
-        var m = runtimeType.DefineMethod("ChildReadCapped",
-            MethodAttributes.Public | MethodAttributes.Static, _types.String,
-            [_types.TextReader, _types.Int32, typeof(bool[])]);
-        _childReadCapped = m;
+        var streamT = typeof(System.IO.Stream);
+        var memT = typeof(System.IO.MemoryStream);
+        var m = runtimeType.DefineMethod("ChildReadCappedBytes",
+            MethodAttributes.Public | MethodAttributes.Static, typeof(byte[]),
+            [streamT, _types.Int32, typeof(bool[])]);
+        _childReadCappedBytes = m;
         var il = m.GetILGenerator();
-        var sbLocal = il.DeclareLocal(_types.StringBuilder);
-        var bufLocal = il.DeclareLocal(typeof(char[]));
+        var msLocal = il.DeclareLocal(memT);
+        var bufLocal = il.DeclareLocal(typeof(byte[]));
         var nLocal = il.DeclareLocal(_types.Int32);
+        var totalLocal = il.DeclareLocal(_types.Int32);
         var remLocal = il.DeclareLocal(_types.Int32);
-        var readM = _types.TextReader.GetMethod("Read", [typeof(char[]), _types.Int32, _types.Int32])!;
-        var appendM = _types.StringBuilder.GetMethod("Append", [typeof(char[]), _types.Int32, _types.Int32])!;
-        var lenGet = _types.StringBuilder.GetProperty("Length")!.GetGetMethod()!;
+        var readM = streamT.GetMethod("Read", [typeof(byte[]), _types.Int32, _types.Int32])!;
+        var writeM = streamT.GetMethod("Write", [typeof(byte[]), _types.Int32, _types.Int32])!;
 
-        // if (maxBuffer < 0) return reader.ReadToEnd();
-        var bounded = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Bge, bounded);
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, _miReadToEnd);
-        il.Emit(OpCodes.Ret);
-        il.MarkLabel(bounded);
-
-        il.Emit(OpCodes.Newobj, _types.StringBuilder.GetConstructor(Type.EmptyTypes)!);
-        il.Emit(OpCodes.Stloc, sbLocal);
-        il.Emit(OpCodes.Ldc_I4, 4096); il.Emit(OpCodes.Newarr, typeof(char)); il.Emit(OpCodes.Stloc, bufLocal);
+        il.Emit(OpCodes.Newobj, memT.GetConstructor(Type.EmptyTypes)!); il.Emit(OpCodes.Stloc, msLocal);
+        il.Emit(OpCodes.Ldc_I4, 4096); il.Emit(OpCodes.Newarr, typeof(byte)); il.Emit(OpCodes.Stloc, bufLocal);
+        il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, totalLocal);
 
         var loop = il.DefineLabel();
         var end = il.DefineLabel();
@@ -1722,32 +1809,45 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Callvirt, readM);
         il.Emit(OpCodes.Stloc, nLocal);
         il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ble, end);
-        // if (sb.Length + n > maxBuffer) { rem = max(0, maxBuffer - sb.Length); sb.Append(buf,0,rem); flag[0]=true; break; }
+        // if (maxBuffer >= 0 && total + n > maxBuffer) { rem = max(0, maxBuffer-total); ms.Write(buf,0,rem); flag[0]=true; break; }
         var noOverflow = il.DefineLabel();
-        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Callvirt, lenGet);
-        il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Blt, noOverflow); // maxBuffer < 0 → unbounded
+        il.Emit(OpCodes.Ldloc, totalLocal); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Add);
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Ble, noOverflow);
-        // rem = maxBuffer - sb.Length; if (rem<0) rem=0;
-        il.Emit(OpCodes.Ldarg_1);
-        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Callvirt, lenGet);
-        il.Emit(OpCodes.Sub);
-        il.Emit(OpCodes.Stloc, remLocal);
+        il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldloc, totalLocal); il.Emit(OpCodes.Sub); il.Emit(OpCodes.Stloc, remLocal);
         var remOk = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, remLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Bge, remOk);
         il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Stloc, remLocal);
         il.MarkLabel(remOk);
-        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Ldloc, bufLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldloc, remLocal);
-        il.Emit(OpCodes.Callvirt, appendM); il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, msLocal); il.Emit(OpCodes.Ldloc, bufLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldloc, remLocal);
+        il.Emit(OpCodes.Callvirt, writeM);
         il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldc_I4_1); il.Emit(OpCodes.Stelem_I1);
         il.Emit(OpCodes.Br, end);
         il.MarkLabel(noOverflow);
-        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Ldloc, bufLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldloc, nLocal);
-        il.Emit(OpCodes.Callvirt, appendM); il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ldloc, msLocal); il.Emit(OpCodes.Ldloc, bufLocal); il.Emit(OpCodes.Ldc_I4_0); il.Emit(OpCodes.Ldloc, nLocal);
+        il.Emit(OpCodes.Callvirt, writeM);
+        il.Emit(OpCodes.Ldloc, totalLocal); il.Emit(OpCodes.Ldloc, nLocal); il.Emit(OpCodes.Add); il.Emit(OpCodes.Stloc, totalLocal);
         il.Emit(OpCodes.Br, loop);
         il.MarkLabel(end);
-        il.Emit(OpCodes.Ldloc, sbLocal); il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.StringBuilder, "ToString"));
+        il.Emit(OpCodes.Ldloc, msLocal); il.Emit(OpCodes.Callvirt, memT.GetMethod("ToArray", Type.EmptyTypes)!);
         il.Emit(OpCodes.Ret);
+
+        // static object ChildDecodeOutput(byte[] bytes, bool asBuffer, string encoding):
+        //   var b = new $Buffer(bytes); return asBuffer ? b : b.ToEncodedString(encoding);
+        var d = runtimeType.DefineMethod("ChildDecodeOutput",
+            MethodAttributes.Public | MethodAttributes.Static, _types.Object,
+            [typeof(byte[]), _types.Boolean, _types.String]);
+        _childDecodeOutput = d;
+        var dil = d.GetILGenerator();
+        var bLocal = dil.DeclareLocal(runtime.TSBufferType);
+        dil.Emit(OpCodes.Ldarg_0); dil.Emit(OpCodes.Newobj, runtime.TSBufferCtor); dil.Emit(OpCodes.Stloc, bLocal);
+        var decode = dil.DefineLabel();
+        dil.Emit(OpCodes.Ldarg_1); dil.Emit(OpCodes.Brfalse, decode);
+        dil.Emit(OpCodes.Ldloc, bLocal); dil.Emit(OpCodes.Ret);
+        dil.MarkLabel(decode);
+        dil.Emit(OpCodes.Ldloc, bLocal); dil.Emit(OpCodes.Ldarg_2); dil.Emit(OpCodes.Callvirt, runtime.TSBufferToString);
+        dil.Emit(OpCodes.Ret);
     }
 
     /// <summary>

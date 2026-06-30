@@ -473,6 +473,85 @@ public class ChildProcessAsyncTests
 
     [Theory]
     [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Exec_Encoding_Buffer_ReturnsBuffer(ExecutionMode mode)
+    {
+        // encoding:'buffer' makes stdout a Buffer instead of a string.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { exec } from 'child_process';
+                exec('echo hello', { encoding: 'buffer' }, (err: any, stdout: any) => {
+                  console.log('isBuf:' + Buffer.isBuffer(stdout) + ' val:' + stdout.toString().trim());
+                });
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("isBuf:true val:hello\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExecSync_Input_FeedsStdin(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { execSync } from 'child_process';
+                const out = execSync('sort', { input: 'banana\napple\n' });
+                console.log('execSync:' + out.trim());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("execSync:apple\nbanana\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ExecFileSync_Input_FeedsStdin(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { execFileSync } from 'child_process';
+                const out = execFileSync('sort', [], { input: 'cherry\nberry\n' });
+                console.log('execFileSync:' + out.trim());
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("execFileSync:berry\ncherry\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Spawn_WindowsVerbatimArguments_Honored(ExecutionMode mode)
+    {
+        // windowsVerbatimArguments passes args as a raw command line; verify a normal spawn
+        // still produces correct output through that path.
+        var command = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "cmd.exe" : "/bin/echo";
+        var args = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? "['/c', 'echo', 'vbworks']"
+            : "['vbworks']";
+
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = $$"""
+                import { spawn } from 'child_process';
+                const c = spawn('{{command}}', {{args}}, { windowsVerbatimArguments: true });
+                let out = '';
+                c.stdout.on('data', (d: any) => { out += d.toString(); });
+                c.stdout.on('end', () => console.log('vb:' + out.trim()));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("vb:vbworks\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
     public void Exec_MaxBuffer_Overflow_Errors(ExecutionMode mode)
     {
         // Output longer than maxBuffer kills the child and surfaces ERR_CHILD_PROCESS_STDIO_MAXBUFFER.

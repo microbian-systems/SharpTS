@@ -37,12 +37,14 @@ public static class ChildProcessModuleInterpreter
         var options = args.Length > 1 ? args[1].ToObject() as SharpTSObject : null;
         var cwd = GetStringOption(options, "cwd");
         var timeout = GetDoubleOption(options, "timeout", -1);
+        var input = GetStringOption(options, "input");
 
         var startInfo = new ProcessStartInfo
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            RedirectStandardInput = input != null,
             CreateNoWindow = true
         };
 
@@ -66,6 +68,11 @@ public static class ChildProcessModuleInterpreter
 
         using var process = new Process { StartInfo = startInfo };
         process.Start();
+        if (input != null)
+        {
+            process.StandardInput.Write(input);
+            process.StandardInput.Close();
+        }
 
         var stdout = process.StandardOutput.ReadToEnd();
 
@@ -212,7 +219,7 @@ public static class ChildProcessModuleInterpreter
         interpreter.Ref();
         Task.Run(() =>
         {
-            string stdout = "", stderr = "";
+            object stdout = "", stderr = ""; // string (decoded) or SharpTSBuffer (encoding:'buffer')
             int code = 0, kind = 0; // kind: 0 normal, 1 timeout, 2 exception
             object? error = null;
             try
@@ -247,8 +254,11 @@ public static class ChildProcessModuleInterpreter
                 childProcess.SetProcess(process);
 
                 var maxBuffer = (int)GetDoubleOption(options, "maxBuffer", 1024 * 1024);
-                stdout = ReadCapped(process.StandardOutput, maxBuffer, out var oOver);
-                stderr = ReadCapped(process.StandardError, maxBuffer, out var eOver);
+                var (asBuffer, encoding) = GetOutputEncoding(options);
+                var outBytes = ReadCappedBytes(process.StandardOutput.BaseStream, maxBuffer, out var oOver);
+                var errBytes = ReadCappedBytes(process.StandardError.BaseStream, maxBuffer, out var eOver);
+                stdout = asBuffer ? new SharpTSBuffer(outBytes) : BufferEncoding.Decode(outBytes, encoding);
+                stderr = asBuffer ? new SharpTSBuffer(errBytes) : BufferEncoding.Decode(errBytes, encoding);
                 if (oOver || eOver)
                 {
                     try { process.Kill(); } catch { }
@@ -377,8 +387,12 @@ public static class ChildProcessModuleInterpreter
             else
             {
                 startInfo.FileName = command;
-                foreach (var arg in cmdArgs)
-                    startInfo.ArgumentList.Add(arg);
+                if (GetBoolOption(options, "windowsVerbatimArguments", false))
+                    // Pass args verbatim (no .NET quoting), as Node's windowsVerbatimArguments asks.
+                    startInfo.Arguments = string.Join(" ", cmdArgs);
+                else
+                    foreach (var arg in cmdArgs)
+                        startInfo.ArgumentList.Add(arg);
             }
 
             if (!string.IsNullOrEmpty(cwd))
@@ -539,6 +553,7 @@ public static class ChildProcessModuleInterpreter
 
         var cwd = GetStringOption(options, "cwd");
         var timeout = GetDoubleOption(options, "timeout", -1);
+        var input = GetStringOption(options, "input");
 
         var startInfo = new ProcessStartInfo
         {
@@ -546,6 +561,7 @@ public static class ChildProcessModuleInterpreter
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            RedirectStandardInput = input != null,
             CreateNoWindow = true
         };
 
@@ -559,6 +575,11 @@ public static class ChildProcessModuleInterpreter
 
         using var process = new Process { StartInfo = startInfo };
         process.Start();
+        if (input != null)
+        {
+            process.StandardInput.Write(input);
+            process.StandardInput.Close();
+        }
 
         var stdout = process.StandardOutput.ReadToEnd();
 
@@ -629,7 +650,7 @@ public static class ChildProcessModuleInterpreter
         interpreter.Ref();
         Task.Run(() =>
         {
-            string stdout = "", stderr = "";
+            object stdout = "", stderr = ""; // string (decoded) or SharpTSBuffer (encoding:'buffer')
             int code = 0, kind = 0; // kind: 0 normal, 1 timeout, 2 exception
             object? error = null;
             try
@@ -657,8 +678,11 @@ public static class ChildProcessModuleInterpreter
                 childProcess.SetProcess(process);
 
                 var maxBuffer = (int)GetDoubleOption(options, "maxBuffer", 1024 * 1024);
-                stdout = ReadCapped(process.StandardOutput, maxBuffer, out var oOver);
-                stderr = ReadCapped(process.StandardError, maxBuffer, out var eOver);
+                var (asBuffer, encoding) = GetOutputEncoding(options);
+                var outBytes = ReadCappedBytes(process.StandardOutput.BaseStream, maxBuffer, out var oOver);
+                var errBytes = ReadCappedBytes(process.StandardError.BaseStream, maxBuffer, out var eOver);
+                stdout = asBuffer ? new SharpTSBuffer(outBytes) : BufferEncoding.Decode(outBytes, encoding);
+                stderr = asBuffer ? new SharpTSBuffer(errBytes) : BufferEncoding.Decode(errBytes, encoding);
                 if (oOver || eOver)
                 {
                     try { process.Kill(); } catch { }
@@ -973,29 +997,40 @@ public static class ChildProcessModuleInterpreter
     /// array form. fd numbers / streams / 'ipc' fall back to "pipe" (documented limitation).
     /// </summary>
     /// <summary>
-    /// Reads a stream up to <paramref name="maxBuffer"/> chars (Node's exec maxBuffer, bytes
-    /// approximated by chars). Sets <paramref name="overflowed"/> and stops at the cap; a
-    /// negative cap means unbounded.
+    /// Reads a stream up to <paramref name="maxBuffer"/> bytes (Node's exec maxBuffer is in
+    /// bytes). Sets <paramref name="overflowed"/> and stops at the cap; a negative cap is unbounded.
     /// </summary>
-    private static string ReadCapped(System.IO.TextReader reader, int maxBuffer, out bool overflowed)
+    private static byte[] ReadCappedBytes(System.IO.Stream stream, int maxBuffer, out bool overflowed)
     {
         overflowed = false;
-        if (maxBuffer < 0)
-            return reader.ReadToEnd();
-        var sb = new System.Text.StringBuilder();
-        var buf = new char[4096];
-        int n;
-        while ((n = reader.Read(buf, 0, buf.Length)) > 0)
+        using var ms = new System.IO.MemoryStream();
+        var buf = new byte[4096];
+        int total = 0, n;
+        while ((n = stream.Read(buf, 0, buf.Length)) > 0)
         {
-            if (sb.Length + n > maxBuffer)
+            if (maxBuffer >= 0 && total + n > maxBuffer)
             {
-                sb.Append(buf, 0, Math.Max(0, maxBuffer - sb.Length));
+                ms.Write(buf, 0, Math.Max(0, maxBuffer - total));
                 overflowed = true;
                 break;
             }
-            sb.Append(buf, 0, n);
+            ms.Write(buf, 0, n);
+            total += n;
         }
-        return sb.ToString();
+        return ms.ToArray();
+    }
+
+    /// <summary>
+    /// Reads the `encoding` option: 'buffer' → raw Buffer output; any other name → decode the
+    /// bytes with that encoding; absent/unrecognised → 'utf8' (Node's exec default). (Explicit
+    /// `encoding: null` → Buffer is not distinguished from absent and decodes as utf8.)
+    /// </summary>
+    private static (bool asBuffer, string encoding) GetOutputEncoding(SharpTSObject? options)
+    {
+        var value = options?.GetProperty("encoding");
+        if (value is string s)
+            return s == "buffer" ? (true, "utf8") : (false, s);
+        return (false, "utf8");
     }
 
     private static SharpTSObject MaxBufferError() => new(new Dictionary<string, object?>
