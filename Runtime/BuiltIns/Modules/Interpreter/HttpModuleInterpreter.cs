@@ -19,13 +19,25 @@ public static class HttpModuleInterpreter
     /// <summary>
     /// Gets all exported values for the http module.
     /// </summary>
-    public static Dictionary<string, object?> GetExports()
+    public static Dictionary<string, object?> GetExports() => GetExports(isHttps: false);
+
+    /// <summary>
+    /// Gets all exported values for the http (or https) module. The <paramref name="isHttps"/>
+    /// flag selects TLS for the client request path (used by the https module wiring).
+    /// </summary>
+    public static Dictionary<string, object?> GetExports(bool isHttps)
     {
         return new Dictionary<string, object?>
         {
-            ["createServer"] = BuiltInMethod.CreateV2("createServer", 0, 1, CreateServer),
-            ["request"] = new BuiltInAsyncMethod("request", 1, 2, Request),
-            ["get"] = new BuiltInAsyncMethod("get", 1, 2, Get),
+            ["createServer"] = BuiltInMethod.CreateV2("createServer", 0, 2, CreateServer),
+            ["request"] = BuiltInMethod.CreateV2("request", 1, 3, (interp, _, args) =>
+                RuntimeValue.FromObject(CreateClientRequest(interp, args, forceMethod: null, forceHttps: isHttps))),
+            ["get"] = BuiltInMethod.CreateV2("get", 1, 3, (interp, _, args) =>
+            {
+                var req = CreateClientRequest(interp, args, forceMethod: "GET", forceHttps: isHttps);
+                req.EndNow();
+                return RuntimeValue.FromObject(req);
+            }),
             ["METHODS"] = GetMethods(),
             ["STATUS_CODES"] = GetStatusCodes(),
             ["globalAgent"] = SharpTSAgent.GlobalAgent,
@@ -66,71 +78,72 @@ public static class HttpModuleInterpreter
     }
 
     /// <summary>
-    /// Makes an HTTP request (similar to Node.js http.request).
+    /// Builds a <see cref="SharpTSClientRequest"/> from <c>http.request</c>/<c>http.get</c> arguments.
+    /// Accepts <c>(url[, options][, cb])</c> or <c>(options[, cb])</c>. The response callback (the
+    /// last function argument) is registered as a 'response' listener.
     /// </summary>
-    private static async Task<object?> Request(Interp interpreter, object? receiver, List<object?> args)
+    internal static SharpTSClientRequest CreateClientRequest(
+        Interp interpreter, ReadOnlySpan<RuntimeValue> args, string? forceMethod, bool forceHttps)
     {
-        if (args.Count == 0)
-            throw new SharpTSPromiseRejectedException(
-                new SharpTSTypeError("http.request requires a URL or options object"));
-
-        string url;
+        string? urlStr = null;
         SharpTSObject? options = null;
+        ISharpTSCallable? callback = null;
 
-        // Parse arguments
-        if (args[0] is string urlStr)
+        if (args.Length > 0)
         {
-            url = urlStr;
-            if (args.Count > 1 && args[1] is SharpTSObject opts)
-            {
-                options = opts;
-            }
+            var a0 = args[0].ToObject();
+            if (a0 is string s) urlStr = s;
+            else if (a0 is SharpTSObject o) options = o;
         }
-        else if (args[0] is SharpTSObject opts)
+        for (int i = 1; i < args.Length; i++)
         {
-            options = opts;
-            // Build URL from options
-            var protocol = opts.Fields.TryGetValue("protocol", out var p) && p is string ps ? ps : "http:";
-            var hostname = opts.Fields.TryGetValue("hostname", out var h) && h is string hs ? hs
-                : opts.Fields.TryGetValue("host", out var ho) && ho is string hos ? hos : "localhost";
-            var port = opts.Fields.TryGetValue("port", out var po) && po is double pd ? $":{(int)pd}" : "";
-            var path = opts.Fields.TryGetValue("path", out var pa) && pa is string pas ? pas : "/";
-
-            protocol = protocol.TrimEnd(':') + ":";
-            url = $"{protocol}//{hostname}{port}{path}";
-        }
-        else
-        {
-            throw new SharpTSPromiseRejectedException(
-                new SharpTSTypeError("http.request: first argument must be URL string or options object"));
+            var a = args[i].ToObject();
+            if (a is ISharpTSCallable cb) callback = cb;
+            else if (a is SharpTSObject o && options == null) options = o;
         }
 
-        // Delegate to fetch - use Call which returns a Promise
-        var promise = FetchBuiltIns.FetchMethod.Call(interpreter, new List<object?> { url, options });
-        if (promise is SharpTSPromise fetchPromise)
-        {
-            return await fetchPromise.GetValueAsync();
-        }
-        return promise;
+        bool isHttps = forceHttps;
+        if (urlStr != null && urlStr.StartsWith("https:", StringComparison.OrdinalIgnoreCase))
+            isHttps = true;
+        if (options != null && options.Fields.TryGetValue("protocol", out var p) && p is string ps
+            && ps.TrimEnd(':').Equals("https", StringComparison.OrdinalIgnoreCase))
+            isHttps = true;
+        if (forceHttps) isHttps = true;
+
+        string url = urlStr ?? BuildUrlFromOptions(options, isHttps);
+
+        string method = forceMethod
+            ?? (options != null && options.Fields.TryGetValue("method", out var m) && m is string ms ? ms : "GET");
+
+        var req = new SharpTSClientRequest(interpreter, method, url, options, isHttps);
+        if (callback != null)
+            req.RegisterResponseCallback(callback);
+        return req;
     }
 
     /// <summary>
-    /// Shorthand for GET requests.
+    /// Builds a URL from a request options object (protocol/host/hostname/port/path).
     /// </summary>
-    private static async Task<object?> Get(Interp interpreter, object? receiver, List<object?> args)
+    private static string BuildUrlFromOptions(SharpTSObject? opts, bool isHttps)
     {
-        // Ensure method is GET
-        if (args.Count > 1 && args[1] is SharpTSObject options)
+        string defaultScheme = isHttps ? "https" : "http";
+        if (opts == null) return $"{defaultScheme}://localhost/";
+
+        string protocol = opts.Fields.TryGetValue("protocol", out var p) && p is string ps
+            ? ps.TrimEnd(':') : defaultScheme;
+        string host = opts.Fields.TryGetValue("hostname", out var h) && h is string hs ? hs
+            : opts.Fields.TryGetValue("host", out var ho) && ho is string hos ? hos : "localhost";
+
+        string portStr = "";
+        if (opts.Fields.TryGetValue("port", out var po))
         {
-            options.SetProperty("method", "GET");
-        }
-        else if (args.Count == 1)
-        {
-            var opts = new SharpTSObject(new Dictionary<string, object?> { ["method"] = "GET" });
-            args = new List<object?> { args[0], opts };
+            if (po is double pd) portStr = ":" + (int)pd;
+            else if (po is string pss && int.TryParse(pss, out var pii)) portStr = ":" + pii;
         }
 
-        return await Request(interpreter, receiver, args);
+        string path = opts.Fields.TryGetValue("path", out var pa) && pa is string pas ? pas : "/";
+        if (!path.StartsWith("/")) path = "/" + path;
+        return $"{protocol}://{host}{portStr}{path}";
     }
 
     /// <summary>

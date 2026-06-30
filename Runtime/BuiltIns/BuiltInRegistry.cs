@@ -950,6 +950,14 @@ public sealed class BuiltInRegistry
         registry.RegisterInstanceType(typeof(SharpTSHttpResponse), (instance, name) =>
             ((SharpTSHttpResponse)instance).GetMember(name));
 
+        // Register HTTP client types (http.request/get return a ClientRequest; its
+        // 'response' carries an IncomingMessage = SharpTSClientResponse).
+        registry.RegisterInstanceType(typeof(SharpTSClientRequest), (instance, name) =>
+            ((SharpTSClientRequest)instance).GetMember(name));
+
+        registry.RegisterInstanceType(typeof(SharpTSClientResponse), (instance, name) =>
+            ((SharpTSClientResponse)instance).GetMember(name));
+
         // Register http.Agent type
         registry.RegisterInstanceType(typeof(SharpTSAgent), (instance, name) =>
             ((SharpTSAgent)instance).GetMember(name));
