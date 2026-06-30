@@ -47,6 +47,11 @@ public class SharpTSHttpRequest : SharpTSReadable
     /// </summary>
     public string HttpVersion => $"{_request.ProtocolVersion.Major}.{_request.ProtocolVersion.Minor}";
 
+    private bool _aborted;
+
+    /// <summary>Marks the request as aborted (peer disconnected before the body finished).</summary>
+    internal void MarkAborted() => _aborted = true;
+
     /// <summary>
     /// Gets a member (property or method) by name.
     /// Overrides Readable.GetMember to add HTTP-specific properties.
@@ -59,14 +64,19 @@ public class SharpTSHttpRequest : SharpTSReadable
             "method" => Method,
             "url" => Url,
             "httpVersion" => HttpVersion,
+            "httpVersionMajor" => (double)_request.ProtocolVersion.Major,
+            "httpVersionMinor" => (double)_request.ProtocolVersion.Minor,
             "headers" => GetHeadersObject(),
+            "headersDistinct" => GetHeadersDistinct(),
             "rawHeaders" => GetRawHeaders(),
-            "socket" => CreateSocketObject(),
+            "socket" or "connection" => CreateSocketObject(),
             "complete" => _bodyRead && _endEmitted,
-            "statusCode" => (double)_request.ProtocolVersion.Major, // For response messages
-            "statusMessage" => (object?)null,
+            // Server-side IncomingMessage has no statusCode/statusMessage (those are client-side).
+            "statusCode" => SharpTSUndefined.Instance,
+            "statusMessage" => SharpTSUndefined.Instance,
             "trailers" => new SharpTSObject(new Dictionary<string, object?>()),
-            "aborted" => false,
+            "rawTrailers" => new SharpTSArray(new List<object?>()),
+            "aborted" => _aborted,
 
             // Inherit Readable stream methods (on, once, pipe, read, pause, resume, etc.)
             _ => base.GetMember(name)
@@ -80,24 +90,27 @@ public class SharpTSHttpRequest : SharpTSReadable
     internal async Task EmitDataEventsAsync(Interpreter interpreter)
     {
         if (_bodyRead) return;
+        _bodyRead = true;
 
         try
         {
-            using var ms = new MemoryStream();
-            await _request.InputStream.CopyToAsync(ms);
-            var body = ms.ToArray();
-            _bodyRead = true;
+            var pushMethod = base.GetMember("push") as BuiltInMethod;
+            var bound = pushMethod?.Bind(this);
 
-            // Push data into the Readable stream (triggers 'data' events if flowing)
-            if (body.Length > 0)
+            // On-demand streaming (#1048): read the request body in chunks and push each as it
+            // arrives, rather than buffering the whole body then emitting one 'data'. Listeners
+            // were attached synchronously by the handler before this runs.
+            var buffer = new byte[16384];
+            int n;
+            while ((n = await _request.InputStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
             {
-                var pushMethod = base.GetMember("push") as BuiltInMethod;
-                pushMethod?.Bind(this).Call(interpreter, [new SharpTSBuffer(body)]);
+                var chunk = new byte[n];
+                Array.Copy(buffer, chunk, n);
+                bound?.Call(interpreter, [new SharpTSBuffer(chunk)]);
             }
 
             // Signal EOF
-            var pushNull = base.GetMember("push") as BuiltInMethod;
-            pushNull?.Bind(this).Call(interpreter, new List<object?> { null });
+            bound?.Call(interpreter, new List<object?> { null });
             _endEmitted = true;
         }
         catch (Exception ex)
@@ -105,6 +118,20 @@ public class SharpTSHttpRequest : SharpTSReadable
             // Emit 'error' event through the Readable stream
             EmitEvent(interpreter, "error", [new SharpTSError(ex.Message)]);
         }
+    }
+
+    /// <summary>
+    /// Node's headersDistinct — every header value as a string array.
+    /// </summary>
+    private SharpTSObject GetHeadersDistinct()
+    {
+        var distinct = new Dictionary<string, object?>();
+        foreach (string? key in _request.Headers.AllKeys)
+        {
+            if (key != null)
+                distinct[key.ToLowerInvariant()] = new SharpTSArray(new List<object?> { _request.Headers[key] });
+        }
+        return new SharpTSObject(distinct);
     }
 
     /// <summary>
@@ -145,12 +172,17 @@ public class SharpTSHttpRequest : SharpTSReadable
     /// </summary>
     private SharpTSObject CreateSocketObject()
     {
+        var remote = _request.RemoteEndPoint;
+        string family = remote?.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 ? "IPv6" : "IPv4";
         return new SharpTSObject(new Dictionary<string, object?>
         {
-            ["remoteAddress"] = _request.RemoteEndPoint?.Address?.ToString(),
-            ["remotePort"] = (double?)_request.RemoteEndPoint?.Port,
+            ["remoteAddress"] = remote?.Address?.ToString(),
+            ["remotePort"] = (double?)remote?.Port,
+            ["remoteFamily"] = family,
             ["localAddress"] = _request.LocalEndPoint?.Address?.ToString(),
-            ["localPort"] = (double?)_request.LocalEndPoint?.Port
+            ["localPort"] = (double?)_request.LocalEndPoint?.Port,
+            ["family"] = family,
+            ["encrypted"] = _request.IsSecureConnection
         });
     }
 

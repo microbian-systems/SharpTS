@@ -771,6 +771,50 @@ public partial class RuntimeEmitter
 
             il.MarkLabel(noCb);
 
+            // Read the request body and emit 'data' before 'end' (#1048 on-demand body),
+            // so req.on('data') receives the posted payload as a $Buffer. Listeners were
+            // attached synchronously by the handler above.
+            var bodyBytesLocal = il.DeclareLocal(typeof(byte[]));
+            il.BeginExceptionBlock();
+            {
+                var msLocal = il.DeclareLocal(typeof(System.IO.MemoryStream));
+                il.Emit(OpCodes.Newobj, typeof(System.IO.MemoryStream).GetConstructor(Type.EmptyTypes)!);
+                il.Emit(OpCodes.Stloc, msLocal);
+                il.Emit(OpCodes.Ldarg_0);
+                il.Emit(OpCodes.Ldfld, ctxField);
+                il.Emit(OpCodes.Callvirt, typeof(HttpListenerContext).GetProperty("Request")!.GetGetMethod()!);
+                il.Emit(OpCodes.Callvirt, typeof(HttpListenerRequest).GetProperty("InputStream")!.GetGetMethod()!);
+                il.Emit(OpCodes.Ldloc, msLocal);
+                il.Emit(OpCodes.Callvirt, typeof(System.IO.Stream).GetMethod("CopyTo", [typeof(System.IO.Stream)])!);
+                il.Emit(OpCodes.Ldloc, msLocal);
+                il.Emit(OpCodes.Callvirt, typeof(System.IO.MemoryStream).GetMethod("ToArray", Type.EmptyTypes)!);
+                il.Emit(OpCodes.Stloc, bodyBytesLocal);
+            }
+            il.BeginCatchBlock(typeof(Exception));
+            il.Emit(OpCodes.Pop);
+            il.EndExceptionBlock();
+
+            // if (bytes != null && bytes.Length > 0) req.Emit("data", [ new $Buffer(bytes) ])
+            var skipData = il.DefineLabel();
+            il.Emit(OpCodes.Ldloc, bodyBytesLocal);
+            il.Emit(OpCodes.Brfalse, skipData);
+            il.Emit(OpCodes.Ldloc, bodyBytesLocal);
+            il.Emit(OpCodes.Ldlen);
+            il.Emit(OpCodes.Conv_I4);
+            il.Emit(OpCodes.Brfalse, skipData);
+            il.Emit(OpCodes.Ldloc, reqLocal);
+            il.Emit(OpCodes.Ldstr, "data");
+            il.Emit(OpCodes.Ldc_I4_1);
+            il.Emit(OpCodes.Newarr, _types.Object);
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4_0);
+            il.Emit(OpCodes.Ldloc, bodyBytesLocal);
+            il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
+            il.Emit(OpCodes.Stelem_Ref);
+            il.Emit(OpCodes.Callvirt, runtime.TSEventEmitterEmit);
+            il.Emit(OpCodes.Pop);
+            il.MarkLabel(skipData);
+
             // Emit 'end' event on request so req.on('end', ...) works
             il.Emit(OpCodes.Ldloc, reqLocal);
             il.Emit(OpCodes.Ldstr, "end");

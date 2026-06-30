@@ -127,7 +127,73 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
         il.Emit(OpCodes.Brtrue, rawHeadersLabel);
 
+        // #1048 additions: version parts, complete/aborted, trailers, socket.
+        var verMajorLabel = il.DefineLabel();
+        var verMinorLabel = il.DefineLabel();
+        var completeLabel = il.DefineLabel();
+        var abortedLabel = il.DefineLabel();
+        var trailersLabel = il.DefineLabel();
+        var rawTrailersLabel = il.DefineLabel();
+        var socketLabel = il.DefineLabel();
+
+        void Check(string n, System.Reflection.Emit.Label lbl)
+        {
+            il.Emit(OpCodes.Ldarg_1);
+            il.Emit(OpCodes.Ldstr, n);
+            il.Emit(OpCodes.Call, _types.String.GetMethod("Equals", [_types.String])!);
+            il.Emit(OpCodes.Brtrue, lbl);
+        }
+        Check("httpVersionMajor", verMajorLabel);
+        Check("httpVersionMinor", verMinorLabel);
+        Check("complete", completeLabel);
+        Check("aborted", abortedLabel);
+        Check("trailers", trailersLabel);
+        Check("rawTrailers", rawTrailersLabel);
+        Check("socket", socketLabel);
+        Check("connection", socketLabel);
+
         il.Emit(OpCodes.Br, defaultLabel);
+
+        // httpVersionMajor / httpVersionMinor
+        void EmitVersionPart(System.Reflection.Emit.Label lbl, string propName)
+        {
+            il.MarkLabel(lbl);
+            il.Emit(OpCodes.Ldarg_0);
+            il.Emit(OpCodes.Ldfld, _httpRequestRequestField);
+            il.Emit(OpCodes.Callvirt, httpListenerRequestType.GetProperty("ProtocolVersion")!.GetGetMethod()!);
+            il.Emit(OpCodes.Callvirt, typeof(Version).GetProperty(propName)!.GetGetMethod()!);
+            il.Emit(OpCodes.Conv_R8);
+            il.Emit(OpCodes.Box, _types.Double);
+            il.Emit(OpCodes.Ret);
+        }
+        EmitVersionPart(verMajorLabel, "Major");
+        EmitVersionPart(verMinorLabel, "Minor");
+
+        // complete / aborted → false (server request lifecycle not tracked in compiled)
+        il.MarkLabel(completeLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(abortedLabel);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Box, _types.Boolean);
+        il.Emit(OpCodes.Ret);
+
+        // trailers → empty dictionary
+        il.MarkLabel(trailersLabel);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.DictionaryStringObject));
+        il.Emit(OpCodes.Ret);
+
+        // rawTrailers → empty List<object?> (Array.isArray-compatible, same shape as rawHeaders;
+        // runtime.CreateArray is not yet assigned at the $HttpRequest emit phase).
+        il.MarkLabel(rawTrailersLabel);
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(_types.ListOfObject));
+        il.Emit(OpCodes.Ret);
+
+        // socket → minimal { remoteAddress, remotePort, family }
+        il.MarkLabel(socketLabel);
+        EmitHttpRequestSocket(il, runtime, httpListenerRequestType);
+        il.Emit(OpCodes.Ret);
 
         // "method" - return _request.HttpMethod
         il.MarkLabel(methodLabel);
@@ -180,6 +246,61 @@ public partial class RuntimeEmitter
         il.MarkLabel(defaultLabel);
         il.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
         il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Builds a minimal request socket dictionary { remoteAddress, remotePort, family } from
+    /// HttpListenerRequest.RemoteEndPoint and leaves it on the stack (#1048).
+    /// </summary>
+    private void EmitHttpRequestSocket(ILGenerator il, EmittedRuntime runtime, Type httpListenerRequestType)
+    {
+        var dictType = _types.DictionaryStringObject;
+        var setItem = dictType.GetMethod("set_Item", [_types.String, _types.Object])!;
+        var ipEndPointType = typeof(System.Net.IPEndPoint);
+
+        var epLocal = il.DeclareLocal(ipEndPointType);
+        var dictLocal = il.DeclareLocal(dictType);
+
+        il.Emit(OpCodes.Newobj, _types.GetDefaultConstructor(dictType));
+        il.Emit(OpCodes.Stloc, dictLocal);
+
+        // ep = _request.RemoteEndPoint as IPEndPoint
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, _httpRequestRequestField);
+        il.Emit(OpCodes.Callvirt, httpListenerRequestType.GetProperty("RemoteEndPoint")!.GetGetMethod()!);
+        il.Emit(OpCodes.Isinst, ipEndPointType);
+        il.Emit(OpCodes.Stloc, epLocal);
+
+        var noEpLabel = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, epLocal);
+        il.Emit(OpCodes.Brfalse, noEpLabel);
+
+        // dict["remoteAddress"] = ep.Address.ToString()
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "remoteAddress");
+        il.Emit(OpCodes.Ldloc, epLocal);
+        il.Emit(OpCodes.Callvirt, ipEndPointType.GetProperty("Address")!.GetGetMethod()!);
+        il.Emit(OpCodes.Callvirt, typeof(System.Net.IPAddress).GetMethod("ToString", Type.EmptyTypes)!);
+        il.Emit(OpCodes.Callvirt, setItem);
+
+        // dict["remotePort"] = (double)ep.Port
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "remotePort");
+        il.Emit(OpCodes.Ldloc, epLocal);
+        il.Emit(OpCodes.Callvirt, ipEndPointType.GetProperty("Port")!.GetGetMethod()!);
+        il.Emit(OpCodes.Conv_R8);
+        il.Emit(OpCodes.Box, _types.Double);
+        il.Emit(OpCodes.Callvirt, setItem);
+
+        il.MarkLabel(noEpLabel);
+
+        // dict["family"] = "IPv4"
+        il.Emit(OpCodes.Ldloc, dictLocal);
+        il.Emit(OpCodes.Ldstr, "family");
+        il.Emit(OpCodes.Ldstr, "IPv4");
+        il.Emit(OpCodes.Callvirt, setItem);
+
+        il.Emit(OpCodes.Ldloc, dictLocal);
     }
 
     private void EmitExtractRequestHeaders(ILGenerator il, Type httpListenerRequestType)
