@@ -21,9 +21,11 @@ public static class VmModuleInterpreter
         {
             ["runInNewContext"] = BuiltInMethod.CreateV2("runInNewContext", 1, 3, RunInNewContext),
             ["runInThisContext"] = BuiltInMethod.CreateV2("runInThisContext", 1, 2, RunInThisContext),
-            ["createContext"] = BuiltInMethod.CreateV2("createContext", 0, 1, CreateContext),
+            ["runInContext"] = BuiltInMethod.CreateV2("runInContext", 2, 3, RunInContext),
+            ["createContext"] = BuiltInMethod.CreateV2("createContext", 0, 2, CreateContext),
             ["isContext"] = BuiltInMethod.CreateV2("isContext", 1, 1, IsContext),
             ["compileFunction"] = BuiltInMethod.CreateV2("compileFunction", 1, 3, CompileFunction),
+            ["constants"] = VmConstants.Create(),
             ["Script"] = new VmScriptConstructor()
         };
     }
@@ -52,6 +54,25 @@ public static class VmModuleInterpreter
 
         var timeout = GetTimeoutOption(args.Length > 1 ? args[1].ToObject() : null);
         return RuntimeValue.FromBoxed(ExecuteInCurrentContext(code, interpreter, timeout));
+    }
+
+    /// <summary>
+    /// vm.runInContext(code, contextifiedObject, options?) — executes code in an
+    /// already-contextified object (created via vm.createContext()). Throws a TypeError
+    /// if the second argument has not been contextified.
+    /// </summary>
+    private static RuntimeValue RunInContext(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length == 0 || args[0].ToObject() is not string code)
+            throw new Exception("vm.runInContext requires a code string");
+
+        var contextObject = args.Length > 1 ? args[1].ToObject() : null;
+        if (!VmContext.IsContext(contextObject))
+            throw new Exception("TypeError [ERR_INVALID_ARG_TYPE]: The \"contextifiedObject\" argument must be of type vm.Context.");
+
+        var options = args.Length > 2 ? args[2].ToObject() : null;
+        var timeout = GetTimeoutOption(options);
+        return RuntimeValue.FromBoxed(ExecuteInNewContext(code, contextObject, interpreter, timeout));
     }
 
     /// <summary>

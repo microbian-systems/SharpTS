@@ -3010,11 +3010,16 @@ public class EmittedRuntime
     // Vm module methods
     public MethodBuilder VmRunInNewContext { get; set; } = null!;
     public MethodBuilder VmRunInThisContext { get; set; } = null!;
+    public MethodBuilder VmRunInContext { get; set; } = null!;
     public MethodBuilder VmCreateContext { get; set; } = null!;
     public MethodBuilder VmIsContext { get; set; } = null!;
     public MethodBuilder VmGetScriptConstructor { get; set; } = null!;
     public MethodBuilder VmNewScript { get; set; } = null!;
     public MethodBuilder VmCompileFunction { get; set; } = null!;
+    public MethodBuilder VmGetConstants { get; set; } = null!;
+    public MethodBuilder VmMeasureMemory { get; set; } = null!;
+    public MethodBuilder VmNewSourceTextModule { get; set; } = null!;
+    public MethodBuilder VmNewSyntheticModule { get; set; } = null!;
 
     // Pure-IL Web Streams emitted types. The original late-binding helpers
     // (CreateReadableStream/CreateWritableStream/etc.) were removed when

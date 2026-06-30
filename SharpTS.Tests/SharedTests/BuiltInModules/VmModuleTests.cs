@@ -256,6 +256,107 @@ public class VmModuleTests
 
     #endregion
 
+    #region runInContext (module-level) / constants Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_RunInContext_Basic(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const ctx = vm.createContext({ x: 1 });
+                console.log(vm.runInContext('x + 1', ctx));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_RunInContext_WritesBack(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const ctx = vm.createContext({ count: 10 });
+                vm.runInContext('count = count + 5', ctx);
+                console.log(ctx.count);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("15\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_RunInContext_NonContext_Throws(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                try {
+                    vm.runInContext('1 + 1', { x: 1 });
+                    console.log('no error');
+                } catch (e) {
+                    console.log('caught error');
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("caught error\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Constants_Exist(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                console.log(typeof vm.constants === 'object');
+                console.log(vm.constants.DONT_CONTEXTIFY !== undefined);
+                console.log(vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER !== undefined);
+                // Sentinels are stable singletons (same value across accesses) and distinct.
+                console.log(vm.constants.DONT_CONTEXTIFY === vm.constants.DONT_CONTEXTIFY);
+                console.log(vm.constants.DONT_CONTEXTIFY !== vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\ntrue\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_Constants_AreSymbols(ExecutionMode mode)
+    {
+        // typeof reports 'symbol' in the interpreter; compiled-mode typeof of a
+        // cross-runtime-boundary SharpTSSymbol reports 'object' (a known interop
+        // detail — the sentinels' identity, exercised above, is what matters).
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                console.log(typeof vm.constants.DONT_CONTEXTIFY);
+                console.log(typeof vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("symbol\nsymbol\n", output);
+    }
+
+    #endregion
+
     #region Script Tests
 
     [Theory]

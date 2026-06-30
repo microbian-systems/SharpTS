@@ -14,11 +14,48 @@ public partial class RuntimeEmitter
     {
         EmitVmRunInNewContext(typeBuilder, runtime);
         EmitVmRunInThisContext(typeBuilder, runtime);
+        EmitVmRunInContext(typeBuilder, runtime);
         EmitVmCreateContext(typeBuilder, runtime);
         EmitVmIsContext(typeBuilder, runtime);
         EmitVmCompileFunction(typeBuilder, runtime);
+        EmitVmGetConstants(typeBuilder, runtime);
         EmitVmGetScriptConstructor(typeBuilder, runtime);
         EmitVmNewScript(typeBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Emits: public static object VmRunInContext(object code, object contextifiedObject, object options)
+    /// Delegates to VmModuleInterpreter.GetExports()["runInContext"] via reflection.
+    /// </summary>
+    private void EmitVmRunInContext(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "VmRunInContext",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object, _types.Object]);
+        runtime.VmRunInContext = method;
+        runtime.RegisterBuiltInModuleMethod("vm", "runInContext", method);
+
+        var il = method.GetILGenerator();
+        EmitVmReflectionCall(il, "runInContext", 3);
+    }
+
+    /// <summary>
+    /// Emits: public static object VmGetConstants()
+    /// Returns VmModuleInterpreter.GetExports()["constants"] via reflection.
+    /// </summary>
+    private void EmitVmGetConstants(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "VmGetConstants",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            Type.EmptyTypes);
+        runtime.VmGetConstants = method;
+
+        var il = method.GetILGenerator();
+        EmitVmGetExportValue(il, "constants");
     }
 
     /// <summary>
@@ -127,7 +164,16 @@ public partial class RuntimeEmitter
         runtime.RegisterBuiltInModuleMethod("vm", "Script", method);
 
         var il = method.GetILGenerator();
+        EmitVmGetExportValue(il, "Script");
+    }
 
+    /// <summary>
+    /// Emits IL that returns VmModuleInterpreter.GetExports()[exportName] (the raw
+    /// exported value — a dict, constructor, or other object — not the result of a Call).
+    /// Returns null when SharpTS isn't present at runtime (standalone graceful degradation).
+    /// </summary>
+    private void EmitVmGetExportValue(ILGenerator il, string exportName)
+    {
         // Type moduleType = Type.GetType("SharpTS.Runtime.BuiltIns.Modules.Interpreter.VmModuleInterpreter, SharpTS");
         il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.Modules.Interpreter.VmModuleInterpreter, SharpTS");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
@@ -152,7 +198,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
 
-        // Get "Script" from exports dict
+        // Get exports[exportName] via the dictionary indexer
         var exportsLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Stloc, exportsLocal);
 
@@ -165,7 +211,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldstr, "Script");
+        il.Emit(OpCodes.Ldstr, exportName);
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object, _types.ObjectArray));
         il.Emit(OpCodes.Ret);
