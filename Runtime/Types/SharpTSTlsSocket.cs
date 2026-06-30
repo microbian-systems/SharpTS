@@ -14,6 +14,7 @@ public class SharpTSTlsSocket : SharpTSSocket
 {
     private SslStream? _sslStream;
     private bool _authorized;
+    private string? _authorizationError;
     private string? _alpnProtocol;
     private X509Certificate2? _peerCertificate;
     private SslProtocols _negotiatedProtocol;
@@ -51,6 +52,7 @@ public class SharpTSTlsSocket : SharpTSSocket
         {
             // TLS-specific properties
             "authorized" => _authorized,
+            "authorizationError" => (object?)_authorizationError,
             "encrypted" => _sslStream != null,
             "alpnProtocol" => (object?)_alpnProtocol ?? SharpTSUndefined.Instance,
             "servername" => (object?)_servername ?? SharpTSUndefined.Instance,
@@ -99,8 +101,16 @@ public class SharpTSTlsSocket : SharpTSSocket
                 await _client.ConnectAsync(capturedHost, capturedPort);
                 var networkStream = _client.GetStream();
 
+                // Always observe the chain validation result so authorized/authorizationError
+                // reflect Node semantics (false + reason for a self-signed/untrusted peer), even
+                // when rejectUnauthorized:false lets the handshake proceed.
+                var capturedErrors = SslPolicyErrors.None;
                 _sslStream = new SslStream(networkStream, false,
-                    capturedReject ? null : (_, _, _, _) => true);
+                    (sender, cert, chain, errors) =>
+                    {
+                        capturedErrors = errors;
+                        return !capturedReject || errors == SslPolicyErrors.None;
+                    });
 
                 var sslOptions = new SslClientAuthenticationOptions
                 {
@@ -120,7 +130,8 @@ public class SharpTSTlsSocket : SharpTSSocket
                 await _sslStream.AuthenticateAsClientAsync(sslOptions);
 
                 _stream = _sslStream;
-                _authorized = _sslStream.IsAuthenticated;
+                _authorized = capturedErrors == SslPolicyErrors.None;
+                _authorizationError = _authorized ? null : DescribePolicyErrors(capturedErrors);
                 _negotiatedProtocol = _sslStream.SslProtocol;
                 _peerCertificate = _sslStream.RemoteCertificate as X509Certificate2;
                 _alpnProtocol = _sslStream.NegotiatedApplicationProtocol.ToString();
@@ -193,6 +204,21 @@ public class SharpTSTlsSocket : SharpTSSocket
     {
         // Node.js renegotiate() - not widely used, return this for chaining
         return RuntimeValue.FromObject(this);
+    }
+
+    /// <summary>
+    /// Maps SslStream chain-validation errors to a Node-ish authorizationError string.
+    /// Kept in sync with the compiled $TlsConnectClosure validation path.
+    /// </summary>
+    internal static string DescribePolicyErrors(SslPolicyErrors errors)
+    {
+        if ((errors & SslPolicyErrors.RemoteCertificateChainErrors) != 0)
+            return "self-signed certificate";
+        if ((errors & SslPolicyErrors.RemoteCertificateNameMismatch) != 0)
+            return "Hostname/IP does not match certificate's altnames";
+        if ((errors & SslPolicyErrors.RemoteCertificateNotAvailable) != 0)
+            return "no certificate provided";
+        return errors.ToString();
     }
 
     /// <summary>

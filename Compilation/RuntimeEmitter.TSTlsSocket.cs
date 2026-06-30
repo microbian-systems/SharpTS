@@ -33,10 +33,10 @@ public partial class RuntimeEmitter
     private FieldBuilder _tlsSocketPeerCertField = null!;       // X509Certificate2 (peer cert)
     private MethodBuilder _tlsProtoStringMethod = null!;        // static string _ProtoString(SslProtocols)
     private MethodBuilder _tlsBuildAlpnListMethod = null!;      // static List<SslApplicationProtocol> _BuildAlpnList(string[])
-    private MethodBuilder _tlsAcceptAnyCertMethod = null!;      // static bool _AcceptAnyCert(...) for rejectUnauthorized:false
     private MethodBuilder _tlsAlpnStringMethod = null!;         // static string _AlpnString(SslStream)
     private MethodBuilder _tlsLoadCertMethod = null!;           // static X509Certificate2 _LoadCert(string cert, string key)
     private MethodBuilder _tlsSanStringMethod = null!;          // static string _SanString(X509Certificate2)
+    internal MethodBuilder _tlsDescribeErrMethod = null!;       // static string _DescribePolicyErrors(SslPolicyErrors)
 
     // ---- $TlsServer field builders ----
     private TypeBuilder _tlsServerTypeBuilder = null!;
@@ -107,10 +107,10 @@ public partial class RuntimeEmitter
         // Static helpers
         EmitTlsProtoStringHelper(typeBuilder);
         EmitTlsBuildAlpnListHelper(typeBuilder);
-        EmitTlsAcceptAnyCertHelper(typeBuilder);
         EmitTlsAlpnStringHelper(typeBuilder);
         EmitTlsLoadCertHelper(typeBuilder);
         EmitTlsSanStringHelper(typeBuilder);
+        EmitTlsDescribePolicyErrorsHelper(typeBuilder);
 
         // TLS-specific methods
         EmitTlsSocketGetCipher(typeBuilder);
@@ -216,24 +216,6 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
-    /// Emits: private static bool _AcceptAnyCert(object, X509Certificate, X509Chain, SslPolicyErrors)
-    /// The RemoteCertificateValidationCallback used when rejectUnauthorized:false — always trusts.
-    /// </summary>
-    private void EmitTlsAcceptAnyCertHelper(TypeBuilder typeBuilder)
-    {
-        var method = typeBuilder.DefineMethod(
-            "_AcceptAnyCert",
-            MethodAttributes.Assembly | MethodAttributes.Static,
-            _types.Boolean,
-            [_types.Object, typeof(X509Certificate), typeof(X509Chain), typeof(SslPolicyErrors)]
-        );
-        _tlsAcceptAnyCertMethod = method;
-        var il = method.GetILGenerator();
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Ret);
-    }
-
-    /// <summary>
     /// Emits: private static string _AlpnString(SslStream s)
     /// Returns the negotiated ALPN protocol name, or null if none was negotiated.
     /// </summary>
@@ -325,6 +307,61 @@ public partial class RuntimeEmitter
                 il.Emit(OpCodes.Ldnull);   // reference types (Pkcs12LoaderLimits?)
         }
         il.Emit(OpCodes.Call, loadPkcs12);
+        il.Emit(OpCodes.Ret);
+    }
+
+    /// <summary>
+    /// Emits: internal static string _DescribePolicyErrors(SslPolicyErrors errors)
+    /// Mirrors interp SharpTSTlsSocket.DescribePolicyErrors.
+    /// </summary>
+    private void EmitTlsDescribePolicyErrorsHelper(TypeBuilder typeBuilder)
+    {
+        var method = typeBuilder.DefineMethod(
+            "_DescribePolicyErrors",
+            MethodAttributes.Assembly | MethodAttributes.Static,
+            _types.String,
+            [typeof(SslPolicyErrors)]
+        );
+        _tlsDescribeErrMethod = method;
+        var il = method.GetILGenerator();
+
+        // if ((errors & ChainErrors) != 0) return "self-signed certificate"
+        var notChain = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, (int)SslPolicyErrors.RemoteCertificateChainErrors);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Brfalse, notChain);
+        il.Emit(OpCodes.Ldstr, "self-signed certificate");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notChain);
+
+        // if ((errors & NameMismatch) != 0) return "Hostname/IP does not match certificate's altnames"
+        var notName = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, (int)SslPolicyErrors.RemoteCertificateNameMismatch);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Brfalse, notName);
+        il.Emit(OpCodes.Ldstr, "Hostname/IP does not match certificate's altnames");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notName);
+
+        // if ((errors & NotAvailable) != 0) return "no certificate provided"
+        var notAvail = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4, (int)SslPolicyErrors.RemoteCertificateNotAvailable);
+        il.Emit(OpCodes.And);
+        il.Emit(OpCodes.Brfalse, notAvail);
+        il.Emit(OpCodes.Ldstr, "no certificate provided");
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(notAvail);
+
+        // default: errors.ToString()
+        var eLocal = il.DeclareLocal(typeof(SslPolicyErrors));
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Stloc, eLocal);
+        il.Emit(OpCodes.Ldloca, eLocal);
+        il.Emit(OpCodes.Constrained, typeof(SslPolicyErrors));
+        il.Emit(OpCodes.Callvirt, _types.Object.GetMethod("ToString", Type.EmptyTypes)!);
         il.Emit(OpCodes.Ret);
     }
 

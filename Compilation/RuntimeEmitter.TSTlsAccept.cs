@@ -262,6 +262,7 @@ public partial class RuntimeEmitter
         var hostField = typeBuilder.DefineField("_host", _types.String, FieldAttributes.Private);
         var rejectField = typeBuilder.DefineField("_reject", _types.Boolean, FieldAttributes.Private);
         var alpnField = typeBuilder.DefineField("_alpn", typeof(string[]), FieldAttributes.Private);
+        var policyErrorsField = typeBuilder.DefineField("_policyErrors", typeof(SslPolicyErrors), FieldAttributes.Private);
 
         var ctor = typeBuilder.DefineConstructor(
             MethodAttributes.Public,
@@ -279,6 +280,36 @@ public partial class RuntimeEmitter
         ctorIL.Emit(OpCodes.Ldarg_0); ctorIL.Emit(OpCodes.Ldarg, 4); ctorIL.Emit(OpCodes.Stfld, rejectField);
         ctorIL.Emit(OpCodes.Ldarg_0); ctorIL.Emit(OpCodes.Ldarg, 5); ctorIL.Emit(OpCodes.Stfld, alpnField);
         ctorIL.Emit(OpCodes.Ret);
+
+        // bool _Validate(object sender, X509Certificate, X509Chain, SslPolicyErrors errors):
+        //   _policyErrors = errors; return !_reject || errors == None;
+        // An instance callback so the per-handshake chain result is captured (authorized/authError).
+        var validate = typeBuilder.DefineMethod(
+            "_Validate",
+            MethodAttributes.Public,
+            _types.Boolean,
+            [_types.Object, typeof(X509Certificate), typeof(X509Chain), typeof(SslPolicyErrors)]
+        );
+        {
+            var vil = validate.GetILGenerator();
+            // _policyErrors = errors (arg4)
+            vil.Emit(OpCodes.Ldarg_0);
+            vil.Emit(OpCodes.Ldarg, 4);
+            vil.Emit(OpCodes.Stfld, policyErrorsField);
+            // return !_reject || errors == None
+            var ret = vil.DefineLabel();
+            var retTrue = vil.DefineLabel();
+            vil.Emit(OpCodes.Ldarg_0);
+            vil.Emit(OpCodes.Ldfld, rejectField);
+            vil.Emit(OpCodes.Brfalse, retTrue);   // !_reject → true
+            vil.Emit(OpCodes.Ldarg, 4);
+            vil.Emit(OpCodes.Ldc_I4, (int)SslPolicyErrors.None);
+            vil.Emit(OpCodes.Ceq);
+            vil.Emit(OpCodes.Ret);
+            vil.MarkLabel(retTrue);
+            vil.Emit(OpCodes.Ldc_I4_1);
+            vil.Emit(OpCodes.Ret);
+        }
 
         // Connect(object state): void — runs on ThreadPool
         var connect = typeBuilder.DefineMethod(
@@ -303,32 +334,17 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldfld, portField);
         il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetMethod("Connect", [_types.String, _types.Int32])!);
 
-        // sslStream = _reject ? new SslStream(ns, false) : new SslStream(ns, false, _AcceptAnyCert)
-        var rejectPath = il.DefineLabel();
-        var sslDone = il.DefineLabel();
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldfld, rejectField);
-        il.Emit(OpCodes.Brtrue, rejectPath);
-
-        // not rejecting: pass an always-true validation callback
+        // sslStream = new SslStream(ns, false, this._Validate)  — always observe the chain result;
+        // _Validate enforces rejectUnauthorized and records _policyErrors for authorized/authError.
         il.Emit(OpCodes.Ldloc, tcpClientLocal);
         il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetMethod("GetStream")!);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ldftn, _tlsAcceptAnyCertMethod);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldftn, validate);
         il.Emit(OpCodes.Newobj, typeof(RemoteCertificateValidationCallback).GetConstructor([_types.Object, typeof(IntPtr)])!);
         il.Emit(OpCodes.Newobj, typeof(SslStream).GetConstructor(
             [typeof(System.IO.Stream), _types.Boolean, typeof(RemoteCertificateValidationCallback)])!);
         il.Emit(OpCodes.Stloc, sslStreamLocal);
-        il.Emit(OpCodes.Br, sslDone);
-
-        il.MarkLabel(rejectPath);
-        il.Emit(OpCodes.Ldloc, tcpClientLocal);
-        il.Emit(OpCodes.Callvirt, typeof(TcpClient).GetMethod("GetStream")!);
-        il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Newobj, typeof(SslStream).GetConstructor([typeof(System.IO.Stream), _types.Boolean])!);
-        il.Emit(OpCodes.Stloc, sslStreamLocal);
-        il.MarkLabel(sslDone);
 
         // opts = new SslClientAuthenticationOptions { TargetHost=_host, EnabledSslProtocols=1.2|1.3 }
         il.Emit(OpCodes.Newobj, typeof(SslClientAuthenticationOptions).GetConstructor(Type.EmptyTypes)!);
@@ -363,6 +379,27 @@ public partial class RuntimeEmitter
             loadSocket: () => { il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldfld, socketField); },
             loadClient: () => il.Emit(OpCodes.Ldloc, tcpClientLocal),
             loadSslStream: () => il.Emit(OpCodes.Ldloc, sslStreamLocal));
+
+        // _socket._authorized = (_policyErrors == None)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, socketField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, policyErrorsField);
+        il.Emit(OpCodes.Ldc_I4, (int)SslPolicyErrors.None);
+        il.Emit(OpCodes.Ceq);
+        il.Emit(OpCodes.Stfld, _tlsSocketAuthorizedField);
+        // if (_policyErrors != None) _socket._authError = _DescribePolicyErrors(_policyErrors)
+        var authOk = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, policyErrorsField);
+        il.Emit(OpCodes.Brfalse, authOk);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, socketField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldfld, policyErrorsField);
+        il.Emit(OpCodes.Call, _tlsDescribeErrMethod);
+        il.Emit(OpCodes.Stfld, _tlsSocketAuthErrorField);
+        il.MarkLabel(authOk);
 
         // EventLoop.Schedule(new Action(new $TlsConnectOkClosure(_socket).Run))
         il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
@@ -410,10 +447,7 @@ public partial class RuntimeEmitter
         loadSocket(); loadSslStream(); il.Emit(OpCodes.Stfld, _netSocketStreamField);
         // socket._sslStream = sslStream
         loadSocket(); loadSslStream(); il.Emit(OpCodes.Stfld, _tlsSocketSslStreamField);
-        // socket._authorized = sslStream.IsAuthenticated
-        loadSocket(); loadSslStream();
-        il.Emit(OpCodes.Callvirt, typeof(SslStream).GetProperty("IsAuthenticated")!.GetGetMethod()!);
-        il.Emit(OpCodes.Stfld, _tlsSocketAuthorizedField);
+        // NOTE: _authorized/_authError are set by the caller (connect: chain policy; server: IsAuthenticated).
         // socket._peerCert = sslStream.RemoteCertificate as X509Certificate2
         loadSocket(); loadSslStream();
         il.Emit(OpCodes.Callvirt, typeof(SslStream).GetProperty("RemoteCertificate")!.GetGetMethod()!);
@@ -521,6 +555,11 @@ public partial class RuntimeEmitter
             loadSocket: () => il.Emit(OpCodes.Ldloc, socketLocal),
             loadClient: () => il.Emit(OpCodes.Ldloc, tcpClientLocal),
             loadSslStream: () => il.Emit(OpCodes.Ldloc, sslStreamLocal));
+        // server-side: socket._authorized = sslStream.IsAuthenticated
+        il.Emit(OpCodes.Ldloc, socketLocal);
+        il.Emit(OpCodes.Ldloc, sslStreamLocal);
+        il.Emit(OpCodes.Callvirt, typeof(SslStream).GetProperty("IsAuthenticated")!.GetGetMethod()!);
+        il.Emit(OpCodes.Stfld, _tlsSocketAuthorizedField);
 
         // EventLoop.Schedule(new Action(new $TlsAcceptClosure(this, socket).Run))
         il.Emit(OpCodes.Call, runtime.EventLoopGetInstance);
