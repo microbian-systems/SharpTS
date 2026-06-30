@@ -24,6 +24,45 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Declares an inputLocal, parses options[argIdx]["input"] into it, and sets
+    /// RedirectStandardInput = (input != null) on startInfoLocal. Returns inputLocal. (#1021)
+    /// </summary>
+    private LocalBuilder EmitSyncInputRedirect(ILGenerator il, LocalBuilder startInfoLocal, int optionsArgIdx)
+    {
+        var inputLocal = il.DeclareLocal(_types.String);
+        var dictLocal = il.DeclareLocal(_types.DictionaryStringObject);
+        var tmpLocal = il.DeclareLocal(_types.Object);
+        var done = il.DefineLabel();
+        il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Stloc, inputLocal);
+        il.Emit(OpCodes.Ldarg, optionsArgIdx);
+        il.Emit(OpCodes.Isinst, _types.DictionaryStringObject);
+        il.Emit(OpCodes.Dup); il.Emit(OpCodes.Stloc, dictLocal);
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldloc, dictLocal); il.Emit(OpCodes.Ldstr, "input"); il.Emit(OpCodes.Ldloca, tmpLocal);
+        il.Emit(OpCodes.Callvirt, _types.DictionaryStringObject.GetMethod("TryGetValue", [_types.String, _types.Object.MakeByRefType()])!);
+        il.Emit(OpCodes.Brfalse, done);
+        il.Emit(OpCodes.Ldloc, tmpLocal); il.Emit(OpCodes.Isinst, _types.String); il.Emit(OpCodes.Stloc, inputLocal);
+        il.MarkLabel(done);
+        il.Emit(OpCodes.Ldloc, startInfoLocal);
+        il.Emit(OpCodes.Ldloc, inputLocal); il.Emit(OpCodes.Ldnull); il.Emit(OpCodes.Cgt_Un);
+        il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("RedirectStandardInput")!.GetSetMethod()!);
+        return inputLocal;
+    }
+
+    /// <summary>After Start: if input != null, write it to StandardInput and Close (EOF). (#1021)</summary>
+    private void EmitSyncInputWrite(ILGenerator il, LocalBuilder processLocal, LocalBuilder inputLocal)
+    {
+        var noWrite = il.DefineLabel();
+        var stdinGet = _types.Process.GetProperty("StandardInput")!.GetGetMethod()!;
+        il.Emit(OpCodes.Ldloc, inputLocal); il.Emit(OpCodes.Brfalse, noWrite);
+        il.Emit(OpCodes.Ldloc, processLocal); il.Emit(OpCodes.Callvirt, stdinGet);
+        il.Emit(OpCodes.Ldloc, inputLocal); il.Emit(OpCodes.Callvirt, typeof(System.IO.TextWriter).GetMethod("Write", [_types.String])!);
+        il.Emit(OpCodes.Ldloc, processLocal); il.Emit(OpCodes.Callvirt, stdinGet);
+        il.Emit(OpCodes.Callvirt, typeof(System.IO.TextWriter).GetMethod("Close", Type.EmptyTypes)!);
+        il.MarkLabel(noWrite);
+    }
+
+    /// <summary>
     /// Emits: public static string ChildProcessExecSync(string command, object options)
     /// Executes a command synchronously and returns stdout.
     /// </summary>
@@ -71,6 +110,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, startInfoLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("CreateNoWindow")!.GetSetMethod()!);
+        var __inputES = EmitSyncInputRedirect(il, startInfoLocal, 1);
 
         // Platform check: if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         var notWindowsLabel = il.DefineLabel();
@@ -244,6 +284,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, processLocal);
         il.Emit(OpCodes.Callvirt, _types.Process.GetMethod("Start", Type.EmptyTypes)!);
         il.Emit(OpCodes.Pop);
+        EmitSyncInputWrite(il, processLocal, __inputES);
 
         // stdout = process.StandardOutput.ReadToEnd()
         il.Emit(OpCodes.Ldloc, processLocal);
@@ -961,6 +1002,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, startInfoLocal);
         il.Emit(OpCodes.Ldc_I4_1);
         il.Emit(OpCodes.Callvirt, _types.ProcessStartInfo.GetProperty("CreateNoWindow")!.GetSetMethod()!);
+        var __inputEFS = EmitSyncInputRedirect(il, startInfoLocal, 2);
 
         // Extract args if provided (args is List<object?>)
         var noArgsLabel = il.DefineLabel();
@@ -1061,6 +1103,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldloc, processLocal);
         il.Emit(OpCodes.Callvirt, _types.Process.GetMethod("Start", Type.EmptyTypes)!);
         il.Emit(OpCodes.Pop);
+        EmitSyncInputWrite(il, processLocal, __inputEFS);
 
         il.Emit(OpCodes.Ldloc, processLocal);
         il.Emit(OpCodes.Callvirt, _types.Process.GetProperty("StandardOutput")!.GetGetMethod()!);
