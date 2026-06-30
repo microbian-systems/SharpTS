@@ -23,9 +23,15 @@ public class SharpTSAgent : SharpTSEventEmitter
         maxSockets: double.PositiveInfinity, maxTotalSockets: double.PositiveInfinity,
         maxFreeSockets: 256, timeout: 0, scheduling: "lifo");
 
-    #pragma warning disable CS0414 // Field is assigned but never read — tracks agent lifecycle state
     private bool _destroyed;
-    #pragma warning restore CS0414
+
+    // Observable connection-pool state (#1051). Real socket ownership lives in HttpClient's
+    // connection pool, so these dictionaries are a Node-shaped shadow keyed by origin
+    // ("host:port") that the ClientRequest populates as requests flow through the agent.
+    private readonly Dictionary<string, int> _activeSockets = new();
+    private readonly Dictionary<string, int> _freeSocketsByOrigin = new();
+    private readonly Dictionary<string, int> _pendingRequests = new();
+    private readonly object _poolLock = new();
 
     public bool KeepAlive { get; set; }
     public double KeepAliveMsecs { get; set; }
@@ -88,10 +94,10 @@ public class SharpTSAgent : SharpTSEventEmitter
             "timeout" => Timeout,
             "scheduling" => Scheduling,
 
-            // State inspection (empty in our implementation since .NET handles pooling)
-            "sockets" => new SharpTSObject(new Dictionary<string, object?>()),
-            "freeSockets" => new SharpTSObject(new Dictionary<string, object?>()),
-            "requests" => new SharpTSObject(new Dictionary<string, object?>()),
+            // Observable pool state (#1051): origin → array of (placeholder) sockets.
+            "sockets" => BuildPoolObject(_activeSockets),
+            "freeSockets" => BuildPoolObject(_freeSocketsByOrigin),
+            "requests" => BuildPoolObject(_pendingRequests),
 
             // Methods
             "destroy" => BuiltInMethod.CreateV2("destroy", 0, Destroy),
@@ -116,6 +122,12 @@ public class SharpTSAgent : SharpTSEventEmitter
         GlobalAgent.Timeout = 0;
         GlobalAgent.Scheduling = "lifo";
         GlobalAgent._destroyed = false;
+        lock (GlobalAgent._poolLock)
+        {
+            GlobalAgent._activeSockets.Clear();
+            GlobalAgent._freeSocketsByOrigin.Clear();
+            GlobalAgent._pendingRequests.Clear();
+        }
         GlobalAgent.ClearAllListenersInternal();
     }
 
@@ -139,7 +151,81 @@ public class SharpTSAgent : SharpTSEventEmitter
     private RuntimeValue Destroy(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         _destroyed = true;
+        lock (_poolLock)
+        {
+            _activeSockets.Clear();
+            _freeSocketsByOrigin.Clear();
+            _pendingRequests.Clear();
+        }
         return RuntimeValue.Null;
+    }
+
+    /// <summary>
+    /// Records that a request is using a socket to <paramref name="origin"/> ("host:port").
+    /// Reuses a free keep-alive socket when one exists. Returns false when at maxSockets — the
+    /// caller may still proceed (HttpClient owns real concurrency); the request is tracked as
+    /// pending so agent.requests reflects the contention.
+    /// </summary>
+    internal bool TrackSocketStart(string origin)
+    {
+        lock (_poolLock)
+        {
+            int active = _activeSockets.GetValueOrDefault(origin);
+            if (!double.IsPositiveInfinity(MaxSockets) && active >= (int)MaxSockets)
+            {
+                _pendingRequests[origin] = _pendingRequests.GetValueOrDefault(origin) + 1;
+                return false;
+            }
+            // Reuse a free socket if available, otherwise open a new one.
+            if (_freeSocketsByOrigin.GetValueOrDefault(origin) > 0)
+                _freeSocketsByOrigin[origin] = _freeSocketsByOrigin[origin] - 1;
+            _activeSockets[origin] = active + 1;
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Records that a request finished. When keep-alive is on, the socket moves to the free pool
+    /// (capped at maxFreeSockets); otherwise it is dropped.
+    /// </summary>
+    internal void TrackSocketEnd(string origin, bool keepAlive)
+    {
+        lock (_poolLock)
+        {
+            int active = _activeSockets.GetValueOrDefault(origin);
+            if (active > 0)
+            {
+                if (active == 1) _activeSockets.Remove(origin);
+                else _activeSockets[origin] = active - 1;
+            }
+            if (_pendingRequests.GetValueOrDefault(origin) > 0)
+            {
+                if (_pendingRequests[origin] == 1) _pendingRequests.Remove(origin);
+                else _pendingRequests[origin] = _pendingRequests[origin] - 1;
+            }
+            if (keepAlive && KeepAlive)
+            {
+                int free = _freeSocketsByOrigin.GetValueOrDefault(origin);
+                if (double.IsPositiveInfinity(MaxFreeSockets) || free < (int)MaxFreeSockets)
+                    _freeSocketsByOrigin[origin] = free + 1;
+            }
+        }
+    }
+
+    private SharpTSObject BuildPoolObject(Dictionary<string, int> source)
+    {
+        var obj = new Dictionary<string, object?>();
+        lock (_poolLock)
+        {
+            foreach (var (origin, count) in source)
+            {
+                var list = new List<object?>();
+                for (int i = 0; i < count; i++)
+                    list.Add(new SharpTSObject(new Dictionary<string, object?>()));
+                obj[origin] = new SharpTSArray(list);
+            }
+        }
+        return new SharpTSObject(obj);
     }
 
     private RuntimeValue GetName(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)

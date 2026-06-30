@@ -45,6 +45,8 @@ public class SharpTSClientRequest : SharpTSWritable
     private int _timeoutMs;
     private readonly CancellationTokenSource _cts = new();
     private SharpTSObject? _socketObject;
+    private SharpTSAgent? _agent;        // null when options.agent === false (no pooling)
+    private bool _agentTracked;
 
     public SharpTSClientRequest(Interpreter interpreter, string method, string url, SharpTSObject? options, bool isHttps)
     {
@@ -52,6 +54,7 @@ public class SharpTSClientRequest : SharpTSWritable
         _method = string.IsNullOrEmpty(method) ? "GET" : method.ToUpperInvariant();
         _url = url;
         _isHttps = isHttps;
+        _agent = SharpTSAgent.GlobalAgent; // default pool (Node semantics); overridden below
 
         if (options != null)
         {
@@ -65,6 +68,13 @@ public class SharpTSClientRequest : SharpTSWritable
                 _timeoutMs = (int)tov;
             if (options.Fields.TryGetValue("rejectUnauthorized", out var ru) && ru is bool rub)
                 _rejectUnauthorized = rub;
+            // Resolve the connection agent (#1051): an explicit SharpTSAgent, false for no
+            // pooling, or the global agent by default.
+            if (options.Fields.TryGetValue("agent", out var ag))
+            {
+                if (ag is SharpTSAgent customAgent) _agent = customAgent;
+                else if (ag is false) _agent = null;
+            }
             // options.auth ("user:pass") → Basic Authorization header (Node semantics).
             if (options.Fields.TryGetValue("auth", out var au) && au is string authStr && authStr.Length > 0
                 && !_headers.ContainsKey("authorization"))
@@ -302,6 +312,13 @@ public class SharpTSClientRequest : SharpTSWritable
         if (_sent) return;
         _sent = true;
 
+        // Register with the connection agent's pool (#1051), unless agent:false.
+        if (_agent != null)
+        {
+            _agent.TrackSocketStart(PoolOrigin());
+            _agentTracked = true;
+        }
+
         var bodyBytes = ConcatBody();
         _interpreter.Ref();
 
@@ -339,6 +356,7 @@ public class SharpTSClientRequest : SharpTSWritable
                 var (status, reason, version, headersLower, raw) = ExtractResponse(response);
                 var body = await response.Content.ReadAsByteArrayAsync(_cts.Token);
 
+                EndAgentTracking(keepAlive: true);
                 _interpreter.ScheduleTimer(0, 0, () =>
                 {
                     DeliverResponse(status, reason, version, headersLower, raw, body);
@@ -348,10 +366,12 @@ public class SharpTSClientRequest : SharpTSWritable
             catch (OperationCanceledException)
             {
                 // Aborted/destroyed — 'abort'/'close' were already emitted synchronously.
+                EndAgentTracking(keepAlive: false);
                 _interpreter.ScheduleTimer(0, 0, () => _interpreter.Unref(), isInterval: false);
             }
             catch (Exception ex)
             {
+                EndAgentTracking(keepAlive: false);
                 _interpreter.ScheduleTimer(0, 0, () =>
                 {
                     if (!_aborted)
@@ -505,6 +525,17 @@ public class SharpTSClientRequest : SharpTSWritable
             ["readable"] = true
         });
     }
+
+    private void EndAgentTracking(bool keepAlive)
+    {
+        if (_agentTracked && _agent != null)
+        {
+            _agent.TrackSocketEnd(PoolOrigin(), keepAlive);
+            _agentTracked = false;
+        }
+    }
+
+    private string PoolOrigin() => $"{GetHostName()}:{GetPort()}";
 
     private byte[] ConcatBody()
     {
