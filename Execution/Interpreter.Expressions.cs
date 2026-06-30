@@ -1363,6 +1363,11 @@ public partial class Interpreter
         string specifier = pathValue?.ToString()
             ?? throw new InterpreterException("Dynamic import path cannot be null.");
 
+        // vm importModuleDynamically hook: resolve through the user-provided loader
+        // instead of the file-system module resolver (vm #1156).
+        if (_vmDynamicImportHook != null)
+            return _vmDynamicImportHook(specifier);
+
         // Create resolver if needed (single-file mode without module context)
         _moduleResolver ??= new ModuleResolver(
             _currentModule?.Path ?? Directory.GetCurrentDirectory());

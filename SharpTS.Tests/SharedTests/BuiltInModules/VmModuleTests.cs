@@ -256,6 +256,232 @@ public class VmModuleTests
 
     #endregion
 
+    #region runInContext (module-level) / constants Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_RunInContext_Basic(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const ctx = vm.createContext({ x: 1 });
+                console.log(vm.runInContext('x + 1', ctx));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_RunInContext_WritesBack(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const ctx = vm.createContext({ count: 10 });
+                vm.runInContext('count = count + 5', ctx);
+                console.log(ctx.count);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("15\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_RunInContext_NonContext_Throws(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                try {
+                    vm.runInContext('1 + 1', { x: 1 });
+                    console.log('no error');
+                } catch (e) {
+                    console.log('caught error');
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("caught error\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Constants_Exist(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                console.log(typeof vm.constants === 'object');
+                console.log(vm.constants.DONT_CONTEXTIFY !== undefined);
+                console.log(vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER !== undefined);
+                // Sentinels are stable singletons (same value across accesses) and distinct.
+                console.log(vm.constants.DONT_CONTEXTIFY === vm.constants.DONT_CONTEXTIFY);
+                console.log(vm.constants.DONT_CONTEXTIFY !== vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\ntrue\ntrue\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_Constants_AreSymbols(ExecutionMode mode)
+    {
+        // typeof reports 'symbol' in the interpreter; compiled-mode typeof of a
+        // cross-runtime-boundary SharpTSSymbol reports 'object' (a known interop
+        // detail — the sentinels' identity, exercised above, is what matters).
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                console.log(typeof vm.constants.DONT_CONTEXTIFY);
+                console.log(typeof vm.constants.USE_MAIN_CONTEXT_DEFAULT_LOADER);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("symbol\nsymbol\n", output);
+    }
+
+    #endregion
+
+    #region createContext options + measureMemory Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CreateContext_MicrotaskMode_AfterEvaluate(ExecutionMode mode)
+    {
+        // With microtaskMode:'afterEvaluate', the queued .then microtask runs before
+        // runInContext returns, so the scalar write is visible afterward.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const ctx = vm.createContext({ flag: 0 }, { microtaskMode: 'afterEvaluate' });
+                vm.runInContext('Promise.resolve().then(() => { flag = 1; }); 0;', ctx);
+                console.log(ctx.flag);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CreateContext_CodeGeneration_StringsFalse_BlocksEval(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const ctx = vm.createContext({}, { codeGeneration: { strings: false } });
+                try {
+                    vm.runInContext('eval("1 + 1")', ctx);
+                    console.log('no error');
+                } catch (e: any) {
+                    console.log('blocked');
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("blocked\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CreateContext_CodeGeneration_Default_AllowsEval(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const ctx = vm.createContext({});
+                console.log(vm.runInContext('eval("20 + 22")', ctx));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CreateContext_NameOrigin_Accepted(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const ctx = vm.createContext({ x: 5 }, { name: 'my-ctx', origin: 'file:///x' });
+                console.log(vm.runInContext('x * 2', ctx));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("10\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_MeasureMemory_ResolvesShape(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                async function main() {
+                    const r: any = await vm.measureMemory();
+                    console.log(typeof r.total.jsMemoryEstimate === 'number');
+                    console.log(r.total.jsMemoryRange !== undefined && r.total.jsMemoryRange !== null);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_MeasureMemory_RangeIsArray(ExecutionMode mode)
+    {
+        // jsMemoryRange is a 2-element Array; Array.isArray/.length only fully recognize it
+        // within the interpreter (compiled is blind to a cross-boundary SharpTSArray — a
+        // known interop detail; cross-mode the value is present, covered above).
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                async function main() {
+                    const r: any = await vm.measureMemory();
+                    console.log(Array.isArray(r.total.jsMemoryRange));
+                    console.log(r.total.jsMemoryRange.length === 2);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    #endregion
+
     #region Script Tests
 
     [Theory]
@@ -333,6 +559,420 @@ public class VmModuleTests
 
         var output = TestHarness.RunModules(files, "main.ts", mode);
         Assert.Equal("9\n25\n49\n", output);
+    }
+
+    #endregion
+
+    #region Script/compileFunction options + cachedData Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_Filename_InSyntaxError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                try {
+                    new Script('let x = ;', { filename: 'my-file.js' });
+                    console.log('no error');
+                } catch (e: any) {
+                    console.log(e.message.indexOf('my-file.js') >= 0);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_OffsetsAndDisplayErrors_Accepted(ExecutionMode mode)
+    {
+        // filename/lineOffset/columnOffset/displayErrors are honored without altering
+        // a successful run's result.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                const s = new Script('40 + 2', {
+                    filename: 'calc.js', lineOffset: 5, columnOffset: 2, displayErrors: true
+                });
+                console.log(s.runInNewContext({}));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_CreateCachedData_ReturnsValue(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                const s = new Script('1 + 1');
+                const cd = s.createCachedData();
+                console.log(cd !== undefined && cd !== null);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_CreateCachedData_IsBuffer(ExecutionMode mode)
+    {
+        // The marker is a real Buffer; Buffer.isBuffer/length only recognize it within
+        // the interpreter (compiled Buffer.isBuffer is blind to a cross-boundary
+        // SharpTSBuffer — a known interop detail; cross-mode the value is defined+round-trips).
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                const s = new Script('1 + 1');
+                const cd = s.createCachedData();
+                console.log(Buffer.isBuffer(cd));
+                console.log(cd.length > 0);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_ProduceCachedData(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                const s = new Script('1 + 1', { produceCachedData: true });
+                console.log(s.cachedDataProduced);
+                console.log(s.cachedData !== undefined && s.cachedData !== null);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_CachedData_RoundTrips_NotRejected(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                const s1 = new Script('2 * 21', { produceCachedData: true });
+                const s2 = new Script('2 * 21', { cachedData: s1.cachedData });
+                console.log(s2.cachedDataRejected);
+                console.log(s2.runInNewContext({}));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("false\n42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_Filename_InTimeoutErrorStack(ExecutionMode mode)
+    {
+        // The origin frame is attached to errors that propagate as a live guest error
+        // object (the timeout error). User throws/runtime faults are reconstructed at the
+        // execution boundary and don't carry the frame (a documented limitation); the
+        // filename DOES flow into SyntaxErrors cross-mode (covered above).
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script } from 'vm';
+                const s = new Script('while(true){}', { filename: 'loop.js' });
+                try {
+                    s.runInNewContext({}, { timeout: 50 });
+                    console.log('no error');
+                } catch (e: any) {
+                    console.log((e.stack || '').indexOf('loop.js') >= 0);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CompileFunction_Filename_InSyntaxError(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compileFunction } from 'vm';
+                try {
+                    compileFunction('return ;; @@', [], { filename: 'fn-src.js' });
+                    console.log('no error');
+                } catch (e: any) {
+                    console.log(e.message.indexOf('fn-src.js') >= 0);
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
+
+    #region SourceTextModule (ESM-in-vm) Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SourceTextModule_LinkEvaluate_ImportsDependency(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule } from 'vm';
+                async function main() {
+                    const dep = new SourceTextModule('export const x = 42; export const y = "hi";');
+                    const m = new SourceTextModule('import { x, y } from "dep"; export const sum = x + 1; export const greet = y + x;');
+                    await m.link((spec: string) => dep);
+                    await m.evaluate();
+                    console.log(m.namespace.sum);
+                    console.log(m.namespace.greet);
+                    console.log(dep.namespace.x);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("43\nhi42\n42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SourceTextModule_StatusTransitions(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule } from 'vm';
+                async function main() {
+                    const m = new SourceTextModule('export const v = 1;');
+                    console.log(m.status);
+                    await m.link((spec: string) => { throw new Error('no deps'); });
+                    console.log(m.status);
+                    await m.evaluate();
+                    console.log(m.status);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("unlinked\nlinked\nevaluated\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SourceTextModule_DependencySpecifiers_Count(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule } from 'vm';
+                const m = new SourceTextModule('import { a } from "x"; import { b } from "y"; export const c = 1;');
+                console.log(m.dependencySpecifiers.length);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_SourceTextModule_DependencySpecifiers_Indexing(ExecutionMode mode)
+    {
+        // dependencySpecifiers is an Array; element indexing is observable within the
+        // interpreter (compiled indexing of a cross-boundary SharpTSArray returns undefined
+        // — a known interop detail; the .length is observable cross-mode, covered above).
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule } from 'vm';
+                const m = new SourceTextModule('import { a } from "x"; import { b } from "y"; export const c = 1;');
+                console.log(m.dependencySpecifiers[0]);
+                console.log(m.dependencySpecifiers[1]);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("x\ny\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SourceTextModule_LinkerError_SetsErrored(ExecutionMode mode)
+    {
+        // The error path is exercised synchronously (link/evaluate complete synchronously in
+        // SharpTS): an awaited synchronously-throwing call is not caught by the compiled async
+        // state machine — a pre-existing limitation unrelated to vm.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule } from 'vm';
+                const m = new SourceTextModule('import { x } from "missing";');
+                try {
+                    m.link((spec: string) => { throw new Error('cannot resolve ' + spec); });
+                } catch (e: any) { }
+                console.log(m.status);
+                console.log(m.error !== undefined && m.error !== null);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("errored\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SourceTextModule_DefaultExport(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule } from 'vm';
+                async function main() {
+                    const dep = new SourceTextModule('export default 99;');
+                    const m = new SourceTextModule('import d from "dep"; export const val = d + 1;');
+                    await m.link((spec: string) => dep);
+                    await m.evaluate();
+                    console.log(m.namespace.val);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("100\n", output);
+    }
+
+    #endregion
+
+    #region SyntheticModule Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SyntheticModule_ImportedBySourceTextModule_LiveBinding(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule, SyntheticModule } from 'vm';
+                async function main() {
+                    const syn = new SyntheticModule(['x', 'y'], function (this: any) {
+                        this.setExport('x', 42);
+                        this.setExport('y', 'hello');
+                    });
+                    const m = new SourceTextModule('import { x, y } from "syn"; export const r = x + 1; export const s = y + "!";');
+                    await m.link((spec: string) => syn);
+                    await m.evaluate();
+                    console.log(m.namespace.r);
+                    console.log(m.namespace.s);
+                    console.log(syn.namespace.x);
+                    console.log(syn.status);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("43\nhello!\n42\nevaluated\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SyntheticModule_SetExportBeforeLink_Throws(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SyntheticModule } from 'vm';
+                const syn = new SyntheticModule(['a'], function (this: any) { this.setExport('a', 1); });
+                try {
+                    syn.setExport('a', 5);
+                    console.log('no error');
+                } catch (e: any) {
+                    console.log('threw');
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("threw\n", output);
+    }
+
+    #endregion
+
+    #region importModuleDynamically Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_ImportModuleDynamically_ResolvesViaHook(ExecutionMode mode)
+    {
+        // The result of the in-vm dynamic import is written back to a context scalar to
+        // keep it observable cross-mode (a cross-boundary Promise is not unwrapped by
+        // compiled await; the await happens inside the hosted interpreter).
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script, SourceTextModule, createContext } from 'vm';
+                const dep = new SourceTextModule('export const value = 123;');
+                const importModuleDynamically = (specifier: string) => dep;
+                const ctx: any = createContext({ result: 0 });
+                const script = new Script(
+                    '(async () => { const ns = await import("dep"); result = ns.value; })();',
+                    { importModuleDynamically });
+                script.runInContext(ctx);
+                console.log(ctx.result);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("123\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_ImportModuleDynamically_UseMainContextDefaultLoader_Accepted(ExecutionMode mode)
+    {
+        // Passing the USE_MAIN_CONTEXT_DEFAULT_LOADER sentinel falls back to the default
+        // loader (no override) and does not disturb a script that performs no import.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script, constants } from 'vm';
+                const script = new Script('1 + 1', {
+                    importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER
+                });
+                console.log(script.runInNewContext({}));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("2\n", output);
     }
 
     #endregion

@@ -538,6 +538,31 @@ public partial class Interpreter : IDisposable
     /// </summary>
     public void SetVmTimeoutToken(CancellationToken token) => _vmTimeoutToken = token;
 
+    // vm codeGeneration.strings:false support — when true, eval()/new Function() throw
+    // an EvalError in this (sub-)interpreter, matching a vm context created with
+    // codeGeneration:{ strings:false }.
+    private bool _vmCodeGenerationStringsDisabled;
+
+    /// <summary>
+    /// Disables runtime code generation from strings (eval / new Function) in this
+    /// interpreter. Used by the vm module to honor codeGeneration:{ strings:false }.
+    /// </summary>
+    public void DisableCodeGenerationFromStrings() => _vmCodeGenerationStringsDisabled = true;
+
+    /// <summary>Whether eval/new Function are disabled (codeGeneration.strings:false).</summary>
+    public bool IsCodeGenerationFromStringsDisabled => _vmCodeGenerationStringsDisabled;
+
+    // vm importModuleDynamically support — when set, a dynamic import() inside vm-executed
+    // code is resolved through this hook (specifier → module namespace) instead of the
+    // normal module resolver. See vm #1156.
+    private Func<string, object?>? _vmDynamicImportHook;
+
+    /// <summary>
+    /// Routes dynamic import() in this interpreter through a user hook (the vm
+    /// importModuleDynamically option). The hook maps a specifier to a module namespace.
+    /// </summary>
+    public void SetVmDynamicImportHook(Func<string, object?>? hook) => _vmDynamicImportHook = hook;
+
     // Worker-termination support — a worker sets this to its CancellationToken so a
     // synchronous runtime op that observes it (Atomics.wait) can unwind the worker thread
     // when worker.terminate() cancels it. Distinct from _vmTimeoutToken so the worker abort
@@ -1444,6 +1469,10 @@ public partial class Interpreter : IDisposable
     /// </remarks>
     public object? Eval(string source)
     {
+        if (_vmCodeGenerationStringsDisabled)
+            throw new ThrowException(new SharpTSError(
+                "EvalError: Code generation from strings disallowed for this context"));
+
         var lexer = new Lexer(source);
         List<Token> tokens = lexer.ScanTokens();
         var parser = new Parser(tokens);

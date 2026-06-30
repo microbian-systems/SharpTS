@@ -2167,18 +2167,51 @@ public static class BuiltInModuleTypes
             ["runInNewContext"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 0),
             ["runInThisContext"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
             ["runInContext"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1),
+            ["createCachedData"] = new TypeInfo.Function([], anyType, RequiredParams: 0),
+            ["cachedData"] = anyType,
+            ["cachedDataProduced"] = BooleanType,
+            ["cachedDataRejected"] = BooleanType,
+            ["sourceMapURL"] = anyType,
         }.ToFrozenDictionary());
 
         var stringArrayType = new TypeInfo.Array(stringType);
+
+        // vm.Module / SourceTextModule / SyntheticModule instance shape.
+        var moduleType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["status"] = stringType,
+            ["identifier"] = stringType,
+            ["namespace"] = anyType,
+            ["dependencySpecifiers"] = stringArrayType,
+            ["error"] = anyType,
+            ["context"] = anyType,
+            ["link"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 1),
+            ["evaluate"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
+            ["instantiate"] = new TypeInfo.Function([], anyType, RequiredParams: 0),
+            ["setExport"] = new TypeInfo.Function([stringType, anyType], anyType, RequiredParams: 2),
+            ["createCachedData"] = new TypeInfo.Function([], anyType, RequiredParams: 0),
+        }.ToFrozenDictionary());
+
+        // vm.constants — opaque sentinel Symbols used as marker option values.
+        var constantsType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["USE_MAIN_CONTEXT_DEFAULT_LOADER"] = anyType,
+            ["DONT_CONTEXTIFY"] = anyType,
+        }.ToFrozenDictionary());
 
         return new Dictionary<string, TypeInfo>
         {
             ["runInNewContext"] = new TypeInfo.Function([stringType, anyType, anyType], anyType, RequiredParams: 1),
             ["runInThisContext"] = new TypeInfo.Function([stringType, anyType], anyType, RequiredParams: 1),
-            ["createContext"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
+            ["runInContext"] = new TypeInfo.Function([stringType, anyType, anyType], anyType, RequiredParams: 2),
+            ["createContext"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 0),
             ["isContext"] = new TypeInfo.Function([anyType], boolType),
             ["compileFunction"] = new TypeInfo.Function([stringType, stringArrayType, anyType], anyType, RequiredParams: 1),
+            ["measureMemory"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
+            ["constants"] = constantsType,
             ["Script"] = new TypeInfo.Function([stringType, anyType], scriptType, RequiredParams: 1),
+            ["SourceTextModule"] = new TypeInfo.Function([stringType, anyType], moduleType, RequiredParams: 1),
+            ["SyntheticModule"] = new TypeInfo.Function([stringArrayType, anyType, anyType], moduleType, RequiredParams: 2),
         };
     }
 
