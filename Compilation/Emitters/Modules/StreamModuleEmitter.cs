@@ -22,6 +22,7 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
         "finished",
         "pipeline",
         "addAbortSignal",
+        "compose",
         "promises"
     ];
 
@@ -40,8 +41,14 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
             case "addAbortSignal":
                 EmitAddAbortSignalCall(emitter, arguments);
                 return true;
+            case "compose":
+                EmitComposeCall(emitter, arguments);
+                return true;
             case "Readable.from":
                 EmitReadableFromCall(emitter, arguments);
+                return true;
+            case "Duplex.from":
+                EmitDuplexFromCall(emitter, arguments);
                 return true;
             case "Readable.isReadable":
                 EmitIsReadableCall(emitter, arguments);
@@ -260,5 +267,34 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
         }
 
         il.Emit(OpCodes.Call, ctx.Runtime!.StreamReadableFrom);
+    }
+
+    private static void EmitDuplexFromCall(IEmitterContext emitter, List<Expr> arguments)
+    {
+        EmitPackedArgsCall(emitter, arguments, emitter.Context.Runtime!.StreamDuplexFrom);
+    }
+
+    private static void EmitComposeCall(IEmitterContext emitter, List<Expr> arguments)
+    {
+        EmitPackedArgsCall(emitter, arguments, emitter.Context.Runtime!.StreamCompose);
+    }
+
+    /// <summary>Packs the arguments into an object[] and calls the given runtime helper.</summary>
+    private static void EmitPackedArgsCall(IEmitterContext emitter, List<Expr> arguments, System.Reflection.MethodInfo target)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        il.Emit(OpCodes.Ldc_I4, arguments.Count);
+        il.Emit(OpCodes.Newarr, typeof(object));
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            il.Emit(OpCodes.Dup);
+            il.Emit(OpCodes.Ldc_I4, i);
+            emitter.EmitExpression(arguments[i]);
+            emitter.EmitBoxIfNeeded(arguments[i]);
+            il.Emit(OpCodes.Stelem_Ref);
+        }
+        il.Emit(OpCodes.Call, target);
     }
 }

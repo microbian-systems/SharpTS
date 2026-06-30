@@ -1869,7 +1869,10 @@ public static class BuiltInModuleTypes
         // Duplex constructor
         var duplexConstructorType = new TypeInfo.Interface(
             Name: "Duplex",
-            Members: new Dictionary<string, TypeInfo>().ToFrozenDictionary(),
+            Members: new Dictionary<string, TypeInfo>
+            {
+                ["from"] = new TypeInfo.Function([anyType, anyType], streamInstanceType, RequiredParams: 1)
+            }.ToFrozenDictionary(),
             OptionalMembers: FrozenSet<string>.Empty,
             ConstructorSignatures:
             [
@@ -1929,6 +1932,9 @@ public static class BuiltInModuleTypes
         // addAbortSignal function type
         var addAbortSignalType = new TypeInfo.Function([anyType, anyType], anyType);
 
+        // compose function type (#1028): compose(...streams) → Duplex
+        var composeType = new TypeInfo.Function([anyType], streamInstanceType, RequiredParams: 1, HasRestParam: true);
+
         // promises sub-module
         var promisesType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
         {
@@ -1946,6 +1952,7 @@ public static class BuiltInModuleTypes
             ["finished"] = finishedType,
             ["pipeline"] = pipelineType,
             ["addAbortSignal"] = addAbortSignalType,
+            ["compose"] = composeType,
             ["promises"] = promisesType
         };
     }

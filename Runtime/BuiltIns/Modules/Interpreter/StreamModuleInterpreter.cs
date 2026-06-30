@@ -33,6 +33,7 @@ public static class StreamModuleInterpreter
             ["finished"] = BuiltInMethod.CreateV2("finished", 1, 3, Finished),
             ["pipeline"] = BuiltInMethod.CreateV2("pipeline", 2, int.MaxValue, Pipeline),
             ["addAbortSignal"] = BuiltInMethod.CreateV2("addAbortSignal", 2, AddAbortSignal),
+            ["compose"] = BuiltInMethod.CreateV2("compose", 1, int.MaxValue, Compose),
             ["promises"] = StreamPromisesModuleInterpreter.CreatePromisesNamespace()
         };
     }
@@ -266,6 +267,113 @@ public static class StreamModuleInterpreter
         public object? Call(Interp interpreter, List<object?> arguments)
         {
             DestroyStreamWithAbort(interpreter, _stream, _signal);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// stream.compose(...streams) — composes streams into a single Duplex (#1028). Writing to the
+    /// returned Duplex feeds the first stream; the chain is piped together; the last stream's output
+    /// is pushed onto the Duplex's readable side.
+    /// </summary>
+    private static RuntimeValue Compose(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length < 1)
+            throw new Exception("compose() requires at least one stream");
+
+        var streams = new List<object?>(args.Length);
+        for (int i = 0; i < args.Length; i++)
+            streams.Add(args[i].ToObject());
+
+        // Pipe consecutive streams together.
+        for (int i = 0; i < streams.Count - 1; i++)
+            GetStreamMethod(streams[i], "pipe")?.Call(interpreter, [streams[i + 1]]);
+
+        var first = streams[0];
+        var last = streams[^1];
+
+        var composed = new SharpTSDuplex { ObjectMode = true, WritableObjectMode = true };
+        composed.SetWriteCallback(new ComposeForwardListener(first));
+        composed.SetFinalCallback(new ComposeFinalListener(first));
+
+        if (last is SharpTSEventEmitter lastEmitter)
+        {
+            lastEmitter.AddListenerDirect("data", new ComposeDataListener(composed));
+            lastEmitter.AddListenerDirect("end", new ComposeEndListener(composed));
+            lastEmitter.AddListenerDirect("error", new ComposeErrorListener(composed));
+        }
+
+        return RuntimeValue.FromObject(composed);
+    }
+
+    /// <summary>Write callback for a composed Duplex: forwards each chunk to the first stream.</summary>
+    private sealed class ComposeForwardListener : ISharpTSCallable
+    {
+        private readonly object? _first;
+        public ComposeForwardListener(object? first) => _first = first;
+        public int Arity() => 3;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            var chunk = arguments.Count > 0 ? arguments[0] : null;
+            var done = arguments.Count > 2 ? arguments[2] as ISharpTSCallable : null;
+            GetStreamMethod(_first, "write")?.Call(interpreter, [chunk]);
+            done?.Call(interpreter, []);
+            return null;
+        }
+    }
+
+    /// <summary>Final callback for a composed Duplex: ends the first stream when the Duplex ends.</summary>
+    private sealed class ComposeFinalListener : ISharpTSCallable
+    {
+        private readonly object? _first;
+        public ComposeFinalListener(object? first) => _first = first;
+        public int Arity() => 1;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            var done = arguments.Count > 0 ? arguments[0] as ISharpTSCallable : null;
+            GetStreamMethod(_first, "end")?.Call(interpreter, []);
+            done?.Call(interpreter, []);
+            return null;
+        }
+    }
+
+    /// <summary>Pushes the last stream's data onto the composed Duplex's readable side.</summary>
+    private sealed class ComposeDataListener : ISharpTSCallable
+    {
+        private readonly SharpTSDuplex _composed;
+        public ComposeDataListener(SharpTSDuplex composed) => _composed = composed;
+        public int Arity() => 1;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            var chunk = arguments.Count > 0 ? arguments[0] : null;
+            GetStreamMethod(_composed, "push")?.Call(interpreter, [chunk]);
+            return null;
+        }
+    }
+
+    /// <summary>Ends the composed Duplex's readable side when the last stream ends.</summary>
+    private sealed class ComposeEndListener : ISharpTSCallable
+    {
+        private readonly SharpTSDuplex _composed;
+        public ComposeEndListener(SharpTSDuplex composed) => _composed = composed;
+        public int Arity() => 0;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            GetStreamMethod(_composed, "push")?.Call(interpreter, [(object?)null]);
+            return null;
+        }
+    }
+
+    /// <summary>Propagates the last stream's error to the composed Duplex.</summary>
+    private sealed class ComposeErrorListener : ISharpTSCallable
+    {
+        private readonly SharpTSDuplex _composed;
+        public ComposeErrorListener(SharpTSDuplex composed) => _composed = composed;
+        public int Arity() => 1;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            var error = arguments.Count > 0 ? arguments[0] : null;
+            GetStreamMethod(_composed, "destroy")?.Call(interpreter, [error]);
             return null;
         }
     }

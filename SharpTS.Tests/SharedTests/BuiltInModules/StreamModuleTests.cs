@@ -1873,4 +1873,53 @@ public class StreamModuleTests
     }
 
     #endregion
+
+    #region compose + Duplex.from — #1028
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_Compose_TransformChain(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { compose, Transform } from 'stream';
+                const up = new Transform({ objectMode: true, transform(c: any, e: any, cb: any) { cb(null, String(c).toUpperCase()); } });
+                const bang = new Transform({ objectMode: true, transform(c: any, e: any, cb: any) { cb(null, c + '!'); } });
+                const composed = compose(up, bang);
+                const out: string[] = [];
+                composed.on('data', (d: any) => out.push(d));
+                composed.write('a');
+                composed.write('b');
+                console.log(out.join(','));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("A!,B!\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_DuplexFrom_Iterable(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Duplex } from 'stream';
+                async function main(): Promise<void> {
+                    const d = Duplex.from([1, 2, 3]);
+                    const got: number[] = [];
+                    for await (const x of d) got.push(x);
+                    console.log(got.join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("1,2,3\n", output);
+    }
+
+    #endregion
 }

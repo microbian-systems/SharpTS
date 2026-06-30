@@ -1,3 +1,4 @@
+using SharpTS.Runtime.BuiltIns;
 using Interp = SharpTS.Execution.Interpreter;
 
 namespace SharpTS.Runtime.Types;
@@ -81,8 +82,33 @@ public sealed class SharpTSDuplexConstructor : ISharpTSCallable
     {
         return name switch
         {
+            "from" => BuiltInMethod.CreateV2("from", 1, DuplexFrom),
             _ => null
         };
+    }
+
+    /// <summary>
+    /// Duplex.from(source) — builds a Duplex whose readable side yields the items of an
+    /// iterable/array source (mirrors Readable.from); other source kinds push nothing (#1028).
+    /// </summary>
+    private static RuntimeValue DuplexFrom(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var source = args.Length > 0 ? args[0].ToObject() : null;
+        var stream = new SharpTSDuplex { ObjectMode = true, WritableObjectMode = true };
+
+        if (source is SharpTSArray arr)
+        {
+            foreach (var item in arr)
+                stream.PushFromHost(interpreter, item);
+        }
+        else if (source is List<object?> list)
+        {
+            foreach (var item in list)
+                stream.PushFromHost(interpreter, item);
+        }
+
+        stream.PushFromHost(interpreter, null); // EOF
+        return RuntimeValue.FromObject(stream);
     }
 
     /// <summary>

@@ -2466,6 +2466,15 @@ public class EmittedRuntime
     public Type StreamAbortCallbackType { get; set; } = null!;
     public ConstructorBuilder StreamAbortCallbackCtor { get; set; } = null!;
     public MethodBuilder StreamAbortCallbackOnAbort { get; set; } = null!;
+    // #1028: compose(...streams) + Duplex.from(source).
+    public MethodBuilder StreamDuplexFrom { get; set; } = null!;
+    public MethodBuilder StreamCompose { get; set; } = null!;
+    public Type StreamComposeBridgeType { get; set; } = null!;
+    public ConstructorBuilder StreamComposeBridgeCtor { get; set; } = null!;
+    public MethodBuilder StreamComposeBridgeForwardWrite { get; set; } = null!;
+    public MethodBuilder StreamComposeBridgePushData { get; set; } = null!;
+    public MethodBuilder StreamComposeBridgePushEnd { get; set; } = null!;
+    public MethodBuilder StreamComposeBridgeEndFirst { get; set; } = null!;
 
     // $Writable type - emitted for standalone stream support
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSWritable
