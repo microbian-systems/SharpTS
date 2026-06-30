@@ -328,6 +328,14 @@ public class SharpTSClientRequest : SharpTSWritable
                 }
 
                 using var response = await sendTask;
+
+                // Persist Set-Cookie into the shared jar (parity with the fetch client path).
+                if (response.Headers.TryGetValues("Set-Cookie", out var setCookies))
+                {
+                    foreach (var c in setCookies)
+                        SharpTSCookieJar.Instance.SetCookie(c, _url);
+                }
+
                 var (status, reason, version, headersLower, raw) = ExtractResponse(response);
                 var body = await response.Content.ReadAsByteArrayAsync(_cts.Token);
 
@@ -402,6 +410,15 @@ public class SharpTSClientRequest : SharpTSWritable
                     content.Headers.TryAddWithoutValidation(name, value);
                 }
             }
+        }
+
+        // Attach cookies from the shared jar unless the caller set Cookie explicitly
+        // (parity with the fetch client path).
+        if (!_headers.ContainsKey("cookie"))
+        {
+            var cookieHeader = SharpTSCookieJar.Instance.GetCookieHeader(_url);
+            if (!string.IsNullOrEmpty(cookieHeader))
+                request.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
         }
 
         request.Content = content;

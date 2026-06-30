@@ -1730,6 +1730,12 @@ public partial class Interpreter
             return value;
         }
 
+        if (obj is SharpTSHttpServer httpServer)
+        {
+            httpServer.SetMember(memberName, value);
+            return value;
+        }
+
         if (obj is SharpTSNetServer netServer)
         {
             netServer.SetMember(memberName, value);

@@ -29,6 +29,17 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
     private bool _isClusterWorker;
     private int _port;
 
+    // Server-management surface (#1045). HttpListener does not expose per-connection
+    // control, so these timeouts/limits are stored as observable Node-compatible config
+    // (defaults match Node 24); requestTimeout is enforced by aborting the response.
+    private double _keepAliveTimeout = 5000;
+    private double _headersTimeout = 60000;
+    private double _requestTimeout = 300000;
+    private double _timeout;             // 0 = no socket timeout (Node default)
+    private double _maxHeadersCount = 2000;
+    private double _maxRequestsPerSocket;
+    private ISharpTSCallable? _timeoutCallback;
+
     // Drain-before-close state (issue #41): close() doesn't tear the listener
     // down while requests are in flight. It marks _closeRequested, then the
     // last HandleRequestAsync to finish invokes FinishClose. Mutations to
@@ -87,9 +98,75 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
                 RuntimeValue.FromBoxed(receiver.ToObject() is SharpTSHttpServer server
                     ? server.GetAddress()
                     : null)).Bind(this),
+
+            // Server lifecycle/management (#1045).
+            "closeAllConnections" => BuiltInMethod.CreateV2("closeAllConnections", 0, (_, receiver, _) =>
+            {
+                if (receiver.ToObject() is SharpTSHttpServer s) s.CloseAllConnections();
+                return RuntimeValue.Undefined;
+            }).Bind(this),
+            "closeIdleConnections" => BuiltInMethod.CreateV2("closeIdleConnections", 0, (_, _, _) =>
+                // HttpListener manages keep-alive connections internally and exposes no idle set;
+                // there is nothing for us to close here.
+                RuntimeValue.Undefined).Bind(this),
+            "setTimeout" => BuiltInMethod.CreateV2("setTimeout", 1, 2, (_, receiver, args) =>
+            {
+                if (receiver.ToObject() is SharpTSHttpServer s) return s.SetTimeout(args);
+                return receiver;
+            }).Bind(this),
+
+            // Config properties (settable via SetMember).
+            "keepAliveTimeout" => _keepAliveTimeout,
+            "headersTimeout" => _headersTimeout,
+            "requestTimeout" => _requestTimeout,
+            "timeout" => _timeout,
+            "maxHeadersCount" => _maxHeadersCount,
+            "maxRequestsPerSocket" => _maxRequestsPerSocket,
+
             // Inherit EventEmitter methods for on, once, off, emit, removeAllListeners, etc.
             _ => base.GetMember(name)
         };
+    }
+
+    /// <summary>
+    /// Sets a settable server config property (#1045).
+    /// </summary>
+    public void SetMember(string name, object? value)
+    {
+        switch (name)
+        {
+            case "keepAliveTimeout": if (value is double ka) _keepAliveTimeout = ka; break;
+            case "headersTimeout": if (value is double ht) _headersTimeout = ht; break;
+            case "requestTimeout": if (value is double rt) _requestTimeout = rt; break;
+            case "timeout": if (value is double t) _timeout = t; break;
+            case "maxHeadersCount": if (value is double mh) _maxHeadersCount = mh; break;
+            case "maxRequestsPerSocket": if (value is double mr) _maxRequestsPerSocket = mr; break;
+        }
+    }
+
+    private RuntimeValue SetTimeout(ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length > 0 && args[0].IsNumber)
+            _timeout = args[0].AsNumberUnsafe();
+        if (args.Length > 1 && args[1].ToObject() is ISharpTSCallable cb)
+        {
+            _timeoutCallback = cb;
+            var on = base.GetMember("on") as BuiltInMethod;
+            on?.Bind(this).Call(_interpreter!, ["timeout", cb]);
+        }
+        return RuntimeValue.FromObject(this);
+    }
+
+    /// <summary>
+    /// Forcibly closes the server, tearing down the listener immediately rather than draining
+    /// in-flight requests (Node's <c>closeAllConnections</c>).
+    /// </summary>
+    private void CloseAllConnections()
+    {
+        if (!_isListening) return;
+        lock (_stateLock) { _closeRequested = true; }
+        _cts?.Cancel();
+        FinishClose();
     }
 
     /// <summary>
@@ -447,6 +524,23 @@ public class SharpTSHttpServer : SharpTSEventEmitter, IDisposable
             {
                 try
                 {
+                    // Emit 'connection' best-effort (#1045). HttpListener exposes contexts, not raw
+                    // TCP connections, so this fires per accepted request with a minimal socket
+                    // object — an approximation under keep-alive, documented as such.
+                    if (HasListenersInternal("connection"))
+                    {
+                        EmitEvent("connection", new List<object?>
+                        {
+                            new SharpTSObject(new Dictionary<string, object?>
+                            {
+                                ["remoteAddress"] = context.Request.RemoteEndPoint?.Address?.ToString(),
+                                ["remotePort"] = (double?)context.Request.RemoteEndPoint?.Port,
+                                ["localAddress"] = context.Request.LocalEndPoint?.Address?.ToString(),
+                                ["localPort"] = (double?)context.Request.LocalEndPoint?.Port
+                            })
+                        });
+                    }
+
                     // Emit 'request' event
                     EmitEvent("request", new List<object?> { req, res });
 

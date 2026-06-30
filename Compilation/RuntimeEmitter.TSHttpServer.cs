@@ -1051,7 +1051,75 @@ public partial class RuntimeEmitter
         // Property getters for reflection-based access
         EmitHttpServerPropertyGetters(typeBuilder, runtime);
 
+        // Server-management surface (#1045): config getters (Node defaults) + lifecycle methods.
+        EmitHttpServerLifecycleMembers(typeBuilder, runtime, httpListenerType);
+
         typeBuilder.CreateType();
+    }
+
+    /// <summary>
+    /// Emits the server-management surface (#1045): config property getters returning Node
+    /// defaults (resolved via the GetProperty PascalCase-reflection fallback) plus
+    /// closeAllConnections/closeIdleConnections/setTimeout. Compiled exposes the defaults for
+    /// reads; mutating the timeouts is interpreter-only (documented).
+    /// </summary>
+    private void EmitHttpServerLifecycleMembers(TypeBuilder typeBuilder, EmittedRuntime runtime, Type httpListenerType)
+    {
+        void EmitConstDoubleProperty(string name, double value)
+        {
+            var prop = typeBuilder.DefineProperty(name, PropertyAttributes.None, _types.Double, null);
+            var getter = typeBuilder.DefineMethod(
+                "get_" + name,
+                MethodAttributes.Public | MethodAttributes.SpecialName,
+                _types.Double,
+                Type.EmptyTypes);
+            var gil = getter.GetILGenerator();
+            gil.Emit(OpCodes.Ldc_R8, value);
+            gil.Emit(OpCodes.Ret);
+            prop.SetGetMethod(getter);
+        }
+
+        EmitConstDoubleProperty("KeepAliveTimeout", 5000);
+        EmitConstDoubleProperty("HeadersTimeout", 60000);
+        EmitConstDoubleProperty("RequestTimeout", 300000);
+        EmitConstDoubleProperty("Timeout", 0);
+        EmitConstDoubleProperty("MaxHeadersCount", 2000);
+        EmitConstDoubleProperty("MaxRequestsPerSocket", 0);
+
+        // CloseAllConnections() → forcibly close (reuse Close); returns this.
+        var closeAll = typeBuilder.DefineMethod("CloseAllConnections",
+            MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var cail = closeAll.GetILGenerator();
+        cail.Emit(OpCodes.Ldarg_0);
+        cail.Emit(OpCodes.Ldnull);
+        cail.Emit(OpCodes.Callvirt, runtime.TSHttpServerClose);
+        cail.Emit(OpCodes.Pop);
+        cail.Emit(OpCodes.Ldarg_0);
+        cail.Emit(OpCodes.Ret);
+
+        // CloseIdleConnections() → no-op (HttpListener manages keep-alive internally); returns undefined.
+        var closeIdle = typeBuilder.DefineMethod("CloseIdleConnections",
+            MethodAttributes.Public, _types.Object, Type.EmptyTypes);
+        var ciil = closeIdle.GetILGenerator();
+        ciil.Emit(OpCodes.Ldsfld, runtime.UndefinedInstance);
+        ciil.Emit(OpCodes.Ret);
+
+        // SetTimeout(msecs, cb) → register cb as a 'timeout' listener (best effort); returns this.
+        var setTimeout = typeBuilder.DefineMethod("SetTimeout",
+            MethodAttributes.Public, _types.Object, [_types.Object, _types.Object]);
+        var stil = setTimeout.GetILGenerator();
+        // if (cb != null) this.On("timeout", cb)
+        var noCbLabel = stil.DefineLabel();
+        stil.Emit(OpCodes.Ldarg_2);
+        stil.Emit(OpCodes.Brfalse, noCbLabel);
+        stil.Emit(OpCodes.Ldarg_0);
+        stil.Emit(OpCodes.Ldstr, "timeout");
+        stil.Emit(OpCodes.Ldarg_2);
+        stil.Emit(OpCodes.Callvirt, runtime.TSEventEmitterOn);
+        stil.Emit(OpCodes.Pop);
+        stil.MarkLabel(noCbLabel);
+        stil.Emit(OpCodes.Ldarg_0);
+        stil.Emit(OpCodes.Ret);
     }
 
     private void EmitHttpServerPropertyGetters(TypeBuilder typeBuilder, EmittedRuntime runtime)
