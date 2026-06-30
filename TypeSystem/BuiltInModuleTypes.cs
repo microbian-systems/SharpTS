@@ -2151,6 +2151,22 @@ public static class BuiltInModuleTypes
 
         var stringArrayType = new TypeInfo.Array(stringType);
 
+        // vm.Module / SourceTextModule / SyntheticModule instance shape.
+        var moduleType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
+        {
+            ["status"] = stringType,
+            ["identifier"] = stringType,
+            ["namespace"] = anyType,
+            ["dependencySpecifiers"] = stringArrayType,
+            ["error"] = anyType,
+            ["context"] = anyType,
+            ["link"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 1),
+            ["evaluate"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
+            ["instantiate"] = new TypeInfo.Function([], anyType, RequiredParams: 0),
+            ["setExport"] = new TypeInfo.Function([stringType, anyType], anyType, RequiredParams: 2),
+            ["createCachedData"] = new TypeInfo.Function([], anyType, RequiredParams: 0),
+        }.ToFrozenDictionary());
+
         // vm.constants — opaque sentinel Symbols used as marker option values.
         var constantsType = new TypeInfo.Record(new Dictionary<string, TypeInfo>
         {
@@ -2169,6 +2185,7 @@ public static class BuiltInModuleTypes
             ["measureMemory"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
             ["constants"] = constantsType,
             ["Script"] = new TypeInfo.Function([stringType, anyType], scriptType, RequiredParams: 1),
+            ["SourceTextModule"] = new TypeInfo.Function([stringType, anyType], moduleType, RequiredParams: 1),
         };
     }
 

@@ -27,7 +27,8 @@ public static class VmModuleInterpreter
             ["compileFunction"] = BuiltInMethod.CreateV2("compileFunction", 1, 3, CompileFunction),
             ["measureMemory"] = BuiltInMethod.CreateV2("measureMemory", 0, 1, MeasureMemory),
             ["constants"] = VmConstants.Create(),
-            ["Script"] = new VmScriptConstructor()
+            ["Script"] = new VmScriptConstructor(),
+            ["SourceTextModule"] = new VmSourceTextModuleConstructor()
         };
     }
 

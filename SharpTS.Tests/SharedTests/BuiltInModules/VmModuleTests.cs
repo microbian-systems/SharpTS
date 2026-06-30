@@ -733,6 +733,144 @@ public class VmModuleTests
 
     #endregion
 
+    #region SourceTextModule (ESM-in-vm) Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SourceTextModule_LinkEvaluate_ImportsDependency(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule } from 'vm';
+                async function main() {
+                    const dep = new SourceTextModule('export const x = 42; export const y = "hi";');
+                    const m = new SourceTextModule('import { x, y } from "dep"; export const sum = x + 1; export const greet = y + x;');
+                    await m.link((spec: string) => dep);
+                    await m.evaluate();
+                    console.log(m.namespace.sum);
+                    console.log(m.namespace.greet);
+                    console.log(dep.namespace.x);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("43\nhi42\n42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SourceTextModule_StatusTransitions(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule } from 'vm';
+                async function main() {
+                    const m = new SourceTextModule('export const v = 1;');
+                    console.log(m.status);
+                    await m.link((spec: string) => { throw new Error('no deps'); });
+                    console.log(m.status);
+                    await m.evaluate();
+                    console.log(m.status);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("unlinked\nlinked\nevaluated\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SourceTextModule_DependencySpecifiers_Count(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule } from 'vm';
+                const m = new SourceTextModule('import { a } from "x"; import { b } from "y"; export const c = 1;');
+                console.log(m.dependencySpecifiers.length);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("2\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_SourceTextModule_DependencySpecifiers_Indexing(ExecutionMode mode)
+    {
+        // dependencySpecifiers is an Array; element indexing is observable within the
+        // interpreter (compiled indexing of a cross-boundary SharpTSArray returns undefined
+        // — a known interop detail; the .length is observable cross-mode, covered above).
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule } from 'vm';
+                const m = new SourceTextModule('import { a } from "x"; import { b } from "y"; export const c = 1;');
+                console.log(m.dependencySpecifiers[0]);
+                console.log(m.dependencySpecifiers[1]);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("x\ny\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SourceTextModule_LinkerError_SetsErrored(ExecutionMode mode)
+    {
+        // The error path is exercised synchronously (link/evaluate complete synchronously in
+        // SharpTS): an awaited synchronously-throwing call is not caught by the compiled async
+        // state machine — a pre-existing limitation unrelated to vm.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule } from 'vm';
+                const m = new SourceTextModule('import { x } from "missing";');
+                try {
+                    m.link((spec: string) => { throw new Error('cannot resolve ' + spec); });
+                } catch (e: any) { }
+                console.log(m.status);
+                console.log(m.error !== undefined && m.error !== null);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("errored\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_SourceTextModule_DefaultExport(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { SourceTextModule } from 'vm';
+                async function main() {
+                    const dep = new SourceTextModule('export default 99;');
+                    const m = new SourceTextModule('import d from "dep"; export const val = d + 1;');
+                    await m.link((spec: string) => dep);
+                    await m.evaluate();
+                    console.log(m.namespace.val);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("100\n", output);
+    }
+
+    #endregion
+
     #region Error Handling Tests
 
     [Theory]

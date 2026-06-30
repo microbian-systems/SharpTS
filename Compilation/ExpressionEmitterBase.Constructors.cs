@@ -490,6 +490,14 @@ public abstract partial class ExpressionEmitterBase
                 SetStackUnknown();
                 return true;
 
+            // --- vm.SourceTextModule ---
+            case "SourceTextModule":
+                EmitBoxedArgOrNull(arguments, 0);
+                EmitBoxedArgOrNull(arguments, 1);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.VmNewSourceTextModule);
+                SetStackUnknown();
+                return true;
+
             // --- Stream constructors ---
             case "Readable":
                 EmitNewReadableConstructor(arguments);

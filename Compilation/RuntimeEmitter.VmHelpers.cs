@@ -22,6 +22,7 @@ public partial class RuntimeEmitter
         EmitVmGetConstants(typeBuilder, runtime);
         EmitVmGetScriptConstructor(typeBuilder, runtime);
         EmitVmNewScript(typeBuilder, runtime);
+        EmitVmNewSourceTextModule(typeBuilder, runtime);
     }
 
     /// <summary>
@@ -278,9 +279,34 @@ public partial class RuntimeEmitter
             [_types.Object, _types.Object]);
         runtime.VmNewScript = method;
 
-        var il = method.GetILGenerator();
+        EmitVmConstructorCall(method.GetILGenerator(), "Script", 2);
+    }
 
-        // Get the Script constructor: VmModuleInterpreter.GetExports()["Script"]
+    /// <summary>
+    /// Emits: public static object VmNewSourceTextModule(object code, object options)
+    /// Creates a vm.SourceTextModule facade via reflection to VmSourceTextModuleConstructor.
+    /// </summary>
+    private void EmitVmNewSourceTextModule(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "VmNewSourceTextModule",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object, _types.Object]);
+        runtime.VmNewSourceTextModule = method;
+
+        EmitVmConstructorCall(method.GetILGenerator(), "SourceTextModule", 2);
+    }
+
+    /// <summary>
+    /// Emits IL that constructs a vm export via its ISharpTSCallable constructor:
+    /// <c>VmModuleInterpreter.GetExports()[exportName].Call(null, new List&lt;object?&gt; { arg0..argN-1 })</c>.
+    /// The N constructor arguments are taken from ldarg 0..N-1. Returns null (graceful
+    /// degradation) when SharpTS isn't present at runtime.
+    /// </summary>
+    private void EmitVmConstructorCall(ILGenerator il, string exportName, int argCount)
+    {
+        // Type moduleType = Type.GetType("...VmModuleInterpreter, SharpTS");
         il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.Modules.Interpreter.VmModuleInterpreter, SharpTS");
         il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
         var typeLocal = il.DeclareLocal(_types.Type);
@@ -293,7 +319,7 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ret);
         il.MarkLabel(typeOk);
 
-        // Get exports
+        // object exports = moduleType.GetMethod("GetExports").Invoke(null, Array.Empty<object>());
         il.Emit(OpCodes.Ldloc, typeLocal);
         il.Emit(OpCodes.Ldstr, "GetExports");
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
@@ -304,7 +330,7 @@ public partial class RuntimeEmitter
         var exportsLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Stloc, exportsLocal);
 
-        // Get "Script" from exports
+        // object ctor = exports[exportName]
         il.Emit(OpCodes.Ldloc, exportsLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
         il.Emit(OpCodes.Ldstr, "Item");
@@ -314,26 +340,25 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Newarr, _types.Object);
         il.Emit(OpCodes.Dup);
         il.Emit(OpCodes.Ldc_I4_0);
-        il.Emit(OpCodes.Ldstr, "Script");
+        il.Emit(OpCodes.Ldstr, exportName);
         il.Emit(OpCodes.Stelem_Ref);
         il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.PropertyInfo, "GetValue", _types.Object, _types.ObjectArray));
         var ctorLocal = il.DeclareLocal(_types.Object);
         il.Emit(OpCodes.Stloc, ctorLocal);
 
-        // Build args: new List<object?> { code, options }
+        // Build args: new List<object?> { arg0..argN-1 }
         il.Emit(OpCodes.Newobj, _types.ListObjectNullableDefaultCtor);
         var argsLocal = il.DeclareLocal(_types.ListOfObjectNullable);
         il.Emit(OpCodes.Stloc, argsLocal);
 
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Ldarg_0); // code
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObjectNullable, "Add", _types.Object));
+        for (int i = 0; i < argCount; i++)
+        {
+            il.Emit(OpCodes.Ldloc, argsLocal);
+            il.Emit(OpCodes.Ldarg, i);
+            il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObjectNullable, "Add", _types.Object));
+        }
 
-        il.Emit(OpCodes.Ldloc, argsLocal);
-        il.Emit(OpCodes.Ldarg_1); // options
-        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.ListOfObjectNullable, "Add", _types.Object));
-
-        // Call ctor.GetType().GetMethod("Call").Invoke(ctor, new object[] { null, argsList })
+        // ctor.GetType().GetMethod("Call").Invoke(ctor, new object[] { null, argsList })
         il.Emit(OpCodes.Ldloc, ctorLocal);
         il.Emit(OpCodes.Callvirt, _types.GetMethodNoParams(_types.Object, "GetType"));
         il.Emit(OpCodes.Ldstr, "Call");
