@@ -926,6 +926,57 @@ public class VmModuleTests
 
     #endregion
 
+    #region importModuleDynamically Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_ImportModuleDynamically_ResolvesViaHook(ExecutionMode mode)
+    {
+        // The result of the in-vm dynamic import is written back to a context scalar to
+        // keep it observable cross-mode (a cross-boundary Promise is not unwrapped by
+        // compiled await; the await happens inside the hosted interpreter).
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script, SourceTextModule, createContext } from 'vm';
+                const dep = new SourceTextModule('export const value = 123;');
+                const importModuleDynamically = (specifier: string) => dep;
+                const ctx: any = createContext({ result: 0 });
+                const script = new Script(
+                    '(async () => { const ns = await import("dep"); result = ns.value; })();',
+                    { importModuleDynamically });
+                script.runInContext(ctx);
+                console.log(ctx.result);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("123\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_Script_ImportModuleDynamically_UseMainContextDefaultLoader_Accepted(ExecutionMode mode)
+    {
+        // Passing the USE_MAIN_CONTEXT_DEFAULT_LOADER sentinel falls back to the default
+        // loader (no override) and does not disturb a script that performs no import.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Script, constants } from 'vm';
+                const script = new Script('1 + 1', {
+                    importModuleDynamically: constants.USE_MAIN_CONTEXT_DEFAULT_LOADER
+                });
+                console.log(script.runInNewContext({}));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("2\n", output);
+    }
+
+    #endregion
+
     #region Error Handling Tests
 
     [Theory]

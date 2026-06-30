@@ -330,6 +330,14 @@ public sealed class VmSourceTextModule : VmModuleBase
             }
         }
 
+        // Route dynamic import() inside the module body through importModuleDynamically (#1156).
+        if (ImportModuleDynamically != null)
+        {
+            var hook = VmModuleInterpreter.BuildDynamicImportHook(ImportModuleDynamically, Facade, interp);
+            if (hook != null)
+                sub.SetVmDynamicImportHook(hook);
+        }
+
         var resolver = new VariableResolver(sub);
         resolver.Resolve(toRun);
         sub.InterpretRepl(toRun);

@@ -552,6 +552,17 @@ public partial class Interpreter : IDisposable
     /// <summary>Whether eval/new Function are disabled (codeGeneration.strings:false).</summary>
     public bool IsCodeGenerationFromStringsDisabled => _vmCodeGenerationStringsDisabled;
 
+    // vm importModuleDynamically support — when set, a dynamic import() inside vm-executed
+    // code is resolved through this hook (specifier → module namespace) instead of the
+    // normal module resolver. See vm #1156.
+    private Func<string, object?>? _vmDynamicImportHook;
+
+    /// <summary>
+    /// Routes dynamic import() in this interpreter through a user hook (the vm
+    /// importModuleDynamically option). The hook maps a specifier to a module namespace.
+    /// </summary>
+    public void SetVmDynamicImportHook(Func<string, object?>? hook) => _vmDynamicImportHook = hook;
+
     // Worker-termination support — a worker sets this to its CancellationToken so a
     // synchronous runtime op that observes it (Atomics.wait) can unwind the worker thread
     // when worker.terminate() cancels it. Distinct from _vmTimeoutToken so the worker abort

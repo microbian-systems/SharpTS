@@ -46,8 +46,9 @@ public static class VmModuleInterpreter
         var options = args.Length > 2 ? args[2].ToObject() : null;
         var timeout = GetTimeoutOption(options);
         var origin = ScriptOrigin.From(options);
+        var hook = BuildDynamicImportHook(GetOption(options, "importModuleDynamically"), null, interpreter);
         return RuntimeValue.FromBoxed(WithScriptOrigin(origin,
-            () => ExecuteInNewContext(code, contextObject, interpreter, timeout, origin.Filename)));
+            () => ExecuteInNewContext(code, contextObject, interpreter, timeout, origin.Filename, hook)));
     }
 
     /// <summary>
@@ -82,8 +83,9 @@ public static class VmModuleInterpreter
         var options = args.Length > 2 ? args[2].ToObject() : null;
         var timeout = GetTimeoutOption(options);
         var origin = ScriptOrigin.From(options);
+        var hook = BuildDynamicImportHook(GetOption(options, "importModuleDynamically"), null, interpreter);
         return RuntimeValue.FromBoxed(WithScriptOrigin(origin,
-            () => ExecuteInNewContext(code, contextObject, interpreter, timeout, origin.Filename)));
+            () => ExecuteInNewContext(code, contextObject, interpreter, timeout, origin.Filename, hook)));
     }
 
     /// <summary>
@@ -187,7 +189,7 @@ public static class VmModuleInterpreter
     /// Executes code in a fresh interpreter with context object properties seeded as variables.
     /// Mutations to context variables are written back to the context object.
     /// </summary>
-    internal static object? ExecuteInNewContext(string code, object? contextObject, Interp? parentInterpreter = null, int timeout = -1, string? filename = null)
+    internal static object? ExecuteInNewContext(string code, object? contextObject, Interp? parentInterpreter = null, int timeout = -1, string? filename = null, Func<string, object?>? dynamicImportHook = null)
     {
         // Parse the code
         var statements = ParseCode(code, filename);
@@ -207,6 +209,8 @@ public static class VmModuleInterpreter
         // Honor the context's createContext options (codeGeneration / microtaskMode).
         var contextOptions = VmContext.GetOptions(contextObject);
         ApplyContextOptions(subInterpreter, contextOptions);
+        if (dynamicImportHook != null)
+            subInterpreter.SetVmDynamicImportHook(dynamicImportHook);
 
         // Apply timeout if specified
         CancellationTokenSource? cts = null;
@@ -274,7 +278,7 @@ public static class VmModuleInterpreter
     /// Executes pre-parsed statements in a new context.
     /// Used by Script.runInNewContext and Script.runInContext.
     /// </summary>
-    internal static object? ExecuteParsedInNewContext(List<Stmt> statements, object? contextObject, Interp? parentInterpreter = null, int timeout = -1)
+    internal static object? ExecuteParsedInNewContext(List<Stmt> statements, object? contextObject, Interp? parentInterpreter = null, int timeout = -1, Func<string, object?>? dynamicImportHook = null)
     {
         var contextProps = VmContext.ExtractProperties(contextObject);
 
@@ -288,6 +292,8 @@ public static class VmModuleInterpreter
 
         var contextOptions = VmContext.GetOptions(contextObject);
         ApplyContextOptions(subInterpreter, contextOptions);
+        if (dynamicImportHook != null)
+            subInterpreter.SetVmDynamicImportHook(dynamicImportHook);
 
         CancellationTokenSource? cts = null;
         if (timeout > 0)
@@ -419,6 +425,8 @@ public static class VmModuleInterpreter
         var wrappedCode = $"function __vmfn__({paramsStr}) {{ {trimmedCode} }}";
         var funcDeclStatements = ParseCode(wrappedCode, origin.Filename);
 
+        var importModuleDynamically = GetOption(rawOptions, "importModuleDynamically");
+
         // Return a callable that executes the function body in a fresh interpreter
         var compiledFn = BuiltInMethod.CreateV2("compiledFunction", 0, paramNames.Count,
             (interp, recv, callArgs) =>
@@ -426,8 +434,9 @@ public static class VmModuleInterpreter
                 var boxedCallArgs = new List<object?>(callArgs.Length);
                 for (int i = 0; i < callArgs.Length; i++)
                     boxedCallArgs.Add(callArgs[i].ToObject());
+                var hook = BuildDynamicImportHook(importModuleDynamically, null, interp);
                 return RuntimeValue.FromBoxed(WithScriptOrigin(origin,
-                    () => ExecuteCompiledFunction(funcDeclStatements, paramNames, boxedCallArgs, parsingContext, contextExtensions, interp)));
+                    () => ExecuteCompiledFunction(funcDeclStatements, paramNames, boxedCallArgs, parsingContext, contextExtensions, interp, hook)));
             });
 
         return RuntimeValue.FromObject(compiledFn);
@@ -443,12 +452,15 @@ public static class VmModuleInterpreter
         List<object?> callArgs,
         object? parsingContext,
         List<object?>? contextExtensions,
-        Interp? parentInterpreter = null)
+        Interp? parentInterpreter = null,
+        Func<string, object?>? dynamicImportHook = null)
     {
         var subInterpreter = parentInterpreter != null
             ? new Interp(parentInterpreter.Out, parentInterpreter.Error)
             : new Interp();
         var env = subInterpreter.Environment;
+        if (dynamicImportHook != null)
+            subInterpreter.SetVmDynamicImportHook(dynamicImportHook);
 
         // Seed parsingContext variables
         if (parsingContext != null)
@@ -547,6 +559,44 @@ public static class VmModuleInterpreter
         if (val is double d && d > 0)
             return (int)d;
         return -1;
+    }
+
+    /// <summary>
+    /// Builds the dynamic-import resolver for a vm importModuleDynamically option, to be
+    /// installed on the sub-interpreter so an <c>import(x)</c> inside vm code routes through
+    /// the user hook. Returns null when no hook is supplied or the
+    /// USE_MAIN_CONTEXT_DEFAULT_LOADER sentinel is used (fall back to the default loader).
+    /// The hook may return a module namespace object or a vm.Module (which is linked+
+    /// evaluated and exposed via its namespace).
+    /// </summary>
+    internal static Func<string, object?>? BuildDynamicImportHook(object? importModuleDynamically, object? scriptOrModule, Interp? interp)
+    {
+        if (importModuleDynamically == null)
+            return null;
+        if (ReferenceEquals(importModuleDynamically, VmConstants.UseMainContextDefaultLoader))
+            return null;
+
+        return specifier =>
+        {
+            var attributes = new Dictionary<string, object?>();
+            var result = RuntimeCallableDispatcher.Invoke(interp, importModuleDynamically, specifier, scriptOrModule, attributes);
+
+            if (result is SharpTSPromise p && p.Task.IsCompletedSuccessfully)
+                result = p.Task.Result;
+
+            // If the hook returned a vm.Module, link (deps-free) + evaluate it and expose
+            // its namespace; otherwise the hook returned a namespace object directly.
+            var module = VmModuleRegistry.Get(result);
+            if (module != null)
+            {
+                if (module.Status == "unlinked")
+                    module.Link(interp, linker: null);
+                if (module.Status != "evaluated")
+                    module.Evaluate(interp);
+                return new Dictionary<string, object?>(module.Exports);
+            }
+            return result;
+        };
     }
 
     /// <summary>
@@ -665,6 +715,7 @@ public sealed class VmScriptConstructor : ISharpTSCallable
         var origin = VmModuleInterpreter.ScriptOrigin.From(options);
         var produceCachedData = VmModuleInterpreter.GetBoolOption(options, "produceCachedData");
         var hasCachedDataInput = VmModuleInterpreter.GetOption(options, "cachedData") != null;
+        var importModuleDynamically = VmModuleInterpreter.GetOption(options, "importModuleDynamically");
 
         // Pre-parse the code (with semicolon retry); syntax errors carry the filename.
         var statements = VmModuleInterpreter.ParseCode(code, origin.Filename);
@@ -677,20 +728,26 @@ public sealed class VmScriptConstructor : ISharpTSCallable
             {
                 var contextObject = methodArgs.Length > 0 ? methodArgs[0].ToObject() : null;
                 var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Length > 1 ? methodArgs[1].ToObject() : null);
+                var hook = VmModuleInterpreter.BuildDynamicImportHook(importModuleDynamically, null, interp);
                 return RuntimeValue.FromBoxed(VmModuleInterpreter.WithScriptOrigin(origin,
-                    () => VmModuleInterpreter.ExecuteParsedInNewContext(statements, contextObject, interp, timeout)));
+                    () => VmModuleInterpreter.ExecuteParsedInNewContext(statements, contextObject, interp, timeout, hook)));
             });
 
         var runInThisCtx = BuiltInMethod.CreateV2("runInThisContext", 0, 1,
             (interp, recv, methodArgs) =>
             {
                 var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Length > 0 ? methodArgs[0].ToObject() : null);
+                var hook = VmModuleInterpreter.BuildDynamicImportHook(importModuleDynamically, null, interp);
                 return RuntimeValue.FromBoxed(VmModuleInterpreter.WithScriptOrigin(origin, () =>
                 {
                     if (interp != null)
-                        return VmModuleInterpreter.ExecuteParsedInCurrentContext(statements, interp, timeout);
+                    {
+                        if (hook != null) interp.SetVmDynamicImportHook(hook);
+                        try { return VmModuleInterpreter.ExecuteParsedInCurrentContext(statements, interp, timeout); }
+                        finally { if (hook != null) interp.SetVmDynamicImportHook(null); }
+                    }
                     // Compiled mode: no interpreter available, fall back to new context
-                    return VmModuleInterpreter.ExecuteParsedInNewContext(statements, null, interp, timeout);
+                    return VmModuleInterpreter.ExecuteParsedInNewContext(statements, null, interp, timeout, hook);
                 }));
             });
 
@@ -701,8 +758,9 @@ public sealed class VmScriptConstructor : ISharpTSCallable
                 if (!VmContext.IsContext(context))
                     throw new Exception("TypeError [ERR_INVALID_ARG_TYPE]: The \"contextifiedObject\" argument must be of type vm.Context.");
                 var timeout = VmModuleInterpreter.GetTimeoutOption(methodArgs.Length > 1 ? methodArgs[1].ToObject() : null);
+                var hook = VmModuleInterpreter.BuildDynamicImportHook(importModuleDynamically, null, interp);
                 return RuntimeValue.FromBoxed(VmModuleInterpreter.WithScriptOrigin(origin,
-                    () => VmModuleInterpreter.ExecuteParsedInNewContext(statements, context, interp, timeout)));
+                    () => VmModuleInterpreter.ExecuteParsedInNewContext(statements, context, interp, timeout, hook)));
             });
 
         // vm bytecode caching has no .NET equivalent (#1150 ceiling): createCachedData()
