@@ -22,6 +22,14 @@ public static class BufferModuleInterpreter
         {
             ["Buffer"] = SharpTSBufferConstructor.Instance,
 
+            // Blob/File constructors (also globals). Construction dispatches by the
+            // syntactic name `new Blob()`; these markers resolve value-position uses.
+            ["Blob"] = SharpTSBlobConstructor.Instance,
+            ["File"] = SharpTSFileConstructor.Instance,
+
+            // resolveObjectURL(id) — looks up a blob: URL created via URL.createObjectURL.
+            ["resolveObjectURL"] = BuiltInMethod.CreateV2("resolveObjectURL", 1, ResolveObjectURL),
+
             // Base64 (also exposed as globals atob/btoa)
             ["atob"] = BuiltInMethod.CreateV2("atob", 1, Atob),
             ["btoa"] = BuiltInMethod.CreateV2("btoa", 1, Btoa),
@@ -109,5 +117,13 @@ public static class BufferModuleInterpreter
         if (args.Length == 0 || !args[0].IsNumber)
             throw new Exception("SlowBuffer requires a size argument");
         return RuntimeValue.FromObject(SharpTSBuffer.AllocUnsafe((int)args[0].AsNumberUnsafe()));
+    }
+
+    private static RuntimeValue ResolveObjectURL(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        if (args.Length == 0 || !args[0].IsString)
+            return RuntimeValue.Undefined;
+        var blob = BlobUrlRegistry.Resolve(args[0].AsStringUnsafe());
+        return blob != null ? RuntimeValue.FromObject(blob) : RuntimeValue.Undefined;
     }
 }

@@ -1287,6 +1287,12 @@ public sealed class BuiltInRegistry
             ((SharpTSRequest)instance).GetMember(name));
         registry.RegisterInstanceType(typeof(SharpTSResponse), (instance, name) =>
             ((SharpTSResponse)instance).GetMember(name));
+        // Blob/File — most-derived GetMember (File overrides name/lastModified, then
+        // falls back to Blob's size/type/text/arrayBuffer/bytes/slice/stream).
+        registry.RegisterInstanceType(typeof(SharpTSBlob), (instance, name) =>
+            ((SharpTSBlob)instance).GetMember(name));
+        registry.RegisterInstanceType(typeof(SharpTSFile), (instance, name) =>
+            ((SharpTSFile)instance).GetMember(name));
     }
 
     private static void RegisterResponseNamespace(BuiltInRegistry registry)

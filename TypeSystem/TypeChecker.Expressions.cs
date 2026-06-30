@@ -1770,6 +1770,7 @@ public partial class TypeChecker
         if (name.Lexeme is "ReadableStream" or "WritableStream" or "TransformStream"
             or "ByteLengthQueuingStrategy" or "CountQueuingStrategy")
             return new TypeInfo.Any(); // Web Streams constructors
+        if (name.Lexeme is "Blob" or "File") return new TypeInfo.Any(); // Blob/File constructors
         // TypedArray constructors
         if (name.Lexeme is "Int8Array" or "Uint8Array" or "Uint8ClampedArray"
             or "Int16Array" or "Uint16Array" or "Int32Array" or "Uint32Array"

@@ -92,7 +92,8 @@ public static class BuiltInNames
         TextEncoder, TextDecoder,
         Request, Response,
         ReadableStream, WritableStream, TransformStream,
-        ByteLengthQueuingStrategy, CountQueuingStrategy
+        ByteLengthQueuingStrategy, CountQueuingStrategy,
+        Blob, File
     ];
 
     // Individual constructor constants
@@ -133,6 +134,8 @@ public static class BuiltInNames
     public const string TransformStream = "TransformStream";
     public const string ByteLengthQueuingStrategy = "ByteLengthQueuingStrategy";
     public const string CountQueuingStrategy = "CountQueuingStrategy";
+    public const string Blob = "Blob";
+    public const string File = "File";
     public const string ReadableStreamDefaultReader = "ReadableStreamDefaultReader";
     public const string WritableStreamDefaultWriter = "WritableStreamDefaultWriter";
     public const string ReadableStreamDefaultController = "ReadableStreamDefaultController";

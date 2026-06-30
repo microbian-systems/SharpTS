@@ -1374,4 +1374,111 @@ public class BufferTests
     }
 
     #endregion
+
+    #region Blob / File (#1159)
+
+    // Blob/File are interpreter-complete; the compiled $Blob/$File IL type is a
+    // documented follow-up (see the compiled deferral test below), so the behavioral
+    // tests are interpreter-only.
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Blob_SizeTypeTextSlice(ExecutionMode mode)
+    {
+        var source = """
+            const b = new Blob(['Hello, ', 'world!'], { type: 'text/plain' });
+            console.log(b.size);
+            console.log(b.type);
+            b.text().then((t: string) => console.log(t));
+            b.slice(0, 5).text().then((t: string) => console.log(t));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("13\ntext/plain\nHello, world!\nHello\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Blob_ArrayBufferBytesStream(ExecutionMode mode)
+    {
+        var source = """
+            async function main() {
+              const b = new Blob(['ab', 'cd']);
+              const ab = await b.arrayBuffer();
+              console.log(ab.byteLength);
+              const bytes = await b.bytes();
+              console.log(bytes.length + ' ' + bytes[0]);
+              let total = 0;
+              let first = -1;
+              for await (const chunk of b.stream()) {
+                total += chunk.length;
+                if (first < 0) first = chunk[0];
+              }
+              console.log(total + ' ' + first);
+            }
+            main();
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("4\n4 97\n4 97\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void File_NameLastModified(ExecutionMode mode)
+    {
+        var source = """
+            const f = new File(['data'], 'f.txt', { type: 'text/plain', lastModified: 12345 });
+            console.log(f.name);
+            console.log(f.lastModified);
+            console.log(f.size);
+            console.log(f.type);
+            f.text().then((t: string) => console.log(t));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("f.txt\n12345\n4\ntext/plain\ndata\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Blob_BufferModuleImport(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Blob, File, resolveObjectURL } from 'buffer';
+                const b = new Blob(['hi']);
+                console.log(b.size);
+                const f = new File(['x'], 'a.txt');
+                console.log(f.name);
+                console.log(resolveObjectURL('blob:unknown'));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("2\na.txt\nundefined\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.CompiledOnly), MemberType = typeof(ExecutionModes))]
+    public void Blob_CompiledThrowsClearDeferral(ExecutionMode mode)
+    {
+        // Compiled mode emits a clear, documented deferral error rather than the
+        // misleading "undefined variable Blob".
+        var source = """
+            let msg = '';
+            try {
+                const b = new Blob(['x']);
+            } catch (e) {
+                msg = (e as Error).message;
+            }
+            console.log(msg.includes('not yet supported in compiled mode'));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("true\n", output);
+    }
+
+    #endregion
 }

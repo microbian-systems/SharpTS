@@ -113,6 +113,20 @@ public abstract partial class ExpressionEmitterBase
     {
         switch (className)
         {
+            // Blob/File: interpreter-complete (SharpTSBlob/SharpTSFile); the compiled
+            // $Blob/$File IL type (parts-concatenating ctor + Promise/stream-returning
+            // methods) is a documented follow-up (#1159). Emit a clear runtime error
+            // rather than the misleading "undefined variable Blob".
+            case "Blob":
+            case "File":
+                IL.Emit(OpCodes.Ldstr, className + " is not yet supported in compiled mode (interpreter only); see SharpTS #1159");
+                IL.Emit(OpCodes.Newobj, Ctx.Runtime!.TSTypeErrorCtor);
+                IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateException);
+                IL.Emit(OpCodes.Throw);
+                IL.Emit(OpCodes.Ldnull); // unreachable; balances the expression's result slot
+                SetStackUnknown();
+                return true;
+
             // --- No-arg constructors ---
             case "WeakMap":
                 IL.Emit(OpCodes.Call, Ctx.Runtime!.CreateWeakMap);

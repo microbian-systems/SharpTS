@@ -899,6 +899,11 @@ public static class BuiltInModuleTypes
         {
             ["Buffer"] = bufferConstructorType,
 
+            // Blob/File constructors (also globals) + resolveObjectURL
+            ["Blob"] = anyType,
+            ["File"] = anyType,
+            ["resolveObjectURL"] = new TypeInfo.Function([stringType], anyType, RequiredParams: 1),
+
             // Base64 (also globals)
             ["atob"] = new TypeInfo.Function([stringType], stringType),
             ["btoa"] = new TypeInfo.Function([stringType], stringType),
