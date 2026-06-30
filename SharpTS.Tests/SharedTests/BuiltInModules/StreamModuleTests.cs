@@ -1581,4 +1581,135 @@ public class StreamModuleTests
     }
 
     #endregion
+
+    #region Async iteration (Symbol.asyncIterator) — #1024
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_AsyncIterator_SyncProducer(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    r.push(1); r.push(2); r.push(3); r.push(null);
+                    const out: number[] = [];
+                    for await (const x of r) { out.push(x); }
+                    console.log(out.join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("1,2,3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_AsyncIterator_SlowProducer(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    let i = 0;
+                    const t = setInterval(() => {
+                        i++;
+                        if (i <= 3) { r.push(i * 10); }
+                        else { r.push(null); clearInterval(t); }
+                    }, 5);
+                    const out: number[] = [];
+                    for await (const x of r) { out.push(x); }
+                    console.log(out.join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("10,20,30\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_AsyncIterator_EarlyBreak_Destroys(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    r.push('a'); r.push('b'); r.push('c'); r.push(null);
+                    const out: string[] = [];
+                    for await (const x of r) { out.push(x); if (out.length === 2) break; }
+                    console.log(out.join(','), r.destroyed);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("a,b true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_AsyncIterator_ErrorRejects(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    let i = 0;
+                    const t = setInterval(() => {
+                        i++;
+                        if (i === 1) { r.push('x'); }
+                        else { r.destroy(new Error('boom')); clearInterval(t); }
+                    }, 5);
+                    try {
+                        for await (const x of r) { console.log('got', x); }
+                        console.log('no error');
+                    } catch (e: any) {
+                        console.log('caught:', e.message ?? e);
+                    }
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("got x\ncaught: boom\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Readable_AsyncIterator_FromArray(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = Readable.from([10, 20, 30]);
+                    let sum = 0;
+                    for await (const x of r) { sum += x; }
+                    console.log(sum);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("60\n", output);
+    }
+
+    #endregion
 }

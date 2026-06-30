@@ -193,6 +193,13 @@ public partial class Interpreter
             return new SharpTSReadableStreamAsyncIterator(rs, reader);
         }
 
+        // node:stream Readable (incl. Duplex/Transform/PassThrough) — wrap in an async
+        // iterator that pulls buffered chunks and parks on a slow producer (#1024).
+        if (iterable is SharpTSReadable readable)
+        {
+            return new SharpTSReadableAsyncIterator(readable);
+        }
+
         if (iterable is SharpTSObject obj)
         {
             var asyncIteratorFn = obj.GetBySymbol(SharpTSSymbol.AsyncIterator);

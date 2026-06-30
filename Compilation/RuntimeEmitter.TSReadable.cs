@@ -21,6 +21,10 @@ public partial class RuntimeEmitter
     private FieldBuilder _tsReadableObjectModeField = null!;
     private FieldBuilder _tsReadableHighWaterMarkField = null!;
     private FieldBuilder _tsReadableBufferSizeField = null!;
+    // Async iteration support (#1024)
+    private FieldBuilder _tsReadableErroredField = null!;
+    private FieldBuilder _tsReadableErrorField = null!;
+    private FieldBuilder _tsReadableIterWaiterField = null!;
 
     /// <summary>
     /// Phase 1: Define the $Readable type, fields, and constructor.
@@ -51,6 +55,10 @@ public partial class RuntimeEmitter
         _tsReadableObjectModeField = typeBuilder.DefineField("_objectMode", _types.Boolean, FieldAttributes.Family);
         _tsReadableHighWaterMarkField = typeBuilder.DefineField("_highWaterMark", _types.Int32, FieldAttributes.Family);
         _tsReadableBufferSizeField = typeBuilder.DefineField("_bufferSize", _types.Int32, FieldAttributes.Family);
+        // Async iteration support (#1024): error state + parked async-iterator pull.
+        _tsReadableErroredField = typeBuilder.DefineField("_errored", _types.Boolean, FieldAttributes.Family);
+        _tsReadableErrorField = typeBuilder.DefineField("_error", _types.Object, FieldAttributes.Family);
+        _tsReadableIterWaiterField = typeBuilder.DefineField("_iterWaiter", _types.TaskCompletionSourceOfObject, FieldAttributes.Family);
 
         // Constructor
         EmitTSReadableCtor(typeBuilder, runtime, queueOfObject);
@@ -69,6 +77,11 @@ public partial class RuntimeEmitter
         EmitTSReadableForEach(typeBuilder, runtime, queueOfObject);
         EmitTSReadableSetObjectMode(typeBuilder, runtime);
         EmitTSReadableSetHighWaterMark(typeBuilder, runtime);
+
+        // [Symbol.asyncIterator] surface (#1024). Emitted in Phase 1 so MakeIterResult is
+        // available to Push (Phase 2a), which settles a parked pull. None of these depend
+        // on Duplex/Transform.
+        EmitTSReadableAsyncIteratorMethods(typeBuilder, runtime, queueOfObject);
 
         // Property getters
         EmitTSReadablePropertyGetters(typeBuilder, runtime, queueOfObject);
@@ -444,6 +457,9 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Ldc_I4_0);
         il.Emit(OpCodes.Stfld, _tsReadableReadableField);
 
+        // Settle a parked `for await` pull as done (#1024).
+        EmitSettleIterWaiterDone(il, runtime);
+
         // Emit 'end' event: this.Emit("end", [])
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "end");
@@ -520,6 +536,10 @@ public partial class RuntimeEmitter
         il.Emit(OpCodes.Br, returnFalseLabel);
 
         il.MarkLabel(notNullLabel);
+
+        // Hand the chunk directly to a parked `for await` pull, if any (#1024).
+        // On delivery this returns true from Push so the chunk is not also buffered/emitted.
+        EmitDeliverChunkToIterWaiterAndReturn(il, runtime);
 
         // Check if flowing mode: if (_flowing == 1) emit 'data' directly
         var notFlowingLabel = il.DefineLabel();
@@ -869,9 +889,21 @@ public partial class RuntimeEmitter
         var clearMethod = queueType.GetMethod("Clear")!;
         il.Emit(OpCodes.Callvirt, clearMethod);
 
-        // if (error != null) emit 'error'
+        // if (error != null) { _errored = true; _error = error; fault any parked pull; emit 'error'; }
         il.Emit(OpCodes.Ldarg_1);
         il.Emit(OpCodes.Brfalse, noErrorLabel);
+
+        // _errored = true; _error = error;  (#1024)
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldc_I4_1);
+        il.Emit(OpCodes.Stfld, _tsReadableErroredField);
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Stfld, _tsReadableErrorField);
+
+        // A pending `for await` pull rejects with the destroy error.
+        EmitFaultIterWaiter(il, runtime);
+
         il.Emit(OpCodes.Ldarg_0);
         il.Emit(OpCodes.Ldstr, "error");
         il.Emit(OpCodes.Ldc_I4_1);

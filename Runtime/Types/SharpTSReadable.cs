@@ -23,6 +23,12 @@ public class SharpTSReadable : SharpTSEventEmitter
     private bool _objectMode;
     private int _highWaterMark = 16384; // bytes for binary mode, 16 for object mode
 
+    // Async iteration support (#1024): tracks error state for `for await` rejection,
+    // and parks a pending next() pull when the buffer is empty and the stream is live.
+    private bool _errored;
+    private object? _error;
+    private System.Threading.Tasks.TaskCompletionSource<object?>? _iterWaiter;
+
     /// <summary>
     /// Gets or sets whether this stream operates in object mode.
     /// In object mode, chunks can be any JavaScript value (not just strings/Buffers).
@@ -316,10 +322,14 @@ public class SharpTSReadable : SharpTSEventEmitter
         {
             _ended = true;
             _readable = false;
+            TryDeliverToIterWaiter(null, end: true);
             if (_flowing == true)
                 EmitData(interpreter, "end", null);
             return;
         }
+
+        if (TryDeliverToIterWaiter(chunk, end: false))
+            return;
 
         if (_flowing == true)
             EmitData(interpreter, "data", chunk);
@@ -353,6 +363,7 @@ public class SharpTSReadable : SharpTSEventEmitter
             // EOF signal
             _ended = true;
             _readable = false;
+            TryDeliverToIterWaiter(null, end: true);
             if (_flowing == true)
             {
                 EmitEvent(interpreter, "end", []);
@@ -363,6 +374,12 @@ public class SharpTSReadable : SharpTSEventEmitter
             }
             FlushPipes(interpreter);
             return RuntimeValue.False;
+        }
+
+        // Hand the chunk directly to a parked `for await` pull, if any (#1024).
+        if (TryDeliverToIterWaiter(chunk, end: false))
+        {
+            return RuntimeValue.FromBoolean(GetBufferSize() < _highWaterMark);
         }
 
         if (_flowing == true)
@@ -570,10 +587,21 @@ public class SharpTSReadable : SharpTSEventEmitter
         _readBuffer.Clear();
         _pipeDestinations.Clear();
 
-        if (args.Length > 0 && args[0].ToObject() is { } error)
+        var destroyError = args.Length > 0 ? args[0].ToObject() : null;
+        if (destroyError is not null)
         {
+            _errored = true;
+            _error = destroyError;
+            // A pending `for await` pull rejects with the destroy error (#1024).
+            var faulted = _iterWaiter;
+            _iterWaiter = null;
+            faulted?.TrySetException(new SharpTSPromiseRejectedException(destroyError));
             // Emit error event
-            EmitEvent(interpreter, "error", [error]);
+            EmitEvent(interpreter, "error", [destroyError]);
+        }
+        else
+        {
+            TryDeliverToIterWaiter(null, end: true);
         }
 
         EmitEvent(interpreter, "close", []);
@@ -848,6 +876,68 @@ public class SharpTSReadable : SharpTSEventEmitter
             size += GetChunkLength(chunk);
         }
         return size;
+    }
+
+    // ---- Async iteration support (#1024) ----
+
+    private static Dictionary<string, object?> MakeIterResult(object? value, bool done)
+        => new() { ["value"] = done ? SharpTSUndefined.Instance : value, ["done"] = done };
+
+    /// <summary>
+    /// Pulls the next chunk for <c>[Symbol.asyncIterator]().next()</c>. Returns a Task that
+    /// resolves to an <c>{ value, done }</c> record. When the buffer is empty and the stream
+    /// is still live, the returned task is parked until the next push / end / error so a slow
+    /// (asynchronous) producer is awaited rather than ending the loop prematurely.
+    /// </summary>
+    internal System.Threading.Tasks.Task<object?> IterNextAsync()
+    {
+        if (_readBuffer.Count > 0)
+            return System.Threading.Tasks.Task.FromResult<object?>(MakeIterResult(_readBuffer.Dequeue(), false));
+        if (_errored)
+        {
+            var tcs = new System.Threading.Tasks.TaskCompletionSource<object?>();
+            tcs.SetException(new SharpTSPromiseRejectedException(_error));
+            return tcs.Task;
+        }
+        if (_ended || _destroyed)
+            return System.Threading.Tasks.Task.FromResult<object?>(MakeIterResult(null, true));
+
+        // Park until a producer pushes more, ends, or errors.
+        _iterWaiter = new System.Threading.Tasks.TaskCompletionSource<object?>(
+            System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
+        return _iterWaiter.Task;
+    }
+
+    /// <summary>
+    /// Cleanup for an early <c>for await</c> exit (break/return/throw) — destroys the stream
+    /// and settles any parked pull as done.
+    /// </summary>
+    internal void IterReturn()
+    {
+        if (!_destroyed)
+        {
+            _destroyed = true;
+            _readable = false;
+            _readBuffer.Clear();
+            _pipeDestinations.Clear();
+        }
+        var waiter = _iterWaiter;
+        _iterWaiter = null;
+        waiter?.TrySetResult(MakeIterResult(null, true));
+    }
+
+    /// <summary>
+    /// Hands a value to a parked async-iterator pull, if one is waiting. Returns true when the
+    /// value was consumed by the iterator (so the caller must not also buffer / emit it).
+    /// </summary>
+    private bool TryDeliverToIterWaiter(object? chunk, bool end)
+    {
+        var waiter = _iterWaiter;
+        if (waiter == null)
+            return false;
+        _iterWaiter = null;
+        waiter.TrySetResult(end ? MakeIterResult(null, true) : MakeIterResult(chunk, false));
+        return true;
     }
 
     public override string ToString() => "Readable {}";
