@@ -2118,6 +2118,7 @@ public class EmittedRuntime
     public MethodBuilder BufferTranscode { get; set; } = null!;
     public MethodBuilder BufferSlowBuffer { get; set; } = null!;
     public MethodBuilder BufferModuleConstants { get; set; } = null!;
+    public MethodBuilder BufferCopyBytesFrom { get; set; } = null!;
     public MethodBuilder TSBufferCopy { get; set; } = null!;
     public MethodBuilder TSBufferCompare { get; set; } = null!;
     public MethodBuilder TSBufferEquals { get; set; } = null!;
@@ -2131,6 +2132,12 @@ public class EmittedRuntime
     // Multi-byte read methods
     public MethodBuilder TSBufferReadInt8 { get; set; } = null!;
     public MethodBuilder TSBufferReadUInt16LE { get; set; } = null!;
+    public MethodBuilder TSBufferReadUIntLE { get; set; } = null!;
+    public MethodBuilder TSBufferReadUIntBE { get; set; } = null!;
+    public MethodBuilder TSBufferReadIntLE { get; set; } = null!;
+    public MethodBuilder TSBufferReadIntBE { get; set; } = null!;
+    public MethodBuilder TSBufferWriteUIntLE { get; set; } = null!;
+    public MethodBuilder TSBufferWriteUIntBE { get; set; } = null!;
     public MethodBuilder TSBufferReadUInt16BE { get; set; } = null!;
     public MethodBuilder TSBufferReadUInt32LE { get; set; } = null!;
     public MethodBuilder TSBufferReadUInt32BE { get; set; } = null!;

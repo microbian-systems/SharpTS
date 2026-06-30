@@ -1288,4 +1288,90 @@ public class BufferTests
     }
 
     #endregion
+
+    #region Buffer statics + read/write matrix (#1161)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Of_And_PoolSize(ExecutionMode mode)
+    {
+        var source = """
+            const b = Buffer.of(72, 105);
+            console.log(b.toString());
+            console.log(b.length);
+            console.log(Buffer.poolSize);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("Hi\n2\n8192\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_VariableLengthReadWrite(ExecutionMode mode)
+    {
+        var source = """
+            const b = Buffer.from([1, 2, 3, 4, 5, 6]);
+            console.log(b.readUIntLE(0, 3));
+            console.log(b.readUIntBE(0, 3));
+            console.log(b.readIntLE(3, 3));
+            const w = Buffer.alloc(6);
+            w.writeUIntLE(197121, 0, 3);
+            console.log(w.readUIntLE(0, 3));
+            w.writeIntBE(-1000, 0, 4);
+            console.log(w.readIntBE(0, 4));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("197121\n66051\n394500\n197121\n-1000\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_Subarray(ExecutionMode mode)
+    {
+        var source = """
+            const b = Buffer.from([10, 20, 30, 40, 50]);
+            console.log(b.subarray(1, 3).toString('hex'));
+            console.log(b.subarray(2).length);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("141e\n3\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_LowercaseUintAliases(ExecutionMode mode)
+    {
+        var source = """
+            const b = Buffer.from([1, 0, 2, 0]);
+            console.log(b.readUint8(0));
+            console.log(b.readUint16LE(0));
+            const w = Buffer.alloc(2);
+            w.writeUint16LE(513, 0);
+            console.log(w.readUint16LE(0));
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("1\n1\n513\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Buffer_CopyBytesFrom(ExecutionMode mode)
+    {
+        var source = """
+            const u16 = new Uint16Array([0x0102, 0x0304]);
+            const b = Buffer.copyBytesFrom(u16);
+            console.log(b.length);
+            const sub = Buffer.copyBytesFrom(u16, 1);
+            console.log(sub.length);
+            """;
+
+        var output = TestHarness.Run(source, mode);
+        Assert.Equal("4\n2\n", output);
+    }
+
+    #endregion
 }

@@ -19,6 +19,48 @@ public sealed class BufferStaticEmitter : IStaticTypeEmitterStrategy
 
         switch (methodName)
         {
+            case "of":
+                // Buffer.of(...bytes) — build a List<object?> of the args and call FromArray.
+                var ofListLocal = il.DeclareLocal(ctx.Types.ListOfObject);
+                il.Emit(OpCodes.Newobj, ctx.Types.GetConstructor(ctx.Types.ListOfObject));
+                il.Emit(OpCodes.Stloc, ofListLocal);
+                var ofAdd = ctx.Types.ListOfObject.GetMethod("Add", [ctx.Types.Object])!;
+                foreach (var arg in arguments)
+                {
+                    il.Emit(OpCodes.Ldloc, ofListLocal);
+                    emitter.EmitExpression(arg);
+                    emitter.EmitBoxIfNeeded(arg);
+                    il.Emit(OpCodes.Callvirt, ofAdd);
+                }
+                il.Emit(OpCodes.Ldloc, ofListLocal);
+                il.Emit(OpCodes.Call, ctx.Runtime!.TSBufferFromArray);
+                return true;
+
+            case "copyBytesFrom":
+                // Buffer.copyBytesFrom(view[, offset[, length]])
+                emitter.EmitExpression(arguments[0]);
+                emitter.EmitBoxIfNeeded(arguments[0]);
+                if (arguments.Count > 1)
+                {
+                    emitter.EmitExpression(arguments[1]);
+                    emitter.EmitBoxIfNeeded(arguments[1]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldnull);
+                }
+                if (arguments.Count > 2)
+                {
+                    emitter.EmitExpression(arguments[2]);
+                    emitter.EmitBoxIfNeeded(arguments[2]);
+                }
+                else
+                {
+                    il.Emit(OpCodes.Ldnull);
+                }
+                il.Emit(OpCodes.Call, ctx.Runtime!.BufferCopyBytesFrom);
+                return true;
+
             case "isBuffer":
                 if (arguments.Count > 0)
                 {
@@ -187,10 +229,18 @@ public sealed class BufferStaticEmitter : IStaticTypeEmitterStrategy
     }
 
     /// <summary>
-    /// Buffer has no static properties.
+    /// Buffer.poolSize — informational only (SharpTS doesn't pool); emits the Node
+    /// default of 8 KiB. Assignment isn't tracked in compiled mode.
     /// </summary>
     public bool TryEmitStaticPropertyGet(IEmitterContext emitter, string propertyName)
     {
-        return false;
+        if (propertyName != "poolSize")
+            return false;
+
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        il.Emit(OpCodes.Ldc_R8, 8192.0);
+        il.Emit(OpCodes.Box, ctx.Types.Double);
+        return true;
     }
 }

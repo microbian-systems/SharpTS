@@ -22,6 +22,163 @@ public partial class RuntimeEmitter
         EmitBufferTranscode(typeBuilder, runtime);
         EmitBufferSlowBuffer(typeBuilder, runtime);
         EmitBufferModuleConstants(typeBuilder, runtime);
+
+        // Buffer.copyBytesFrom needs the $TypedArray runtime type, which is only emitted
+        // when a typed array is used. Any caller passes a TypedArray, so HasAnyTypedArray
+        // is set whenever this helper is actually reachable.
+        if (_features.HasAnyTypedArray)
+            EmitBufferCopyBytesFrom(typeBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Emits <c>object BufferCopyBytesFrom(object view, object offset, object length)</c>:
+    /// copies a TypedArray's underlying bytes (offset/length in view elements) into a new
+    /// Buffer. Mirrors SharpTSBufferConstructor.BufferCopyBytesFrom.
+    /// </summary>
+    private void EmitBufferCopyBytesFrom(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "BufferCopyBytesFrom",
+            System.Reflection.MethodAttributes.Public | System.Reflection.MethodAttributes.Static,
+            _types.Object, [_types.Object, _types.Object, _types.Object]);
+        runtime.BufferCopyBytesFrom = method;
+
+        var il = method.GetILGenerator();
+        var byteArr = _types.MakeArrayType(_types.Byte);
+        var arrayCopy = typeof(Array).GetMethod("Copy",
+            [typeof(Array), _types.Int32, typeof(Array), _types.Int32, _types.Int32])!;
+
+        // ta = view as $TypedArray; if null throw
+        var taLocal = il.DeclareLocal(runtime.TypedArrayBaseType);
+        var ok = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Isinst, runtime.TypedArrayBaseType);
+        il.Emit(OpCodes.Stloc, taLocal);
+        il.Emit(OpCodes.Ldloc, taLocal);
+        il.Emit(OpCodes.Brtrue, ok);
+        il.Emit(OpCodes.Ldstr, "Buffer.copyBytesFrom requires a TypedArray argument");
+        il.Emit(OpCodes.Newobj, _types.GetConstructor(_types.Exception, _types.String));
+        il.Emit(OpCodes.Throw);
+        il.MarkLabel(ok);
+
+        var backing = il.DeclareLocal(byteArr);
+        il.Emit(OpCodes.Ldloc, taLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TypedArrayGetBuffer);
+        il.Emit(OpCodes.Stloc, backing);
+
+        var byteOff = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, taLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TypedArrayByteOffsetGetter);
+        il.Emit(OpCodes.Stloc, byteOff);
+
+        var elemCount = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, taLocal);
+        il.Emit(OpCodes.Callvirt, runtime.TypedArrayLengthGetter);
+        il.Emit(OpCodes.Stloc, elemCount);
+
+        var bpe = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, taLocal);
+        il.Emit(OpCodes.Callvirt, _typedArrayBytesPerElementGetter!);
+        il.Emit(OpCodes.Stloc, bpe);
+
+        // int offEl = (offset is double) ? (int)offset : 0; clamp >= 0
+        var offEl = il.DeclareLocal(_types.Int32);
+        var offDefault = il.DefineLabel();
+        var afterOff = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, offDefault);
+        il.Emit(OpCodes.Ldarg_1);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, offEl);
+        il.Emit(OpCodes.Br, afterOff);
+        il.MarkLabel(offDefault);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, offEl);
+        il.MarkLabel(afterOff);
+        var offOk = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, offEl);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bge, offOk);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, offEl);
+        il.MarkLabel(offOk);
+
+        // int lenEl = (length is double) ? (int)length : (elemCount - offEl)
+        var lenEl = il.DeclareLocal(_types.Int32);
+        var lenDefault = il.DefineLabel();
+        var afterLen = il.DefineLabel();
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Isinst, _types.Double);
+        il.Emit(OpCodes.Brfalse, lenDefault);
+        il.Emit(OpCodes.Ldarg_2);
+        il.Emit(OpCodes.Unbox_Any, _types.Double);
+        il.Emit(OpCodes.Conv_I4);
+        il.Emit(OpCodes.Stloc, lenEl);
+        il.Emit(OpCodes.Br, afterLen);
+        il.MarkLabel(lenDefault);
+        il.Emit(OpCodes.Ldloc, elemCount);
+        il.Emit(OpCodes.Ldloc, offEl);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, lenEl);
+        il.MarkLabel(afterLen);
+        // if (lenEl < 0) lenEl = 0
+        var lenOk1 = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, lenEl);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bge, lenOk1);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, lenEl);
+        il.MarkLabel(lenOk1);
+        // if (offEl + lenEl > elemCount) lenEl = max(0, elemCount - offEl)
+        var lenOk2 = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, offEl);
+        il.Emit(OpCodes.Ldloc, lenEl);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Ldloc, elemCount);
+        il.Emit(OpCodes.Ble, lenOk2);
+        il.Emit(OpCodes.Ldloc, elemCount);
+        il.Emit(OpCodes.Ldloc, offEl);
+        il.Emit(OpCodes.Sub);
+        il.Emit(OpCodes.Stloc, lenEl);
+        il.Emit(OpCodes.Ldloc, lenEl);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Bge, lenOk2);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Stloc, lenEl);
+        il.MarkLabel(lenOk2);
+
+        // int byteStart = byteOff + offEl * bpe; int byteLen = lenEl * bpe;
+        var byteStart = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, byteOff);
+        il.Emit(OpCodes.Ldloc, offEl);
+        il.Emit(OpCodes.Ldloc, bpe);
+        il.Emit(OpCodes.Mul);
+        il.Emit(OpCodes.Add);
+        il.Emit(OpCodes.Stloc, byteStart);
+        var byteLen = il.DeclareLocal(_types.Int32);
+        il.Emit(OpCodes.Ldloc, lenEl);
+        il.Emit(OpCodes.Ldloc, bpe);
+        il.Emit(OpCodes.Mul);
+        il.Emit(OpCodes.Stloc, byteLen);
+
+        // byte[] result = new byte[byteLen]; Array.Copy(backing, byteStart, result, 0, byteLen)
+        var result = il.DeclareLocal(byteArr);
+        il.Emit(OpCodes.Ldloc, byteLen);
+        il.Emit(OpCodes.Newarr, _types.Byte);
+        il.Emit(OpCodes.Stloc, result);
+        il.Emit(OpCodes.Ldloc, backing);
+        il.Emit(OpCodes.Ldloc, byteStart);
+        il.Emit(OpCodes.Ldloc, result);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Ldloc, byteLen);
+        il.Emit(OpCodes.Call, arrayCopy);
+
+        // return new $Buffer(result)
+        il.Emit(OpCodes.Ldloc, result);
+        il.Emit(OpCodes.Newobj, runtime.TSBufferCtor);
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>Emits <c>string BufferCoerceString(object)</c> — null → "", string → itself, else ToString().</summary>

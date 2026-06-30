@@ -412,6 +412,14 @@ public class SharpTSBuffer : ITypeCategorized
     /// </summary>
     public object? GetMember(string name)
     {
+        // Node exposes both the `UInt` and lowercase `Uint` spellings for every
+        // unsigned read/write (readUInt8/readUint8, writeBigUInt64LE/writeBigUint64LE,
+        // readUIntLE/readUintLE, …). Normalize to the canonical `UInt` spelling so a
+        // single set of cases serves both — matching the compiled path, whose
+        // reflection dispatch already resolves either spelling case-insensitively.
+        if (name.Contains("Uint"))
+            name = name.Replace("Uint", "UInt");
+
         return name switch
         {
             "length" => (double)Length,
@@ -428,6 +436,37 @@ public class SharpTSBuffer : ITypeCategorized
                 int? end = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : null;
                 return RuntimeValue.FromObject(Slice(start, end));
             }),
+
+            // subarray: same windowing arithmetic as slice. DEVIATION: SharpTS Buffers
+            // wrap a flat managed byte[] (not a view over a shared ArrayBuffer), so the
+            // result is an independent copy rather than sharing memory with the parent —
+            // mirroring this Buffer's existing copying `slice`. (Shared-memory views would
+            // require an offset/length backing refactor of both the interpreter and the
+            // compiled $Buffer.)
+            "subarray" => BuiltInMethod.CreateV2("subarray", 0, 2, (_, _, args) =>
+            {
+                int start = args.Length > 0 && args[0].IsNumber ? (int)args[0].AsNumberUnsafe() : 0;
+                int? end = args.Length > 1 && args[1].IsNumber ? (int)args[1].AsNumberUnsafe() : null;
+                return RuntimeValue.FromObject(Slice(start, end));
+            }),
+
+            // Variable-length integer reads/writes (1-6 bytes).
+            "readUIntLE" or "readUintLE" => BuiltInMethod.CreateV2("readUIntLE", 2, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadUIntLE(OffsetArg(args, 0), OffsetArg(args, 1)))),
+            "readUIntBE" or "readUintBE" => BuiltInMethod.CreateV2("readUIntBE", 2, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadUIntBE(OffsetArg(args, 0), OffsetArg(args, 1)))),
+            "readIntLE" => BuiltInMethod.CreateV2("readIntLE", 2, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadIntLE(OffsetArg(args, 0), OffsetArg(args, 1)))),
+            "readIntBE" => BuiltInMethod.CreateV2("readIntBE", 2, (_, _, args) =>
+                RuntimeValue.FromNumber(ReadIntBE(OffsetArg(args, 0), OffsetArg(args, 1)))),
+            "writeUIntLE" or "writeUintLE" => BuiltInMethod.CreateV2("writeUIntLE", 3, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteUIntLE(NumberArg(args, "writeUIntLE"), OffsetArg(args, 1), OffsetArg(args, 2)))),
+            "writeUIntBE" or "writeUintBE" => BuiltInMethod.CreateV2("writeUIntBE", 3, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteUIntBE(NumberArg(args, "writeUIntBE"), OffsetArg(args, 1), OffsetArg(args, 2)))),
+            "writeIntLE" => BuiltInMethod.CreateV2("writeIntLE", 3, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteIntLE(NumberArg(args, "writeIntLE"), OffsetArg(args, 1), OffsetArg(args, 2)))),
+            "writeIntBE" => BuiltInMethod.CreateV2("writeIntBE", 3, (_, _, args) =>
+                RuntimeValue.FromNumber(WriteIntBE(NumberArg(args, "writeIntBE"), OffsetArg(args, 1), OffsetArg(args, 2)))),
 
             "copy" => BuiltInMethod.CreateV2("copy", 1, 4, (_, _, args) =>
             {
@@ -1040,6 +1079,86 @@ public class SharpTSBuffer : ITypeCategorized
         };
         BinaryPrimitives.WriteUInt64BigEndian(_data.AsSpan(offset), ulongValue);
         return offset + 8;
+    }
+
+    #endregion
+
+    #region Variable-length Reads/Writes
+
+    /// <summary>Reads an unsigned little-endian integer of <paramref name="byteLength"/> (1-6) bytes.</summary>
+    public double ReadUIntLE(int offset, int byteLength)
+    {
+        ValidateVarByteLength(byteLength);
+        ValidateOffset(offset, byteLength);
+        long val = 0;
+        for (int i = 0; i < byteLength; i++)
+            val |= (long)_data[offset + i] << (8 * i);
+        return val;
+    }
+
+    /// <summary>Reads an unsigned big-endian integer of <paramref name="byteLength"/> (1-6) bytes.</summary>
+    public double ReadUIntBE(int offset, int byteLength)
+    {
+        ValidateVarByteLength(byteLength);
+        ValidateOffset(offset, byteLength);
+        long val = 0;
+        for (int i = 0; i < byteLength; i++)
+            val = (val << 8) | _data[offset + i];
+        return val;
+    }
+
+    /// <summary>Reads a signed little-endian integer of <paramref name="byteLength"/> (1-6) bytes.</summary>
+    public double ReadIntLE(int offset, int byteLength)
+        => SignExtend((long)ReadUIntLE(offset, byteLength), byteLength);
+
+    /// <summary>Reads a signed big-endian integer of <paramref name="byteLength"/> (1-6) bytes.</summary>
+    public double ReadIntBE(int offset, int byteLength)
+        => SignExtend((long)ReadUIntBE(offset, byteLength), byteLength);
+
+    /// <summary>Writes a little-endian integer of <paramref name="byteLength"/> (1-6) bytes. Returns offset + byteLength.</summary>
+    public double WriteUIntLE(double value, int offset, int byteLength)
+    {
+        ValidateVarByteLength(byteLength);
+        ValidateOffset(offset, byteLength);
+        long v = (long)value;
+        for (int i = 0; i < byteLength; i++)
+        {
+            _data[offset + i] = (byte)(v & 0xFF);
+            v >>= 8;
+        }
+        return offset + byteLength;
+    }
+
+    /// <summary>Writes a big-endian integer of <paramref name="byteLength"/> (1-6) bytes. Returns offset + byteLength.</summary>
+    public double WriteUIntBE(double value, int offset, int byteLength)
+    {
+        ValidateVarByteLength(byteLength);
+        ValidateOffset(offset, byteLength);
+        long v = (long)value;
+        for (int i = byteLength - 1; i >= 0; i--)
+        {
+            _data[offset + i] = (byte)(v & 0xFF);
+            v >>= 8;
+        }
+        return offset + byteLength;
+    }
+
+    // Signed writes are byte-identical to unsigned (two's-complement representation).
+    public double WriteIntLE(double value, int offset, int byteLength) => WriteUIntLE(value, offset, byteLength);
+    public double WriteIntBE(double value, int offset, int byteLength) => WriteUIntBE(value, offset, byteLength);
+
+    private static void ValidateVarByteLength(int byteLength)
+    {
+        if (byteLength < 1 || byteLength > 6)
+            throw new Exception($"The value of \"byteLength\" is out of range. It must be >= 1 and <= 6. Received {byteLength}");
+    }
+
+    private static double SignExtend(long val, int byteLength)
+    {
+        long signBit = 1L << (byteLength * 8 - 1);
+        if ((val & signBit) != 0)
+            val -= 1L << (byteLength * 8);
+        return val;
     }
 
     #endregion

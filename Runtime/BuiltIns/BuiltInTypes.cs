@@ -745,6 +745,11 @@ public static class BuiltInTypes
     {
         var bufferType = new TypeInfo.Buffer();
 
+        // Accept Node's lowercase `Uint` spelling (readUint8, writeBigUint64LE, …)
+        // as an alias for the canonical `UInt` form.
+        if (name.Contains("Uint"))
+            name = name.Replace("Uint", "UInt");
+
         return name switch
         {
             // Properties
@@ -753,6 +758,7 @@ public static class BuiltInTypes
             // Methods
             "toString" => new TypeInfo.Function([StringType], StringType, RequiredParams: 0), // encoding optional
             "slice" => new TypeInfo.Function([NumberType, NumberType], bufferType, RequiredParams: 0), // start, end optional
+            "subarray" => new TypeInfo.Function([NumberType, NumberType], bufferType, RequiredParams: 0), // start, end optional
             "copy" => new TypeInfo.Function(
                 [bufferType, NumberType, NumberType, NumberType],
                 NumberType,
@@ -809,6 +815,16 @@ public static class BuiltInTypes
             "writeBigUInt64LE" => new TypeInfo.Function([BigIntType, NumberType], NumberType, RequiredParams: 1),
             "writeBigUInt64BE" => new TypeInfo.Function([BigIntType, NumberType], NumberType, RequiredParams: 1),
 
+            // Variable-length integer reads/writes (offset, byteLength)
+            "readUIntLE" => new TypeInfo.Function([NumberType, NumberType], NumberType, RequiredParams: 2),
+            "readUIntBE" => new TypeInfo.Function([NumberType, NumberType], NumberType, RequiredParams: 2),
+            "readIntLE" => new TypeInfo.Function([NumberType, NumberType], NumberType, RequiredParams: 2),
+            "readIntBE" => new TypeInfo.Function([NumberType, NumberType], NumberType, RequiredParams: 2),
+            "writeUIntLE" => new TypeInfo.Function([NumberType, NumberType, NumberType], NumberType, RequiredParams: 3),
+            "writeUIntBE" => new TypeInfo.Function([NumberType, NumberType, NumberType], NumberType, RequiredParams: 3),
+            "writeIntLE" => new TypeInfo.Function([NumberType, NumberType, NumberType], NumberType, RequiredParams: 3),
+            "writeIntBE" => new TypeInfo.Function([NumberType, NumberType, NumberType], NumberType, RequiredParams: 3),
+
             // Search methods
             "indexOf" => new TypeInfo.Function([AnyType, NumberType, StringType], NumberType, RequiredParams: 1),
             "includes" => new TypeInfo.Function([AnyType, NumberType, StringType], BooleanType, RequiredParams: 1),
@@ -852,6 +868,9 @@ public static class BuiltInTypes
                 RequiredParams: 1), // string required, encoding optional
             "compare" => new TypeInfo.Function([bufferType, bufferType], NumberType),
             "isEncoding" => new TypeInfo.Function([StringType], BooleanType),
+            "of" => new TypeInfo.Function([NumberType], bufferType, RequiredParams: 0, HasRestParam: true),
+            "copyBytesFrom" => new TypeInfo.Function([AnyType, NumberType, NumberType], bufferType, RequiredParams: 1),
+            "poolSize" => NumberType,
 
             _ => null
         };
