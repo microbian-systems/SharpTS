@@ -505,4 +505,48 @@ public class TlsModuleTests
     }
 
     #endregion
+
+    #region I/O + renegotiate parity (#1035)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void TlsSocket_WriteEchoAndClose_Parity(ExecutionMode mode)
+    {
+        // Bidirectional write-through over the negotiated SslStream + close lifecycle,
+        // plus renegotiate() returning the socket — identical interp == compiled.
+        var (certPem, keyPem) = GenerateSelfSignedCert();
+        var files = new Dictionary<string, string>
+        {
+            ["./main.ts"] = $$"""
+                import * as tls from 'tls';
+                const cert = `{{certPem}}`;
+                const key = `{{keyPem}}`;
+                const server = tls.createServer({ cert, key }, (socket: any) => {
+                    socket.setEncoding('utf8');
+                    socket.on('data', (d: string) => { socket.write('echo:' + d); });
+                    socket.on('end', () => { socket.end(); });
+                });
+                server.listen(0, '127.0.0.1', () => {
+                    const addr = server.address();
+                    const client = tls.connect(addr.port, '127.0.0.1', { rejectUnauthorized: false }, () => {
+                        console.log('reneg-self:' + (client.renegotiate({}, () => {}) === client));
+                        client.write('ping');
+                        client.end();
+                    });
+                    client.setEncoding('utf8');
+                    let recv = '';
+                    client.on('data', (d: string) => { recv += d; });
+                    client.on('close', () => {
+                        console.log('recv:' + recv);
+                        console.log('closed:true');
+                        server.close();
+                    });
+                });
+                """
+        };
+        var output = TestHarness.RunModules(files, "./main.ts", mode);
+        Assert.Equal("reneg-self:true\nrecv:echo:ping\nclosed:true\n", output);
+    }
+
+    #endregion
 }
