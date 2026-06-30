@@ -2147,6 +2147,11 @@ public static class BuiltInModuleTypes
             ["runInNewContext"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 0),
             ["runInThisContext"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
             ["runInContext"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 1),
+            ["createCachedData"] = new TypeInfo.Function([], anyType, RequiredParams: 0),
+            ["cachedData"] = anyType,
+            ["cachedDataProduced"] = BooleanType,
+            ["cachedDataRejected"] = BooleanType,
+            ["sourceMapURL"] = anyType,
         }.ToFrozenDictionary());
 
         var stringArrayType = new TypeInfo.Array(stringType);

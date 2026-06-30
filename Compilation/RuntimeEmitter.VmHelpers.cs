@@ -50,13 +50,11 @@ public partial class RuntimeEmitter
         var typeLocal = il.DeclareLocal(_types.Type);
         il.Emit(OpCodes.Stloc, typeLocal);
 
-        // Standalone (SharpTS absent): return a resolved promise of null.
+        // Standalone (SharpTS absent): throw a clear "not supported" error.
         var typeOk = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, typeLocal);
         il.Emit(OpCodes.Brtrue, typeOk);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Call, runtime.TSPromiseResolve);
-        il.Emit(OpCodes.Ret);
+        EmitThrowVmNotStandalone(il);
         il.MarkLabel(typeOk);
 
         // object dict = moduleType.GetMethod("MeasureMemoryResultObject").Invoke(null, Array.Empty<object>());
@@ -234,8 +232,7 @@ public partial class RuntimeEmitter
         var typeOk = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, typeLocal);
         il.Emit(OpCodes.Brtrue, typeOk);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+        EmitThrowVmNotStandalone(il);
         il.MarkLabel(typeOk);
 
         // MethodInfo getExports = moduleType.GetMethod("GetExports");
@@ -332,8 +329,7 @@ public partial class RuntimeEmitter
         var typeOk = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, typeLocal);
         il.Emit(OpCodes.Brtrue, typeOk);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+        EmitThrowVmNotStandalone(il);
         il.MarkLabel(typeOk);
 
         // object exports = moduleType.GetMethod("GetExports").Invoke(null, Array.Empty<object>());
@@ -396,6 +392,19 @@ public partial class RuntimeEmitter
     }
 
     /// <summary>
+    /// Emits a clear "vm requires the SharpTS runtime" throw — reached only when the vm
+    /// program was built with --standalone (SharpTS.dll suppressed), so the soft-dependency
+    /// path degrades to a deterministic error instead of a silent null (cf. the eval/tls
+    /// standalone lesson). A normal --compile co-locates SharpTS.dll, so this never fires.
+    /// </summary>
+    private void EmitThrowVmNotStandalone(ILGenerator il)
+    {
+        il.Emit(OpCodes.Ldstr, "vm module is not supported in standalone compiled output (SharpTS runtime not present).");
+        il.Emit(OpCodes.Newobj, _types.ExceptionCtorString);
+        il.Emit(OpCodes.Throw);
+    }
+
+    /// <summary>
     /// Emits IL that calls VmModuleInterpreter.GetExports()[methodName] via reflection.
     /// Same pattern as EmitChildProcessReflectionCall.
     /// </summary>
@@ -411,8 +420,7 @@ public partial class RuntimeEmitter
         var typeOk = il.DefineLabel();
         il.Emit(OpCodes.Ldloc, typeLocal);
         il.Emit(OpCodes.Brtrue, typeOk);
-        il.Emit(OpCodes.Ldnull);
-        il.Emit(OpCodes.Ret);
+        EmitThrowVmNotStandalone(il);
         il.MarkLabel(typeOk);
 
         // MethodInfo getExports = moduleType.GetMethod("GetExports");

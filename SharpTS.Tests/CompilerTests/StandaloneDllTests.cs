@@ -261,6 +261,70 @@ public class StandaloneDllTests
         }
     }
 
+    /// <summary>
+    /// vm is a soft dependency: a normal --compile co-locates SharpTS.dll, but a --standalone
+    /// build suppresses the copy and the vm path must throw a clear "not supported" error at
+    /// runtime instead of silently degrading (cf. the eval/tls standalone lesson). The test
+    /// helper never co-locates SharpTS.dll, so running the isolated DLL exercises exactly the
+    /// --standalone path.
+    /// </summary>
+    [Fact]
+    public void Isolated_Vm_ThrowsClearly_WhenSharpTsRuntimeAbsent()
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                console.log(vm.runInNewContext('1 + 1'));
+                """
+        };
+
+        var (tempDir, dllPath) = CompileStandaloneModule(files, "main.ts");
+        try
+        {
+            var ex = Assert.Throws<Exception>(() => ExecuteCompiledDllIsolated(dllPath, timeoutMs: 15000));
+            Assert.Contains("vm module is not supported in standalone", ex.Message);
+        }
+        finally
+        {
+            CleanupTempDir(tempDir);
+        }
+    }
+
+    /// <summary>
+    /// A vm program records the "vm module" soft-dependency reason so the CLI co-locates
+    /// SharpTS.dll next to non-standalone output.
+    /// </summary>
+    [Fact]
+    public void Vm_RecordsSharpTsRuntimeDependency()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"sharpts_vm_dep_{Guid.NewGuid()}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var entryPath = Path.Combine(tempDir, "main.ts");
+            File.WriteAllText(entryPath, """
+                import * as vm from 'vm';
+                console.log(vm.runInNewContext('1 + 1'));
+                """);
+
+            var resolver = new ModuleResolver(entryPath);
+            var entryModule = resolver.LoadModule(entryPath);
+            var modules = resolver.GetModulesInOrder(entryModule);
+            var typeMap = new TypeChecker().CheckModules(modules, resolver);
+            var deadCodeInfo = new DeadCodeAnalyzer(typeMap).Analyze(modules.SelectMany(m => m.Statements).ToList());
+
+            var compiler = new ILCompiler("vm_dep_test");
+            compiler.CompileModules(modules, resolver, typeMap, deadCodeInfo);
+
+            Assert.Contains("vm module", compiler.RequiredSharpTSRuntimeReasons);
+        }
+        finally
+        {
+            CleanupTempDir(tempDir);
+        }
+    }
+
     [Fact]
     public void Isolated_BroadcastChannel_ShouldExecuteWithoutSharpTsDll()
     {
