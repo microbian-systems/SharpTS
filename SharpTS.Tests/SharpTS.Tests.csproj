@@ -1,9 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <!-- TargetFramework / ImplicitUsings / Nullable inherited from Directory.Build.props. -->
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <!-- Server + Concurrent GC: the test workload is heavily multi-threaded (xUnit parallel
