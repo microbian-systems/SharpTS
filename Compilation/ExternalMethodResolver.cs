@@ -350,9 +350,8 @@ public class ExternalMethodResolver(TypeMap? typeMap, TypeProvider types)
 
     private static bool IsStringType(TSTypeInfo? type) => type switch
     {
-        TSTypeInfo.String => true,
+        TSTypeInfo.String => true,        // `string` is always TypeInfo.String (#1108)
         TSTypeInfo.StringLiteral => true,
-        TSTypeInfo.Primitive { Type: TokenType.TYPE_STRING } => true,
         _ => false
     };
 

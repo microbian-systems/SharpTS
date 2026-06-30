@@ -1734,8 +1734,8 @@ public partial class TypeChecker
         if (name.Lexeme == "undefined") return new TypeInfo.Undefined(); // Global undefined
         if (name.Lexeme == "NaN") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER); // Global NaN
         if (name.Lexeme == "Infinity") return new TypeInfo.Primitive(TokenType.TYPE_NUMBER); // Global Infinity
-        if (name.Lexeme == "__dirname") return new TypeInfo.Primitive(TokenType.TYPE_STRING); // Node.js __dirname
-        if (name.Lexeme == "__filename") return new TypeInfo.Primitive(TokenType.TYPE_STRING); // Node.js __filename
+        if (name.Lexeme == "__dirname") return new TypeInfo.String(); // Node.js __dirname
+        if (name.Lexeme == "__filename") return new TypeInfo.String(); // Node.js __filename
         // CommonJS globals — bound by the CJS module wrapper at runtime. Treated as `any` because
         // CJS modules don't carry static type info for module.exports.
         if (name.Lexeme == "require") return new TypeInfo.Any();

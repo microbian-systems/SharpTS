@@ -175,7 +175,9 @@ public static class ObjectLocalPromotionAnalyzer
         {
             TypeInfo.Primitive { Type: TokenType.TYPE_NUMBER } => TokenType.TYPE_NUMBER,
             TypeInfo.Primitive { Type: TokenType.TYPE_BOOLEAN } => TokenType.TYPE_BOOLEAN,
-            TypeInfo.Primitive { Type: TokenType.TYPE_STRING } => TokenType.TYPE_STRING,
+            // `string` is TypeInfo.String, never Primitive(TYPE_STRING) (#1108) — match the canonical
+            // form so string-valued fields are promotable (the shape struct emits a String slot for them).
+            TypeInfo.String => TokenType.TYPE_STRING,
             _ => null
         };
     }

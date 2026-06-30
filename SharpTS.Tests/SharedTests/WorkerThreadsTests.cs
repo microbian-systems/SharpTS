@@ -1716,4 +1716,39 @@ public class WorkerThreadsTests
     }
 
     #endregion
+
+    #region parentPort (#1109)
+
+    /// <summary>
+    /// On the MAIN thread, <c>worker_threads.parentPort</c> is <c>null</c> in Node — and that is the
+    /// correct value the compiled <c>EmitParentPort</c> emits (#1109). A worker's body runs under a fresh
+    /// interpreter (SharpTSWorker.RunWorkerScript), which binds the real parentPort via SetupWorkerGlobals,
+    /// so the compiled path is only ever reached on the main thread. This locks in that both modes agree
+    /// and that the canonical <c>if (parentPort)</c> main-thread guard keeps working (not a throw).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void ParentPort_OnMainThread_IsNull(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { parentPort, isMainThread } from "worker_threads";
+                console.log("main=" + isMainThread);
+                console.log("isnull=" + (parentPort === null));
+                if (parentPort) {
+                    console.log("guard-entered");
+                } else {
+                    console.log("guard-skipped");
+                }
+                """,
+        };
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Contains("main=true", output);
+        Assert.Contains("isnull=true", output);
+        Assert.Contains("guard-skipped", output);
+        Assert.DoesNotContain("guard-entered", output);
+    }
+
+    #endregion
 }
