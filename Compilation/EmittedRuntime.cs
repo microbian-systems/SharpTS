@@ -2461,6 +2461,11 @@ public class EmittedRuntime
     // #1024: [Symbol.asyncIterator] support — GetAsyncIterator() is registered via the
     // GetIteratorFunction hook so `for await…of` over a $Readable works in compiled mode.
     public MethodBuilder TSReadableGetAsyncIterator { get; set; } = null!;
+    // #1027: addAbortSignal(signal, stream) — destroy-on-abort wiring + its listener closure.
+    public MethodBuilder StreamAddAbortSignal { get; set; } = null!;
+    public Type StreamAbortCallbackType { get; set; } = null!;
+    public ConstructorBuilder StreamAbortCallbackCtor { get; set; } = null!;
+    public MethodBuilder StreamAbortCallbackOnAbort { get; set; } = null!;
 
     // $Writable type - emitted for standalone stream support
     // NOTE: Must stay in sync with SharpTS.Runtime.Types.SharpTSWritable

@@ -1600,6 +1600,51 @@ public class StreamModuleTests
         Assert.Equal("true\n", output);
     }
 
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_AddAbortSignal_DestroysOnAbort(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, addAbortSignal } from 'stream';
+                const r = new Readable();
+                const ac = new AbortController();
+                addAbortSignal(ac.signal, r);
+                const events: string[] = [];
+                r.on('error', (e: any) => events.push('error:' + (e.name ?? e)));
+                r.on('close', () => events.push('close'));
+                ac.abort();
+                console.log(events.join(','), r.destroyed);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("error:AbortError,close true\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Stream_AddAbortSignal_AlreadyAborted_DestroysImmediately(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable, addAbortSignal } from 'stream';
+                const r = new Readable();
+                const ac = new AbortController();
+                ac.abort();
+                const events: string[] = [];
+                r.on('error', (e: any) => events.push('error:' + (e.name ?? e)));
+                addAbortSignal(ac.signal, r);
+                console.log(events.join(','), r.destroyed);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("error:AbortError true\n", output);
+    }
+
     #endregion
 
     #region Async iteration (Symbol.asyncIterator) — #1024

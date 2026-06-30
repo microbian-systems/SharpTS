@@ -273,6 +273,8 @@ public partial class RuntimeEmitter
             EmitTSReadableMapFilterMethods(runtime);               // Phase 2b: Map, Filter (need Transform) + CreateType
             EmitTSPassThroughClass(moduleBuilder, runtime);
             EmitTSStreamUtilsClass(moduleBuilder, runtime);
+            // addAbortSignal listener closure (#1027) — needs $Readable/$Writable Destroy + $Error.
+            EmitStreamAbortCallbackClass(moduleBuilder, runtime);
         }
         if (features.UsesZlib)
             EmitTSZlibTransformClass(moduleBuilder, runtime);

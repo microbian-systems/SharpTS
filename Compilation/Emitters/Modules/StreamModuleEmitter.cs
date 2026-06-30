@@ -153,8 +153,18 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
         var ctx = emitter.Context;
         var il = ctx.IL;
 
-        // Simply return the stream (second argument)
-        if (arguments.Count >= 2)
+        // Real wiring (#1027): $Runtime.StreamAddAbortSignal(signal, stream) destroys the stream
+        // with an AbortError when the signal fires, and returns the stream. The helper is only
+        // emitted when AbortController is in use; otherwise fall back to returning the stream.
+        if (arguments.Count >= 2 && ctx.Runtime!.StreamAddAbortSignal != null)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+            il.Emit(OpCodes.Call, ctx.Runtime!.StreamAddAbortSignal);
+        }
+        else if (arguments.Count >= 2)
         {
             emitter.EmitExpression(arguments[1]);
         }

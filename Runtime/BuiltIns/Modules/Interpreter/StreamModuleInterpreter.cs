@@ -218,16 +218,56 @@ public static class StreamModuleInterpreter
     }
 
     /// <summary>
-    /// stream.addAbortSignal(signal, stream) — destroys stream when signal is aborted.
+    /// stream.addAbortSignal(signal, stream) — destroys the stream with an AbortError when the
+    /// signal fires (#1027). If the signal is already aborted, the stream is destroyed at once.
     /// </summary>
     private static RuntimeValue AddAbortSignal(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
-        // Basic implementation: just return the stream
-        // AbortSignal integration requires async runtime support
         if (args.Length < 2)
             throw new Exception("addAbortSignal() requires signal and stream arguments");
 
+        var signal = args[0].ToObject() as SharpTSAbortSignal;
+        var stream = args[1].ToObject();
+
+        if (signal != null && stream != null)
+        {
+            if (signal.Aborted)
+                DestroyStreamWithAbort(interpreter, stream, signal);
+            else
+                signal.AddEventListener("abort", new AbortDestroyListener(stream, signal));
+        }
+
         return args[1]; // Return the stream
+    }
+
+    /// <summary>Destroys a stream with the signal's reason (or a fresh AbortError).</summary>
+    private static void DestroyStreamWithAbort(Interp interpreter, object stream, SharpTSAbortSignal signal)
+    {
+        var destroy = GetStreamMethod(stream, "destroy");
+        destroy?.Call(interpreter, [MakeAbortError(signal)]);
+    }
+
+    /// <summary>Returns the signal's reason when it is an Error/object, else a Node-style AbortError.</summary>
+    private static object MakeAbortError(SharpTSAbortSignal signal)
+    {
+        var reason = signal.Reason;
+        if (reason is SharpTSError || reason is SharpTSObject)
+            return reason;
+        return new SharpTSError("The operation was aborted") { Name = "AbortError", Code = "ABORT_ERR" };
+    }
+
+    /// <summary>Listener that destroys the stream when its AbortSignal fires.</summary>
+    private sealed class AbortDestroyListener : ISharpTSCallable
+    {
+        private readonly object _stream;
+        private readonly SharpTSAbortSignal _signal;
+        public AbortDestroyListener(object stream, SharpTSAbortSignal signal) { _stream = stream; _signal = signal; }
+        public int Arity() => 0;
+        public object? Call(Interp interpreter, List<object?> arguments)
+        {
+            DestroyStreamWithAbort(interpreter, _stream, _signal);
+            return null;
+        }
     }
 
     private static BuiltInMethod? GetStreamMethod(object? stream, string methodName)
