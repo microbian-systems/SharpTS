@@ -9,7 +9,7 @@ namespace SharpTS.TypeSystem;
 /// </summary>
 /// <remarks>
 /// Contains methods: EvaluateConditionalType, SubstituteWithoutConditionalEval,
-/// SubstituteTupleWithoutConditionalEval, DistributeConditionalOverUnion,
+/// DistributeConditionalOverUnion,
 /// CheckExtendsWithInfer, CheckExtendsRecursive, IsSameGenericDefinition,
 /// EvaluateIntrinsicStringType, ApplyStringManipulation, MatchTemplateLiteralWithInfer,
 /// MatchStringLiteralToTemplatePattern.
@@ -141,113 +141,12 @@ public partial class TypeChecker
 
     /// <summary>
     /// Substitutes type parameters without triggering conditional type evaluation (to avoid infinite recursion).
+    /// Thin wrapper over the shared <see cref="Substitute(TypeInfo, Dictionary{string, TypeInfo}, bool)"/> switch
+    /// with <c>evalConditionals: false</c> — see that method for the per-variant behaviour and why the two
+    /// substitution paths must share one switch (#1106).
     /// </summary>
     private TypeInfo SubstituteWithoutConditionalEval(TypeInfo type, Dictionary<string, TypeInfo> substitutions)
-    {
-        return type switch
-        {
-            TypeInfo.TypeParameter tp =>
-                substitutions.TryGetValue(tp.Name, out var sub) ? sub : type,
-            TypeInfo.Array arr =>
-                new TypeInfo.Array(SubstituteWithoutConditionalEval(arr.ElementType, substitutions)),
-            TypeInfo.Promise promise =>
-                new TypeInfo.Promise(SubstituteWithoutConditionalEval(promise.ValueType, substitutions)),
-            TypeInfo.Function func =>
-                new TypeInfo.Function(
-                    func.ParamTypes.Select(p => SubstituteWithoutConditionalEval(p, substitutions)).ToList(),
-                    SubstituteWithoutConditionalEval(func.ReturnType, substitutions),
-                    func.RequiredParams,
-                    func.HasRestParam),
-            TypeInfo.Tuple tuple =>
-                SubstituteTupleWithoutConditionalEval(tuple, substitutions),
-            TypeInfo.Union union =>
-                new TypeInfo.Union(union.Types.Select(t => SubstituteWithoutConditionalEval(t, substitutions)).ToList()),
-            TypeInfo.Record rec =>
-                SubstituteRecordMembers(rec, t => SubstituteWithoutConditionalEval(t, substitutions)),
-            TypeInfo.InstantiatedGeneric ig =>
-                new TypeInfo.InstantiatedGeneric(
-                    ig.GenericDefinition,
-                    ig.TypeArguments.Select(a => SubstituteWithoutConditionalEval(a, substitutions)).ToList()),
-            TypeInfo.KeyOf keyOf =>
-                new TypeInfo.KeyOf(SubstituteWithoutConditionalEval(keyOf.SourceType, substitutions)),
-            TypeInfo.TypeOf => type, // typeof doesn't contain type parameters, return as-is
-            TypeInfo.IndexedAccess ia =>
-                new TypeInfo.IndexedAccess(
-                    SubstituteWithoutConditionalEval(ia.ObjectType, substitutions),
-                    SubstituteWithoutConditionalEval(ia.IndexType, substitutions)),
-            TypeInfo.ConditionalType cond =>
-                new TypeInfo.ConditionalType(
-                    SubstituteWithoutConditionalEval(cond.CheckType, substitutions),
-                    SubstituteWithoutConditionalEval(cond.ExtendsType, substitutions),
-                    SubstituteWithoutConditionalEval(cond.TrueType, substitutions),
-                    SubstituteWithoutConditionalEval(cond.FalseType, substitutions))
-                { IsDistributive = cond.IsDistributive },
-            TypeInfo.InferredTypeParameter infer =>
-                substitutions.TryGetValue(infer.Name, out var inferSub)
-                    ? inferSub
-                    : infer.Constraint is { } inferConstraint
-                        ? infer with { Constraint = SubstituteWithoutConditionalEval(inferConstraint, substitutions) }
-                        : type,
-            _ => type
-        };
-    }
-
-    /// <summary>
-    /// Substitutes type parameters in a tuple without triggering conditional type evaluation.
-    /// Handles spread element flattening similar to SubstituteTupleWithFlattening.
-    /// </summary>
-    private TypeInfo SubstituteTupleWithoutConditionalEval(TypeInfo.Tuple tuple, Dictionary<string, TypeInfo> substitutions)
-    {
-        List<TypeInfo.TupleElement> newElements = [];
-        int newRequiredCount = 0;
-
-        foreach (var elem in tuple.Elements)
-        {
-            if (elem.Kind == TupleElementKind.Spread)
-            {
-                var substitutedInner = SubstituteWithoutConditionalEval(elem.Type, substitutions);
-
-                // Flatten if spread resolves to concrete tuple
-                if (substitutedInner is TypeInfo.Tuple innerTuple)
-                {
-                    foreach (var innerElem in innerTuple.Elements)
-                    {
-                        newElements.Add(innerElem);
-                        if (innerElem.Kind == TupleElementKind.Required)
-                            newRequiredCount++;
-                    }
-                    if (innerTuple.RestElementType != null)
-                    {
-                        newElements.Add(new TypeInfo.TupleElement(
-                            new TypeInfo.Array(innerTuple.RestElementType),
-                            TupleElementKind.Spread
-                        ));
-                    }
-                }
-                else if (substitutedInner is TypeInfo.Array arr)
-                {
-                    newElements.Add(new TypeInfo.TupleElement(arr, TupleElementKind.Spread, elem.Name));
-                }
-                else
-                {
-                    newElements.Add(new TypeInfo.TupleElement(substitutedInner, TupleElementKind.Spread, elem.Name));
-                }
-            }
-            else
-            {
-                var substitutedType = SubstituteWithoutConditionalEval(elem.Type, substitutions);
-                newElements.Add(new TypeInfo.TupleElement(substitutedType, elem.Kind, elem.Name));
-                if (elem.Kind == TupleElementKind.Required)
-                    newRequiredCount++;
-            }
-        }
-
-        var newRestType = tuple.RestElementType != null
-            ? SubstituteWithoutConditionalEval(tuple.RestElementType, substitutions)
-            : null;
-
-        return new TypeInfo.Tuple(newElements, newRequiredCount, newRestType);
-    }
+        => Substitute(type, substitutions, evalConditionals: false);
 
     /// <summary>
     /// Distributes a conditional type over a union type.
