@@ -15,12 +15,16 @@ public static class VmContext
 
     /// <summary>
     /// Tags an object as a vm context. If contextObject is null, creates a new SharpTSObject.
-    /// Returns the contextified object.
+    /// Returns the contextified object. The optional createContext options
+    /// (name / origin / codeGeneration / microtaskMode) are stored on the marker and
+    /// honored when code runs against this context.
     /// </summary>
-    public static object Create(object? contextObject)
+    public static object Create(object? contextObject, VmContextOptions? options = null)
     {
         var obj = contextObject ?? new SharpTSObject(new Dictionary<string, object?>());
-        _contexts.GetOrCreateValue(obj);
+        var marker = _contexts.GetOrCreateValue(obj);
+        if (options != null)
+            marker.Options = options;
         return obj;
     }
 
@@ -31,6 +35,17 @@ public static class VmContext
     {
         if (obj == null) return false;
         return _contexts.TryGetValue(obj, out _);
+    }
+
+    /// <summary>
+    /// Returns the createContext options associated with a contextified object, or null
+    /// if the object is not a context or was created without options.
+    /// </summary>
+    public static VmContextOptions? GetOptions(object? obj)
+    {
+        if (obj != null && _contexts.TryGetValue(obj, out var marker))
+            return marker.Options;
+        return null;
     }
 
     /// <summary>
@@ -124,7 +139,32 @@ public static class VmContext
         }
     }
 
-    private sealed class VmContextMarker { }
+    private sealed class VmContextMarker
+    {
+        public VmContextOptions? Options { get; set; }
+    }
+}
+
+/// <summary>
+/// Parsed createContext() options that affect how code runs against the context.
+/// </summary>
+/// <param name="Name">Human-readable context name (createContext <c>name</c>).</param>
+/// <param name="Origin">Context origin URL (createContext <c>origin</c>).</param>
+/// <param name="CodeGenerationStrings">When false, <c>eval</c> / <c>new Function</c> in the
+/// context throw (codeGeneration.strings:false).</param>
+/// <param name="CodeGenerationWasm">When false, WebAssembly compilation in the context is
+/// disallowed (codeGeneration.wasm:false). SharpTS has no Wasm engine, so this is recorded
+/// but not separately enforced.</param>
+/// <param name="MicrotaskMode">When "afterEvaluate", the microtask queue is drained after
+/// each evaluation against the context.</param>
+public sealed record VmContextOptions(
+    string? Name = null,
+    string? Origin = null,
+    bool CodeGenerationStrings = true,
+    bool CodeGenerationWasm = true,
+    string? MicrotaskMode = null)
+{
+    public bool DrainMicrotasks => MicrotaskMode == "afterEvaluate";
 }
 
 /// <summary>

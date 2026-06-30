@@ -15,7 +15,7 @@ public sealed class VmModuleEmitter : IBuiltInModuleEmitter
     private static readonly string[] _exportedMembers =
     [
         "runInNewContext", "runInThisContext", "runInContext", "createContext", "isContext",
-        "compileFunction", "constants", "Script"
+        "compileFunction", "measureMemory", "constants", "Script"
     ];
 
     public IReadOnlyList<string> GetExportedMembers() => _exportedMembers;
@@ -30,6 +30,7 @@ public sealed class VmModuleEmitter : IBuiltInModuleEmitter
             "createContext" => EmitCreateContext(emitter, arguments),
             "isContext" => EmitIsContext(emitter, arguments),
             "compileFunction" => EmitCompileFunction(emitter, arguments),
+            "measureMemory" => EmitMeasureMemory(emitter, arguments),
             _ => false
         };
     }
@@ -55,7 +56,7 @@ public sealed class VmModuleEmitter : IBuiltInModuleEmitter
 
         // Methods emitted as null for namespace dict — actual calls go through TryEmitMethodCall
         if (propertyName is "runInNewContext" or "runInThisContext" or "runInContext"
-            or "createContext" or "isContext" or "compileFunction")
+            or "createContext" or "isContext" or "compileFunction" or "measureMemory")
         {
             il.Emit(OpCodes.Ldnull);
             return true;
@@ -189,6 +190,7 @@ public sealed class VmModuleEmitter : IBuiltInModuleEmitter
         var ctx = emitter.Context;
         var il = ctx.IL;
 
+        // contextObject (optional)
         if (arguments.Count > 0)
         {
             emitter.EmitExpression(arguments[0]);
@@ -199,7 +201,39 @@ public sealed class VmModuleEmitter : IBuiltInModuleEmitter
             il.Emit(OpCodes.Ldnull);
         }
 
+        // options (optional)
+        if (arguments.Count > 1)
+        {
+            emitter.EmitExpression(arguments[1]);
+            emitter.EmitBoxIfNeeded(arguments[1]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
         il.Emit(OpCodes.Call, ctx.Runtime!.VmCreateContext);
+        emitter.SetStackUnknown();
+        return true;
+    }
+
+    private static bool EmitMeasureMemory(IEmitterContext emitter, List<Expr> arguments)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+
+        // options (optional)
+        if (arguments.Count > 0)
+        {
+            emitter.EmitExpression(arguments[0]);
+            emitter.EmitBoxIfNeeded(arguments[0]);
+        }
+        else
+        {
+            il.Emit(OpCodes.Ldnull);
+        }
+
+        il.Emit(OpCodes.Call, ctx.Runtime!.VmMeasureMemory);
         emitter.SetStackUnknown();
         return true;
     }

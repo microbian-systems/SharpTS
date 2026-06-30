@@ -25,6 +25,7 @@ public static class VmModuleInterpreter
             ["createContext"] = BuiltInMethod.CreateV2("createContext", 0, 2, CreateContext),
             ["isContext"] = BuiltInMethod.CreateV2("isContext", 1, 1, IsContext),
             ["compileFunction"] = BuiltInMethod.CreateV2("compileFunction", 1, 3, CompileFunction),
+            ["measureMemory"] = BuiltInMethod.CreateV2("measureMemory", 0, 1, MeasureMemory),
             ["constants"] = VmConstants.Create(),
             ["Script"] = new VmScriptConstructor()
         };
@@ -84,12 +85,91 @@ public static class VmModuleInterpreter
     }
 
     /// <summary>
-    /// vm.createContext(contextObject?) — tags an object as a vm context.
+    /// vm.createContext(contextObject?, options?) — tags an object as a vm context.
+    /// Options (name / origin / codeGeneration / microtaskMode) are stored on the
+    /// context and honored when code runs against it.
     /// </summary>
     private static RuntimeValue CreateContext(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
     {
         var contextObject = args.Length > 0 ? args[0].ToObject() : null;
-        return RuntimeValue.FromObject(VmContext.Create(contextObject));
+        var options = args.Length > 1 ? ParseContextOptions(args[1].ToObject()) : null;
+        return RuntimeValue.FromObject(VmContext.Create(contextObject, options));
+    }
+
+    /// <summary>
+    /// Parses a createContext()/runInNewContext() options object into VmContextOptions.
+    /// Reads name, origin, codeGeneration:{ strings, wasm }, and microtaskMode.
+    /// </summary>
+    internal static VmContextOptions? ParseContextOptions(object? options)
+    {
+        if (options == null) return null;
+
+        var name = GetStringOption(options, "name");
+        var originUrl = GetStringOption(options, "origin");
+        var microtaskMode = GetStringOption(options, "microtaskMode");
+
+        var codeGenStrings = true;
+        var codeGenWasm = true;
+        if (GetOption(options, "codeGeneration") is { } codeGen)
+        {
+            codeGenStrings = GetBoolOption(codeGen, "strings", true);
+            codeGenWasm = GetBoolOption(codeGen, "wasm", true);
+        }
+
+        // Only allocate options when something non-default was supplied.
+        if (name == null && originUrl == null && microtaskMode == null && codeGenStrings && codeGenWasm)
+            return null;
+
+        return new VmContextOptions(name, originUrl, codeGenStrings, codeGenWasm, microtaskMode);
+    }
+
+    /// <summary>
+    /// Applies a context's createContext options to a freshly-created sub-interpreter:
+    /// disables eval/new Function when codeGeneration.strings is false.
+    /// (microtaskMode draining happens after evaluation — see <see cref="DrainContextMicrotasks"/>.)
+    /// </summary>
+    private static void ApplyContextOptions(Interp subInterpreter, VmContextOptions? options)
+    {
+        if (options is { CodeGenerationStrings: false })
+            subInterpreter.DisableCodeGenerationFromStrings();
+    }
+
+    /// <summary>Drains the sub-interpreter's microtask queue when microtaskMode is 'afterEvaluate'.</summary>
+    private static void DrainContextMicrotasks(Interp subInterpreter, VmContextOptions? options)
+    {
+        if (options is { DrainMicrotasks: true })
+            subInterpreter.ProcessMicrotasks();
+    }
+
+    /// <summary>
+    /// vm.measureMemory([options]) — returns a Promise resolving to a best-effort,
+    /// GC-derived memory measurement. V8's per-context detailed breakdown has no .NET
+    /// equivalent (#1150 ceiling), so the estimate/range come from GC.GetTotalMemory and
+    /// the per-context split is omitted.
+    /// </summary>
+    private static RuntimeValue MeasureMemory(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        return RuntimeValue.FromObject(SharpTSPromise.Resolve(MeasureMemoryResultObject()));
+    }
+
+    /// <summary>
+    /// Builds the (best-effort, GC-derived) measureMemory result payload as plain
+    /// dictionaries so it is readable in both modes (compiled GetFieldsProperty
+    /// dispatches dictionaries; a SharpTSObject's fields are not visible across the
+    /// runtime boundary). The compiled VmMeasureMemory helper calls this directly and
+    /// wraps the result in a native $Promise (a cross-boundary SharpTSPromise is not
+    /// unwrapped by compiled await).
+    /// </summary>
+    public static object MeasureMemoryResultObject()
+    {
+        var bytes = (double)GC.GetTotalMemory(forceFullCollection: false);
+        var range = new SharpTSArray(new List<object?> { bytes, bytes });
+        var total = new Dictionary<string, object?>
+        {
+            ["jsMemoryEstimate"] = bytes,
+            ["jsMemoryRange"] = range,
+        };
+        return new Dictionary<string, object?> { ["total"] = total };
     }
 
     /// <summary>
@@ -122,6 +202,10 @@ public static class VmModuleInterpreter
         foreach (var (key, value) in contextProps)
             env.Define(key, value);
 
+        // Honor the context's createContext options (codeGeneration / microtaskMode).
+        var contextOptions = VmContext.GetOptions(contextObject);
+        ApplyContextOptions(subInterpreter, contextOptions);
+
         // Apply timeout if specified
         CancellationTokenSource? cts = null;
         if (timeout > 0)
@@ -137,6 +221,9 @@ public static class VmModuleInterpreter
             resolver.Resolve(statements);
 
             var result = subInterpreter.InterpretRepl(statements);
+
+            // Drain queued microtasks when microtaskMode:'afterEvaluate'.
+            DrainContextMicrotasks(subInterpreter, contextOptions);
 
             // Write mutations back to context object
             VmContext.WriteBack(contextObject, contextProps, subInterpreter.Environment);
@@ -197,6 +284,9 @@ public static class VmModuleInterpreter
         foreach (var (key, value) in contextProps)
             env.Define(key, value);
 
+        var contextOptions = VmContext.GetOptions(contextObject);
+        ApplyContextOptions(subInterpreter, contextOptions);
+
         CancellationTokenSource? cts = null;
         if (timeout > 0)
         {
@@ -210,6 +300,8 @@ public static class VmModuleInterpreter
             resolver.Resolve(statements);
 
             var result = subInterpreter.InterpretRepl(statements);
+
+            DrainContextMicrotasks(subInterpreter, contextOptions);
 
             VmContext.WriteBack(contextObject, contextProps, subInterpreter.Environment);
 

@@ -2166,6 +2166,7 @@ public static class BuiltInModuleTypes
             ["createContext"] = new TypeInfo.Function([anyType, anyType], anyType, RequiredParams: 0),
             ["isContext"] = new TypeInfo.Function([anyType], boolType),
             ["compileFunction"] = new TypeInfo.Function([stringType, stringArrayType, anyType], anyType, RequiredParams: 1),
+            ["measureMemory"] = new TypeInfo.Function([anyType], anyType, RequiredParams: 0),
             ["constants"] = constantsType,
             ["Script"] = new TypeInfo.Function([stringType, anyType], scriptType, RequiredParams: 1),
         };

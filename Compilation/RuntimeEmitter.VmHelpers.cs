@@ -18,9 +18,57 @@ public partial class RuntimeEmitter
         EmitVmCreateContext(typeBuilder, runtime);
         EmitVmIsContext(typeBuilder, runtime);
         EmitVmCompileFunction(typeBuilder, runtime);
+        EmitVmMeasureMemory(typeBuilder, runtime);
         EmitVmGetConstants(typeBuilder, runtime);
         EmitVmGetScriptConstructor(typeBuilder, runtime);
         EmitVmNewScript(typeBuilder, runtime);
+    }
+
+    /// <summary>
+    /// Emits: public static object VmMeasureMemory(object options)
+    /// Fetches the raw measureMemory result dictionary from VmModuleInterpreter via
+    /// reflection and wraps it in a native $Promise (a cross-boundary SharpTSPromise is
+    /// not unwrapped by compiled await, so we can't return the interpreter's promise).
+    /// </summary>
+    private void EmitVmMeasureMemory(TypeBuilder typeBuilder, EmittedRuntime runtime)
+    {
+        var method = typeBuilder.DefineMethod(
+            "VmMeasureMemory",
+            MethodAttributes.Public | MethodAttributes.Static,
+            _types.Object,
+            [_types.Object]);
+        runtime.VmMeasureMemory = method;
+        runtime.RegisterBuiltInModuleMethod("vm", "measureMemory", method);
+
+        var il = method.GetILGenerator();
+
+        // Type moduleType = Type.GetType("...VmModuleInterpreter, SharpTS");
+        il.Emit(OpCodes.Ldstr, "SharpTS.Runtime.BuiltIns.Modules.Interpreter.VmModuleInterpreter, SharpTS");
+        il.Emit(OpCodes.Call, _types.GetMethod(_types.Type, "GetType", _types.String));
+        var typeLocal = il.DeclareLocal(_types.Type);
+        il.Emit(OpCodes.Stloc, typeLocal);
+
+        // Standalone (SharpTS absent): return a resolved promise of null.
+        var typeOk = il.DefineLabel();
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Brtrue, typeOk);
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Call, runtime.TSPromiseResolve);
+        il.Emit(OpCodes.Ret);
+        il.MarkLabel(typeOk);
+
+        // object dict = moduleType.GetMethod("MeasureMemoryResultObject").Invoke(null, Array.Empty<object>());
+        il.Emit(OpCodes.Ldloc, typeLocal);
+        il.Emit(OpCodes.Ldstr, "MeasureMemoryResultObject");
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.Type, "GetMethod", _types.String));
+        il.Emit(OpCodes.Ldnull);
+        il.Emit(OpCodes.Ldc_I4_0);
+        il.Emit(OpCodes.Newarr, _types.Object);
+        il.Emit(OpCodes.Callvirt, _types.GetMethod(_types.MethodInfo, "Invoke", _types.Object, _types.ObjectArray));
+
+        // return $Runtime.Resolve(dict)  →  native $Promise
+        il.Emit(OpCodes.Call, runtime.TSPromiseResolve);
+        il.Emit(OpCodes.Ret);
     }
 
     /// <summary>
@@ -104,12 +152,12 @@ public partial class RuntimeEmitter
             "VmCreateContext",
             MethodAttributes.Public | MethodAttributes.Static,
             _types.Object,
-            [_types.Object]);
+            [_types.Object, _types.Object]);
         runtime.VmCreateContext = method;
         runtime.RegisterBuiltInModuleMethod("vm", "createContext", method);
 
         var il = method.GetILGenerator();
-        EmitVmReflectionCall(il, "createContext", 1);
+        EmitVmReflectionCall(il, "createContext", 2);
     }
 
     /// <summary>

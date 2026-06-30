@@ -357,6 +357,131 @@ public class VmModuleTests
 
     #endregion
 
+    #region createContext options + measureMemory Tests
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CreateContext_MicrotaskMode_AfterEvaluate(ExecutionMode mode)
+    {
+        // With microtaskMode:'afterEvaluate', the queued .then microtask runs before
+        // runInContext returns, so the scalar write is visible afterward.
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const ctx = vm.createContext({ flag: 0 }, { microtaskMode: 'afterEvaluate' });
+                vm.runInContext('Promise.resolve().then(() => { flag = 1; }); 0;', ctx);
+                console.log(ctx.flag);
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("1\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CreateContext_CodeGeneration_StringsFalse_BlocksEval(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const ctx = vm.createContext({}, { codeGeneration: { strings: false } });
+                try {
+                    vm.runInContext('eval("1 + 1")', ctx);
+                    console.log('no error');
+                } catch (e: any) {
+                    console.log('blocked');
+                }
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("blocked\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CreateContext_CodeGeneration_Default_AllowsEval(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const ctx = vm.createContext({});
+                console.log(vm.runInContext('eval("20 + 22")', ctx));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("42\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_CreateContext_NameOrigin_Accepted(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                const ctx = vm.createContext({ x: 5 }, { name: 'my-ctx', origin: 'file:///x' });
+                console.log(vm.runInContext('x * 2', ctx));
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("10\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.All), MemberType = typeof(ExecutionModes))]
+    public void Vm_MeasureMemory_ResolvesShape(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                async function main() {
+                    const r: any = await vm.measureMemory();
+                    console.log(typeof r.total.jsMemoryEstimate === 'number');
+                    console.log(r.total.jsMemoryRange !== undefined && r.total.jsMemoryRange !== null);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Vm_MeasureMemory_RangeIsArray(ExecutionMode mode)
+    {
+        // jsMemoryRange is a 2-element Array; Array.isArray/.length only fully recognize it
+        // within the interpreter (compiled is blind to a cross-boundary SharpTSArray — a
+        // known interop detail; cross-mode the value is present, covered above).
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import * as vm from 'vm';
+                async function main() {
+                    const r: any = await vm.measureMemory();
+                    console.log(Array.isArray(r.total.jsMemoryRange));
+                    console.log(r.total.jsMemoryRange.length === 2);
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("true\ntrue\n", output);
+    }
+
+    #endregion
+
     #region Script Tests
 
     [Theory]
