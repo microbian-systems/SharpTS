@@ -899,7 +899,7 @@ public class SharpTSReadable : SharpTSEventEmitter
     // toArray/forEach). Consuming helpers return a resolved Promise; lazy helpers return a
     // new objectMode Readable carrying the transformed chunks. Interp == compiled by construction.
 
-    private List<object?> DrainBufferToList()
+    internal List<object?> DrainBufferToList()
     {
         var items = new List<object?>(_readBuffer.Count);
         while (_readBuffer.Count > 0)

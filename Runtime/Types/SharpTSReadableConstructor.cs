@@ -71,8 +71,43 @@ public sealed class SharpTSReadableConstructor : ISharpTSCallable
         {
             "from" => BuiltInMethod.CreateV2("from", 1, 2, ReadableFrom),
             "isReadable" => BuiltInMethod.CreateV2("isReadable", 1, IsReadable),
+            "toWeb" => BuiltInMethod.CreateV2("toWeb", 1, ToWeb),
+            "fromWeb" => BuiltInMethod.CreateV2("fromWeb", 1, FromWeb),
             _ => null
         };
+    }
+
+    /// <summary>
+    /// Readable.toWeb(readable) — converts a Node Readable to a WHATWG ReadableStream by draining
+    /// its currently-buffered chunks (documented subset, #1029). Mirrors
+    /// <c>ReadableStream.from(readable.toArray())</c>.
+    /// </summary>
+    private static RuntimeValue ToWeb(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var ws = new SharpTSReadableStream(interpreter, underlyingSource: null, strategy: null);
+        if (args.Length > 0 && args[0].ToObject() is SharpTSReadable r)
+        {
+            foreach (var chunk in r.DrainBufferToList())
+                ws.EnqueueInternal(chunk);
+        }
+        ws.CloseInternal();
+        return RuntimeValue.FromObject(ws);
+    }
+
+    /// <summary>
+    /// Readable.fromWeb(readableStream) — converts a WHATWG ReadableStream to a Node Readable by
+    /// draining its currently-queued chunks (documented subset, #1029).
+    /// </summary>
+    private static RuntimeValue FromWeb(Interp interpreter, RuntimeValue receiver, ReadOnlySpan<RuntimeValue> args)
+    {
+        var stream = new SharpTSReadable { ObjectMode = true };
+        if (args.Length > 0 && args[0].ToObject() is SharpTSReadableStream ws)
+        {
+            while (ws.Queue.Count > 0)
+                stream.PushFromHost(interpreter, ws.Queue.Dequeue().Value);
+        }
+        stream.PushFromHost(interpreter, null); // EOF
+        return RuntimeValue.FromObject(stream);
     }
 
     /// <summary>

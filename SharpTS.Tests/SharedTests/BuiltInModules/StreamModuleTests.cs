@@ -1986,4 +1986,55 @@ public class StreamModuleTests
     }
 
     #endregion
+
+    #region Node↔Web conversions (toWeb/fromWeb) — #1029 (interpreter-only documented subset)
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Readable_ToWeb(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const r = new Readable({ objectMode: true });
+                    r.push('a'); r.push('b'); r.push(null);
+                    const web = Readable.toWeb(r);
+                    const got: string[] = [];
+                    for await (const c of web) got.push(c);
+                    console.log(got.join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("a,b\n", output);
+    }
+
+    [Theory]
+    [MemberData(nameof(ExecutionModes.InterpretedOnly), MemberType = typeof(ExecutionModes))]
+    public void Stream_Readable_FromWeb(ExecutionMode mode)
+    {
+        var files = new Dictionary<string, string>
+        {
+            ["main.ts"] = """
+                import { Readable } from 'stream';
+                async function main(): Promise<void> {
+                    const ws = new ReadableStream({ start(c: any) { c.enqueue(1); c.enqueue(2); c.enqueue(3); c.close(); } });
+                    const node = Readable.fromWeb(ws);
+                    const got: number[] = [];
+                    for await (const x of node) got.push(x);
+                    console.log(got.join(','));
+                }
+                main();
+                """
+        };
+
+        var output = TestHarness.RunModules(files, "main.ts", mode);
+        Assert.Equal("1,2,3\n", output);
+    }
+
+    #endregion
 }

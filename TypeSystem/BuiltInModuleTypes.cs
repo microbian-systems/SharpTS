@@ -1829,7 +1829,9 @@ public static class BuiltInModuleTypes
             Members: new Dictionary<string, TypeInfo>
             {
                 ["from"] = new TypeInfo.Function([anyType, anyType], streamInstanceType, RequiredParams: 1),
-                ["isReadable"] = new TypeInfo.Function([anyType], boolType)
+                ["isReadable"] = new TypeInfo.Function([anyType], boolType),
+                ["toWeb"] = new TypeInfo.Function([anyType], anyType),     // #1029
+                ["fromWeb"] = new TypeInfo.Function([anyType], streamInstanceType) // #1029
             }.ToFrozenDictionary(),
             OptionalMembers: FrozenSet<string>.Empty,
             ConstructorSignatures:

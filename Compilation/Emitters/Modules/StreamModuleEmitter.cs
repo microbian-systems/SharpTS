@@ -62,6 +62,13 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
             case "Duplex.from":
                 EmitDuplexFromCall(emitter, arguments);
                 return true;
+            case "Readable.toWeb":
+            case "Readable.fromWeb":
+                // #1029: Node↔Web stream conversions are an interpreter-only documented subset —
+                // the compiled path is deferred pending stream/web async-iterator + BYOB support
+                // (DEFERRED, see STATUS.md). Throw a clear error rather than fail silently.
+                EmitNotSupportedInCompiled(emitter, methodName);
+                return true;
             case "Readable.isReadable":
                 EmitIsReadableCall(emitter, arguments);
                 return true;
@@ -279,6 +286,18 @@ public sealed class StreamModuleEmitter : IBuiltInModuleEmitter
         }
 
         il.Emit(OpCodes.Call, ctx.Runtime!.StreamReadableFrom);
+    }
+
+    /// <summary>
+    /// Emits a runtime throw for a stream API that is interpreter-only in compiled output (#1029).
+    /// </summary>
+    private static void EmitNotSupportedInCompiled(IEmitterContext emitter, string methodName)
+    {
+        var ctx = emitter.Context;
+        var il = ctx.IL;
+        il.Emit(OpCodes.Ldstr, $"stream.{methodName} is not yet supported in compiled output (#1029); run in the interpreter.");
+        il.Emit(OpCodes.Newobj, ctx.Types.InvalidOperationExceptionCtorString);
+        il.Emit(OpCodes.Throw);
     }
 
     /// <summary>
